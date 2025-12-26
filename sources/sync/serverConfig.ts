@@ -6,9 +6,20 @@ const serverConfigStorage = new MMKV({ id: 'server-config' });
 const SERVER_KEY = 'custom-server-url';
 const DEFAULT_SERVER_URL = 'https://api.cluster-fluster.com';
 
+function getWebOrigin(): string | null {
+  try {
+    const anyGlobal = globalThis as unknown as { location?: { origin?: string } };
+    const origin = anyGlobal.location?.origin;
+    return origin && origin.trim() ? origin.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export function getServerUrl(): string {
     return serverConfigStorage.getString(SERVER_KEY) || 
            process.env.EXPO_PUBLIC_HAPPY_SERVER_URL || 
+           getWebOrigin() ||
            DEFAULT_SERVER_URL;
 }
 
