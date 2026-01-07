@@ -72,7 +72,13 @@ function UserTextBlock(props: {
   sessionId: string;
 }) {
   const handleOptionPress = React.useCallback((option: Option) => {
-    sync.sendMessage(props.sessionId, option.title);
+    void (async () => {
+      try {
+        await sync.submitMessage(props.sessionId, option.title);
+      } catch (e) {
+        Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
+      }
+    })();
   }, [props.sessionId]);
 
   return (
@@ -95,7 +101,13 @@ function AgentTextBlock(props: {
   sessionId: string;
 }) {
   const handleOptionPress = React.useCallback((option: Option) => {
-    sync.sendMessage(props.sessionId, option.title);
+    void (async () => {
+      try {
+        await sync.submitMessage(props.sessionId, option.title);
+      } catch (e) {
+        Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
+      }
+    })();
   }, [props.sessionId]);
 
   return (

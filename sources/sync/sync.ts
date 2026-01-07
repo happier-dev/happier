@@ -6,7 +6,7 @@ import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { storage } from './storage';
 import { ApiEphemeralUpdateSchema, ApiMessage, ApiUpdateContainerSchema } from './apiTypes';
 import type { ApiEphemeralActivityUpdate } from './apiTypes';
-import { Session, Machine } from './storageTypes';
+import { Session, Machine, PendingMessage } from './storageTypes';
 import { InvalidateSync } from '@/utils/sync';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import { randomUUID } from 'expo-crypto';
@@ -300,10 +300,12 @@ class Sync {
                     }
 
                     const prev = this.sessionOldestLoadedSeq.get(sessionId);
-                    if (prev === undefined) {
-                        this.sessionOldestLoadedSeq.set(sessionId, decrypted.seq);
-                    } else {
-                        this.sessionOldestLoadedSeq.set(sessionId, Math.min(prev, decrypted.seq));
+                    if (typeof decrypted.seq === 'number') {
+                        if (prev === undefined) {
+                            this.sessionOldestLoadedSeq.set(sessionId, decrypted.seq);
+                        } else {
+                            this.sessionOldestLoadedSeq.set(sessionId, Math.min(prev, decrypted.seq));
+                        }
                     }
                 }
             }
@@ -423,6 +425,217 @@ class Sync {
             sentFrom,
             permissionMode: permissionMode || 'default'
         });
+    }
+
+    async abortSession(sessionId: string): Promise<void> {
+        await apiSocket.sessionRPC(sessionId, 'abort', {
+            reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`
+        });
+    }
+
+    async submitMessage(sessionId: string, text: string, displayText?: string): Promise<void> {
+        const mode = storage.getState().settings.messageSendMode;
+        if (mode === 'interrupt') {
+            try { await this.abortSession(sessionId); } catch { }
+            await this.sendMessage(sessionId, text, displayText);
+            return;
+        }
+        if (mode === 'server_pending') {
+            await this.enqueuePendingMessage(sessionId, text, displayText);
+            return;
+        }
+        await this.sendMessage(sessionId, text, displayText);
+    }
+
+    async fetchPendingMessages(sessionId: string): Promise<void> {
+        const encryption = this.encryption.getSessionEncryption(sessionId);
+        if (!encryption) return;
+
+        const session = storage.getState().sessions[sessionId];
+        if (!session) return;
+
+        const result = await apiSocket.emitWithAck<{
+            ok: boolean;
+            error?: string;
+            messages?: Array<{
+                id: string;
+                localId: string | null;
+                message: string;
+                createdAt: number;
+                updatedAt: number;
+            }>;
+        }>('pending-list', { sid: sessionId, limit: 200 });
+
+        if (!result?.ok || !Array.isArray(result.messages)) {
+            storage.getState().applyPendingLoaded(sessionId);
+            return;
+        }
+
+        const pending: PendingMessage[] = [];
+        for (const m of result.messages) {
+            const raw = await encryption.decryptRaw(m.message);
+            const text = raw?.content?.text;
+            if (typeof text !== 'string') continue;
+            pending.push({
+                id: m.id,
+                localId: typeof m.localId === 'string' ? m.localId : null,
+                createdAt: m.createdAt,
+                updatedAt: m.updatedAt,
+                text,
+                displayText: typeof raw?.meta?.displayText === 'string' ? raw.meta.displayText : undefined,
+                rawRecord: raw,
+            });
+        }
+
+        storage.getState().applyPendingMessages(sessionId, pending);
+    }
+
+    async enqueuePendingMessage(sessionId: string, text: string, displayText?: string): Promise<void> {
+        // Get encryption
+        const encryption = this.encryption.getSessionEncryption(sessionId);
+        if (!encryption) {
+            throw new Error(`Session ${sessionId} not found`);
+        }
+
+        // Get session data from storage
+        const session = storage.getState().sessions[sessionId];
+        if (!session) {
+            throw new Error(`Session ${sessionId} not found in storage`);
+        }
+
+        // Read permission mode and model mode from session state (same as sendMessage)
+        const settings = storage.getState().settings;
+        const globalDefaultPermissionMode = getDefaultPermissionModeForFlavor({
+            flavor: session.metadata?.flavor,
+            defaultPermissionModeClaude: settings.defaultPermissionModeClaude,
+            defaultPermissionModeCodex: settings.defaultPermissionModeCodex,
+        });
+
+        let permissionMode: PermissionMode = coercePermissionModeForFlavor(session.permissionMode, session.metadata?.flavor) as PermissionMode;
+        if (!session.permissionModeExplicit && permissionMode === 'default' && globalDefaultPermissionMode !== 'default') {
+            storage.getState().updateSessionPermissionMode(sessionId, globalDefaultPermissionMode);
+            permissionMode = globalDefaultPermissionMode as PermissionMode;
+        }
+        const modelMode = session.modelMode || 'default';
+
+        // Generate local ID
+        const localId = randomUUID();
+
+        // Determine sentFrom based on platform
+        let sentFrom: string;
+        if (Platform.OS === 'web') {
+            sentFrom = 'web';
+        } else if (Platform.OS === 'android') {
+            sentFrom = 'android';
+        } else if (Platform.OS === 'ios') {
+            if (isRunningOnMac()) {
+                sentFrom = 'mac';
+            } else {
+                sentFrom = 'ios';
+            }
+        } else {
+            sentFrom = 'web';
+        }
+
+        // Model settings - models are configured in CLI settings
+        const model: string | null = null;
+        const fallbackModel: string | null = null;
+
+        const content: RawRecord = {
+            role: 'user',
+            content: {
+                type: 'text',
+                text
+            },
+            meta: {
+                sentFrom,
+                permissionMode: permissionMode || 'default',
+                model,
+                fallbackModel,
+                appendSystemPrompt: systemPrompt,
+                ...(displayText && { displayText })
+            }
+        };
+
+        const encryptedRawRecord = await encryption.encryptRawRecord(content);
+
+        const ack = await apiSocket.emitWithAck<{ ok: boolean; id?: string; error?: string }>('pending-enqueue', {
+            sid: sessionId,
+            message: encryptedRawRecord,
+            localId
+        });
+
+        if (!ack?.ok || !ack.id) {
+            throw new Error(ack?.error || 'Failed to enqueue pending message');
+        }
+
+        const now = Date.now();
+        storage.getState().upsertPendingMessage(sessionId, {
+            id: ack.id,
+            localId,
+            createdAt: now,
+            updatedAt: now,
+            text,
+            displayText,
+            rawRecord: content,
+        });
+    }
+
+    async updatePendingMessage(sessionId: string, pendingId: string, text: string): Promise<void> {
+        const encryption = this.encryption.getSessionEncryption(sessionId);
+        if (!encryption) return;
+
+        const existing = storage.getState().sessionPending[sessionId]?.messages.find((m) => m.id === pendingId);
+        const base = existing?.rawRecord && typeof existing.rawRecord === 'object'
+            ? existing.rawRecord
+            : {
+                role: 'user',
+                content: { type: 'text', text },
+            };
+
+        const updatedRecord: any = {
+            ...base,
+            content: {
+                ...(base.content ?? {}),
+                type: 'text',
+                text
+            }
+        };
+
+        const encrypted = await encryption.encryptRawRecord(updatedRecord);
+
+        const ack = await apiSocket.emitWithAck<{ ok: boolean; error?: string }>('pending-update', {
+            sid: sessionId,
+            id: pendingId,
+            message: encrypted
+        });
+
+        if (!ack?.ok) {
+            throw new Error(ack?.error || 'Failed to update pending message');
+        }
+
+        if (existing) {
+            storage.getState().upsertPendingMessage(sessionId, {
+                ...existing,
+                text,
+                displayText: typeof updatedRecord?.meta?.displayText === 'string' ? updatedRecord.meta.displayText : existing.displayText,
+                rawRecord: updatedRecord,
+                updatedAt: Date.now(),
+            });
+        }
+    }
+
+    async deletePendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const ack = await apiSocket.emitWithAck<{ ok: boolean; error?: string }>('pending-delete', {
+            sid: sessionId,
+            id: pendingId,
+        });
+
+        if (!ack?.ok) {
+            throw new Error(ack?.error || 'Failed to delete pending message');
+        }
+
+        storage.getState().removePendingMessage(sessionId, pendingId);
     }
 
     applySettings = (delta: Partial<Settings>) => {
@@ -609,7 +822,21 @@ class Sync {
         }
 
         const data = await response.json() as {
-            messages: ApiMessage[];
+            sessions: Array<{
+                id: string;
+                tag: string;
+                seq: number;
+                metadata: string;
+                metadataVersion: number;
+                agentState: string | null;
+                agentStateVersion: number;
+                dataEncryptionKey: string | null;
+                active: boolean;
+                activeAt: number;
+                createdAt: number;
+                updatedAt: number;
+                lastMessage: ApiMessage | null;
+            }>;
             hasMore?: boolean;
             nextBeforeSeq?: number | null;
         };
@@ -662,10 +889,12 @@ class Sync {
             let agentState = await sessionEncryption.decryptAgentState(session.agentStateVersion, session.agentState);
 
             // Put it all together
+            const existingPendingCount = storage.getState().sessions[session.id]?.pendingCount ?? 0;
             const processedSession = {
                 ...session,
                 thinking: false,
                 thinkingAt: 0,
+                pendingCount: existingPendingCount,
                 metadata,
                 agentState
             };
@@ -1589,10 +1818,12 @@ class Sync {
                 }
 
                 const prev = this.sessionOldestLoadedSeq.get(sessionId);
-                if (prev === undefined) {
-                    this.sessionOldestLoadedSeq.set(sessionId, decrypted.seq);
-                } else {
-                    this.sessionOldestLoadedSeq.set(sessionId, Math.min(prev, decrypted.seq));
+                if (typeof decrypted.seq === 'number') {
+                    if (prev === undefined) {
+                        this.sessionOldestLoadedSeq.set(sessionId, decrypted.seq);
+                    } else {
+                        this.sessionOldestLoadedSeq.set(sessionId, Math.min(prev, decrypted.seq));
+                    }
                 }
             }
         }
@@ -2111,6 +2342,18 @@ class Sync {
                     activeAt: updateData.activeAt
                 };
                 storage.getState().applyMachines([updatedMachine]);
+            }
+        }
+
+        // Handle pending queue count updates
+        if (updateData.type === 'pending-queue') {
+            const session = storage.getState().sessions[updateData.id];
+            if (session) {
+                const updatedSession: Session = {
+                    ...session,
+                    pendingCount: updateData.count
+                };
+                storage.getState().applySessions([updatedSession]);
             }
         }
 

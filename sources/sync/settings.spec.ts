@@ -118,6 +118,7 @@ describe('settings', () => {
                 lastUsedModelMode: null,
                 defaultPermissionModeClaude: null,
                 defaultPermissionModeCodex: null,
+                messageSendMode: 'agent_queue',
             };
             const delta: Partial<Settings> = {
                 viewInline: true
@@ -156,6 +157,7 @@ describe('settings', () => {
                 lastUsedModelMode: null,
                 defaultPermissionModeClaude: null,
                 defaultPermissionModeCodex: null,
+                messageSendMode: 'agent_queue',
             };
             const delta: Partial<Settings> = {};
             expect(applySettings(currentSettings, delta)).toEqual({
@@ -191,6 +193,7 @@ describe('settings', () => {
                 lastUsedModelMode: null,
                 defaultPermissionModeClaude: null,
                 defaultPermissionModeCodex: null,
+                messageSendMode: 'agent_queue',
             };
             const delta: Partial<Settings> = {
                 viewInline: false
@@ -229,6 +232,7 @@ describe('settings', () => {
                 lastUsedModelMode: null,
                 defaultPermissionModeClaude: null,
                 defaultPermissionModeCodex: null,
+                messageSendMode: 'agent_queue',
             };
             expect(applySettings(currentSettings, {})).toEqual({
                 ...settingsDefaults,
@@ -278,6 +282,7 @@ describe('settings', () => {
                 lastUsedModelMode: null,
                 defaultPermissionModeClaude: null,
                 defaultPermissionModeCodex: null,
+                messageSendMode: 'agent_queue',
             };
             const delta: any = {
                 viewInline: false,

@@ -33,6 +33,7 @@ export const SettingsSchema = z.object({
     lastUsedModelMode: z.string().nullable().describe('Last selected model mode for new sessions'),
     defaultPermissionModeClaude: z.enum(['default', 'acceptEdits', 'plan', 'bypassPermissions']).nullable().describe('Default permission mode for new Claude sessions (null = use last used / CLI defaults)'),
     defaultPermissionModeCodex: z.enum(['default', 'read-only', 'safe-yolo', 'yolo']).nullable().describe('Default permission mode for new Codex/Gemini sessions (null = use last used / CLI defaults)'),
+    messageSendMode: z.enum(['agent_queue', 'interrupt', 'server_pending']).describe('How the app submits messages while an agent is running'),
 });
 
 //
@@ -80,6 +81,7 @@ export const settingsDefaults: Settings = {
     lastUsedModelMode: null,
     defaultPermissionModeClaude: null,
     defaultPermissionModeCodex: null,
+    messageSendMode: 'agent_queue',
 };
 Object.freeze(settingsDefaults);
 

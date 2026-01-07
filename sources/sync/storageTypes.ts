@@ -70,6 +70,7 @@ export interface Session {
         id: string;
     }>;
     draft?: string | null; // Local draft message, not synced to server
+    pendingCount?: number; // Server-side pending queue count (ephemeral)
     permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null; // Local permission mode, not synced to server
     permissionModeExplicit?: boolean; // Whether permissionMode was explicitly set locally (vs inferred/defaulted)
     modelMode?: 'default' | null; // Local model mode, not synced to server (models configured in CLI)
@@ -84,6 +85,16 @@ export interface Session {
         contextSize: number;
         timestamp: number;
     } | null;
+}
+
+export interface PendingMessage {
+    id: string;
+    localId: string | null;
+    createdAt: number;
+    updatedAt: number;
+    text: string;
+    displayText?: string;
+    rawRecord: any;
 }
 
 export interface DecryptedMessage {
