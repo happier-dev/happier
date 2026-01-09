@@ -125,7 +125,8 @@ class ApiSocket {
         if (result.ok) {
             return await sessionEncryption.decryptRaw(result.result) as R;
         }
-        throw new Error('RPC call failed');
+        const errorMessage = typeof result?.error === 'string' ? result.error : 'RPC call failed';
+        throw new Error(errorMessage);
     }
 
     /**
@@ -145,7 +146,8 @@ class ApiSocket {
         if (result.ok) {
             return await machineEncryption.decryptRaw(result.result) as R;
         }
-        throw new Error('RPC call failed');
+        const errorMessage = typeof result?.error === 'string' ? result.error : 'RPC call failed';
+        throw new Error(errorMessage);
     }
 
     send(event: string, data: any) {
