@@ -48,6 +48,11 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
     }, [props.sessionId]);
 
     const handleSendNow = React.useCallback(async (pendingId: string, text: string) => {
+        const textToSend = typeof text === 'string' ? text : '';
+        if (!textToSend.trim()) {
+            Modal.alert('Error', 'This pending message is empty.');
+            return;
+        }
         const confirmed = await Modal.confirm(
             'Send now?',
             'This will stop the current turn and send this message immediately.',
@@ -59,7 +64,7 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
             await sync.deletePendingMessage(props.sessionId, pendingId);
             props.onClose();
             await sessionAbort(props.sessionId);
-            await sync.sendMessage(props.sessionId, text);
+            await sync.sendMessage(props.sessionId, textToSend);
         } catch (e) {
             Modal.alert('Error', e instanceof Error ? e.message : 'Failed to send pending message');
         }
@@ -115,13 +120,13 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
                                     ...Typography.default(),
                                 }}
                             >
-                                {(m.displayText ?? m.text).trim()}
+                                {getPendingPreviewText(m) || '(empty message)'}
                             </Text>
 
                             <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
                                 <ActionButton
                                     title="Edit"
-                                    onPress={() => handleEdit(m.id, m.text)}
+                                    onPress={() => handleEdit(m.id, typeof m.text === 'string' ? m.text : '')}
                                     theme={theme}
                                 />
                                 <ActionButton
@@ -132,7 +137,7 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
                                 />
                                 <ActionButton
                                     title="Send now"
-                                    onPress={() => handleSendNow(m.id, m.text)}
+                                    onPress={() => handleSendNow(m.id, typeof m.text === 'string' ? m.text : '')}
                                     theme={theme}
                                 />
                             </View>
@@ -142,6 +147,13 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
             )}
         </View>
     );
+}
+
+function getPendingPreviewText(message: any): string {
+    const displayText = typeof message?.displayText === 'string' ? message.displayText : '';
+    if (displayText.trim()) return displayText.trim();
+    const text = typeof message?.text === 'string' ? message.text : '';
+    return text.trim();
 }
 
 function ActionButton(props: {
@@ -158,13 +170,15 @@ function ActionButton(props: {
                 paddingVertical: 8,
                 borderRadius: 10,
                 backgroundColor: props.destructive
-                    ? (p.pressed ? props.theme.colors.box.danger.background : props.theme.colors.box.danger.background)
-                    : (p.pressed ? props.theme.colors.button.secondary.background : props.theme.colors.button.secondary.background),
+                    ? props.theme.colors.box.error.background
+                    : (p.pressed ? props.theme.colors.surfacePressed : props.theme.colors.surface),
+                borderWidth: props.destructive ? 0 : 1,
+                borderColor: props.destructive ? 'transparent' : props.theme.colors.divider,
                 opacity: p.pressed ? 0.85 : 1
             })}
         >
             <Text style={{
-                color: props.destructive ? props.theme.colors.box.danger.text : props.theme.colors.button.secondary.tint,
+                color: props.destructive ? props.theme.colors.box.error.text : props.theme.colors.text,
                 fontWeight: '600',
                 ...Typography.default('semiBold')
             }}>
@@ -173,4 +187,3 @@ function ActionButton(props: {
         </Pressable>
     );
 }
-

@@ -277,6 +277,8 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
             <PendingQueueIndicator
                 sessionId={sessionId}
                 count={(session.pendingCount ?? 0) || (pendingLoaded ? pendingMessages.length : 0)}
+                messages={pendingMessages}
+                isLoaded={pendingLoaded}
             />
             <AgentInput
                 placeholder={t('session.inputPlaceholder')}
