@@ -589,10 +589,6 @@ export const ja: TranslationStructure = {
             modifyingMultipleFiles: ({ file, count }: { file: string; count: number }) => `${file} 他${count}件`,
             showingDiff: '変更を表示中',
         },
-        askUserQuestion: {
-            submit: '回答を送信',
-            multipleQuestions: ({ count }: { count: number }) => `${count} 件の質問`,
-        },
     },
 
     files: {
