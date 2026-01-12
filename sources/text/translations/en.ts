@@ -1,20 +1,35 @@
-/**
- * English translations for the Happy app
- * Values can be:
- * - String constants for static text
- * - Functions with typed object parameters for dynamic text
- */
+import type { TranslationStructure } from '../_default';
 
 /**
  * English plural helper function
+ * English has 2 plural forms: singular, plural
  * @param options - Object containing count, singular, and plural forms
- * @returns The appropriate form based on count
+ * @returns The appropriate form based on English plural rules
  */
 function plural({ count, singular, plural }: { count: number; singular: string; plural: string }): string {
     return count === 1 ? singular : plural;
 }
 
-export const en = {
+/**
+ * ENGLISH TRANSLATIONS - DEDICATED FILE
+ *
+ * This file represents the new translation architecture where each language
+ * has its own dedicated file instead of being embedded in _default.ts.
+ *
+ * STRUCTURE CHANGE:
+ * - Previously: All languages in _default.ts as objects
+ * - Now: Separate files for each language (en.ts, ru.ts, pl.ts, es.ts, etc.)
+ * - Benefit: Better maintainability, smaller files, easier language management
+ *
+ * This file contains the complete English translation structure and serves as
+ * the reference implementation for all other language files.
+ *
+ * ARCHITECTURE NOTES:
+ * - All translation keys must match across all language files
+ * - Type safety enforced by TranslationStructure interface
+ * - New translation keys must be added to ALL language files
+ */
+export const en: TranslationStructure = {
     tabs: {
         // Tab navigation labels
         inbox: 'Inbox',
@@ -48,8 +63,8 @@ export const en = {
         no: 'No',
         discard: 'Discard',
         version: 'Version',
-        copied: 'Copied',
         copy: 'Copy',
+        copied: 'Copied',
         scanning: 'Scanning...',
         urlPlaceholder: 'https://example.com',
         home: 'Home',
@@ -70,6 +85,7 @@ export const en = {
         username: 'Username',
         status: 'Status',
     },
+
 
     status: {
         connected: 'connected',
@@ -150,7 +166,7 @@ export const en = {
         themeDescription: 'Choose your preferred color scheme',
         themeOptions: {
             adaptive: 'Adaptive',
-            light: 'Light', 
+            light: 'Light',
             dark: 'Dark',
         },
         themeDescriptions: {
@@ -168,8 +184,6 @@ export const en = {
         showLineNumbersInDiffsDescription: 'Display line numbers in code diffs',
         showLineNumbersInToolViews: 'Show Line Numbers in Tool Views',
         showLineNumbersInToolViewsDescription: 'Display line numbers in tool view diffs',
-        showDiffsInToolViews: 'Show Diffs in Tool Views',
-        showDiffsInToolViewsDescription: 'Display diffs inside tool result cards (Edit/Write/Diff views)',
         wrapLinesInDiffs: 'Wrap Lines in Diffs',
         wrapLinesInDiffsDescription: 'Wrap long lines instead of horizontal scrolling in diff views',
         alwaysShowContextSize: 'Always Show Context Size',
@@ -197,8 +211,8 @@ export const en = {
         webFeatures: 'Web Features',
         webFeaturesDescription: 'Features available only in the web version of the app.',
         enterToSend: 'Enter to Send',
-        enterToSendEnabled: 'Press Enter to send (Shift+Enter for a new line)',
-        enterToSendDisabled: 'Enter inserts a new line',
+        enterToSendEnabled: 'Press Enter to send messages',
+        enterToSendDisabled: 'Press ⌘+Enter to send messages',
         commandPalette: 'Command Palette',
         commandPaletteEnabled: 'Press ⌘K to open',
         commandPaletteDisabled: 'Quick command access disabled',
@@ -246,7 +260,7 @@ export const en = {
             `Retry in ${seconds} ${seconds === 1 ? 'second' : 'seconds'}`,
         errorWithCode: ({ message, code }: { message: string; code: number | string }) =>
             `${message} (Error ${code})`,
-        disconnectServiceFailed: ({ service }: { service: string }) => 
+        disconnectServiceFailed: ({ service }: { service: string }) =>
             `Failed to disconnect ${service}`,
         connectServiceFailed: ({ service }: { service: string }) =>
             `Failed to connect ${service}. Please try again.`,
@@ -276,21 +290,6 @@ export const en = {
         notConnectedToServer: 'Not connected to server. Check your internet connection.',
         noMachineSelected: 'Please select a machine to start the session',
         noPathSelected: 'Please select a directory to start the session in',
-        resume: {
-            title: 'Resume',
-            subtitleClaude: 'Resume from an existing Claude session ID',
-            subtitleCodex: 'Resume from an existing Codex session ID',
-            placeholderClaude: 'Paste Claude session ID…',
-            placeholderCodex: 'Paste Codex session ID…',
-            paste: 'Paste',
-            clear: 'Clear',
-            rowPrefix: 'Resume:',
-            rowNone: 'Resume session (optional)',
-            pickerTitle: 'Resume Session',
-            save: 'Done',
-            clearAndRemove: 'Clear Resume',
-            helpText: 'Copy a session ID from a previous session to continue the conversation. You can find session IDs in session info.',
-        },
         sessionType: {
             title: 'Session Type',
             simple: 'Simple',
@@ -354,13 +353,6 @@ export const en = {
         claudeCodeSessionIdCopied: 'Claude Code Session ID copied to clipboard',
         aiProvider: 'AI Provider',
         failedToCopyClaudeCodeSessionId: 'Failed to copy Claude Code Session ID',
-        codexSessionId: 'Codex Session ID',
-        codexSessionIdCopied: 'Codex Session ID copied to clipboard',
-        failedToCopyCodexSessionId: 'Failed to copy Codex Session ID',
-        copyClaudeResumeCommand: 'Copy Claude Resume Command',
-        copyCodexResumeCommand: 'Copy Codex Resume Command',
-        resumeCommandCopied: 'Resume command copied to clipboard',
-        failedToCopyResumeCommand: 'Failed to copy resume command',
         metadataCopied: 'Metadata copied to clipboard',
         failedToCopyMetadata: 'Failed to copy metadata',
         failedToKillSession: 'Failed to kill session',
@@ -398,11 +390,6 @@ export const en = {
         deleteSessionWarning: 'This action cannot be undone. All messages and data associated with this session will be permanently deleted.',
         failedToDeleteSession: 'Failed to delete session',
         sessionDeleted: 'Session deleted successfully',
-        renameSession: 'Rename Session',
-        renameSessionSubtitle: 'Change the display name for this session',
-        renameSessionPlaceholder: 'Enter session name...',
-        failedToRenameSession: 'Failed to rename session',
-        sessionRenamed: 'Session renamed successfully',
 
     },
 
@@ -504,8 +491,6 @@ export const en = {
             running: 'Tool is running...',
             rawJsonDevMode: 'Raw JSON (Dev Mode)',
         },
-        diffHidden: 'Diff display is disabled in settings',
-        unknownFile: '<unknown file>',
         taskView: {
             initializing: 'Initializing agent...',
             moreTools: ({ count }: { count: number }) => `+${count} more ${plural({ count, singular: 'tool', plural: 'tools' })}`,
@@ -701,9 +686,9 @@ export const en = {
         developerModeDisabled: 'Developer mode disabled',
         disconnectGithub: 'Disconnect GitHub',
         disconnectGithubConfirm: 'Are you sure you want to disconnect your GitHub account?',
-        disconnectService: ({ service }: { service: string }) => 
+        disconnectService: ({ service }: { service: string }) =>
             `Disconnect ${service}`,
-        disconnectServiceConfirm: ({ service }: { service: string }) => 
+        disconnectServiceConfirm: ({ service }: { service: string }) =>
             `Are you sure you want to disconnect ${service} from your account?`,
         disconnect: 'Disconnect',
         failedToConnectTerminal: 'Failed to connect terminal',
@@ -715,7 +700,7 @@ export const en = {
     navigation: {
         // Navigation titles and screen headers
         connectTerminal: 'Connect Terminal',
-        linkNewDevice: 'Link New Device', 
+        linkNewDevice: 'Link New Device',
         restoreWithSecretKey: 'Restore with Secret Key',
         whatsNew: "What's New",
         friends: 'Friends',
@@ -780,7 +765,6 @@ export const en = {
     codex: {
         // Codex permission dialog buttons
         permissions: {
-            yesAlwaysAllowCommand: 'Yes, always allow globally',
             yesForSession: "Yes, and don't ask for a session",
             stopAndExplain: 'Stop, and explain what to do',
         }
@@ -809,7 +793,7 @@ export const en = {
     markdown: {
         // Markdown copy functionality
         codeCopied: 'Code copied',
-        copyFailed: 'Copy failed',
+        copyFailed: 'Failed to copy',
         mermaidRenderFailed: 'Failed to render mermaid diagram',
     },
 
@@ -946,24 +930,4 @@ export const en = {
     }
 } as const;
 
-export type Translations = typeof en;
-
-/**
- * Generic translation type that matches the structure of Translations
- * but allows different string values (for other languages)
- */
-export type TranslationStructure = {
-    readonly [K in keyof Translations]: {
-        readonly [P in keyof Translations[K]]: Translations[K][P] extends string 
-            ? string 
-            : Translations[K][P] extends (...args: any[]) => string 
-                ? Translations[K][P] 
-                : Translations[K][P] extends object
-                    ? {
-                        readonly [Q in keyof Translations[K][P]]: Translations[K][P][Q] extends string
-                            ? string
-                            : Translations[K][P][Q]
-                      }
-                    : Translations[K][P]
-    }
-};
+export type TranslationsEn = typeof en;
