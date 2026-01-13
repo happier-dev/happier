@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { PERMISSION_MODES } from "@/constants/PermissionModes";
+import type { PermissionMode } from "@/constants/PermissionModes";
 
 //
 // Agent states
@@ -21,7 +23,10 @@ export const MetadataSchema = z.object({
     homeDir: z.string().optional(), // User's home directory on the machine
     happyHomeDir: z.string().optional(), // Happy configuration directory 
     hostPid: z.number().optional(), // Process ID of the session
-    flavor: z.string().nullish() // Session flavor/variant identifier
+    flavor: z.string().nullish(), // Session flavor/variant identifier
+    // Published by happy-cli so the app can seed permission state even before there are messages.
+    permissionMode: z.enum(PERMISSION_MODES).optional(),
+    permissionModeUpdatedAt: z.number().optional(),
 });
 
 export type Metadata = z.infer<typeof MetadataSchema>;
@@ -69,7 +74,7 @@ export interface Session {
         id: string;
     }>;
     draft?: string | null; // Local draft message, not synced to server
-    permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null; // Local permission mode, not synced to server
+    permissionMode?: PermissionMode | null; // Local permission mode, not synced to server
     permissionModeUpdatedAt?: number | null; // Local timestamp to coordinate inferred (from last message) vs user-selected mode, not synced to server
     modelMode?: 'default' | null; // Local model mode, not synced to server (models configured in CLI)
     // IMPORTANT: latestUsage is extracted from reducerState.latestUsage after message processing.

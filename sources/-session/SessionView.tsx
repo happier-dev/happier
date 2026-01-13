@@ -22,6 +22,7 @@ import { isRunningOnMac } from '@/utils/platform';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/responsive';
 import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, useSessionStatus } from '@/utils/sessionUtils';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/versionUtils';
+import type { PermissionMode } from '@/constants/PermissionModes';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import * as React from 'react';
@@ -189,7 +190,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     }, [machineId, cliVersion, acknowledgedCliVersions]);
 
     // Function to update permission mode
-    const updatePermissionMode = React.useCallback((mode: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo') => {
+    const updatePermissionMode = React.useCallback((mode: PermissionMode) => {
         storage.getState().updateSessionPermissionMode(sessionId, mode);
     }, [sessionId]);
 
