@@ -70,6 +70,7 @@ export interface Session {
     }>;
     draft?: string | null; // Local draft message, not synced to server
     permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null; // Local permission mode, not synced to server
+    permissionModeUpdatedAt?: number | null; // Local timestamp to coordinate inferred (from last message) vs user-selected mode, not synced to server
     modelMode?: 'default' | null; // Local model mode, not synced to server (models configured in CLI)
     // IMPORTANT: latestUsage is extracted from reducerState.latestUsage after message processing.
     // We store it directly on Session to ensure it's available immediately on load.
