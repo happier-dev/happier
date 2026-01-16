@@ -184,6 +184,8 @@ export const en: TranslationStructure = {
         showLineNumbersInDiffsDescription: 'Display line numbers in code diffs',
         showLineNumbersInToolViews: 'Show Line Numbers in Tool Views',
         showLineNumbersInToolViewsDescription: 'Display line numbers in tool view diffs',
+        showDiffsInToolViews: 'Show Diffs in Tool Views',
+        showDiffsInToolViewsDescription: 'Display diffs inside tool result cards (Edit/Write/Diff views)',
         wrapLinesInDiffs: 'Wrap Lines in Diffs',
         wrapLinesInDiffsDescription: 'Wrap long lines instead of horizontal scrolling in diff views',
         alwaysShowContextSize: 'Always Show Context Size',
@@ -290,6 +292,21 @@ export const en: TranslationStructure = {
         notConnectedToServer: 'Not connected to server. Check your internet connection.',
         noMachineSelected: 'Please select a machine to start the session',
         noPathSelected: 'Please select a directory to start the session in',
+        resume: {
+            title: 'Resume',
+            subtitleClaude: 'Resume from an existing Claude session ID',
+            subtitleCodex: 'Resume from an existing Codex session ID',
+            placeholderClaude: 'Paste Claude session ID…',
+            placeholderCodex: 'Paste Codex session ID…',
+            paste: 'Paste',
+            clear: 'Clear',
+            rowPrefix: 'Resume:',
+            rowNone: 'Resume session (optional)',
+            pickerTitle: 'Resume Session',
+            save: 'Done',
+            clearAndRemove: 'Clear Resume',
+            helpText: 'Copy a session ID from a previous session to continue the conversation. You can find session IDs in session info.',
+        },
         sessionType: {
             title: 'Session Type',
             simple: 'Simple',
@@ -353,6 +370,13 @@ export const en: TranslationStructure = {
         claudeCodeSessionIdCopied: 'Claude Code Session ID copied to clipboard',
         aiProvider: 'AI Provider',
         failedToCopyClaudeCodeSessionId: 'Failed to copy Claude Code Session ID',
+        codexSessionId: 'Codex Session ID',
+        codexSessionIdCopied: 'Codex Session ID copied to clipboard',
+        failedToCopyCodexSessionId: 'Failed to copy Codex Session ID',
+        copyClaudeResumeCommand: 'Copy Claude Resume Command',
+        copyCodexResumeCommand: 'Copy Codex Resume Command',
+        resumeCommandCopied: 'Resume command copied to clipboard',
+        failedToCopyResumeCommand: 'Failed to copy resume command',
         metadataCopied: 'Metadata copied to clipboard',
         failedToCopyMetadata: 'Failed to copy metadata',
         failedToKillSession: 'Failed to kill session',
@@ -390,6 +414,11 @@ export const en: TranslationStructure = {
         deleteSessionWarning: 'This action cannot be undone. All messages and data associated with this session will be permanently deleted.',
         failedToDeleteSession: 'Failed to delete session',
         sessionDeleted: 'Session deleted successfully',
+        renameSession: 'Rename Session',
+        renameSessionSubtitle: 'Change the display name for this session',
+        renameSessionPlaceholder: 'Enter session name...',
+        failedToRenameSession: 'Failed to rename session',
+        sessionRenamed: 'Session renamed successfully',
 
     },
 
@@ -491,6 +520,8 @@ export const en: TranslationStructure = {
             running: 'Tool is running...',
             rawJsonDevMode: 'Raw JSON (Dev Mode)',
         },
+        diffHidden: 'Diff display is disabled in settings',
+        unknownFile: '<unknown file>',
         taskView: {
             initializing: 'Initializing agent...',
             moreTools: ({ count }: { count: number }) => `+${count} more ${plural({ count, singular: 'tool', plural: 'tools' })}`,
@@ -765,6 +796,7 @@ export const en: TranslationStructure = {
     codex: {
         // Codex permission dialog buttons
         permissions: {
+            yesAlwaysAllowCommand: 'Yes, always allow globally',
             yesForSession: "Yes, and don't ask for a session",
             stopAndExplain: 'Stop, and explain what to do',
         }
@@ -918,7 +950,7 @@ export const en: TranslationStructure = {
         enterTmuxTempDir: 'Enter temp directory path',
         tmuxUpdateEnvironment: 'Update environment automatically',
         nameRequired: 'Profile name is required',
-        deleteConfirm: 'Are you sure you want to delete the profile "{name}"?',
+        deleteConfirm: ({ name }: { name: string }) => `Are you sure you want to delete the profile "${name}"?`,
         editProfile: 'Edit Profile',
         addProfileTitle: 'Add New Profile',
         delete: {
