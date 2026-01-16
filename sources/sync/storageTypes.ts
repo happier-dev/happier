@@ -73,7 +73,7 @@ export interface Session {
     pendingCount?: number; // Server-side pending queue count (ephemeral)
     permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null; // Local permission mode, not synced to server
     permissionModeExplicit?: boolean; // Whether permissionMode was explicitly set locally (vs inferred/defaulted)
-    modelMode?: 'default' | null; // Local model mode, not synced to server (models configured in CLI)
+    modelMode?: 'default' | 'gemini-2.5-pro' | 'gemini-2.5-flash' | 'gemini-2.5-flash-lite' | null; // Local model mode, not synced to server
     // IMPORTANT: latestUsage is extracted from reducerState.latestUsage after message processing.
     // We store it directly on Session to ensure it's available immediately on load.
     // Do NOT store reducerState itself on Session - it's mutable and should only exist in SessionMessages.
