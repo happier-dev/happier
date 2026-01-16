@@ -949,23 +949,26 @@ export const zhHans: TranslationStructure = {
             modifyingMultipleFiles: ({ file, count }: { file: string; count: number }) => `${file} 和其他 ${count} 个`,
             showingDiff: '显示更改',
         },
-        askUserQuestion: {
-            submit: '提交答案',
-            multipleQuestions: ({ count }: { count: number }) => `${count} 个问题`,
-        },
-        exitPlanMode: {
-            approve: '批准计划',
-            reject: '拒绝',
+	        askUserQuestion: {
+	            submit: '提交答案',
+	            multipleQuestions: ({ count }: { count: number }) => `${count} 个问题`,
+	            other: '其他',
+	            otherDescription: '输入您自己的答案',
+	            otherPlaceholder: '输入您的答案...',
+	        },
+	        exitPlanMode: {
+	            approve: '批准计划',
+	            reject: '拒绝',
             requestChanges: '请求修改',
             requestChangesPlaceholder: '告诉 Claude 你希望如何修改这个计划…',
             requestChangesSend: '发送反馈',
             requestChangesEmpty: '请填写你希望修改的内容。',
             requestChangesFailed: '请求修改失败，请重试。',
-            responded: '已发送回复',
-            approvalMessage: '我批准这个计划。请继续实现。',
-            rejectionMessage: '我不批准这个计划。请修改它，或问我希望做哪些更改。',
-        },
-    },
+	            responded: '已发送回复',
+	            approvalMessage: '我批准这个计划。请继续实现。',
+	            rejectionMessage: '我不批准这个计划。请修改它，或问我希望做哪些更改。',
+	        },
+	    },
 
     files: {
         searchPlaceholder: '搜索文件...',
