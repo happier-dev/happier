@@ -948,23 +948,26 @@ export const ca: TranslationStructure = {
             modifyingMultipleFiles: ({ file, count }: { file: string; count: number }) => `${file} i ${count} més`,
             showingDiff: 'Mostrant canvis',
         },
-        askUserQuestion: {
-            submit: 'Envia resposta',
-            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'pregunta', plural: 'preguntes' })}`,
-        },
-        exitPlanMode: {
-            approve: 'Aprovar el pla',
-            reject: 'Rebutjar',
+	        askUserQuestion: {
+	            submit: 'Envia resposta',
+	            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'pregunta', plural: 'preguntes' })}`,
+	            other: 'Altres',
+	            otherDescription: 'Escriu la teva pròpia resposta',
+	            otherPlaceholder: 'Escriu la teva resposta...',
+	        },
+	        exitPlanMode: {
+	            approve: 'Aprovar el pla',
+	            reject: 'Rebutjar',
             requestChanges: 'Demanar canvis',
             requestChangesPlaceholder: 'Explica a Claude què vols canviar en aquest pla…',
             requestChangesSend: 'Enviar comentaris',
             requestChangesEmpty: 'Escriu què vols canviar.',
             requestChangesFailed: 'No s\'han pogut demanar canvis. Torna-ho a provar.',
-            responded: 'Resposta enviada',
-            approvalMessage: 'Aprovo aquest pla. Si us plau, continua amb la implementació.',
-            rejectionMessage: 'No aprovo aquest pla. Si us plau, revisa’l o pregunta’m quins canvis voldria.',
-        },
-    },
+	            responded: 'Resposta enviada',
+	            approvalMessage: 'Aprovo aquest pla. Si us plau, continua amb la implementació.',
+	            rejectionMessage: 'No aprovo aquest pla. Si us plau, revisa’l o pregunta’m quins canvis voldria.',
+	        },
+	    },
 
     files: {
         searchPlaceholder: 'Cerca fitxers...',

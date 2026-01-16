@@ -948,23 +948,26 @@ export const es: TranslationStructure = {
             modifyingMultipleFiles: ({ file, count }: { file: string; count: number }) => `${file} y ${count} más`,
             showingDiff: 'Mostrando cambios',
         },
-        askUserQuestion: {
-            submit: 'Enviar respuesta',
-            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'pregunta', plural: 'preguntas' })}`,
-        },
-        exitPlanMode: {
-            approve: 'Aprobar plan',
-            reject: 'Rechazar',
+	        askUserQuestion: {
+	            submit: 'Enviar respuesta',
+	            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'pregunta', plural: 'preguntas' })}`,
+	            other: 'Otro',
+	            otherDescription: 'Escribe tu propia respuesta',
+	            otherPlaceholder: 'Escribe tu respuesta...',
+	        },
+	        exitPlanMode: {
+	            approve: 'Aprobar plan',
+	            reject: 'Rechazar',
             requestChanges: 'Solicitar cambios',
             requestChangesPlaceholder: 'Dile a Claude qué quieres cambiar de este plan…',
             requestChangesSend: 'Enviar comentarios',
             requestChangesEmpty: 'Escribe qué quieres cambiar.',
             requestChangesFailed: 'No se pudieron solicitar cambios. Inténtalo de nuevo.',
-            responded: 'Respuesta enviada',
-            approvalMessage: 'Apruebo este plan. Por favor, continúa con la implementación.',
-            rejectionMessage: 'No apruebo este plan. Por favor, revísalo o pregúntame qué cambios me gustaría.',
-        },
-    },
+	            responded: 'Respuesta enviada',
+	            approvalMessage: 'Apruebo este plan. Por favor, continúa con la implementación.',
+	            rejectionMessage: 'No apruebo este plan. Por favor, revísalo o pregúntame qué cambios me gustaría.',
+	        },
+	    },
 
     files: {
         searchPlaceholder: 'Buscar archivos...',

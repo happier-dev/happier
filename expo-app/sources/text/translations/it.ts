@@ -1158,6 +1158,9 @@ export const it: TranslationStructure = {
         askUserQuestion: {
             submit: 'Invia risposta',
             multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'domanda', plural: 'domande' })}`,
+            other: 'Altro',
+            otherDescription: 'Scrivi la tua risposta',
+            otherPlaceholder: 'Scrivi la tua risposta...',
         },
         exitPlanMode: {
             approve: 'Approva piano',

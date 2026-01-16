@@ -958,23 +958,26 @@ export const ru: TranslationStructure = {
             modifyingMultipleFiles: ({ file, count }: { file: string; count: number }) => `${file} и ещё ${count}`,
             showingDiff: 'Показ изменений',
         },
-        askUserQuestion: {
-            submit: 'Отправить ответ',
-            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'вопрос', few: 'вопроса', many: 'вопросов' })}`,
-        },
-        exitPlanMode: {
-            approve: 'Одобрить план',
-            reject: 'Отклонить',
+	        askUserQuestion: {
+	            submit: 'Отправить ответ',
+	            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'вопрос', few: 'вопроса', many: 'вопросов' })}`,
+	            other: 'Другое',
+	            otherDescription: 'Введите свой ответ',
+	            otherPlaceholder: 'Введите ваш ответ...',
+	        },
+	        exitPlanMode: {
+	            approve: 'Одобрить план',
+	            reject: 'Отклонить',
             requestChanges: 'Попросить изменения',
             requestChangesPlaceholder: 'Напишите Claude, что вы хотите изменить в этом плане…',
             requestChangesSend: 'Отправить комментарий',
             requestChangesEmpty: 'Пожалуйста, напишите, что вы хотите изменить.',
             requestChangesFailed: 'Не удалось отправить запрос на изменения. Попробуйте снова.',
-            responded: 'Ответ отправлен',
-            approvalMessage: 'Я одобряю этот план. Пожалуйста, продолжайте реализацию.',
-            rejectionMessage: 'Я не одобряю этот план. Пожалуйста, переработайте его или спросите, какие изменения я хочу.',
-        },
-    },
+	            responded: 'Ответ отправлен',
+	            approvalMessage: 'Я одобряю этот план. Пожалуйста, продолжайте реализацию.',
+	            rejectionMessage: 'Я не одобряю этот план. Пожалуйста, переработайте его или спросите, какие изменения я хочу.',
+	        },
+	    },
 
     files: {
         searchPlaceholder: 'Поиск файлов...',

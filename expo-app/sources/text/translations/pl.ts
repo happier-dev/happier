@@ -958,23 +958,26 @@ export const pl: TranslationStructure = {
             modifyingMultipleFiles: ({ file, count }: { file: string; count: number }) => `${file} i ${count} ${plural({ count, one: 'więcej', few: 'więcej', many: 'więcej' })}`,
             showingDiff: 'Pokazywanie zmian',
         },
-        askUserQuestion: {
-            submit: 'Wyślij odpowiedź',
-            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'pytanie', few: 'pytania', many: 'pytań' })}`,
-        },
-        exitPlanMode: {
-            approve: 'Zatwierdź plan',
-            reject: 'Odrzuć',
+	        askUserQuestion: {
+	            submit: 'Wyślij odpowiedź',
+	            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'pytanie', few: 'pytania', many: 'pytań' })}`,
+	            other: 'Inne',
+	            otherDescription: 'Wpisz własną odpowiedź',
+	            otherPlaceholder: 'Wpisz swoją odpowiedź...',
+	        },
+	        exitPlanMode: {
+	            approve: 'Zatwierdź plan',
+	            reject: 'Odrzuć',
             requestChanges: 'Poproś o zmiany',
             requestChangesPlaceholder: 'Napisz Claude, co chcesz zmienić w tym planie…',
             requestChangesSend: 'Wyślij uwagi',
             requestChangesEmpty: 'Wpisz, co chcesz zmienić.',
             requestChangesFailed: 'Nie udało się poprosić o zmiany. Spróbuj ponownie.',
-            responded: 'Odpowiedź wysłana',
-            approvalMessage: 'Zatwierdzam ten plan. Proszę kontynuować implementację.',
-            rejectionMessage: 'Nie zatwierdzam tego planu. Proszę go poprawić lub zapytać mnie, jakie zmiany chciałbym wprowadzić.',
-        },
-    },
+	            responded: 'Odpowiedź wysłana',
+	            approvalMessage: 'Zatwierdzam ten plan. Proszę kontynuować implementację.',
+	            rejectionMessage: 'Nie zatwierdzam tego planu. Proszę go poprawić lub zapytać mnie, jakie zmiany chciałbym wprowadzić.',
+	        },
+	    },
 
     files: {
         searchPlaceholder: 'Wyszukaj pliki...',

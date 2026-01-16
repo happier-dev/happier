@@ -241,6 +241,12 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId,
 
         setIsSubmitting(true);
 
+        // HACK: Disable the form immediately by switching to the submitted view.
+        // Without this, users could edit their selections while the network calls
+        // are in flight, but those edits would be ignored since we've already
+        // captured the values above. TODO: Revisit this logic.
+        setIsSubmitted(true);
+
         // Format answers as readable text
         const responseLines: string[] = [];
         const answers: Record<string, string> = {};
