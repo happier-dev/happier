@@ -27,6 +27,7 @@ interface Settings {
   machineId?: string
   machineIdConfirmedByServer?: boolean
   daemonAutoStartWhenRunningHappy?: boolean
+  chromeMode?: boolean
 }
 
 const defaultSettings: Settings = {
