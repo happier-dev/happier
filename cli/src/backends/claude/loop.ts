@@ -2,7 +2,7 @@ import { ApiSessionClient } from "@/api/apiSession"
 import { MessageQueue2 } from "@/utils/MessageQueue2"
 import { logger } from "@/ui/logger"
 import { Session } from "./session"
-import { claudeLocalLauncher } from "./claudeLocalLauncher"
+import { claudeLocalLauncher, LauncherResult } from "./claudeLocalLauncher"
 import { claudeRemoteLauncher } from "./claudeRemoteLauncher"
 import { ApiClient } from "@/lib"
 import type { JsRuntime } from "./runClaude"
@@ -75,7 +75,6 @@ export async function loop(opts: LoopOptions): Promise<number> {
     let mode: 'local' | 'remote' = opts.startingMode ?? 'local';
     while (true) {
         logger.debug(`[loop] Iteration with mode: ${mode}`);
-
         switch (mode) {
             case 'local': {
                 const result = await claudeLocalLauncher(session);
