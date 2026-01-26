@@ -7,6 +7,7 @@ import { PERMISSION_MODES, isPermissionMode } from '@/api/types';
 import { runClaude, type StartOptions } from '@/backends/claude/runClaude';
 import { claudeCliPath } from '@/backends/claude/claudeLocal';
 import { isDaemonRunningCurrentlyInstalledHappyVersion } from '@/daemon/controlClient';
+import { readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
@@ -26,6 +27,7 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
   const options: StartOptions = {};
   let showHelp = false;
   let showVersion = false;
+  let chromeOverride: boolean | undefined = undefined;
   const unknownArgs: string[] = []; // Collect unknown args to pass through to claude
 
   for (let i = 0; i < args.length; i++) {
@@ -90,6 +92,10 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
         console.error(chalk.red(`Invalid --claude-env format: ${envArg}. Expected KEY=VALUE`));
         process.exit(1);
       }
+    } else if (arg === '--chrome') {
+      chromeOverride = true;
+    } else if (arg === '--no-chrome') {
+      chromeOverride = false;
     } else {
       unknownArgs.push(arg);
       // Check if this arg expects a value (simplified check for common patterns)
@@ -101,6 +107,13 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
 
   if (unknownArgs.length > 0) {
     options.claudeArgs = [...(options.claudeArgs || []), ...unknownArgs];
+  }
+
+  // Resolve Chrome mode: explicit flag > settings > false
+  const settings = await readSettings();
+  const chromeEnabled = chromeOverride ?? settings.chromeMode ?? false;
+  if (chromeEnabled && !(options.claudeArgs || []).includes('--chrome')) {
+    options.claudeArgs = [...(options.claudeArgs || []), '--chrome'];
   }
 
   if (showHelp) {
@@ -123,6 +136,8 @@ ${chalk.bold('Examples:')}
   happy                    Start session
   happy --yolo             Start with bypassing permissions
                             happy sugar for --dangerously-skip-permissions
+  happy --chrome           Enable Chrome browser access for this session
+  happy --no-chrome        Disable Chrome even if default is on
   happy --js-runtime bun   Use bun instead of node to spawn Claude Code
   happy --claude-env ANTHROPIC_BASE_URL=http://127.0.0.1:3456
                            Use a custom API endpoint (e.g., claude-code-router)
