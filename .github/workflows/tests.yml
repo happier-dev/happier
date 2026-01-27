@@ -22,7 +22,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
+          cache: yarn
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
@@ -57,7 +57,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
+          cache: yarn
           cache-dependency-path: server/yarn.lock
 
       - name: Enable Corepack
@@ -104,7 +104,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
+          cache: yarn
           cache-dependency-path: cli/yarn.lock
 
       - name: Enable Corepack
@@ -184,7 +184,8 @@ jobs:
       DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: "true"
       HAPPY_SERVER_LIGHT_DATA_DIR: /tmp/happy-server-light
       DATABASE_URL: file:///tmp/happy-server-light/happy-server-light.sqlite
-      HANDY_MASTER_SECRET: happy-ci-master-secret-not-a-real-secret
+      # Fall back to a deterministic non-secret for forks / untrusted PRs (no access to repo secrets).
+      HANDY_MASTER_SECRET: ${{ secrets.CI_MASTER_SECRET != '' && secrets.CI_MASTER_SECRET || 'happy-ci-master-secret-not-a-real-secret' }}
       HAPPY_NO_BROWSER_OPEN: "1"
       TMPDIR: /tmp
     steps:
@@ -195,7 +196,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
+          cache: yarn
           cache-dependency-path: |
             cli/yarn.lock
             server/yarn.lock
@@ -268,6 +269,7 @@ jobs:
       - name: Install provider CLI stubs (CI only)
         run: |
           set -euo pipefail
+          trap 'exit 0' TERM INT
 
           STUB_BIN_DIR="/tmp/ci-bin"
           mkdir -p "${STUB_BIN_DIR}"
@@ -292,10 +294,10 @@ jobs:
 
           # Some callers expect a long-running interactive process; do not exit.
           if [ -t 0 ]; then
-            while true; do sleep 3600; done
+            while true; do sleep 3600 & wait $!; done
           else
             cat >/dev/null || true
-            while true; do sleep 3600; done
+            while true; do sleep 3600 & wait $!; done
           fi
           EOF
             chmod +x "${STUB_BIN_DIR}/${name}"
@@ -335,7 +337,10 @@ jobs:
 
           for i in $(seq 1 60); do
             if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-              echo "Server is healthy"
+              # Require health to be stable (avoid flaking on a transient accept before the server is ready).
+              sleep 1
+              curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1
+              echo "Server is healthy (stable)"
               break
             fi
             sleep 1
