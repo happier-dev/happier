@@ -1,58 +1,56 @@
-import React, { memo, useState, useEffect } from 'react';
-import { View, Text, Switch, Platform, Linking, useWindowDimensions } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import React, { memo, useEffect, useState } from 'react';
+import { View, Text, Switch, Platform, Linking, useWindowDimensions, ScrollView, Pressable } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Ionicons } from '@expo/vector-icons';
 import QRCode from 'qrcode';
 import { Image } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
-import { PublicSessionShare } from '@/sync/sharingTypes';
-import { Item } from '@/components/Item';
-import { ItemList } from '@/components/ItemList';
-import { RoundButton } from '@/components/RoundButton';
-import { t } from '@/text';
-import { Ionicons } from '@expo/vector-icons';
-import { BaseModal } from '@/modal/components/BaseModal';
-import { Modal } from '@/modal';
 
-/**
- * Props for PublicLinkDialog component
- */
+import { Typography } from '@/constants/Typography';
+import { t } from '@/text';
+import { Modal } from '@/modal';
+import { BaseModal } from '@/modal/components/BaseModal';
+import { Item } from '@/components/Item';
+import { ItemGroup } from '@/components/ItemGroup';
+import { RoundButton } from '@/components/RoundButton';
+import { PublicSessionShare } from '@/sync/sharingTypes';
+
 export interface PublicLinkDialogProps {
-    /** Existing public share if any */
     publicShare: PublicSessionShare | null;
-    /** Callback to create a new public share */
     onCreate: (options: {
         expiresInDays?: number;
         maxUses?: number;
         isConsentRequired: boolean;
     }) => void;
-    /** Callback to delete the public share */
     onDelete: () => void;
-    /** Callback when cancelled */
     onCancel: () => void;
 }
 
-/**
- * Dialog for managing public share links
- *
- * @remarks
- * Displays the current public link with QR code, or allows creating a new one.
- * Shows expiration date, usage count, and allows configuring consent requirement.
- */
 export const PublicLinkDialog = memo(function PublicLinkDialog({
     publicShare,
     onCreate,
     onDelete,
     onCancel
 }: PublicLinkDialogProps) {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const { height: windowHeight } = useWindowDimensions();
+
     const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
     const [shareUrl, setShareUrl] = useState<string | null>(null);
     const [isConfiguring, setIsConfiguring] = useState(false);
     const [expiresInDays, setExpiresInDays] = useState<number | undefined>(7);
     const [maxUses, setMaxUses] = useState<number | undefined>(undefined);
     const [isConsentRequired, setIsConsentRequired] = useState(true);
-    const { height: windowHeight } = useWindowDimensions();
 
-    const buildPublicShareUrl = (token: string): string => {
+    const scrollRef = React.useRef<ScrollView>(null);
+    const scrollYRef = React.useRef(0);
+
+    const maxHeight = React.useMemo(() => {
+        return Math.min(720, Math.max(360, Math.floor(windowHeight * 0.85)));
+    }, [windowHeight]);
+
+    const buildPublicShareUrl = React.useCallback((token: string): string => {
         const path = `/share/${token}`;
 
         if (Platform.OS === 'web') {
@@ -66,15 +64,26 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
         const configuredWebAppUrl = (process.env.EXPO_PUBLIC_HAPPY_WEBAPP_URL || '').trim();
         const webAppUrl = configuredWebAppUrl || 'https://app.happy.engineering';
         return `${webAppUrl}${path}`;
-    };
+    }, []);
 
-    const maxDialogHeight = React.useMemo(() => {
-        // Keep some breathing room from the screen edges.
-        const margin = 24;
-        return Math.max(260, windowHeight - margin * 2);
-    }, [windowHeight]);
+    const handleScroll = React.useCallback((e: any) => {
+        scrollYRef.current = e?.nativeEvent?.contentOffset?.y ?? 0;
+    }, []);
 
-    // Generate QR code when public share exists
+    // On web, RN ScrollView inside a modal doesn't reliably respond to mouse wheel / trackpad scroll.
+    // Manually translate wheel deltas into scrollTo.
+    const handleWheel = React.useCallback((e: any) => {
+        if (Platform.OS !== 'web') return;
+        const deltaY = e?.deltaY;
+        if (typeof deltaY !== 'number' || Number.isNaN(deltaY)) return;
+
+        if (e?.cancelable) {
+            e?.preventDefault?.();
+        }
+        e?.stopPropagation?.();
+        scrollRef.current?.scrollTo({ y: Math.max(0, scrollYRef.current + deltaY), animated: false });
+    }, []);
+
     useEffect(() => {
         if (!publicShare?.token) {
             setQrDataUrl(null);
@@ -82,8 +91,6 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
             return;
         }
 
-        // IMPORTANT: Public share links point to the web app route (`/share/:token`),
-        // not the API server URL.
         const url = buildPublicShareUrl(publicShare.token);
         setShareUrl(url);
 
@@ -97,7 +104,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
         })
             .then(setQrDataUrl)
             .catch(() => setQrDataUrl(null));
-    }, [publicShare?.token]);
+    }, [buildPublicShareUrl, publicShare?.token]);
 
     const handleCreate = () => {
         setIsConfiguring(false);
@@ -106,10 +113,6 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
             maxUses,
             isConsentRequired,
         });
-    };
-
-    const formatDate = (timestamp: number) => {
-        return new Date(timestamp).toLocaleDateString();
     };
 
     const handleOpenLink = async () => {
@@ -135,313 +138,289 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
         }
     };
 
+    const formatDate = (timestamp: number) => new Date(timestamp).toLocaleDateString();
+
+    const Radio = ({ selected }: { selected: boolean }) => (
+        <View style={[styles.radioOuter, selected ? styles.radioActive : styles.radioInactive]}>
+            {selected ? <View style={styles.radioDot} /> : null}
+        </View>
+    );
+
     return (
         <BaseModal visible={true} onClose={onCancel}>
-            <View style={[styles.container, { maxHeight: maxDialogHeight }]}>
+            <View
+                style={[styles.container, { height: maxHeight, maxHeight }]}
+                {...(Platform.OS === 'web' ? ({ onWheel: handleWheel } as any) : {})}
+            >
                 <View style={styles.header}>
-                    <Text style={styles.title}>{t('session.sharing.publicLink')}</Text>
-                    <Item
-                        title={t('common.cancel')}
+                    <Text style={styles.headerTitle}>{t('session.sharing.publicLink')}</Text>
+                    <Pressable
                         onPress={onCancel}
-                    />
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                    >
+                        <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
+                    </Pressable>
                 </View>
 
-                <View style={styles.content}>
+                <ScrollView
+                    ref={scrollRef}
+                    style={styles.scroll}
+                    contentContainerStyle={styles.scrollContent}
+                    showsVerticalScrollIndicator
+                    nestedScrollEnabled
+                    keyboardShouldPersistTaps="handled"
+                    onScroll={handleScroll}
+                    scrollEventThrottle={16}
+                >
                     {!publicShare || isConfiguring ? (
-                        <ItemList style={{ flex: 1 }} containerStyle={{ paddingTop: 8 }}>
-                            <Text style={styles.description}>
-                                {t('session.sharing.publicLinkDescription')}
-                            </Text>
-
-                            {/* Expiration */}
-                            <View style={styles.optionGroup}>
-                                <Text style={styles.groupTitle}>
-                                    {t('session.sharing.expiresIn')}
+                        <>
+                            <View style={styles.section}>
+                                <Text style={styles.descriptionText}>
+                                    {t('session.sharing.publicLinkDescription')}
                                 </Text>
+                            </View>
+
+                            <ItemGroup title={t('session.sharing.expiresIn')}>
                                 <Item
                                     title={t('session.sharing.days7')}
+                                    leftElement={<Radio selected={expiresInDays === 7} />}
+                                    selected={expiresInDays === 7}
                                     onPress={() => setExpiresInDays(7)}
-                                    rightElement={
-                                        expiresInDays === 7 ? (
-                                            <View style={styles.radioSelected}>
-                                                <View style={styles.radioDot} />
-                                            </View>
-                                        ) : (
-                                            <View style={styles.radioUnselected} />
-                                        )
-                                    }
+                                    showChevron={false}
                                 />
                                 <Item
                                     title={t('session.sharing.days30')}
+                                    leftElement={<Radio selected={expiresInDays === 30} />}
+                                    selected={expiresInDays === 30}
                                     onPress={() => setExpiresInDays(30)}
-                                    rightElement={
-                                        expiresInDays === 30 ? (
-                                            <View style={styles.radioSelected}>
-                                                <View style={styles.radioDot} />
-                                            </View>
-                                        ) : (
-                                            <View style={styles.radioUnselected} />
-                                        )
-                                    }
+                                    showChevron={false}
                                 />
                                 <Item
                                     title={t('session.sharing.never')}
+                                    leftElement={<Radio selected={expiresInDays === undefined} />}
+                                    selected={expiresInDays === undefined}
                                     onPress={() => setExpiresInDays(undefined)}
-                                    rightElement={
-                                        expiresInDays === undefined ? (
-                                            <View style={styles.radioSelected}>
-                                                <View style={styles.radioDot} />
-                                            </View>
-                                        ) : (
-                                            <View style={styles.radioUnselected} />
-                                        )
-                                    }
+                                    showChevron={false}
+                                    showDivider={false}
                                 />
-                            </View>
+                            </ItemGroup>
 
-                        {/* Max uses */}
-                        <View style={styles.optionGroup}>
-                            <Text style={styles.groupTitle}>
-                                {t('session.sharing.maxUsesLabel')}
-                            </Text>
-                            <Item
-                                title={t('session.sharing.unlimited')}
-                                onPress={() => setMaxUses(undefined)}
-                                rightElement={
-                                    maxUses === undefined ? (
-                                        <View style={styles.radioSelected}>
-                                            <View style={styles.radioDot} />
-                                        </View>
-                                    ) : (
-                                        <View style={styles.radioUnselected} />
-                                    )
-                                }
-                            />
-                            <Item
-                                title={t('session.sharing.uses10')}
-                                onPress={() => setMaxUses(10)}
-                                rightElement={
-                                    maxUses === 10 ? (
-                                        <View style={styles.radioSelected}>
-                                            <View style={styles.radioDot} />
-                                        </View>
-                                    ) : (
-                                        <View style={styles.radioUnselected} />
-                                    )
-                                }
-                            />
-                            <Item
-                                title={t('session.sharing.uses50')}
-                                onPress={() => setMaxUses(50)}
-                                rightElement={
-                                    maxUses === 50 ? (
-                                        <View style={styles.radioSelected}>
-                                            <View style={styles.radioDot} />
-                                        </View>
-                                    ) : (
-                                        <View style={styles.radioUnselected} />
-                                    )
-                                }
-                            />
-                        </View>
+                            <ItemGroup title={t('session.sharing.maxUsesLabel')}>
+                                <Item
+                                    title={t('session.sharing.unlimited')}
+                                    leftElement={<Radio selected={maxUses === undefined} />}
+                                    selected={maxUses === undefined}
+                                    onPress={() => setMaxUses(undefined)}
+                                    showChevron={false}
+                                />
+                                <Item
+                                    title={t('session.sharing.uses10')}
+                                    leftElement={<Radio selected={maxUses === 10} />}
+                                    selected={maxUses === 10}
+                                    onPress={() => setMaxUses(10)}
+                                    showChevron={false}
+                                />
+                                <Item
+                                    title={t('session.sharing.uses50')}
+                                    leftElement={<Radio selected={maxUses === 50} />}
+                                    selected={maxUses === 50}
+                                    onPress={() => setMaxUses(50)}
+                                    showChevron={false}
+                                    showDivider={false}
+                                />
+                            </ItemGroup>
 
-                        {/* Consent */}
-                        <View style={styles.optionGroup}>
-                            <Item
-                                title={t('session.sharing.requireConsent')}
-                                subtitle={t('session.sharing.requireConsentDescription')}
-                                rightElement={
-                                    <Switch
-                                        value={isConsentRequired}
-                                        onValueChange={setIsConsentRequired}
-                                    />
-                                }
-                            />
-                            </View>
+                            <ItemGroup>
+                                <Item
+                                    title={t('session.sharing.requireConsent')}
+                                    subtitle={t('session.sharing.requireConsentDescription')}
+                                    rightElement={
+                                        <Switch value={isConsentRequired} onValueChange={setIsConsentRequired} />
+                                    }
+                                    showChevron={false}
+                                />
+                            </ItemGroup>
 
-                            {/* Create button */}
-                            <View style={styles.buttonContainer}>
+                            <View style={styles.section}>
                                 <RoundButton
                                     title={publicShare ? t('session.sharing.regeneratePublicLink') : t('session.sharing.createPublicLink')}
                                     onPress={handleCreate}
                                     size="large"
-                                    style={{ width: '100%', maxWidth: 400 }}
+                                    style={{ width: '100%', maxWidth: 420, alignSelf: 'center' }}
                                 />
                             </View>
-                        </ItemList>
-                    ) : publicShare ? (
-                        <ItemList style={{ flex: 1 }} containerStyle={{ paddingTop: 8 }}>
-                            <Item
-                                title={t('session.sharing.regeneratePublicLink')}
-                                onPress={() => setIsConfiguring(true)}
-                                icon={<Ionicons name="refresh-outline" size={29} color="#007AFF" />}
-                        />
-
-                        {/* QR Code */}
-                        {qrDataUrl && (
-                            <View style={styles.qrContainer}>
-                                <Image
-                                    source={{ uri: qrDataUrl }}
-                                    style={{ width: 250, height: 250 }}
-                                    contentFit="contain"
-                                />
-                            </View>
-                        )}
-
-                        {/* Public link */}
-                        {shareUrl ? (
-                            <>
+                        </>
+                    ) : (
+                        <>
+                            <ItemGroup>
                                 <Item
-                                    title={t('session.sharing.publicLink')}
-                                    subtitle={<Text selectable>{shareUrl}</Text>}
-                                    subtitleLines={0}
-                                    onPress={handleOpenLink}
+                                    title={t('session.sharing.regeneratePublicLink')}
+                                    onPress={() => setIsConfiguring(true)}
+                                    icon={<Ionicons name="refresh-outline" size={29} color="#007AFF" />}
+                                />
+                            </ItemGroup>
+
+                            {qrDataUrl ? (
+                                <View style={styles.qrSection}>
+                                    <Image
+                                        source={{ uri: qrDataUrl }}
+                                        style={styles.qrImage}
+                                        contentFit="contain"
+                                    />
+                                </View>
+                            ) : null}
+
+                            {shareUrl ? (
+                                <ItemGroup>
+                                    <Item
+                                        title={t('session.sharing.publicLink')}
+                                        subtitle={<Text selectable>{shareUrl}</Text>}
+                                        subtitleLines={0}
+                                        onPress={handleOpenLink}
+                                    />
+                                    <Item
+                                        title={t('common.copy')}
+                                        icon={<Ionicons name="copy-outline" size={29} color="#007AFF" />}
+                                        onPress={handleCopyLink}
+                                        showChevron={false}
+                                        showDivider={false}
+                                    />
+                                </ItemGroup>
+                            ) : null}
+
+                            <ItemGroup>
+                                {publicShare.token ? (
+                                    <Item
+                                        title={t('session.sharing.linkToken')}
+                                        subtitle={publicShare.token}
+                                        subtitleLines={1}
+                                        showChevron={false}
+                                    />
+                                ) : (
+                                    <Item
+                                        title={t('session.sharing.tokenNotRecoverable')}
+                                        subtitle={t('session.sharing.tokenNotRecoverableDescription')}
+                                        showChevron={false}
+                                    />
+                                )}
+
+                                {publicShare.expiresAt ? (
+                                    <Item
+                                        title={t('session.sharing.expiresOn')}
+                                        subtitle={formatDate(publicShare.expiresAt)}
+                                        showChevron={false}
+                                    />
+                                ) : null}
+
+                                <Item
+                                    title={t('session.sharing.usageCount')}
+                                    subtitle={
+                                        publicShare.maxUses
+                                            ? t('session.sharing.usageCountWithMax', {
+                                                used: publicShare.useCount,
+                                                max: publicShare.maxUses,
+                                            })
+                                            : t('session.sharing.usageCountUnlimited', {
+                                                used: publicShare.useCount,
+                                            })
+                                    }
+                                    showChevron={false}
                                 />
                                 <Item
-                                    title={t('common.copy')}
-                                    icon={<Ionicons name="copy-outline" size={29} color="#007AFF" />}
-                                    onPress={handleCopyLink}
+                                    title={t('session.sharing.requireConsent')}
+                                    subtitle={publicShare.isConsentRequired ? t('common.yes') : t('common.no')}
+                                    showChevron={false}
+                                    showDivider={false}
                                 />
-                            </>
-                        ) : null}
+                            </ItemGroup>
 
-                        {/* Info */}
-                        {publicShare.token ? (
-                            <Item
-                                title={t('session.sharing.linkToken')}
-                                subtitle={publicShare.token}
-                                subtitleLines={1}
-                            />
-                        ) : (
-                            <Item
-                                title={t('session.sharing.tokenNotRecoverable')}
-                                subtitle={t('session.sharing.tokenNotRecoverableDescription')}
-                                showChevron={false}
-                            />
-                        )}
-                        {publicShare.expiresAt && (
-                            <Item
-                                title={t('session.sharing.expiresOn')}
-                                subtitle={formatDate(publicShare.expiresAt)}
-                            />
-                        )}
-                        <Item
-                            title={t('session.sharing.usageCount')}
-                            subtitle={
-                                publicShare.maxUses
-                                    ? t('session.sharing.usageCountWithMax', {
-                                          used: publicShare.useCount,
-                                          max: publicShare.maxUses,
-                                      })
-                                    : t('session.sharing.usageCountUnlimited', {
-                                          used: publicShare.useCount,
-                                      })
-                            }
-                        />
-                        <Item
-                            title={t('session.sharing.requireConsent')}
-                            subtitle={
-                                publicShare.isConsentRequired
-                                    ? t('common.yes')
-                                    : t('common.no')
-                            }
-                        />
-
-                        {/* Delete button */}
-                        <View style={styles.buttonContainer}>
-                            <Item
-                                title={t('session.sharing.deletePublicLink')}
-                                onPress={onDelete}
+                            <ItemGroup>
+                                <Item
+                                    title={t('session.sharing.deletePublicLink')}
+                                    onPress={onDelete}
                                     destructive
+                                    showDivider={false}
                                 />
-                            </View>
-                        </ItemList>
-                    ) : null}
-                </View>
+                            </ItemGroup>
+                        </>
+                    )}
+                </ScrollView>
             </View>
         </BaseModal>
     );
 });
 
-const styles = StyleSheet.create((theme) => ({
+const stylesheet = StyleSheet.create((theme) => ({
     container: {
-        width: 600,
-        maxWidth: '90%',
-        backgroundColor: theme.colors.surface,
-        borderRadius: 12,
+        width: '92%',
+        maxWidth: 560,
+        backgroundColor: theme.colors.groupped.background,
+        borderRadius: 16,
         overflow: 'hidden',
-        minHeight: 0,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        flexShrink: 1,
     },
     header: {
+        paddingHorizontal: 16,
+        paddingVertical: 12,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
         borderBottomWidth: 1,
         borderBottomColor: theme.colors.divider,
     },
-    title: {
-        fontSize: 18,
-        fontWeight: '600',
+    headerTitle: {
+        fontSize: 17,
         color: theme.colors.text,
+        ...Typography.default('semiBold'),
     },
-    content: {
+    scroll: {
         flex: 1,
-        minHeight: 0,
     },
-    description: {
-        fontSize: 14,
-        color: theme.colors.textSecondary,
+    scrollContent: {
+        paddingBottom: 16,
+        flexGrow: 1,
+    },
+    section: {
         paddingHorizontal: 16,
-        paddingTop: 16,
-        paddingBottom: 8,
+        paddingTop: 12,
+    },
+    descriptionText: {
+        color: theme.colors.textSecondary,
+        fontSize: Platform.select({ ios: 15, default: 14 }),
         lineHeight: 20,
+        letterSpacing: Platform.select({ ios: -0.24, default: 0.1 }),
+        ...Typography.default(),
     },
-    optionGroup: {
-        marginTop: 16,
-    },
-    groupTitle: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: theme.colors.textSecondary,
+    qrSection: {
         paddingHorizontal: 16,
-        paddingBottom: 8,
-        textTransform: 'uppercase',
+        paddingTop: 12,
+        alignItems: 'center',
     },
-    radioSelected: {
+    qrImage: {
+        width: 250,
+        height: 250,
+    },
+    radioOuter: {
         width: 20,
         height: 20,
         borderRadius: 10,
-        backgroundColor: 'transparent',
         borderWidth: 2,
-        borderColor: theme.colors.radio.active,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    radioDot: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-        backgroundColor: theme.colors.radio.dot,
+    radioActive: {
+        borderColor: theme.colors.radio.active,
     },
-    radioUnselected: {
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        backgroundColor: 'transparent',
-        borderWidth: 2,
+    radioInactive: {
         borderColor: theme.colors.radio.inactive,
     },
-    qrContainer: {
-        alignItems: 'center',
-        padding: 24,
-        backgroundColor: theme.colors.surface,
-    },
-    buttonContainer: {
-        marginTop: 24,
-        marginBottom: 16,
-        paddingHorizontal: 16,
-        alignItems: 'center',
+    radioDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: theme.colors.radio.dot,
     },
 }));
