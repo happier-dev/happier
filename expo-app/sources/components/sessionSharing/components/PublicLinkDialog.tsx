@@ -1,5 +1,5 @@
 import React, { memo, useState, useEffect } from 'react';
-import { View, Text, ScrollView, Switch, Platform, Linking } from 'react-native';
+import { View, Text, Switch, Platform, Linking, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import QRCode from 'qrcode';
 import { Image } from 'expo-image';
@@ -50,6 +50,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
     const [expiresInDays, setExpiresInDays] = useState<number | undefined>(7);
     const [maxUses, setMaxUses] = useState<number | undefined>(undefined);
     const [isConsentRequired, setIsConsentRequired] = useState(true);
+    const { height: windowHeight } = useWindowDimensions();
 
     const buildPublicShareUrl = (token: string): string => {
         const path = `/share/${token}`;
@@ -66,6 +67,12 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
         const webAppUrl = configuredWebAppUrl || 'https://app.happy.engineering';
         return `${webAppUrl}${path}`;
     };
+
+    const maxDialogHeight = React.useMemo(() => {
+        // Keep some breathing room from the screen edges.
+        const margin = 24;
+        return Math.max(260, windowHeight - margin * 2);
+    }, [windowHeight]);
 
     // Generate QR code when public share exists
     useEffect(() => {
@@ -130,7 +137,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
 
     return (
         <BaseModal visible={true} onClose={onCancel}>
-            <View style={styles.container}>
+            <View style={[styles.container, { maxHeight: maxDialogHeight }]}>
                 <View style={styles.header}>
                     <Text style={styles.title}>{t('session.sharing.publicLink')}</Text>
                     <Item
@@ -139,14 +146,14 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                     />
                 </View>
 
-                <ScrollView style={styles.content}>
+                <View style={styles.content}>
                     {!publicShare || isConfiguring ? (
-                        <ItemList>
-                        <Text style={styles.description}>
-                            {t('session.sharing.publicLinkDescription')}
-                        </Text>
+                        <ItemList style={{ flex: 1 }} containerStyle={{ paddingTop: 8 }}>
+                            <Text style={styles.description}>
+                                {t('session.sharing.publicLinkDescription')}
+                            </Text>
 
-                        {/* Expiration */}
+                            {/* Expiration */}
                         <View style={styles.optionGroup}>
                             <Text style={styles.groupTitle}>
                                 {t('session.sharing.expiresIn')}
@@ -250,24 +257,24 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                                     />
                                 }
                             />
-                        </View>
+                            </View>
 
-                        {/* Create button */}
-                        <View style={styles.buttonContainer}>
-                            <RoundButton
-                                title={publicShare ? t('session.sharing.regeneratePublicLink') : t('session.sharing.createPublicLink')}
-                                onPress={handleCreate}
-                                size="large"
-                                style={{ width: '100%', maxWidth: 400 }}
-                            />
-                        </View>
-                    </ItemList>
-                ) : publicShare ? (
-                    <ItemList>
-                        <Item
-                            title={t('session.sharing.regeneratePublicLink')}
-                            onPress={() => setIsConfiguring(true)}
-                            icon={<Ionicons name="refresh-outline" size={29} color="#007AFF" />}
+                            {/* Create button */}
+                            <View style={styles.buttonContainer}>
+                                <RoundButton
+                                    title={publicShare ? t('session.sharing.regeneratePublicLink') : t('session.sharing.createPublicLink')}
+                                    onPress={handleCreate}
+                                    size="large"
+                                    style={{ width: '100%', maxWidth: 400 }}
+                                />
+                            </View>
+                        </ItemList>
+                    ) : publicShare ? (
+                        <ItemList style={{ flex: 1 }} containerStyle={{ paddingTop: 8 }}>
+                            <Item
+                                title={t('session.sharing.regeneratePublicLink')}
+                                onPress={() => setIsConfiguring(true)}
+                                icon={<Ionicons name="refresh-outline" size={29} color="#007AFF" />}
                         />
 
                         {/* QR Code */}
@@ -345,12 +352,12 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                             <Item
                                 title={t('session.sharing.deletePublicLink')}
                                 onPress={onDelete}
-                                destructive
-                            />
-                        </View>
-                    </ItemList>
-                ) : null}
-                </ScrollView>
+                                    destructive
+                                />
+                            </View>
+                        </ItemList>
+                    ) : null}
+                </View>
             </View>
         </BaseModal>
     );
@@ -360,10 +367,10 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         width: 600,
         maxWidth: '90%',
-        maxHeight: '80%',
         backgroundColor: theme.colors.surface,
         borderRadius: 12,
         overflow: 'hidden',
+        minHeight: 0,
     },
     header: {
         flexDirection: 'row',
@@ -381,6 +388,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     content: {
         flex: 1,
+        minHeight: 0,
     },
     description: {
         fontSize: 14,
