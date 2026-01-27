@@ -203,6 +203,21 @@ describe('normalizeToolCallV2', () => {
             },
         });
     });
+
+    it('normalizes diff aliases into Diff.unified_diff', () => {
+        const normalized = normalizeToolCallV2({
+            protocol: 'codex',
+            provider: 'codex',
+            toolName: 'CodexDiff',
+            rawInput: { diff: 'diff --git a/a b/b\n@@ -1 +1 @@\n-a\n+b\n' },
+            callId: 'call-6',
+        });
+
+        expect(normalized.canonicalToolName).toBe('Diff');
+        expect(normalized.input).toMatchObject({
+            unified_diff: 'diff --git a/a b/b\n@@ -1 +1 @@\n-a\n+b\n',
+        });
+    });
 });
 
 describe('normalizeToolResultV2', () => {

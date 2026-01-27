@@ -3,6 +3,9 @@ import type { CanonicalToolName, ToolNormalizationHappyMetaV2, ToolNormalization
 import { normalizeBashInput, normalizeBashResult } from './families/execute';
 import { normalizeReadInput, normalizeReadResult } from './families/read';
 import { normalizeEditInput } from './families/edit';
+import { normalizeDiffInput } from './families/diff';
+import { normalizePatchInput } from './families/patch';
+import { normalizeReasoningInput, normalizeReasoningResult } from './families/reasoning';
 import { normalizeCodeSearchInput, normalizeGlobInput, normalizeGrepInput, normalizeLsInput } from './families/search';
 import { normalizeWriteInput } from './families/write';
 import { normalizeWebFetchInput, normalizeWebSearchInput } from './families/web';
@@ -43,6 +46,8 @@ export function canonicalizeToolNameV2(opts: {
     }
     if (lower === 'edit') {
         const record = asRecord(opts.toolInput) ?? {};
+        const changes = asRecord((record as any).changes);
+        if (changes && Object.keys(changes).length > 0) return 'Patch';
         if (Array.isArray((record as any).edits) && (record as any).edits.length > 0) return 'MultiEdit';
         return 'Edit';
     }
@@ -120,6 +125,45 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Edit' || opts.canonicalToolName === 'MultiEdit') {
         const normalized = normalizeEditInput(opts.rawInput);
+        const meta: ToolNormalizationHappyMetaV2 = {
+            v: 2,
+            protocol: opts.protocol,
+            provider: opts.provider,
+            rawToolName: opts.toolName,
+            canonicalToolName: opts.canonicalToolName,
+        };
+        const withHappy = mergeHappyMeta(normalized, meta);
+        return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
+    }
+
+    if (opts.canonicalToolName === 'Diff') {
+        const normalized = normalizeDiffInput(opts.rawInput);
+        const meta: ToolNormalizationHappyMetaV2 = {
+            v: 2,
+            protocol: opts.protocol,
+            provider: opts.provider,
+            rawToolName: opts.toolName,
+            canonicalToolName: opts.canonicalToolName,
+        };
+        const withHappy = mergeHappyMeta(normalized, meta);
+        return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
+    }
+
+    if (opts.canonicalToolName === 'Patch') {
+        const normalized = normalizePatchInput(opts.rawInput);
+        const meta: ToolNormalizationHappyMetaV2 = {
+            v: 2,
+            protocol: opts.protocol,
+            provider: opts.provider,
+            rawToolName: opts.toolName,
+            canonicalToolName: opts.canonicalToolName,
+        };
+        const withHappy = mergeHappyMeta(normalized, meta);
+        return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
+    }
+
+    if (opts.canonicalToolName === 'Reasoning') {
+        const normalized = normalizeReasoningInput(opts.rawInput);
         const meta: ToolNormalizationHappyMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -265,6 +309,9 @@ export function normalizeToolResultV2(opts: {
         }
         if (opts.canonicalToolName === 'Read') {
             return normalizeReadResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'Reasoning') {
+            return normalizeReasoningResult(opts.rawOutput);
         }
         const record = asRecord(opts.rawOutput);
         if (record) return { ...record };

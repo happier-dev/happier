@@ -10,6 +10,24 @@ function firstNonEmptyString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+function hasNonEmptyRecord(value: unknown): boolean {
+    const record = asRecord(value);
+    return !!record && Object.keys(record).length > 0;
+}
+
+function normalizeDiffAliases(input: Record<string, unknown>): Record<string, unknown> | null {
+    if (typeof input.unified_diff === 'string' && input.unified_diff.trim().length > 0) return null;
+
+    const diff =
+        typeof input.diff === 'string'
+            ? input.diff
+            : typeof input.patch === 'string'
+                ? input.patch
+                : null;
+    if (!diff || diff.trim().length === 0) return null;
+    return { ...input, unified_diff: diff };
+}
+
 function coerceSingleLocationPath(locations: unknown): string | null {
     if (!Array.isArray(locations) || locations.length !== 1) return null;
     const first = asRecord(locations[0]);
@@ -137,7 +155,11 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
         const lower = toolName.toLowerCase();
         if (lower === 'execute' || lower === 'shell' || toolName === 'GeminiBash' || toolName === 'CodexBash') return 'Bash';
         if (lower === 'read') return 'Read';
-        if (lower === 'edit') return 'Edit';
+        if (lower === 'edit') {
+            const inputObj = asRecord(input);
+            if (hasNonEmptyRecord(inputObj?.changes)) return 'Patch';
+            return 'Edit';
+        }
         if (lower === 'write') {
             const inputObj = asRecord(input);
             const hasTodos = Array.isArray(inputObj?.todos) && inputObj?.todos.length > 0;
@@ -178,6 +200,10 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
             nextInput = normalizeEditAliases(inputRecord2) ?? inputRecord2;
         } else if (toolNameLower === 'write' || toolNameLower === 'read') {
             nextInput = normalizeFilePathAliases(inputRecord2) ?? inputRecord2;
+        }
+
+        if (nextName === 'Diff') {
+            nextInput = normalizeDiffAliases(asRecord(nextInput) ?? inputRecord2) ?? nextInput;
         }
     }
 

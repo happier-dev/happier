@@ -12,8 +12,6 @@ import { BashViewFull } from './BashViewFull';
 import { EditViewFull } from './EditViewFull';
 import { MultiEditViewFull } from './MultiEditViewFull';
 import { CodexBashView } from './CodexBashView';
-import { CodexPatchView } from './CodexPatchView';
-import { CodexDiffView } from './CodexDiffView';
 import { PatchView } from './PatchView';
 import { DiffView } from './DiffView';
 import { AskUserQuestionView } from './AskUserQuestionView';
@@ -46,8 +44,8 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     Diff: DiffView,
     Reasoning: ReasoningView,
     CodexBash: CodexBashView,
-    CodexPatch: CodexPatchView,
-    CodexDiff: CodexDiffView,
+    CodexPatch: PatchView,
+    CodexDiff: DiffView,
     Write: WriteView,
     Read: ReadView,
     read: ReadView,
@@ -95,8 +93,6 @@ export function getToolFullViewComponent(toolName: string): ToolViewComponent | 
 export { EditView } from './EditView';
 export { BashView } from './BashView';
 export { CodexBashView } from './CodexBashView';
-export { CodexPatchView } from './CodexPatchView';
-export { CodexDiffView } from './CodexDiffView';
 export { PatchView } from './PatchView';
 export { DiffView } from './DiffView';
 export { BashViewFull } from './BashViewFull';

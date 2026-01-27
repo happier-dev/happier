@@ -13,8 +13,6 @@ vi.mock('./BashViewFull', () => ({ BashViewFull: () => null }));
 vi.mock('./EditViewFull', () => ({ EditViewFull: () => null }));
 vi.mock('./MultiEditViewFull', () => ({ MultiEditViewFull: () => null }));
 vi.mock('./CodexBashView', () => ({ CodexBashView: () => null }));
-vi.mock('./CodexPatchView', () => ({ CodexPatchView: () => null }));
-vi.mock('./CodexDiffView', () => ({ CodexDiffView: () => null }));
 vi.mock('./PatchView', () => ({ PatchView: () => null }));
 vi.mock('./DiffView', () => ({ DiffView: () => null }));
 vi.mock('./AskUserQuestionView', () => ({ AskUserQuestionView: () => null }));
