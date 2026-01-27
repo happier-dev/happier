@@ -20,6 +20,7 @@ import { updateSessionAgentStateWithAck, updateSessionMetadataWithAck } from './
 import type { CatalogAgentId } from '@/backends/types';
 import { SOCKET_RPC_EVENTS } from '@happy/protocol/socketRpc';
 import { normalizeToolCallV2, normalizeToolResultV2 } from '@/agent/tools/normalization';
+import { calculateCost } from '@/utils/pricing';
 
 /**
  * ACP (Agent Communication Protocol) message data types.
@@ -44,7 +45,7 @@ export type ACPMessageData =
     // Permissions
     | { type: 'permission-request'; permissionId: string; toolName: string; description: string; options?: unknown }
     // Usage/metrics
-    | { type: 'token_count'; [key: string]: unknown };
+    | { type: 'token_count';[key: string]: unknown };
 
 export type ACPProvider = CatalogAgentId;
 
@@ -220,7 +221,6 @@ export class ApiSessionClient extends EventEmitter {
 
         // Server events
         this.socket.on('update', (data: Update) => this.handleUpdate(data, { source: 'session-scoped' }));
-
         this.userSocket.on('update', (data: Update) => this.handleUpdate(data, { source: 'user-scoped' }));
 
         // DEATH
@@ -649,7 +649,7 @@ export class ApiSessionClient extends EventEmitter {
         // Track usage from assistant messages
         if (body.type === 'assistant' && body.message?.usage) {
             try {
-                this.sendUsageData(body.message.usage);
+                this.sendUsageData(body.message.usage, body.message.model);
             } catch (error) {
                 logger.debug('[SOCKET] Failed to send usage data:', error);
             }
@@ -1005,9 +1005,11 @@ export class ApiSessionClient extends EventEmitter {
     /**
      * Send usage data to the server
      */
-    sendUsageData(usage: Usage) {
+    sendUsageData(usage: Usage, model?: string) {
         // Calculate total tokens
         const totalTokens = usage.input_tokens + usage.output_tokens + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
+
+        const costs = calculateCost(usage, model);
 
         // Transform Claude usage format to backend expected format
         const usageReport = {
@@ -1021,10 +1023,9 @@ export class ApiSessionClient extends EventEmitter {
                 cache_read: usage.cache_read_input_tokens || 0
             },
             cost: {
-                // Costs are not currently calculated (placeholder values).
-                total: 0,
-                input: 0,
-                output: 0
+                total: costs.total,
+                input: costs.input,
+                output: costs.output
             }
         }
         logger.debugLargeJson('[SOCKET] Sending usage data:', usageReport)
