@@ -84,6 +84,9 @@ export function splitShellCommandTopLevel(command: string): ShellSplitResult {
       // Fail-closed on command substitution / backticks: too hard to reason safely.
       if (ch === '`') return { ok: false };
       if (ch === '$' && src[i + 1] === '(') return { ok: false };
+      // Fail-closed on process substitution: it embeds a command in an I/O redirection.
+      if (ch === '<' && src[i + 1] === '(') return { ok: false };
+      if (ch === '>' && src[i + 1] === '(') return { ok: false };
 
       // Control operators.
       if (ch === '\n' || ch === ';') {
