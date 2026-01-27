@@ -19,6 +19,7 @@ import { isToolTraceEnabled, recordAcpToolTraceEventIfNeeded, recordClaudeToolTr
 import { updateSessionAgentStateWithAck, updateSessionMetadataWithAck } from './session/stateUpdates';
 import type { CatalogAgentId } from '@/backends/types';
 import { SOCKET_RPC_EVENTS } from '@happy/protocol/socketRpc';
+import { normalizeToolCallV2, normalizeToolResultV2 } from '@/agent/tools/normalization';
 
 /**
  * ACP (Agent Communication Protocol) message data types.
@@ -68,6 +69,21 @@ export class ApiSessionClient extends EventEmitter {
     private userSocketDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private closed = false;
     private snapshotSyncInFlight: Promise<void> | null = null;
+    private readonly toolCallCanonicalNameByProviderAndId = new Map<string, { rawToolName: string; canonicalToolName: string }>();
+    private readonly permissionToolCallRawInputByProviderAndId = new Map<string, unknown>();
+
+    private getToolCallNameKey(provider: string, callId: string): string {
+        return `${provider}:${callId}`;
+    }
+
+    private extractPermissionToolCallRawInput(options: unknown): unknown | null {
+        if (!options || typeof options !== 'object' || Array.isArray(options)) return null;
+        const record = options as Record<string, unknown>;
+        const toolCall = record.toolCall;
+        if (!toolCall || typeof toolCall !== 'object' || Array.isArray(toolCall)) return null;
+        const toolCallRecord = toolCall as Record<string, unknown>;
+        return toolCallRecord.rawInput ?? null;
+    }
 
     /**
      * Returns the latest known agentState (may be stale if socket is disconnected).
@@ -603,20 +619,55 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     sendCodexMessage(body: any) {
+        const normalizedBody = (() => {
+            if (body?.type === 'tool-call') {
+                const callId = typeof body.callId === 'string' ? body.callId : undefined;
+                const rawToolName = String(body?.name ?? '');
+                const { canonicalToolName, input } = normalizeToolCallV2({
+                    protocol: 'codex',
+                    provider: 'codex',
+                    toolName: rawToolName,
+                    rawInput: body?.input,
+                    callId,
+                });
+                if (callId) {
+                    this.toolCallCanonicalNameByProviderAndId.set(this.getToolCallNameKey('codex', callId), { rawToolName, canonicalToolName });
+                }
+                return { ...body, name: canonicalToolName, input };
+            }
+
+            if (body?.type === 'tool-call-result') {
+                const callId = typeof body.callId === 'string' ? body.callId : undefined;
+                const mapping = callId ? this.toolCallCanonicalNameByProviderAndId.get(this.getToolCallNameKey('codex', callId)) : undefined;
+                const canonicalToolName = mapping?.canonicalToolName ?? 'Unknown';
+                const rawToolName = mapping?.rawToolName ?? 'unknown';
+                const output = normalizeToolResultV2({
+                    protocol: 'codex',
+                    provider: 'codex',
+                    rawToolName,
+                    canonicalToolName,
+                    rawOutput: body?.output,
+                });
+                return { ...body, output };
+            }
+
+            return body;
+        })();
+
         let content = {
             role: 'agent',
             content: {
                 type: 'codex',
-                data: body  // This wraps the entire Claude message
+                data: normalizedBody  // This wraps the entire Codex message
             },
             meta: {
                 sentFrom: 'cli'
             }
         };
 
-        recordCodexToolTraceEventIfNeeded({ sessionId: this.sessionId, body });
+        recordCodexToolTraceEventIfNeeded({ sessionId: this.sessionId, body: normalizedBody });
         
-        this.logSendWhileDisconnected('Codex message', { type: body?.type });
+        this.logSendWhileDisconnected('Codex message', { type: normalizedBody?.type });
 
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
         
@@ -639,15 +690,80 @@ export class ApiSessionClient extends EventEmitter {
         opts?: { localId?: string; meta?: Record<string, unknown> },
     ) {
         const normalizedBody: ACPMessageData = (() => {
-            if (body.type !== 'tool-result') return body;
-            if (typeof (body as any).isError === 'boolean') return body;
-            const output = (body as any).output as unknown;
-            if (!output || typeof output !== 'object' || Array.isArray(output)) return body;
-            const record = output as Record<string, unknown>;
-            const status = typeof record.status === 'string' ? record.status : null;
-            const error = typeof record.error === 'string' ? record.error : null;
-            const isError = Boolean(error && error.length > 0) || status === 'failed' || status === 'cancelled' || status === 'error';
-            return isError ? ({ ...(body as any), isError: true } as ACPMessageData) : body;
+            // V2 tool-call normalization (canonical tool names + canonical input aliases + _happy/_raw).
+            if (body.type === 'tool-call') {
+                const callId = body.callId;
+                const rawToolName = body.name;
+                const rawInputHint = this.permissionToolCallRawInputByProviderAndId.get(this.getToolCallNameKey(provider, callId));
+                const hintedRawInput = (() => {
+                    if (!rawInputHint) return body.input;
+                    if (!body.input || typeof body.input !== 'object' || Array.isArray(body.input)) return rawInputHint;
+                    if (typeof rawInputHint !== 'object' || Array.isArray(rawInputHint)) return body.input;
+                    return { ...(rawInputHint as Record<string, unknown>), ...(body.input as Record<string, unknown>) };
+                })();
+                const { canonicalToolName, input } = normalizeToolCallV2({
+                    protocol: 'acp',
+                    provider,
+                    toolName: rawToolName,
+                    rawInput: hintedRawInput,
+                    callId,
+                });
+                this.toolCallCanonicalNameByProviderAndId.set(this.getToolCallNameKey(provider, callId), { rawToolName, canonicalToolName });
+                this.permissionToolCallRawInputByProviderAndId.delete(this.getToolCallNameKey(provider, callId));
+                return { ...body, name: canonicalToolName, input };
+            }
+
+            if (body.type === 'permission-request') {
+                const rawInputHint = this.extractPermissionToolCallRawInput(body.options);
+                if (rawInputHint != null) {
+                    this.permissionToolCallRawInputByProviderAndId.set(this.getToolCallNameKey(provider, body.permissionId), rawInputHint);
+                }
+                let { canonicalToolName } = normalizeToolCallV2({
+                    protocol: 'acp',
+                    provider,
+                    toolName: body.toolName,
+                    rawInput: rawInputHint ?? body.options ?? {},
+                    callId: body.permissionId,
+                });
+                // Some providers encode todo writes only in the callId. Ensure permission prompts match the tool-call canonicalization.
+                if (
+                    canonicalToolName === 'Write' &&
+                    typeof body.permissionId === 'string' &&
+                    body.permissionId.startsWith('write_todos')
+                ) {
+                    canonicalToolName = 'TodoWrite';
+                }
+                return { ...body, toolName: canonicalToolName };
+            }
+
+            // Infer isError on tool results (preserve existing behavior).
+            if (body.type === 'tool-result') {
+                const callId = body.callId;
+                const mapping = this.toolCallCanonicalNameByProviderAndId.get(this.getToolCallNameKey(provider, callId));
+                const canonicalToolName = mapping?.canonicalToolName ?? 'Unknown';
+                const rawToolName = mapping?.rawToolName ?? 'unknown';
+
+                const output = normalizeToolResultV2({
+                    protocol: 'acp',
+                    provider,
+                    rawToolName,
+                    canonicalToolName,
+                    rawOutput: (body as any).output,
+                });
+
+                if (typeof (body as any).isError === 'boolean') return { ...(body as any), output } as ACPMessageData;
+                if (!output || typeof output !== 'object' || Array.isArray(output)) return { ...(body as any), output } as ACPMessageData;
+
+                const record = output as Record<string, unknown>;
+                const status = typeof record.status === 'string' ? record.status : null;
+                const error = typeof record.error === 'string' ? record.error : null;
+                const isError = Boolean(error && error.length > 0) || status === 'failed' || status === 'cancelled' || status === 'error';
+                return isError
+                    ? ({ ...(body as any), output, isError: true } as ACPMessageData)
+                    : ({ ...(body as any), output } as ACPMessageData);
+            }
+
+            return body;
         })();
 
         let content = {

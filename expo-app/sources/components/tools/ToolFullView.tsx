@@ -14,6 +14,7 @@ import { normalizeToolCallForRendering } from './utils/normalizeToolCallForRende
 import { inferToolNameForRendering } from './utils/toolNameInference';
 import { knownTools } from '@/components/tools/knownTools';
 import { PermissionFooter } from './PermissionFooter';
+import { useSetting } from '@/sync/storage';
 
 const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 
@@ -44,7 +45,8 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [] }: ToolF
         getToolFullViewComponent(normalizedToolName) ??
         getToolViewComponent(normalizedToolName);
     const screenWidth = useWindowDimensions().width;
-    const devModeEnabled = (useLocalSetting('devModeEnabled') || __DEV__);
+    const toolViewShowDebugByDefault = useSetting('toolViewShowDebugByDefault');
+    const [showDebug, setShowDebug] = React.useState<boolean>(toolViewShowDebugByDefault);
     const isWaitingForPermission =
         toolForRendering.permission?.status === 'pending' && toolForRendering.state !== 'completed';
 
@@ -109,7 +111,11 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [] }: ToolF
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.error')}</Text>
                             </View>
                             <View style={styles.errorContainer}>
-                                <Text style={styles.errorText}>{String(toolForRendering.result)}</Text>
+                                <Text style={styles.errorText}>
+                                    {typeof toolForRendering.result === 'string'
+                                        ? toolForRendering.result
+                                        : JSON.stringify(toolForRendering.result, null, 2)}
+                                </Text>
                             </View>
                         </View>
                     )}
@@ -139,16 +145,23 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [] }: ToolF
                     />
                 )}
                 
-                {/* Raw JSON View (Dev Mode Only) */}
-                {devModeEnabled && (
-                    <View style={styles.section}>
-                        <View style={styles.sectionHeader}>
-                            <Ionicons name="code-slash" size={20} color="#FF9500" />
-                            <Text style={styles.sectionTitle}>{t('tools.fullView.rawJsonDevMode')}</Text>
-                        </View>
-                        <CodeView 
+                {/* Debug/raw payloads (opt-in) */}
+                <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                        <Ionicons name="code-slash" size={20} color="#FF9500" />
+                        <Text style={styles.sectionTitle}>{t('tools.fullView.debug')}</Text>
+                        <Text
+                            style={[styles.toolId, { marginLeft: 8 }]}
+                            onPress={() => setShowDebug((v) => !v)}
+                        >
+                            {showDebug ? t('tools.fullView.hide') : t('tools.fullView.show')}
+                        </Text>
+                    </View>
+                    {showDebug && (
+                        <CodeView
                             code={JSON.stringify({
                                 name: tool.name,
+                                normalizedName: normalizedToolName,
                                 state: toolForRendering.state,
                                 description: toolForRendering.description,
                                 input: toolForRendering.input,
@@ -157,11 +170,11 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [] }: ToolF
                                 startedAt: toolForRendering.startedAt,
                                 completedAt: toolForRendering.completedAt,
                                 permission: toolForRendering.permission,
-                                messages
-                            }, null, 2)} 
+                                messages,
+                            }, null, 2)}
                         />
-                    </View>
-                )}
+                    )}
+                </View>
             </View>
         </ScrollView>
     );

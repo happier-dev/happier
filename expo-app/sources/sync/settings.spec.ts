@@ -277,6 +277,10 @@ describe('settings', () => {
                 codex: 'default',
                 gemini: 'default',
             });
+            expect(settingsDefaults.toolViewDetailLevelDefault).toBe('summary');
+            expect(settingsDefaults.toolViewDetailLevelDefaultLocalControl).toBe('title');
+            expect(settingsDefaults.toolViewDetailLevelByToolName).toEqual({});
+            expect(settingsDefaults.toolViewShowDebugByDefault).toBe(false);
             expect((settingsDefaults as any).expGemini).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeClaude).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeCodex).toBeUndefined();

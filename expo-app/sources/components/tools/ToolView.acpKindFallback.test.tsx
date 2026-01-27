@@ -80,7 +80,18 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
+vi.mock('@/sync/storage', () => ({
+    useSetting: (key: string) => {
+        if (key === 'toolViewDetailLevelDefault') return 'summary';
+        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+        if (key === 'toolViewDetailLevelByToolName') return {};
+        if (key === 'toolViewShowDebugByDefault') return false;
+        return null;
+    },
+}));
+
 vi.mock('@/agents/catalog', () => ({
+    AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
     getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
     resolveAgentIdFromFlavor: () => null,
 }));

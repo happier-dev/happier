@@ -884,6 +884,9 @@ export const ca: TranslationStructure = {
             completed: 'Eina completada amb èxit',
             noOutput: 'No s\'ha produït cap sortida',
             running: 'L\'eina s\'està executant...',
+            debug: 'Depuració',
+            show: 'Mostra',
+            hide: 'Amaga',
             rawJsonDevMode: 'JSON en brut (mode desenvolupador)',
         },
         taskView: {

@@ -19,6 +19,7 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@/sync/storage', () => ({
     useLocalSetting: () => false,
+    useSetting: () => false,
 }));
 
 vi.mock('@/text', () => ({

@@ -894,6 +894,9 @@ export const ru: TranslationStructure = {
             completed: 'Инструмент выполнен успешно',
             noOutput: 'Результат не получен',
             running: 'Выполняется...',
+            debug: 'Отладка',
+            show: 'Показать',
+            hide: 'Скрыть',
             rawJsonDevMode: 'Исходный JSON (режим разработчика)',
         },
         taskView: {

@@ -126,6 +126,44 @@ function normalizeEditAliases(input: Record<string, unknown>): Record<string, un
 export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
     const parsedInput = maybeParseJson(tool.input);
     const parsedResult = maybeParseJson(tool.result);
+    const canonicalizeName = (toolName: string, input: unknown): string => {
+        if (toolName === 'CodexPatch' || toolName === 'GeminiPatch') return 'Patch';
+        if (toolName === 'CodexDiff' || toolName === 'GeminiDiff') return 'Diff';
+        if (toolName === 'CodexReasoning' || toolName === 'GeminiReasoning' || toolName === 'think') return 'Reasoning';
+        if (toolName === 'exit_plan_mode') return 'ExitPlanMode';
+
+        if (toolName === 'mcp__happy__change_title') return 'change_title';
+
+        const lower = toolName.toLowerCase();
+        if (lower === 'execute' || lower === 'shell' || toolName === 'GeminiBash' || toolName === 'CodexBash') return 'Bash';
+        if (lower === 'read') return 'Read';
+        if (lower === 'edit') return 'Edit';
+        if (lower === 'write') {
+            const inputObj = asRecord(input);
+            const hasTodos = Array.isArray(inputObj?.todos) && inputObj?.todos.length > 0;
+            return hasTodos ? 'TodoWrite' : 'Write';
+        }
+
+        if (lower === 'glob') return 'Glob';
+        if (lower === 'grep') return 'Grep';
+        if (lower === 'ls') return 'LS';
+        if (lower === 'web_fetch' || lower === 'webfetch') return 'WebFetch';
+        if (lower === 'web_search' || lower === 'websearch') return 'WebSearch';
+
+        if (lower === 'search') {
+            const inputObj = asRecord(input);
+            const hasQuery =
+                !!firstNonEmptyString(inputObj?.query) ||
+                !!firstNonEmptyString(inputObj?.pattern) ||
+                !!firstNonEmptyString(inputObj?.text);
+            // Gemini internal "search" often has only items/locations and is intentionally minimal/hidden.
+            return hasQuery ? 'CodeSearch' : toolName;
+        }
+
+        return toolName;
+    };
+
+    const nextName = canonicalizeName(tool.name, parsedInput);
     let nextInput: unknown = parsedInput;
 
     const inputRecord = asRecord(nextInput);
@@ -143,8 +181,9 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
         }
     }
 
+    const nameChanged = nextName !== tool.name;
     const inputChanged = nextInput !== tool.input;
     const resultChanged = parsedResult !== tool.result;
-    if (!inputChanged && !resultChanged) return tool;
-    return { ...tool, input: nextInput, result: parsedResult };
+    if (!nameChanged && !inputChanged && !resultChanged) return tool;
+    return { ...tool, name: nextName, input: nextInput, result: parsedResult };
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ApiSessionClient } from './apiSession';
 import type { RawJSONLines } from '@/backends/claude/types';
-import { encodeBase64, encrypt } from './encryption';
+import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -76,6 +76,214 @@ describe('ApiSessionClient connection handling', () => {
         delete process.env.HAPPY_STACKS_TOOL_TRACE;
         delete process.env.HAPPY_STACKS_TOOL_TRACE_FILE;
         __resetToolTraceForTests();
+    });
+
+    it('normalizes outbound ACP tool-call names and inputs to V2 canonical keys', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+        client.sendAgentMessage('opencode', {
+            type: 'tool-call',
+            callId: 'call-1',
+            name: 'execute',
+            input: { command: ['bash', '-lc', 'echo hi'] },
+            id: 'msg-1',
+        });
+
+        const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
+        expect(call).toBeTruthy();
+        const payload = call![1];
+        const decrypted = decrypt(
+            mockSession.encryptionKey,
+            mockSession.encryptionVariant,
+            decodeBase64(payload.message),
+        ) as any;
+
+        expect(decrypted.content.type).toBe('acp');
+        expect(decrypted.content.provider).toBe('opencode');
+        expect(decrypted.content.data).toMatchObject({
+            type: 'tool-call',
+            name: 'Bash',
+            input: expect.objectContaining({ command: 'echo hi' }),
+        });
+    });
+
+    it('backfills missing Read tool-call input details from permission-request toolCall.rawInput', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        client.sendAgentMessage('opencode', {
+            type: 'permission-request',
+            permissionId: 'call-1',
+            toolName: 'read',
+            description: 'read',
+            options: {
+                toolCall: {
+                    rawInput: { filepath: '/etc/hosts' },
+                },
+            },
+        });
+
+        client.sendAgentMessage('opencode', {
+            type: 'tool-call',
+            callId: 'call-1',
+            name: 'read',
+            input: {
+                locations: [],
+                description: 'read',
+                _acp: { kind: 'read', title: 'read', rawInput: {} },
+            },
+            id: 'msg-1',
+        });
+
+        const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
+        const decryptedToolCall = calls
+            .map((call: any[]) => {
+                const payload = call[1];
+                return decrypt(
+                    mockSession.encryptionKey,
+                    mockSession.encryptionVariant,
+                    decodeBase64(payload.message),
+                ) as any;
+            })
+            .find((msg: any) => msg?.content?.type === 'acp' && msg?.content?.data?.type === 'tool-call');
+
+        expect(decryptedToolCall).toBeTruthy();
+        expect(decryptedToolCall.content.data).toMatchObject({
+            type: 'tool-call',
+            name: 'Read',
+            input: expect.objectContaining({ file_path: '/etc/hosts' }),
+        });
+    });
+
+    it('normalizes outbound ACP permission-request toolName to V2 canonical keys (supports TodoWrite)', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        client.sendAgentMessage('gemini', {
+            type: 'permission-request',
+            permissionId: 'write_todos-1',
+            toolName: 'write',
+            description: 'write',
+            options: {},
+        });
+
+        const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
+        expect(call).toBeTruthy();
+        const payload = call![1];
+        const decrypted = decrypt(
+            mockSession.encryptionKey,
+            mockSession.encryptionVariant,
+            decodeBase64(payload.message),
+        ) as any;
+
+        expect(decrypted.content.type).toBe('acp');
+        expect(decrypted.content.data).toMatchObject({
+            type: 'permission-request',
+            toolName: 'TodoWrite',
+        });
+    });
+
+    it('normalizes outbound ACP tool-result outputs using the canonical tool name for the callId', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        client.sendAgentMessage('opencode', {
+            type: 'tool-call',
+            callId: 'call-1',
+            name: 'execute',
+            input: { command: ['bash', '-lc', 'echo hi'] },
+            id: 'msg-1',
+        });
+
+        client.sendAgentMessage('opencode', {
+            type: 'tool-result',
+            callId: 'call-1',
+            output: 'TRACE_OK\n',
+            id: 'msg-2',
+        });
+
+        const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
+        expect(calls).toHaveLength(2);
+
+        const payload = calls[1][1];
+        const decrypted = decrypt(
+            mockSession.encryptionKey,
+            mockSession.encryptionVariant,
+            decodeBase64(payload.message),
+        ) as any;
+
+        expect(decrypted.content.type).toBe('acp');
+        expect(decrypted.content.data).toMatchObject({
+            type: 'tool-result',
+            callId: 'call-1',
+            output: expect.objectContaining({
+                stdout: 'TRACE_OK\n',
+                _happy: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
+                _raw: expect.anything(),
+            }),
+        });
+    });
+
+    it('normalizes outbound Codex MCP tool-call names to V2 canonical keys', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+        client.sendCodexMessage({
+            type: 'tool-call',
+            callId: 'call-1',
+            name: 'CodexBash',
+            input: { command: ['bash', '-lc', 'echo hi'] },
+            id: 'msg-1',
+        });
+
+        const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
+        expect(call).toBeTruthy();
+        const payload = call![1];
+        const decrypted = decrypt(
+            mockSession.encryptionKey,
+            mockSession.encryptionVariant,
+            decodeBase64(payload.message),
+        ) as any;
+
+        expect(decrypted.content.type).toBe('codex');
+        expect(decrypted.content.data).toMatchObject({
+            type: 'tool-call',
+            name: 'Bash',
+        });
+    });
+
+    it('normalizes outbound Codex MCP tool-call-result outputs using the canonical tool name for the callId', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        client.sendCodexMessage({
+            type: 'tool-call',
+            callId: 'call-1',
+            name: 'CodexBash',
+            input: { command: ['bash', '-lc', 'echo hi'] },
+            id: 'msg-1',
+        });
+
+        client.sendCodexMessage({
+            type: 'tool-call-result',
+            callId: 'call-1',
+            output: { stdout: 'TRACE_OK\n', exit_code: 0 },
+            id: 'msg-2',
+        });
+
+        const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
+        expect(calls).toHaveLength(2);
+
+        const payload = calls[1][1];
+        const decrypted = decrypt(
+            mockSession.encryptionKey,
+            mockSession.encryptionVariant,
+            decodeBase64(payload.message),
+        ) as any;
+
+        expect(decrypted.content.type).toBe('codex');
+        expect(decrypted.content.data).toMatchObject({
+            type: 'tool-call-result',
+            callId: 'call-1',
+            output: expect.objectContaining({
+                stdout: 'TRACE_OK\n',
+                _happy: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
+                _raw: expect.anything(),
+            }),
+        });
     });
 
     it('should handle socket connection failure gracefully', async () => {

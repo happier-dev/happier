@@ -22,6 +22,16 @@ describe('permissionToolIdentifier', () => {
     expect(makeToolIdentifier('read', { path: 'foo' })).toBe('read');
   });
 
+  it('treats non-shell tool names as case-insensitive for allowlist matching (legacy → canonical)', () => {
+    const allowed = new Set(['read']);
+    expect(isToolAllowedForSession(allowed, 'Read', { path: 'foo' })).toBe(true);
+  });
+
+  it('treats non-shell tool names as case-insensitive for allowlist matching (canonical → legacy)', () => {
+    const allowed = new Set(['Read']);
+    expect(isToolAllowedForSession(allowed, 'read', { path: 'foo' })).toBe(true);
+  });
+
   it('accepts shell-tool synonyms for exact matches', () => {
     const allowed = new Set(['execute(git status)']);
     expect(isToolAllowedForSession(allowed, 'bash', { command: 'git status' })).toBe(true);

@@ -14,6 +14,7 @@ vi.mock('react-native', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
+    StyleSheet: { create: (styles: any) => styles },
     useUnistyles: () => ({
         theme: {
             colors: {

@@ -1137,6 +1137,9 @@ export const it: TranslationStructure = {
             completed: 'Strumento completato con successo',
             noOutput: 'Nessun output prodotto',
             running: 'Strumento in esecuzione...',
+            debug: 'Debug',
+            show: 'Mostra',
+            hide: 'Nascondi',
             rawJsonDevMode: 'JSON grezzo (Modalità sviluppatore)',
         },
         taskView: {

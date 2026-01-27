@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Text, View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons, Octicons } from '@expo/vector-icons';
-import { getToolViewComponent } from './views/_registry';
+import { getToolFullViewComponent, getToolViewComponent } from './views/_registry';
 import { Message, ToolCall } from '@/sync/typesMessage';
 import { CodeView } from '../CodeView';
 import { ToolSectionView } from './ToolSectionView';
@@ -19,6 +19,8 @@ import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
 import { StructuredResultView } from './views/StructuredResultView';
 import { inferToolNameForRendering } from './utils/toolNameInference';
 import { normalizeToolCallForRendering } from './utils/normalizeToolCallForRendering';
+import { useSetting } from '@/sync/storage';
+import { resolveToolViewDetailLevel } from './utils/resolveToolViewDetailLevel';
 
 const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 
@@ -38,6 +40,9 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
     const isWaitingForPermission = toolForRendering.permission?.status === 'pending' && toolForRendering.state === 'running';
     const parsedToolInput = toolForRendering.input;
+    const toolViewDetailLevelDefault = useSetting('toolViewDetailLevelDefault');
+    const toolViewDetailLevelDefaultLocalControl = useSetting('toolViewDetailLevelDefaultLocalControl');
+    const toolViewDetailLevelByToolName = useSetting('toolViewDetailLevelByToolName');
 
     // Create default onPress handler for navigation
     const handlePress = React.useCallback(() => {
@@ -90,8 +95,8 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     let toolTitle = normalizedToolName;
     
     // Special handling for MCP tools
-    if (tool.name.startsWith('mcp__')) {
-        toolTitle = formatMCPTitle(tool.name);
+    if (toolForRendering.name.startsWith('mcp__')) {
+        toolTitle = formatMCPTitle(toolForRendering.name);
         icon = <Ionicons name="extension-puzzle-outline" size={18} color={theme.colors.textSecondary} />;
         minimal = true;
     } else if (knownTool?.title) {
@@ -118,6 +123,22 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         } else {
             minimal = knownTool.minimal;
         }
+    }
+
+    const effectiveDetailLevel = resolveToolViewDetailLevel({
+        toolName: normalizedToolName,
+        toolInput: toolForRendering.input,
+        detailLevelDefault: toolViewDetailLevelDefault,
+        detailLevelDefaultLocalControl: toolViewDetailLevelDefaultLocalControl,
+        detailLevelByToolName: toolViewDetailLevelByToolName as any,
+    });
+
+    // Apply the per-tool detail level preference for the timeline card.
+    // - title: hide the tool body
+    // - summary: default current behavior
+    // - full: prefer full-view component when available
+    if (effectiveDetailLevel === 'title') {
+        minimal = true;
     }
     
     // Special handling for CodexBash to determine icon based on parsed_cmd
@@ -227,7 +248,10 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             {/* Content area - either custom children or tool-specific view */}
             {(() => {
                 // Try to use a specific tool view component first
-                const SpecificToolView = getToolViewComponent(normalizedToolName);
+                const SpecificToolView =
+                    effectiveDetailLevel === 'full'
+                        ? getToolFullViewComponent(normalizedToolName) ?? getToolViewComponent(normalizedToolName)
+                        : getToolViewComponent(normalizedToolName);
                 if (SpecificToolView) {
                     return (
                         <View style={styles.content}>
@@ -235,7 +259,13 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                             {toolForRendering.state === 'error' && toolForRendering.result &&
                                 !(toolForRendering.permission && (toolForRendering.permission.status === 'denied' || toolForRendering.permission.status === 'canceled')) &&
                                 !hideDefaultError && (
-                                    <ToolError message={String(toolForRendering.result)} />
+                                    <ToolError
+                                        message={
+                                            typeof toolForRendering.result === 'string'
+                                                ? toolForRendering.result
+                                                : JSON.stringify(toolForRendering.result, null, 2)
+                                        }
+                                    />
                                 )}
                         </View>
                     );
@@ -259,7 +289,13 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                     !isToolUseError) {
                     return (
                         <View style={styles.content}>
-                            <ToolError message={String(toolForRendering.result)} />
+                            <ToolError
+                                message={
+                                    typeof toolForRendering.result === 'string'
+                                        ? toolForRendering.result
+                                        : JSON.stringify(toolForRendering.result, null, 2)
+                                }
+                            />
                         </View>
                     );
                 }
@@ -301,7 +337,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 function ElapsedView(props: { from: number }) {
     const { from } = props;
     const elapsed = useElapsedTime(from);
-    return <Text style={styles.elapsedText}>{elapsed.toFixed(1)}s</Text>;
+    return <Text style={styles.elapsedText}>{`${elapsed.toFixed(1)}s`}</Text>;
 }
 
 const styles = StyleSheet.create((theme) => ({

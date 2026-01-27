@@ -22,7 +22,7 @@ describe('normalizeToolCallForRendering', () => {
 
     it('returns the same reference when no parsing is needed', () => {
         const tool = {
-            name: 'read',
+            name: 'Read',
             state: 'completed' as const,
             input: { file_path: '/etc/hosts' },
             result: { ok: true },
@@ -101,5 +101,78 @@ describe('normalizeToolCallForRendering', () => {
             old_string: 'hello',
             new_string: 'hi',
         });
+    });
+
+    it('maps legacy tool names to canonical V2 tool names', () => {
+        const tool = {
+            name: 'CodexPatch',
+            state: 'completed' as const,
+            input: { changes: { '/tmp/a.txt': { add: { content: 'x' } } } },
+            result: { ok: true },
+            createdAt: 0,
+            startedAt: 0,
+            completedAt: 1,
+            description: null,
+        };
+
+        const normalized = normalizeToolCallForRendering(tool as any);
+        expect(normalized.name).toBe('Patch');
+    });
+
+    it('maps execute/shell variants to Bash', () => {
+        const tool = {
+            name: 'execute',
+            state: 'completed' as const,
+            input: { command: ['bash', '-lc', 'echo hi'] },
+            result: '',
+            createdAt: 0,
+            startedAt: 0,
+            completedAt: 1,
+            description: null,
+        };
+
+        const normalized = normalizeToolCallForRendering(tool as any);
+        expect(normalized.name).toBe('Bash');
+    });
+
+    it('maps write todos payloads to TodoWrite', () => {
+        const tool = {
+            name: 'write',
+            state: 'completed' as const,
+            input: { todos: [{ content: 'x', status: 'pending' }] },
+            result: '',
+            createdAt: 0,
+            startedAt: 0,
+            completedAt: 1,
+            description: null,
+        };
+
+        const normalized = normalizeToolCallForRendering(tool as any);
+        expect(normalized.name).toBe('TodoWrite');
+    });
+
+    it('maps common legacy lowercase tool names to canonical TitleCase tool names', () => {
+        const tools = [
+            { name: 'glob', expected: 'Glob', input: { glob: '*.ts' } },
+            { name: 'grep', expected: 'Grep', input: { pattern: 'x' } },
+            { name: 'ls', expected: 'LS', input: { path: '.' } },
+            { name: 'web_fetch', expected: 'WebFetch', input: { href: 'https://example.com' } },
+            { name: 'web_search', expected: 'WebSearch', input: { q: 'cats' } },
+        ];
+
+        for (const t of tools) {
+            const tool = {
+                name: t.name,
+                state: 'completed' as const,
+                input: t.input,
+                result: '',
+                createdAt: 0,
+                startedAt: 0,
+                completedAt: 1,
+                description: null,
+            };
+            const normalized = normalizeToolCallForRendering(tool as any);
+            expect(normalized.name).toBe(t.expected);
+        }
     });
 });

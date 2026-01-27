@@ -897,6 +897,9 @@ export const en = {
             completed: 'Tool completed successfully',
             noOutput: 'No output was produced',
             running: 'Tool is running...',
+            debug: 'Debug',
+            show: 'Show',
+            hide: 'Hide',
             rawJsonDevMode: 'Raw JSON (Dev Mode)',
         },
         taskView: {

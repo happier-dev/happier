@@ -885,6 +885,9 @@ export const zhHans: TranslationStructure = {
             completed: '工具已成功完成',
             noOutput: '未产生输出',
             running: '工具正在运行...',
+            debug: '调试',
+            show: '显示',
+            hide: '隐藏',
             rawJsonDevMode: '原始 JSON（开发模式）',
         },
         taskView: {

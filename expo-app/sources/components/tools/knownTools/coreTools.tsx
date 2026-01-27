@@ -6,6 +6,9 @@ import { coreFileTools } from './core/files';
 import { coreWebTools } from './core/web';
 import { coreNotebookTools } from './core/notebook';
 import { coreTodoTools } from './core/todo';
+import { corePatchTools } from './core/patch';
+import { coreDiffTools } from './core/diff';
+import { coreReasoningTools } from './core/reasoning';
 
 export const knownToolsCore = {
     ...coreTaskTools,
@@ -15,4 +18,7 @@ export const knownToolsCore = {
     ...coreWebTools,
     ...coreNotebookTools,
     ...coreTodoTools,
+    ...corePatchTools,
+    ...coreDiffTools,
+    ...coreReasoningTools,
 } satisfies Record<string, KnownToolDefinition>;

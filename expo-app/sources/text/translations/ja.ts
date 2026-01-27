@@ -1131,6 +1131,9 @@ export const ja: TranslationStructure = {
             completed: 'ツールが正常に完了しました',
             noOutput: '出力がありません',
             running: 'ツールを実行中...',
+            debug: 'デバッグ',
+            show: '表示',
+            hide: '非表示',
             rawJsonDevMode: 'Raw JSON (開発モード)',
         },
         taskView: {

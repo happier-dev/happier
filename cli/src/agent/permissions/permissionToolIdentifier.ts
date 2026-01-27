@@ -112,8 +112,9 @@ export function isToolAllowedForSession(
 
   // Non-shell tools: allow direct tool-name identifiers (legacy).
   if (!isShell) {
+    const target = toolName.toLowerCase();
     for (const item of allowedIdentifiers) {
-      if (item === toolName) return true;
+      if (typeof item === 'string' && item.toLowerCase() === target) return true;
     }
   }
 

@@ -1,0 +1,135 @@
+import React from 'react';
+import { describe, expect, it, vi } from 'vitest';
+import renderer, { act } from 'react-test-renderer';
+import type { ToolCall } from '@/sync/typesMessage';
+
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const { toolErrorSpy } = vi.hoisted(() => ({
+    toolErrorSpy: vi.fn(),
+}));
+
+vi.mock('expo-router', () => ({
+    useRouter: () => ({ push: vi.fn() }),
+}));
+
+vi.mock('react-native', () => ({
+    View: 'View',
+    Text: 'Text',
+    TouchableOpacity: 'TouchableOpacity',
+    ActivityIndicator: 'ActivityIndicator',
+    NativeModules: {},
+    Platform: { OS: 'ios', select: (v: any) => v.ios },
+}));
+
+vi.mock('react-native-unistyles', () => ({
+    StyleSheet: { create: (styles: any) => styles },
+    useUnistyles: () => ({
+        theme: {
+            colors: {
+                surfaceHigh: '#fff',
+                surfaceHighest: '#fff',
+                text: '#000',
+                textSecondary: '#666',
+                warning: '#f00',
+                box: { error: { background: '#fee', border: '#f00', text: '#900' } },
+            },
+        },
+    }),
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
+}));
+
+vi.mock('@/components/tools/views/_registry', () => ({
+    getToolViewComponent: () => null,
+    getToolFullViewComponent: () => null,
+}));
+
+vi.mock('@/components/tools/knownTools', () => ({
+    knownTools: {},
+}));
+
+vi.mock('@/components/tools/views/MCPToolView', () => ({
+    formatMCPTitle: () => 'MCP',
+}));
+
+vi.mock('@/utils/toolErrorParser', () => ({
+    parseToolUseError: () => ({ isToolUseError: false }),
+}));
+
+vi.mock('../CodeView', () => ({
+    CodeView: () => null,
+}));
+
+vi.mock('@/components/CodeView', () => ({
+    CodeView: () => null,
+}));
+
+vi.mock('./ToolSectionView', () => ({
+    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
+}));
+
+vi.mock('./ToolError', () => ({
+    ToolError: (props: any) => {
+        toolErrorSpy(props);
+        return null;
+    },
+}));
+
+vi.mock('./PermissionFooter', () => ({
+    PermissionFooter: () => React.createElement('PermissionFooter', null),
+}));
+
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
+
+vi.mock('@/sync/storage', () => ({
+    useSetting: (key: string) => {
+        if (key === 'toolViewDetailLevelDefault') return 'summary';
+        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'title';
+        if (key === 'toolViewDetailLevelByToolName') return {};
+        if (key === 'toolViewShowDebugByDefault') return false;
+        return null;
+    },
+}));
+
+vi.mock('@/agents/catalog', () => ({
+    AGENT_IDS: ['claude', 'codex', 'gemini', 'opencode'],
+    getAgentCore: () => ({ toolRendering: { hideUnknownToolsByDefault: false } }),
+    resolveAgentIdFromFlavor: () => null,
+}));
+
+describe('ToolView (error message formatting)', () => {
+    it('passes a JSON string to ToolError when the tool result is an object', async () => {
+        const { ToolView } = await import('./ToolView');
+
+        const tool: ToolCall = {
+            name: 'SomeUnknownTool',
+            state: 'error',
+            input: { anything: true },
+            result: { error: 'Tool call failed', status: 'failed' },
+            createdAt: Date.now(),
+            startedAt: Date.now(),
+            completedAt: Date.now(),
+            description: null,
+            permission: undefined,
+        };
+
+        await act(async () => {
+            renderer.create(
+                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
+            );
+        });
+
+        expect(toolErrorSpy).toHaveBeenCalledTimes(1);
+        const args = toolErrorSpy.mock.calls[0][0];
+        expect(typeof args.message).toBe('string');
+        expect(args.message).toContain('"error"');
+        expect(args.message).toContain('Tool call failed');
+    });
+});
+

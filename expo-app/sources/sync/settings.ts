@@ -327,6 +327,13 @@ export const SettingsSchema = z.object({
         perMachine: z.record(z.string(), z.record(z.string(), z.boolean()).default({})).default({}),
         global: z.record(z.string(), z.boolean()).default({}),
     }).default({ perMachine: {}, global: {} }).describe('Tracks which CLI installation warnings user has dismissed (per-machine or globally)'),
+
+    // Tool rendering detail level preferences (synced per user).
+    // Keep flat: use toolView* prefix (see tool-normalization-refactor-plan.md).
+    toolViewDetailLevelDefault: z.enum(['title', 'summary', 'full']).describe('Default tool detail level in the session timeline'),
+    toolViewDetailLevelDefaultLocalControl: z.enum(['title', 'summary', 'full']).describe('Default tool detail level for local-control transcript mirroring'),
+    toolViewDetailLevelByToolName: z.record(z.string(), z.enum(['title', 'summary', 'full'])).default({}).describe('Per-tool detail level overrides (keyed by canonical tool name)'),
+    toolViewShowDebugByDefault: z.boolean().describe('Whether to auto-expand debug/raw tool payloads in the full tool view'),
 });
 
 //
@@ -412,6 +419,11 @@ export const settingsDefaults: Settings = {
     favoriteProfiles: [],
     // Dismissed CLI warnings (empty by default)
     dismissedCLIWarnings: { perMachine: {}, global: {} },
+
+    toolViewDetailLevelDefault: 'summary',
+    toolViewDetailLevelDefaultLocalControl: 'title',
+    toolViewDetailLevelByToolName: {},
+    toolViewShowDebugByDefault: false,
 };
 Object.freeze(settingsDefaults);
 

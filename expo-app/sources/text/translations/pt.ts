@@ -884,6 +884,9 @@ export const pt: TranslationStructure = {
             completed: 'Ferramenta concluída com sucesso',
             noOutput: 'Nenhuma saída foi produzida',
             running: 'Ferramenta está executando...',
+            debug: 'Depuração',
+            show: 'Mostrar',
+            hide: 'Ocultar',
             rawJsonDevMode: 'JSON bruto (modo desenvolvedor)',
         },
         taskView: {
