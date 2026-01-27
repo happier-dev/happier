@@ -69,7 +69,6 @@ export async function loop(opts: LoopOptions): Promise<number> {
 
     // Publish initial permission mode so the app can reflect it even before any app-driven message exists.
     session.setLastPermissionMode(opts.permissionMode ?? 'default');
-
     opts.onSessionReady?.(session)
 
     let mode: 'local' | 'remote' = opts.startingMode ?? 'local';
