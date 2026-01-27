@@ -93,6 +93,16 @@ function makeImportEventLocalId(params: { provider: string; remoteSessionId: str
   return `acp-import:v1:${params.provider}:${params.remoteSessionId}:e${params.index}:${short}`;
 }
 
+function isSafeRemoteSessionId(remoteSessionId: string): boolean {
+  const raw = String(remoteSessionId ?? '');
+  if (raw.length === 0) return false;
+  if (raw.length > 128) return false;
+  // Avoid ambiguous/unsafe identifiers: reject whitespace and path separators.
+  if (/\s/.test(raw)) return false;
+  if (raw.includes('/') || raw.includes('\\')) return false;
+  return true;
+}
+
 export async function importAcpReplayHistoryV1(params: {
   session: ApiSessionClient;
   provider: ACPProvider;
@@ -100,6 +110,14 @@ export async function importAcpReplayHistoryV1(params: {
   replay: AcpReplayEvent[];
   permissionHandler: AcpPermissionHandler;
 }): Promise<void> {
+  if (!isSafeRemoteSessionId(params.remoteSessionId)) {
+    logger.debug('[ACP History] Invalid remoteSessionId; skipping history import', {
+      provider: params.provider,
+      remoteSessionId: String(params.remoteSessionId ?? '').slice(0, 80),
+    });
+    return;
+  }
+
   const { messages: replayMessages } = extractReplayTextItems(params.replay);
   if (replayMessages.length === 0) return;
 
