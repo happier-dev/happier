@@ -180,6 +180,48 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
+    it('backfills missing permission-request input details from nested options.toolCall.content (Gemini ACP)', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        client.sendAgentMessage('gemini', {
+            type: 'permission-request',
+            permissionId: 'replace-1',
+            toolName: 'edit',
+            description: 'edit',
+            options: {
+                options: {
+                    toolCall: {
+                        kind: 'edit',
+                        title: 'Editing /tmp/a.txt',
+                        locations: [{ path: '/tmp/a.txt' }],
+                        content: [{ path: 'a.txt', oldText: 'hello', newText: 'hi', type: 'diff' }],
+                    },
+                    input: {},
+                },
+            },
+        });
+
+        const call = mockSocket.emit.mock.calls.find((c: any[]) => c[0] === 'message');
+        expect(call).toBeTruthy();
+        const payload = call![1];
+        const decrypted = decrypt(
+            mockSession.encryptionKey,
+            mockSession.encryptionVariant,
+            decodeBase64(payload.message),
+        ) as any;
+
+        expect(decrypted.content.type).toBe('acp');
+        expect(decrypted.content.provider).toBe('gemini');
+        expect(decrypted.content.data.type).toBe('permission-request');
+        expect(decrypted.content.data.options).toMatchObject({
+            options: {
+                input: {
+                    items: [{ path: 'a.txt', oldText: 'hello', newText: 'hi', type: 'diff' }],
+                },
+            },
+        });
+    });
+
     it('normalizes outbound ACP tool-result outputs using the canonical tool name for the callId', () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
@@ -216,6 +258,45 @@ describe('ApiSessionClient connection handling', () => {
                 stdout: 'TRACE_OK\n',
                 _happy: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
                 _raw: expect.anything(),
+            }),
+        });
+    });
+
+    it('backfills empty TodoWrite tool-result outputs with the requested todos', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        client.sendAgentMessage('gemini', {
+            type: 'tool-call',
+            callId: 'write_todos-1',
+            name: 'write',
+            input: { todos: [{ content: 'a', status: 'pending' }] },
+            id: 'msg-1',
+        });
+
+        client.sendAgentMessage('gemini', {
+            type: 'tool-result',
+            callId: 'write_todos-1',
+            output: [],
+            id: 'msg-2',
+        });
+
+        const calls = mockSocket.emit.mock.calls.filter((c: any[]) => c[0] === 'message');
+        expect(calls).toHaveLength(2);
+
+        const payload = calls[1][1];
+        const decrypted = decrypt(
+            mockSession.encryptionKey,
+            mockSession.encryptionVariant,
+            decodeBase64(payload.message),
+        ) as any;
+
+        expect(decrypted.content.type).toBe('acp');
+        expect(decrypted.content.provider).toBe('gemini');
+        expect(decrypted.content.data).toMatchObject({
+            type: 'tool-result',
+            callId: 'write_todos-1',
+            output: expect.objectContaining({
+                todos: [{ content: 'a', status: 'pending' }],
             }),
         });
     });

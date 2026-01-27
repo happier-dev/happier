@@ -71,18 +71,65 @@ export class ApiSessionClient extends EventEmitter {
     private snapshotSyncInFlight: Promise<void> | null = null;
     private readonly toolCallCanonicalNameByProviderAndId = new Map<string, { rawToolName: string; canonicalToolName: string }>();
     private readonly permissionToolCallRawInputByProviderAndId = new Map<string, unknown>();
+    private readonly toolCallInputByProviderAndId = new Map<string, unknown>();
 
     private getToolCallNameKey(provider: string, callId: string): string {
         return `${provider}:${callId}`;
     }
 
+    private asRecord(value: unknown): Record<string, unknown> | null {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        return value as Record<string, unknown>;
+    }
+
+    private isEmptyObject(value: unknown): boolean {
+        const record = this.asRecord(value);
+        return !!record && Object.keys(record).length === 0;
+    }
+
     private extractPermissionToolCallRawInput(options: unknown): unknown | null {
-        if (!options || typeof options !== 'object' || Array.isArray(options)) return null;
-        const record = options as Record<string, unknown>;
-        const toolCall = record.toolCall;
-        if (!toolCall || typeof toolCall !== 'object' || Array.isArray(toolCall)) return null;
-        const toolCallRecord = toolCall as Record<string, unknown>;
-        return toolCallRecord.rawInput ?? null;
+        const record = this.asRecord(options);
+        if (!record) return null;
+
+        const candidates = [record, this.asRecord(record.options)];
+        for (const candidate of candidates) {
+            if (!candidate) continue;
+            const toolCallRecord = this.asRecord(candidate.toolCall);
+            if (!toolCallRecord) continue;
+
+            if (toolCallRecord.rawInput != null) return toolCallRecord.rawInput;
+
+            // Gemini ACP uses `toolCall.content` + `toolCall.locations` and leaves `input={}`.
+            if (Array.isArray(toolCallRecord.content)) {
+                const locations = Array.isArray(toolCallRecord.locations) ? toolCallRecord.locations : [];
+                return { items: toolCallRecord.content, locations };
+            }
+
+            if (typeof toolCallRecord.title === 'string' && toolCallRecord.title.trim().length > 0) {
+                return { title: toolCallRecord.title };
+            }
+        }
+
+        return null;
+    }
+
+    private backfillPermissionRequestOptionsInput(options: unknown, rawInputHint: unknown): unknown {
+        if (rawInputHint == null) return options;
+        const record = this.asRecord(options);
+        if (!record) return options;
+
+        // Most ACP providers nest their permission UI payload under `options.options`.
+        const nested = this.asRecord(record.options);
+        if (nested && this.isEmptyObject(nested.input)) {
+            return { ...record, options: { ...nested, input: rawInputHint } };
+        }
+
+        // Some providers may place `input` at the top level.
+        if (this.isEmptyObject(record.input)) {
+            return { ...record, input: rawInputHint };
+        }
+
+        return options;
     }
 
     /**
@@ -709,12 +756,16 @@ export class ApiSessionClient extends EventEmitter {
                     callId,
                 });
                 this.toolCallCanonicalNameByProviderAndId.set(this.getToolCallNameKey(provider, callId), { rawToolName, canonicalToolName });
+                this.toolCallInputByProviderAndId.set(this.getToolCallNameKey(provider, callId), input);
                 this.permissionToolCallRawInputByProviderAndId.delete(this.getToolCallNameKey(provider, callId));
                 return { ...body, name: canonicalToolName, input };
             }
 
             if (body.type === 'permission-request') {
                 const rawInputHint = this.extractPermissionToolCallRawInput(body.options);
+                const nextOptions = rawInputHint != null
+                    ? this.backfillPermissionRequestOptionsInput(body.options, rawInputHint)
+                    : body.options;
                 if (rawInputHint != null) {
                     this.permissionToolCallRawInputByProviderAndId.set(this.getToolCallNameKey(provider, body.permissionId), rawInputHint);
                 }
@@ -722,7 +773,7 @@ export class ApiSessionClient extends EventEmitter {
                     protocol: 'acp',
                     provider,
                     toolName: body.toolName,
-                    rawInput: rawInputHint ?? body.options ?? {},
+                    rawInput: rawInputHint ?? nextOptions ?? {},
                     callId: body.permissionId,
                 });
                 // Some providers encode todo writes only in the callId. Ensure permission prompts match the tool-call canonicalization.
@@ -733,13 +784,14 @@ export class ApiSessionClient extends EventEmitter {
                 ) {
                     canonicalToolName = 'TodoWrite';
                 }
-                return { ...body, toolName: canonicalToolName };
+                return { ...body, toolName: canonicalToolName, options: nextOptions };
             }
 
             // Infer isError on tool results (preserve existing behavior).
             if (body.type === 'tool-result') {
                 const callId = body.callId;
-                const mapping = this.toolCallCanonicalNameByProviderAndId.get(this.getToolCallNameKey(provider, callId));
+                const key = this.getToolCallNameKey(provider, callId);
+                const mapping = this.toolCallCanonicalNameByProviderAndId.get(key);
                 const canonicalToolName = mapping?.canonicalToolName ?? 'Unknown';
                 const rawToolName = mapping?.rawToolName ?? 'unknown';
 
@@ -751,16 +803,37 @@ export class ApiSessionClient extends EventEmitter {
                     rawOutput: (body as any).output,
                 });
 
-                if (typeof (body as any).isError === 'boolean') return { ...(body as any), output } as ACPMessageData;
-                if (!output || typeof output !== 'object' || Array.isArray(output)) return { ...(body as any), output } as ACPMessageData;
+                const maybePatchedOutput = (() => {
+                    if (canonicalToolName !== 'TodoWrite' && canonicalToolName !== 'TodoRead') return output;
+                    const outputRecord = output && typeof output === 'object' && !Array.isArray(output) ? (output as Record<string, unknown>) : null;
+                    if (!outputRecord) return output;
+                    const existingTodos = Array.isArray((outputRecord as any).todos) ? ((outputRecord as any).todos as unknown[]) : null;
+                    if (existingTodos && existingTodos.length > 0) return output;
 
-                const record = output as Record<string, unknown>;
+                    const input = this.toolCallInputByProviderAndId.get(key);
+                    const inputRecord = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : null;
+                    const todos = inputRecord && Array.isArray((inputRecord as any).todos) ? ((inputRecord as any).todos as unknown[]) : null;
+                    if (!todos || todos.length === 0) return output;
+                    return { ...outputRecord, todos };
+                })();
+
+                // Avoid unbounded growth for tool calls that don't need later reconciliation.
+                this.toolCallInputByProviderAndId.delete(key);
+
+                if (typeof (body as any).isError === 'boolean') {
+                    return { ...(body as any), output: maybePatchedOutput } as ACPMessageData;
+                }
+                if (!maybePatchedOutput || typeof maybePatchedOutput !== 'object' || Array.isArray(maybePatchedOutput)) {
+                    return { ...(body as any), output: maybePatchedOutput } as ACPMessageData;
+                }
+
+                const record = maybePatchedOutput as Record<string, unknown>;
                 const status = typeof record.status === 'string' ? record.status : null;
                 const error = typeof record.error === 'string' ? record.error : null;
                 const isError = Boolean(error && error.length > 0) || status === 'failed' || status === 'cancelled' || status === 'error';
                 return isError
-                    ? ({ ...(body as any), output, isError: true } as ACPMessageData)
-                    : ({ ...(body as any), output } as ACPMessageData);
+                    ? ({ ...(body as any), output: record, isError: true } as ACPMessageData)
+                    : ({ ...(body as any), output: record } as ACPMessageData);
             }
 
             return body;
