@@ -21,8 +21,13 @@ export async function deriveSecretKeyTreeChild(chainCode: Uint8Array, index: str
     // Derive key
     const I = await hmac_sha512(chainCode, data);
     return {
-        key: I.subarray(0, 32),
-        chainCode: I.subarray(32),
+        // NOTE:
+        // Use `slice()` to force a compact copy. Some native crypto bindings are picky about
+        // the underlying ArrayBuffer byte length (not just the view length) when validating keys.
+        // Returning a `subarray()` view over a 64-byte HMAC output can cause "invalid key length"
+        // errors even though `key.length === 32`.
+        key: I.slice(0, 32),
+        chainCode: I.slice(32),
     };
 }
 

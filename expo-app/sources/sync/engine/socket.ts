@@ -33,7 +33,12 @@ import {
 export function parseUpdateContainer(update: unknown) {
     const validatedUpdate = ApiUpdateContainerSchema.safeParse(update);
     if (!validatedUpdate.success) {
-        console.error('❌ Sync: Invalid update data:', update);
+        // Don’t crash on unknown/forward-compatible socket updates.
+        // In dev we still emit a warning to help catch schema drift.
+        // eslint-disable-next-line no-undef
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+            console.warn('⚠️ Sync: Ignoring unrecognized update payload');
+        }
         return null;
     }
     return validatedUpdate.data;
@@ -373,6 +378,18 @@ export async function handleUpdateContainer(params: {
             invalidateTodosSync: invalidateTodos,
             log,
         });
+    } else if (
+        updateData.body.t === 'session-shared' ||
+        updateData.body.t === 'session-share-updated' ||
+        updateData.body.t === 'session-share-revoked' ||
+        updateData.body.t === 'public-share-created' ||
+        updateData.body.t === 'public-share-updated' ||
+        updateData.body.t === 'public-share-deleted'
+    ) {
+        // Sharing changes affect which sessions are visible/accessible and some metadata
+        // shown in UI. For now, refresh the session list; sharing screens fetch details
+        // via explicit endpoints.
+        invalidateSessions();
     }
 }
 

@@ -24,6 +24,7 @@ import { HappyError } from '@/utils/errors';
 import { resolveProfileById } from '@/sync/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
+import { useSessionSharingSupport } from '@/hooks/useSessionSharingSupport';
 
 // Animated status dot component
 function StatusDot({ color, isPulsing, size = 8 }: { color: string; isPulsing?: boolean; size?: number }) {
@@ -73,6 +74,7 @@ function SessionInfoContent({ session }: { session: Session }) {
     const useProfiles = useSetting('useProfiles');
     const profiles = useSetting('profiles');
     const experimentsEnabled = useSetting('experiments');
+    const sharingSupported = useSessionSharingSupport();
     // Check if CLI version is outdated
     const isCliOutdated = session.metadata?.version && !isVersionSupported(session.metadata.version, MINIMUM_CLI_VERSION);
     const canManageSharing = !session.accessLevel || session.accessLevel === 'admin';
@@ -348,7 +350,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                             onPress={() => router.push(`/machine/${session.metadata?.machineId}`)}
                         />
                     )}
-                    {canManageSharing && (
+                    {canManageSharing && sharingSupported && (
                         <Item
                             title={t('sessionInfo.manageSharing')}
                             subtitle={t('sessionInfo.manageSharingSubtitle')}

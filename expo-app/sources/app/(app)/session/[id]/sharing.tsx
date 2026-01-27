@@ -321,6 +321,8 @@ export default memo(() => {
     const { theme } = useUnistyles();
     const { id } = useLocalSearchParams<{ id: string }>();
     const isDataReady = useIsDataReady();
+    const headerTitle = t('session.sharing.title');
+    const screenOptions = React.useMemo(() => ({ headerTitle }), [headerTitle]);
 
     if (!isDataReady) {
         return (
@@ -341,9 +343,7 @@ export default memo(() => {
     return (
         <>
             <Stack.Screen
-                options={{
-                    headerTitle: t('session.sharing.title'),
-                }}
+                options={screenOptions}
             />
             <SharingManagementContent sessionId={id} />
         </>

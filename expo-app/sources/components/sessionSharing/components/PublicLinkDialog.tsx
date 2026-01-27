@@ -2,8 +2,6 @@ import React, { memo, useEffect, useState } from 'react';
 import { View, Text, Switch, Platform, Linking, useWindowDimensions, ScrollView, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
-import QRCode from 'qrcode';
-import { Image } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
 
 import { Typography } from '@/constants/Typography';
@@ -15,6 +13,7 @@ import { ItemGroup } from '@/components/ItemGroup';
 import { RoundButton } from '@/components/RoundButton';
 import { PublicSessionShare } from '@/sync/sharingTypes';
 import { HappyError } from '@/utils/errors';
+import { QRCode } from '@/components/qr';
 
 export interface PublicLinkDialogProps {
     publicShare: PublicSessionShare | null;
@@ -37,7 +36,6 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
     const styles = stylesheet;
     const { height: windowHeight } = useWindowDimensions();
 
-    const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
     const [shareUrl, setShareUrl] = useState<string | null>(null);
     const [isConfiguring, setIsConfiguring] = useState(false);
     const [expiresInDays, setExpiresInDays] = useState<number | undefined>(7);
@@ -87,32 +85,20 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
 
     useEffect(() => {
         if (!publicShare?.token) {
-            setQrDataUrl(null);
             setShareUrl(null);
             return;
         }
 
         const url = buildPublicShareUrl(publicShare.token);
         setShareUrl(url);
-
-        QRCode.toDataURL(url, {
-            width: 250,
-            margin: 2,
-            color: {
-                dark: '#000000',
-                light: '#FFFFFF',
-            },
-        })
-            .then(setQrDataUrl)
-            .catch(() => setQrDataUrl(null));
     }, [buildPublicShareUrl, publicShare?.token]);
 
     useEffect(() => {
-        if (!qrDataUrl) return;
+        if (!shareUrl) return;
         // Ensure the generated QR code is visible even if the user was scrolled
         // to the bottom of the configuration screen when creating the link.
         requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
-    }, [qrDataUrl]);
+    }, [shareUrl]);
 
     const handleCreate = async () => {
         try {
@@ -295,13 +281,9 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                                 />
                             </ItemGroup>
 
-                            {qrDataUrl ? (
+                            {shareUrl ? (
                                 <View style={styles.qrSection}>
-                                    <Image
-                                        source={{ uri: qrDataUrl }}
-                                        style={styles.qrImage}
-                                        contentFit="contain"
-                                    />
+                                    <QRCode data={shareUrl} size={250} />
                                 </View>
                             ) : null}
 
@@ -432,10 +414,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingHorizontal: 16,
         paddingTop: 12,
         alignItems: 'center',
-    },
-    qrImage: {
-        width: 250,
-        height: 250,
     },
     radioOuter: {
         width: 20,
