@@ -342,10 +342,7 @@ export default memo(() => {
         <>
             <Stack.Screen
                 options={{
-                    title: t('session.sharing.title'),
-                    headerStyle: { backgroundColor: theme.colors.header.background },
-                    headerTintColor: theme.colors.header.tint,
-                    headerShadowVisible: false,
+                    headerTitle: t('session.sharing.title'),
                 }}
             />
             <SharingManagementContent sessionId={id} />

@@ -14,6 +14,7 @@ import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
 import { RoundButton } from '@/components/RoundButton';
 import { PublicSessionShare } from '@/sync/sharingTypes';
+import { HappyError } from '@/utils/errors';
 
 export interface PublicLinkDialogProps {
     publicShare: PublicSessionShare | null;
@@ -21,8 +22,8 @@ export interface PublicLinkDialogProps {
         expiresInDays?: number;
         maxUses?: number;
         isConsentRequired: boolean;
-    }) => void;
-    onDelete: () => void;
+    }) => Promise<void> | void;
+    onDelete: () => Promise<void> | void;
     onCancel: () => void;
 }
 
@@ -113,16 +114,36 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
         requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
     }, [qrDataUrl]);
 
-    const handleCreate = () => {
-        setIsConfiguring(false);
-        // When generating/regenerating a link, users often press the button at the bottom
-        // of the config screen. Scroll back to top so the resulting QR code is visible.
-        requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
-        onCreate({
-            expiresInDays,
-            maxUses,
-            isConsentRequired,
-        });
+    const handleCreate = async () => {
+        try {
+            await Promise.resolve(onCreate({
+                expiresInDays,
+                maxUses,
+                isConsentRequired,
+            }));
+            setIsConfiguring(false);
+            // When generating/regenerating a link, users often press the button at the bottom
+            // of the config screen. Scroll back to top so the resulting QR code is visible.
+            requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
+        } catch (e) {
+            const message =
+                e instanceof HappyError ? e.message :
+                e instanceof Error ? e.message :
+                t('errors.unknownError');
+            Modal.alert(t('common.error'), message);
+        }
+    };
+
+    const handleDelete = async () => {
+        try {
+            await Promise.resolve(onDelete());
+        } catch (e) {
+            const message =
+                e instanceof HappyError ? e.message :
+                e instanceof Error ? e.message :
+                t('errors.unknownError');
+            Modal.alert(t('common.error'), message);
+        }
     };
 
     const handleOpenLink = async () => {
@@ -351,7 +372,7 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                             <ItemGroup>
                                 <Item
                                     title={t('session.sharing.deletePublicLink')}
-                                    onPress={onDelete}
+                                    onPress={handleDelete}
                                     destructive
                                     showDivider={false}
                                 />
