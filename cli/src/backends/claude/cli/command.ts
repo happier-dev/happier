@@ -15,6 +15,31 @@ import packageJson from '../../../../package.json';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
+export function stripHappyInternalSettingsFlag(
+  args: readonly string[],
+  opts?: { warn?: (msg: string) => void },
+): string[] {
+  const warn = opts?.warn ?? console.warn;
+
+  const stripped: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg !== '--settings') {
+      stripped.push(arg);
+      continue;
+    }
+
+    const settingsValue = args[i + 1];
+    i++; // Consume the value (if any), like upstream's behavior.
+
+    const displayedValue = typeof settingsValue === 'string' ? settingsValue : '<missing>';
+    warn(chalk.yellow(`⚠️  Warning: --settings is used internally by Happy for session tracking.`));
+    warn(chalk.yellow(`   Your settings file "${displayedValue}" will be ignored.`));
+    warn(chalk.yellow(`   To configure Claude, edit ~/.claude/settings.json instead.`));
+  }
+  return stripped;
+}
+
 export async function handleClaudeCliCommand(context: CommandContext): Promise<void> {
   const args = [...context.args];
 
@@ -23,6 +48,8 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
     args.shift();
   }
 
+  const strippedArgs = stripHappyInternalSettingsFlag(args);
+
   // Parse command line arguments for main command
   const options: StartOptions = {};
   let showHelp = false;
@@ -30,8 +57,8 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
   let chromeOverride: boolean | undefined = undefined;
   const unknownArgs: string[] = []; // Collect unknown args to pass through to claude
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+  for (let i = 0; i < strippedArgs.length; i++) {
+    const arg = strippedArgs[i];
 
     if (arg === '-h' || arg === '--help') {
       showHelp = true;
@@ -40,29 +67,29 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
       showVersion = true;
       unknownArgs.push(arg);
     } else if (arg === '--happy-starting-mode') {
-      options.startingMode = z.enum(['local', 'remote']).parse(args[++i]);
+      options.startingMode = z.enum(['local', 'remote']).parse(strippedArgs[++i]);
     } else if (arg === '--yolo') {
       // Shortcut for --dangerously-skip-permissions
       unknownArgs.push('--dangerously-skip-permissions');
     } else if (arg === '--started-by') {
-      options.startedBy = args[++i] as 'daemon' | 'terminal';
+      options.startedBy = strippedArgs[++i] as 'daemon' | 'terminal';
     } else if (arg === '--permission-mode') {
-      if (i + 1 >= args.length) {
+      if (i + 1 >= strippedArgs.length) {
         console.error(chalk.red(`Missing value for --permission-mode. Valid values: ${PERMISSION_MODES.join(', ')}`));
         process.exit(1);
       }
-      const value = args[++i];
+      const value = strippedArgs[++i];
       if (!isPermissionMode(value)) {
         console.error(chalk.red(`Invalid --permission-mode value: ${value}. Valid values: ${PERMISSION_MODES.join(', ')}`));
         process.exit(1);
       }
       options.permissionMode = value;
     } else if (arg === '--permission-mode-updated-at') {
-      if (i + 1 >= args.length) {
+      if (i + 1 >= strippedArgs.length) {
         console.error(chalk.red('Missing value for --permission-mode-updated-at (expected: unix ms timestamp)'));
         process.exit(1);
       }
-      const raw = args[++i];
+      const raw = strippedArgs[++i];
       const parsedAt = Number(raw);
       if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
         console.error(chalk.red(`Invalid --permission-mode-updated-at value: ${raw}. Expected a positive number (unix ms)`));
@@ -70,7 +97,7 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
       }
       options.permissionModeUpdatedAt = Math.floor(parsedAt);
     } else if (arg === '--js-runtime') {
-      const runtime = args[++i];
+      const runtime = strippedArgs[++i];
       if (runtime !== 'node' && runtime !== 'bun') {
         console.error(chalk.red(`Invalid --js-runtime value: ${runtime}. Must be 'node' or 'bun'`));
         process.exit(1);
@@ -78,10 +105,10 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
       options.jsRuntime = runtime;
     } else if (arg === '--existing-session') {
       // Used by daemon to reconnect to an existing session (for inactive session resume)
-      options.existingSessionId = args[++i];
+      options.existingSessionId = strippedArgs[++i];
     } else if (arg === '--claude-env') {
       // Parse KEY=VALUE environment variable to pass to Claude
-      const envArg = args[++i];
+      const envArg = strippedArgs[++i];
       if (envArg && envArg.includes('=')) {
         const eqIndex = envArg.indexOf('=');
         const key = envArg.substring(0, eqIndex);
@@ -99,8 +126,8 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
     } else {
       unknownArgs.push(arg);
       // Check if this arg expects a value (simplified check for common patterns)
-      if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
-        unknownArgs.push(args[++i]);
+      if (i + 1 < strippedArgs.length && !strippedArgs[i + 1].startsWith('-')) {
+        unknownArgs.push(strippedArgs[++i]);
       }
     }
   }
