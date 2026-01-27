@@ -1,12 +1,14 @@
 import React, { memo, useCallback, useState } from 'react';
-import { View, Text, ScrollView } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { View, Text, ScrollView, Pressable, useWindowDimensions } from 'react-native';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/Item';
 import { ItemList } from '@/components/ItemList';
 import { t } from '@/text';
 import { SessionShare, ShareAccessLevel } from '@/sync/sharingTypes';
 import { Avatar } from '@/components/Avatar';
+import { BaseModal } from '@/modal/components/BaseModal';
+import { Typography } from '@/constants/Typography';
 
 /**
  * Props for the SessionShareDialog component
@@ -50,7 +52,14 @@ export const SessionShareDialog = memo(function SessionShareDialog({
     onManagePublicLink,
     onClose
 }: SessionShareDialogProps) {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const { height: windowHeight } = useWindowDimensions();
     const [selectedShareId, setSelectedShareId] = useState<string | null>(null);
+
+    const maxHeight = React.useMemo(() => {
+        return Math.min(760, Math.max(420, Math.floor(windowHeight * 0.85)));
+    }, [windowHeight]);
 
     const handleSharePress = useCallback((shareId: string) => {
         if (canManage) {
@@ -69,65 +78,63 @@ export const SessionShareDialog = memo(function SessionShareDialog({
     }, [onRemoveShare]);
 
     return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.title}>{t('session.sharing.title')}</Text>
-                <Item
-                    title={t('common.cancel')}
-                    onPress={onClose}
-                />
+        <BaseModal visible={true} onClose={onClose}>
+            <View style={[styles.modal, { height: maxHeight, maxHeight }]}>
+                <View style={styles.header}>
+                    <Text style={styles.headerTitle}>{t('session.sharing.title')}</Text>
+                    <Pressable
+                        onPress={onClose}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                        style={({ pressed }) => ({ opacity: pressed ? 0.7 : 1 })}
+                    >
+                        <Ionicons name="close" size={20} color={theme.colors.textSecondary} />
+                    </Pressable>
+                </View>
+
+                <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+                    <ItemList>
+                        {canManage && (
+                            <Item
+                                title={t('session.sharing.shareWith')}
+                                icon={<Ionicons name="person-add-outline" size={29} color="#007AFF" />}
+                                onPress={onAddShare}
+                            />
+                        )}
+
+                        {canManage && (
+                            <Item
+                                title={t('session.sharing.publicLink')}
+                                icon={<Ionicons name="link-outline" size={29} color="#007AFF" />}
+                                onPress={onManagePublicLink}
+                            />
+                        )}
+
+                        {shares.length > 0 ? (
+                            <View style={styles.section}>
+                                <Text style={styles.sectionTitle}>{t('session.sharing.sharedWith')}</Text>
+                                {shares.map((share) => (
+                                    <ShareItem
+                                        key={share.id}
+                                        share={share}
+                                        canManage={canManage}
+                                        isSelected={selectedShareId === share.id}
+                                        onPress={() => handleSharePress(share.id)}
+                                        onAccessLevelChange={handleAccessLevelChange}
+                                        onRemove={handleRemoveShare}
+                                    />
+                                ))}
+                            </View>
+                        ) : null}
+
+                        {shares.length === 0 && !canManage ? (
+                            <View style={styles.emptyState}>
+                                <Text style={styles.emptyText}>{t('session.sharing.noShares')}</Text>
+                            </View>
+                        ) : null}
+                    </ItemList>
+                </ScrollView>
             </View>
-
-            <ScrollView style={styles.content}>
-                <ItemList>
-                    {/* Add share button */}
-                    {canManage && (
-                        <Item
-                            title={t('session.sharing.shareWith')}
-                            icon={<Ionicons name="person-add-outline" size={29} color="#007AFF" />}
-                            onPress={onAddShare}
-                        />
-                    )}
-
-                    {/* Public link management */}
-                    {canManage && (
-                        <Item
-                            title={t('session.sharing.publicLink')}
-                            icon={<Ionicons name="link-outline" size={29} color="#007AFF" />}
-                            onPress={onManagePublicLink}
-                        />
-                    )}
-
-                    {/* Current shares */}
-                    {shares.length > 0 && (
-                        <View style={styles.section}>
-                            <Text style={styles.sectionTitle}>
-                                {t('session.sharing.sharedWith')}
-                            </Text>
-                            {shares.map(share => (
-                                <ShareItem
-                                    key={share.id}
-                                    share={share}
-                                    canManage={canManage}
-                                    isSelected={selectedShareId === share.id}
-                                    onPress={() => handleSharePress(share.id)}
-                                    onAccessLevelChange={handleAccessLevelChange}
-                                    onRemove={handleRemoveShare}
-                                />
-                            ))}
-                        </View>
-                    )}
-
-                    {shares.length === 0 && !canManage && (
-                        <View style={styles.emptyState}>
-                            <Text style={styles.emptyText}>
-                                {t('session.sharing.noShares')}
-                            </Text>
-                        </View>
-                    )}
-                </ItemList>
-            </ScrollView>
-        </View>
+        </BaseModal>
     );
 });
 
@@ -151,6 +158,7 @@ const ShareItem = memo(function ShareItem({
     onAccessLevelChange,
     onRemove
 }: ShareItemProps) {
+    const styles = stylesheet;
     const accessLevelLabel = getAccessLevelLabel(share.accessLevel);
     const userName = share.sharedWithUser.username || [share.sharedWithUser.firstName, share.sharedWithUser.lastName]
         .filter(Boolean)
@@ -218,42 +226,48 @@ function getAccessLevelLabel(level: ShareAccessLevel): string {
     }
 }
 
-const styles = StyleSheet.create((theme) => ({
-    container: {
-        width: 600,
-        maxWidth: '90%',
-        maxHeight: '80%',
-        backgroundColor: theme.colors.surface,
-        borderRadius: 12,
+const stylesheet = StyleSheet.create((theme) => ({
+    modal: {
+        width: '92%',
+        maxWidth: 560,
+        backgroundColor: theme.colors.groupped.background,
+        borderRadius: 16,
         overflow: 'hidden',
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        flexShrink: 1,
     },
     header: {
+        paddingHorizontal: 16,
+        paddingVertical: 12,
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
         borderBottomWidth: 1,
         borderBottomColor: theme.colors.divider,
     },
-    title: {
-        fontSize: 18,
-        fontWeight: '600',
+    headerTitle: {
+        fontSize: 17,
         color: theme.colors.text,
+        ...Typography.default('semiBold'),
     },
-    content: {
+    scroll: {
         flex: 1,
+    },
+    scrollContent: {
+        paddingBottom: 16,
+        flexGrow: 1,
     },
     section: {
         marginTop: 16,
     },
     sectionTitle: {
         fontSize: 14,
-        fontWeight: '600',
         color: theme.colors.textSecondary,
         paddingHorizontal: 16,
         paddingVertical: 8,
         textTransform: 'uppercase',
+        ...Typography.default('semiBold'),
     },
     options: {
         paddingLeft: 24,

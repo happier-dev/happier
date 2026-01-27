@@ -9,7 +9,7 @@ import { useSession, useIsDataReady } from '@/sync/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { FriendSelector, PublicLinkDialog, SessionShareDialog } from '@/components/sessionSharing';
+import { FriendSelector, PublicLinkDialog, SessionShareDialog } from '@/components/session/sharing';
 import { SessionShare, PublicSessionShare, ShareAccessLevel } from '@/sync/sharingTypes';
 import {
     getSessionShares,
@@ -302,6 +302,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                     friends={friends}
                     excludedUserIds={excludedUserIds}
                     onSelect={handleAddShare}
+                    onCancel={() => setShowFriendSelector(false)}
                 />
             )}
 
