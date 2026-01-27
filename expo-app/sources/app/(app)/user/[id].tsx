@@ -17,6 +17,7 @@ import { t } from '@/text';
 import { trackFriendsConnect } from '@/track';
 import { Ionicons } from '@expo/vector-icons';
 import { useAllSessions } from '@/sync/storage';
+import { useSessionSharingSupport } from '@/hooks/useSessionSharingSupport';
 
 export default function UserProfileScreen() {
     const { id } = useLocalSearchParams<{ id: string }>();
@@ -24,6 +25,7 @@ export default function UserProfileScreen() {
     const router = useRouter();
     const { theme } = useUnistyles();
     const sessions = useAllSessions();
+    const sharingSupported = useSessionSharingSupport();
     const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
     const [isLoading, setIsLoading] = useState(true);
 
@@ -161,7 +163,7 @@ export default function UserProfileScreen() {
     };
 
     const friendActions = getFriendActions();
-    const sharedSessions = userProfile.status === 'friend'
+    const sharedSessions = userProfile.status === 'friend' && sharingSupported
         ? sessions.filter(session => session.owner === userProfile.id)
         : [];
 
@@ -213,7 +215,7 @@ export default function UserProfileScreen() {
             </ItemGroup>
 
             {/* Sessions shared by this friend */}
-            {userProfile.status === 'friend' && (
+            {userProfile.status === 'friend' && sharingSupported && (
                 <ItemGroup title={t('friends.sharedSessions')}>
                     {sharedSessions.length > 0 ? (
                         sharedSessions.map((session) => (

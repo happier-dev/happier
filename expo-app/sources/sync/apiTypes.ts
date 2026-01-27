@@ -165,6 +165,24 @@ export const ApiSessionShareRevokedSchema = z.object({
     shareId: z.string(),
 });
 
+// Public share event schemas
+export const ApiPublicShareCreatedSchema = z.object({
+    t: z.literal('public-share-created'),
+    sessionId: z.string(),
+    publicShareId: z.string(),
+});
+
+export const ApiPublicShareUpdatedSchema = z.object({
+    t: z.literal('public-share-updated'),
+    sessionId: z.string(),
+    publicShareId: z.string(),
+});
+
+export const ApiPublicShareDeletedSchema = z.object({
+    t: z.literal('public-share-deleted'),
+    sessionId: z.string(),
+});
+
 export const ApiUpdateSchema = z.discriminatedUnion('t', [
     ApiUpdateNewMessageSchema,
     ApiUpdateNewSessionSchema,
@@ -180,7 +198,10 @@ export const ApiUpdateSchema = z.discriminatedUnion('t', [
     ApiKvBatchUpdateSchema,
     ApiSessionSharedSchema,
     ApiSessionShareUpdatedSchema,
-    ApiSessionShareRevokedSchema
+    ApiSessionShareRevokedSchema,
+    ApiPublicShareCreatedSchema,
+    ApiPublicShareUpdatedSchema,
+    ApiPublicShareDeletedSchema,
 ]);
 
 export type ApiUpdateNewMessage = z.infer<typeof ApiUpdateNewMessageSchema>;
