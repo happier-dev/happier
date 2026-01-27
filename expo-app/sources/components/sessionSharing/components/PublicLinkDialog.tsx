@@ -154,50 +154,50 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                             </Text>
 
                             {/* Expiration */}
-                        <View style={styles.optionGroup}>
-                            <Text style={styles.groupTitle}>
-                                {t('session.sharing.expiresIn')}
-                            </Text>
-                            <Item
-                                title={t('session.sharing.days7')}
-                                onPress={() => setExpiresInDays(7)}
-                                rightElement={
-                                    expiresInDays === 7 ? (
-                                        <View style={styles.radioSelected}>
-                                            <View style={styles.radioDot} />
-                                        </View>
-                                    ) : (
-                                        <View style={styles.radioUnselected} />
-                                    )
-                                }
-                            />
-                            <Item
-                                title={t('session.sharing.days30')}
-                                onPress={() => setExpiresInDays(30)}
-                                rightElement={
-                                    expiresInDays === 30 ? (
-                                        <View style={styles.radioSelected}>
-                                            <View style={styles.radioDot} />
-                                        </View>
-                                    ) : (
-                                        <View style={styles.radioUnselected} />
-                                    )
-                                }
-                            />
-                            <Item
-                                title={t('session.sharing.never')}
-                                onPress={() => setExpiresInDays(undefined)}
-                                rightElement={
-                                    expiresInDays === undefined ? (
-                                        <View style={styles.radioSelected}>
-                                            <View style={styles.radioDot} />
-                                        </View>
-                                    ) : (
-                                        <View style={styles.radioUnselected} />
-                                    )
-                                }
-                            />
-                        </View>
+                            <View style={styles.optionGroup}>
+                                <Text style={styles.groupTitle}>
+                                    {t('session.sharing.expiresIn')}
+                                </Text>
+                                <Item
+                                    title={t('session.sharing.days7')}
+                                    onPress={() => setExpiresInDays(7)}
+                                    rightElement={
+                                        expiresInDays === 7 ? (
+                                            <View style={styles.radioSelected}>
+                                                <View style={styles.radioDot} />
+                                            </View>
+                                        ) : (
+                                            <View style={styles.radioUnselected} />
+                                        )
+                                    }
+                                />
+                                <Item
+                                    title={t('session.sharing.days30')}
+                                    onPress={() => setExpiresInDays(30)}
+                                    rightElement={
+                                        expiresInDays === 30 ? (
+                                            <View style={styles.radioSelected}>
+                                                <View style={styles.radioDot} />
+                                            </View>
+                                        ) : (
+                                            <View style={styles.radioUnselected} />
+                                        )
+                                    }
+                                />
+                                <Item
+                                    title={t('session.sharing.never')}
+                                    onPress={() => setExpiresInDays(undefined)}
+                                    rightElement={
+                                        expiresInDays === undefined ? (
+                                            <View style={styles.radioSelected}>
+                                                <View style={styles.radioDot} />
+                                            </View>
+                                        ) : (
+                                            <View style={styles.radioUnselected} />
+                                        )
+                                    }
+                                />
+                            </View>
 
                         {/* Max uses */}
                         <View style={styles.optionGroup}>
