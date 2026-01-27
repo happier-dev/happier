@@ -108,6 +108,9 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
 
     const handleCreate = () => {
         setIsConfiguring(false);
+        // When generating/regenerating a link, users often press the button at the bottom
+        // of the config screen. Scroll back to top so the resulting QR code is visible.
+        requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
         onCreate({
             expiresInDays,
             maxUses,
@@ -256,7 +259,10 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
                             <ItemGroup>
                                 <Item
                                     title={t('session.sharing.regeneratePublicLink')}
-                                    onPress={() => setIsConfiguring(true)}
+                                    onPress={() => {
+                                        setIsConfiguring(true);
+                                        requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
+                                    }}
                                     icon={<Ionicons name="refresh-outline" size={29} color="#007AFF" />}
                                 />
                             </ItemGroup>
