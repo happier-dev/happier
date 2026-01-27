@@ -6,7 +6,8 @@
  * error handling) is delegated to TransportHandler implementations.
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import spawn from 'cross-spawn';
 import {
   ClientSideConnection,
   ndJsonStream,
@@ -56,6 +57,7 @@ import {
   handleCurrentModeUpdate,
 } from './sessionUpdateHandlers';
 import { nodeToWebStreams } from './nodeToWebStreams';
+import { buildAcpSpawnSpec } from './acpSpawn';
 import {
   pickPermissionOutcome,
   type PermissionOptionLike,
@@ -284,28 +286,16 @@ export class AcpBackend implements AgentBackend {
     }
 
     try {
-    // Spawn the ACP agent process
-    const args = this.options.args || [];
+      // Spawn the ACP agent process.
+      // Use cross-spawn so Windows quoting/.cmd resolution is handled safely without joining args.
+      const spec = buildAcpSpawnSpec({
+        command: this.options.command,
+        args: this.options.args || [],
+        cwd: this.options.cwd,
+        env: { ...process.env, ...this.options.env },
+      });
 
-    // On Windows, spawn via cmd.exe to handle .cmd files and PATH resolution
-    // This ensures proper stdio piping without shell buffering
-    if (process.platform === 'win32') {
-      const fullCommand = [this.options.command, ...args].join(' ');
-      this.process = spawn('cmd.exe', ['/c', fullCommand], {
-        cwd: this.options.cwd,
-        env: { ...process.env, ...this.options.env },
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      });
-    } else {
-      this.process = spawn(this.options.command, args, {
-        cwd: this.options.cwd,
-        env: { ...process.env, ...this.options.env },
-        // Use 'pipe' for all stdio to capture output without printing to console
-        // stdout and stderr will be handled by our event listeners
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-    }
+      this.process = spawn(spec.command, spec.args, spec.options);
 
     if (!this.process.stdin || !this.process.stdout || !this.process.stderr) {
       throw new Error('Failed to create stdio pipes');
