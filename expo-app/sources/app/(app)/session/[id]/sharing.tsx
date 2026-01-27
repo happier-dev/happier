@@ -1,6 +1,6 @@
-import React, { memo, useState, useCallback, useEffect } from 'react';
+import React, { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/Item';
 import { ItemGroup } from '@/components/ItemGroup';
@@ -36,6 +36,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
 
     const [shares, setShares] = useState<SessionShare[]>([]);
     const [publicShare, setPublicShare] = useState<PublicSessionShare | null>(null);
+    const publicShareTokenRef = useRef<string | null>(null);
     const [friends, setFriends] = useState<UserProfile[]>([]);
 
     const [showShareDialog, setShowShareDialog] = useState(false);
@@ -56,13 +57,16 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                 const publicShareData = await getPublicShare(credentials, sessionId);
                 setPublicShare((prev) => {
                     if (!publicShareData) return null;
-                    if (prev?.token && !publicShareData.token) {
-                        return { ...publicShareData, token: prev.token };
+                    const token = publicShareData.token ?? prev?.token ?? publicShareTokenRef.current ?? null;
+                    if (token) {
+                        publicShareTokenRef.current = token;
+                        return { ...publicShareData, token };
                     }
                     return publicShareData;
                 });
             } catch (e) {
                 // No public share exists
+                publicShareTokenRef.current = null;
                 setPublicShare(null);
             }
 
@@ -177,7 +181,8 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                 isConsentRequired: options.isConsentRequired,
             });
 
-            setPublicShare(created);
+            publicShareTokenRef.current = token;
+            setPublicShare({ ...created, token });
             await loadSharingData();
         } catch (error) {
             throw new HappyError(t('errors.operationFailed'), false);
@@ -189,6 +194,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
         try {
             const credentials = sync.getCredentials();
             await deletePublicShare(credentials, sessionId);
+            publicShareTokenRef.current = null;
             await loadSharingData();
             setShowPublicLinkDialog(false);
         } catch (error) {
@@ -217,6 +223,14 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
 
     return (
         <>
+            <Stack.Screen
+                options={{
+                    title: t('session.sharing.title'),
+                    headerStyle: { backgroundColor: theme.colors.header.background },
+                    headerTintColor: theme.colors.header.tint,
+                    headerShadowVisible: false,
+                }}
+            />
             <ItemList>
                 {/* Current Shares */}
                 <ItemGroup title={t('session.sharing.directSharing')}>
