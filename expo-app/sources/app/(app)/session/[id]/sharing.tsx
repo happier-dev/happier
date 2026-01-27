@@ -185,6 +185,8 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
             setPublicShare({ ...created, token });
             await loadSharingData();
         } catch (error) {
+            console.error('Failed to create public share:', error);
+            if (error instanceof HappyError) throw error;
             throw new HappyError(t('errors.operationFailed'), false);
         }
     }, [sessionId, loadSharingData]);
@@ -223,14 +225,6 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
 
     return (
         <>
-            <Stack.Screen
-                options={{
-                    title: t('session.sharing.title'),
-                    headerStyle: { backgroundColor: theme.colors.header.background },
-                    headerTintColor: theme.colors.header.tint,
-                    headerShadowVisible: false,
-                }}
-            />
             <ItemList>
                 {/* Current Shares */}
                 <ItemGroup title={t('session.sharing.directSharing')}>
@@ -344,5 +338,17 @@ export default memo(() => {
         );
     }
 
-    return <SharingManagementContent sessionId={id} />;
+    return (
+        <>
+            <Stack.Screen
+                options={{
+                    title: t('session.sharing.title'),
+                    headerStyle: { backgroundColor: theme.colors.header.background },
+                    headerTintColor: theme.colors.header.tint,
+                    headerShadowVisible: false,
+                }}
+            />
+            <SharingManagementContent sessionId={id} />
+        </>
+    );
 });

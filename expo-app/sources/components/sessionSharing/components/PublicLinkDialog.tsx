@@ -106,6 +106,13 @@ export const PublicLinkDialog = memo(function PublicLinkDialog({
             .catch(() => setQrDataUrl(null));
     }, [buildPublicShareUrl, publicShare?.token]);
 
+    useEffect(() => {
+        if (!qrDataUrl) return;
+        // Ensure the generated QR code is visible even if the user was scrolled
+        // to the bottom of the configuration screen when creating the link.
+        requestAnimationFrame(() => scrollRef.current?.scrollTo({ y: 0, animated: false }));
+    }, [qrDataUrl]);
+
     const handleCreate = () => {
         setIsConfiguring(false);
         // When generating/regenerating a link, users often press the button at the bottom
