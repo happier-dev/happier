@@ -168,6 +168,7 @@ export interface Session {
         avatar: string | null;
     }; // Owner profile information (for shared sessions)
     accessLevel?: 'view' | 'edit' | 'admin'; // Access level for shared sessions
+    canApprovePermissions?: boolean; // Whether the current user can approve permission prompts for this shared session
 }
 
 export interface PendingMessage {

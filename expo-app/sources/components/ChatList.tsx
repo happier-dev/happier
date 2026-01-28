@@ -20,6 +20,19 @@ export const ChatList = React.memo((props: { session: Session; bottomNotice?: Ch
     const { messages, isLoaded } = useSessionMessages(props.session.id);
     const { messages: pendingMessages } = useSessionPendingMessages(props.session.id);
     const items = React.useMemo(() => buildChatListItems({ messages, pendingMessages }), [messages, pendingMessages]);
+
+    const interaction = React.useMemo(() => {
+        const isOwner = !props.session.accessLevel;
+        const canSendMessages =
+            isOwner || props.session.accessLevel === 'edit' || props.session.accessLevel === 'admin';
+        const canApprovePermissions =
+            isOwner || props.session.canApprovePermissions === true;
+        const permissionDisabledReason = isOwner
+            ? undefined
+            : (props.session.accessLevel === 'view' ? 'readOnly' : 'notGranted');
+        return { canSendMessages, canApprovePermissions, permissionDisabledReason } as const;
+    }, [props.session.accessLevel, props.session.canApprovePermissions]);
+
     return (
         <ChatListInternal
             metadata={props.session.metadata}
@@ -28,6 +41,7 @@ export const ChatList = React.memo((props: { session: Session; bottomNotice?: Ch
             committedMessagesCount={messages.length}
             isLoaded={isLoaded}
             bottomNotice={props.bottomNotice}
+            interaction={interaction}
         />
     )
 });
@@ -64,6 +78,11 @@ const ChatListInternal = React.memo((props: {
     committedMessagesCount: number,
     isLoaded: boolean,
     bottomNotice?: ChatListBottomNotice | null,
+    interaction: {
+        canSendMessages: boolean;
+        canApprovePermissions: boolean;
+        permissionDisabledReason?: 'readOnly' | 'notGranted';
+    };
 }) => {
     const [isLoadingOlder, setIsLoadingOlder] = React.useState(false);
     const [hasMoreOlder, setHasMoreOlder] = React.useState<boolean | null>(null);
@@ -80,8 +99,15 @@ const ChatListInternal = React.memo((props: {
                 />
             );
         }
-        return <MessageView message={item.message} metadata={props.metadata} sessionId={props.sessionId} />;
-    }, [props.metadata, props.sessionId]);
+        return (
+            <MessageView
+                message={item.message}
+                metadata={props.metadata}
+                sessionId={props.sessionId}
+                interaction={props.interaction}
+            />
+        );
+    }, [props.interaction, props.metadata, props.sessionId]);
 
     const loadOlder = useCallback(async () => {
         if (!props.isLoaded || props.committedMessagesCount === 0) {

@@ -25,9 +25,19 @@ interface PermissionFooterProps {
     toolName: string;
     toolInput?: any;
     metadata?: any;
+    canApprovePermissions?: boolean;
+    disabledReason?: 'public' | 'readOnly' | 'notGranted';
 }
 
-export const PermissionFooter: React.FC<PermissionFooterProps> = ({ permission, sessionId, toolName, toolInput, metadata }) => {
+export const PermissionFooter: React.FC<PermissionFooterProps> = ({
+    permission,
+    sessionId,
+    toolName,
+    toolInput,
+    metadata,
+    canApprovePermissions = true,
+    disabledReason,
+}) => {
     const { theme } = useUnistyles();
     const [loadingButton, setLoadingButton] = useState<'allow' | 'deny' | 'abort' | null>(null);
     const [loadingAllEdits, setLoadingAllEdits] = useState(false);
@@ -48,6 +58,38 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({ permission, 
         return [];
     })();
     const canApproveExecPolicy = isCodexDecision && execPolicyCommand.length > 0;
+
+    if (!canApprovePermissions && permission.status === 'pending') {
+        const summary = formatPermissionRequestSummary({ toolName, toolInput });
+        const message =
+            disabledReason === 'public'
+                ? t('session.sharing.permissionApprovalsDisabledPublic')
+                : disabledReason === 'readOnly'
+                    ? t('session.sharing.permissionApprovalsDisabledReadOnly')
+                    : t('session.sharing.permissionApprovalsDisabledNotGranted');
+        return (
+            <View style={{ marginTop: 8, paddingHorizontal: 12, paddingBottom: 12 }}>
+                <View style={{
+                    backgroundColor: theme.colors.surfaceHighest,
+                    borderRadius: 10,
+                    borderWidth: 1,
+                    borderColor: theme.colors.divider,
+                    padding: 12,
+                    gap: 6,
+                }}>
+                    <Text style={{ color: theme.colors.text, fontWeight: '600' }}>
+                        {t('session.sharing.permissionApprovalsDisabledTitle')}
+                    </Text>
+                    <Text style={{ color: theme.colors.textSecondary }}>
+                        {message}
+                    </Text>
+                    <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
+                        {summary}
+                    </Text>
+                </View>
+            </View>
+        );
+    }
 
     const handleApprove = async () => {
         if (permission.status !== 'pending' || loadingButton !== null || loadingAllEdits || loadingForSession) return;

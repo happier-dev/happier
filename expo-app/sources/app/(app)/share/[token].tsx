@@ -1,6 +1,6 @@
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -16,6 +16,12 @@ import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import type { ApiMessage } from '@/sync/apiTypes';
 import { normalizeRawMessage, type NormalizedMessage } from '@/sync/typesRaw';
 import { useAuth } from '@/auth/AuthContext';
+import { createReducer, reducer } from '@/sync/reducer/reducer';
+import { TranscriptList } from '@/components/sessions/transcript/TranscriptList';
+import { ChatHeaderView } from '@/components/ChatHeaderView';
+import type { Message } from '@/sync/typesMessage';
+
+const SHARE_SCREEN_OPTIONS = { headerShown: false } as const;
 
 type ShareOwner = {
     id: string;
@@ -62,27 +68,6 @@ function getOwnerDisplayName(owner: ShareOwner | null): string {
     return fullName || t('status.unknown');
 }
 
-function summarizeMessage(message: NormalizedMessage): string {
-    if (message.role === 'user') {
-        return message.content.text;
-    }
-    if (message.role === 'agent') {
-        for (const block of message.content) {
-            if (block.type === 'text' && block.text) {
-                return block.text;
-            }
-            if (block.type === 'tool-call') {
-                return block.name;
-            }
-            if (block.type === 'tool-result') {
-                return t('common.details');
-            }
-        }
-        return t('common.details');
-    }
-    return t('common.details');
-}
-
 export default memo(function PublicShareViewerScreen() {
     const { token } = useLocalSearchParams<{ token: string }>();
     const { credentials } = useAuth();
@@ -94,7 +79,7 @@ export default memo(function PublicShareViewerScreen() {
     const [consentInfo, setConsentInfo] = useState<PublicShareConsentResponse | null>(null);
     const [share, setShare] = useState<PublicShareResponse | null>(null);
     const [decryptedMetadata, setDecryptedMetadata] = useState<any | null>(null);
-    const [messages, setMessages] = useState<NormalizedMessage[]>([]);
+    const [messages, setMessages] = useState<Message[]>([]);
 
     const authHeader = useMemo(() => {
         if (!credentials?.token) return null;
@@ -158,6 +143,11 @@ export default memo(function PublicShareViewerScreen() {
                 data.session.metadata
             );
 
+            const decryptedAgentState = await sessionEncryption.decryptAgentState(
+                data.session.agentStateVersion,
+                data.session.agentState
+            );
+
             const messagesUrl = withConsent
                 ? `${serverUrl}/v1/public-share/${token}/messages?consent=true`
                 : `${serverUrl}/v1/public-share/${token}/messages`;
@@ -179,9 +169,12 @@ export default memo(function PublicShareViewerScreen() {
             }
             normalized.sort((a, b) => a.createdAt - b.createdAt);
 
+            const reducerState = createReducer();
+            const reduced = reducer(reducerState, normalized, decryptedAgentState);
+
             setShare(data);
             setDecryptedMetadata(decryptedMetadata);
-            setMessages(normalized.slice(-60));
+            setMessages(reduced.messages.slice(-200));
             setIsLoading(false);
         } catch {
             setError(t('errors.operationFailed'));
@@ -250,50 +243,40 @@ export default memo(function PublicShareViewerScreen() {
     }
 
     const ownerName = getOwnerDisplayName(share.owner);
-    const ownerAvatarUrl = share.owner?.avatar ?? null;
     const sessionName = decryptedMetadata?.name || decryptedMetadata?.path || t('session.sharing.session');
+    const interaction = {
+        canSendMessages: false,
+        canApprovePermissions: false,
+        permissionDisabledReason: 'public' as const,
+        disableToolNavigation: true,
+    };
 
     return (
-        <ItemList style={{ paddingTop: 0 }}>
-            <ItemGroup title={t('session.sharing.publicLink')}>
-                <Item
-                    title={sessionName}
-                    subtitle={t('session.sharing.viewOnly')}
-                    icon={<Ionicons name="lock-closed-outline" size={29} color="#007AFF" />}
-                    showChevron={false}
-                />
-                <Item
-                    title={ownerName}
-                    icon={
-                        <Avatar
-                            id={share.owner.id}
-                            size={32}
-                            imageUrl={ownerAvatarUrl}
-                        />
-                    }
-                    showChevron={false}
-                />
-            </ItemGroup>
-
-            <ItemGroup title={t('common.message')}>
-                {messages.length > 0 ? (
-                    messages.map((m) => (
-                        <Item
-                            key={m.id}
-                            title={t('common.message')}
-                            subtitle={summarizeMessage(m)}
-                            subtitleLines={2}
-                            showChevron={false}
-                        />
-                    ))
-                ) : (
-                    <Item
-                        title={t('session.sharing.noMessages')}
-                        showChevron={false}
+        <>
+            <Stack.Screen options={SHARE_SCREEN_OPTIONS} />
+            <View style={{ flex: 1, backgroundColor: theme.colors.surface }}>
+                <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1000 }}>
+                    <ChatHeaderView
+                        title={sessionName}
+                        subtitle={t('session.sharing.sharedBy', { name: ownerName })}
+                        onBackPress={() => router.back()}
+                        isConnected={false}
+                        flavor={null}
                     />
-                )}
-            </ItemGroup>
-        </ItemList>
+                </View>
+                <TranscriptList
+                    sessionId={share.session.id}
+                    metadata={decryptedMetadata}
+                    messages={messages}
+                    interaction={interaction}
+                    bottomNotice={{
+                        title: t('session.sharing.publicReadOnlyTitle'),
+                        body: t('session.sharing.publicReadOnlyBody'),
+                    }}
+                    isLoaded={!isLoading}
+                />
+            </View>
+        </>
     );
 });
 

@@ -31,6 +31,11 @@ interface ToolViewProps {
     onPress?: () => void;
     sessionId?: string;
     messageId?: string;
+    interaction?: {
+        canSendMessages: boolean;
+        canApprovePermissions: boolean;
+        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    };
 }
 
 export const ToolView = React.memo<ToolViewProps>((props) => {
@@ -247,6 +252,12 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 
             {/* Content area - either custom children or tool-specific view */}
             {(() => {
+                // "Title" detail level hides the tool body entirely (the tool can still be opened
+                // into the full view by tapping the header).
+                if (effectiveDetailLevel === 'title') {
+                    return null;
+                }
+
                 // Try to use a specific tool view component first
                 const SpecificToolView =
                     effectiveDetailLevel === 'full'
@@ -255,7 +266,13 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 if (SpecificToolView) {
                     return (
                         <View style={styles.content}>
-                            <SpecificToolView tool={toolForRendering} metadata={props.metadata} messages={props.messages ?? []} sessionId={sessionId} />
+                            <SpecificToolView
+                                tool={toolForRendering}
+                                metadata={props.metadata}
+                                messages={props.messages ?? []}
+                                sessionId={sessionId}
+                                interaction={props.interaction}
+                            />
                             {toolForRendering.state === 'error' && toolForRendering.result &&
                                 !(toolForRendering.permission && (toolForRendering.permission.status === 'denied' || toolForRendering.permission.status === 'canceled')) &&
                                 !hideDefaultError && (
@@ -328,7 +345,15 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             {/* Permission footer - rendered for most tools */}
             {/* AskUserQuestion and ExitPlanMode have custom action UIs */}
             {isWaitingForPermission && toolForRendering.permission && sessionId && toolForRendering.name !== 'AskUserQuestion' && toolForRendering.name !== 'ExitPlanMode' && toolForRendering.name !== 'exit_plan_mode' && toolForRendering.name !== 'AcpHistoryImport' && (
-                <PermissionFooter permission={toolForRendering.permission} sessionId={sessionId} toolName={normalizedToolName} toolInput={toolForRendering.input} metadata={props.metadata} />
+                <PermissionFooter
+                    permission={toolForRendering.permission}
+                    sessionId={sessionId}
+                    toolName={normalizedToolName}
+                    toolInput={toolForRendering.input}
+                    metadata={props.metadata}
+                    canApprovePermissions={props.interaction?.canApprovePermissions ?? true}
+                    disabledReason={props.interaction?.permissionDisabledReason}
+                />
             )}
         </View>
     );

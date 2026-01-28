@@ -128,7 +128,7 @@ export async function updateSessionShare(
     credentials: AuthCredentials,
     sessionId: string,
     shareId: string,
-    accessLevel: 'view' | 'edit' | 'admin'
+    patch: { accessLevel?: 'view' | 'edit' | 'admin'; canApprovePermissions?: boolean }
 ): Promise<SessionShare> {
     return await backoff(async () => {
         const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/shares/${shareId}`, {
@@ -137,7 +137,7 @@ export async function updateSessionShare(
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify({ accessLevel })
+            body: JSON.stringify(patch)
         });
 
         if (!response.ok) {

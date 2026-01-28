@@ -21,6 +21,12 @@ export const MessageView = (props: {
   metadata: Metadata | null;
   sessionId: string;
   getMessageById?: (id: string) => Message | null;
+  interaction?: {
+    canSendMessages: boolean;
+    canApprovePermissions: boolean;
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    disableToolNavigation?: boolean;
+  };
 }) => {
   return (
     <View style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
@@ -30,6 +36,7 @@ export const MessageView = (props: {
           metadata={props.metadata}
           sessionId={props.sessionId}
           getMessageById={props.getMessageById}
+          interaction={props.interaction}
         />
       </View>
     </View>
@@ -42,13 +49,19 @@ function RenderBlock(props: {
   metadata: Metadata | null;
   sessionId: string;
   getMessageById?: (id: string) => Message | null;
+  interaction?: {
+    canSendMessages: boolean;
+    canApprovePermissions: boolean;
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    disableToolNavigation?: boolean;
+  };
 }): React.ReactElement {
   switch (props.message.kind) {
     case 'user-text':
-      return <UserTextBlock message={props.message} metadata={props.metadata} sessionId={props.sessionId} />;
+      return <UserTextBlock message={props.message} metadata={props.metadata} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
 
     case 'agent-text':
-      return <AgentTextBlock message={props.message} sessionId={props.sessionId} />;
+      return <AgentTextBlock message={props.message} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
 
     case 'tool-call':
       return <ToolCallBlock
@@ -56,6 +69,7 @@ function RenderBlock(props: {
         metadata={props.metadata}
         sessionId={props.sessionId}
         getMessageById={props.getMessageById}
+        interaction={props.interaction}
       />;
 
     case 'agent-event':
@@ -73,17 +87,22 @@ function UserTextBlock(props: {
   message: UserTextMessage;
   metadata: Metadata | null;
   sessionId: string;
+  canSendMessages: boolean;
 }) {
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
   const handleOptionPress = React.useCallback((option: Option) => {
     void (async () => {
       try {
+        if (!props.canSendMessages) {
+          Modal.alert(t('session.sharing.viewOnly'), t('session.sharing.noEditPermission'));
+          return;
+        }
         await sync.submitMessage(props.sessionId, option.title);
       } catch (e) {
         Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
       }
     })();
-  }, [props.sessionId]);
+  }, [props.canSendMessages, props.sessionId]);
 
   return (
     <View style={styles.userMessageContainer}>
@@ -106,6 +125,7 @@ function UserTextBlock(props: {
 function AgentTextBlock(props: {
   message: AgentTextMessage;
   sessionId: string;
+  canSendMessages: boolean;
 }) {
   const experiments = useSetting('experiments');
   const expShowThinkingMessages = useSetting('expShowThinkingMessages');
@@ -113,12 +133,16 @@ function AgentTextBlock(props: {
   const handleOptionPress = React.useCallback((option: Option) => {
     void (async () => {
       try {
+        if (!props.canSendMessages) {
+          Modal.alert(t('session.sharing.viewOnly'), t('session.sharing.noEditPermission'));
+          return;
+        }
         await sync.submitMessage(props.sessionId, option.title);
       } catch (e) {
         Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
       }
     })();
-  }, [props.sessionId]);
+  }, [props.canSendMessages, props.sessionId]);
 
   // Hide thinking messages unless experiments is enabled
   if (props.message.isThinking && !showThinkingMessages) {
@@ -242,6 +266,12 @@ function ToolCallBlock(props: {
   metadata: Metadata | null;
   sessionId: string;
   getMessageById?: (id: string) => Message | null;
+  interaction?: {
+    canSendMessages: boolean;
+    canApprovePermissions: boolean;
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    disableToolNavigation?: boolean;
+  };
 }) {
   if (!props.message.tool) {
     return null;
@@ -253,7 +283,8 @@ function ToolCallBlock(props: {
         metadata={props.metadata}
         messages={props.message.children}
         sessionId={props.sessionId}
-        messageId={props.message.id}
+        messageId={props.interaction?.disableToolNavigation ? undefined : props.message.id}
+        interaction={props.interaction}
       />
     </View>
   );

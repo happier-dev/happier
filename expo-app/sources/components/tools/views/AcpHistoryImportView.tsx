@@ -22,13 +22,21 @@ function asPreviewList(input: unknown): HistoryPreviewItem[] {
     });
 }
 
-export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId }) => {
+export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId, interaction }) => {
   const { theme } = useUnistyles();
   const [loading, setLoading] = React.useState<'import' | 'skip' | null>(null);
 
   if (!sessionId) return null;
   const permissionId = tool.permission?.id;
   if (!permissionId) return null;
+
+  const canApprovePermissions = interaction?.canApprovePermissions ?? true;
+  const disabledMessage =
+    interaction?.permissionDisabledReason === 'public'
+      ? t('session.sharing.permissionApprovalsDisabledPublic')
+      : interaction?.permissionDisabledReason === 'readOnly'
+        ? t('session.sharing.permissionApprovalsDisabledReadOnly')
+        : t('session.sharing.permissionApprovalsDisabledNotGranted');
 
   const input = tool.input as any;
   const provider = typeof input?.provider === 'string' ? input.provider : 'acp';
@@ -42,7 +50,7 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
   const isPending = tool.permission?.status === 'pending';
 
   const onImport = async () => {
-    if (!isPending || loading) return;
+    if (!isPending || loading || !canApprovePermissions) return;
     setLoading('import');
     try {
       await sessionAllow(sessionId, permissionId);
@@ -54,7 +62,7 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
   };
 
   const onSkip = async () => {
-    if (!isPending || loading) return;
+    if (!isPending || loading || !canApprovePermissions) return;
     setLoading('skip');
     try {
       await sessionDeny(sessionId, permissionId, undefined, undefined, 'denied');
@@ -73,8 +81,14 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
           {provider}{remoteSessionId ? ` • ${remoteSessionId}` : ''}
         </Text>
         <Text style={styles.body}>
-          {note ?? 'This session history differs from what is already in Happy. Importing may create duplicates.'}
-        </Text>
+        {note ?? 'This session history differs from what is already in Happy. Importing may create duplicates.'}
+      </Text>
+
+        {isPending && !canApprovePermissions ? (
+          <Text style={[styles.body, { color: theme.colors.textSecondary }]}>
+            {disabledMessage}
+          </Text>
+        ) : null}
 
         {(typeof localCount === 'number' || typeof remoteCount === 'number') && (
           <View style={styles.countRow}>
@@ -111,14 +125,14 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
         <View style={styles.actions}>
           <TouchableOpacity
             style={[styles.button, styles.primaryButton, !isPending && styles.disabled]}
-            disabled={!isPending || loading !== null}
+            disabled={!isPending || loading !== null || !canApprovePermissions}
             onPress={onImport}
           >
             {loading === 'import' ? <ActivityIndicator color={theme.colors.button.primary.tint} /> : <Text style={styles.primaryText}>Import</Text>}
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.button, styles.secondaryButton, !isPending && styles.disabled]}
-            disabled={!isPending || loading !== null}
+            disabled={!isPending || loading !== null || !canApprovePermissions}
             onPress={onSkip}
           >
             {loading === 'skip' ? <ActivityIndicator color={theme.colors.text} /> : <Text style={styles.secondaryText}>Skip</Text>}

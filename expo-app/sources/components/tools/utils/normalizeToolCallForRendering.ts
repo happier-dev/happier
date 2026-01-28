@@ -145,6 +145,11 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
     const parsedInput = maybeParseJson(tool.input);
     const parsedResult = maybeParseJson(tool.result);
     const canonicalizeName = (toolName: string, input: unknown): string => {
+        const inputObj = asRecord(input);
+        const happy = asRecord(inputObj?._happy);
+        const canonicalFromHappy = firstNonEmptyString(happy?.canonicalToolName);
+        if (canonicalFromHappy) return canonicalFromHappy;
+
         if (toolName === 'CodexPatch' || toolName === 'GeminiPatch') return 'Patch';
         if (toolName === 'CodexDiff' || toolName === 'GeminiDiff') return 'Diff';
         if (toolName === 'CodexReasoning' || toolName === 'GeminiReasoning' || toolName === 'think') return 'Reasoning';
@@ -155,13 +160,12 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
         const lower = toolName.toLowerCase();
         if (lower === 'execute' || lower === 'shell' || toolName === 'GeminiBash' || toolName === 'CodexBash') return 'Bash';
         if (lower === 'read') return 'Read';
+        if (lower === 'delete' || lower === 'remove') return 'Patch';
         if (lower === 'edit') {
-            const inputObj = asRecord(input);
             if (hasNonEmptyRecord(inputObj?.changes)) return 'Patch';
             return 'Edit';
         }
         if (lower === 'write') {
-            const inputObj = asRecord(input);
             const hasTodos = Array.isArray(inputObj?.todos) && inputObj?.todos.length > 0;
             return hasTodos ? 'TodoWrite' : 'Write';
         }
@@ -173,13 +177,21 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
         if (lower === 'web_search' || lower === 'websearch') return 'WebSearch';
 
         if (lower === 'search') {
-            const inputObj = asRecord(input);
             const hasQuery =
                 !!firstNonEmptyString(inputObj?.query) ||
                 !!firstNonEmptyString(inputObj?.pattern) ||
                 !!firstNonEmptyString(inputObj?.text);
             // Gemini internal "search" often has only items/locations and is intentionally minimal/hidden.
             return hasQuery ? 'CodeSearch' : toolName;
+        }
+
+        if (lower === 'unknown tool') {
+            const inputObj = asRecord(input);
+            const title =
+                firstNonEmptyString(inputObj?.title) ??
+                firstNonEmptyString(asRecord(inputObj?.toolCall)?.title) ??
+                null;
+            if (title === 'Workspace Indexing Permission') return 'WorkspaceIndexingPermission';
         }
 
         return toolName;
@@ -196,6 +208,17 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
             normalizeFromAcpItems(inputRecord, { toolNameLower }) ??
             inputRecord;
         const inputRecord2 = asRecord(nextInput) ?? inputRecord;
+        if ((toolNameLower === 'delete' || toolNameLower === 'remove') && nextName === 'Patch') {
+            const filePaths = Array.isArray((inputRecord2 as any).file_paths) ? ((inputRecord2 as any).file_paths as unknown[]) : null;
+            const paths = (filePaths ?? []).filter((v): v is string => typeof v === 'string' && v.trim().length > 0);
+            if (paths.length > 0 && !hasNonEmptyRecord((inputRecord2 as any).changes)) {
+                const changes: Record<string, unknown> = {};
+                for (const p of paths) {
+                    changes[p.trim()] = { delete: { content: '' }, type: 'delete' };
+                }
+                nextInput = { ...inputRecord2, changes };
+            }
+        }
         if (toolNameLower === 'edit') {
             nextInput = normalizeEditAliases(inputRecord2) ?? inputRecord2;
         } else if (toolNameLower === 'write' || toolNameLower === 'read') {
