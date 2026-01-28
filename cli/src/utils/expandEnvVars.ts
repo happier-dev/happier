@@ -13,6 +13,11 @@ import { logger } from '@/ui/logger';
  *
  * This utility ensures ${VAR} expansion works in both modes.
  *
+ * SECURITY NOTE:
+ * This function performs **text substitution only**. It does **not** sanitize or validate the expanded value.
+ * Do not use it with untrusted profile definitions. If you use expanded values to construct shell commands,
+ * prefer argv-based execution (no shell) or ensure proper quoting/escaping in the caller.
+ *
  * @param envVars - Environment variables that may contain ${VAR} references
  * @param sourceEnv - Source environment (usually process.env) to resolve references from
  * @returns New object with all ${VAR} references expanded to actual values
