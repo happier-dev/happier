@@ -83,6 +83,52 @@ describe('claudeLocalLauncher', () => {
     session.cleanup();
   });
 
+  it('returns switch after repeated Claude process failures (no infinite retry loop)', async () => {
+    vi.useFakeTimers();
+
+    const sendSessionEvent = vi.fn();
+    const client = {
+      keepAlive: vi.fn(),
+      updateMetadata: vi.fn(),
+      rpcHandlerManager: { registerHandler: vi.fn() },
+      sendClaudeSessionMessage: vi.fn(),
+      sendSessionEvent,
+      peekPendingMessageQueueV1Preview: vi.fn(() => ({ count: 0, preview: [] })),
+      discardPendingMessageQueueV1All: vi.fn().mockResolvedValue(0),
+    } as any;
+
+    const session = new Session({
+      api: {} as any,
+      client,
+      path: '/tmp',
+      logPath: '/tmp/log',
+      sessionId: null,
+      mcpServers: {},
+      messageQueue: new MessageQueue2<any>(() => 'mode'),
+      onModeChange: () => {},
+      hookSettingsPath: '/tmp/hooks.json',
+    });
+
+    mockCreateSessionScanner.mockResolvedValue({
+      cleanup: vi.fn(async () => {}),
+      onNewSession: vi.fn(),
+    });
+
+    mockClaudeLocal.mockImplementation(async () => {
+      throw new Error('boom');
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const launcherPromise = claudeLocalLauncher(session);
+
+    await vi.runAllTimersAsync();
+    await expect(launcherPromise).resolves.toBe('switch');
+    expect(sendSessionEvent).toHaveBeenCalled();
+
+    vi.useRealTimers();
+    session.cleanup();
+  });
+
   it('surfaces transcript missing warnings to the UI', async () => {
     const sendSessionEvent = vi.fn();
     const client = {
