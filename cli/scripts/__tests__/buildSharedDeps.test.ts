@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { sep } from 'node:path';
 
-import { runTsc } from '../buildSharedDeps.mjs';
+import { resolveTscBin, runTsc } from '../buildSharedDeps.mjs';
 
 describe('buildSharedDeps', () => {
   it('surfaces which tsconfig failed when compilation throws', () => {
@@ -12,5 +13,15 @@ describe('buildSharedDeps', () => {
       /tsconfig\.json/i,
     );
   });
-});
 
+  it('prefers the workspace root tsc binary when present', () => {
+    const bin = resolveTscBin({
+      exists: (candidate: string) =>
+        candidate.includes(`${sep}node_modules${sep}.bin${sep}`) &&
+        !candidate.includes(`${sep}cli${sep}node_modules${sep}`),
+    });
+
+    expect(bin).toMatch(/node_modules/);
+    expect(bin).not.toMatch(/cli[\\/]+node_modules/);
+  });
+});

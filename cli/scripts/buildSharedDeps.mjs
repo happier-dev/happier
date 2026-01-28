@@ -6,12 +6,30 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '..', '..');
 
-const tscBin = resolve(repoRoot, 'cli', 'node_modules', '.bin', process.platform === 'win32' ? 'tsc.cmd' : 'tsc');
+export function resolveTscBin({ exists } = {}) {
+  const existsImpl = exists ?? existsSync;
+  const binName = process.platform === 'win32' ? 'tsc.cmd' : 'tsc';
+  const candidates = [
+    // Monorepo: TypeScript is installed at the workspace root.
+    resolve(repoRoot, 'node_modules', '.bin', binName),
+    // Fallback: older layouts installed it under cli/.
+    resolve(repoRoot, 'cli', 'node_modules', '.bin', binName),
+  ];
+
+  for (const candidate of candidates) {
+    if (existsImpl(candidate)) return candidate;
+  }
+
+  return candidates[0];
+}
+
+const tscBin = resolveTscBin();
 
 export function runTsc(tsconfigPath, opts) {
   const exec = opts?.execFileSync ?? execFileSync;
+  const tsc = opts?.tscBin ?? tscBin;
   try {
-    exec(tscBin, ['-p', tsconfigPath], { stdio: 'inherit' });
+    exec(tsc, ['-p', tsconfigPath], { stdio: 'inherit' });
   } catch (error) {
     const suffix = tsconfigPath ? ` (${tsconfigPath})` : '';
     const message = error instanceof Error ? error.message : String(error);
