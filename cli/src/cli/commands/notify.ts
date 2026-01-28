@@ -101,8 +101,6 @@ ${chalk.bold('Examples:')}
     console.log(chalk.gray(`  Title: ${notificationTitle}`));
     console.log(chalk.gray(`  Message: ${message}`));
     console.log(chalk.gray('  Check your mobile device for the notification.'));
-
-    await new Promise((resolve) => setTimeout(resolve, 1000));
   } catch (error) {
     console.error(chalk.red('✗ Failed to send push notification'));
     throw error;
