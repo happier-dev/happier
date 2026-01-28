@@ -82,7 +82,7 @@ ${chalk.bold('Examples:')}
     process.exit(1);
   }
 
-  let credentials = await readCredentials();
+  const credentials = await readCredentials();
   if (!credentials) {
     console.error(chalk.red('Error: Not authenticated. Please run "happy auth login" first.'));
     process.exit(1);
