@@ -8,9 +8,11 @@
 Use Claude Code, Codex, Gemini, OpenCode, Augment Code from anywhere with end-to-end encryption.
 </h4>
 
-This forks adds a lot of new features, improvements, fixes on top of the original Happy project. **The goal is to keep upstream compatibility for now and be able port our changes into upstream when the time comes.**
-
 # Happier
+
+This forks adds a lot of new features, improvements, fixes on top of the original Happy project. 
+**The goal is to keep upstream compatibility for now and be able port our changes into upstream when the time comes.**
+
 ## 🏗 Core Architecture
 
 ### 1. Server Light (SQLite & Local Files)
