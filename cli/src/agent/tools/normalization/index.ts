@@ -61,6 +61,36 @@ export function canonicalizeToolNameV2(opts: {
     // Web.
     if (lower === 'webfetch' || lower === 'web_fetch') return 'WebFetch';
     if (lower === 'websearch' || lower === 'web_search') return 'WebSearch';
+    if (lower === 'fetch') {
+        const record = asRecord(opts.toolInput) ?? {};
+        const urlCandidate =
+            typeof (record as any).url === 'string'
+                ? (record as any).url
+                : typeof (record as any).href === 'string'
+                    ? (record as any).href
+                    : typeof (record as any).uri === 'string'
+                        ? (record as any).uri
+                        : typeof (record as any).link === 'string'
+                            ? (record as any).link
+                            : null;
+        if (typeof urlCandidate === 'string' && urlCandidate.trim().length > 0) return 'WebFetch';
+
+        const queryCandidate =
+            typeof (record as any).query === 'string'
+                ? (record as any).query
+                : typeof (record as any).q === 'string'
+                    ? (record as any).q
+                    : typeof (record as any).text === 'string'
+                        ? (record as any).text
+                        : typeof (record as any).pattern === 'string'
+                            ? (record as any).pattern
+                            : typeof (record as any).information_request === 'string'
+                                ? (record as any).information_request
+                                : typeof (record as any).informationRequest === 'string'
+                                    ? (record as any).informationRequest
+                                    : null;
+        if (typeof queryCandidate === 'string' && queryCandidate.trim().length > 0) return 'WebSearch';
+    }
 
     // Tasks / notebooks.
     // Claude emits TaskCreate/TaskList/TaskUpdate; keep them unified for rendering.

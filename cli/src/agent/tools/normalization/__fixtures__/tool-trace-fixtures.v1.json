@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "generatedAt": 1769585146449,
+  "generatedAt": 1769586541021,
   "examples": {
     "acp/opencode/tool-call/execute": [
       {
@@ -4902,6 +4902,49 @@
         }
       }
     ],
+    "acp/auggie/permission-request/Unknown tool": [
+      {
+        "v": 1,
+        "ts": 1769541752039,
+        "direction": "outbound",
+        "sessionId": "cmkwzgxqm00018o5yl7znc8ka",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "permission-request",
+        "payload": {
+          "type": "permission-request",
+          "permissionId": "workspace-indexing-permission",
+          "toolName": "Unknown tool",
+          "description": "Unknown tool",
+          "options": {
+            "options": [
+              {
+                "id": "enable",
+                "name": "Enable indexing",
+                "kind": "allow_always"
+              },
+              {
+                "id": "disable",
+                "name": "Skip indexing",
+                "kind": "reject_once"
+              }
+            ],
+            "sessionId": "dca035d6-a75b-4dcc-ab10-f141b02a0933",
+            "toolCall": {
+              "title": "Workspace Indexing Permission",
+              "toolCallId": "workspace-indexing-permission"
+            },
+            "permissionId": "workspace-indexing-permission",
+            "toolCallId": "workspace-indexing-permission",
+            "toolName": "Unknown tool",
+            "input": {
+              "title": "Workspace Indexing Permission",
+              "toolCallId": "workspace-indexing-permission"
+            }
+          }
+        }
+      }
+    ],
     "claude/claude/tool-call/AskUserQuestion": [
       {
         "v": 1,
@@ -5178,6 +5221,751 @@
             "command": "npm install -g cowsay",
             "description": "Install cowsay package globally (requires permission)"
           }
+        }
+      }
+    ],
+    "acp/auggie/tool-call/Read": [
+      {
+        "v": 1,
+        "ts": 1769547527554,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01KdEqJqjuzyaS3HZNxu9fe7",
+          "name": "Read",
+          "input": {
+            "path": ".",
+            "type": "directory",
+            "file_path": ".",
+            "locations": [
+              {
+                "path": "/Users/leeroy/Development/happy-local"
+              }
+            ],
+            "description": "Read `.`",
+            "_acp": {
+              "kind": "read",
+              "title": "Read `.`",
+              "rawInput": {
+                "path": ".",
+                "type": "directory"
+              },
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local"
+                }
+              ]
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "read",
+              "canonicalToolName": "Read"
+            },
+            "_raw": {
+              "path": ".",
+              "type": "directory",
+              "file_path": ".",
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local"
+                }
+              ],
+              "description": "Read `.`",
+              "_acp": {
+                "kind": "read",
+                "title": "Read `.`",
+                "rawInput": {
+                  "path": ".",
+                  "type": "directory"
+                },
+                "locations": [
+                  {
+                    "path": "/Users/leeroy/Development/happy-local"
+                  }
+                ]
+              }
+            }
+          },
+          "id": "b3711f54-1718-4628-aa85-fa459f940da6"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547534510,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01WQrCqutXVLsgCWZVtDrwzV",
+          "name": "Read",
+          "input": {
+            "path": "tool-test-file.txt",
+            "file_path": "tool-test-file.txt",
+            "locations": [
+              {
+                "path": "/Users/leeroy/Development/happy-local/tool-test-file.txt"
+              }
+            ],
+            "description": "Read `tool-test-file.txt`",
+            "_acp": {
+              "kind": "read",
+              "title": "Read `tool-test-file.txt`",
+              "rawInput": {
+                "path": "tool-test-file.txt"
+              },
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local/tool-test-file.txt"
+                }
+              ]
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "read",
+              "canonicalToolName": "Read"
+            },
+            "_raw": {
+              "path": "tool-test-file.txt",
+              "file_path": "tool-test-file.txt",
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local/tool-test-file.txt"
+                }
+              ],
+              "description": "Read `tool-test-file.txt`",
+              "_acp": {
+                "kind": "read",
+                "title": "Read `tool-test-file.txt`",
+                "rawInput": {
+                  "path": "tool-test-file.txt"
+                },
+                "locations": [
+                  {
+                    "path": "/Users/leeroy/Development/happy-local/tool-test-file.txt"
+                  }
+                ]
+              }
+            }
+          },
+          "id": "1a4d8828-f61f-4936-8ce6-66d79d680960"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547541291,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01YWQ2BaAYg4usKMRjKtLU2P",
+          "name": "Read",
+          "input": {
+            "path": "tool-test-file.txt",
+            "search_query_regex": "Test.*#[0-9]+",
+            "file_path": "tool-test-file.txt",
+            "locations": [
+              {
+                "path": "/Users/leeroy/Development/happy-local/tool-test-file.txt"
+              }
+            ],
+            "description": "Read `tool-test-file.txt` (search: \"Test.*#[0-9]+\")",
+            "_acp": {
+              "kind": "read",
+              "title": "Read `tool-test-file.txt` (search: \"Test.*#[0-9]+\")",
+              "rawInput": {
+                "path": "tool-test-file.txt",
+                "search_query_regex": "Test.*#[0-9]+"
+              },
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local/tool-test-file.txt"
+                }
+              ]
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "read",
+              "canonicalToolName": "Read"
+            },
+            "_raw": {
+              "path": "tool-test-file.txt",
+              "search_query_regex": "Test.*#[0-9]+",
+              "file_path": "tool-test-file.txt",
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local/tool-test-file.txt"
+                }
+              ],
+              "description": "Read `tool-test-file.txt` (search: \"Test.*#[0-9]+\")",
+              "_acp": {
+                "kind": "read",
+                "title": "Read `tool-test-file.txt` (search: \"Test.*#[0-9]+\")",
+                "rawInput": {
+                  "path": "tool-test-file.txt",
+                  "search_query_regex": "Test.*#[0-9]+"
+                },
+                "locations": [
+                  {
+                    "path": "/Users/leeroy/Development/happy-local/tool-test-file.txt"
+                  }
+                ]
+              }
+            }
+          },
+          "id": "1997983b-b636-44f9-93f0-8939701bc638"
+        }
+      }
+    ],
+    "acp/auggie/tool-result": [
+      {
+        "v": 1,
+        "ts": 1769547528346,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01SqfZfJqXG3ij2YroVbLvG8",
+          "output": {
+            "stdout": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\ntotal 56\ndrwxr-xr-x@ 11 leeroy  staff   352 Jan 27 21:30 .\ndrwxr-xr-x@  3 leeroy  staff    96 Jan 23 13:19 ..\ndrwxr-xr-x@  5 leeroy  staff   160 Jan 24 20:53 .ruff_cache\ndrwxr-xr-x@ 12 leeroy  staff   384 Jan 25 20:04 .tmp\n-rw-r--r--@  1 leeroy  staff    33 Jan 24 11:28 acp-apply-patch-test-renamed.txt\n-rw-r--r--@  1 leeroy  staff     0 Jan 24 11:27 acp-write-test.txt\n-rw-r--r--@  1 leeroy  staff     6 Jan 27 21:30 auggie-permission-test.txt\n-rw-r--r--@  1 leeroy  staff  4896 Jan 24 20:58 comprehensive_test_report.md\n-rw-r--r--@  1 leeroy  staff  1053 Jan 24 20:57 test_async.js\n-rw-r--r--@  1 leeroy  staff    11 Jan 25 17:22 tmp-tool-ux-test.txt\n-rw-r--r--@  1 leeroy  staff   146 Jan 27 20:27 tool-test-file.txt\n\n</output>",
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "execute",
+              "canonicalToolName": "Bash"
+            },
+            "_raw": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\ntotal 56\ndrwxr-xr-x@ 11 leeroy  staff   352 Jan 27 21:30 .\ndrwxr-xr-x@  3 leeroy  staff    96 Jan 23 13:19 ..\ndrwxr-xr-x@  5 leeroy  staff   160 Jan 24 20:53 .ruff_cache\ndrwxr-xr-x@ 12 leeroy  staff   384 Jan 25 20:04 .tmp\n-rw-r--r--@  1 leeroy  staff    33 Jan 24 11:28 acp-apply-patch-test-renamed.txt\n-rw-r--r--@  1 leeroy  staff     0 Jan 24 11:27 acp-write-test.txt\n-rw-r--r--@  1 leeroy  staff     6 Jan 27 21:30 auggie-permission-test.txt\n-rw-r--r--@  1 leeroy  staff  4896 Jan 24 20:58 comprehensive_test_report.md\n-rw-r--r--@  1 leeroy  staff  1053 Jan 24 20:57 test_async.js\n-rw-r--r--@  1 leeroy  staff    11 Jan 25 17:22 tmp-tool-ux-test.txt\n-rw-r--r--@  1 leeroy  staff   146 Jan 27 20:27 tool-test-file.txt\n\n</output>"
+          },
+          "id": "147cbb10-2b3b-4207-b409-a9a00382117a"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547534508,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01AesmQimcT8DzyrdFUZdCB1",
+          "output": {
+            "stdout": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\n./acp-apply-patch-test-renamed.txt:ACP apply_patch test\n./tool-test-file.txt:This is a test file created by Claude to verify the Write tool.\n\n</output>",
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "execute",
+              "canonicalToolName": "Bash"
+            },
+            "_raw": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\n./acp-apply-patch-test-renamed.txt:ACP apply_patch test\n./tool-test-file.txt:This is a test file created by Claude to verify the Write tool.\n\n</output>"
+          },
+          "id": "39b206be-ea0b-4e72-9767-e369395dff5b"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547534661,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01EwaeneyS2fxEofSMWxpeMz",
+          "output": {
+            "stdout": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\nTesting bash script execution\nTue Jan 27 21:58:54 CET 2026\nleeroy\n/Users/leeroy/Development/happy-local\n\n</output>",
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "execute",
+              "canonicalToolName": "Bash"
+            },
+            "_raw": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\nTesting bash script execution\nTue Jan 27 21:58:54 CET 2026\nleeroy\n/Users/leeroy/Development/happy-local\n\n</output>"
+          },
+          "id": "cacbe9b7-56df-49dd-b3d2-22c2dc9887cb"
+        }
+      }
+    ],
+    "acp/auggie/tool-call/fetch": [
+      {
+        "v": 1,
+        "ts": 1769547527570,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_019XY3pDho85DQ63FKy3LNk9",
+          "name": "fetch",
+          "input": {
+            "query": "latest TypeScript best practices 2026",
+            "num_results": 3,
+            "description": "Search web: \"latest TypeScript best practices 2026\" (3 results)",
+            "_acp": {
+              "kind": "fetch",
+              "title": "Search web: \"latest TypeScript best practices 2026\" (3 results)",
+              "rawInput": {
+                "query": "latest TypeScript best practices 2026",
+                "num_results": 3
+              }
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "fetch",
+              "canonicalToolName": "fetch"
+            },
+            "_raw": {
+              "query": "latest TypeScript best practices 2026",
+              "num_results": 3,
+              "description": "Search web: \"latest TypeScript best practices 2026\" (3 results)",
+              "_acp": {
+                "kind": "fetch",
+                "title": "Search web: \"latest TypeScript best practices 2026\" (3 results)",
+                "rawInput": {
+                  "query": "latest TypeScript best practices 2026",
+                  "num_results": 3
+                }
+              }
+            }
+          },
+          "id": "1544e048-c0af-4245-84dc-144dbc432965"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547551415,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01RUBugySDD6gH4A2G7d2J9X",
+          "name": "fetch",
+          "input": {
+            "url": "https://www.example.com",
+            "description": "Fetch https://www.example.com",
+            "_acp": {
+              "kind": "fetch",
+              "title": "Fetch https://www.example.com",
+              "rawInput": {
+                "url": "https://www.example.com"
+              }
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "fetch",
+              "canonicalToolName": "fetch"
+            },
+            "_raw": {
+              "url": "https://www.example.com",
+              "description": "Fetch https://www.example.com",
+              "_acp": {
+                "kind": "fetch",
+                "title": "Fetch https://www.example.com",
+                "rawInput": {
+                  "url": "https://www.example.com"
+                }
+              }
+            }
+          },
+          "id": "79eb91e5-1777-4bf6-a7e9-a826c6d1215c"
+        }
+      }
+    ],
+    "acp/auggie/tool-call/Bash": [
+      {
+        "v": 1,
+        "ts": 1769547528141,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01SqfZfJqXG3ij2YroVbLvG8",
+          "name": "Bash",
+          "input": {
+            "command": "ls -la",
+            "wait": true,
+            "max_wait_seconds": 10,
+            "cwd": "/Users/leeroy/Development/happy-local",
+            "description": "Run `ls -la`",
+            "_acp": {
+              "kind": "execute",
+              "title": "Run `ls -la`",
+              "rawInput": {
+                "command": "ls -la",
+                "wait": true,
+                "max_wait_seconds": 10,
+                "cwd": "/Users/leeroy/Development/happy-local"
+              }
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "execute",
+              "canonicalToolName": "Bash"
+            },
+            "_raw": {
+              "command": "ls -la",
+              "wait": true,
+              "max_wait_seconds": 10,
+              "cwd": "/Users/leeroy/Development/happy-local",
+              "description": "Run `ls -la`",
+              "_acp": {
+                "kind": "execute",
+                "title": "Run `ls -la`",
+                "rawInput": {
+                  "command": "ls -la",
+                  "wait": true,
+                  "max_wait_seconds": 10,
+                  "cwd": "/Users/leeroy/Development/happy-local"
+                }
+              }
+            }
+          },
+          "id": "e8adc811-baf3-4480-afc0-d05ac8adeb58"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547534404,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01AesmQimcT8DzyrdFUZdCB1",
+          "name": "Bash",
+          "input": {
+            "command": "grep -r \"test\" . --include=\"*.txt\" | head -5",
+            "wait": true,
+            "max_wait_seconds": 10,
+            "cwd": "/Users/leeroy/Development/happy-local",
+            "description": "Run `grep -r \"test\" . --include=\"*.txt\" | head -5`",
+            "_acp": {
+              "kind": "execute",
+              "title": "Run `grep -r \"test\" . --include=\"*.txt\" | head -5`",
+              "rawInput": {
+                "command": "grep -r \"test\" . --include=\"*.txt\" | head -5",
+                "wait": true,
+                "max_wait_seconds": 10,
+                "cwd": "/Users/leeroy/Development/happy-local"
+              }
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "execute",
+              "canonicalToolName": "Bash"
+            },
+            "_raw": {
+              "command": "grep -r \"test\" . --include=\"*.txt\" | head -5",
+              "wait": true,
+              "max_wait_seconds": 10,
+              "cwd": "/Users/leeroy/Development/happy-local",
+              "description": "Run `grep -r \"test\" . --include=\"*.txt\" | head -5`",
+              "_acp": {
+                "kind": "execute",
+                "title": "Run `grep -r \"test\" . --include=\"*.txt\" | head -5`",
+                "rawInput": {
+                  "command": "grep -r \"test\" . --include=\"*.txt\" | head -5",
+                  "wait": true,
+                  "max_wait_seconds": 10,
+                  "cwd": "/Users/leeroy/Development/happy-local"
+                }
+              }
+            }
+          },
+          "id": "4059d125-e40b-4d42-bdf2-94672e3023ef"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547534527,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01EwaeneyS2fxEofSMWxpeMz",
+          "name": "Bash",
+          "input": {
+            "command": "echo \"Testing bash script execution\" && date && whoami && pwd",
+            "wait": true,
+            "max_wait_seconds": 10,
+            "cwd": "/Users/leeroy/Development/happy-local",
+            "description": "Run `echo \"Testing bash script execution\" && date && whoami && pwd`",
+            "_acp": {
+              "kind": "execute",
+              "title": "Run `echo \"Testing bash script execution\" && date && whoami && pwd`",
+              "rawInput": {
+                "command": "echo \"Testing bash script execution\" && date && whoami && pwd",
+                "wait": true,
+                "max_wait_seconds": 10,
+                "cwd": "/Users/leeroy/Development/happy-local"
+              }
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "execute",
+              "canonicalToolName": "Bash"
+            },
+            "_raw": {
+              "command": "echo \"Testing bash script execution\" && date && whoami && pwd",
+              "wait": true,
+              "max_wait_seconds": 10,
+              "cwd": "/Users/leeroy/Development/happy-local",
+              "description": "Run `echo \"Testing bash script execution\" && date && whoami && pwd`",
+              "_acp": {
+                "kind": "execute",
+                "title": "Run `echo \"Testing bash script execution\" && date && whoami && pwd`",
+                "rawInput": {
+                  "command": "echo \"Testing bash script execution\" && date && whoami && pwd",
+                  "wait": true,
+                  "max_wait_seconds": 10,
+                  "cwd": "/Users/leeroy/Development/happy-local"
+                }
+              }
+            }
+          },
+          "id": "9dbaa6c9-7ad6-4a43-a80f-15ff2c7add91"
+        }
+      }
+    ],
+    "acp/auggie/tool-call/search": [
+      {
+        "v": 1,
+        "ts": 1769547541294,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01AWC8BNt2Ty5KfTHCr48362",
+          "name": "search",
+          "input": {
+            "information_request": "Find any JavaScript or TypeScript test files in the codebase",
+            "description": "Context engine: \"Find any JavaScript or TypeScript test files in the codebase\"",
+            "_acp": {
+              "kind": "search",
+              "title": "Context engine: \"Find any JavaScript or TypeScript test files in the codebase\"",
+              "rawInput": {
+                "information_request": "Find any JavaScript or TypeScript test files in the codebase"
+              }
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "search",
+              "canonicalToolName": "search"
+            },
+            "_raw": {
+              "information_request": "Find any JavaScript or TypeScript test files in the codebase",
+              "description": "Context engine: \"Find any JavaScript or TypeScript test files in the codebase\"",
+              "_acp": {
+                "kind": "search",
+                "title": "Context engine: \"Find any JavaScript or TypeScript test files in the codebase\"",
+                "rawInput": {
+                  "information_request": "Find any JavaScript or TypeScript test files in the codebase"
+                }
+              }
+            }
+          },
+          "id": "fd80376d-4223-4157-9613-61702b1dd6b5"
+        }
+      }
+    ],
+    "acp/auggie/tool-call/Edit": [
+      {
+        "v": 1,
+        "ts": 1769547587198,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01KqrxavhsAq35ACQwsw4oHu",
+          "name": "Edit",
+          "input": {
+            "instructions_reminder": "LIMIT THE FILE CONTENT TO AT MOST 150 LINES. IF MORE CONTENT NEEDS TO BE ADDED USE THE str-replace-editor TOOL TO EDIT THE FILE AFTER IT HAS BEEN CREATED.",
+            "path": "tool_validation_results.md",
+            "file_content": "# Tool Validation Test Results\n**Date:** January 27, 2026  \n**Environment:** Happy Local Development  \n**User:** leeroy  \n**System:** macOS Darwin\n\n---\n\n## ✅ Test Summary: ALL TOOLS WORKING CORRECTLY\n\n### 1. File System Tools\n- ✅ **view (directory)** - Successfully listed workspace contents\n- ✅ **view (file)** - Successfully read file contents with line numbers\n- ✅ **view (regex search)** - Successfully searched for pattern `Test.*#[0-9]+` and found match\n- ✅ **save-file** - Successfully created this report file\n\n### 2. Process Management Tools\n- ✅ **launch-process (wait=true)** - Executed 8 synchronous commands successfully\n- ✅ **launch-process (wait=false)** - Launched background process (Terminal 7)\n- ✅ **read-process** - Successfully read output from background process\n- ✅ **list-processes** - Listed all 7 terminal processes with status\n\n### 3. Shell Commands & Bash Scripts\n- ✅ **ls -la** - Directory listing with details\n- ✅ **grep** - Recursive text search in .txt files\n- ✅ **date, whoami, pwd** - System information commands\n- ✅ **find** - File search by pattern (*.js files)\n- ✅ **env** - Environment variable inspection\n- ✅ **python3 -m json.tool** - JSON formatting\n- ✅ **Multi-line bash script** - Created and executed script in /tmp/\n\n### 4. Web Tools\n- ✅ **web-search** - Successfully searched for \"latest TypeScript best practices 2026\"\n  - Returned 3 relevant results from Reddit and AWS docs\n- ⚠️ **web-fetch** - Failed on example.com (expected - site may block automated requests)\n\n### 5. Codebase Tools\n- ✅ **codebase-retrieval** - Successfully found JavaScript/TypeScript test files\n  - Located: test_async.js, comprehensive_test_report.md, and multiple test files in .tmp/\n\n---\n\n## Detailed Test Results\n\n### Bash Script Execution\nCreated and ran multi-line bash script:\n```bash\n#!/bin/bash\necho \"=== Bash Script Test ===\"\necho \"Current directory: $(pwd)\"\necho \"Files count: $(ls -1 | wc -l)\"\necho \"System: $(uname -s)\"\necho \"Script executed successfully!\"\n```\n**Out…(truncated 1436 chars)",
+            "file_path": "tool_validation_results.md",
+            "locations": [
+              {
+                "path": "/Users/leeroy/Development/happy-local/tool_validation_results.md"
+              }
+            ],
+            "description": "Save tool_validation_results.md",
+            "_acp": {
+              "kind": "edit",
+              "title": "Save tool_validation_results.md",
+              "rawInput": {
+                "instructions_reminder": "LIMIT THE FILE CONTENT TO AT MOST 150 LINES. IF MORE CONTENT NEEDS TO BE ADDED USE THE str-replace-editor TOOL TO EDIT THE FILE AFTER IT HAS BEEN CREATED.",
+                "path": "tool_validation_results.md",
+                "file_content": "# Tool Validation Test Results\n**Date:** January 27, 2026  \n**Environment:** Happy Local Development  \n**User:** leeroy  \n**System:** macOS Darwin\n\n---\n\n## ✅ Test Summary: ALL TOOLS WORKING CORRECTLY\n\n### 1. File System Tools\n- ✅ **view (directory)** - Successfully listed workspace contents\n- ✅ **view (file)** - Successfully read file contents with line numbers\n- ✅ **view (regex search)** - Successfully searched for pattern `Test.*#[0-9]+` and found match\n- ✅ **save-file** - Successfully created this report file\n\n### 2. Process Management Tools\n- ✅ **launch-process (wait=true)** - Executed 8 synchronous commands successfully\n- ✅ **launch-process (wait=false)** - Launched background process (Terminal 7)\n- ✅ **read-process** - Successfully read output from background process\n- ✅ **list-processes** - Listed all 7 terminal processes with status\n\n### 3. Shell Commands & Bash Scripts\n- ✅ **ls -la** - Directory listing with details\n- ✅ **grep** - Recursive text search in .txt files\n- ✅ **date, whoami, pwd** - System information commands\n- ✅ **find** - File search by pattern (*.js files)\n- ✅ **env** - Environment variable inspection\n- ✅ **python3 -m json.tool** - JSON formatting\n- ✅ **Multi-line bash script** - Created and executed script in /tmp/\n\n### 4. Web Tools\n- ✅ **web-search** - Successfully searched for \"latest TypeScript best practices 2026\"\n  - Returned 3 relevant results from Reddit and AWS docs\n- ⚠️ **web-fetch** - Failed on example.com (expected - site may block automated requests)\n\n### 5. Codebase Tools\n- ✅ **codebase-retrieval** - Successfully found JavaScript/TypeScript test files\n  - Located: test_async.js, comprehensive_test_report.md, and multiple test files in .tmp/\n\n---\n\n## Detailed Test Results\n\n### Bash Script Execution\nCreated and ran multi-line bash script:\n```bash\n#!/bin/bash\necho \"=== Bash Script Test ===\"\necho \"Current directory: $(pwd)\"\necho \"Files count: $(ls -1 | wc -l)\"\necho \"System: $(uname -s)\"\necho \"Script executed successfully!\"\n```\n**Out…(truncated 1436 chars)"
+              },
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local/tool_validation_results.md"
+                }
+              ]
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "edit",
+              "canonicalToolName": "Edit"
+            },
+            "_raw": {
+              "instructions_reminder": "LIMIT THE FILE CONTENT TO AT MOST 150 LINES. IF MORE CONTENT NEEDS TO BE ADDED USE THE str-replace-editor TOOL TO EDIT THE FILE AFTER IT HAS BEEN CREATED.",
+              "path": "tool_validation_results.md",
+              "file_content": "# Tool Validation Test Results\n**Date:** January 27, 2026  \n**Environment:** Happy Local Development  \n**User:** leeroy  \n**System:** macOS Darwin\n\n---\n\n## ✅ Test Summary: ALL TOOLS WORKING CORRECTLY\n\n### 1. File System Tools\n- ✅ **view (directory)** - Successfully listed workspace contents\n- ✅ **view (file)** - Successfully read file contents with line numbers\n- ✅ **view (regex search)** - Successfully searched for pattern `Test.*#[0-9]+` and found match\n- ✅ **save-file** - Successfully created this report file\n\n### 2. Process Management Tools\n- ✅ **launch-process (wait=true)** - Executed 8 synchronous commands successfully\n- ✅ **launch-process (wait=false)** - Launched background process (Terminal 7)\n- ✅ **read-process** - Successfully read output from background process\n- ✅ **list-processes** - Listed all 7 terminal processes with status\n\n### 3. Shell Commands & Bash Scripts\n- ✅ **ls -la** - Directory listing with details\n- ✅ **grep** - Recursive text search in .txt files\n- ✅ **date, whoami, pwd** - System information commands\n- ✅ **find** - File search by pattern (*.js files)\n- ✅ **env** - Environment variable inspection\n- ✅ **python3 -m json.tool** - JSON formatting\n- ✅ **Multi-line bash script** - Created and executed script in /tmp/\n\n### 4. Web Tools\n- ✅ **web-search** - Successfully searched for \"latest TypeScript best practices 2026\"\n  - Returned 3 relevant results from Reddit and AWS docs\n- ⚠️ **web-fetch** - Failed on example.com (expected - site may block automated requests)\n\n### 5. Codebase Tools\n- ✅ **codebase-retrieval** - Successfully found JavaScript/TypeScript test files\n  - Located: test_async.js, comprehensive_test_report.md, and multiple test files in .tmp/\n\n---\n\n## Detailed Test Results\n\n### Bash Script Execution\nCreated and ran multi-line bash script:\n```bash\n#!/bin/bash\necho \"=== Bash Script Test ===\"\necho \"Current directory: $(pwd)\"\necho \"Files count: $(ls -1 | wc -l)\"\necho \"System: $(uname -s)\"\necho \"Script executed successfully!\"\n```\n**Out…(truncated 23 chars)",
+              "file_path": "tool_validation_results.md",
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local/tool_validation_results.md"
+                }
+              ],
+              "description": "Save tool_validation_results.md",
+              "_acp": {
+                "kind": "edit",
+                "title": "Save tool_validation_results.md",
+                "rawInput": {
+                  "instructions_reminder": "LIMIT THE FILE CONTENT TO AT MOST 150 LINES. IF MORE CONTENT NEEDS TO BE ADDED USE THE str-replace-editor TOOL TO EDIT THE FILE AFTER IT HAS BEEN CREATED.",
+                  "path": "tool_validation_results.md",
+                  "file_content": "# Tool Validation Test Results\n**Date:** January 27, 2026  \n**Environment:** Happy Local Development  \n**User:** leeroy  \n**System:** macOS Darwin\n\n---\n\n## ✅ Test Summary: ALL TOOLS WORKING CORRECTLY\n\n### 1. File System Tools\n- ✅ **view (directory)** - Successfully listed workspace contents\n- ✅ **view (file)** - Successfully read file contents with line numbers\n- ✅ **view (regex search)** - Successfully searched for pattern `Test.*#[0-9]+` and found match\n- ✅ **save-file** - Successfully created this report file\n\n### 2. Process Management Tools\n- ✅ **launch-process (wait=true)** - Executed 8 synchronous commands successfully\n- ✅ **launch-process (wait=false)** - Launched background process (Terminal 7)\n- ✅ **read-process** - Successfully read output from background process\n- ✅ **list-processes** - Listed all 7 terminal processes with status\n\n### 3. Shell Commands & Bash Scripts\n- ✅ **ls -la** - Directory listing with details\n- ✅ **grep** - Recursive text search in .txt files\n- ✅ **date, whoami, pwd** - System information commands\n- ✅ **find** - File search by pattern (*.js files)\n- ✅ **env** - Environment variable inspection\n- ✅ **python3 -m json.tool** - JSON formatting\n- ✅ **Multi-line bash script** - Created and executed script in /tmp/\n\n### 4. Web Tools\n- ✅ **web-search** - Successfully searched for \"latest TypeScript best practices 2026\"\n  - Returned 3 relevant results from Reddit and AWS docs\n- ⚠️ **web-fetch** - Failed on example.com (expected - site may block automated requests)\n\n### 5. Codebase Tools\n- ✅ **codebase-retrieval** - Successfully found JavaScript/TypeScript test files\n  - Located: test_async.js, comprehensive_test_report.md, and multiple test files in .tmp/\n\n---\n\n## Detailed Test Results\n\n### Bash Script Execution\nCreated and ran multi-line bash script:\n```bash\n#!/bin/bash\necho \"=== Bash Script Test ===\"\necho \"Current directory: $(pwd)\"\necho \"Files count: $(ls -1 | wc -l)\"\necho \"System: $(uname -s)\"\necho \"Script executed successfully!\"\n```\n**Out…(truncated 23 chars)"
+                },
+                "locations": [
+                  {
+                    "path": "/Users/leeroy/Development/happy-local/tool_validation_results.md"
+                  }
+                ]
+              }
+            }
+          },
+          "id": "2012a573-f596-4566-a0db-d5dd517df518"
+        }
+      }
+    ],
+    "acp/auggie/tool-call/delete": [
+      {
+        "v": 1,
+        "ts": 1769547625089,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_013TxpVjgCi1YhVRgjgmbDtZ",
+          "name": "delete",
+          "input": {
+            "file_paths": [
+              "tool_validation_results.md"
+            ],
+            "locations": [
+              {
+                "path": "/Users/leeroy/Development/happy-local/tool_validation_results.md"
+              }
+            ],
+            "description": "Delete tool_validation_results.md",
+            "_acp": {
+              "kind": "delete",
+              "title": "Delete tool_validation_results.md",
+              "rawInput": {
+                "file_paths": [
+                  "tool_validation_results.md"
+                ]
+              },
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local/tool_validation_results.md"
+                }
+              ]
+            },
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "delete",
+              "canonicalToolName": "delete"
+            },
+            "_raw": {
+              "file_paths": [
+                "tool_validation_results.md"
+              ],
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local/tool_validation_results.md"
+                }
+              ],
+              "description": "Delete tool_validation_results.md",
+              "_acp": {
+                "kind": "delete",
+                "title": "Delete tool_validation_results.md",
+                "rawInput": {
+                  "file_paths": [
+                    "tool_validation_results.md"
+                  ]
+                },
+                "locations": [
+                  {
+                    "path": "/Users/leeroy/Development/happy-local/tool_validation_results.md"
+                  }
+                ]
+              }
+            }
+          },
+          "id": "8fc48afe-b767-4129-a5e7-a152e70d3730"
         }
       }
     ]

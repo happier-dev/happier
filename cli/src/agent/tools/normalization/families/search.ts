@@ -30,6 +30,10 @@ export function normalizeCodeSearchInput(rawInput: unknown): UnknownRecord {
                 ? out.q.trim()
                 : typeof out.pattern === 'string' && out.pattern.trim().length > 0
                     ? out.pattern.trim()
+                    : typeof (out as any).information_request === 'string' && (out as any).information_request.trim().length > 0
+                        ? (out as any).information_request.trim()
+                        : typeof (out as any).informationRequest === 'string' && (out as any).informationRequest.trim().length > 0
+                            ? (out as any).informationRequest.trim()
                     : null;
 
     if (query && typeof out.query !== 'string') out.query = query;
@@ -58,4 +62,3 @@ export function normalizeLsInput(rawInput: unknown): UnknownRecord {
 
     return out;
 }
-

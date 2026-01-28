@@ -48,6 +48,7 @@ describe('tool normalization fixtures (v1)', () => {
         const keys = Object.keys(fixtures.examples);
 
         expect(keys).toEqual(expect.arrayContaining([
+            'acp/auggie/tool-call/Bash',
             'acp/opencode/tool-call/execute',
             'acp/gemini/permission-request/edit',
             'acp/codex/tool-call/execute',
@@ -157,6 +158,17 @@ describe('tool normalization fixtures (v1)', () => {
             callId: reasoning!.payload.callId,
         });
         expect(reasoningNorm.canonicalToolName).toBe('Reasoning');
+
+        const codexChangeTitle = fixtures.examples['codex/codex/tool-call/mcp__happy__change_title']?.[0];
+        expect(codexChangeTitle).toBeTruthy();
+        const codexChangeTitleNorm = normalizeToolCallV2({
+            protocol: 'codex',
+            provider: 'codex',
+            toolName: codexChangeTitle!.payload.name,
+            rawInput: codexChangeTitle!.payload.input,
+            callId: codexChangeTitle!.payload.callId,
+        });
+        expect(codexChangeTitleNorm.canonicalToolName).toBe('change_title');
     });
 
     it('normalizes tool-call inputs for file/search/web tools (surfaces key fields when provided)', () => {
@@ -275,6 +287,24 @@ describe('tool normalization fixtures (v1)', () => {
             expect(norm.canonicalToolName).toBe('Task');
             const input = asRecord(norm.input);
             expect(typeof input?.subject).toBe('string');
+        }
+
+        // Auggie search (raw tool name 'search' should map to CodeSearch)
+        {
+            const ev = sample('acp/auggie/tool-call/search');
+            const norm = normalizeFirstCall(ev);
+            expect(norm.canonicalToolName).toBe('CodeSearch');
+            const input = asRecord(norm.input);
+            expect(typeof input?.query).toBe('string');
+        }
+
+        // Auggie fetch (web query should map to WebSearch)
+        {
+            const ev = sample('acp/auggie/tool-call/fetch');
+            const norm = normalizeFirstCall(ev);
+            expect(norm.canonicalToolName).toBe('WebSearch');
+            const input = asRecord(norm.input);
+            expect(typeof input?.query).toBe('string');
         }
     });
 

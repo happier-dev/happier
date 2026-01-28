@@ -130,6 +130,30 @@ describe('normalizeToolCallV2', () => {
         ).toBe('Task');
     });
 
+    it('maps fetch to WebFetch/WebSearch based on payload shape', () => {
+        expect(
+            normalizeToolCallV2({ protocol: 'acp', provider: 'auggie', toolName: 'fetch', rawInput: { query: 'cats' }, callId: 'f1' })
+                .canonicalToolName
+        ).toBe('WebSearch');
+
+        expect(
+            normalizeToolCallV2({ protocol: 'acp', provider: 'auggie', toolName: 'fetch', rawInput: { url: 'https://example.com' }, callId: 'f2' })
+                .canonicalToolName
+        ).toBe('WebFetch');
+    });
+
+    it('maps mcp__happy__change_title to change_title', () => {
+        expect(
+            normalizeToolCallV2({ protocol: 'codex', provider: 'codex', toolName: 'mcp__happy__change_title', rawInput: { title: 'x' }, callId: 'ct1' })
+                .canonicalToolName
+        ).toBe('change_title');
+
+        expect(
+            normalizeToolCallV2({ protocol: 'acp', provider: 'gemini', toolName: 'change_title', rawInput: { title: 'x' }, callId: 'ct2' })
+                .canonicalToolName
+        ).toBe('change_title');
+    });
+
     it('normalizes common search aliases into canonical Glob/CodeSearch inputs', () => {
         const glob = normalizeToolCallV2({
             protocol: 'acp',
