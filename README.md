@@ -13,6 +13,58 @@ Use Claude Code, Codex, Gemini, OpenCode, Augment Code from anywhere with end-to
 This forks adds a lot of new features, improvements, fixes on top of the original Happy project. 
 **The goal is to keep upstream compatibility for now and be able port our changes into upstream when the time comes.**
 
+## 🧭 Highlights
+
+- **Server Light:** SQLite + local files (no Docker) + optional UI serving
+- **Server storage validation:** S3/Minio env checks + bucket existence verification
+- **Session Sharing:** friends + public share links + access logging + `/v1/features` gating
+- **Agents:** centralized agent catalog (app + CLI)
+- **OpenCode** and **Auggie** (Augment Code) support
+- **Slash commands:** ACP/Claude command publishing into session metadata + consistent UI affordances
+- **Pending Message Queue:** persistent metadata-backed queue + pending UI/actions
+- **Capabilities Protocol:** checklist-based machine introspection + install helpers
+- **New Session Wizard:** route-based wizard + machine/path/profile pickers + requirement checks
+- **Profiles & `preview-env`:** env-var-based profiles + effective spawn-env preview (with secrets policy)
+- **Secrets Vault:** SecretString-sealed secrets + bindings + session-only “enter once” support
+- **Permissions:** persistent permission-mode restoration + cross-agent normalization + defaults per agent type
+- **Inactive Session Resume:** UI resume for existing sessions + vendor resume in new sessions (Codex MCP resume gated)
+- **Claude reliability:** remote↔local switching hardening + transcript/streaming resilience + AskUserQuestion/ExitPlanMode native handling + terminal corruption fixes
+- **Terminal & tmux:** headless sessions + attach tooling + hardened tmux parsing/targeting + instance isolation
+- **Codex improvements:** ExecPolicy approvals + MCP tool-call reliability + `/clear` session reset handling
+- **Tool UX:** specialized tool renderers + structured ACP result rendering + improved agent error surfacing
+- **UI primitives:** overlay/popover/modal system + searchable list/picker primitives
+- **Sessions UX:** unread/inactive grouping + session list/detail polish
+- **Daemon process safety:** strict reattach + ownership gating + cross-stack safety
+- **Auth/storage hardening:** scoped storage + safer token persistence + `happy auth login --no-open`
+- **Foundations:** Unistyles migration + i18n sweep/tooling + deterministic postinstall patches + test harness + log redaction
+
+## How to try it
+
+You can use [happy-stacks](https://github.com/leeroybrun/happy-stacks) to easily run this PR in an isolated sandbox:
+
+```
+npx --yes happy-stacks@latest review-pr \
+  --happy=https://github.com/slopus/happy/pull/487 \
+  --no-mobile \
+  --keep-sandbox \
+  --verbose \
+  -- --bind=loopback
+```
+
+## WIP / not fully tested yet / not fully finished yet
+
+This branch/PR is not finalized yet, but can still be used/reviewed/tested already. Other changes will be pushed as they are finalized.
+
+- **ACP resume:** ACP providers resume features and capability detection have not been fully tested yet
+- **Tool rendering:** full normalization and rendering improvements are still WIP
+- **Message queue UI polishing:** some improvements and UI/UX are WIP
+- **Installable deps UI display + checking:** experimental installable dependencies (codex-mcp fork & codex-acp) display & detection will be improved a bit in the new session screens
+- **Sessions sharing UI:** some improvements and UI/UX are WIP
+- **Multi-provider permissions session allowlist:** the Claude sessions' permissions allowlists have been improved and extended to all other providers, but not fully tested yet
+- **Deep review in progress**
+
+---
+
 ## 🏗 Core Architecture
 
 ### 1. Server Light (SQLite & Local Files)
@@ -504,6 +556,8 @@ PRs without sufficient evidence are intentionally omitted to avoid false positiv
 | PR | Title | Author | Evidence |
 | --- | --- | --- | --- |
 | [slopus/happy-server#25](https://github.com/slopus/happy-server/pull/25) | feat: session sharing API/server support | @54m | ported into monorepo; see Session Sharing section |
+
+---------
 
 <div align="center">
   
