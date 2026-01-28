@@ -3,7 +3,7 @@ import { readCredentials } from '@/persistence';
 import { ApiClient } from '@/api/api';
 import type { CloudConnectTarget, CloudConnectTargetStatus } from '@/cloud/connectTypes';
 import { AGENTS } from '@/backends/catalog';
-import { deriveVendorConnectStatusForStatusCheck } from '@/commands/connectStatus';
+import { deriveVendorConnectStatusForStatusCheck } from '@/cloud/connectStatus';
 
 /**
  * Handle connect subcommand

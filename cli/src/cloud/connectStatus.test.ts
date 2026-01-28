@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { deriveVendorConnectStatus, deriveVendorConnectStatusForStatusCheck } from '@/commands/connectStatus';
+import { deriveVendorConnectStatus, deriveVendorConnectStatusForStatusCheck } from '@/cloud/connectStatus';
 
 function makeUnsignedJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
@@ -46,4 +46,3 @@ describe('deriveVendorConnectStatusForStatusCheck', () => {
     });
   });
 });
-
