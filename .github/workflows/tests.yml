@@ -18,12 +18,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (GitHub Actions)
+        if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
+          cache: yarn
           cache-dependency-path: yarn.lock
+
+      - name: Setup Node (act)
+        if: env.ACT == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Enable Corepack
         run: |
@@ -53,12 +60,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (GitHub Actions)
+        if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
+          cache: yarn
           cache-dependency-path: server/yarn.lock
+
+      - name: Setup Node (act)
+        if: env.ACT == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Enable Corepack
         run: |
@@ -100,12 +114,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (GitHub Actions)
+        if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
+          cache: yarn
           cache-dependency-path: cli/yarn.lock
+
+      - name: Setup Node (act)
+        if: env.ACT == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Enable Corepack
         run: |
@@ -192,14 +213,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node (GitHub Actions)
+        if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
+          cache: yarn
           cache-dependency-path: |
             cli/yarn.lock
             server/yarn.lock
+
+      - name: Setup Node (act)
+        if: env.ACT == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Enable Corepack
         run: |
