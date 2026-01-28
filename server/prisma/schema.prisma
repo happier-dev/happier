@@ -398,6 +398,8 @@ model SessionShare {
     sharedWithUserId  String
     sharedWithUser    Account          @relation("SharedWithSessions", fields: [sharedWithUserId], references: [id])
     accessLevel       ShareAccessLevel @default(view)
+    /// Whether this recipient can approve permission prompts for this session (delegated to the owner daemon)
+    canApprovePermissions Boolean       @default(false)
     /// NaCl Box encrypted dataEncryptionKey for the recipient
     encryptedDataKey  Bytes
     createdAt         DateTime         @default(now())

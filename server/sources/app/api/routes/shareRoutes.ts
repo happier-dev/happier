@@ -1,7 +1,7 @@
 import { type Fastify } from "../types";
 import { db } from "@/storage/db";
 import { z } from "zod";
-import { canManageSharing, areFriends } from "@/app/share/accessControl";
+import { canManageSharing, canManagePermissionDelegation, areFriends } from "@/app/share/accessControl";
 import { ShareAccessLevel } from "@prisma/client";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { eventRouter, buildSessionSharedUpdate, buildSessionShareUpdatedUpdate, buildSessionShareRevokedUpdate } from "@/app/events/eventRouter";
@@ -64,6 +64,7 @@ export function shareRoutes(app: Fastify) {
                 id: share.id,
                 sharedWithUser: toShareUserProfile(share.sharedWithUser),
                 accessLevel: share.accessLevel,
+                canApprovePermissions: share.canApprovePermissions,
                 createdAt: share.createdAt.getTime(),
                 updatedAt: share.updatedAt.getTime()
             }))
@@ -88,13 +89,14 @@ export function shareRoutes(app: Fastify) {
             body: z.object({
                 userId: z.string(),
                 accessLevel: z.enum(['view', 'edit', 'admin']),
+                canApprovePermissions: z.boolean().optional(),
                 encryptedDataKey: z.string(),
             })
         }
     }, async (request, reply) => {
         const ownerId = request.userId;
         const { sessionId } = request.params;
-        const { userId, accessLevel, encryptedDataKey } = request.body;
+        const { userId, accessLevel, canApprovePermissions, encryptedDataKey } = request.body;
 
         const session = await db.session.findUnique({
             where: { id: sessionId },
@@ -107,6 +109,15 @@ export function shareRoutes(app: Fastify) {
         // Only owner or admin can create shares
         if (!await canManageSharing(ownerId, sessionId)) {
             return reply.code(403).send({ error: 'Forbidden' });
+        }
+
+        if (canApprovePermissions === true) {
+            if (accessLevel === 'view') {
+                return reply.code(400).send({ error: 'Permission approvals require edit or admin access' });
+            }
+            if (!await canManagePermissionDelegation(ownerId, sessionId)) {
+                return reply.code(403).send({ error: 'Forbidden' });
+            }
         }
 
         // Cannot share with yourself
@@ -149,10 +160,12 @@ export function shareRoutes(app: Fastify) {
                 sharedByUserId: ownerId,
                 sharedWithUserId: userId,
                 accessLevel: accessLevel as ShareAccessLevel,
+                ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
                 encryptedDataKey: encryptedDataKeyBytes
             },
             update: {
                 accessLevel: accessLevel as ShareAccessLevel,
+                ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
                 encryptedDataKey: encryptedDataKeyBytes
             },
             include: {
@@ -179,6 +192,7 @@ export function shareRoutes(app: Fastify) {
                 id: share.id,
                 sharedWithUser: toShareUserProfile(share.sharedWithUser),
                 accessLevel: share.accessLevel,
+                canApprovePermissions: share.canApprovePermissions,
                 createdAt: share.createdAt.getTime(),
                 updatedAt: share.updatedAt.getTime()
             }
@@ -196,22 +210,46 @@ export function shareRoutes(app: Fastify) {
                 shareId: z.string()
             }),
             body: z.object({
-                accessLevel: z.enum(['view', 'edit', 'admin'])
+                accessLevel: z.enum(['view', 'edit', 'admin']).optional(),
+                canApprovePermissions: z.boolean().optional(),
             })
         }
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId, shareId } = request.params;
-        const { accessLevel } = request.body;
+        const { accessLevel, canApprovePermissions } = request.body;
 
         // Only owner or admin can update shares
         if (!await canManageSharing(userId, sessionId)) {
             return reply.code(403).send({ error: 'Forbidden' });
         }
 
-        const share = await db.sessionShare.update({
+        if (canApprovePermissions !== undefined) {
+            if (!await canManagePermissionDelegation(userId, sessionId)) {
+                return reply.code(403).send({ error: 'Forbidden' });
+            }
+        }
+
+        const existing = await db.sessionShare.findFirst({
             where: { id: shareId, sessionId },
-            data: { accessLevel: accessLevel as ShareAccessLevel },
+            select: { accessLevel: true, canApprovePermissions: true },
+        });
+        if (!existing) {
+            return reply.code(404).send({ error: 'Share not found' });
+        }
+
+        const nextAccessLevel = accessLevel ?? existing.accessLevel;
+        const nextCanApprovePermissions = canApprovePermissions ?? existing.canApprovePermissions;
+        if (nextCanApprovePermissions === true && nextAccessLevel === 'view') {
+            return reply.code(400).send({ error: 'Permission approvals require edit or admin access' });
+        }
+
+        const share = await db.sessionShare.update({
+            where: { id: shareId },
+            data: {
+                ...(accessLevel !== undefined ? { accessLevel: accessLevel as ShareAccessLevel } : {}),
+                ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
+            },
             include: {
                 sharedWithUser: {
                     select: PROFILE_SELECT
@@ -240,6 +278,7 @@ export function shareRoutes(app: Fastify) {
                 id: share.id,
                 sharedWithUser: toShareUserProfile(share.sharedWithUser),
                 accessLevel: share.accessLevel,
+                canApprovePermissions: share.canApprovePermissions,
                 createdAt: share.createdAt.getTime(),
                 updatedAt: share.updatedAt.getTime()
             }
@@ -269,7 +308,7 @@ export function shareRoutes(app: Fastify) {
         // Use transaction to ensure consistent state
         const result = await db.$transaction(async (tx) => {
             // Get share before deleting
-            const share = await tx.sessionShare.findUnique({
+            const share = await tx.sessionShare.findFirst({
                 where: { id: shareId, sessionId }
             });
 
@@ -279,7 +318,7 @@ export function shareRoutes(app: Fastify) {
 
             // Delete share
             await tx.sessionShare.delete({
-                where: { id: shareId, sessionId }
+                where: { id: shareId }
             });
 
             return { share };
