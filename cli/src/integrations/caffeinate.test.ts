@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-const spawnMock = vi.fn();
-
-vi.mock('child_process', () => ({
-    spawn: spawnMock,
+const { spawnMock } = vi.hoisted(() => ({
+    spawnMock: vi.fn(),
 }));
+
+vi.mock('child_process', async () => {
+    const actual = await vi.importActual<any>('child_process');
+    return {
+        ...actual,
+        spawn: spawnMock,
+    };
+});
 
 vi.mock('@/configuration', () => ({
     configuration: {
@@ -66,4 +72,3 @@ describe('caffeinate', () => {
         }
     });
 });
-
