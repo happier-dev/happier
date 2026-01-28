@@ -7,7 +7,8 @@ import { computeNextReadStateV1 } from '../readStateV1';
 import { getServerUrl } from '../serverConfig';
 import type { AuthCredentials } from '@/auth/tokenStorage';
 import { HappyError } from '@/utils/errors';
-import type { ApiMessage } from '../apiTypes';
+import type { ApiMessage, ApiSessionMessagesResponse } from '../apiTypes';
+import { ApiSessionMessagesResponseSchema } from '../apiTypes';
 import { storage } from '../storage';
 import type { Encryption } from '../encryption/encryption';
 import { nowServerMs } from '../time';
@@ -607,6 +608,7 @@ export async function fetchAndApplyMessages(params: {
     sessionReceivedMessages: Map<string, Set<string>>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     markMessagesLoaded: (sessionId: string) => void;
+    onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
     log: { log: (message: string) => void };
 }): Promise<void> {
     const { sessionId, getSessionEncryption, request, sessionReceivedMessages, applyMessages, markMessagesLoaded, log } =
@@ -624,7 +626,13 @@ export async function fetchAndApplyMessages(params: {
 
     // Request (apiSocket.request calibrates server time best-effort from the HTTP Date header)
     const response = await request(`/v1/sessions/${sessionId}/messages`);
-    const data = await response.json();
+    const json = await response.json();
+    const parsed = ApiSessionMessagesResponseSchema.safeParse(json);
+    if (!parsed.success) {
+        throw new Error(`Invalid /messages response: ${parsed.error.message}`);
+    }
+    const data = parsed.data;
+    params.onMessagesPage?.(data);
 
     // Collect existing messages
     let eixstingMessages = sessionReceivedMessages.get(sessionId);
@@ -638,7 +646,7 @@ export async function fetchAndApplyMessages(params: {
 
     // Filter out existing messages and prepare for batch decryption
     const messagesToDecrypt: ApiMessage[] = [];
-    for (const msg of [...(data.messages as ApiMessage[])].reverse()) {
+    for (const msg of [...data.messages].reverse()) {
         if (!eixstingMessages.has(msg.id)) {
             messagesToDecrypt.push(msg);
         }
@@ -664,4 +672,65 @@ export async function fetchAndApplyMessages(params: {
     applyMessages(sessionId, normalizedMessages);
     markMessagesLoaded(sessionId);
     log.log(`💬 fetchMessages completed for session ${sessionId} - processed ${normalizedMessages.length} messages`);
+}
+
+export async function fetchAndApplyOlderMessages(params: {
+    sessionId: string;
+    beforeSeq: number;
+    limit: number;
+    getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
+    request: (path: string) => Promise<Response>;
+    sessionReceivedMessages: Map<string, Set<string>>;
+    applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
+    log: { log: (message: string) => void };
+}): Promise<{ applied: number; page: ApiSessionMessagesResponse }> {
+    const { sessionId, beforeSeq, limit, getSessionEncryption, request, sessionReceivedMessages, applyMessages, log } = params;
+
+    // Get encryption - may not be ready yet if session was just created
+    const encryption = getSessionEncryption(sessionId);
+    if (!encryption) {
+        throw new Error(`Session encryption not ready for ${sessionId}`);
+    }
+
+    const qs = new URLSearchParams({ beforeSeq: String(beforeSeq), limit: String(limit) });
+    const response = await request(`/v1/sessions/${sessionId}/messages?${qs.toString()}`);
+    const json = await response.json();
+    const parsed = ApiSessionMessagesResponseSchema.safeParse(json);
+    if (!parsed.success) {
+        throw new Error(`Invalid /messages response: ${parsed.error.message}`);
+    }
+    const data = parsed.data;
+    params.onMessagesPage?.(data);
+
+    let eixstingMessages = sessionReceivedMessages.get(sessionId);
+    if (!eixstingMessages) {
+        eixstingMessages = new Set<string>();
+        sessionReceivedMessages.set(sessionId, eixstingMessages);
+    }
+
+    const messagesToDecrypt: ApiMessage[] = [];
+    for (const msg of [...data.messages].reverse()) {
+        if (!eixstingMessages.has(msg.id)) {
+            messagesToDecrypt.push(msg);
+        }
+    }
+
+    const decryptedMessages = await encryption.decryptMessages(messagesToDecrypt);
+
+    const normalizedMessages: NormalizedMessage[] = [];
+    for (let i = 0; i < decryptedMessages.length; i++) {
+        const decrypted = decryptedMessages[i];
+        if (decrypted) {
+            eixstingMessages.add(decrypted.id);
+            const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
+            if (normalized) {
+                normalizedMessages.push(normalized);
+            }
+        }
+    }
+
+    applyMessages(sessionId, normalizedMessages);
+    log.log(`💬 fetchOlderMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
+    return { applied: normalizedMessages.length, page: data };
 }

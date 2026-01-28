@@ -20,6 +20,14 @@ export const ApiMessageSchema = z.object({
 
 export type ApiMessage = z.infer<typeof ApiMessageSchema>;
 
+export const ApiSessionMessagesResponseSchema = z.object({
+    messages: z.array(ApiMessageSchema),
+    hasMore: z.boolean().optional(),
+    nextBeforeSeq: z.number().nullable().optional(),
+});
+
+export type ApiSessionMessagesResponse = z.infer<typeof ApiSessionMessagesResponseSchema>;
+
 //
 // Updates
 //

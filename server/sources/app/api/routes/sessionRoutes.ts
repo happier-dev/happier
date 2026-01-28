@@ -346,22 +346,32 @@ export function sessionRoutes(app: Fastify) {
         schema: {
             params: z.object({
                 sessionId: z.string()
-            })
+            }),
+            querystring: z.object({
+                limit: z.coerce.number().int().min(1).max(500).default(150),
+                beforeSeq: z.coerce.number().int().min(1).optional(),
+            }).optional(),
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
+        const { limit = 150, beforeSeq } = request.query || {};
 
         const access = await checkSessionAccess(userId, sessionId);
         if (!access) {
             return reply.code(404).send({ error: 'Session not found' });
         }
 
+        const where: Prisma.SessionMessageWhereInput = { sessionId };
+        if (beforeSeq !== undefined) {
+            where.seq = { lt: beforeSeq };
+        }
+
         const messages = await db.sessionMessage.findMany({
-            where: { sessionId },
-            orderBy: { createdAt: 'desc' },
-            take: 150,
+            where,
+            orderBy: { seq: 'desc' },
+            take: limit + 1,
             select: {
                 id: true,
                 seq: true,
@@ -372,15 +382,23 @@ export function sessionRoutes(app: Fastify) {
             }
         });
 
+        const hasMore = messages.length > limit;
+        const resultMessages = hasMore ? messages.slice(0, limit) : messages;
+        const nextBeforeSeq = hasMore && resultMessages.length > 0
+            ? resultMessages[resultMessages.length - 1].seq
+            : null;
+
         return reply.send({
-            messages: messages.map((v) => ({
+            messages: resultMessages.map((v) => ({
                 id: v.id,
                 seq: v.seq,
                 content: v.content,
                 localId: v.localId,
                 createdAt: v.createdAt.getTime(),
                 updatedAt: v.updatedAt.getTime()
-            }))
+            })),
+            hasMore,
+            nextBeforeSeq
         });
     });
 

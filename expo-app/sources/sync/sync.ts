@@ -65,6 +65,7 @@ import {
     buildUpdatedSessionFromSocketUpdate,
     fetchAndApplySessions,
     fetchAndApplyMessages,
+    fetchAndApplyOlderMessages,
     fetchAndApplyPendingMessages as fetchAndApplyPendingMessagesEngine,
     handleDeleteSessionSocketUpdate,
     handleNewMessageSocketUpdate,
@@ -83,6 +84,8 @@ import {
     handleSocketUpdate,
 } from './engine/socket';
 
+const SESSION_MESSAGES_PAGE_SIZE = 150;
+
 class Sync {
     // Spawned agents (especially in spawn mode) can take noticeable time to connect.
     private static readonly SESSION_READY_TIMEOUT_MS = 10000;
@@ -95,6 +98,10 @@ class Sync {
     private sessionsSync: InvalidateSync;
     private messagesSync = new Map<string, InvalidateSync>();
     private sessionReceivedMessages = new Map<string, Set<string>>();
+    private sessionMessagesBeforeSeq = new Map<string, number>();
+    private sessionMessagesHasMoreOlder = new Map<string, boolean>();
+    private sessionMessagesLoadingOlder = new Set<string>();
+    private sessionMessagesPaginationSupported = new Map<string, boolean>();
     private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
     private machineDataKeys = new Map<string, Uint8Array>(); // Store machine data encryption keys internally
     private artifactDataKeys = new Map<string, Uint8Array>(); // Store artifact data encryption keys internally
@@ -1003,8 +1010,75 @@ class Sync {
             sessionReceivedMessages: this.sessionReceivedMessages,
             applyMessages: (sid, messages) => this.applyMessages(sid, messages),
             markMessagesLoaded: (sid) => storage.getState().applyMessagesLoaded(sid),
+            onMessagesPage: (page) => {
+                this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+            },
             log,
         });
+    }
+
+    public async loadOlderMessages(sessionId: string): Promise<{
+        loaded: number;
+        hasMore: boolean;
+        status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+    }> {
+        if (this.sessionMessagesLoadingOlder.has(sessionId)) {
+            return {
+                loaded: 0,
+                hasMore: this.sessionMessagesHasMoreOlder.get(sessionId) ?? true,
+                status: 'in_flight',
+            };
+        }
+
+        const knownHasMore = this.sessionMessagesHasMoreOlder.get(sessionId);
+        if (knownHasMore === false) {
+            return { loaded: 0, hasMore: false, status: 'no_more' };
+        }
+
+        const supported = this.sessionMessagesPaginationSupported.get(sessionId);
+        if (supported === false) {
+            return { loaded: 0, hasMore: false, status: 'no_more' };
+        }
+
+        const beforeSeq = this.sessionMessagesBeforeSeq.get(sessionId);
+        if (!beforeSeq) {
+            // Pagination state is initialized during the initial `/messages` fetch. If we haven't
+            // seen it yet, don't permanently disable pagination on the UI side.
+            return { loaded: 0, hasMore: knownHasMore ?? true, status: 'not_ready' };
+        }
+
+        this.sessionMessagesLoadingOlder.add(sessionId);
+        try {
+            const result = await fetchAndApplyOlderMessages({
+                sessionId,
+                beforeSeq,
+                limit: SESSION_MESSAGES_PAGE_SIZE,
+                getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                request: (path) => apiSocket.request(path),
+                sessionReceivedMessages: this.sessionReceivedMessages,
+                applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                log,
+            });
+
+            if (result.page.messages.length === 0) {
+                this.sessionMessagesHasMoreOlder.set(sessionId, false);
+                return { loaded: 0, hasMore: false, status: 'no_more' };
+            }
+
+            this.updateSessionMessagesPaginationFromPage(sessionId, result.page, { allowHasMoreInference: true });
+
+            const hasMore = this.sessionMessagesHasMoreOlder.get(sessionId) ?? false;
+            if (hasMore === false) {
+                return { loaded: result.applied, hasMore: false, status: 'no_more' };
+            }
+
+            return { loaded: result.applied, hasMore, status: 'loaded' };
+        } catch (error) {
+            console.error('Failed to load older messages:', error);
+            return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+        } finally {
+            this.sessionMessagesLoadingOlder.delete(sessionId);
+        }
     }
 
     private registerPushToken = async () => {
@@ -1074,20 +1148,71 @@ class Sync {
     // Apply store
     //
 
-    private applyMessages = (sessionId: string, messages: NormalizedMessage[]) => {
+    private applyMessages = (
+        sessionId: string,
+        messages: NormalizedMessage[],
+        options?: { notifyVoice?: boolean }
+    ) => {
         const result = storage.getState().applyMessages(sessionId, messages);
-        let m: Message[] = [];
-        for (let messageId of result.changed) {
-            const message = storage.getState().sessionMessages[sessionId].messagesMap[messageId];
-            if (message) {
-                m.push(message);
+        const notifyVoice = options?.notifyVoice !== false;
+        if (notifyVoice) {
+            let m: Message[] = [];
+            for (let messageId of result.changed) {
+                const message = storage.getState().sessionMessages[sessionId].messagesMap[messageId];
+                if (message) {
+                    m.push(message);
+                }
+            }
+            if (m.length > 0) {
+                voiceHooks.onMessages(sessionId, m);
+            }
+            if (result.hasReadyEvent) {
+                voiceHooks.onReady(sessionId);
             }
         }
-        if (m.length > 0) {
-            voiceHooks.onMessages(sessionId, m);
+    }
+
+    private updateSessionMessagesPaginationFromPage(
+        sessionId: string,
+        page: { messages: Array<{ seq: number }>; hasMore?: boolean; nextBeforeSeq?: number | null },
+        options?: { allowHasMoreInference?: boolean }
+    ) {
+        if (!Array.isArray(page.messages) || page.messages.length === 0) {
+            return;
         }
-        if (result.hasReadyEvent) {
-            voiceHooks.onReady(sessionId);
+
+        const supportsPagination = page.hasMore !== undefined || page.nextBeforeSeq !== undefined;
+        if (supportsPagination) {
+            this.sessionMessagesPaginationSupported.set(sessionId, true);
+        } else if (!this.sessionMessagesPaginationSupported.has(sessionId)) {
+            this.sessionMessagesPaginationSupported.set(sessionId, false);
+        }
+
+        const prevCursor = this.sessionMessagesBeforeSeq.get(sessionId);
+        const minSeq = Math.min(...page.messages.map((m) => m.seq));
+        const nextCursorCandidate =
+            typeof page.nextBeforeSeq === 'number' ? page.nextBeforeSeq : minSeq;
+        const nextCursor = prevCursor === undefined ? nextCursorCandidate : Math.min(prevCursor, nextCursorCandidate);
+        this.sessionMessagesBeforeSeq.set(sessionId, nextCursor);
+
+        const prevHasMore = this.sessionMessagesHasMoreOlder.get(sessionId);
+        if (typeof page.hasMore === 'boolean') {
+            this.sessionMessagesHasMoreOlder.set(sessionId, page.hasMore);
+            return;
+        }
+        if (prevHasMore === false) {
+            return;
+        }
+        if (options?.allowHasMoreInference) {
+            const inferredHasMore = page.messages.length >= SESSION_MESSAGES_PAGE_SIZE;
+            // If the server doesn't send `hasMore`, treat a short page as a definitive "no more".
+            if (!inferredHasMore) {
+                this.sessionMessagesHasMoreOlder.set(sessionId, false);
+                return;
+            }
+            if (prevHasMore === undefined) {
+                this.sessionMessagesHasMoreOlder.set(sessionId, true);
+            }
         }
     }
 
