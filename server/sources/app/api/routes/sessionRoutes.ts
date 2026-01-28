@@ -43,6 +43,7 @@ export function sessionRoutes(app: Fastify) {
                 take: 150,
                 select: {
                     accessLevel: true,
+                    canApprovePermissions: true,
                     encryptedDataKey: true,
                     sharedByUserId: true,
                     sharedByUser: { select: PROFILE_SELECT },
@@ -98,6 +99,7 @@ export function sessionRoutes(app: Fastify) {
                     owner: share.sharedByUserId,
                     ownerProfile: toShareUserProfile(share.sharedByUser),
                     accessLevel: share.accessLevel,
+                    canApprovePermissions: share.canApprovePermissions,
                 };
             }),
         ]

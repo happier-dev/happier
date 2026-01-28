@@ -25,9 +25,10 @@ class FakeSocket {
 describe('rpcHandler', () => {
   it('returns an explicit errorCode when the RPC method is not available', async () => {
     const socket = new FakeSocket();
-    const rpcListeners = new Map<string, any>();
+    const userRpcListeners = new Map<string, any>();
+    const allRpcListeners = new Map<string, any>();
 
-    rpcHandler('user-1', socket as any, rpcListeners as any);
+    rpcHandler('user-1', socket as any, userRpcListeners as any, allRpcListeners as any);
 
     const handler = socket.handlers.get(SOCKET_RPC_EVENTS.CALL);
     expect(typeof handler).toBe('function');

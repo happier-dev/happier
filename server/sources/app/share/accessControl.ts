@@ -139,6 +139,66 @@ export async function canManageSharing(
 }
 
 /**
+ * Check if user can approve permission prompts for this session.
+ *
+ * - Owners can always approve.
+ * - Shared users can approve only if:
+ *   - they have at least edit access, AND
+ *   - their share has canApprovePermissions enabled.
+ */
+export async function canApprovePermissions(
+    userId: string,
+    sessionId: string,
+): Promise<boolean> {
+    const access = await checkSessionAccess(userId, sessionId);
+    if (!access) return false;
+    if (access.isOwner) return true;
+    if (!requireAccessLevel(access, 'edit')) return false;
+
+    const share = await db.sessionShare.findUnique({
+        where: {
+            sessionId_sharedWithUserId: {
+                sessionId,
+                sharedWithUserId: userId,
+            },
+        },
+        select: { canApprovePermissions: true },
+    });
+
+    return share?.canApprovePermissions === true;
+}
+
+/**
+ * Check if user can grant/revoke permission-approval capability for other recipients.
+ *
+ * - Owners can always manage delegation.
+ * - Shared admins can manage delegation only if their own share also has canApprovePermissions enabled.
+ *
+ * This prevents shared admins (without delegated permission approval) from escalating privileges.
+ */
+export async function canManagePermissionDelegation(
+    userId: string,
+    sessionId: string,
+): Promise<boolean> {
+    const access = await checkSessionAccess(userId, sessionId);
+    if (!access) return false;
+    if (access.isOwner) return true;
+    if (access.level !== 'admin') return false;
+
+    const share = await db.sessionShare.findUnique({
+        where: {
+            sessionId_sharedWithUserId: {
+                sessionId,
+                sharedWithUserId: userId,
+            },
+        },
+        select: { canApprovePermissions: true },
+    });
+
+    return share?.canApprovePermissions === true;
+}
+
+/**
  * Check if user owns the session
  *
  * @param userId - User ID requesting access
