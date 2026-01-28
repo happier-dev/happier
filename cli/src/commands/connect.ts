@@ -1,9 +1,9 @@
 import chalk from 'chalk';
 import { readCredentials } from '@/persistence';
 import { ApiClient } from '@/api/api';
-import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import type { CloudConnectTarget, CloudConnectTargetStatus } from '@/cloud/connectTypes';
 import { AGENTS } from '@/backends/catalog';
+import { deriveVendorConnectStatusForStatusCheck } from '@/commands/connectStatus';
 
 /**
  * Handle connect subcommand
@@ -20,8 +20,8 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
     const allTargets = await loadConnectTargets({ includeExperimental: true });
     const visibleTargets = includeExperimental ? allTargets : allTargets.filter((t) => t.status === 'wired');
 
-    const targetById = new Map(allTargets.map((t) => [t.id, t] as const));
-    const visibleTargetById = new Map(visibleTargets.map((t) => [t.id, t] as const));
+    const targetById = new Map<string, CloudConnectTarget>(allTargets.map((t) => [t.id, t] as const));
+    const visibleTargetById = new Map<string, CloudConnectTarget>(visibleTargets.map((t) => [t.id, t] as const));
 
     if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
         showConnectHelp(visibleTargets, { includeExperimental });
@@ -34,9 +34,9 @@ export async function handleConnectCommand(args: string[]): Promise<void> {
       return;
     }
 
-    const visibleTarget = visibleTargetById.get(normalized as any);
+    const visibleTarget = visibleTargetById.get(normalized);
     if (!visibleTarget) {
-      const hiddenTarget = targetById.get(normalized as any);
+      const hiddenTarget = targetById.get(normalized);
       if (hiddenTarget && hiddenTarget.status === 'experimental' && !includeExperimental) {
         console.error(chalk.yellow(`Connect target '${hiddenTarget.id}' is experimental and not enabled by default.`));
         console.error(chalk.gray(`Run: happy connect --all ${hiddenTarget.id}`));
@@ -142,36 +142,35 @@ async function handleConnectStatus(targets: ReadonlyArray<CloudConnectTarget>): 
     const api = await ApiClient.create(credentials);
 
     for (const target of targets) {
-        try {
-            const token = await api.getVendorToken(target.vendorKey);
-            
-            if (token?.oauth) {
-                // Try to extract user info from id_token (JWT)
-                let userInfo = '';
-                
-                const idToken = (token.oauth as any)?.id_token;
-                if (typeof idToken === 'string') {
-                    const payload = decodeJwtPayload(idToken);
-                    if (payload?.email) {
-                        userInfo = chalk.gray(` (${payload.email})`);
-                    }
-                }
-                
-                // Check if token might be expired
-                const expiresAt = token.oauth.expires_at || (token.oauth.expires_in ? Date.now() + token.oauth.expires_in * 1000 : null);
-                const isExpired = expiresAt && expiresAt < Date.now();
-                
-                if (isExpired) {
-                    console.log(`  ${chalk.yellow('⚠️')}  ${target.vendorDisplayName}: ${chalk.yellow('expired')}${userInfo}`);
-                } else {
-                    console.log(`  ${chalk.green('✓')}  ${target.vendorDisplayName}: ${chalk.green('connected')}${userInfo}`);
-                }
-            } else {
-                console.log(`  ${chalk.gray('○')}  ${target.vendorDisplayName}: ${chalk.gray('not connected')}`);
-            }
-        } catch {
-            console.log(`  ${chalk.gray('○')}  ${target.vendorDisplayName}: ${chalk.gray('not connected')}`);
-        }
+      let token: unknown = null;
+      let checkError: unknown | undefined;
+      try {
+        token = await api.getVendorToken(target.vendorKey);
+      } catch (error) {
+        checkError = error;
+      }
+
+      if (checkError && process.env.DEBUG) {
+        console.error(chalk.gray(`[debug] failed to check ${target.vendorDisplayName} connection:`), checkError);
+      }
+
+      const status = deriveVendorConnectStatusForStatusCheck({ token, error: checkError });
+      const userInfo = status.kind === 'not_connected' ? '' : status.email ? chalk.gray(` (${status.email})`) : '';
+
+      if (checkError) {
+        console.log(`  ${chalk.yellow('?')}  ${target.vendorDisplayName}: ${chalk.yellow('unknown (check failed)')}${userInfo}`);
+        continue;
+      }
+
+      if (status.kind === 'not_connected') {
+        console.log(`  ${chalk.gray('○')}  ${target.vendorDisplayName}: ${chalk.gray('not connected')}`);
+      } else if (status.kind === 'expired') {
+        console.log(`  ${chalk.yellow('⚠️')}  ${target.vendorDisplayName}: ${chalk.yellow('expired')}${userInfo}`);
+      } else if (status.kind === 'connected') {
+        console.log(`  ${chalk.green('✓')}  ${target.vendorDisplayName}: ${chalk.green('connected')}${userInfo}`);
+      } else {
+        console.log(`  ${chalk.yellow('?')}  ${target.vendorDisplayName}: ${chalk.yellow('unknown')}${userInfo}`);
+      }
     }
 
     console.log('');
