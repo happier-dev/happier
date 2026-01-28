@@ -82,6 +82,54 @@ describe('normalizeToolCallV2', () => {
         ).toBe('LS');
     });
 
+    it('maps edit calls with edits[] to MultiEdit (preserves edits payload)', () => {
+        const normalized = normalizeToolCallV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            toolName: 'edit',
+            rawInput: {
+                edits: [
+                    { file_path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
+                    { file_path: '/tmp/b.txt', old_string: 'c', new_string: 'd' },
+                ],
+            },
+            callId: 'call-multiedit',
+        });
+
+        expect(normalized.canonicalToolName).toBe('MultiEdit');
+        expect(normalized.input).toMatchObject({
+            edits: expect.any(Array),
+        });
+    });
+
+    it('normalizes LS dir/path aliases into LS.path', () => {
+        const normalized = normalizeToolCallV2({
+            protocol: 'acp',
+            provider: 'opencode',
+            toolName: 'ls',
+            rawInput: { dir: '/tmp' },
+            callId: 'call-ls',
+        });
+
+        expect(normalized.canonicalToolName).toBe('LS');
+        expect(normalized.input).toMatchObject({ path: '/tmp' });
+    });
+
+    it('maps Task* variants to Task (unifies task helpers)', () => {
+        expect(
+            normalizeToolCallV2({ protocol: 'claude', provider: 'claude', toolName: 'TaskCreate', rawInput: { subject: 'x' }, callId: 't1' })
+                .canonicalToolName
+        ).toBe('Task');
+        expect(
+            normalizeToolCallV2({ protocol: 'claude', provider: 'claude', toolName: 'TaskList', rawInput: {}, callId: 't2' })
+                .canonicalToolName
+        ).toBe('Task');
+        expect(
+            normalizeToolCallV2({ protocol: 'claude', provider: 'claude', toolName: 'TaskUpdate', rawInput: { taskId: '1' }, callId: 't3' })
+                .canonicalToolName
+        ).toBe('Task');
+    });
+
     it('normalizes common search aliases into canonical Glob/CodeSearch inputs', () => {
         const glob = normalizeToolCallV2({
             protocol: 'acp',

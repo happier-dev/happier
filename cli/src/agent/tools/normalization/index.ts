@@ -63,7 +63,8 @@ export function canonicalizeToolNameV2(opts: {
     if (lower === 'websearch' || lower === 'web_search') return 'WebSearch';
 
     // Tasks / notebooks.
-    if (lower === 'task') return 'Task';
+    // Claude emits TaskCreate/TaskList/TaskUpdate; keep them unified for rendering.
+    if (lower === 'task' || lower.startsWith('task')) return 'Task';
     if (lower === 'todowrite') return 'TodoWrite';
     if (lower === 'todoread') return 'TodoRead';
 

@@ -1,0 +1,79 @@
+# Tool trace fixture allowlist (v1)
+#
+# Purpose:
+# - Keep the committed fixture set small and stable.
+# - Cover the protocols/providers we care about for tool normalization and rendering.
+#
+# Notes:
+# - This file is used by `yarn tool:trace:fixtures:v1` when `--allowlist` is not provided.
+# - One key per line (matches the extractor key format).
+
+acp/codex/permission-request/execute
+acp/codex/tool-call/edit
+acp/codex/tool-call/execute
+acp/codex/tool-call/read
+acp/codex/tool-call/search
+acp/codex/tool-result
+acp/auggie/permission-request/Unknown tool
+acp/auggie/tool-call/Bash
+acp/auggie/tool-call/Edit
+acp/auggie/tool-call/Read
+acp/auggie/tool-call/delete
+acp/auggie/tool-call/fetch
+acp/auggie/tool-call/search
+acp/auggie/tool-result
+acp/gemini/permission-request/change_title
+acp/gemini/permission-request/edit
+acp/gemini/permission-request/write
+acp/gemini/tool-call/GeminiReasoning
+acp/gemini/tool-call/TodoWrite
+acp/gemini/tool-call/change_title
+acp/gemini/tool-call/edit
+acp/gemini/tool-call/execute
+acp/gemini/tool-call/glob
+acp/gemini/tool-call/read
+acp/gemini/tool-call/search
+acp/gemini/tool-call/unknown
+acp/gemini/tool-call/write
+acp/gemini/tool-result
+acp/opencode/permission-request/edit
+acp/opencode/permission-request/read
+acp/opencode/tool-call/edit
+acp/opencode/tool-call/execute
+acp/opencode/tool-call/other
+acp/opencode/tool-call/read
+acp/opencode/tool-call/search
+acp/opencode/tool-result
+claude/claude/permission-request/AskUserQuestion
+claude/claude/permission-request/Bash
+claude/claude/permission-request/ExitPlanMode
+claude/claude/permission-request/Read
+claude/claude/permission-request/WebFetch
+claude/claude/permission-request/WebSearch
+claude/claude/permission-request/Write
+claude/claude/tool-call/AskUserQuestion
+claude/claude/tool-call/Bash
+claude/claude/tool-call/Edit
+claude/claude/tool-call/EnterPlanMode
+claude/claude/tool-call/ExitPlanMode
+claude/claude/tool-call/Glob
+claude/claude/tool-call/Grep
+claude/claude/tool-call/Read
+claude/claude/tool-call/Task
+claude/claude/tool-call/TaskCreate
+claude/claude/tool-call/TaskList
+claude/claude/tool-call/TaskUpdate
+claude/claude/tool-call/TodoWrite
+claude/claude/tool-call/WebFetch
+claude/claude/tool-call/WebSearch
+claude/claude/tool-call/Write
+claude/claude/tool-call/mcp__happy__change_title
+claude/claude/tool-result
+codex/codex/permission-request/CodexBash
+codex/codex/permission-request/CodexPatch
+codex/codex/tool-call-result
+codex/codex/tool-call/CodexBash
+codex/codex/tool-call/CodexDiff
+codex/codex/tool-call/CodexPatch
+codex/codex/tool-call/CodexReasoning
+codex/codex/tool-call/mcp__happy__change_title

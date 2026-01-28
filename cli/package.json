@@ -71,6 +71,7 @@
     "pretest": "yarn -s build:shared",
     "postinstall": "node scripts/unpack-tools.cjs && yarn -s build:shared",
     "tool:trace:extract": "tsx scripts/tool-trace-extract.ts",
+    "tool:trace:fixtures:v1": "tsx scripts/tool-trace-fixtures-v1.ts",
     "// ==== Dev/Stable Variant Management ====": "",
     "stable": "node scripts/env-wrapper.cjs stable",
     "dev:variant": "node scripts/env-wrapper.cjs dev",
