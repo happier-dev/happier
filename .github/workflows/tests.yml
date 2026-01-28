@@ -22,7 +22,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: yarn
+          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack
@@ -57,7 +57,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: yarn
+          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
           cache-dependency-path: server/yarn.lock
 
       - name: Enable Corepack
@@ -104,7 +104,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: yarn
+          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
           cache-dependency-path: cli/yarn.lock
 
       - name: Enable Corepack
@@ -196,7 +196,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: yarn
+          cache: ${{ env.ACT == 'true' && 'npm' || 'yarn' }}
           cache-dependency-path: |
             cli/yarn.lock
             server/yarn.lock
