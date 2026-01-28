@@ -239,22 +239,24 @@ export class ApiSessionClient extends EventEmitter {
         if (this.closed) return Promise.resolve();
         if (this.snapshotSyncInFlight) return this.snapshotSyncInFlight;
 
-        const p = (async () => {
-            try {
-                const update = await fetchSessionSnapshotUpdateFromServer({
-                    token: this.token,
-                    sessionId: this.sessionId,
-                    encryptionKey: this.encryptionKey,
-                    encryptionVariant: this.encryptionVariant,
-                    currentMetadataVersion: this.metadataVersion,
-                    currentAgentStateVersion: this.agentStateVersion,
-                });
+		const p = (async () => {
+			try {
+				const update = await fetchSessionSnapshotUpdateFromServer({
+					token: this.token,
+					sessionId: this.sessionId,
+					encryptionKey: this.encryptionKey,
+					encryptionVariant: this.encryptionVariant,
+					currentMetadataVersion: this.metadataVersion,
+					currentAgentStateVersion: this.agentStateVersion,
+				});
 
-                if (update.metadata) {
-                    this.metadata = update.metadata.metadata;
-                    this.metadataVersion = update.metadata.metadataVersion;
-                    this.emit('metadata-updated');
-                }
+				if (this.closed) return;
+
+				if (update.metadata) {
+					this.metadata = update.metadata.metadata;
+					this.metadataVersion = update.metadata.metadataVersion;
+					this.emit('metadata-updated');
+				}
 
                 if (update.agentState) {
                     this.agentState = update.agentState.agentState;
