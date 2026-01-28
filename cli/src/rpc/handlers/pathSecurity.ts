@@ -1,8 +1,9 @@
-import { resolve } from 'path';
+import { isAbsolute, relative, resolve, sep } from 'path';
 
 export interface PathValidationResult {
     valid: boolean;
     error?: string;
+    resolvedPath?: string;
 }
 
 /**
@@ -12,18 +13,24 @@ export interface PathValidationResult {
  * @returns Validation result
  */
 export function validatePath(targetPath: string, workingDirectory: string): PathValidationResult {
-    // Resolve both paths to absolute paths to handle path traversal attempts
-    const resolvedTarget = resolve(workingDirectory, targetPath);
-    const resolvedWorkingDir = resolve(workingDirectory);
+    if (!workingDirectory || typeof workingDirectory !== 'string') {
+        return { valid: false, error: 'Access denied: Invalid working directory' };
+    }
 
-    // Check if the resolved target path starts with the working directory
-    // This prevents access to files outside the working directory
-    if (!resolvedTarget.startsWith(resolvedWorkingDir + '/') && resolvedTarget !== resolvedWorkingDir) {
+    // Resolve both paths to absolute paths to handle path traversal attempts.
+    const resolvedWorkingDir = resolve(workingDirectory);
+    const resolvedTarget = resolve(resolvedWorkingDir, targetPath);
+
+    // Use a separator-agnostic check so this works across platforms.
+    const rel = relative(resolvedWorkingDir, resolvedTarget);
+
+    // If the relative path is outside (../..) or absolute, it's not within the allowed root.
+    if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
         return {
             valid: false,
             error: `Access denied: Path '${targetPath}' is outside the working directory`
         };
     }
 
-    return { valid: true };
+    return { valid: true, resolvedPath: resolvedTarget };
 }

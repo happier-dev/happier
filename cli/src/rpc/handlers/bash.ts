@@ -29,10 +29,16 @@ export function registerBashHandler(rpcHandlerManager: RpcHandlerManager, workin
         // Validate cwd if provided
         // Special case: "/" means "use shell's default cwd" (used by CLI detection)
         // Security: Still validate all other paths to prevent directory traversal
-        if (data.cwd && data.cwd !== '/') {
-            const validation = validatePath(data.cwd, workingDirectory);
-            if (!validation.valid) {
-                return { success: false, error: validation.error };
+        let cwd: string | undefined = workingDirectory;
+        if (data.cwd) {
+            if (data.cwd === '/') {
+                cwd = undefined;
+            } else {
+                const validation = validatePath(data.cwd, workingDirectory);
+                if (!validation.valid) {
+                    return { success: false, error: validation.error };
+                }
+                cwd = validation.resolvedPath!;
             }
         }
 
@@ -41,7 +47,7 @@ export function registerBashHandler(rpcHandlerManager: RpcHandlerManager, workin
             // Note: ExecOptions doesn't support boolean for shell, but exec() uses the default shell when shell is undefined
             // If cwd is "/", use undefined to let shell use its default (respects user's PATH)
             const options: ExecOptions = {
-                cwd: data.cwd === '/' ? undefined : data.cwd,
+                cwd,
                 timeout: data.timeout || 30000, // Default 30 seconds timeout
             };
 
