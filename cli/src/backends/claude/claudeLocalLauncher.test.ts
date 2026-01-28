@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { Session } from './session';
 
@@ -32,6 +32,10 @@ describe('claudeLocalLauncher', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     readlineAnswer = 'n';
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('surfaces Claude process errors to the UI', async () => {
@@ -121,12 +125,17 @@ describe('claudeLocalLauncher', () => {
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const launcherPromise = claudeLocalLauncher(session);
 
-    await vi.runAllTimersAsync();
-    await expect(launcherPromise).resolves.toBe('switch');
-    expect(sendSessionEvent).toHaveBeenCalled();
-
-    vi.useRealTimers();
-    session.cleanup();
+    try {
+      // Avoid `runAllTimersAsync()` here: the CLI test suite schedules many timers across files,
+      // and draining the entire timer queue can hit Vitest's safety limit. Advancing time just
+      // beyond the retry backoff window is enough to validate the bounded retry behavior.
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(launcherPromise).resolves.toBe('switch');
+      expect(sendSessionEvent).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      session.cleanup();
+    }
   });
 
   it('surfaces transcript missing warnings to the UI', async () => {
