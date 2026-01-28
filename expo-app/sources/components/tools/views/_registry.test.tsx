@@ -25,6 +25,7 @@ vi.mock('./WebFetchView', () => ({ WebFetchView: () => null }));
 vi.mock('./WebSearchView', () => ({ WebSearchView: () => null }));
 vi.mock('./CodeSearchView', () => ({ CodeSearchView: () => null }));
 vi.mock('./ReasoningView', () => ({ ReasoningView: () => null }));
+vi.mock('./WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null }));
 
 describe('toolViewRegistry', () => {
     it('registers a Read view for lowercase read tool name', async () => {

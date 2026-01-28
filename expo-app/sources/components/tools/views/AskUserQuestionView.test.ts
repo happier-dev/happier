@@ -226,4 +226,55 @@ describe('AskUserQuestionView', () => {
         expect(sendMessage).toHaveBeenCalledTimes(0);
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'boom');
     });
+
+    it('does not allow answering when canApprovePermissions is false', async () => {
+        const { AskUserQuestionView } = await import('./AskUserQuestionView');
+
+        const tool: ToolCall = {
+            name: 'AskUserQuestion',
+            state: 'running',
+            input: {
+                questions: [
+                    {
+                        header: 'Q1',
+                        question: 'Pick one',
+                        multiSelect: false,
+                        options: [{ label: 'A', description: '' }, { label: 'B', description: '' }],
+                    },
+                ],
+            },
+            createdAt: Date.now(),
+            startedAt: Date.now(),
+            completedAt: null,
+            description: null,
+            permission: { id: 'toolu_1', status: 'pending' },
+        };
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(AskUserQuestionView, {
+                    tool,
+                    sessionId: 's1',
+                    metadata: null,
+                    messages: [],
+                    interaction: { canSendMessages: true, canApprovePermissions: false, permissionDisabledReason: 'notGranted' },
+                }),
+            );
+        });
+
+        // Attempt to select an option and submit.
+        await act(async () => {
+            const touchables = tree!.root.findAllByType('TouchableOpacity' as any);
+            await touchables[0].props.onPress();
+            await touchables[touchables.length - 1].props.onPress();
+        });
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(0);
+        expect(sessionDeny).toHaveBeenCalledTimes(0);
+        expect(sendMessage).toHaveBeenCalledTimes(0);
+
+        const texts = tree!.root.findAllByType('Text' as any).map((n) => n.props.children).flat();
+        expect(texts).toContain('session.sharing.permissionApprovalsDisabledNotGranted');
+    });
 });

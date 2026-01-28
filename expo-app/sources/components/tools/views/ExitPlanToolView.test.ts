@@ -280,4 +280,41 @@ describe('ExitPlanToolView', () => {
         const buttonsAfter = tree!.root.findAllByType('TouchableOpacity' as any);
         expect(buttonsAfter.length).toBeGreaterThanOrEqual(2);
     });
+
+    it('does not allow responding when canApprovePermissions is false', async () => {
+        const { ExitPlanToolView } = await import('./ExitPlanToolView');
+
+        const tool: ToolCall = {
+            name: 'ExitPlanMode',
+            state: 'running',
+            input: { plan: 'plan' },
+            createdAt: Date.now(),
+            startedAt: Date.now(),
+            completedAt: null,
+            description: null,
+            permission: { id: 'perm1', status: 'pending' },
+        };
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(ExitPlanToolView, {
+                    tool,
+                    sessionId: 's1',
+                    metadata: null,
+                    messages: [],
+                    interaction: { canSendMessages: true, canApprovePermissions: false, permissionDisabledReason: 'notGranted' },
+                }),
+            );
+        });
+
+        expect(tree!.root.findAllByProps({ testID: 'exit-plan-approve' })).toHaveLength(0);
+        expect(tree!.root.findAllByProps({ testID: 'exit-plan-reject' })).toHaveLength(0);
+
+        expect(sessionAllow).toHaveBeenCalledTimes(0);
+        expect(sessionDeny).toHaveBeenCalledTimes(0);
+
+        const texts = tree!.root.findAllByType('Text' as any).map((n) => n.props.children).flat();
+        expect(texts).toContain('session.sharing.permissionApprovalsDisabledNotGranted');
+    });
 });

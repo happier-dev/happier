@@ -219,4 +219,65 @@ describe('normalizeToolCallForRendering', () => {
             expect(normalized.name).toBe(t.expected);
         }
     });
+
+    it('maps delete tool calls to Patch with delete changes', () => {
+        const tool = {
+            name: 'delete',
+            state: 'running' as const,
+            input: { file_paths: ['tool_validation_results.md'] },
+            result: null,
+            createdAt: 0,
+            startedAt: 0,
+            completedAt: null,
+            description: 'Delete tool_validation_results.md',
+        };
+
+        const normalized = normalizeToolCallForRendering(tool as any);
+        expect(normalized.name).toBe('Patch');
+        expect(normalized.input).toMatchObject({
+            changes: {
+                'tool_validation_results.md': {
+                    delete: { content: '' },
+                },
+            },
+        });
+    });
+
+    it('maps workspace indexing permission prompts to a known tool name for rendering', () => {
+        const tool = {
+            name: 'Unknown tool',
+            state: 'running' as const,
+            input: {
+                toolCall: { title: 'Workspace Indexing Permission', toolCallId: 'workspace-indexing-permission' },
+                permissionId: 'workspace-indexing-permission',
+            },
+            result: null,
+            createdAt: 0,
+            startedAt: 0,
+            completedAt: null,
+            description: 'Unknown tool',
+        };
+
+        const normalized = normalizeToolCallForRendering(tool as any);
+        expect(normalized.name).toBe('WorkspaceIndexingPermission');
+    });
+
+    it('prefers tool.input._happy.canonicalToolName when present', () => {
+        const tool = {
+            name: 'TaskUpdate',
+            state: 'running' as const,
+            input: {
+                _happy: { canonicalToolName: 'Task' },
+                subject: 'x',
+            },
+            result: null,
+            createdAt: 0,
+            startedAt: 0,
+            completedAt: null,
+            description: null,
+        };
+
+        const normalized = normalizeToolCallForRendering(tool as any);
+        expect(normalized.name).toBe('Task');
+    });
 });
