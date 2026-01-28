@@ -10,9 +10,12 @@
     "workspaces": {
         "packages": [
             "expo-app",
+            "cli",
+            "server",
             "packages/*"
         ],
         "nohoist": [
+            "**/zod",
             "**/react",
             "**/react-dom",
             "**/react-native",
@@ -20,9 +23,6 @@
             "**/react-native-edge-to-edge/**",
             "**/react-native-incall-manager/**"
         ]
-    },
-    "resolutions": {
-        "expo-router": "6.0.22"
     },
     "packageManager": "yarn@1.22.22"
 }

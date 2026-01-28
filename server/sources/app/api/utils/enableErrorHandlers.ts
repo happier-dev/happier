@@ -1,4 +1,5 @@
 import { log } from "@/utils/log";
+import { FastifyError } from "fastify";
 import { Fastify } from "../types";
 import { readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -6,7 +7,7 @@ import { resolveUiConfig } from "@/app/api/uiConfig";
 
 export function enableErrorHandlers(app: Fastify) {
     // Global error handler
-    app.setErrorHandler(async (error, request, reply) => {
+    app.setErrorHandler(async (error: FastifyError, request, reply) => {
         const method = request.method;
         const url = request.url;
         const userAgent = request.headers['user-agent'] || 'unknown';
