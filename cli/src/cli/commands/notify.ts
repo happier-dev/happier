@@ -5,6 +5,23 @@ import { readCredentials } from '@/persistence';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
+export async function sendPushNotification({
+  api,
+  title,
+  message,
+  nowMs = Date.now(),
+}: Readonly<{
+  api: { push(): { sendToAllDevicesAsync(title: string, message: string, meta: { source: 'cli'; timestamp: number }): Promise<void> } };
+  title: string;
+  message: string;
+  nowMs?: number;
+}>): Promise<void> {
+  await api.push().sendToAllDevicesAsync(title, message, {
+    source: 'cli',
+    timestamp: nowMs,
+  });
+}
+
 export async function handleNotifyCliCommand(context: CommandContext): Promise<void> {
   try {
     await handleNotifyCommand(context.args.slice(1));
@@ -78,10 +95,7 @@ ${chalk.bold('Examples:')}
 
     const notificationTitle = title || 'Happy';
 
-    api.push().sendToAllDevices(notificationTitle, message, {
-      source: 'cli',
-      timestamp: Date.now(),
-    });
+    await sendPushNotification({ api, title: notificationTitle, message });
 
     console.log(chalk.green('✓ Push notification sent successfully!'));
     console.log(chalk.gray(`  Title: ${notificationTitle}`));
@@ -94,4 +108,3 @@ ${chalk.bold('Examples:')}
     throw error;
   }
 }
-
