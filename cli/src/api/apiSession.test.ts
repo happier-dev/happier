@@ -109,8 +109,8 @@ describe('ApiSessionClient connection handling', () => {
     it('does not emit metadata-updated after close() when a snapshot sync resolves late', async () => {
         const snapshotSync = await import('./session/snapshotSync');
 
-        let resolveFetch: ((value: any) => void) | null = null;
-        const fetchPromise = new Promise((resolve) => {
+        let resolveFetch!: (value: any) => void;
+        const fetchPromise = new Promise<any>((resolve) => {
             resolveFetch = resolve;
         });
 
@@ -126,7 +126,7 @@ describe('ApiSessionClient connection handling', () => {
             const syncPromise = (client as any).syncSessionSnapshotFromServer({ reason: 'connect' });
             await client.close();
 
-            resolveFetch?.({
+            resolveFetch({
                 metadata: {
                     metadata: { ...mockSession.metadata, path: '/tmp/late' },
                     metadataVersion: mockSession.metadataVersion + 1,
