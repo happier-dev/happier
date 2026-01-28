@@ -106,6 +106,42 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
+    it('does not emit metadata-updated after close() when a snapshot sync resolves late', async () => {
+        const snapshotSync = await import('./session/snapshotSync');
+
+        let resolveFetch: ((value: any) => void) | null = null;
+        const fetchPromise = new Promise((resolve) => {
+            resolveFetch = resolve;
+        });
+
+        const fetchSpy = vi
+            .spyOn(snapshotSync, 'fetchSessionSnapshotUpdateFromServer')
+            .mockReturnValue(fetchPromise as any);
+
+        try {
+            const client = new ApiSessionClient('fake-token', mockSession);
+            const onMetadataUpdated = vi.fn();
+            client.on('metadata-updated', onMetadataUpdated);
+
+            const syncPromise = (client as any).syncSessionSnapshotFromServer({ reason: 'connect' });
+            await client.close();
+
+            resolveFetch?.({
+                metadata: {
+                    metadata: { ...mockSession.metadata, path: '/tmp/late' },
+                    metadataVersion: mockSession.metadataVersion + 1,
+                },
+                agentState: null,
+            });
+
+            await syncPromise;
+            expect(onMetadataUpdated).not.toHaveBeenCalled();
+            expect(client.getMetadataSnapshot()?.path).toBe('/tmp');
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
     it('backfills missing Read tool-call input details from permission-request toolCall.rawInput', () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
