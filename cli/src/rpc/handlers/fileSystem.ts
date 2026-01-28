@@ -1,7 +1,7 @@
 import { logger } from '@/ui/logger';
 import { readFile, writeFile, readdir, stat } from 'fs/promises';
 import { createHash } from 'crypto';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { validatePath } from './pathSecurity';
 import { RPC_METHODS } from '@happy/protocol/rpc';
@@ -77,7 +77,7 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerManager,
         }
 
         try {
-            const buffer = await readFile(data.path);
+            const buffer = await readFile(validation.resolvedPath!);
             const content = buffer.toString('base64');
             return { success: true, content };
         } catch (error) {
@@ -96,11 +96,12 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerManager,
             return { success: false, error: validation.error };
         }
 
+        const resolvedPath = validation.resolvedPath!;
         try {
             // If expectedHash is provided (not null), verify existing file
             if (data.expectedHash !== null && data.expectedHash !== undefined) {
                 try {
-                    const existingBuffer = await readFile(data.path);
+                    const existingBuffer = await readFile(resolvedPath);
                     const existingHash = createHash('sha256').update(existingBuffer).digest('hex');
 
                     if (existingHash !== data.expectedHash) {
@@ -123,7 +124,7 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerManager,
             } else {
                 // expectedHash is null - expecting new file
                 try {
-                    await stat(data.path);
+                    await stat(resolvedPath);
                     // File exists but we expected it to be new
                     return {
                         success: false,
@@ -140,7 +141,7 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerManager,
 
             // Write the file
             const buffer = Buffer.from(data.content, 'base64');
-            await writeFile(data.path, buffer);
+            await writeFile(resolvedPath, buffer);
 
             // Calculate and return hash of written file
             const hash = createHash('sha256').update(buffer).digest('hex');
@@ -162,12 +163,13 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerManager,
             return { success: false, error: validation.error };
         }
 
+        const resolvedPath = validation.resolvedPath!;
         try {
-            const entries = await readdir(data.path, { withFileTypes: true });
+            const entries = await readdir(resolvedPath, { withFileTypes: true });
 
             const directoryEntries: DirectoryEntry[] = await Promise.all(
                 entries.map(async (entry) => {
-                    const fullPath = join(data.path, entry.name);
+                    const fullPath = join(resolvedPath, entry.name);
                     let type: 'file' | 'directory' | 'other' = 'other';
                     let size: number | undefined;
                     let modified: number | undefined;
@@ -219,6 +221,8 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerManager,
         if (!validation.valid) {
             return { success: false, error: validation.error };
         }
+
+        const resolvedPath = validation.resolvedPath!;
 
         // Helper function to build tree recursively
         async function buildTree(path: string, name: string, currentDepth: number): Promise<TreeNode | null> {
@@ -281,10 +285,10 @@ export function registerFileSystemHandlers(rpcHandlerManager: RpcHandlerManager,
             }
 
             // Get the base name for the root node
-            const baseName = data.path === '/' ? '/' : data.path.split('/').pop() || data.path;
+            const baseName = resolvedPath === '/' ? '/' : basename(resolvedPath);
 
             // Build the tree starting from the requested path
-            const tree = await buildTree(data.path, baseName, 0);
+            const tree = await buildTree(resolvedPath, baseName, 0);
 
             if (!tree) {
                 return { success: false, error: 'Failed to access the specified path' };

@@ -1,3 +1,4 @@
+import { resolve } from 'path';
 import { describe, it, expect } from 'vitest';
 import { validatePath } from './pathSecurity';
 
@@ -5,9 +6,18 @@ describe('validatePath', () => {
     const workingDir = '/home/user/project';
 
     it('should allow paths within working directory', () => {
-        expect(validatePath('/home/user/project/file.txt', workingDir).valid).toBe(true);
-        expect(validatePath('file.txt', workingDir).valid).toBe(true);
-        expect(validatePath('./src/file.txt', workingDir).valid).toBe(true);
+        expect(validatePath(resolve(workingDir, 'file.txt'), workingDir)).toMatchObject({
+            valid: true,
+            resolvedPath: resolve(workingDir, 'file.txt'),
+        });
+        expect(validatePath('file.txt', workingDir)).toMatchObject({
+            valid: true,
+            resolvedPath: resolve(workingDir, 'file.txt'),
+        });
+        expect(validatePath('./src/file.txt', workingDir)).toMatchObject({
+            valid: true,
+            resolvedPath: resolve(workingDir, 'src', 'file.txt'),
+        });
     });
 
     it('should reject paths outside working directory', () => {
@@ -23,7 +33,7 @@ describe('validatePath', () => {
     });
 
     it('should allow the working directory itself', () => {
-        expect(validatePath('.', workingDir).valid).toBe(true);
-        expect(validatePath(workingDir, workingDir).valid).toBe(true);
+        expect(validatePath('.', workingDir)).toMatchObject({ valid: true, resolvedPath: resolve(workingDir) });
+        expect(validatePath(workingDir, workingDir)).toMatchObject({ valid: true, resolvedPath: resolve(workingDir) });
     });
 });

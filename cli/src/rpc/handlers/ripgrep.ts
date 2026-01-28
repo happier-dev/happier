@@ -22,16 +22,15 @@ export function registerRipgrepHandler(rpcHandlerManager: RpcHandlerManager, wor
     rpcHandlerManager.registerHandler<RipgrepRequest, RipgrepResponse>(RPC_METHODS.RIPGREP, async (data) => {
         logger.debug('Ripgrep request with args:', data.args, 'cwd:', data.cwd);
 
-        // Validate cwd if provided
+        let cwd = workingDirectory;
         if (data.cwd) {
             const validation = validatePath(data.cwd, workingDirectory);
-            if (!validation.valid) {
-                return { success: false, error: validation.error };
-            }
+            if (!validation.valid) return { success: false, error: validation.error };
+            cwd = validation.resolvedPath!;
         }
 
         try {
-            const result = await runRipgrep(data.args, { cwd: data.cwd });
+            const result = await runRipgrep(data.args, { cwd });
             return {
                 success: true,
                 exitCode: result.exitCode,

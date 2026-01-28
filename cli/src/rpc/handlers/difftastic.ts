@@ -22,16 +22,15 @@ export function registerDifftasticHandler(rpcHandlerManager: RpcHandlerManager, 
     rpcHandlerManager.registerHandler<DifftasticRequest, DifftasticResponse>(RPC_METHODS.DIFFTASTIC, async (data) => {
         logger.debug('Difftastic request with args:', data.args, 'cwd:', data.cwd);
 
-        // Validate cwd if provided
+        let cwd = workingDirectory;
         if (data.cwd) {
             const validation = validatePath(data.cwd, workingDirectory);
-            if (!validation.valid) {
-                return { success: false, error: validation.error };
-            }
+            if (!validation.valid) return { success: false, error: validation.error };
+            cwd = validation.resolvedPath!;
         }
 
         try {
-            const result = await runDifftastic(data.args, { cwd: data.cwd });
+            const result = await runDifftastic(data.args, { cwd });
             return {
                 success: true,
                 exitCode: result.exitCode,
