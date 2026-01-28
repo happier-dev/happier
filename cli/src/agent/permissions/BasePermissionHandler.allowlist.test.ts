@@ -12,6 +12,10 @@ class FakeSession {
   rpcHandlerManager = new FakeRpcHandlerManager();
   agentState: any = { requests: {}, completedRequests: {} };
 
+  getAgentStateSnapshot() {
+    return this.agentState;
+  }
+
   updateAgentState(updater: any) {
     this.agentState = updater(this.agentState);
     return this.agentState;
@@ -79,5 +83,27 @@ describe('BasePermissionHandler allowlist', () => {
         decision: 'abort',
       })
     );
+  });
+
+  it('clears the allowlist when the session reference is updated', async () => {
+    const session1 = new FakeSession();
+    const handler = new TestPermissionHandler(session1 as any);
+
+    const input = { command: ['bash', '-lc', 'echo hello'] };
+    const promise = handler.request('perm-1', 'bash', input);
+
+    const rpc1 = session1.rpcHandlerManager.handlers.get('permission');
+    expect(rpc1).toBeDefined();
+    await rpc1!({ id: 'perm-1', approved: true, decision: 'approved_for_session' });
+
+    await promise;
+    expect(handler.isAllowed('bash', input)).toBe(true);
+
+    const session2 = new FakeSession();
+    // Simulate a new session reference without persisted allowlist entries.
+    session2.agentState = { requests: {}, completedRequests: {} };
+    handler.updateSession(session2 as any);
+
+    expect(handler.isAllowed('bash', input)).toBe(false);
   });
 });

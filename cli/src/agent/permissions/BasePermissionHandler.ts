@@ -96,6 +96,9 @@ export abstract class BasePermissionHandler {
         this.session = newSession;
         // Re-setup RPC handler with new session
         this.setupRpcHandler();
+        // Prevent per-session allowlists from leaking across session references.
+        // The new session snapshot will re-seed any persisted per-session approvals.
+        this.allowedToolIdentifiers.clear();
         this.seedAllowedToolsFromAgentState();
     }
 
