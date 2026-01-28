@@ -83,7 +83,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
     }, [loadSharingData]);
 
     // Handle adding a new share
-    const handleAddShare = useCallback(async (userId: string, accessLevel: ShareAccessLevel) => {
+    const handleAddShare = useCallback(async (userId: string, accessLevel: ShareAccessLevel, canApprovePermissions?: boolean) => {
         try {
             const credentials = sync.getCredentials();
 
@@ -113,6 +113,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
             await createSessionShare(credentials, sessionId, {
                 userId,
                 accessLevel,
+                ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
                 encryptedDataKey,
             });
 
@@ -124,10 +125,10 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
     }, [friends, sessionId, loadSharingData]);
 
     // Handle updating share access level
-    const handleUpdateShare = useCallback(async (shareId: string, accessLevel: ShareAccessLevel) => {
+    const handleUpdateShare = useCallback(async (shareId: string, patch: { accessLevel?: ShareAccessLevel; canApprovePermissions?: boolean }) => {
         try {
             const credentials = sync.getCredentials();
-            await updateSessionShare(credentials, sessionId, shareId, accessLevel);
+            await updateSessionShare(credentials, sessionId, shareId, patch);
             await loadSharingData();
         } catch (error) {
             throw new HappyError(t('errors.operationFailed'), false);
@@ -222,6 +223,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
 
     const excludedUserIds = shares.map(share => share.sharedWithUser.id);
     const canManage = !session.accessLevel || session.accessLevel === 'admin';
+    const canManagePermissionDelegation = !session.accessLevel || (session.accessLevel === 'admin' && session.canApprovePermissions === true);
 
     return (
         <>
@@ -283,6 +285,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                     sessionId={sessionId}
                     shares={shares}
                     canManage={canManage}
+                    canManagePermissionDelegation={canManagePermissionDelegation}
                     onAddShare={() => {
                         setShowShareDialog(false);
                         setShowFriendSelector(true);
@@ -303,6 +306,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
                     excludedUserIds={excludedUserIds}
                     onSelect={handleAddShare}
                     onCancel={() => setShowFriendSelector(false)}
+                    canManagePermissionDelegation={canManagePermissionDelegation}
                 />
             )}
 

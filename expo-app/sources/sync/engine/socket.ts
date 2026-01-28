@@ -1,4 +1,4 @@
-import { ApiEphemeralUpdateSchema, ApiUpdateContainerSchema } from '../apiTypes';
+import { ApiEphemeralUpdateSchema, ApiUpdateContainerSchema, ApiUpdateSchema } from '../apiTypes';
 import type { ApiEphemeralActivityUpdate, ApiUpdateContainer } from '../apiTypes';
 import type { Encryption } from '../encryption/encryption';
 import type { NormalizedMessage } from '../typesRaw';
@@ -33,6 +33,33 @@ import {
 export function parseUpdateContainer(update: unknown) {
     const validatedUpdate = ApiUpdateContainerSchema.safeParse(update);
     if (!validatedUpdate.success) {
+        // Compatibility fallback:
+        // Some servers may emit `update.body` (or the `ApiUpdate` itself) instead of the full container.
+        // We only attempt to recover sharing-related updates to avoid mis-applying core message/session updates.
+        if (update && typeof update === 'object') {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const maybeBody = (update as any).body ?? update;
+            const parsedBody = ApiUpdateSchema.safeParse(maybeBody);
+            if (parsedBody.success) {
+                const t = parsedBody.data.t;
+                if (
+                    t === 'session-shared' ||
+                    t === 'session-share-updated' ||
+                    t === 'session-share-revoked' ||
+                    t === 'public-share-created' ||
+                    t === 'public-share-updated' ||
+                    t === 'public-share-deleted'
+                ) {
+                    return {
+                        id: '',
+                        seq: 0,
+                        body: parsedBody.data,
+                        createdAt: Date.now(),
+                    } satisfies ApiUpdateContainer;
+                }
+            }
+        }
+
         // Don’t crash on unknown/forward-compatible socket updates.
         // In dev we still emit a warning to help catch schema drift.
         // eslint-disable-next-line no-undef

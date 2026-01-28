@@ -1,5 +1,5 @@
 import React, { memo, useMemo, useState } from 'react';
-import { View, Text, TextInput, FlatList, ScrollView, Pressable, useWindowDimensions, Platform } from 'react-native';
+import { View, Text, TextInput, FlatList, ScrollView, Pressable, useWindowDimensions, Platform, Switch } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -23,9 +23,11 @@ export interface FriendSelectorProps {
     /** IDs of users already having access */
     excludedUserIds: string[];
     /** Callback when a friend is selected */
-    onSelect: (userId: string, accessLevel: ShareAccessLevel) => Promise<void> | void;
+    onSelect: (userId: string, accessLevel: ShareAccessLevel, canApprovePermissions?: boolean) => Promise<void> | void;
     /** Close without selecting */
     onCancel: () => void;
+    /** Whether the current user can grant permission approvals to recipients */
+    canManagePermissionDelegation?: boolean;
     /** Currently selected user ID (optional) */
     selectedUserId?: string | null;
     /** Currently selected access level (optional) */
@@ -45,6 +47,7 @@ export const FriendSelector = memo(function FriendSelector({
     excludedUserIds,
     onSelect,
     onCancel,
+    canManagePermissionDelegation = false,
     selectedUserId: initialSelectedUserId = null,
     selectedAccessLevel: initialSelectedAccessLevel = 'view',
 }: FriendSelectorProps) {
@@ -55,6 +58,7 @@ export const FriendSelector = memo(function FriendSelector({
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedUserId, setSelectedUserId] = useState<string | null>(initialSelectedUserId);
     const [selectedAccessLevel, setSelectedAccessLevel] = useState<ShareAccessLevel>(initialSelectedAccessLevel);
+    const [canApprovePermissions, setCanApprovePermissions] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     // Filter friends based on search and exclusions
@@ -85,7 +89,11 @@ export const FriendSelector = memo(function FriendSelector({
         if (isSubmitting) return;
         setIsSubmitting(true);
         try {
-            await Promise.resolve(onSelect(selectedUserId, selectedAccessLevel));
+            await Promise.resolve(onSelect(
+                selectedUserId,
+                selectedAccessLevel,
+                canManagePermissionDelegation ? canApprovePermissions : undefined,
+            ));
         } catch (e) {
             const message =
                 e instanceof HappyError ? e.message :
@@ -160,7 +168,10 @@ export const FriendSelector = memo(function FriendSelector({
                             <Item
                                 title={t('session.sharing.viewOnly')}
                                 subtitle={t('session.sharing.viewOnlyDescription')}
-                                onPress={() => setSelectedAccessLevel('view')}
+                                onPress={() => {
+                                    setSelectedAccessLevel('view');
+                                    setCanApprovePermissions(false);
+                                }}
                                 rightElement={
                                     selectedAccessLevel === 'view' ? (
                                         <View style={styles.radioSelected}>
@@ -199,6 +210,23 @@ export const FriendSelector = memo(function FriendSelector({
                                     )
                                 }
                             />
+
+                            {canManagePermissionDelegation && selectedAccessLevel !== 'view' ? (
+                                <View style={styles.permissionToggle}>
+                                    <Item
+                                        title={t('session.sharing.allowPermissionApprovals')}
+                                        subtitle={t('session.sharing.allowPermissionApprovalsDescription')}
+                                        rightElement={
+                                            <Switch
+                                                value={canApprovePermissions}
+                                                onValueChange={setCanApprovePermissions}
+                                            />
+                                        }
+                                        showChevron={false}
+                                        showDivider={false}
+                                    />
+                                </View>
+                            ) : null}
                         </View>
                     ) : null}
 
@@ -314,6 +342,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: 10,
         borderWidth: 2,
         borderColor: theme.colors.radio.inactive,
+    },
+    permissionToggle: {
+        marginTop: 8,
     },
     footer: {
         marginTop: 16,

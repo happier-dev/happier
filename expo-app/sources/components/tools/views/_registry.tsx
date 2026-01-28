@@ -25,12 +25,18 @@ import { WebFetchView } from './WebFetchView';
 import { WebSearchView } from './WebSearchView';
 import { CodeSearchView } from './CodeSearchView';
 import { ReasoningView } from './ReasoningView';
+import { WorkspaceIndexingPermissionView } from './WorkspaceIndexingPermissionView';
 
 export type ToolViewProps = {
     tool: ToolCall;
     metadata: Metadata | null;
     messages: Message[];
     sessionId?: string;
+    interaction?: {
+        canSendMessages: boolean;
+        canApprovePermissions: boolean;
+        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    };
 }
 
 // Type for tool view components
@@ -62,6 +68,7 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     Task: TaskView,
     AskUserQuestion: AskUserQuestionView,
     AcpHistoryImport: AcpHistoryImportView,
+    WorkspaceIndexingPermission: WorkspaceIndexingPermissionView,
     // Gemini tools (lowercase)
     edit: GeminiEditView,
     execute: GeminiExecuteView,
@@ -111,3 +118,4 @@ export { ReadView } from './ReadView';
 export { WebFetchView } from './WebFetchView';
 export { WebSearchView } from './WebSearchView';
 export { CodeSearchView } from './CodeSearchView';
+export { WorkspaceIndexingPermissionView } from './WorkspaceIndexingPermissionView';

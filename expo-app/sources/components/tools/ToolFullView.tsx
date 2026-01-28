@@ -23,9 +23,14 @@ interface ToolFullViewProps {
     sessionId?: string;
     metadata?: Metadata | null;
     messages?: Message[];
+    interaction?: {
+        canSendMessages: boolean;
+        canApprovePermissions: boolean;
+        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    };
 }
 
-export function ToolFullView({ tool, sessionId, metadata, messages = [] }: ToolFullViewProps) {
+export function ToolFullView({ tool, sessionId, metadata, messages = [], interaction }: ToolFullViewProps) {
     const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
 
     const normalizedToolName = React.useMemo(() => {
@@ -55,7 +60,13 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [] }: ToolF
             <View style={styles.contentWrapper}>
                 {/* Tool-specific content or generic fallback */}
                 {SpecializedFullView ? (
-                    <SpecializedFullView tool={toolForRendering} metadata={metadata || null} messages={messages} sessionId={sessionId} />
+                    <SpecializedFullView
+                        tool={toolForRendering}
+                        metadata={metadata || null}
+                        messages={messages}
+                        sessionId={sessionId}
+                        interaction={interaction}
+                    />
                 ) : (
                     <>
                     {/* Generic fallback for tools without specialized views */}
@@ -142,6 +153,8 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [] }: ToolF
                         toolName={normalizedToolName}
                         toolInput={toolForRendering.input}
                         metadata={metadata || null}
+                        canApprovePermissions={interaction?.canApprovePermissions ?? true}
+                        disabledReason={interaction?.permissionDisabledReason}
                     />
                 )}
                 

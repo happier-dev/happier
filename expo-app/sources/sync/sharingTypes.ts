@@ -58,6 +58,14 @@ export interface SessionShare {
     /** Access level granted to the shared user */
     accessLevel: ShareAccessLevel;
     /**
+     * Whether the recipient can approve permission prompts (delegated to the owner daemon)
+     *
+     * @remarks
+     * This is a per-recipient opt-in. When enabled, recipients with edit/admin access
+     * can approve tool/permission prompts that execute on the owner's machine.
+     */
+    canApprovePermissions: boolean;
+    /**
      * Session data encryption key, encrypted with the recipient's public key
      *
      * @remarks
@@ -197,6 +205,8 @@ export interface CreateSessionShareRequest {
     userId: string;
     /** Access level to grant */
     accessLevel: ShareAccessLevel;
+    /** Whether this recipient can approve permission prompts (edit/admin only) */
+    canApprovePermissions?: boolean;
     /** Base64 encoded (v0 + box bundle) */
     encryptedDataKey: string;
 }

@@ -537,6 +537,7 @@ export async function fetchAndApplySessions(params: {
             avatar: string | null;
         };
         accessLevel?: 'view' | 'edit' | 'admin';
+        canApprovePermissions?: boolean;
     }>;
 
     // Initialize all session encryptions first

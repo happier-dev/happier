@@ -181,7 +181,7 @@ const styles = StyleSheet.create((theme) => ({
     },
 }));
 
-export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId }) => {
+export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId, interaction }) => {
     const { theme } = useUnistyles();
     const [selections, setSelections] = React.useState<Map<number, Set<number>>>(new Map());
     const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -196,7 +196,14 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId 
     }
 
     const isRunning = tool.state === 'running';
-    const canInteract = isRunning && !isSubmitted;
+    const canApprovePermissions = interaction?.canApprovePermissions ?? true;
+    const canInteract = isRunning && !isSubmitted && canApprovePermissions;
+    const disabledMessage =
+        interaction?.permissionDisabledReason === 'public'
+            ? t('session.sharing.permissionApprovalsDisabledPublic')
+            : interaction?.permissionDisabledReason === 'readOnly'
+                ? t('session.sharing.permissionApprovalsDisabledReadOnly')
+                : t('session.sharing.permissionApprovalsDisabledNotGranted');
 
     // Check if all questions have at least one selection
     const allQuestionsAnswered = questions.every((_, qIndex) => {
@@ -316,6 +323,11 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, sessionId 
     return (
         <ToolSectionView>
             <View style={styles.container}>
+                {!canApprovePermissions && isRunning ? (
+                    <Text style={{ color: theme.colors.textSecondary }}>
+                        {disabledMessage}
+                    </Text>
+                ) : null}
                 {questions.map((question, qIndex) => {
                     const selectedOptions = selections.get(qIndex) || new Set();
 

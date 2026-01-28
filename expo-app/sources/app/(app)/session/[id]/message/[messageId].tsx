@@ -97,6 +97,16 @@ export default React.memo(() => {
             headerShadowVisible: false,
         } as const;
     }, [theme.colors.header.background, theme.colors.header.tint, toolHeaderRight, toolHeaderTitle]);
+
+    const interaction = React.useMemo(() => {
+        const isOwner = !session.accessLevel;
+        const canSendMessages = isOwner || session.accessLevel === 'edit' || session.accessLevel === 'admin';
+        const canApprovePermissions = isOwner || session.canApprovePermissions === true;
+        const permissionDisabledReason = isOwner
+            ? undefined
+            : (session.accessLevel === 'view' ? 'readOnly' : 'notGranted');
+        return { canSendMessages, canApprovePermissions, permissionDisabledReason } as const;
+    }, [session.accessLevel, session.canApprovePermissions]);
     
     return (
         <>
@@ -106,18 +116,36 @@ export default React.memo(() => {
                 />
             )}
             <Deferred>
-                <FullView message={message} sessionId={sessionId!} metadata={(session as any)?.metadata ?? null} />
+                <FullView
+                    message={message}
+                    sessionId={sessionId!}
+                    metadata={(session as any)?.metadata ?? null}
+                    interaction={interaction}
+                />
             </Deferred>
         </>
     );
 });
 
-function FullView(props: { message: Message; sessionId: string; metadata: any }) {
+function FullView(props: {
+    message: Message;
+    sessionId: string;
+    metadata: any;
+    interaction: { canSendMessages: boolean; canApprovePermissions: boolean; permissionDisabledReason?: 'readOnly' | 'notGranted' };
+}) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     
     if (props.message.kind === 'tool-call') {
-        return <ToolFullView tool={props.message.tool} messages={props.message.children} sessionId={props.sessionId} metadata={props.metadata} />
+        return (
+            <ToolFullView
+                tool={props.message.tool}
+                messages={props.message.children}
+                sessionId={props.sessionId}
+                metadata={props.metadata}
+                interaction={props.interaction}
+            />
+        );
     }
     if (props.message.kind === 'agent-text') {
         return (

@@ -10,7 +10,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Ionicons } from '@expo/vector-icons';
 
-export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId }) => {
+export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, interaction }) => {
     const { theme } = useUnistyles();
     const [isApproving, setIsApproving] = React.useState(false);
     const [isRejecting, setIsRejecting] = React.useState(false);
@@ -26,7 +26,14 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId }) 
     }
 
     const isRunning = tool.state === 'running';
-    const canInteract = isRunning && !isResponded && sessionId;
+    const canApprovePermissions = interaction?.canApprovePermissions ?? true;
+    const canInteract = isRunning && !isResponded && sessionId && canApprovePermissions;
+    const disabledMessage =
+        interaction?.permissionDisabledReason === 'public'
+            ? t('session.sharing.permissionApprovalsDisabledPublic')
+            : interaction?.permissionDisabledReason === 'readOnly'
+                ? t('session.sharing.permissionApprovalsDisabledReadOnly')
+                : t('session.sharing.permissionApprovalsDisabledNotGranted');
 
     const handleApprove = React.useCallback(async () => {
         if (!sessionId || isApproving || isRejecting || !canInteract) return;
@@ -333,7 +340,18 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId }) 
                             </View>
                         )}
                     </>
-                ) : null}
+                ) : (isRunning && !canApprovePermissions ? (
+                    <View style={styles.respondedContainer}>
+                        <Ionicons
+                            name="lock-closed-outline"
+                            size={18}
+                            color={theme.colors.textSecondary}
+                        />
+                        <Text style={styles.respondedText}>
+                            {disabledMessage}
+                        </Text>
+                    </View>
+                ) : null)}
             </View>
         </ToolSectionView>
     );
