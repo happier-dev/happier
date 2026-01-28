@@ -36,6 +36,7 @@ export function expandEnvironmentVariables(
     const expanded: Record<string, string> = {};
     const undefinedVars: string[] = [];
     const assignedEnv: Record<string, string> = {};
+    const maxDepth = 5;
 
     function readEnv(varName: string): string | undefined {
         if (Object.prototype.hasOwnProperty.call(assignedEnv, varName)) {
@@ -44,71 +45,118 @@ export function expandEnvironmentVariables(
         return sourceEnv[varName];
     }
 
-    for (const [key, value] of Object.entries(envVars)) {
-        // Replace all ${VAR}, ${VAR:-default}, and ${VAR:=default} references with actual values from sourceEnv
-        const expandedValue = value.replace(/\$\{([^}]+)\}/g, (match, expr) => {
-            // Support bash parameter expansion: ${VAR:-default} and ${VAR:=default}
-            // Example: ${Z_AI_BASE_URL:-https://api.z.ai/api/anthropic}
-            const colonDashIndex = expr.indexOf(':-');
-            const colonEqIndex = expr.indexOf(':=');
-            let varName: string;
-            let defaultValue: string | undefined;
-            let operator: ':-' | ':=' | null = null;
-
-            if (colonDashIndex !== -1 || colonEqIndex !== -1) {
-                // Split ${VAR:-default} or ${VAR:=default} into varName and defaultValue
-                const idx = colonDashIndex !== -1 && (colonEqIndex === -1 || colonDashIndex < colonEqIndex)
-                    ? colonDashIndex
-                    : colonEqIndex;
-                operator = idx === colonDashIndex ? ':-' : ':=';
-                varName = expr.substring(0, idx);
-                defaultValue = expr.substring(idx + 2);
-            } else {
-                // Simple ${VAR} reference
-                varName = expr;
+    function findClosingBrace(value: string, startAfterOpeningBrace: number): number | null {
+        let nesting = 1;
+        for (let i = startAfterOpeningBrace; i < value.length; i++) {
+            const ch = value[i];
+            if (ch === '$' && value[i + 1] === '{') {
+                nesting++;
+                i++;
+                continue;
             }
+            if (ch === '}') {
+                nesting--;
+                if (nesting === 0) return i;
+            }
+        }
+        return null;
+    }
+
+    function splitTopLevelOperator(expr: string): { varName: string; operator: ':-' | ':=' | null; defaultValue?: string } {
+        let nesting = 0;
+        for (let i = 0; i < expr.length - 1; i++) {
+            const ch = expr[i];
+            if (ch === '$' && expr[i + 1] === '{') {
+                nesting++;
+                i++;
+                continue;
+            }
+            if (ch === '}' && nesting > 0) {
+                nesting--;
+                continue;
+            }
+
+            if (nesting === 0 && ch === ':' && (expr[i + 1] === '-' || expr[i + 1] === '=')) {
+                const operator = expr[i + 1] === '-' ? ':-' : ':=';
+                const varName = expr.substring(0, i);
+                const defaultValue = expr.substring(i + 2);
+                return { varName, operator, defaultValue };
+            }
+        }
+
+        return { varName: expr, operator: null };
+    }
+
+    function expandValue(value: string, depth: number): string {
+        if (depth > maxDepth) return value;
+
+        let cursor = 0;
+        let out = '';
+
+        while (cursor < value.length) {
+            const start = value.indexOf('${', cursor);
+            if (start === -1) {
+                out += value.substring(cursor);
+                break;
+            }
+
+            out += value.substring(cursor, start);
+
+            const end = findClosingBrace(value, start + 2);
+            if (end === null) {
+                out += value.substring(start);
+                break;
+            }
+
+            const expr = value.substring(start + 2, end);
+            const { varName, operator, defaultValue } = splitTopLevelOperator(expr);
 
             const resolvedValue = readEnv(varName);
             const shouldTreatEmptyAsMissing = defaultValue !== undefined;
             const isMissing = resolvedValue === undefined || (shouldTreatEmptyAsMissing && resolvedValue === '');
 
             if (!isMissing) {
-                // Variable found in source environment - use its value
                 if (process.env.DEBUG) {
                     logger.debug(`[EXPAND ENV] Expanded ${varName} from daemon env`);
                 }
 
-                // Warn if empty string (common mistake)
                 if (resolvedValue === '' && !Object.prototype.hasOwnProperty.call(assignedEnv, varName)) {
                     logger.warn(`[EXPAND ENV] WARNING: ${varName} is set but EMPTY in daemon environment`);
                 }
 
-                return resolvedValue;
+                out += resolvedValue;
             } else if (defaultValue !== undefined) {
-                // Variable not found but default value provided - use default
                 if (process.env.DEBUG) {
                     logger.debug(`[EXPAND ENV] Using default value for ${varName}`);
                 }
-                if (operator === ':=') {
-                    assignedEnv[varName] = defaultValue;
-                }
-                return defaultValue;
-            } else {
-                // Variable not found and no default - keep placeholder and warn
-                undefinedVars.push(varName);
-                return match;
-            }
-        });
 
-        expanded[key] = expandedValue;
+                const expandedDefault = expandValue(defaultValue, depth + 1);
+                if (operator === ':=') {
+                    assignedEnv[varName] = expandedDefault;
+                }
+                out += expandedDefault;
+            } else {
+                undefinedVars.push(varName);
+                out += value.substring(start, end + 1);
+            }
+
+            cursor = end + 1;
+        }
+
+        return out;
+    }
+
+    for (const [key, value] of Object.entries(envVars)) {
+        expanded[key] = expandValue(value, 0);
     }
 
     // Log warning if any variables couldn't be resolved
     const warnOnUndefined = options?.warnOnUndefined ?? true;
-    if (warnOnUndefined && undefinedVars.length > 0) {
-        logger.warn(`[EXPAND ENV] Undefined variables referenced in profile environment: ${undefinedVars.join(', ')}`);
+    const uniqueUndefinedVars = Array.from(new Set(undefinedVars));
+    if (warnOnUndefined && uniqueUndefinedVars.length > 0) {
+        logger.warn(`[EXPAND ENV] Undefined variables referenced in profile environment: ${uniqueUndefinedVars.join(', ')}`);
         logger.warn(`[EXPAND ENV] Session may fail to authenticate. Set these in daemon environment before launching:`);
-        undefinedVars.forEach(varName => {
+        uniqueUndefinedVars.forEach(varName => {
             logger.warn(`[EXPAND ENV]   ${varName}=<your-value>`);
         });
     }
