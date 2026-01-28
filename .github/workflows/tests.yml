@@ -31,7 +31,7 @@ jobs:
           corepack prepare yarn@1.22.22 --activate
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile --ignore-scripts
+        run: yarn install --frozen-lockfile
 
       - name: Build workspace link deps (agents/protocol)
         run: |
