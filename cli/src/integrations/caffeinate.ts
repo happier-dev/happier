@@ -85,7 +85,10 @@ export async function stopCaffeinate(): Promise<void> {
             caffeinateProcess.kill('SIGTERM')
             
             // Give it a moment to terminate gracefully
-            await new Promise(resolve => setTimeout(resolve, 1000))
+            await new Promise((resolve) => {
+                const timeout = setTimeout(resolve, 1000)
+                timeout.unref?.()
+            })
 
             if (caffeinateProcess && !caffeinateProcess.killed) {
                 logger.debug('[caffeinate] Force killing caffeinate process')
@@ -121,7 +124,7 @@ function setupCleanupHandlers(): void {
     
     // Clean up on various exit conditions
     const cleanup = () => {
-        stopCaffeinate()
+        void stopCaffeinate()
     }
     
     process.on('exit', cleanup)
