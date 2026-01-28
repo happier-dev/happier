@@ -70,7 +70,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
     // Handle abort
     let exitReason: 'switch' | 'exit' | null = null;
     const processAbortController = new AbortController();
-    let exutFuture = new Future<void>();
+    let exitFuture = new Future<void>();
     try {
         async function abort() {
 
@@ -80,7 +80,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
             }
 
             // Await full exit
-            await exutFuture.promise;
+            await exitFuture.promise;
         }
 
         async function ensureSessionInfoBeforeSwitch(): Promise<void> {
@@ -218,6 +218,8 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
         }
 
         // Run local mode
+        let errorCount = 0;
+        const maxRetries = 5;
         while (true) {
             // If we already have an exit reason, return it
             if (exitReason) {
@@ -258,6 +260,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
                 // Consume one-time Claude flags after spawn
                 // For example we don't want to pass --resume flag after first spawn
                 session.consumeOneTimeFlags();
+                errorCount = 0;
 
                 // Normal exit
                 if (!exitReason) {
@@ -273,7 +276,23 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
                     session.transcriptPath = resumeFromTranscriptPath;
                 }
                 if (!exitReason) {
-                    session.client.sendSessionEvent({ type: 'message', message: `Claude process error: ${formatErrorForUi(e)}` });
+                    errorCount += 1;
+                    session.client.sendSessionEvent({
+                        type: 'message',
+                        message: `Claude process error (${errorCount}/${maxRetries}): ${formatErrorForUi(e)}`,
+                    });
+
+                    if (errorCount >= maxRetries) {
+                        session.client.sendSessionEvent({
+                            type: 'message',
+                            message: `Claude process failed ${maxRetries} times. Switching back to remote mode.`,
+                        });
+                        exitReason = 'switch';
+                        break;
+                    }
+
+                    // Backoff to avoid tight retry loops and log spam.
+                    await new Promise((resolve) => setTimeout(resolve, Math.min(1000 * errorCount, 5000)));
                     continue;
                 } else {
                     break;
@@ -284,7 +303,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
     } finally {
 
         // Resolve future
-        exutFuture.resolve(undefined);
+        exitFuture.resolve(undefined);
 
         // Set handlers to no-op
         session.client.rpcHandlerManager.registerHandler('abort', async () => { });
