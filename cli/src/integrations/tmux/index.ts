@@ -910,15 +910,21 @@ export class TmuxUtilities {
 
             if (!createResult || createResult.returncode !== 0) {
                 throw new Error(`Failed to create tmux window: ${createResult?.stderr}`);
-            }
+			}
 
-            // Extract the PID from the output
-            const panePid = parseInt(createResult.stdout.trim());
-            if (isNaN(panePid)) {
-                throw new Error(`Failed to extract PID from tmux output: ${createResult.stdout}`);
-            }
+			// Extract the PID from the output
+			const panePidText = createResult.stdout.trim();
+			if (!/^\d+$/.test(panePidText)) {
+				const preview = panePidText.length > 200 ? `${panePidText.slice(0, 200)}…` : panePidText;
+				throw new Error(`Failed to extract PID from tmux output: ${preview}`);
+			}
 
-            logger.debug(`[TMUX] Spawned command in tmux session ${sessionName}, window ${windowName}, PID ${panePid}`);
+			const panePid = Number.parseInt(panePidText, 10);
+			if (!Number.isFinite(panePid) || panePid <= 0) {
+				throw new Error(`Failed to extract PID from tmux output: ${panePidText}`);
+			}
+
+			logger.debug(`[TMUX] Spawned command in tmux session ${sessionName}, window ${windowName}, PID ${panePid}`);
 
             // Return tmux session info and PID
             const sessionIdentifier: TmuxSessionIdentifier = {

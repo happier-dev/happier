@@ -648,4 +648,27 @@ describe('TmuxUtilities.spawnInTmux', () => {
         const newWindowCalls = tmux.calls.filter((call) => call.cmd[0] === 'new-window');
         expect(newWindowCalls.length).toBeGreaterThanOrEqual(2);
     });
+
+    it('returns an error when tmux new-window output is not a numeric pane PID', async () => {
+        class InvalidPidTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'new-window') {
+                    this.calls.push({ cmd, session });
+                    return { returncode: 0, stdout: 'not-a-pid\n', stderr: '', command: cmd };
+                }
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+
+        const tmux = new InvalidPidTmuxUtilities();
+
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window' },
+            {},
+        );
+
+        expect(result.success).toBe(false);
+        expect(result.error).toMatch(/PID/i);
+    });
 });
