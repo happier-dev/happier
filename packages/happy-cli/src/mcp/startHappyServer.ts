@@ -45,7 +45,7 @@ export async function startHappyServer(client: ApiSessionClient) {
         inputSchema: {
             title: z.string().describe('The new title for the chat session'),
         },
-    } as any, async (args: any, _extra: any) => {
+    } as any, async (args: any) => {
         const title = typeof args?.title === 'string' ? args.title : '';
         const response = await handler(title);
         logger.debug('[happyMCP] Response:', response);

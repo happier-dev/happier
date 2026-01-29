@@ -4,7 +4,22 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(__dirname, '..', '..');
+
+function findRepoRoot(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 10; i++) {
+    if (existsSync(resolve(dir, 'package.json')) && existsSync(resolve(dir, 'yarn.lock'))) {
+      return dir;
+    }
+    const parent = resolve(dir, '..');
+    if (parent === dir) break;
+    dir = parent;
+  }
+  // Fallback for older layouts (repoRoot/packages/happy-cli/scripts).
+  return resolve(startDir, '..', '..', '..');
+}
+
+const repoRoot = findRepoRoot(__dirname);
 
 export function resolveTscBin({ exists } = {}) {
   const existsImpl = exists ?? existsSync;

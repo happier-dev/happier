@@ -6,7 +6,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { logger } from '@/ui/logger';
 import type { CodexSessionConfig, CodexToolResponse } from './types';
-import { z } from 'zod';
+import { z } from 'zod/v4';
 import { ElicitRequestParamsSchema, RequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { CodexPermissionHandler } from './utils/permissionHandler';
 import { execFileSync } from 'child_process';
