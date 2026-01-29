@@ -43,4 +43,20 @@ export const AGENTS_CORE = {
         cloudConnect: null,
         resume: { vendorResume: 'supported', vendorResumeIdField: 'auggieSessionId', runtimeGate: 'acpLoadSession' },
     },
+    qwen: {
+        id: 'qwen',
+        cliSubcommand: 'qwen',
+        detectKey: 'qwen',
+        flavorAliases: ['qwen-code'],
+        cloudConnect: null,
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'qwenSessionId', runtimeGate: 'acpLoadSession' },
+    },
+    kimi: {
+        id: 'kimi',
+        cliSubcommand: 'kimi',
+        detectKey: 'kimi',
+        flavorAliases: ['kimi-cli'],
+        cloudConnect: null,
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'kimiSessionId', runtimeGate: 'acpLoadSession' },
+    },
 } as const satisfies Record<AgentId, AgentCore>;

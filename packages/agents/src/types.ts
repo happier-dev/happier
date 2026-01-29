@@ -1,10 +1,16 @@
-export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie'] as const;
+export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
 export type VendorResumeSupportLevel = 'supported' | 'unsupported' | 'experimental';
 export type ResumeRuntimeGate = 'acpLoadSession' | null;
 
-export type VendorResumeIdField = 'codexSessionId' | 'geminiSessionId' | 'opencodeSessionId' | 'auggieSessionId';
+export type VendorResumeIdField =
+    | 'codexSessionId'
+    | 'geminiSessionId'
+    | 'opencodeSessionId'
+    | 'auggieSessionId'
+    | 'qwenSessionId'
+    | 'kimiSessionId';
 
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';
