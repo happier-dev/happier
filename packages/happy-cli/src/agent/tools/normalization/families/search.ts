@@ -172,7 +172,32 @@ export function normalizeCodeSearchResult(rawOutput: unknown): UnknownRecord {
         return { matches: (record as any).matches };
     }
 
-    return { ...record };
+    const textCandidate =
+        typeof (record as any).aggregated_output === 'string'
+            ? (record as any).aggregated_output
+            : typeof (record as any).formatted_output === 'string'
+                ? (record as any).formatted_output
+                : typeof (record as any).stdout === 'string'
+                    ? (record as any).stdout
+                    : typeof (record as any).text === 'string'
+                        ? (record as any).text
+                        : typeof (record as any).value === 'string'
+                            ? (record as any).value
+                            : null;
+
+    if (typeof textCandidate === 'string' && textCandidate.trim().length > 0) {
+        const parsed = parseOpenCodeSearch(textCandidate);
+        if (parsed) return parsed;
+        const lines = textCandidate
+            .replace(/\r\n/g, '\n')
+            .split('\n')
+            .map((l) => l.trim())
+            .filter((l) => l.length > 0);
+        if (lines.length > 0) return { ...record, matches: lines.map((l) => ({ excerpt: l })) };
+    }
+
+    // Always guarantee a stable schema for the UI/tests, even for error-only outputs.
+    return { ...record, matches: [] };
 }
 
 export function normalizeGrepInput(rawInput: unknown): UnknownRecord {

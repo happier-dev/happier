@@ -1127,6 +1127,8 @@ export const ja: TranslationStructure = {
     },
 
     toolView: {
+        open: '詳細を開く',
+        expand: '展開/折りたたみ',
         input: '入力',
         output: '出力',
         open: '開く',

@@ -893,6 +893,8 @@ export const en = {
     },
 
     toolView: {
+        open: 'Open details',
+        expand: 'Expand/collapse',
         input: 'Input',
         output: 'Output',
         open: 'Open',

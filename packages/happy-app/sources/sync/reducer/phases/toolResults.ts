@@ -28,8 +28,23 @@ export function runToolResultsPhase(params: Readonly<{
                         continue;
                     }
 
-                    if (message.tool.state !== 'running') {
+                    // Tool results can race: we can receive a permission completion (creating a "permission-only" tool)
+                    // and then later receive the actual tool_result without ever seeing a tool_call (dropped update,
+                    // reconnect/resume, etc). In that case we must allow the real tool output to overwrite placeholders
+                    // like "Approved".
+                    const isApprovedPlaceholder =
+                        message.tool.state === 'completed' &&
+                        message.tool.result === 'Approved' &&
+                        message.tool.permission?.status === 'approved';
+
+                    if (message.tool.state !== 'running' && !isApprovedPlaceholder) {
                         continue;
+                    }
+
+                    if (isApprovedPlaceholder) {
+                        message.tool.state = 'running';
+                        message.tool.completedAt = null;
+                        message.tool.result = undefined;
                     }
 
                     const streamChunk = coerceStreamingToolResultChunk(c.content);
@@ -77,4 +92,3 @@ export function runToolResultsPhase(params: Readonly<{
         }
     }
 }
-

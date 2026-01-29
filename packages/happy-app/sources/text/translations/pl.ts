@@ -890,6 +890,8 @@ export const pl: TranslationStructure = {
     },
 
     toolView: {
+        open: 'Otwórz szczegóły',
+        expand: 'Rozwiń/zwiń',
         input: 'Wejście',
         output: 'Wyjście',
         open: 'Otwórz',

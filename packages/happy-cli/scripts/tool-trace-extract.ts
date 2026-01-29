@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { extractToolTraceFixturesFromJsonlLines } from '../src/toolTrace/extractToolTraceFixtures';
+import { extractToolTraceFixturesFromJsonlLines } from '../src/agent/tools/trace/extractToolTraceFixtures';
 
 function parseArgs(argv: string[]): { inputs: string[]; outFile: string | null } {
     const inputs: string[] = [];
@@ -50,4 +50,3 @@ function main() {
 }
 
 main();
-

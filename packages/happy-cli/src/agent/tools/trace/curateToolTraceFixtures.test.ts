@@ -98,4 +98,33 @@ describe('curateToolTraceFixturesFromJsonlLines', () => {
             'acp/opencode/tool-result/read',
         ]));
     });
+
+    it('keys tool-result events by tool name when a permission-request exists without a tool-call', () => {
+        const fixtures = curateToolTraceFixturesFromJsonlLines([
+            JSON.stringify({
+                v: 1,
+                ts: 1,
+                direction: 'outbound',
+                sessionId: 's1',
+                protocol: 'acp',
+                provider: 'gemini',
+                kind: 'tool-result',
+                payload: { type: 'tool-result', callId: 'c1', output: { status: 'ok' } },
+            }),
+            JSON.stringify({
+                v: 1,
+                ts: 2,
+                direction: 'outbound',
+                sessionId: 's1',
+                protocol: 'acp',
+                provider: 'gemini',
+                kind: 'permission-request',
+                payload: { type: 'permission-request', permissionId: 'c1', toolName: 'read', input: { file_path: '/etc/hosts' } },
+            }),
+        ]);
+
+        expect(Object.keys(fixtures.examples)).toEqual(expect.arrayContaining([
+            'acp/gemini/tool-result/read',
+        ]));
+    });
 });

@@ -44,5 +44,62 @@ describe('extractToolTraceFixturesFromJsonlLines', () => {
         expect(fixtures.examples['codex/codex/tool-call/CodexBash']).toHaveLength(1);
         expect(fixtures.examples['acp/opencode/message']).toBeUndefined();
     });
-});
 
+    it('keys tool-result events by tool name even when the tool-call arrives later in the trace', () => {
+        const fixtures = extractToolTraceFixturesFromJsonlLines([
+            JSON.stringify({
+                v: 1,
+                ts: 1,
+                direction: 'outbound',
+                sessionId: 's1',
+                protocol: 'acp',
+                provider: 'opencode',
+                kind: 'tool-result',
+                payload: { type: 'tool-result', callId: 'c1', output: { stdout: 'ok' } },
+            }),
+            JSON.stringify({
+                v: 1,
+                ts: 2,
+                direction: 'outbound',
+                sessionId: 's1',
+                protocol: 'acp',
+                provider: 'opencode',
+                kind: 'tool-call',
+                payload: { type: 'tool-call', callId: 'c1', name: 'read', input: { filePath: '/etc/hosts' } },
+            }),
+        ]);
+
+        expect(Object.keys(fixtures.examples)).toEqual(
+            expect.arrayContaining(['acp/opencode/tool-result/read'])
+        );
+    });
+
+    it('keys tool-result events by tool name when only a permission-request exists (no tool-call)', () => {
+        const fixtures = extractToolTraceFixturesFromJsonlLines([
+            JSON.stringify({
+                v: 1,
+                ts: 1,
+                direction: 'outbound',
+                sessionId: 's1',
+                protocol: 'acp',
+                provider: 'gemini',
+                kind: 'tool-result',
+                payload: { type: 'tool-result', callId: 'c1', output: { status: 'failed' } },
+            }),
+            JSON.stringify({
+                v: 1,
+                ts: 2,
+                direction: 'outbound',
+                sessionId: 's1',
+                protocol: 'acp',
+                provider: 'gemini',
+                kind: 'permission-request',
+                payload: { type: 'permission-request', permissionId: 'c1', toolName: 'read', input: { file_path: '/etc/hosts' } },
+            }),
+        ]);
+
+        expect(Object.keys(fixtures.examples)).toEqual(
+            expect.arrayContaining(['acp/gemini/tool-result/read'])
+        );
+    });
+});
