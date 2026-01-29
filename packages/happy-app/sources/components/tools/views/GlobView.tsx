@@ -3,16 +3,10 @@ import { View, Text } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ToolSectionView } from '../ToolSectionView';
 import type { ToolViewProps } from './_registry';
-import { maybeParseJson } from '../utils/parseJson';
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    return value as Record<string, unknown>;
-}
+import { coerceToolResultRecord } from '../legacy/coerceToolResultRecord';
 
 function getMatches(result: unknown): string[] {
-    const parsed = maybeParseJson(result);
-    const record = asRecord(parsed);
+    const record = coerceToolResultRecord(result);
     const matches = record?.matches;
     if (!Array.isArray(matches)) return [];
     return matches.filter((m): m is string => typeof m === 'string');

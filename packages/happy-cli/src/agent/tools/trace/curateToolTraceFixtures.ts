@@ -158,8 +158,11 @@ export function curateToolTraceFixturesFromJsonlLines(lines: string[], opts?: {
         recordableEvents.push(event as ToolTraceEventV1);
     }
 
-    // First pass: index tool-call names by callId so tool-result events can be keyed by tool name
+    // First pass: index tool names by callId so tool-result events can be keyed by tool name
     // even if the tool-call arrives later in the stream.
+    //
+    // Note: Some providers emit permission-request + tool-result without a tool-call (or with a dropped tool-call).
+    // In that case, we still want tool-result events to be keyed by tool name for fixture stability.
     for (const fullEvent of recordableEvents) {
         const provider = typeof fullEvent.provider === 'string' && fullEvent.provider.length > 0 ? fullEvent.provider : 'unknown';
         const callId = getCallIdForIndex(fullEvent);
@@ -169,7 +172,7 @@ export function curateToolTraceFixturesFromJsonlLines(lines: string[], opts?: {
                 ? `${fullEvent.protocol}/${provider}/${sessionId}/${callId}`
                 : null;
 
-        if (fullEvent.kind === 'tool-call' && callIndexKey) {
+        if ((fullEvent.kind === 'tool-call' || fullEvent.kind === 'permission-request') && callIndexKey) {
             const toolName = getToolNameForKey(fullEvent);
             if (toolName) callIdToToolName.set(callIndexKey, toolName);
         }

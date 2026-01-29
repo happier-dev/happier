@@ -1133,6 +1133,8 @@ export const it: TranslationStructure = {
     },
 
     toolView: {
+        open: 'Apri dettagli',
+        expand: 'Espandi/Comprimi',
         input: 'Input',
         output: 'Output',
         open: 'Apri',

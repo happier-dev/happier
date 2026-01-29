@@ -3,7 +3,7 @@ import { View, Text } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { ToolSectionView } from '../ToolSectionView';
 import type { ToolViewProps } from './_registry';
-import { maybeParseJson } from '../utils/parseJson';
+import { coerceToolResultRecord } from '../legacy/coerceToolResultRecord';
 
 type GrepMatch = { filePath?: string; line?: number; excerpt?: string };
 
@@ -13,8 +13,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function getMatches(result: unknown): GrepMatch[] {
-    const parsed = maybeParseJson(result);
-    const record = asRecord(parsed);
+    const record = coerceToolResultRecord(result);
     const matches = record?.matches;
     if (!Array.isArray(matches)) return [];
 

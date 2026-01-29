@@ -3,7 +3,7 @@ import { View, Text } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from './_registry';
 import { ToolSectionView } from '../ToolSectionView';
-import { maybeParseJson } from '../utils/parseJson';
+import { coerceToolResultRecord } from '../legacy/coerceToolResultRecord';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -13,8 +13,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 type SearchMatch = { filePath?: string; line?: number; excerpt?: string };
 
 function getMatches(result: unknown): SearchMatch[] {
-    const parsed = maybeParseJson(result);
-    const record = asRecord(parsed);
+    const record = coerceToolResultRecord(result);
     const matches = record?.matches;
     if (!Array.isArray(matches)) return [];
 

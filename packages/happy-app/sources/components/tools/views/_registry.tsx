@@ -52,12 +52,8 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     Patch: PatchView,
     Diff: DiffView,
     Reasoning: ReasoningView,
-    CodexBash: BashView,
-    CodexPatch: PatchView,
-    CodexDiff: DiffView,
     Write: WriteView,
     Read: ReadView,
-    read: ReadView,
     Glob: GlobView,
     Grep: GrepView,
     LS: LSView,
@@ -68,25 +64,50 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     TodoRead: TodoView,
     EnterPlanMode: EnterPlanModeView,
     ExitPlanMode: ExitPlanToolView,
-    exit_plan_mode: ExitPlanToolView,
     MultiEdit: MultiEditView,
     Task: TaskView,
     AskUserQuestion: AskUserQuestionView,
     AcpHistoryImport: AcpHistoryImportView,
     WorkspaceIndexingPermission: WorkspaceIndexingPermissionView,
     change_title: ChangeTitleView,
-    // ACP providers often use lowercase tool names
-    edit: EditView,
-    execute: BashView,
-    GeminiReasoning: ReasoningView,
-    CodexReasoning: ReasoningView,
-    think: ReasoningView,
 };
+
+const legacyToolNameToCanonical: Record<string, keyof typeof toolViewRegistry> = {
+    // Provider-branded historical names.
+    CodexBash: 'Bash',
+    CodexPatch: 'Patch',
+    CodexDiff: 'Diff',
+    GeminiReasoning: 'Reasoning',
+    CodexReasoning: 'Reasoning',
+    TaskCreate: 'Task',
+    TaskList: 'Task',
+    TaskUpdate: 'Task',
+
+    // Legacy lowercase names (ACP + older sessions).
+    edit: 'Edit',
+    execute: 'Bash',
+    read: 'Read',
+    write: 'Write',
+    search: 'CodeSearch',
+    glob: 'Glob',
+    grep: 'Grep',
+    ls: 'LS',
+    delete: 'Delete',
+    remove: 'Delete',
+    exit_plan_mode: 'ExitPlanMode',
+    think: 'Reasoning',
+};
+
+export function normalizeToolNameForView(toolName: string): string {
+    if (toolName.startsWith('mcp__')) return toolName;
+    return legacyToolNameToCanonical[toolName] ?? toolName;
+}
 
 // Helper function to get the appropriate view component for a tool
 export function getToolViewComponent(toolName: string): ToolViewComponent | null {
     if (toolName.startsWith('mcp__')) return MCPToolView;
-    return toolViewRegistry[toolName] || null;
+    const normalizedName = normalizeToolNameForView(toolName);
+    return toolViewRegistry[normalizedName] || null;
 }
 
 // Export individual components

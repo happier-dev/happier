@@ -880,6 +880,8 @@ export const es: TranslationStructure = {
     },
 
     toolView: {
+        open: 'Abrir detalles',
+        expand: 'Expandir/contraer',
         input: 'Entrada',
         output: 'Salida',
         open: 'Abrir',
