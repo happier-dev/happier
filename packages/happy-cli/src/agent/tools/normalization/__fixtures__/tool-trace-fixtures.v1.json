@@ -1200,6 +1200,32 @@
         }
       }
     ],
+    "codex/codex/tool-call/mcp__linear__create_issue": [
+      {
+        "v": 1,
+        "ts": 1769999999000,
+        "direction": "outbound",
+        "sessionId": "fixture-mcp-generic",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "name": "mcp__linear__create_issue",
+          "callId": "call_FIXTURE_MCP_LINEAR_CREATE_ISSUE",
+          "input": {
+            "title": "Bug: MCP tool rendering summary",
+            "description": "Synthetic fixture used to validate stable MCP tool display + normalization.",
+            "projectId": "PRJ-123",
+            "labels": [
+              "tooling",
+              "ux"
+            ]
+          },
+          "id": "fixture-mcp-linear-create-issue"
+        }
+      }
+    ],
     "codex/codex/tool-call-result/mcp__happy__change_title": [
       {
         "v": 1,
@@ -1268,6 +1294,31 @@
             "isError": false
           },
           "id": "11de51f3-eee4-44fb-9290-b1928393ad8f"
+        }
+      }
+    ],
+    "codex/codex/tool-call-result/mcp__linear__create_issue": [
+      {
+        "v": 1,
+        "ts": 1769999999100,
+        "direction": "outbound",
+        "sessionId": "fixture-mcp-generic",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_FIXTURE_MCP_LINEAR_CREATE_ISSUE",
+          "output": {
+            "content": [
+              {
+                "text": "Created issue LIN-42",
+                "type": "text"
+              }
+            ],
+            "isError": false
+          },
+          "id": "fixture-mcp-linear-create-issue-result"
         }
       }
     ],

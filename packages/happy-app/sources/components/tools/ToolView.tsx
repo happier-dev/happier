@@ -13,7 +13,7 @@ import { Metadata } from '@/sync/storageTypes';
 import { useRouter } from 'expo-router';
 import { PermissionFooter } from './PermissionFooter';
 import { parseToolUseError } from '@/utils/toolErrorParser';
-import { formatMCPTitle } from './views/MCPToolView';
+import { formatMCPSubtitle, formatMCPTitle } from './views/MCPToolView';
 import { t } from '@/text';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
 import { StructuredResultView } from './views/StructuredResultView';
@@ -109,7 +109,10 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     if (toolForRendering.name.startsWith('mcp__')) {
         toolTitle = formatMCPTitle(toolForRendering.name);
         icon = <Ionicons name="extension-puzzle-outline" size={18} color={theme.colors.textSecondary} />;
-        minimal = true;
+        const subtitle = formatMCPSubtitle(toolForRendering.input);
+        if (subtitle) {
+            description = subtitle;
+        }
     } else if (knownTool?.title) {
         if (typeof knownTool.title === 'function') {
             toolTitle = knownTool.title({ tool: toolForRendering, metadata: props.metadata });
@@ -136,13 +139,23 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         }
     }
 
-    const collapsedDetailLevel = resolveToolViewDetailLevel({
-        toolName: normalizedToolName,
-        toolInput: toolForRendering.input,
-        detailLevelDefault: toolViewDetailLevelDefault,
-        detailLevelDefaultLocalControl: toolViewDetailLevelDefaultLocalControl,
-        detailLevelByToolName: toolViewDetailLevelByToolName as any,
-    });
+    const hasSpecificView = !!getToolViewComponent(normalizedToolName);
+    const isUnknownTool =
+        !toolForRendering.name.startsWith('mcp__') &&
+        !knownTool &&
+        !hasSpecificView;
+
+    const shouldCollapseUnknownToolByDefault = isUnknownTool && toolForRendering.state === 'completed';
+
+    const collapsedDetailLevel = toolForRendering.name.startsWith('mcp__') || shouldCollapseUnknownToolByDefault
+        ? 'title'
+        : resolveToolViewDetailLevel({
+              toolName: normalizedToolName,
+              toolInput: toolForRendering.input,
+              detailLevelDefault: toolViewDetailLevelDefault,
+              detailLevelDefaultLocalControl: toolViewDetailLevelDefaultLocalControl,
+              detailLevelByToolName: toolViewDetailLevelByToolName as any,
+          });
 
     const expandedDetailLevel: 'summary' | 'full' =
         (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? toolViewExpandedDetailLevelDefault;

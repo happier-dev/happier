@@ -69,6 +69,7 @@ vi.mock('@/utils/toolErrorParser', () => ({
 
 vi.mock('./views/MCPToolView', () => ({
     formatMCPTitle: (t: string) => t,
+    formatMCPSubtitle: () => '',
 }));
 
 vi.mock('../CodeView', () => ({

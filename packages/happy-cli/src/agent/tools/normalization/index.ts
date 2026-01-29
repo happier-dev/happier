@@ -23,6 +23,7 @@ import { normalizeTodoReadInput, normalizeTodoResult, normalizeTodoWriteInput } 
 import { normalizeWebFetchInput, normalizeWebFetchResult, normalizeWebSearchInput, normalizeWebSearchResult } from './families/web';
 import { normalizeTaskInput, normalizeTaskResult } from './families/task';
 import { normalizeChangeTitleResult } from './families/changeTitle';
+import { normalizeMcpInput, normalizeMcpResult } from './families/mcp';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -35,6 +36,40 @@ function mergeHappyMeta(input: unknown, meta: ToolNormalizationHappyMetaV2): Unk
     const record = asRecord(input) ?? {};
     const current = asRecord(record._happy) ?? {};
     return { ...record, _happy: { ...current, ...meta } };
+}
+
+function withCommonErrorMessage(normalized: UnknownRecord): UnknownRecord {
+    const existing = typeof (normalized as any).errorMessage === 'string' ? String((normalized as any).errorMessage) : null;
+    if (existing && existing.trim().length > 0) return normalized;
+
+    const candidates: Array<unknown> = [
+        (normalized as any).error,
+        // Many tool results use `stderr` or `message` to convey failures.
+        (normalized as any).stderr,
+        (normalized as any).message,
+        (normalized as any).text,
+    ];
+
+    let chosen: string | null = null;
+    for (const c of candidates) {
+        if (typeof c === 'string' && c.trim().length > 0) {
+            chosen = c.trim();
+            break;
+        }
+    }
+
+    const isError =
+        (normalized as any).isError === true ||
+        (normalized as any).ok === false ||
+        (normalized as any).success === false ||
+        (normalized as any).applied === false;
+
+    // Only promote message/text as an errorMessage when the result indicates failure.
+    if (!isError && chosen === (normalized as any).message) chosen = null;
+    if (!isError && chosen === (normalized as any).text) chosen = null;
+
+    if (!chosen) return normalized;
+    return { ...normalized, errorMessage: chosen };
 }
 
 export function canonicalizeToolNameV2(opts: {
@@ -161,6 +196,19 @@ export function normalizeToolCallInputV2(opts: {
     canonicalToolName: string;
     rawInput: unknown;
 }): unknown {
+    if (opts.canonicalToolName.startsWith('mcp__')) {
+        const normalized = normalizeMcpInput(opts.canonicalToolName, opts.rawInput);
+        const meta: ToolNormalizationHappyMetaV2 = {
+            v: 2,
+            protocol: opts.protocol,
+            provider: opts.provider,
+            rawToolName: opts.toolName,
+            canonicalToolName: opts.canonicalToolName,
+        };
+        const withHappy = mergeHappyMeta(normalized, meta);
+        return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
+    }
+
     if (opts.canonicalToolName === 'Bash') {
         const normalized = normalizeBashInput(opts.rawInput);
         const meta: ToolNormalizationHappyMetaV2 = {
@@ -446,6 +494,9 @@ export function normalizeToolResultV2(opts: {
     };
 
     const normalized: UnknownRecord = (() => {
+        if (opts.canonicalToolName.startsWith('mcp__')) {
+            return normalizeMcpResult(opts.canonicalToolName, opts.rawOutput);
+        }
         if (opts.canonicalToolName === 'Bash') {
             return normalizeBashResult(opts.rawOutput);
         }
@@ -499,6 +550,6 @@ export function normalizeToolResultV2(opts: {
         return { value: opts.rawOutput };
     })();
 
-    const withHappy = mergeHappyMeta(normalized, meta);
+    const withHappy = mergeHappyMeta(withCommonErrorMessage(normalized), meta);
     return { ...withHappy, _raw: truncateDeep(opts.rawOutput) };
 }

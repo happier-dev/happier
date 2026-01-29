@@ -5,6 +5,47 @@ function asRecord(value: unknown): UnknownRecord | null {
     return value as UnknownRecord;
 }
 
+function coerceFirstItemDiff(items: unknown): UnknownRecord | null {
+    if (!Array.isArray(items) || items.length === 0) return null;
+    const first = items[0];
+    if (!first || typeof first !== 'object' || Array.isArray(first)) return null;
+    return first as UnknownRecord;
+}
+
+function coerceItemPath(item: UnknownRecord | null): string | null {
+    if (!item) return null;
+    const path =
+        (typeof item.path === 'string' && item.path.trim().length > 0)
+            ? item.path.trim()
+            : (typeof item.filePath === 'string' && item.filePath.trim().length > 0)
+                ? item.filePath.trim()
+                : null;
+    return path;
+}
+
+function coerceItemNewText(item: UnknownRecord | null): string | null {
+    if (!item) return null;
+    const candidates = [item.newText, item.new_string, item.newString, item.text, item.data];
+    for (const c of candidates) {
+        if (typeof c === 'string' && c.trim().length > 0) return c;
+    }
+    return null;
+}
+
+function coerceSingleLocationPath(locations: unknown): string | null {
+    if (!Array.isArray(locations) || locations.length !== 1) return null;
+    const first = locations[0];
+    if (!first || typeof first !== 'object') return null;
+    const obj = first as UnknownRecord;
+    const path =
+        (typeof obj.path === 'string' && obj.path.trim().length > 0)
+            ? obj.path.trim()
+            : (typeof obj.filePath === 'string' && obj.filePath.trim().length > 0)
+                ? obj.filePath.trim()
+                : null;
+    return path;
+}
+
 function coerceTextFromContentBlocks(content: unknown): string | null {
     if (typeof content === 'string') return content;
     if (!Array.isArray(content)) return null;
@@ -31,7 +72,11 @@ export function normalizeWriteInput(rawInput: unknown): UnknownRecord {
                 : typeof out.path === 'string' && out.path.trim().length > 0
                     ? out.path.trim()
                     : null;
-    if (filePath) out.file_path = filePath;
+    const firstItem = coerceFirstItemDiff(out.items);
+    const fromItem = filePath ? null : coerceItemPath(firstItem);
+    const fromLocations = filePath || fromItem ? null : coerceSingleLocationPath(out.locations);
+    const normalizedPath = filePath ?? fromItem ?? fromLocations;
+    if (normalizedPath) out.file_path = normalizedPath;
 
     const content =
         typeof out.content === 'string'
@@ -45,7 +90,9 @@ export function normalizeWriteInput(rawInput: unknown): UnknownRecord {
                     : typeof out.newText === 'string'
                         ? out.newText
                         : null;
-    if (content != null && typeof out.content !== 'string') out.content = content;
+    const fromItemContent = content != null ? null : coerceItemNewText(firstItem);
+    const normalizedContent = content ?? fromItemContent;
+    if (normalizedContent != null && typeof out.content !== 'string') out.content = normalizedContent;
 
     return out;
 }

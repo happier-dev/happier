@@ -24,6 +24,7 @@ import { WorkspaceIndexingPermissionView } from './WorkspaceIndexingPermissionVi
 import { LSView } from './LSView';
 import { ChangeTitleView } from './ChangeTitleView';
 import { DeleteView } from './DeleteView';
+import { MCPToolView } from './MCPToolView';
 
 export type ToolViewDetailLevel = 'title' | 'summary' | 'full';
 
@@ -84,6 +85,7 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
 
 // Helper function to get the appropriate view component for a tool
 export function getToolViewComponent(toolName: string): ToolViewComponent | null {
+    if (toolName.startsWith('mcp__')) return MCPToolView;
     return toolViewRegistry[toolName] || null;
 }
 
@@ -108,3 +110,4 @@ export { CodeSearchView } from './CodeSearchView';
 export { WorkspaceIndexingPermissionView } from './WorkspaceIndexingPermissionView';
 export { ChangeTitleView } from './ChangeTitleView';
 export { DeleteView } from './DeleteView';
+export { MCPToolView } from './MCPToolView';

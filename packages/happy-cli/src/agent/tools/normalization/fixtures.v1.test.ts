@@ -240,6 +240,48 @@ describe('tool normalization fixtures (v1)', () => {
         expect(normalizeFirst('acp/auggie/tool-call/fetch', 1).canonicalToolName).toBe('WebFetch');
     });
 
+    it('normalizes MCP generic tools into a stable safe-display shape (title/subtitle + raw preserved)', () => {
+        const fixtures = loadFixtureV1();
+
+        const call = fixtures.examples['codex/codex/tool-call/mcp__linear__create_issue']?.[0];
+        expect(call).toBeTruthy();
+        const callNorm = normalizeToolCallV2({
+            protocol: 'codex',
+            provider: 'codex',
+            toolName: call!.payload.name,
+            rawInput: call!.payload.input,
+            callId: call!.payload.callId,
+        });
+        expect(callNorm.canonicalToolName).toBe('mcp__linear__create_issue');
+        const input = asRecord(callNorm.input);
+        expect(input).toBeTruthy();
+        expect(asRecord(input?._mcp)).toMatchObject({
+            serverId: 'linear',
+            toolId: 'create_issue',
+        });
+        expect(asRecord(input?._mcp)?.display).toBeTruthy();
+        expect(typeof asRecord(asRecord(input?._mcp)?.display)?.title).toBe('string');
+        expect(typeof asRecord(asRecord(input?._mcp)?.display)?.subtitle).toBe('string');
+
+        const result = fixtures.examples['codex/codex/tool-call-result/mcp__linear__create_issue']?.[0];
+        expect(result).toBeTruthy();
+        const resultNorm = normalizeToolResultV2({
+            protocol: 'codex',
+            provider: 'codex',
+            rawToolName: call!.payload.name,
+            canonicalToolName: callNorm.canonicalToolName,
+            rawOutput: result!.payload.output,
+        });
+        const out = asRecord(resultNorm);
+        expect(out).toBeTruthy();
+        expect(asRecord(out?._mcp)).toMatchObject({
+            serverId: 'linear',
+            toolId: 'create_issue',
+        });
+        // Coerced text is optional, but raw must always be present.
+        expect(out?._raw).toBeDefined();
+    });
+
     it('normalizes tool-call inputs for file/search/web tools (surfaces key fields when provided)', () => {
         const fixtures = loadFixtureV1();
 

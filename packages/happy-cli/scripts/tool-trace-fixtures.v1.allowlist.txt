@@ -113,4 +113,6 @@ codex/codex/tool-call/CodexDiff
 codex/codex/tool-call/CodexPatch
 codex/codex/tool-call/CodexReasoning
 codex/codex/tool-call/mcp__happy__change_title
+codex/codex/tool-call/mcp__linear__create_issue
 codex/codex/tool-call-result/CodexReasoning
+codex/codex/tool-call-result/mcp__linear__create_issue

@@ -880,4 +880,22 @@ describe('normalizeToolResultV2', () => {
             content: 'Line 1\nLine 2',
         });
     });
+
+    it('surfaces a stable errorMessage field for unknown tool results that include error-like keys', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'codex',
+            provider: 'codex',
+            rawToolName: 'SomeNewTool',
+            canonicalToolName: 'SomeNewTool',
+            rawOutput: { status: 403, error: 'Forbidden' },
+        });
+
+        expect(normalized).toMatchObject({
+            status: 403,
+            error: 'Forbidden',
+            errorMessage: 'Forbidden',
+            _happy: expect.objectContaining({ v: 2, protocol: 'codex', provider: 'codex', rawToolName: 'SomeNewTool' }),
+            _raw: expect.anything(),
+        });
+    });
 });

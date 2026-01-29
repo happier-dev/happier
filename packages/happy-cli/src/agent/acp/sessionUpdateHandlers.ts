@@ -11,7 +11,6 @@
 import type { AgentMessage } from '../core';
 import type { TransportHandler } from '../transport';
 import { logger } from '@/ui/logger';
-import { normalizeAcpToolArgs, normalizeAcpToolResult } from './toolNormalization';
 
 /**
  * Default timeout for idle detection after message chunks (ms)
@@ -237,12 +236,7 @@ function emitToolCallRefresh(
   ) ?? baseName;
 
   const parsedArgs = parseArgsFromContent(rawInput);
-  const args = normalizeAcpToolArgs({
-    toolKind: toolKindStr,
-    toolName: realToolName,
-    rawInput,
-    args: parsedArgs,
-  });
+  const args = { ...parsedArgs };
 
   if (update.locations && Array.isArray(update.locations)) {
     args.locations = update.locations;
@@ -518,12 +512,7 @@ export function startToolCall(
 
   // Parse args and emit tool-call event
   const parsedArgs = parseArgsFromContent(rawInput);
-  const args = normalizeAcpToolArgs({
-    toolKind: toolKindStr,
-    toolName,
-    rawInput,
-    args: parsedArgs,
-  });
+  const args = { ...parsedArgs };
 
   // Extract locations if present
   if (update.locations && Array.isArray(update.locations)) {
@@ -572,8 +561,8 @@ export function completeToolCall(
 
   logger.debug(`[AcpBackend] ✅ Tool call COMPLETED: ${toolCallId} (${resolvedToolName}) - Duration: ${duration}. Active tool calls: ${ctx.activeToolCalls.size}`);
 
-  const normalized = normalizeAcpToolResult(extractToolOutput(update));
-  const record = asRecord(normalized);
+  const output = extractToolOutput(update);
+  const record = asRecord(output);
   if (record) {
     const meta = extractMeta(update);
     const acp: Record<string, unknown> = { kind: toolKindStr };
@@ -586,7 +575,7 @@ export function completeToolCall(
   ctx.emit({
     type: 'tool-result',
     toolName: resolvedToolName,
-    result: normalized,
+    result: output,
     callId: toolCallId,
   });
 

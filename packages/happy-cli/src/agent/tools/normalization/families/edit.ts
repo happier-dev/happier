@@ -12,6 +12,31 @@ function coerceFirstItemDiff(items: unknown): UnknownRecord | null {
     return first as UnknownRecord;
 }
 
+function coerceItemPath(item: UnknownRecord | null): string | null {
+    if (!item) return null;
+    const path =
+        (typeof item.path === 'string' && item.path.trim().length > 0)
+            ? item.path.trim()
+            : (typeof item.filePath === 'string' && item.filePath.trim().length > 0)
+                ? item.filePath.trim()
+                : null;
+    return path;
+}
+
+function coerceSingleLocationPath(locations: unknown): string | null {
+    if (!Array.isArray(locations) || locations.length !== 1) return null;
+    const first = locations[0];
+    if (!first || typeof first !== 'object') return null;
+    const obj = first as UnknownRecord;
+    const path =
+        (typeof obj.path === 'string' && obj.path.trim().length > 0)
+            ? obj.path.trim()
+            : (typeof obj.filePath === 'string' && obj.filePath.trim().length > 0)
+                ? obj.filePath.trim()
+                : null;
+    return path;
+}
+
 function coerceItemText(item: UnknownRecord | null, key: 'old' | 'new'): string | null {
     if (!item) return null;
     const candidates =
@@ -28,6 +53,8 @@ export function normalizeEditInput(rawInput: unknown): UnknownRecord {
     const record = asRecord(rawInput) ?? {};
     const out: UnknownRecord = { ...record };
 
+    const firstItem = coerceFirstItemDiff(record.items);
+
     const filePath =
         (typeof record.file_path === 'string' && record.file_path.trim().length > 0)
             ? record.file_path.trim()
@@ -36,9 +63,11 @@ export function normalizeEditInput(rawInput: unknown): UnknownRecord {
                 : (typeof record.filePath === 'string' && record.filePath.trim().length > 0)
                     ? record.filePath.trim()
                     : null;
-    if (filePath) out.file_path = filePath;
+    const fromItem = filePath ? null : coerceItemPath(firstItem);
+    const fromLocations = filePath || fromItem ? null : coerceSingleLocationPath(record.locations);
+    const normalizedPath = filePath ?? fromItem ?? fromLocations;
+    if (normalizedPath) out.file_path = normalizedPath;
 
-    const firstItem = coerceFirstItemDiff(record.items);
     const oldText =
         (typeof record.old_string === 'string' && record.old_string.trim().length > 0)
             ? record.old_string.trim()

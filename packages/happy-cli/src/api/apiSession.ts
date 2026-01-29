@@ -688,6 +688,12 @@ export class ApiSessionClient extends EventEmitter {
             if (body?.type === 'tool-call-result') {
                 const callId = typeof body.callId === 'string' ? body.callId : undefined;
                 const mapping = callId ? this.toolCallCanonicalNameByProviderAndId.get(this.getToolCallNameKey('codex', callId)) : undefined;
+                if (callId && !mapping) {
+                    logger.debug('[Codex] Received tool-call-result without prior tool-call mapping (callId mismatch?)', {
+                        callId,
+                        type: body?.type,
+                    });
+                }
                 const canonicalToolName = mapping?.canonicalToolName ?? 'Unknown';
                 const rawToolName = mapping?.rawToolName ?? 'unknown';
                 const output = normalizeToolResultV2({

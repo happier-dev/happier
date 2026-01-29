@@ -54,6 +54,7 @@ vi.mock('@/components/tools/knownTools', () => ({
 
 vi.mock('@/components/tools/views/MCPToolView', () => ({
     formatMCPTitle: () => 'MCP',
+    formatMCPSubtitle: () => '',
 }));
 
 vi.mock('@/utils/toolErrorParser', () => ({

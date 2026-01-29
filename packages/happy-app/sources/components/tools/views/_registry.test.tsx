@@ -22,6 +22,11 @@ vi.mock('./CodeSearchView', () => ({ CodeSearchView: () => null }));
 vi.mock('./ReasoningView', () => ({ ReasoningView: () => null }));
 vi.mock('./WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null }));
 vi.mock('./DeleteView', () => ({ DeleteView: () => null }));
+vi.mock('./MCPToolView', () => ({
+    MCPToolView: () => null,
+    formatMCPTitle: () => 'MCP',
+    formatMCPSubtitle: () => '',
+}));
 
 describe('toolViewRegistry', () => {
     it('registers a Read view for lowercase read tool name', async () => {
@@ -49,5 +54,18 @@ describe('toolViewRegistry', () => {
         }
 
         expect(getToolViewComponent('Patch')).not.toBeNull();
+    });
+
+    it('uses the MCP tool renderer for any mcp__* tool name', async () => {
+        let getToolViewComponent: (name: string) => any;
+        let MCPToolView: any;
+        try {
+            ({ getToolViewComponent } = await import('./_registry'));
+            ({ MCPToolView } = await import('./MCPToolView'));
+        } catch (e: any) {
+            throw new Error(e?.stack ? String(e.stack) : String(e));
+        }
+
+        expect(getToolViewComponent('mcp__linear__create_issue')).toBe(MCPToolView);
     });
 });

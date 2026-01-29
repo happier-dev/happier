@@ -29,32 +29,47 @@ vi.mock('@/agents/catalog', () => ({
 }));
 
 vi.mock('@/components/tools/knownTools', () => ({
-    knownTools: {
-        Read: { title: 'Read' },
-    },
+    knownTools: {},
 }));
-
-const renderedToolViewSpy = vi.fn();
 
 vi.mock('./views/_registry', () => ({
-    getToolViewComponent: () => (props: any) => {
-        renderedToolViewSpy(props);
-        return React.createElement('SpecificToolView', null);
-    },
+    getToolViewComponent: () => null,
 }));
 
-vi.mock('./PermissionFooter', () => ({
-    PermissionFooter: () => null,
+vi.mock('./views/MCPToolView', () => ({
+    formatMCPTitle: (t: string) => t,
+    formatMCPSubtitle: () => '',
 }));
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
+vi.mock('@/utils/toolErrorParser', () => ({
+    parseToolUseError: () => ({ isToolUseError: false }),
+}));
+
+vi.mock('../CodeView', () => ({
+    CodeView: () => React.createElement('CodeView', null),
+}));
+
+vi.mock('./ToolSectionView', () => ({
+    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
+}));
+
+vi.mock('@/hooks/useElapsedTime', () => ({
+    useElapsedTime: () => 0,
+}));
+
+vi.mock('./PermissionFooter', () => ({
+    PermissionFooter: () => null,
+}));
+
+// Default tool detail level is summary, but unknown tools should still collapse to title by default.
 vi.mock('@/sync/storage', () => ({
     useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return 'full';
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'full';
+        if (key === 'toolViewDetailLevelDefault') return 'summary';
+        if (key === 'toolViewDetailLevelDefaultLocalControl') return 'summary';
         if (key === 'toolViewDetailLevelByToolName') return {};
         if (key === 'toolViewTapAction') return 'expand';
         if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
@@ -63,38 +78,15 @@ vi.mock('@/sync/storage', () => ({
     },
 }));
 
-vi.mock('@/utils/toolErrorParser', () => ({
-    parseToolUseError: () => ({ isToolUseError: false }),
-}));
-
-vi.mock('./views/MCPToolView', () => ({
-    formatMCPTitle: (t: string) => t,
-    formatMCPSubtitle: () => '',
-}));
-
-vi.mock('../CodeView', () => ({
-    CodeView: () => null,
-}));
-
-vi.mock('./ToolSectionView', () => ({
-    ToolSectionView: () => null,
-}));
-
-vi.mock('@/hooks/useElapsedTime', () => ({
-    useElapsedTime: () => 0,
-}));
-
-describe('ToolView (detail level: full)', () => {
-    it('renders via the single tool renderer and passes detailLevel without calling getToolFullViewComponent', async () => {
-        renderedToolViewSpy.mockReset();
-
+describe('ToolView (unknown tools)', () => {
+    it('collapses unknown tools to title-only by default (safe), even when global default is summary', async () => {
         const { ToolView } = await import('./ToolView');
 
         const tool: ToolCall = {
-            name: 'Read',
+            name: 'SomeBrandNewTool',
             state: 'completed',
-            input: { file_path: '/tmp/a.txt' },
-            result: { file: { content: 'hello' } },
+            input: { secret: 'should-not-render-inline' } as any,
+            result: { ok: true } as any,
             createdAt: Date.now(),
             startedAt: Date.now(),
             completedAt: Date.now(),
@@ -104,10 +96,13 @@ describe('ToolView (detail level: full)', () => {
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
+            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null } as any));
         });
 
-        expect(tree.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
-        expect(renderedToolViewSpy).toHaveBeenCalledWith(expect.objectContaining({ detailLevel: 'full' }));
+        // Header renders (baseline sanity).
+        expect(tree.root.findAllByType('Text' as any).length).toBeGreaterThan(0);
+        // Body should be hidden because the tool is unknown and collapses to title-only.
+        expect(tree.root.findAllByType('CodeView' as any)).toHaveLength(0);
     });
 });
+
