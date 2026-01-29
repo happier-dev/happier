@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configuration } from '@/configuration';
 
-export type ToolTraceProtocol = 'acp' | 'codex' | 'cloud' | 'claude';
+export type ToolTraceProtocol = 'acp' | 'codex' | 'claude';
 
 export type ToolTraceDirection = 'outbound' | 'inbound';
 
