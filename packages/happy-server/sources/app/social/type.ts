@@ -31,8 +31,8 @@ export function buildUserProfile(
         avatar: ImageRef | null;
         githubUser: { profile: GitHubProfile } | null;
         publicKey: string;
-        contentPublicKey: Uint8Array | null;
-        contentPublicKeySig: Uint8Array | null;
+        contentPublicKey: Uint8Array<ArrayBuffer> | null;
+        contentPublicKeySig: Uint8Array<ArrayBuffer> | null;
     },
     status: RelationshipStatus
 ): UserProfile {

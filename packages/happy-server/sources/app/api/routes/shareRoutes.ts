@@ -8,10 +8,11 @@ import { eventRouter, buildSessionSharedUpdate, buildSessionShareUpdatedUpdate, 
 import { allocateUserSeq } from "@/storage/seq";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 
-function parseEncryptedDataKeyV0(encryptedDataKeyB64: string): Uint8Array {
-    let bytes: Uint8Array;
+function parseEncryptedDataKeyV0(encryptedDataKeyB64: string): Uint8Array<ArrayBuffer> {
+    let bytes: Uint8Array<ArrayBuffer>;
     try {
-        bytes = new Uint8Array(Buffer.from(encryptedDataKeyB64, 'base64'));
+        const buf = Buffer.from(encryptedDataKeyB64, 'base64');
+        bytes = new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
     } catch {
         throw new Error('Invalid base64');
     }
@@ -140,7 +141,7 @@ export function shareRoutes(app: Fastify) {
             return reply.code(403).send({ error: 'Can only share with friends' });
         }
 
-        let encryptedDataKeyBytes: Uint8Array;
+        let encryptedDataKeyBytes: Uint8Array<ArrayBuffer>;
         try {
             encryptedDataKeyBytes = parseEncryptedDataKeyV0(encryptedDataKey);
         } catch (error) {
