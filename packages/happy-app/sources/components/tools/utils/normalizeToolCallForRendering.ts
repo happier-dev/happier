@@ -1,8 +1,8 @@
 import type { ToolCall } from '@/sync/typesMessage';
 import { maybeParseJson } from './parseJson';
-import { normalizeToolInputForRendering } from './normalizeToolCallForRendering/inputNormalization';
-import { canonicalizeToolNameForRendering } from './normalizeToolCallForRendering/nameInference';
-import { normalizeToolResultForRendering } from './normalizeToolCallForRendering/resultNormalization';
+import { normalizeToolInputForRendering } from './normalize/inputNormalization';
+import { canonicalizeToolNameForRendering } from './normalize/nameInference';
+import { normalizeToolResultForRendering } from './normalize/resultNormalization';
 
 export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
     const parsedInput = maybeParseJson(tool.input);
@@ -22,4 +22,3 @@ export function normalizeToolCallForRendering(tool: ToolCall): ToolCall {
     if (!nameChanged && !inputChanged && !resultChanged) return tool;
     return { ...tool, name: nextName, input: nextInput, result: nextResult };
 }
-

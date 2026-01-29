@@ -157,7 +157,7 @@ function parseOpenCodeSearch(text: string): { matches: SearchMatch[] } | null {
             continue;
         }
 
-        const m = trimmed.match(/^Line\s+(\d+):\s?(.*)$/i);
+        const m = trimmed.match(/^Line\\s+(\\d+):\\s?(.*)$/i);
         if (m && currentFile) {
             const n = Number(m[1]);
             matches.push({

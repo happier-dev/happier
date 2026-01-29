@@ -87,8 +87,7 @@ function parseUnifiedDiffFileBlock(unifiedDiff: string): {
 export function normalizeDiffAliases(input: Record<string, unknown>): Record<string, unknown> | null {
     if (typeof input.unified_diff === 'string' && input.unified_diff.trim().length > 0) return null;
 
-    const diff =
-        typeof input.diff === 'string' ? input.diff : typeof input.patch === 'string' ? input.patch : null;
+    const diff = typeof input.diff === 'string' ? input.diff : typeof input.patch === 'string' ? input.patch : null;
     if (!diff || diff.trim().length === 0) return null;
     return { ...input, unified_diff: diff };
 }
@@ -118,3 +117,4 @@ export function normalizePatchFromUnifiedDiff(input: Record<string, unknown>): R
     if (Object.keys(changes).length === 0) return null;
     return { ...input, changes };
 }
+
