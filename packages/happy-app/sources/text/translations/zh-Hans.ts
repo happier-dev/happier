@@ -677,6 +677,10 @@ export const zhHans: TranslationStructure = {
         geminiSessionIdCopied: 'Gemini 会话 ID 已复制到剪贴板',
         auggieSessionId: 'Auggie 会话 ID',
         auggieSessionIdCopied: 'Auggie 会话 ID 已复制到剪贴板',
+        qwenSessionId: 'Qwen Code 会话 ID',
+        qwenSessionIdCopied: 'Qwen Code 会话 ID 已复制到剪贴板',
+        kimiSessionId: 'Kimi 会话 ID',
+        kimiSessionIdCopied: 'Kimi 会话 ID 已复制到剪贴板',
         metadataCopied: '元数据已复制到剪贴板',
         failedToCopyMetadata: '复制元数据失败',
         failedToKillSession: '终止会话失败',
@@ -800,6 +804,8 @@ export const zhHans: TranslationStructure = {
             opencode: 'OpenCode',
             gemini: 'Gemini',
             auggie: 'Auggie',
+            qwen: 'Qwen Code',
+            kimi: 'Kimi',
         },
         auggieIndexingChip: {
             on: '已开启索引',
@@ -1524,6 +1530,8 @@ export const zhHans: TranslationStructure = {
             opencodeSubtitle: 'OpenCode 命令行',
             geminiSubtitleExperimental: 'Gemini 命令行（实验）',
             auggieSubtitle: 'Auggie 命令行',
+            qwenSubtitleExperimental: 'Qwen Code 命令行（实验）',
+            kimiSubtitleExperimental: 'Kimi 命令行（实验）',
         },
         tmux: {
             title: 'tmux',

@@ -9,6 +9,8 @@ import { CODEX_CORE } from './providers/codex/core';
 import { OPENCODE_CORE } from './providers/opencode/core';
 import { GEMINI_CORE } from './providers/gemini/core';
 import { AUGGIE_CORE } from './providers/auggie/core';
+import { QWEN_CORE } from './providers/qwen/core';
+import { KIMI_CORE } from './providers/kimi/core';
 
 export { AGENT_IDS, DEFAULT_AGENT_ID };
 export type { AgentId };
@@ -157,6 +159,8 @@ export const AGENTS_CORE: Readonly<Record<AgentId, AgentCoreConfig>> = Object.fr
     opencode: OPENCODE_CORE,
     gemini: GEMINI_CORE,
     auggie: AUGGIE_CORE,
+    qwen: QWEN_CORE,
+    kimi: KIMI_CORE,
 });
 
 export function isAgentId(value: unknown): value is AgentId {

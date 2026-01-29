@@ -252,6 +252,8 @@ export const it: TranslationStructure = {
             opencodeSubtitle: 'OpenCode CLI',
             geminiSubtitleExperimental: 'Gemini CLI (sperimentale)',
             auggieSubtitle: 'Auggie CLI',
+            qwenSubtitleExperimental: 'Qwen Code CLI (sperimentale)',
+            kimiSubtitleExperimental: 'Kimi CLI (sperimentale)',
         },
         tmux: {
             title: 'Tmux',
@@ -930,6 +932,10 @@ export const it: TranslationStructure = {
         auggieSessionIdCopied: 'ID sessione Auggie copiato negli appunti',
         geminiSessionId: 'ID sessione Gemini',
         geminiSessionIdCopied: 'ID sessione Gemini copiato negli appunti',
+        qwenSessionId: 'ID sessione Qwen Code',
+        qwenSessionIdCopied: 'ID sessione Qwen Code copiato negli appunti',
+        kimiSessionId: 'ID sessione Kimi',
+        kimiSessionIdCopied: 'ID sessione Kimi copiato negli appunti',
         metadataCopied: 'Metadati copiati negli appunti',
         failedToCopyMetadata: 'Impossibile copiare i metadati',
         failedToKillSession: 'Impossibile terminare la sessione',
@@ -1052,6 +1058,8 @@ export const it: TranslationStructure = {
             opencode: 'OpenCode',
             gemini: 'Gemini',
             auggie: 'Auggie',
+            qwen: 'Qwen Code',
+            kimi: 'Kimi',
         },
         auggieIndexingChip: {
             on: 'Indexing on',

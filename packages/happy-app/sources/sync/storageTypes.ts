@@ -24,6 +24,8 @@ export const MetadataSchema = z.object({
     geminiSessionId: z.string().optional(), // Gemini ACP session ID (opaque)
     opencodeSessionId: z.string().optional(), // OpenCode ACP session ID (opaque)
     auggieSessionId: z.string().optional(), // Auggie ACP session ID (opaque)
+    qwenSessionId: z.string().optional(), // Qwen Code ACP session ID (opaque)
+    kimiSessionId: z.string().optional(), // Kimi ACP session ID (opaque)
     auggieAllowIndexing: z.boolean().optional(), // Auggie indexing enablement (spawn-time)
     tools: z.array(z.string()).optional(),
     slashCommands: z.array(z.string()).optional(),

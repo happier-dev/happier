@@ -38,4 +38,24 @@ describe('MetadataSchema', () => {
         expect((parsed as any).auggieSessionId).toBe('auggie-session-1');
         expect((parsed as any).auggieAllowIndexing).toBe(true);
     });
+
+    it('should preserve Qwen vendor session metadata when present', () => {
+        const parsed = MetadataSchema.parse({
+            path: '/tmp',
+            host: 'host',
+            qwenSessionId: 'qwen-session-1',
+        } as any);
+
+        expect((parsed as any).qwenSessionId).toBe('qwen-session-1');
+    });
+
+    it('should preserve Kimi vendor session metadata when present', () => {
+        const parsed = MetadataSchema.parse({
+            path: '/tmp',
+            host: 'host',
+            kimiSessionId: 'kimi-session-1',
+        } as any);
+
+        expect((parsed as any).kimiSessionId).toBe('kimi-session-1');
+    });
 });

@@ -676,6 +676,10 @@ export const pt: TranslationStructure = {
         auggieSessionIdCopied: 'ID da sessão Auggie copiado para a área de transferência',
         geminiSessionId: 'ID da sessão Gemini',
         geminiSessionIdCopied: 'ID da sessão Gemini copiado para a área de transferência',
+        qwenSessionId: 'ID da sessão Qwen Code',
+        qwenSessionIdCopied: 'ID da sessão Qwen Code copiado para a área de transferência',
+        kimiSessionId: 'ID da sessão Kimi',
+        kimiSessionIdCopied: 'ID da sessão Kimi copiado para a área de transferência',
         metadataCopied: 'Metadados copiados para a área de transferência',
         failedToCopyMetadata: 'Falha ao copiar metadados',
         failedToKillSession: 'Falha ao encerrar sessão',
@@ -799,6 +803,8 @@ export const pt: TranslationStructure = {
             opencode: 'OpenCode',
             gemini: 'Gemini',
             auggie: 'Auggie',
+            qwen: 'Qwen Code',
+            kimi: 'Kimi',
         },
         auggieIndexingChip: {
             on: 'Indexing on',
@@ -1523,6 +1529,8 @@ export const pt: TranslationStructure = {
             opencodeSubtitle: 'CLI do OpenCode',
             geminiSubtitleExperimental: 'CLI do Gemini (experimental)',
             auggieSubtitle: 'CLI do Auggie',
+            qwenSubtitleExperimental: 'CLI do Qwen Code (experimental)',
+            kimiSubtitleExperimental: 'CLI do Kimi (experimental)',
         },
         tmux: {
             title: 'Tmux',

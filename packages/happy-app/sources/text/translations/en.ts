@@ -689,6 +689,10 @@ export const en = {
         auggieSessionIdCopied: 'Auggie Session ID copied to clipboard',
         geminiSessionId: 'Gemini Session ID',
         geminiSessionIdCopied: 'Gemini Session ID copied to clipboard',
+        qwenSessionId: 'Qwen Code Session ID',
+        qwenSessionIdCopied: 'Qwen Code Session ID copied to clipboard',
+        kimiSessionId: 'Kimi Session ID',
+        kimiSessionIdCopied: 'Kimi Session ID copied to clipboard',
         metadataCopied: 'Metadata copied to clipboard',
         failedToCopyMetadata: 'Failed to copy metadata',
         failedToKillSession: 'Failed to kill session',
@@ -812,6 +816,8 @@ export const en = {
             opencode: 'OpenCode',
             gemini: 'Gemini',
             auggie: 'Auggie',
+            qwen: 'Qwen Code',
+            kimi: 'Kimi',
         },
         auggieIndexingChip: {
             on: 'Indexing on',
@@ -1589,6 +1595,8 @@ export const en = {
             opencodeSubtitle: 'OpenCode CLI',
             geminiSubtitleExperimental: 'Gemini CLI (experimental)',
             auggieSubtitle: 'Auggie CLI',
+            qwenSubtitleExperimental: 'Qwen Code CLI (experimental)',
+            kimiSubtitleExperimental: 'Kimi CLI (experimental)',
         },
         tmux: {
             title: 'Tmux',

@@ -8,6 +8,8 @@ import { CODEX_UI } from './providers/codex/ui';
 import { OPENCODE_UI } from './providers/opencode/ui';
 import { GEMINI_UI } from './providers/gemini/ui';
 import { AUGGIE_UI } from './providers/auggie/ui';
+import { QWEN_UI } from './providers/qwen/ui';
+import { KIMI_UI } from './providers/kimi/ui';
 
 export type AgentUiConfig = Readonly<{
     id: AgentId;
@@ -35,6 +37,8 @@ export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze
     opencode: OPENCODE_UI,
     gemini: GEMINI_UI,
     auggie: AUGGIE_UI,
+    qwen: QWEN_UI,
+    kimi: KIMI_UI,
 });
 
 export function getAgentIconSource(agentId: AgentId): ImageSourcePropType {
