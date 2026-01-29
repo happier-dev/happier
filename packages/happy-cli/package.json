@@ -1,5 +1,5 @@
 {
-  "name": "happy-coder",
+  "name": "happy-cli",
   "version": "0.14.0-0",
   "description": "Mobile and Web client for Claude Code and Codex",
   "author": "Kirill Dubovitskiy",
@@ -124,8 +124,8 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "@happy/agents": "link:../packages/agents",
-    "@happy/protocol": "link:../packages/protocol",
+    "@happy/agents": "link:../agents",
+    "@happy/protocol": "link:../protocol",
     "@eslint/compat": "^1",
     "@types/node": ">=20",
     "cross-env": "^10.1.0",
