@@ -19,8 +19,8 @@ export const corePatchTools = {
                 add: z.object({ content: z.string() }).optional(),
                 modify: z.object({ old_content: z.string(), new_content: z.string() }).optional(),
                 delete: z.object({ content: z.string() }).optional(),
-            }).loose()).describe('File changes to apply'),
-        }).partial().loose(),
+            }).passthrough()).describe('File changes to apply'),
+        }).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const changes = opts.tool.input?.changes;
             if (!changes || typeof changes !== 'object') return null;

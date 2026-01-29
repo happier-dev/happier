@@ -7,16 +7,11 @@ import { WriteView } from './WriteView';
 import { TodoView } from './TodoView';
 import { ExitPlanToolView } from './ExitPlanToolView';
 import { MultiEditView } from './MultiEditView';
+import { EnterPlanModeView } from './EnterPlanModeView';
 import { TaskView } from './TaskView';
-import { BashViewFull } from './BashViewFull';
-import { EditViewFull } from './EditViewFull';
-import { MultiEditViewFull } from './MultiEditViewFull';
-import { CodexBashView } from './CodexBashView';
 import { PatchView } from './PatchView';
 import { DiffView } from './DiffView';
 import { AskUserQuestionView } from './AskUserQuestionView';
-import { GeminiEditView } from './GeminiEditView';
-import { GeminiExecuteView } from './GeminiExecuteView';
 import { AcpHistoryImportView } from './AcpHistoryImportView';
 import { GlobView } from './GlobView';
 import { GrepView } from './GrepView';
@@ -26,12 +21,18 @@ import { WebSearchView } from './WebSearchView';
 import { CodeSearchView } from './CodeSearchView';
 import { ReasoningView } from './ReasoningView';
 import { WorkspaceIndexingPermissionView } from './WorkspaceIndexingPermissionView';
+import { LSView } from './LSView';
+import { ChangeTitleView } from './ChangeTitleView';
+import { DeleteView } from './DeleteView';
+
+export type ToolViewDetailLevel = 'title' | 'summary' | 'full';
 
 export type ToolViewProps = {
     tool: ToolCall;
     metadata: Metadata | null;
     messages: Message[];
     sessionId?: string;
+    detailLevel?: ToolViewDetailLevel;
     interaction?: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
@@ -46,10 +47,11 @@ export type ToolViewComponent = React.ComponentType<ToolViewProps>;
 export const toolViewRegistry: Record<string, ToolViewComponent> = {
     Edit: EditView,
     Bash: BashView,
+    Delete: DeleteView,
     Patch: PatchView,
     Diff: DiffView,
     Reasoning: ReasoningView,
-    CodexBash: CodexBashView,
+    CodexBash: BashView,
     CodexPatch: PatchView,
     CodexDiff: DiffView,
     Write: WriteView,
@@ -57,11 +59,13 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     read: ReadView,
     Glob: GlobView,
     Grep: GrepView,
+    LS: LSView,
     WebFetch: WebFetchView,
     WebSearch: WebSearchView,
     CodeSearch: CodeSearchView,
     TodoWrite: TodoView,
     TodoRead: TodoView,
+    EnterPlanMode: EnterPlanModeView,
     ExitPlanMode: ExitPlanToolView,
     exit_plan_mode: ExitPlanToolView,
     MultiEdit: MultiEditView,
@@ -69,21 +73,13 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     AskUserQuestion: AskUserQuestionView,
     AcpHistoryImport: AcpHistoryImportView,
     WorkspaceIndexingPermission: WorkspaceIndexingPermissionView,
-    // Gemini tools (lowercase)
-    edit: GeminiEditView,
-    execute: GeminiExecuteView,
+    change_title: ChangeTitleView,
+    // ACP providers often use lowercase tool names
+    edit: EditView,
+    execute: BashView,
     GeminiReasoning: ReasoningView,
     CodexReasoning: ReasoningView,
     think: ReasoningView,
-};
-
-export const toolFullViewRegistry: Record<string, ToolViewComponent> = {
-    Bash: BashViewFull,
-    Edit: EditViewFull,
-    MultiEdit: MultiEditViewFull,
-    // ACP providers often use lowercase tool names
-    execute: BashViewFull,
-    edit: EditViewFull,
 };
 
 // Helper function to get the appropriate view component for a tool
@@ -91,31 +87,24 @@ export function getToolViewComponent(toolName: string): ToolViewComponent | null
     return toolViewRegistry[toolName] || null;
 }
 
-// Helper function to get the full view component for a tool
-export function getToolFullViewComponent(toolName: string): ToolViewComponent | null {
-    return toolFullViewRegistry[toolName] || null;
-}
-
 // Export individual components
 export { EditView } from './EditView';
 export { BashView } from './BashView';
-export { CodexBashView } from './CodexBashView';
 export { PatchView } from './PatchView';
 export { DiffView } from './DiffView';
-export { BashViewFull } from './BashViewFull';
-export { EditViewFull } from './EditViewFull';
-export { MultiEditViewFull } from './MultiEditViewFull';
 export { ExitPlanToolView } from './ExitPlanToolView';
 export { MultiEditView } from './MultiEditView';
+export { EnterPlanModeView } from './EnterPlanModeView';
 export { TaskView } from './TaskView';
 export { AskUserQuestionView } from './AskUserQuestionView';
-export { GeminiEditView } from './GeminiEditView';
-export { GeminiExecuteView } from './GeminiExecuteView';
 export { AcpHistoryImportView } from './AcpHistoryImportView';
 export { GlobView } from './GlobView';
 export { GrepView } from './GrepView';
+export { LSView } from './LSView';
 export { ReadView } from './ReadView';
 export { WebFetchView } from './WebFetchView';
 export { WebSearchView } from './WebSearchView';
 export { CodeSearchView } from './CodeSearchView';
 export { WorkspaceIndexingPermissionView } from './WorkspaceIndexingPermissionView';
+export { ChangeTitleView } from './ChangeTitleView';
+export { DeleteView } from './DeleteView';

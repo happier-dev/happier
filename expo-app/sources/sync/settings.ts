@@ -334,6 +334,9 @@ export const SettingsSchema = z.object({
     toolViewDetailLevelDefaultLocalControl: z.enum(['title', 'summary', 'full']).describe('Default tool detail level for local-control transcript mirroring'),
     toolViewDetailLevelByToolName: z.record(z.string(), z.enum(['title', 'summary', 'full'])).default({}).describe('Per-tool detail level overrides (keyed by canonical tool name)'),
     toolViewShowDebugByDefault: z.boolean().describe('Whether to auto-expand debug/raw tool payloads in the full tool view'),
+    toolViewTapAction: z.enum(['expand', 'open']).describe('Primary tap action on tool cards (timeline)'),
+    toolViewExpandedDetailLevelDefault: z.enum(['summary', 'full']).describe('Default expanded tool detail level in the session timeline'),
+    toolViewExpandedDetailLevelByToolName: z.record(z.string(), z.enum(['summary', 'full'])).default({}).describe('Per-tool expanded detail level overrides (keyed by canonical tool name)'),
 });
 
 //
@@ -424,6 +427,9 @@ export const settingsDefaults: Settings = {
     toolViewDetailLevelDefaultLocalControl: 'title',
     toolViewDetailLevelByToolName: {},
     toolViewShowDebugByDefault: false,
+    toolViewTapAction: 'expand',
+    toolViewExpandedDetailLevelDefault: 'full',
+    toolViewExpandedDetailLevelByToolName: {},
 };
 Object.freeze(settingsDefaults);
 

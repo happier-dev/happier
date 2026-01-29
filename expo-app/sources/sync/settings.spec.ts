@@ -280,6 +280,9 @@ describe('settings', () => {
             expect(settingsDefaults.toolViewDetailLevelDefault).toBe('summary');
             expect(settingsDefaults.toolViewDetailLevelDefaultLocalControl).toBe('title');
             expect(settingsDefaults.toolViewDetailLevelByToolName).toEqual({});
+            expect((settingsDefaults as any).toolViewTapAction).toBe('expand');
+            expect((settingsDefaults as any).toolViewExpandedDetailLevelDefault).toBe('full');
+            expect((settingsDefaults as any).toolViewExpandedDetailLevelByToolName).toEqual({});
             expect(settingsDefaults.toolViewShowDebugByDefault).toBe(false);
             expect((settingsDefaults as any).expGemini).toBeUndefined();
             expect((settingsDefaults as any).sessionDefaultPermissionModeClaude).toBeUndefined();

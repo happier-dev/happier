@@ -19,7 +19,7 @@ export const coreSearchTools = {
         input: z.object({
             pattern: z.string().describe('The glob pattern to match files against'),
             path: z.string().optional().describe('The directory to search in')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.pattern === 'string') {
                 return t('tools.desc.searchPattern', { pattern: opts.tool.input.pattern });
@@ -49,7 +49,7 @@ export const coreSearchTools = {
             type: z.string().optional().describe('File type to search'),
             head_limit: z.number().optional().describe('Limit output to first N lines/entries'),
             multiline: z.boolean().optional().describe('Enable multiline mode')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.pattern === 'string') {
                 const pattern = opts.tool.input.pattern.length > 20
@@ -72,7 +72,7 @@ export const coreSearchTools = {
         input: z.object({
             path: z.string().describe('The absolute path to the directory to list'),
             ignore: z.array(z.string()).optional().describe('List of glob patterns to ignore')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.path === 'string') {
                 const path = resolvePath(opts.tool.input.path, opts.metadata);
@@ -98,7 +98,7 @@ export const coreSearchTools = {
             query: z.string().optional().describe('The search query'),
             pattern: z.string().optional().describe('The search pattern'),
             path: z.string().optional().describe('Optional path scope'),
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const query = typeof opts.tool.input?.query === 'string'
                 ? opts.tool.input.query

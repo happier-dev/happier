@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "generatedAt": 1769586541021,
+  "generatedAt": 1769599522603,
   "examples": {
     "acp/opencode/tool-call/execute": [
       {
@@ -82,7 +82,7 @@
         }
       }
     ],
-    "acp/opencode/tool-result": [
+    "acp/opencode/tool-result/execute": [
       {
         "v": 1,
         "ts": 1769335045813,
@@ -100,32 +100,32 @@
       },
       {
         "v": 1,
-        "ts": 1769335051604,
+        "ts": 1769339035376,
         "direction": "outbound",
-        "sessionId": "cmksq4kly05m88osh3w5g4z0j",
+        "sessionId": "cmktmrl59004p8o7f9vo3xomb",
         "protocol": "acp",
         "provider": "opencode",
         "kind": "tool-result",
         "payload": {
           "type": "tool-result",
-          "callId": "call_2bcd1f75d8be443b800c7117",
-          "output": "<file>\n00001| # ----------------------------\n00002| # Default\n00003| ##\n00004| # Host Database\n00005| #\n00006| # localhost is used to configure the loopback interface\n00007| # when the system is booting.  Do not change this entry.\n00008| ##\n00009| 127.0.0.1\tlocalhost\n00010| 255.255.255.255\tbroadcasthost\n00011| ::1             localhost\n00012| 127.0.0.1 dev.batiplus.ch\n00013| 127.0.0.1    e2e.batiplus.test\n00014| 127.0.0.1    api.batiplus.test\n00015| \n00016| \n00017| \n\n(End of file - total 17 lines)\n</file>",
-          "id": "656def65-76a6-4b89-a99e-f0a8aefb9a4c"
+          "callId": "call_51fb2755063941ea97b62215",
+          "output": "TRACE_OK\n",
+          "id": "98770104-fbce-43ed-9f05-95d51b74be40"
         }
       },
       {
         "v": 1,
-        "ts": 1769335134518,
+        "ts": 1769339240825,
         "direction": "outbound",
-        "sessionId": "cmksq4kly05m88osh3w5g4z0j",
+        "sessionId": "cmktmrl59004p8o7f9vo3xomb",
         "protocol": "acp",
         "provider": "opencode",
         "kind": "tool-result",
         "payload": {
           "type": "tool-result",
-          "callId": "call_e1aa44140f304646898eb147",
-          "output": "Found 1 matches\n/tmp/happy-tool-trace.txt:\n  Line 2: beta",
-          "id": "2c72041a-87aa-492e-ac55-dee8accaa891"
+          "callId": "call_861bcb22e0354f559e10936e",
+          "output": "About to exit with code 12\n",
+          "id": "171fd900-05b8-4e42-897a-73010ac5b91c"
         }
       }
     ],
@@ -394,6 +394,53 @@
               "parentDir": "/nonexistent/path/that/does/not"
             }
           }
+        }
+      }
+    ],
+    "acp/opencode/tool-result/read": [
+      {
+        "v": 1,
+        "ts": 1769335051604,
+        "direction": "outbound",
+        "sessionId": "cmksq4kly05m88osh3w5g4z0j",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_2bcd1f75d8be443b800c7117",
+          "output": "<file>\n00001| # ----------------------------\n00002| # Default\n00003| ##\n00004| # Host Database\n00005| #\n00006| # localhost is used to configure the loopback interface\n00007| # when the system is booting.  Do not change this entry.\n00008| ##\n00009| 127.0.0.1\tlocalhost\n00010| 255.255.255.255\tbroadcasthost\n00011| ::1             localhost\n00012| 127.0.0.1 dev.batiplus.ch\n00013| 127.0.0.1    e2e.batiplus.test\n00014| 127.0.0.1    api.batiplus.test\n00015| \n00016| \n00017| \n\n(End of file - total 17 lines)\n</file>",
+          "id": "656def65-76a6-4b89-a99e-f0a8aefb9a4c"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769339053760,
+        "direction": "outbound",
+        "sessionId": "cmktmrl59004p8o7f9vo3xomb",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_0b66603f69d044f5a787e5c2",
+          "output": "<file>\n00001| a\n00002| b\n00003| c\n\n(End of file - total 3 lines)\n</file>",
+          "id": "ed8abc34-fbbd-4d05-a694-51ad6d6c2adc"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769339174590,
+        "direction": "outbound",
+        "sessionId": "cmktmrl59004p8o7f9vo3xomb",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_12125bd1ce90437daa1d6038",
+          "output": "<file>\n00001| # ----------------------------\n00002| # Default\n00003| ##\n00004| # Host Database\n00005| #\n00006| # localhost is used to configure the loopback interface\n00007| # when the system is booting.  Do not change this entry.\n00008| ##\n00009| 127.0.0.1\tlocalhost\n00010| 255.255.255.255\tbroadcasthost\n00011| ::1             localhost\n00012| 127.0.0.1 dev.batiplus.ch\n00013| 127.0.0.1    e2e.batiplus.test\n00014| 127.0.0.1    api.batiplus.test\n00015| \n00016| \n00017| \n\n(End of file - total 17 lines)\n</file>",
+          "id": "9fe42581-e1f5-43e3-81c4-71cf833c8f77"
         }
       }
     ],
@@ -794,6 +841,208 @@
         }
       }
     ],
+    "acp/opencode/tool-result/search": [
+      {
+        "v": 1,
+        "ts": 1769335134518,
+        "direction": "outbound",
+        "sessionId": "cmksq4kly05m88osh3w5g4z0j",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_e1aa44140f304646898eb147",
+          "output": "Found 1 matches\n/tmp/happy-tool-trace.txt:\n  Line 2: beta",
+          "id": "2c72041a-87aa-492e-ac55-dee8accaa891"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769335157046,
+        "direction": "outbound",
+        "sessionId": "cmksq4kly05m88osh3w5g4z0j",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_a2698e4dec4e4decbd2922ef",
+          "output": "No files found",
+          "id": "141b7d99-3fd9-4c0a-bbae-afcdff82bf0a"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769339064392,
+        "direction": "outbound",
+        "sessionId": "cmktmrl59004p8o7f9vo3xomb",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_4439cad87e2a4eb2b39347f0",
+          "output": "Found 1 matches\n/Users/leeroy/Development/happy-local/.tmp/happy-tool-ux.txt:\n  Line 2: beta",
+          "id": "739a0cf7-ef26-41db-95f3-e8fc6949d67c"
+        }
+      }
+    ],
+    "acp/opencode/tool-call/glob": [
+      {
+        "v": 1,
+        "ts": 1769990000001,
+        "direction": "outbound",
+        "sessionId": "fixture-acp-opencode-search-family",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "call_FIXTURE_GLOB_1",
+          "name": "glob",
+          "input": {
+            "pattern": ".tmp/*.txt",
+            "path": ".tmp",
+            "locations": [
+              {
+                "path": ".tmp"
+              }
+            ],
+            "_acp": {
+              "kind": "unknown",
+              "rawInput": {
+                "pattern": ".tmp/*.txt",
+                "path": ".tmp"
+              }
+            }
+          },
+          "id": "fixture-glob-call-1"
+        }
+      }
+    ],
+    "acp/opencode/tool-result/glob": [
+      {
+        "v": 1,
+        "ts": 1769990000002,
+        "direction": "outbound",
+        "sessionId": "fixture-acp-opencode-search-family",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_FIXTURE_GLOB_1",
+          "output": [
+            ".tmp/a.txt",
+            ".tmp/b.txt"
+          ],
+          "id": "fixture-glob-result-1"
+        }
+      }
+    ],
+    "acp/opencode/tool-call/grep": [
+      {
+        "v": 1,
+        "ts": 1769990000003,
+        "direction": "outbound",
+        "sessionId": "fixture-acp-opencode-search-family",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "call_FIXTURE_GREP_1",
+          "name": "grep",
+          "input": {
+            "pattern": "beta",
+            "path": ".tmp",
+            "locations": [
+              {
+                "path": ".tmp"
+              }
+            ],
+            "_acp": {
+              "kind": "unknown",
+              "rawInput": {
+                "pattern": "beta",
+                "path": ".tmp"
+              }
+            }
+          },
+          "id": "fixture-grep-call-1"
+        }
+      }
+    ],
+    "acp/opencode/tool-result/grep": [
+      {
+        "v": 1,
+        "ts": 1769990000004,
+        "direction": "outbound",
+        "sessionId": "fixture-acp-opencode-search-family",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_FIXTURE_GREP_1",
+          "output": ".tmp/happy-tool-ux.txt:2: beta",
+          "id": "fixture-grep-result-1"
+        }
+      }
+    ],
+    "acp/opencode/tool-call/ls": [
+      {
+        "v": 1,
+        "ts": 1769990000005,
+        "direction": "outbound",
+        "sessionId": "fixture-acp-opencode-search-family",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "call_FIXTURE_LS_1",
+          "name": "ls",
+          "input": {
+            "dir": ".tmp",
+            "locations": [
+              {
+                "path": ".tmp"
+              }
+            ],
+            "_acp": {
+              "kind": "unknown",
+              "rawInput": {
+                "dir": ".tmp"
+              }
+            }
+          },
+          "id": "fixture-ls-call-1"
+        }
+      }
+    ],
+    "acp/opencode/tool-result/ls": [
+      {
+        "v": 1,
+        "ts": 1769990000006,
+        "direction": "outbound",
+        "sessionId": "fixture-acp-opencode-search-family",
+        "protocol": "acp",
+        "provider": "opencode",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_FIXTURE_LS_1",
+          "output": [
+            ".tmp",
+            ".tmp/a.txt",
+            ".tmp/b.txt"
+          ],
+          "id": "fixture-ls-result-1"
+        }
+      }
+    ],
     "acp/opencode/tool-call/other": [
       {
         "v": 1,
@@ -951,10 +1200,33 @@
         }
       }
     ],
-    "codex/codex/tool-call-result": [
+    "codex/codex/tool-call-result/mcp__happy__change_title": [
       {
         "v": 1,
-        "ts": 1769343846513,
+        "ts": 1769337098488,
+        "direction": "outbound",
+        "sessionId": "cmktlme09002s8o7fwrwqsbgb",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_HwpOs4HR4DpJDBTn6XAH0Ub8",
+          "output": {
+            "content": [
+              {
+                "text": "Successfully changed chat title to: \"Set Chat Session Title\"",
+                "type": "text"
+              }
+            ],
+            "isError": false
+          },
+          "id": "9c4f1c07-7518-4cd3-951b-273a6ea9cbfe"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769343726943,
         "direction": "outbound",
         "sessionId": "cmktpjrcz00018opehfv1u5sf",
         "protocol": "codex",
@@ -962,120 +1234,40 @@
         "kind": "tool-call-result",
         "payload": {
           "type": "tool-call-result",
-          "callId": "call_St3weS1Kl7iLaWKBb046BPSD",
+          "callId": "call_rTS7vv0cfB6H6rLmR3BpD2W2",
           "output": {
-            "process_id": "21322",
-            "turn_id": "1",
-            "command": [
-              "/bin/zsh",
-              "-lc",
-              "printf 'TRACE_OK\n'"
-            ],
-            "cwd": "/Users/leeroy/Development/happy-local",
-            "parsed_cmd": [
+            "content": [
               {
-                "type": "unknown",
-                "cmd": "printf 'TRACE_OK\n'"
+                "text": "Successfully changed chat title to: \"Happy tool UX smoke test\"",
+                "type": "text"
               }
             ],
-            "source": "unified_exec_startup",
-            "stdout": "TRACE_OK\n",
-            "stderr": "",
-            "aggregated_output": "TRACE_OK\n",
-            "exit_code": 0,
-            "duration": {
-              "secs": 0,
-              "nanos": 51659625
-            },
-            "formatted_output": "TRACE_OK\n"
+            "isError": false
           },
-          "id": "ff782cc7-fa80-4f59-a1d3-ae0033aab724"
+          "id": "dd113cc9-ab85-42eb-9d03-1b62c24237fc"
         }
       },
       {
         "v": 1,
-        "ts": 1769344076643,
+        "ts": 1769343990907,
         "direction": "outbound",
-        "sessionId": "cmktpqxxg003v8ope467zyyfw",
+        "sessionId": "cmktpps6j002r8ope9mnmc0is",
         "protocol": "codex",
         "provider": "codex",
         "kind": "tool-call-result",
         "payload": {
           "type": "tool-call-result",
-          "callId": "call_z12ZnO40AI1Hhjx5I6WlYWAQ",
+          "callId": "call_TKUTbYenq03nnDUVJjrfTMk4",
           "output": {
-            "process_id": "7938",
-            "turn_id": "1",
-            "command": [
-              "/bin/zsh",
-              "-lc",
-              "mkdir -p .tmp && echo TRACE_OK"
-            ],
-            "cwd": "/Users/leeroy/Development/happy-local",
-            "parsed_cmd": [
+            "content": [
               {
-                "type": "unknown",
-                "cmd": "mkdir -p .tmp"
-              },
-              {
-                "type": "unknown",
-                "cmd": "echo TRACE_OK"
+                "text": "Successfully changed chat title to: \"Happy tool UX smoke test (shell/file/patch/grep/glob/todos)\"",
+                "type": "text"
               }
             ],
-            "source": "unified_exec_startup",
-            "stdout": "TRACE_OK\n",
-            "stderr": "",
-            "aggregated_output": "TRACE_OK\n",
-            "exit_code": 0,
-            "duration": {
-              "secs": 0,
-              "nanos": 51039375
-            },
-            "formatted_output": "TRACE_OK\n"
+            "isError": false
           },
-          "id": "4f2f35e2-3874-4b6f-8ff2-7fb45caeeaff"
-        }
-      },
-      {
-        "v": 1,
-        "ts": 1769344101412,
-        "direction": "outbound",
-        "sessionId": "cmktpqxxg003v8ope467zyyfw",
-        "protocol": "codex",
-        "provider": "codex",
-        "kind": "tool-call-result",
-        "payload": {
-          "type": "tool-call-result",
-          "callId": "call_6ffcNz5uJqPBX7lKCtySGSYE",
-          "output": {
-            "process_id": "52601",
-            "turn_id": "3",
-            "command": [
-              "/bin/zsh",
-              "-lc",
-              "cat .tmp/happy-tool-ux.txt"
-            ],
-            "cwd": "/Users/leeroy/Development/happy-local",
-            "parsed_cmd": [
-              {
-                "type": "read",
-                "cmd": "cat .tmp/happy-tool-ux.txt",
-                "name": "happy-tool-ux.txt",
-                "path": ".tmp/happy-tool-ux.txt"
-              }
-            ],
-            "source": "unified_exec_startup",
-            "stdout": "a\nb\nc\n",
-            "stderr": "",
-            "aggregated_output": "a\nb\nc\n",
-            "exit_code": 0,
-            "duration": {
-              "secs": 0,
-              "nanos": 51881792
-            },
-            "formatted_output": "a\nb\nc\n"
-          },
-          "id": "321351d9-c96e-4ad5-bcbd-327a965f0608"
+          "id": "11de51f3-eee4-44fb-9290-b1928393ad8f"
         }
       }
     ],
@@ -1132,6 +1324,53 @@
             "title": "Reviewing Progress & Next Steps"
           },
           "id": "451f04a1-0262-4c1e-a830-4fedeb8edb40"
+        }
+      }
+    ],
+    "acp/gemini/tool-result/GeminiReasoning": [
+      {
+        "v": 1,
+        "ts": 1769339362695,
+        "direction": "outbound",
+        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "5eb5702f-cfa7-44d8-b557-21ab323c1e63",
+          "output": "I should clarify the user's goal, gather constraints, and propose a minimal plan before executing changes.",
+          "id": "a4a5a2c6-53ff-4b0a-9a2d-9b6e6c3d6ef2"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769339366886,
+        "direction": "outbound",
+        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "b987d874-bedb-4238-aacd-9991cf038cbd",
+          "output": "Proceed to inspect the repo structure and identify the relevant files to change, then validate with tests.",
+          "id": "4d2d6926-63f6-41d0-8cf1-4c2d0d9b676a"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769339401264,
+        "direction": "outbound",
+        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "91e03144-c256-41de-9e2a-9568a62e6aa8",
+          "output": "Summarize progress and next steps, ensuring changes are incremental and easy to verify.",
+          "id": "e16f6d74-d62b-44c8-9d4f-3a4b5f8c4c12"
         }
       }
     ],
@@ -1304,71 +1543,6 @@
               "toolCallId": "change_title-1769348638269"
             }
           }
-        }
-      }
-    ],
-    "acp/gemini/tool-result": [
-      {
-        "v": 1,
-        "ts": 1769339362998,
-        "direction": "outbound",
-        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
-        "protocol": "acp",
-        "provider": "gemini",
-        "kind": "tool-result",
-        "payload": {
-          "type": "tool-result",
-          "callId": "run_shell_command-1769339362915",
-          "output": {
-            "error": "Tool call failed",
-            "status": "failed",
-            "_acp": {
-              "kind": "unknown"
-            }
-          },
-          "id": "191b98da-2aaf-429d-b853-2b276a70d978"
-        }
-      },
-      {
-        "v": 1,
-        "ts": 1769348212894,
-        "direction": "outbound",
-        "sessionId": "cmkts8hyz01yx8ope545k1b2f",
-        "protocol": "acp",
-        "provider": "gemini",
-        "kind": "tool-result",
-        "payload": {
-          "type": "tool-result",
-          "callId": "run_shell_command-1769348212871",
-          "output": {
-            "error": "Tool call failed",
-            "status": "failed",
-            "_acp": {
-              "kind": "unknown"
-            }
-          },
-          "id": "ca618bab-1fc3-4f23-aa67-cf75d2cee5a6"
-        }
-      },
-      {
-        "v": 1,
-        "ts": 1769348459642,
-        "direction": "outbound",
-        "sessionId": "cmkts8hyz01yx8ope545k1b2f",
-        "protocol": "acp",
-        "provider": "gemini",
-        "kind": "tool-result",
-        "payload": {
-          "type": "tool-result",
-          "callId": "read_file-1769348459613",
-          "output": {
-            "error": "Tool call failed",
-            "status": "failed",
-            "_acp": {
-              "kind": "unknown"
-            }
-          },
-          "id": "7c3745ad-ac6c-44f1-9e46-f0e746e463bd"
         }
       }
     ],
@@ -1688,6 +1862,71 @@
         }
       }
     ],
+    "acp/gemini/tool-result/read": [
+      {
+        "v": 1,
+        "ts": 1769348700275,
+        "direction": "outbound",
+        "sessionId": "cmktshmd6023t8ope0r7mlcdp",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "read_file-1769348700205",
+          "output": {
+            "error": "Tool call failed",
+            "status": "failed",
+            "_acp": {
+              "kind": "unknown"
+            }
+          },
+          "id": "33e6d754-8521-4267-9c0b-6dec6a15742b"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769351735569,
+        "direction": "outbound",
+        "sessionId": "cmktub6nm00a78osqghyhlc23",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "read_file-1769351735515",
+          "output": {
+            "error": "Tool call failed",
+            "status": "failed",
+            "_acp": {
+              "kind": "unknown"
+            }
+          },
+          "id": "96f03664-615b-466f-b14f-d7f4082da2a5"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769366159969,
+        "direction": "outbound",
+        "sessionId": "cmku2x91600578o7rd2fzkm2d",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "read_file-1769366159859",
+          "output": {
+            "error": "Tool call failed",
+            "status": "failed",
+            "_acp": {
+              "kind": "read"
+            }
+          },
+          "id": "74175246-00af-45e9-8777-fc996a41667f"
+        }
+      }
+    ],
     "acp/gemini/permission-request/edit": [
       {
         "v": 1,
@@ -1977,6 +2216,77 @@
         }
       }
     ],
+    "acp/gemini/tool-result/search": [
+      {
+        "v": 1,
+        "ts": 1769339442374,
+        "direction": "outbound",
+        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "search_file_content-1769339442252",
+          "output": [
+            {
+              "content": {
+                "text": "Found 1 match",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "id": "10714491-9fdf-46f0-846f-16ef4e346746"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769339446358,
+        "direction": "outbound",
+        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "glob-1769339446323",
+          "output": [
+            {
+              "content": {
+                "text": "Found 1 matching file(s)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "id": "222112a3-c724-403b-b676-6d128162f0db"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769348429992,
+        "direction": "outbound",
+        "sessionId": "cmkts8hyz01yx8ope545k1b2f",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "search_file_content-1769348429840",
+          "output": [
+            {
+              "content": {
+                "text": "Found 1 match",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "id": "4945d4ab-3465-4130-8fbd-0869002fea6d"
+        }
+      }
+    ],
     "acp/gemini/tool-call/write": [
       {
         "v": 1,
@@ -2041,11 +2351,11 @@
           "id": "a406d5a5-80db-46f6-8ed1-02316be2335e"
         }
       },
-      {
-        "v": 1,
-        "ts": 1769339454416,
-        "direction": "outbound",
-        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
+	      {
+	        "v": 1,
+	        "ts": 1769339454416,
+	        "direction": "outbound",
+	        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
         "protocol": "acp",
         "provider": "gemini",
         "kind": "tool-call",
@@ -2063,10 +2373,110 @@
               "rawInput": []
             }
           },
-          "id": "f4212900-dda3-4251-90a7-a94176c3e842"
+	          "id": "f4212900-dda3-4251-90a7-a94176c3e842"
+	        }
+	      },
+	      {
+	        "v": 1,
+	        "ts": 1769375990000,
+	        "direction": "outbound",
+	        "sessionId": "fixture-write-error",
+	        "protocol": "acp",
+	        "provider": "gemini",
+	        "kind": "tool-call",
+	        "payload": {
+	          "type": "tool-call",
+	          "name": "write",
+	          "callId": "write_file-error-fixture",
+	          "input": {
+	            "file_path": "write-error.txt",
+	            "content": "hello",
+	            "_acp": {
+	              "kind": "write",
+	              "rawInput": { "file_path": "write-error.txt", "content": "hello" }
+	            }
+	          },
+	          "id": "fixture-write-error-id"
+	        }
+	      }
+	    ],
+	    "acp/gemini/tool-result/write": [
+      {
+        "v": 1,
+        "ts": 1769339450677,
+        "direction": "outbound",
+        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "write_todos-1769339450647",
+          "output": [],
+          "id": "118c1a9e-7422-4686-b366-2e227d5706d2"
         }
-      }
-    ],
+      },
+      {
+        "v": 1,
+        "ts": 1769339454421,
+        "direction": "outbound",
+        "sessionId": "cmktmyvpx008x8o7fnlufv1kr",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "write_todos-1769339454397",
+          "output": [],
+          "id": "0c475d95-357d-4df2-ac53-168f58cfc484"
+        }
+      },
+	      {
+	        "v": 1,
+	        "ts": 1769348435572,
+	        "direction": "outbound",
+	        "sessionId": "cmkts8hyz01yx8ope545k1b2f",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "write_todos-1769348435503",
+          "output": [],
+	          "id": "beb8d420-4b6e-4996-bda4-457dac491766"
+	        }
+	      },
+	      {
+	        "v": 1,
+	        "ts": 1769375954760,
+	        "direction": "outbound",
+	        "sessionId": "cmku8qqe900018ob07tkfs947",
+	        "protocol": "acp",
+	        "provider": "gemini",
+	        "kind": "tool-result",
+	        "payload": {
+	          "type": "tool-result",
+	          "callId": "write_file-1769375935858",
+	          "output": { "ok": true },
+	          "id": "fixture-write-ok-id"
+	        }
+	      },
+	      {
+	        "v": 1,
+	        "ts": 1769375990500,
+	        "direction": "outbound",
+	        "sessionId": "fixture-write-error",
+	        "protocol": "acp",
+	        "provider": "gemini",
+	        "kind": "tool-result",
+	        "payload": {
+	          "type": "tool-result",
+	          "callId": "write_file-error-fixture",
+	          "output": { "ok": false, "error": "Permission denied" },
+	          "id": "fixture-write-error-result-id"
+	        }
+	      }
+	    ],
     "acp/codex/tool-call/execute": [
       {
         "v": 1,
@@ -2237,7 +2647,7 @@
         }
       }
     ],
-    "acp/codex/tool-result": [
+    "acp/codex/tool-result/execute": [
       {
         "v": 1,
         "ts": 1769339619891,
@@ -2284,100 +2694,90 @@
       },
       {
         "v": 1,
-        "ts": 1769339656004,
+        "ts": 1769340509590,
         "direction": "outbound",
-        "sessionId": "cmktn4bwt00c78o7fmv3s820n",
+        "sessionId": "cmktnmjja01678o7fade058np",
         "protocol": "acp",
         "provider": "codex",
         "kind": "tool-result",
         "payload": {
           "type": "tool-result",
-          "callId": "call_9fOU0nINoIvaj23bJ2xDMwJm",
+          "callId": "call_TXNMmh2LUodXloQ0EA7vBWZ9",
           "output": {
-            "aggregated_output": "a\nb\nc\n",
-            "call_id": "call_9fOU0nINoIvaj23bJ2xDMwJm",
+            "aggregated_output": "-rw-r--r--@ 1 leeroy  wheel     14 Jan 24 13:43 /private/tmp/bash_test.txt\n-rw-r--r--@ 1 leeroy  wheel     23 Jan 23 13:21 /private/tmp/codex_permissions_test.txt\n-rw-r--r--@ 1 leeroy  wheel  27493 Jan 23 09:36 /private/tmp/happys-test-stacks.txt\n",
+            "call_id": "call_TXNMmh2LUodXloQ0EA7vBWZ9",
             "command": [
               "/bin/zsh",
               "-lc",
-              "cat .tmp/happy-tool-ux.txt"
+              "ls -la /private/tmp/happys-test-stacks.txt /private/tmp/codex_permissions_test.txt /private/tmp/bash_test.txt 2>/dev/null || true"
             ],
             "cwd": "/Users/leeroy/Development/happy-local",
             "duration": {
-              "nanos": 54676209,
+              "nanos": 59183584,
               "secs": 0
             },
             "exit_code": 0,
-            "formatted_output": "a\nb\nc\n",
+            "formatted_output": "-rw-r--r--@ 1 leeroy  wheel     14 Jan 24 13:43 /private/tmp/bash_test.txt\n-rw-r--r--@ 1 leeroy  wheel     23 Jan 23 13:21 /private/tmp/codex_permissions_test.txt\n-rw-r--r--@ 1 leeroy  wheel  27493 Jan 23 09:36 /private/tmp/happys-test-stacks.txt\n",
             "parsed_cmd": [
               {
-                "cmd": "cat .tmp/happy-tool-ux.txt",
-                "name": "happy-tool-ux.txt",
-                "path": ".tmp/happy-tool-ux.txt",
-                "type": "read"
+                "cmd": "ls -la /private/tmp/happys-test-stacks.txt /private/tmp/codex_permissions_test.txt /private/tmp/bash_test.txt 2>/dev/null || true",
+                "type": "unknown"
               }
             ],
-            "process_id": "12067",
+            "process_id": "31622",
             "source": "unified_exec_startup",
             "stderr": "",
-            "stdout": "a\nb\nc\n",
+            "stdout": "-rw-r--r--@ 1 leeroy  wheel     14 Jan 24 13:43 /private/tmp/bash_test.txt\n-rw-r--r--@ 1 leeroy  wheel     23 Jan 23 13:21 /private/tmp/codex_permissions_test.txt\n-rw-r--r--@ 1 leeroy  wheel  27493 Jan 23 09:36 /private/tmp/happys-test-stacks.txt\n",
             "turn_id": "1",
             "_acp": {
               "kind": "unknown"
             }
           },
-          "id": "1ddf6aa8-4a81-4f8d-ad11-c821a35d2663"
+          "id": "8d6eb63b-bf5c-4307-b2fd-3a17bf343b74"
         }
       },
       {
         "v": 1,
-        "ts": 1769339700944,
+        "ts": 1769340536105,
         "direction": "outbound",
-        "sessionId": "cmktn4bwt00c78o7fmv3s820n",
+        "sessionId": "cmktnmjja01678o7fade058np",
         "protocol": "acp",
         "provider": "codex",
         "kind": "tool-result",
         "payload": {
           "type": "tool-result",
-          "callId": "call_mLCnoWJgvxBFcuLkIfIarYTH",
+          "callId": "call_p92lUBS1xWyu5EBYB27vQpCF",
           "output": {
-            "aggregated_output": "2:beta\n",
-            "call_id": "call_mLCnoWJgvxBFcuLkIfIarYTH",
+            "aggregated_output": "tar: Failed to set default locale\nleeroybrun-codex-32947aa/\nleeroybrun-codex-32947aa/.bazelignore\nleeroybrun-codex-32947aa/.bazelrc\nleeroybrun-codex-32947aa/.codespellignore\nleeroybrun-codex-32947aa/.codespellrc\nleeroybrun-codex-32947aa/.devcontainer/\nleeroybrun-codex-32947aa/.devcontainer/Dockerfile\nleeroybrun-codex-32947aa/.devcontainer/README.md\nleeroybrun-codex-32947aa/.devcontainer/devcontainer.json\nleeroybrun-codex-32947aa/.github/\n",
+            "call_id": "call_p92lUBS1xWyu5EBYB27vQpCF",
             "command": [
               "/bin/zsh",
               "-lc",
-              "rg -n \"beta\" .tmp/happy-tool-ux.txt || grep -n \"beta\" .tmp/happy-tool-ux.txt"
+              "tar -tzf /private/tmp/codex-verify/repo.tgz | head"
             ],
             "cwd": "/Users/leeroy/Development/happy-local",
             "duration": {
-              "nanos": 78516208,
+              "nanos": 108592209,
               "secs": 0
             },
             "exit_code": 0,
-            "formatted_output": "2:beta\n",
+            "formatted_output": "tar: Failed to set default locale\nleeroybrun-codex-32947aa/\nleeroybrun-codex-32947aa/.bazelignore\nleeroybrun-codex-32947aa/.bazelrc\nleeroybrun-codex-32947aa/.codespellignore\nleeroybrun-codex-32947aa/.codespellrc\nleeroybrun-codex-32947aa/.devcontainer/\nleeroybrun-codex-32947aa/.devcontainer/Dockerfile\nleeroybrun-codex-32947aa/.devcontainer/README.md\nleeroybrun-codex-32947aa/.devcontainer/devcontainer.json\nleeroybrun-codex-32947aa/.github/\n",
             "parsed_cmd": [
               {
-                "cmd": "rg -n beta .tmp/happy-tool-ux.txt",
-                "path": "happy-tool-ux.txt",
-                "query": "beta",
-                "type": "search"
-              },
-              {
-                "cmd": "grep -n beta .tmp/happy-tool-ux.txt",
-                "path": "happy-tool-ux.txt",
-                "query": "beta",
-                "type": "search"
+                "cmd": "tar -tzf /private/tmp/codex-verify/repo.tgz",
+                "type": "unknown"
               }
             ],
-            "process_id": "12945",
+            "process_id": "50207",
             "source": "unified_exec_startup",
             "stderr": "",
-            "stdout": "2:beta\n",
+            "stdout": "tar: Failed to set default locale\nleeroybrun-codex-32947aa/\nleeroybrun-codex-32947aa/.bazelignore\nleeroybrun-codex-32947aa/.bazelrc\nleeroybrun-codex-32947aa/.codespellignore\nleeroybrun-codex-32947aa/.codespellrc\nleeroybrun-codex-32947aa/.devcontainer/\nleeroybrun-codex-32947aa/.devcontainer/Dockerfile\nleeroybrun-codex-32947aa/.devcontainer/README.md\nleeroybrun-codex-32947aa/.devcontainer/devcontainer.json\nleeroybrun-codex-32947aa/.github/\n",
             "turn_id": "1",
             "_acp": {
               "kind": "unknown"
             }
           },
-          "id": "fe71aa43-b8c7-4a4e-b0e3-471443f24b92"
+          "id": "a27645ad-2277-470b-92f6-6708ae3d599e"
         }
       }
     ],
@@ -2883,6 +3283,146 @@
             }
           },
           "id": "8bd6ca9f-ea42-40ef-a9ba-797198038419"
+        }
+      }
+    ],
+    "acp/codex/tool-result/read": [
+      {
+        "v": 1,
+        "ts": 1769339656004,
+        "direction": "outbound",
+        "sessionId": "cmktn4bwt00c78o7fmv3s820n",
+        "protocol": "acp",
+        "provider": "codex",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_9fOU0nINoIvaj23bJ2xDMwJm",
+          "output": {
+            "aggregated_output": "a\nb\nc\n",
+            "call_id": "call_9fOU0nINoIvaj23bJ2xDMwJm",
+            "command": [
+              "/bin/zsh",
+              "-lc",
+              "cat .tmp/happy-tool-ux.txt"
+            ],
+            "cwd": "/Users/leeroy/Development/happy-local",
+            "duration": {
+              "nanos": 54676209,
+              "secs": 0
+            },
+            "exit_code": 0,
+            "formatted_output": "a\nb\nc\n",
+            "parsed_cmd": [
+              {
+                "cmd": "cat .tmp/happy-tool-ux.txt",
+                "name": "happy-tool-ux.txt",
+                "path": ".tmp/happy-tool-ux.txt",
+                "type": "read"
+              }
+            ],
+            "process_id": "12067",
+            "source": "unified_exec_startup",
+            "stderr": "",
+            "stdout": "a\nb\nc\n",
+            "turn_id": "1",
+            "_acp": {
+              "kind": "unknown"
+            }
+          },
+          "id": "1ddf6aa8-4a81-4f8d-ad11-c821a35d2663"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769340490600,
+        "direction": "outbound",
+        "sessionId": "cmktnmjja01678o7fade058np",
+        "protocol": "acp",
+        "provider": "codex",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_cI671HJGvWWikfwh4Q1LFmb1",
+          "output": {
+            "aggregated_output": "a\nbeta\nc\n",
+            "call_id": "call_cI671HJGvWWikfwh4Q1LFmb1",
+            "command": [
+              "/bin/zsh",
+              "-lc",
+              "sed -n '1,200p' .tmp/happy-tool-ux.txt"
+            ],
+            "cwd": "/Users/leeroy/Development/happy-local",
+            "duration": {
+              "nanos": 51177833,
+              "secs": 0
+            },
+            "exit_code": 0,
+            "formatted_output": "a\nbeta\nc\n",
+            "parsed_cmd": [
+              {
+                "cmd": "sed -n '1,200p' .tmp/happy-tool-ux.txt",
+                "name": "happy-tool-ux.txt",
+                "path": ".tmp/happy-tool-ux.txt",
+                "type": "read"
+              }
+            ],
+            "process_id": "47648",
+            "source": "unified_exec_startup",
+            "stderr": "",
+            "stdout": "a\nbeta\nc\n",
+            "turn_id": "1",
+            "_acp": {
+              "kind": "unknown"
+            }
+          },
+          "id": "c00ee267-ffe5-4b30-81ba-8ad47b54d7ba"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769340493185,
+        "direction": "outbound",
+        "sessionId": "cmktnmjja01678o7fade058np",
+        "protocol": "acp",
+        "provider": "codex",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_4fFxF5vA0WdLc2qlteZrVqr4",
+          "output": {
+            "aggregated_output": "hi-opencode-ux",
+            "call_id": "call_4fFxF5vA0WdLc2qlteZrVqr4",
+            "command": [
+              "/bin/zsh",
+              "-lc",
+              "sed -n '1,200p' .tmp/opencode_tool_ux.txt"
+            ],
+            "cwd": "/Users/leeroy/Development/happy-local",
+            "duration": {
+              "nanos": 53528250,
+              "secs": 0
+            },
+            "exit_code": 0,
+            "formatted_output": "hi-opencode-ux",
+            "parsed_cmd": [
+              {
+                "cmd": "sed -n '1,200p' .tmp/opencode_tool_ux.txt",
+                "name": "opencode_tool_ux.txt",
+                "path": ".tmp/opencode_tool_ux.txt",
+                "type": "read"
+              }
+            ],
+            "process_id": "84088",
+            "source": "unified_exec_startup",
+            "stderr": "",
+            "stdout": "hi-opencode-ux",
+            "turn_id": "1",
+            "_acp": {
+              "kind": "unknown"
+            }
+          },
+          "id": "405b29f1-308f-46c9-8024-b9abaee692a4"
         }
       }
     ],
@@ -3622,6 +4162,38 @@
         }
       }
     ],
+    "codex/codex/tool-call-result/CodexReasoning": [
+      {
+        "v": 1,
+        "ts": 1769343705300,
+        "direction": "outbound",
+        "sessionId": "cmktpjrcz00018opehfv1u5sf",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "97410bf4-3e26-442c-b2ca-941d602143ce",
+          "output": "Decide on file locations and create the directory structure before writing content.",
+          "id": "0e4b030b-3f5e-4f2b-96f8-bc0ab13d7b43"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769343707015,
+        "direction": "outbound",
+        "sessionId": "cmktpjrcz00018opehfv1u5sf",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "e0fc6c28-ed8b-4732-91b7-d676fad64eb0",
+          "output": "Sequence the tool calls to avoid partial state and keep changes reversible.",
+          "id": "d12b8d9f-7c44-4f1d-989f-1a0f0f3b2a42"
+        }
+      }
+    ],
     "codex/codex/tool-call/CodexBash": [
       {
         "v": 1,
@@ -3724,6 +4296,134 @@
         }
       }
     ],
+    "codex/codex/tool-call-result/CodexBash": [
+      {
+        "v": 1,
+        "ts": 1769343846513,
+        "direction": "outbound",
+        "sessionId": "cmktpjrcz00018opehfv1u5sf",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_St3weS1Kl7iLaWKBb046BPSD",
+          "output": {
+            "process_id": "21322",
+            "turn_id": "1",
+            "command": [
+              "/bin/zsh",
+              "-lc",
+              "printf 'TRACE_OK\n'"
+            ],
+            "cwd": "/Users/leeroy/Development/happy-local",
+            "parsed_cmd": [
+              {
+                "type": "unknown",
+                "cmd": "printf 'TRACE_OK\n'"
+              }
+            ],
+            "source": "unified_exec_startup",
+            "stdout": "TRACE_OK\n",
+            "stderr": "",
+            "aggregated_output": "TRACE_OK\n",
+            "exit_code": 0,
+            "duration": {
+              "secs": 0,
+              "nanos": 51659625
+            },
+            "formatted_output": "TRACE_OK\n"
+          },
+          "id": "ff782cc7-fa80-4f59-a1d3-ae0033aab724"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769344076643,
+        "direction": "outbound",
+        "sessionId": "cmktpqxxg003v8ope467zyyfw",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_z12ZnO40AI1Hhjx5I6WlYWAQ",
+          "output": {
+            "process_id": "7938",
+            "turn_id": "1",
+            "command": [
+              "/bin/zsh",
+              "-lc",
+              "mkdir -p .tmp && echo TRACE_OK"
+            ],
+            "cwd": "/Users/leeroy/Development/happy-local",
+            "parsed_cmd": [
+              {
+                "type": "unknown",
+                "cmd": "mkdir -p .tmp"
+              },
+              {
+                "type": "unknown",
+                "cmd": "echo TRACE_OK"
+              }
+            ],
+            "source": "unified_exec_startup",
+            "stdout": "TRACE_OK\n",
+            "stderr": "",
+            "aggregated_output": "TRACE_OK\n",
+            "exit_code": 0,
+            "duration": {
+              "secs": 0,
+              "nanos": 51039375
+            },
+            "formatted_output": "TRACE_OK\n"
+          },
+          "id": "4f2f35e2-3874-4b6f-8ff2-7fb45caeeaff"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769344101412,
+        "direction": "outbound",
+        "sessionId": "cmktpqxxg003v8ope467zyyfw",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_6ffcNz5uJqPBX7lKCtySGSYE",
+          "output": {
+            "process_id": "52601",
+            "turn_id": "3",
+            "command": [
+              "/bin/zsh",
+              "-lc",
+              "cat .tmp/happy-tool-ux.txt"
+            ],
+            "cwd": "/Users/leeroy/Development/happy-local",
+            "parsed_cmd": [
+              {
+                "type": "read",
+                "cmd": "cat .tmp/happy-tool-ux.txt",
+                "name": "happy-tool-ux.txt",
+                "path": ".tmp/happy-tool-ux.txt"
+              }
+            ],
+            "source": "unified_exec_startup",
+            "stdout": "a\nb\nc\n",
+            "stderr": "",
+            "aggregated_output": "a\nb\nc\n",
+            "exit_code": 0,
+            "duration": {
+              "secs": 0,
+              "nanos": 51881792
+            },
+            "formatted_output": "a\nb\nc\n"
+          },
+          "id": "321351d9-c96e-4ad5-bcbd-327a965f0608"
+        }
+      }
+    ],
     "codex/codex/tool-call/CodexPatch": [
       {
         "v": 1,
@@ -3797,6 +4497,156 @@
           },
           "id": "89db47b1-904d-42e8-8c25-e3f1761991e1"
         }
+      },
+      {
+        "v": 1,
+        "ts": 1769350012345,
+        "direction": "outbound",
+        "sessionId": "cmktt9ls000018osqn89beoo0",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "name": "CodexPatch",
+          "callId": "call_PATCH_MULTI_FILE",
+          "input": {
+            "auto_approved": false,
+            "changes": {
+              "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-multi-add.txt": {
+                "type": "add",
+                "content": "alpha\nbeta\ngamma\n"
+              },
+              "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-multi-delete.txt": {
+                "type": "delete",
+                "content": "obsolete\ncontent\n"
+              }
+            }
+          },
+          "id": "9a0c09c6-9b44-4ad6-a225-861e0fd1040e"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769350013456,
+        "direction": "outbound",
+        "sessionId": "cmktt9ls000018osqn89beoo0",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "name": "CodexPatch",
+          "callId": "call_PATCH_APPLY_FAIL",
+          "input": {
+            "auto_approved": false,
+            "changes": {
+              "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-fail.txt": {
+                "type": "update",
+                "unified_diff": "@@ -1,1 +1,1 @@\n-old\n+new\n",
+                "move_path": null
+              }
+            }
+          },
+          "id": "ccf9c74d-5d13-4ced-8dd7-5a0d8c7f5a7b"
+        }
+      }
+    ],
+    "codex/codex/tool-call-result/CodexPatch": [
+      {
+        "v": 1,
+        "ts": 1769344095048,
+        "direction": "outbound",
+        "sessionId": "cmktpqxxg003v8ope467zyyfw",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_GwgCFpZY4tzzXgVpUTXrskEC",
+          "output": {
+            "stdout": "Success. Updated the following files:\nA .tmp/happy-tool-ux.txt\n",
+            "stderr": "",
+            "success": true
+          },
+          "id": "fd651621-b1bf-49f8-a83f-2b767ee7b2ef"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769344107776,
+        "direction": "outbound",
+        "sessionId": "cmktpqxxg003v8ope467zyyfw",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_u2SPwUBdpp3KIHQghPmpVfkd",
+          "output": {
+            "stdout": "Success. Updated the following files:\nM .tmp/happy-tool-ux.txt\n",
+            "stderr": "",
+            "success": true
+          },
+          "id": "52f95e48-12d7-4475-90d2-7f5c57ec1ef5"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769350000669,
+        "direction": "outbound",
+        "sessionId": "cmktt9ls000018osqn89beoo0",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_fI62G71Upc5LrgPJEedyL9Vb",
+          "output": {
+            "stdout": "Success. Updated the following files:\nA .tmp/tooltrace-codex-mcp.txt\n",
+            "stderr": "",
+            "success": true
+          },
+          "id": "b89ebd3a-3258-4892-86e2-7b651c4bb54d"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769350012500,
+        "direction": "outbound",
+        "sessionId": "cmktt9ls000018osqn89beoo0",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_PATCH_MULTI_FILE",
+          "output": {
+            "stdout": "Success. Updated the following files:\nA .tmp/tooltrace-codex-multi-add.txt\nD .tmp/tooltrace-codex-multi-delete.txt\n",
+            "stderr": "",
+            "success": true
+          },
+          "id": "8b08144d-8b2f-47f7-a0b3-125a5e6eb3e2"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769350013600,
+        "direction": "outbound",
+        "sessionId": "cmktt9ls000018osqn89beoo0",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_PATCH_APPLY_FAIL",
+          "output": {
+            "stdout": "",
+            "stderr": "Permission denied",
+            "success": false
+          },
+          "id": "2d8e4c64-03d6-4d60-90c5-0850d5d62860"
+        }
       }
     ],
     "codex/codex/tool-call/CodexDiff": [
@@ -3852,6 +4702,94 @@
             "unified_diff": "diff --git a//Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-mcp.txt b//Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-mcp.txt\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..4cb29ea38f70d7c61b2a3a25b02e3bdf44905402\n--- /dev/null\n+++ b//Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-mcp.txt\n@@ -0,0 +1,3 @@\n+one\n+two\n+three\n"
           },
           "id": "ad35c8dd-c260-4a16-9e22-77be17d2fa65"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769350012700,
+        "direction": "outbound",
+        "sessionId": "cmktt9ls000018osqn89beoo0",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "name": "CodexDiff",
+          "callId": "call_DIFF_DELETE_FILE",
+          "input": {
+            "unified_diff": "diff --git a//Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-delete.txt b//Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-delete.txt\ndeleted file mode 100644\nindex 4cb29ea38f70d7c61b2a3a25b02e3bdf44905402..0000000000000000000000000000000000000000\n--- a//Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-delete.txt\n+++ /dev/null\n@@ -1,3 +0,0 @@\n-one\n-two\n-three\n"
+          },
+          "id": "1a8d4eaf-4574-4a08-8fe4-7a7a7ba1d2f8"
+        }
+      }
+    ],
+    "codex/codex/tool-call-result/CodexDiff": [
+      {
+        "v": 1,
+        "ts": 1769344095051,
+        "direction": "outbound",
+        "sessionId": "cmktpqxxg003v8ope467zyyfw",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "fb223c4d-8911-4f59-ab4f-bc962d925f51",
+          "output": {
+            "status": "completed"
+          },
+          "id": "b8b2cdd1-ebc5-4c21-bbc6-d1871c1ec382"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769344107782,
+        "direction": "outbound",
+        "sessionId": "cmktpqxxg003v8ope467zyyfw",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "d98e0409-4f01-4739-af0f-47daf058e41a",
+          "output": {
+            "status": "completed"
+          },
+          "id": "ba565cac-854a-4734-9502-a6fd9ebbe926"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769350000676,
+        "direction": "outbound",
+        "sessionId": "cmktt9ls000018osqn89beoo0",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "1588ef75-47b0-4eef-9c53-79c1683e961d",
+          "output": {
+            "status": "completed"
+          },
+          "id": "fa30e23e-e5e7-4744-94eb-f67132ee9fbc"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769350012710,
+        "direction": "outbound",
+        "sessionId": "cmktt9ls000018osqn89beoo0",
+        "protocol": "codex",
+        "provider": "codex",
+        "kind": "tool-call-result",
+        "payload": {
+          "type": "tool-call-result",
+          "callId": "call_DIFF_DELETE_FILE",
+          "output": {
+            "status": "completed"
+          },
+          "id": "e7a5a563-f0d6-466c-9e89-0c6489b061fd"
         }
       }
     ],
@@ -3912,6 +4850,114 @@
             }
           },
           "id": "9d6aa292-df41-4387-9441-6faa21b59021"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769348839000,
+        "direction": "outbound",
+        "sessionId": "cmktskmre02998ope7cn2969p",
+        "protocol": "acp",
+        "provider": "codex",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "call_PATCH_MULTI_ACP",
+          "name": "edit",
+          "input": {
+            "auto_approved": false,
+            "call_id": "call_PATCH_MULTI_ACP",
+            "changes": {
+              "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-acp-multi.txt": {
+                "move_path": null,
+                "new_content": "one\nTWO\nthree\n",
+                "old_content": "one\ntwo\nthree\n",
+                "type": "update",
+                "unified_diff": "@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n"
+              },
+              "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-acp-delete.txt": {
+                "old_content": "delete-me\n",
+                "type": "delete"
+              }
+            },
+            "turn_id": "1",
+            "locations": [
+              {
+                "path": "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-acp-multi.txt"
+              },
+              {
+                "path": "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-acp-delete.txt"
+              }
+            ],
+            "description": "Edit multiple files",
+            "_acp": {
+              "kind": "edit",
+              "title": "Edit multiple files",
+              "rawInput": {
+                "auto_approved": false,
+                "call_id": "call_PATCH_MULTI_ACP",
+                "changes": {
+                  "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-acp-multi.txt": {
+                    "move_path": null,
+                    "new_content": "one\nTWO\nthree\n",
+                    "old_content": "one\ntwo\nthree\n",
+                    "type": "update",
+                    "unified_diff": "@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n"
+                  },
+                  "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-acp-delete.txt": {
+                    "old_content": "delete-me\n",
+                    "type": "delete"
+                  }
+                },
+                "turn_id": "1"
+              },
+              "locations": [
+                {
+                  "path": "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-acp-multi.txt"
+                },
+                {
+                  "path": "/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-acp-delete.txt"
+                }
+              ]
+            }
+          },
+          "id": "dba15d80-08d1-4f74-9a85-0b5cb859e5b9"
+        }
+      }
+    ],
+    "acp/codex/tool-result/edit": [
+      {
+        "v": 1,
+        "ts": 1769348838000,
+        "direction": "outbound",
+        "sessionId": "cmktskmre02998ope7cn2969p",
+        "protocol": "acp",
+        "provider": "codex",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_03ePs3v0M7uwusF1crGQRt31",
+          "output": "OK",
+          "id": "d7e2be13-f0f6-4c20-9eb7-aee57a8c0f07"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769348839100,
+        "direction": "outbound",
+        "sessionId": "cmktskmre02998ope7cn2969p",
+        "protocol": "acp",
+        "provider": "codex",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "call_PATCH_MULTI_ACP",
+          "output": {
+            "success": true,
+            "stdout": "Applied changes to 2 files",
+            "stderr": ""
+          },
+          "id": "bdf2659b-735d-4c3e-b643-03d68bc57d48"
         }
       }
     ],
@@ -4105,6 +5151,89 @@
         }
       }
     ],
+    "claude/claude/tool-result/TaskCreate": [
+      {
+        "v": 1,
+        "ts": 1769352964200,
+        "direction": "outbound",
+        "sessionId": "cmktuz63p00jw8osq0arepwu3",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01Fe7ikeSkSc5LTA8bpcEaoV",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"taskId\":\"1\",\"subject\":\"Validate tool testing is complete\",\"status\":\"pending\"}"
+            }
+          ]
+        }
+      }
+    ],
+    "claude/claude/tool-result/TaskList": [
+      {
+        "v": 1,
+        "ts": 1769353003400,
+        "direction": "outbound",
+        "sessionId": "cmktuz63p00jw8osq0arepwu3",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01VpTKBtyGp3DH3fXJCYxxbx",
+          "content": [
+            {
+              "type": "text",
+              "text": "[{\"taskId\":\"1\",\"subject\":\"Validate tool testing is complete\",\"status\":\"pending\"}]"
+            }
+          ]
+        }
+      }
+    ],
+    "claude/claude/tool-result/TaskUpdate": [
+      {
+        "v": 1,
+        "ts": 1769353010600,
+        "direction": "outbound",
+        "sessionId": "cmktuz63p00jw8osq0arepwu3",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01X8FX3Ma4Kud3aXhetRALga",
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"taskId\":\"1\",\"status\":\"completed\"}"
+            }
+          ]
+        }
+      }
+      ,
+      {
+        "v": 1,
+        "ts": 1769353010700,
+        "direction": "outbound",
+        "sessionId": "cmktuz63p00jw8osq0arepwu3",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01X8FX3Ma4Kud3aXhetRALga",
+          "content": [
+            {
+              "type": "text",
+              "text": "Error: task not found"
+            }
+          ]
+        }
+      }
+    ],
     "codex/codex/permission-request/CodexBash": [
       {
         "v": 1,
@@ -4283,26 +5412,7 @@
         }
       }
     ],
-    "claude/claude/tool-result": [
-      {
-        "v": 1,
-        "ts": 1769362828073,
-        "direction": "outbound",
-        "sessionId": "cmku0xqxt00058o7rx5lj1u79",
-        "protocol": "claude",
-        "provider": "claude",
-        "kind": "tool-result",
-        "payload": {
-          "type": "tool_result",
-          "tool_use_id": "toolu_01SZzJEoG3RQXFceoR81CHCh",
-          "content": [
-            {
-              "type": "text",
-              "text": "[redacted 59 chars]"
-            }
-          ]
-        }
-      },
+    "claude/claude/tool-result/Read": [
       {
         "v": 1,
         "ts": 1769362899890,
@@ -4319,6 +5429,36 @@
       },
       {
         "v": 1,
+        "ts": 1769542015533,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_013EBLNxUHACb8jJGACHkzuy",
+          "content": "[redacted 1729 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547407478,
+        "direction": "outbound",
+        "sessionId": "cmkx1tktr00018ok0a6sj0wd9",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_0179PAkuBhtUU3VP84BbxQKb",
+          "content": "[redacted 360 chars]"
+        }
+      }
+    ],
+    "claude/claude/tool-result/Bash": [
+      {
+        "v": 1,
         "ts": 1769362904955,
         "direction": "outbound",
         "sessionId": "cmku0xshw00098o7rw4uw7kjp",
@@ -4329,6 +5469,34 @@
           "type": "tool_result",
           "tool_use_id": "toolu_01Ff36xtgK6e8qxYF7dikJ7g",
           "content": "[redacted 15 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769542025452,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01EQ59GayHnbM5nHYhNjuaHJ",
+          "content": "[redacted 616 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769545726222,
+        "direction": "outbound",
+        "sessionId": "cmkx1tktr00018ok0a6sj0wd9",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_019e4kWGr6G2Ckt9sLZ174C3",
+          "content": "[redacted 37 chars]"
         }
       }
     ],
@@ -4468,6 +5636,77 @@
         }
       }
     ],
+    "acp/gemini/tool-result/change_title": [
+      {
+        "v": 1,
+        "ts": 1769366159926,
+        "direction": "outbound",
+        "sessionId": "cmku2x91600578o7rd2fzkm2d",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "change_title-1769366159669",
+          "output": [
+            {
+              "content": {
+                "text": "Successfully changed chat title to: \"Read /etc/hosts\"",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "id": "4fe8b592-17e2-489e-ac0e-b98a8fcc593f"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769366356268,
+        "direction": "outbound",
+        "sessionId": "cmku2x91600578o7rd2fzkm2d",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "change_title-1769366356136",
+          "output": [
+            {
+              "content": {
+                "text": "Successfully changed chat title to: \"Tool Coverage Test\"",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "id": "7d1a671f-9667-4a0d-a0fc-b0065c1d9455"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769367361213,
+        "direction": "outbound",
+        "sessionId": "cmku3mxpr00a38o7rrqs9ine8",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "change_title-1769367361050",
+          "output": [
+            {
+              "content": {
+                "text": "Successfully changed chat title to: \"Gemini CLI Tool Verification\"",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "id": "088a7f67-9e39-4915-a135-a07741b575df"
+        }
+      }
+    ],
     "acp/gemini/tool-call/execute": [
       {
         "v": 1,
@@ -4581,6 +5820,71 @@
             }
           },
           "id": "06e12e66-fe4d-4189-bc78-569c2e2c2ce8"
+        }
+      }
+    ],
+    "acp/gemini/tool-result/execute": [
+      {
+        "v": 1,
+        "ts": 1769366356308,
+        "direction": "outbound",
+        "sessionId": "cmku2x91600578o7rd2fzkm2d",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "run_shell_command-1769366356185",
+          "output": {
+            "error": "Tool call failed",
+            "status": "failed",
+            "_acp": {
+              "kind": "execute"
+            }
+          },
+          "id": "1a8b0623-0e9b-46a2-b8df-b37abbe60486"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769367364430,
+        "direction": "outbound",
+        "sessionId": "cmku3mxpr00a38o7rrqs9ine8",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "run_shell_command-1769367364413",
+          "output": {
+            "error": "Tool call failed",
+            "status": "failed",
+            "_acp": {
+              "kind": "execute"
+            }
+          },
+          "id": "1ffe4870-fef4-4b5d-bc80-41cf9fdaf508"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769367369616,
+        "direction": "outbound",
+        "sessionId": "cmku3mxpr00a38o7rrqs9ine8",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "run_shell_command-1769367369601",
+          "output": {
+            "error": "Tool call failed",
+            "status": "failed",
+            "_acp": {
+              "kind": "execute"
+            }
+          },
+          "id": "a143b97b-9d5f-4cc0-99c4-7e0f76abce3c"
         }
       }
     ],
@@ -4736,43 +6040,109 @@
           "id": "da6da702-3240-4349-b647-7533cdf46717"
         }
       },
-      {
-        "v": 1,
-        "ts": 1769367898866,
-        "direction": "outbound",
-        "sessionId": "cmku3xcfd00ej8o7r1s7wju2i",
-        "protocol": "acp",
-        "provider": "gemini",
-        "kind": "tool-call",
-        "payload": {
-          "type": "tool-call",
-          "name": "edit",
-          "callId": "replace-1769367874450",
-          "input": {
-            "items": [
-              {
-                "newText": "hello world",
-                "oldText": "hello",
-                "path": "gemini.txt",
-                "type": "diff"
-              }
-            ],
-            "_acp": {
-              "kind": "edit",
-              "rawInput": [
-                {
-                  "newText": "hello world",
-                  "oldText": "hello",
-                  "path": "gemini.txt",
-                  "type": "diff"
-                }
-              ]
-            }
-          },
-          "id": "c38455dd-9ca8-4fab-aec8-b810ae57f284"
-        }
-      }
-    ],
+	      {
+	        "v": 1,
+	        "ts": 1769367898866,
+	        "direction": "outbound",
+	        "sessionId": "cmku3xcfd00ej8o7r1s7wju2i",
+	        "protocol": "acp",
+	        "provider": "gemini",
+	        "kind": "tool-call",
+	        "payload": {
+	          "type": "tool-call",
+	          "name": "edit",
+	          "callId": "replace-1769367874450",
+	          "input": {
+	            "items": [
+	              {
+	                "newText": "hello world",
+	                "oldText": "hello",
+	                "path": "gemini.txt",
+	                "type": "diff"
+	              }
+	            ],
+	            "_acp": {
+	              "kind": "edit",
+	              "rawInput": [
+	                {
+	                  "newText": "hello world",
+	                  "oldText": "hello",
+	                  "path": "gemini.txt",
+	                  "type": "diff"
+	                }
+	              ]
+	            }
+	          },
+	          "id": "c38455dd-9ca8-4fab-aec8-b810ae57f284"
+	        }
+	      },
+		      {
+		        "v": 1,
+		        "ts": 1769375980000,
+		        "direction": "outbound",
+		        "sessionId": "fixture-multiedit",
+	        "protocol": "acp",
+	        "provider": "gemini",
+	        "kind": "tool-call",
+	        "payload": {
+	          "type": "tool-call",
+	          "name": "edit",
+	          "callId": "call-multiedit-fixture",
+	          "input": {
+	            "edits": [
+	              { "file_path": "a.txt", "old_string": "hello", "new_string": "hi" },
+	              { "file_path": "b.txt", "old_string": "foo", "new_string": "bar" }
+	            ],
+	            "_acp": {
+	              "kind": "edit",
+	              "rawInput": {
+	                "edits": [
+	                  { "file_path": "a.txt", "old_string": "hello", "new_string": "hi" },
+	                  { "file_path": "b.txt", "old_string": "foo", "new_string": "bar" }
+	                ]
+	              }
+	            }
+		          },
+		          "id": "fixture-multiedit-id"
+		        }
+		      },
+		      {
+		        "v": 1,
+		        "ts": 1769375981000,
+		        "direction": "outbound",
+		        "sessionId": "fixture-noop-edit",
+		        "protocol": "acp",
+		        "provider": "gemini",
+		        "kind": "tool-call",
+		        "payload": {
+		          "type": "tool-call",
+		          "name": "edit",
+		          "callId": "call-noop-edit-fixture",
+		          "input": {
+		            "items": [
+		              {
+		                "newText": "same",
+		                "oldText": "same",
+		                "path": "noop.txt",
+		                "type": "diff"
+		              }
+		            ],
+		            "_acp": {
+		              "kind": "edit",
+		              "rawInput": [
+		                {
+		                  "newText": "same",
+		                  "oldText": "same",
+		                  "path": "noop.txt",
+		                  "type": "diff"
+		                }
+		              ]
+		            }
+		          },
+		          "id": "fixture-noop-edit-id"
+		        }
+		      }
+		    ],
     "acp/gemini/tool-call/glob": [
       {
         "v": 1,
@@ -4822,6 +6192,54 @@
             }
           },
           "id": "5c28ea55-e979-4652-936e-71c962b54537"
+        }
+      }
+    ],
+    "acp/gemini/tool-result/glob": [
+      {
+        "v": 1,
+        "ts": 1769367425631,
+        "direction": "outbound",
+        "sessionId": "cmku3mxpr00a38o7rrqs9ine8",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "glob-1769367425583",
+          "output": [
+            {
+              "content": {
+                "text": "Found 1 matching file(s)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "id": "61af955f-9654-415a-8c7f-ebf448d9c3a1"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769368198795,
+        "direction": "outbound",
+        "sessionId": "cmku44blg00gj8o7rslyhqwy1",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "glob-1769368198739",
+          "output": [
+            {
+              "content": {
+                "text": "Found 3 matching file(s)",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "id": "ff0ec6de-6fdf-46c2-aa4c-1b370f56f552"
         }
       }
     ],
@@ -4899,6 +6317,101 @@
             }
           },
           "id": "d9f87de4-d0fb-4216-ae9e-fda0bf1d7a3e"
+        }
+      }
+    ],
+    "acp/gemini/tool-result/TodoWrite": [
+      {
+        "v": 1,
+        "ts": 1769367428698,
+        "direction": "outbound",
+        "sessionId": "cmku3mxpr00a38o7rrqs9ine8",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "write_todos-1769367428681",
+          "output": [],
+          "id": "19211f11-3798-44d9-92e4-29f94943c858"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769367431013,
+        "direction": "outbound",
+        "sessionId": "cmku3mxpr00a38o7rrqs9ine8",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "write_todos-1769367431009",
+          "output": [],
+          "id": "43426eee-9222-45af-b046-42ca803f1646"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769367870039,
+        "direction": "outbound",
+        "sessionId": "cmku3xcfd00ej8o7r1s7wju2i",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "write_todos-1769367870002",
+          "output": [],
+          "id": "f2e25c7b-a248-4582-bcd8-e3a6e3c1cd4f"
+        }
+      }
+    ],
+    "acp/gemini/tool-call/TodoRead": [
+      {
+        "v": 1,
+        "ts": 1769368000000,
+        "direction": "outbound",
+        "sessionId": "cmku3xcfd00ej8o7r1s7wju2i",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "name": "TodoRead",
+          "callId": "read_todos-1769368000000",
+          "input": {},
+          "id": "b5b1b0d8-2ab0-4d3f-9c11-7b5c7f1b7f3c"
+        }
+      }
+    ],
+    "acp/gemini/tool-result/TodoRead": [
+      {
+        "v": 1,
+        "ts": 1769368000100,
+        "direction": "outbound",
+        "sessionId": "cmku3xcfd00ej8o7r1s7wju2i",
+        "protocol": "acp",
+        "provider": "gemini",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "read_todos-1769368000000",
+          "output": [
+            {
+              "content": "Validate tool normalization pipeline",
+              "status": "in_progress",
+              "priority": "high",
+              "id": "todo-1"
+            },
+            {
+              "content": "Add fixtures + tests for TodoRead",
+              "status": "pending",
+              "priority": "medium",
+              "id": "todo-2"
+            }
+          ],
+          "id": "0d9a9b8a-50d4-4f80-8c3a-76c91225e6a0"
         }
       }
     ],
@@ -5059,6 +6572,36 @@
         }
       }
     ],
+    "claude/claude/tool-result/WebSearch": [
+      {
+        "v": 1,
+        "ts": 1769541896490,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01RJ79dPdLVNzZ4ULpYdYi89",
+          "content": "[redacted 3690 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547425018,
+        "direction": "outbound",
+        "sessionId": "cmkx1tktr00018ok0a6sj0wd9",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01KoCaupQ249SaxpLS6UkTNd",
+          "content": "[redacted 3922 chars]"
+        }
+      }
+    ],
     "claude/claude/tool-call/EnterPlanMode": [
       {
         "v": 1,
@@ -5073,6 +6616,50 @@
           "id": "toolu_0131svQ8BubnC1nuqxP6FB4S",
           "name": "EnterPlanMode",
           "input": {}
+        }
+      }
+    ],
+    "claude/claude/tool-result/Write": [
+      {
+        "v": 1,
+        "ts": 1769541915951,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01KXzJWrF2ZHK1MbRvWZUcmm",
+          "content": "[redacted 80 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769542030799,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01HbQEtDF7LTQtgSRZEMnes9",
+          "content": "[redacted 86 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769545845480,
+        "direction": "outbound",
+        "sessionId": "cmkx1tktr00018ok0a6sj0wd9",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01EXQMpc6qfYt9uWw5nv8oGi",
+          "content": "[redacted 94 chars]"
         }
       }
     ],
@@ -5148,6 +6735,110 @@
         }
       }
     ],
+    "claude/claude/tool-result/TodoWrite": [
+      {
+        "v": 1,
+        "ts": 1769541969201,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01J1BCyMtevatFxtGNJGqEm7",
+          "content": "[redacted 160 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769541972435,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01EsjsDYsBGbKhwFAEwKK3N3",
+          "content": "[redacted 160 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769541979765,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01GYHQPdKoSQafnR529wmeGa",
+          "content": "[redacted 160 chars]"
+        }
+      }
+    ],
+    "claude/claude/tool-result/Glob": [
+      {
+        "v": 1,
+        "ts": 1769542000434,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_017nacJ3d8uTuap74Z8uhSRo",
+          "content": "[redacted 1231 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547407479,
+        "direction": "outbound",
+        "sessionId": "cmkx1tktr00018ok0a6sj0wd9",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01NkpsYYziSBMFVN9LvpGtki",
+          "content": "[redacted 1033 chars]"
+        }
+      }
+    ],
+    "claude/claude/tool-result/Grep": [
+      {
+        "v": 1,
+        "ts": 1769542008308,
+        "direction": "outbound",
+        "sessionId": "cmkwzhlyh000p8o5y1ngmmifr",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01JYpkvYmktj8jxPBdQCTQab",
+          "content": "[redacted 89 chars]"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547407479,
+        "direction": "outbound",
+        "sessionId": "cmkx1tktr00018ok0a6sj0wd9",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01ByfbBAbKjF5Gn2oF4re4xo",
+          "content": "[redacted 254 chars]"
+        }
+      }
+    ],
     "claude/claude/permission-request/WebFetch": [
       {
         "v": 1,
@@ -5165,6 +6856,22 @@
             "url": "https://example.com",
             "prompt": "Summarize what this page contains in one sentence"
           }
+        }
+      }
+    ],
+    "claude/claude/tool-result/WebFetch": [
+      {
+        "v": 1,
+        "ts": 1769547432420,
+        "direction": "outbound",
+        "sessionId": "cmkx1tktr00018ok0a6sj0wd9",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_016kMVScTmiVdZWrjeU7zTMb",
+          "content": "[redacted 33 chars]"
         }
       }
     ],
@@ -5221,6 +6928,31 @@
             "command": "npm install -g cowsay",
             "description": "Install cowsay package globally (requires permission)"
           }
+        }
+      }
+    ],
+    "claude/claude/tool-result/Task": [
+      {
+        "v": 1,
+        "ts": 1769547455577,
+        "direction": "outbound",
+        "sessionId": "cmkx1tktr00018ok0a6sj0wd9",
+        "protocol": "claude",
+        "provider": "claude",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01LR2QQyKGDXq1a6B4LrhS2x",
+          "content": [
+            {
+              "type": "text",
+              "text": "[redacted 2357 chars]"
+            },
+            {
+              "type": "text",
+              "text": "[redacted 71 chars]"
+            }
+          ]
         }
       }
     ],
@@ -5432,10 +7164,10 @@
         }
       }
     ],
-    "acp/auggie/tool-result": [
+    "acp/auggie/tool-result/Read": [
       {
         "v": 1,
-        "ts": 1769547528346,
+        "ts": 1769547527559,
         "direction": "outbound",
         "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
         "protocol": "acp",
@@ -5443,24 +7175,24 @@
         "kind": "tool-result",
         "payload": {
           "type": "tool-result",
-          "callId": "toolu_vrtx_01SqfZfJqXG3ij2YroVbLvG8",
+          "callId": "toolu_vrtx_01KdEqJqjuzyaS3HZNxu9fe7",
           "output": {
-            "stdout": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\ntotal 56\ndrwxr-xr-x@ 11 leeroy  staff   352 Jan 27 21:30 .\ndrwxr-xr-x@  3 leeroy  staff    96 Jan 23 13:19 ..\ndrwxr-xr-x@  5 leeroy  staff   160 Jan 24 20:53 .ruff_cache\ndrwxr-xr-x@ 12 leeroy  staff   384 Jan 25 20:04 .tmp\n-rw-r--r--@  1 leeroy  staff    33 Jan 24 11:28 acp-apply-patch-test-renamed.txt\n-rw-r--r--@  1 leeroy  staff     0 Jan 24 11:27 acp-write-test.txt\n-rw-r--r--@  1 leeroy  staff     6 Jan 27 21:30 auggie-permission-test.txt\n-rw-r--r--@  1 leeroy  staff  4896 Jan 24 20:58 comprehensive_test_report.md\n-rw-r--r--@  1 leeroy  staff  1053 Jan 24 20:57 test_async.js\n-rw-r--r--@  1 leeroy  staff    11 Jan 25 17:22 tmp-tool-ux-test.txt\n-rw-r--r--@  1 leeroy  staff   146 Jan 27 20:27 tool-test-file.txt\n\n</output>",
+            "value": "Here's the files and directories up to 2 levels deep in ., excluding hidden items:\n./acp-apply-patch-test-renamed.txt\n./acp-write-test.txt\n./auggie-permission-test.txt\n./comprehensive_test_report.md\n./test_async.js\n./tmp-tool-ux-test.txt\n./tool-test-file.txt\n",
             "_happy": {
               "v": 2,
               "protocol": "acp",
               "provider": "auggie",
-              "rawToolName": "execute",
-              "canonicalToolName": "Bash"
+              "rawToolName": "read",
+              "canonicalToolName": "Read"
             },
-            "_raw": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\ntotal 56\ndrwxr-xr-x@ 11 leeroy  staff   352 Jan 27 21:30 .\ndrwxr-xr-x@  3 leeroy  staff    96 Jan 23 13:19 ..\ndrwxr-xr-x@  5 leeroy  staff   160 Jan 24 20:53 .ruff_cache\ndrwxr-xr-x@ 12 leeroy  staff   384 Jan 25 20:04 .tmp\n-rw-r--r--@  1 leeroy  staff    33 Jan 24 11:28 acp-apply-patch-test-renamed.txt\n-rw-r--r--@  1 leeroy  staff     0 Jan 24 11:27 acp-write-test.txt\n-rw-r--r--@  1 leeroy  staff     6 Jan 27 21:30 auggie-permission-test.txt\n-rw-r--r--@  1 leeroy  staff  4896 Jan 24 20:58 comprehensive_test_report.md\n-rw-r--r--@  1 leeroy  staff  1053 Jan 24 20:57 test_async.js\n-rw-r--r--@  1 leeroy  staff    11 Jan 25 17:22 tmp-tool-ux-test.txt\n-rw-r--r--@  1 leeroy  staff   146 Jan 27 20:27 tool-test-file.txt\n\n</output>"
+            "_raw": "Here's the files and directories up to 2 levels deep in ., excluding hidden items:\n./acp-apply-patch-test-renamed.txt\n./acp-write-test.txt\n./auggie-permission-test.txt\n./comprehensive_test_report.md\n./test_async.js\n./tmp-tool-ux-test.txt\n./tool-test-file.txt\n"
           },
-          "id": "147cbb10-2b3b-4207-b409-a9a00382117a"
+          "id": "18b4d6f9-abca-417d-af72-c94d9c38c4d7"
         }
       },
       {
         "v": 1,
-        "ts": 1769547534508,
+        "ts": 1769547534519,
         "direction": "outbound",
         "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
         "protocol": "acp",
@@ -5468,24 +7200,24 @@
         "kind": "tool-result",
         "payload": {
           "type": "tool-result",
-          "callId": "toolu_vrtx_01AesmQimcT8DzyrdFUZdCB1",
+          "callId": "toolu_vrtx_01WQrCqutXVLsgCWZVtDrwzV",
           "output": {
-            "stdout": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\n./acp-apply-patch-test-renamed.txt:ACP apply_patch test\n./tool-test-file.txt:This is a test file created by Claude to verify the Write tool.\n\n</output>",
+            "value": "Here's the result of running `cat -n` on tool-test-file.txt:\n     1\tThis is a test file created by Claude to verify the Write tool.\n     2\tCreated: January 27, 2026\n     3\tTest ID: #1256\n     4\tStatus: All tools verified successfully!\n     5\t\nTotal lines in file: 5\n",
             "_happy": {
               "v": 2,
               "protocol": "acp",
               "provider": "auggie",
-              "rawToolName": "execute",
-              "canonicalToolName": "Bash"
+              "rawToolName": "read",
+              "canonicalToolName": "Read"
             },
-            "_raw": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\n./acp-apply-patch-test-renamed.txt:ACP apply_patch test\n./tool-test-file.txt:This is a test file created by Claude to verify the Write tool.\n\n</output>"
+            "_raw": "Here's the result of running `cat -n` on tool-test-file.txt:\n     1\tThis is a test file created by Claude to verify the Write tool.\n     2\tCreated: January 27, 2026\n     3\tTest ID: #1256\n     4\tStatus: All tools verified successfully!\n     5\t\nTotal lines in file: 5\n"
           },
-          "id": "39b206be-ea0b-4e72-9767-e369395dff5b"
+          "id": "0c20d8c0-a2cb-4fdf-b80b-22bbb2863feb"
         }
       },
       {
         "v": 1,
-        "ts": 1769547534661,
+        "ts": 1769547541292,
         "direction": "outbound",
         "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
         "protocol": "acp",
@@ -5493,19 +7225,19 @@
         "kind": "tool-result",
         "payload": {
           "type": "tool-result",
-          "callId": "toolu_vrtx_01EwaeneyS2fxEofSMWxpeMz",
+          "callId": "toolu_vrtx_01YWQ2BaAYg4usKMRjKtLU2P",
           "output": {
-            "stdout": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\nTesting bash script execution\nTue Jan 27 21:58:54 CET 2026\nleeroy\n/Users/leeroy/Development/happy-local\n\n</output>",
+            "value": "Regex search results for pattern: Test.*#[0-9]+ in tool-test-file.txt\nFound 1 matching lines:\n\n      1\tThis is a test file created by Claude to verify the Write tool.\n      2\tCreated: January 27, 2026\n>     3\tTest ID: #1256\n      4\tStatus: All tools verified successfully!\n      5\t\n\nTotal matches: 1\nTotal lines in file: 5",
             "_happy": {
               "v": 2,
               "protocol": "acp",
               "provider": "auggie",
-              "rawToolName": "execute",
-              "canonicalToolName": "Bash"
+              "rawToolName": "read",
+              "canonicalToolName": "Read"
             },
-            "_raw": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\nTesting bash script execution\nTue Jan 27 21:58:54 CET 2026\nleeroy\n/Users/leeroy/Development/happy-local\n\n</output>"
+            "_raw": "Regex search results for pattern: Test.*#[0-9]+ in tool-test-file.txt\nFound 1 matching lines:\n\n      1\tThis is a test file created by Claude to verify the Write tool.\n      2\tCreated: January 27, 2026\n>     3\tTest ID: #1256\n      4\tStatus: All tools verified successfully!\n      5\t\n\nTotal matches: 1\nTotal lines in file: 5"
           },
-          "id": "cacbe9b7-56df-49dd-b3d2-22c2dc9887cb"
+          "id": "6fc0e9d0-3b83-4b84-95bc-5d51b3290ced"
         }
       }
     ],
@@ -5600,6 +7332,184 @@
             }
           },
           "id": "79eb91e5-1777-4bf6-a7e9-a826c6d1215c"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547560010,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01EMPTYWEBSEARCH",
+          "name": "fetch",
+          "input": {
+            "query": "no results please (empty response)",
+            "num_results": 0,
+            "description": "Search web: empty response test",
+            "_acp": {
+              "kind": "fetch",
+              "title": "Search web: empty response test",
+              "rawInput": {
+                "query": "no results please (empty response)",
+                "num_results": 0
+              }
+            }
+          },
+          "id": "7b4c3a51-89a4-4a14-9d5b-8baf31d7a889"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547561120,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01STRINGWEBSEARCH",
+          "name": "fetch",
+          "input": {
+            "query": "string-only response test",
+            "num_results": 1,
+            "description": "Search web: string-only response test",
+            "_acp": {
+              "kind": "fetch",
+              "title": "Search web: string-only response test",
+              "rawInput": {
+                "query": "string-only response test",
+                "num_results": 1
+              }
+            }
+          },
+          "id": "5c2cb07e-6c25-4d3f-a47a-0c5e2d3109db"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547562230,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-call",
+        "payload": {
+          "type": "tool-call",
+          "callId": "toolu_vrtx_01BLOCKEDWEBFETCH",
+          "name": "fetch",
+          "input": {
+            "url": "https://blocked.example.com",
+            "description": "Fetch https://blocked.example.com (blocked test)",
+            "_acp": {
+              "kind": "fetch",
+              "title": "Fetch https://blocked.example.com (blocked test)",
+              "rawInput": {
+                "url": "https://blocked.example.com"
+              }
+            }
+          },
+          "id": "8d5b8c54-d986-4de2-89a4-2b9e0f2fc221"
+        }
+      }
+    ],
+    "acp/auggie/tool-result/fetch": [
+      {
+        "v": 1,
+        "ts": 1769547529000,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_019XY3pDho85DQ63FKy3LNk9",
+          "output": {
+            "results": [
+              {
+                "title": "TypeScript 2026 best practices (community thread)",
+                "url": "https://example.com/typescript-2026",
+                "snippet": "Discussion of practical TS patterns and toolchain updates."
+              },
+              {
+                "title": "AWS TypeScript guidelines",
+                "url": "https://example.com/aws-ts-guidelines",
+                "snippet": "Typed clients, strict mode, and safer config patterns."
+              }
+            ]
+          },
+          "id": "1f58d0bd-2f1c-4a4d-8bf6-8d1e3d06b7f9"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547560150,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01EMPTYWEBSEARCH",
+          "output": [],
+          "id": "a1f5e2f6-358e-4a9a-9f2f-7c090e4b82a8"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547561300,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01STRINGWEBSEARCH",
+          "output": "string-only: provider returned a single summary snippet",
+          "id": "f3b0d8f3-0dd5-45af-a7db-9edc4c8b2014"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547552000,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01RUBugySDD6gH4A2G7d2J9X",
+          "output": {
+            "status": 200,
+            "body": "<html><body>Example Domain</body></html>"
+          },
+          "id": "f53a1e72-0e8f-48a8-b7fe-2f7d96ed7b8c"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547562400,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01BLOCKEDWEBFETCH",
+          "output": {
+            "status": 403,
+            "error": "Forbidden"
+          },
+          "id": "a8d6c3b7-d11c-4f98-b9c2-0d8bf77e14c6"
         }
       }
     ],
@@ -5770,6 +7680,83 @@
             }
           },
           "id": "9dbaa6c9-7ad6-4a43-a80f-15ff2c7add91"
+        }
+      }
+    ],
+    "acp/auggie/tool-result/Bash": [
+      {
+        "v": 1,
+        "ts": 1769547528346,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01SqfZfJqXG3ij2YroVbLvG8",
+          "output": {
+            "stdout": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\ntotal 56\ndrwxr-xr-x@ 11 leeroy  staff   352 Jan 27 21:30 .\ndrwxr-xr-x@  3 leeroy  staff    96 Jan 23 13:19 ..\ndrwxr-xr-x@  5 leeroy  staff   160 Jan 24 20:53 .ruff_cache\ndrwxr-xr-x@ 12 leeroy  staff   384 Jan 25 20:04 .tmp\n-rw-r--r--@  1 leeroy  staff    33 Jan 24 11:28 acp-apply-patch-test-renamed.txt\n-rw-r--r--@  1 leeroy  staff     0 Jan 24 11:27 acp-write-test.txt\n-rw-r--r--@  1 leeroy  staff     6 Jan 27 21:30 auggie-permission-test.txt\n-rw-r--r--@  1 leeroy  staff  4896 Jan 24 20:58 comprehensive_test_report.md\n-rw-r--r--@  1 leeroy  staff  1053 Jan 24 20:57 test_async.js\n-rw-r--r--@  1 leeroy  staff    11 Jan 25 17:22 tmp-tool-ux-test.txt\n-rw-r--r--@  1 leeroy  staff   146 Jan 27 20:27 tool-test-file.txt\n\n</output>",
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "execute",
+              "canonicalToolName": "Bash"
+            },
+            "_raw": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\ntotal 56\ndrwxr-xr-x@ 11 leeroy  staff   352 Jan 27 21:30 .\ndrwxr-xr-x@  3 leeroy  staff    96 Jan 23 13:19 ..\ndrwxr-xr-x@  5 leeroy  staff   160 Jan 24 20:53 .ruff_cache\ndrwxr-xr-x@ 12 leeroy  staff   384 Jan 25 20:04 .tmp\n-rw-r--r--@  1 leeroy  staff    33 Jan 24 11:28 acp-apply-patch-test-renamed.txt\n-rw-r--r--@  1 leeroy  staff     0 Jan 24 11:27 acp-write-test.txt\n-rw-r--r--@  1 leeroy  staff     6 Jan 27 21:30 auggie-permission-test.txt\n-rw-r--r--@  1 leeroy  staff  4896 Jan 24 20:58 comprehensive_test_report.md\n-rw-r--r--@  1 leeroy  staff  1053 Jan 24 20:57 test_async.js\n-rw-r--r--@  1 leeroy  staff    11 Jan 25 17:22 tmp-tool-ux-test.txt\n-rw-r--r--@  1 leeroy  staff   146 Jan 27 20:27 tool-test-file.txt\n\n</output>"
+          },
+          "id": "147cbb10-2b3b-4207-b409-a9a00382117a"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547534508,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01AesmQimcT8DzyrdFUZdCB1",
+          "output": {
+            "stdout": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\n./acp-apply-patch-test-renamed.txt:ACP apply_patch test\n./tool-test-file.txt:This is a test file created by Claude to verify the Write tool.\n\n</output>",
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "execute",
+              "canonicalToolName": "Bash"
+            },
+            "_raw": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\n./acp-apply-patch-test-renamed.txt:ACP apply_patch test\n./tool-test-file.txt:This is a test file created by Claude to verify the Write tool.\n\n</output>"
+          },
+          "id": "39b206be-ea0b-4e72-9767-e369395dff5b"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547534661,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_01EwaeneyS2fxEofSMWxpeMz",
+          "output": {
+            "stdout": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\nTesting bash script execution\nTue Jan 27 21:58:54 CET 2026\nleeroy\n/Users/leeroy/Development/happy-local\n\n</output>",
+            "_happy": {
+              "v": 2,
+              "protocol": "acp",
+              "provider": "auggie",
+              "rawToolName": "execute",
+              "canonicalToolName": "Bash"
+            },
+            "_raw": "Here are the results from executing the command.\n<return-code>\n0\n</return-code>\n<output>\nTesting bash script execution\nTue Jan 27 21:58:54 CET 2026\nleeroy\n/Users/leeroy/Development/happy-local\n\n</output>"
+          },
+          "id": "cacbe9b7-56df-49dd-b3d2-22c2dc9887cb"
         }
       }
     ],
@@ -5966,6 +7953,54 @@
             }
           },
           "id": "8fc48afe-b767-4129-a5e7-a152e70d3730"
+        }
+      }
+    ]
+    ,
+    "acp/auggie/tool-result/delete": [
+      {
+        "v": 1,
+        "ts": 1769547626090,
+        "direction": "outbound",
+        "sessionId": "cmkx1yneq001n8ok0t4x08b9f",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "toolu_vrtx_013TxpVjgCi1YhVRgjgmbDtZ",
+          "output": { "ok": true, "deleted": true, "file_paths": [ "tool_validation_results.md" ] },
+          "id": "fixture-delete-ok-id"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547627090,
+        "direction": "outbound",
+        "sessionId": "fixture-delete-not-found",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "fixture-delete-not-found-callId",
+          "output": { "ok": false, "deleted": false, "error": "Not found", "file_paths": [ "missing.txt" ] },
+          "id": "fixture-delete-not-found-id"
+        }
+      },
+      {
+        "v": 1,
+        "ts": 1769547628090,
+        "direction": "outbound",
+        "sessionId": "fixture-delete-permission-denied",
+        "protocol": "acp",
+        "provider": "auggie",
+        "kind": "tool-result",
+        "payload": {
+          "type": "tool-result",
+          "callId": "fixture-delete-permission-denied-callId",
+          "output": { "ok": false, "deleted": false, "error": "Permission denied", "file_paths": [ "/root/secret.txt" ] },
+          "id": "fixture-delete-permission-denied-id"
         }
       }
     ]

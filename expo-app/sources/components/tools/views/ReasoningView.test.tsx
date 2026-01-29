@@ -52,5 +52,37 @@ describe('ReasoningView', () => {
         const lastCall = markdownViewSpy.mock.calls.at(-1)?.[0];
         expect(lastCall?.markdown).toBe('Hello **world**');
     });
-});
 
+    it('truncates long reasoning by default and preserves full content when detailLevel=full', async () => {
+        markdownViewSpy.mockReset();
+        const { ReasoningView } = await import('./ReasoningView');
+
+        const long = 'x'.repeat(2000);
+        const tool: ToolCall = {
+            name: 'GeminiReasoning',
+            state: 'completed',
+            input: { title: 'Thinking' },
+            result: { content: long } as any,
+            createdAt: Date.now(),
+            startedAt: Date.now(),
+            completedAt: Date.now(),
+            description: null,
+            permission: undefined,
+        };
+
+        await act(async () => {
+            renderer.create(React.createElement(ReasoningView, { tool, metadata: null, messages: [], sessionId: 's1' } as any));
+        });
+        const summaryCall = markdownViewSpy.mock.calls.at(-1)?.[0];
+        expect(typeof summaryCall?.markdown).toBe('string');
+        expect(summaryCall?.markdown.length).toBeLessThan(long.length);
+        expect(summaryCall?.markdown.endsWith('…')).toBe(true);
+
+        markdownViewSpy.mockReset();
+        await act(async () => {
+            renderer.create(React.createElement(ReasoningView, { tool, metadata: null, messages: [], sessionId: 's1', detailLevel: 'full' } as any));
+        });
+        const fullCall = markdownViewSpy.mock.calls.at(-1)?.[0];
+        expect(fullCall?.markdown).toBe(long);
+    });
+});

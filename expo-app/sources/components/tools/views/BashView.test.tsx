@@ -5,13 +5,11 @@ import type { ToolCall } from '@/sync/typesMessage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const commandViewSpy = vi.fn();
-
-vi.mock('react-native', () => ({
-    View: 'View',
-    StyleSheet: { create: (styles: any) => styles },
+vi.mock('../../tools/ToolSectionView', () => ({
+    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
 
+const commandViewSpy = vi.fn();
 vi.mock('@/components/CommandView', () => ({
     CommandView: (props: any) => {
         commandViewSpy(props);
@@ -19,20 +17,17 @@ vi.mock('@/components/CommandView', () => ({
     },
 }));
 
-vi.mock('../../tools/ToolSectionView', () => ({
-    ToolSectionView: ({ children }: any) => React.createElement(React.Fragment, null, children),
-}));
-
 describe('BashView', () => {
-    it('shows stdout on completed tools', async () => {
-        commandViewSpy.mockReset();
+    it('tails long stdout by default', async () => {
+        commandViewSpy.mockClear();
         const { BashView } = await import('./BashView');
 
+        const longStdout = 'x'.repeat(7000);
         const tool: ToolCall = {
             name: 'Bash',
             state: 'completed',
-            input: { command: 'echo hi' },
-            result: { stdout: 'hi\n', stderr: '' } as any,
+            input: { command: ['/bin/zsh', '-lc', 'echo hi'] } as any,
+            result: { stdout: longStdout, stderr: '' } as any,
             createdAt: Date.now(),
             startedAt: Date.now(),
             completedAt: Date.now(),
@@ -40,23 +35,25 @@ describe('BashView', () => {
             permission: undefined,
         };
 
+        let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            renderer.create(React.createElement(BashView, { tool, metadata: null } as any));
+            tree = renderer.create(React.createElement(BashView as any, { tool, metadata: null }));
         });
 
-        const props = commandViewSpy.mock.calls.at(-1)?.[0];
-        expect(props?.stdout).toBe('hi\n');
+        expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
+        expect(commandViewSpy).toHaveBeenCalledWith(expect.objectContaining({ stdout: expect.stringMatching(/^…/) }));
     });
 
-    it('treats plain string tool results as stdout', async () => {
-        commandViewSpy.mockReset();
+    it('shows full stdout when detailLevel=full', async () => {
+        commandViewSpy.mockClear();
         const { BashView } = await import('./BashView');
 
+        const longStdout = 'x'.repeat(7000);
         const tool: ToolCall = {
             name: 'Bash',
             state: 'completed',
-            input: { command: 'pwd' },
-            result: '/tmp\n' as any,
+            input: { command: ['/bin/zsh', '-lc', 'echo hi'] } as any,
+            result: { stdout: longStdout, stderr: '' } as any,
             createdAt: Date.now(),
             startedAt: Date.now(),
             completedAt: Date.now(),
@@ -64,35 +61,13 @@ describe('BashView', () => {
             permission: undefined,
         };
 
+        let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            renderer.create(React.createElement(BashView, { tool, metadata: null } as any));
+            tree = renderer.create(React.createElement(BashView as any, { tool, metadata: null, detailLevel: 'full' }));
         });
 
-        const props = commandViewSpy.mock.calls.at(-1)?.[0];
-        expect(props?.stdout).toBe('/tmp\n');
-    });
-
-    it('uses aggregated_output when stdout is missing', async () => {
-        commandViewSpy.mockReset();
-        const { BashView } = await import('./BashView');
-
-        const tool: ToolCall = {
-            name: 'Bash',
-            state: 'completed',
-            input: { command: 'echo hi' },
-            result: { aggregated_output: 'hi\n', stderr: '' } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
-        await act(async () => {
-            renderer.create(React.createElement(BashView, { tool, metadata: null } as any));
-        });
-
-        const props = commandViewSpy.mock.calls.at(-1)?.[0];
-        expect(props?.stdout).toBe('hi\n');
+        expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
+        expect(commandViewSpy).toHaveBeenCalledWith(expect.objectContaining({ stdout: longStdout }));
     });
 });
+

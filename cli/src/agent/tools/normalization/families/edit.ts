@@ -69,3 +69,31 @@ export function normalizeEditInput(rawInput: unknown): UnknownRecord {
     return out;
 }
 
+export function normalizeEditResult(rawOutput: unknown): UnknownRecord {
+    if (typeof rawOutput === 'string') {
+        const trimmed = rawOutput.trim();
+        if (trimmed.length === 0) return {};
+        return { message: rawOutput };
+    }
+
+    const record = asRecord(rawOutput);
+    if (!record) return { value: rawOutput };
+
+    const out: UnknownRecord = { ...record };
+    const applied =
+        typeof (record as any).applied === 'boolean'
+            ? Boolean((record as any).applied)
+            : typeof (record as any).success === 'boolean'
+                ? Boolean((record as any).success)
+                : typeof (record as any).ok === 'boolean'
+                    ? Boolean((record as any).ok)
+                    : undefined;
+    if (typeof applied === 'boolean') out.applied = applied;
+
+    if (typeof out.applied !== 'boolean') {
+        const hasError = typeof (record as any).error === 'string' && (record as any).error.trim().length > 0;
+        if (hasError) out.applied = false;
+    }
+
+    return out;
+}

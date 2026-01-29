@@ -41,7 +41,7 @@ export const providerPatchTools = {
             oldText: z.string().describe('The text to replace'),
             newText: z.string().describe('The new text'),
             type: z.string().optional().describe('Type of edit (diff)')
-        }).partial().loose()
+        }).partial().passthrough()
     },
     'CodexPatch': {
         title: t('tools.names.applyChanges'),
@@ -61,8 +61,8 @@ export const providerPatchTools = {
                 delete: z.object({
                     content: z.string()
                 }).optional()
-            }).loose()).describe('File changes to apply')
-        }).partial().loose(),
+            }).passthrough()).describe('File changes to apply')
+        }).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             // Show the first file being modified
             if (opts.tool.input?.changes && typeof opts.tool.input.changes === 'object') {
@@ -116,8 +116,8 @@ export const providerPatchTools = {
                 delete: z.object({
                     content: z.string()
                 }).optional()
-            }).loose()).describe('File changes to apply')
-        }).partial().loose(),
+            }).passthrough()).describe('File changes to apply')
+        }).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             // Show the first file being modified
             if (opts.tool.input?.changes && typeof opts.tool.input.changes === 'object') {

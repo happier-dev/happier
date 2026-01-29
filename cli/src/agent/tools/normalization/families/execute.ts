@@ -26,6 +26,26 @@ function stripShellWrapper(argv: string[]): string | null {
     return null;
 }
 
+function extractTaggedReturnCodeOutput(value: string): { stdout?: string; exit_code?: number } | null {
+    const returnCodeMatch = value.match(/<return-code>\s*([0-9]+)\s*<\/return-code>/i);
+    const outputMatch = value.match(/<output>\s*([\s\S]*?)\s*<\/output>/i);
+
+    const exitCode =
+        returnCodeMatch && returnCodeMatch[1]
+            ? Number.parseInt(returnCodeMatch[1], 10)
+            : null;
+    const stdout =
+        outputMatch && typeof outputMatch[1] === 'string'
+            ? outputMatch[1]
+            : null;
+
+    if (exitCode == null && stdout == null) return null;
+    return {
+        stdout: stdout != null ? stdout.replace(/^(?:\r?\n)+/, '') : undefined,
+        exit_code: Number.isFinite(exitCode as number) ? (exitCode as number) : undefined,
+    };
+}
+
 export function normalizeBashInput(rawInput: unknown): { command?: string; timeout?: number } & UnknownRecord {
     const record = asRecord(rawInput) ?? {};
     const out: UnknownRecord = { ...record };
@@ -55,6 +75,8 @@ export function normalizeBashResult(rawOutput: unknown): UnknownRecord {
     if (rawOutput == null) return {};
 
     if (typeof rawOutput === 'string') {
+        const extracted = extractTaggedReturnCodeOutput(rawOutput);
+        if (extracted) return { ...extracted };
         return { stdout: rawOutput };
     }
 
@@ -73,6 +95,14 @@ export function normalizeBashResult(rawOutput: unknown): UnknownRecord {
                     ? out.aggregated_output
                     : null;
         if (candidate != null) out.stdout = candidate;
+    }
+
+    if (typeof out.stdout === 'string') {
+        const extracted = extractTaggedReturnCodeOutput(out.stdout);
+        if (extracted) {
+            if (typeof extracted.stdout === 'string') out.stdout = extracted.stdout;
+            if (typeof extracted.exit_code === 'number' && typeof out.exit_code !== 'number') out.exit_code = extracted.exit_code;
+        }
     }
 
     if (typeof out.stderr !== 'string') {

@@ -52,6 +52,23 @@ function parseOpencodeFileWrapper(text: string): { content: string; startLine?: 
     };
 }
 
+function coerceTextFromContentBlocks(content: unknown): string | null {
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return null;
+    const parts: string[] = [];
+    for (const item of content) {
+        if (!item || typeof item !== 'object') continue;
+        const rec = item as UnknownRecord;
+        if (typeof rec.text === 'string') parts.push(rec.text);
+        const nested = rec.content;
+        if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+            const nestedRec = nested as UnknownRecord;
+            if (typeof nestedRec.text === 'string') parts.push(nestedRec.text);
+        }
+    }
+    return parts.length > 0 ? parts.join('\n') : null;
+}
+
 function coerceSingleLocationPath(locations: unknown): string | null {
     if (!Array.isArray(locations) || locations.length !== 1) return null;
     const first = locations[0];
@@ -108,6 +125,12 @@ export function normalizeReadResult(rawOutput: unknown): UnknownRecord {
         if (text.length > 0) {
             return { file: { content: text } };
         }
+        return {};
+    }
+
+    if (Array.isArray(rawOutput)) {
+        const text = coerceTextFromContentBlocks(rawOutput);
+        if (text && text.trimEnd().length > 0) return { file: { content: text.trimEnd() } };
         return {};
     }
 

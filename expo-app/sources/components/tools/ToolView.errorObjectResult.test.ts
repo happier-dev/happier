@@ -45,7 +45,6 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/components/tools/views/_registry', () => ({
     getToolViewComponent: () => null,
-    getToolFullViewComponent: () => null,
 }));
 
 vi.mock('@/components/tools/knownTools', () => ({
@@ -132,4 +131,3 @@ describe('ToolView (error message formatting)', () => {
         expect(args.message).toContain('Tool call failed');
     });
 });
-

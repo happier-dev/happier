@@ -2,13 +2,27 @@ import { truncateDeep } from '../redaction/redact';
 import type { CanonicalToolName, ToolNormalizationHappyMetaV2, ToolNormalizationProtocol } from './types';
 import { normalizeBashInput, normalizeBashResult } from './families/execute';
 import { normalizeReadInput, normalizeReadResult } from './families/read';
-import { normalizeEditInput } from './families/edit';
+import { normalizeEditInput, normalizeEditResult } from './families/edit';
+import { normalizeMultiEditInput } from './families/multiEdit';
+import { normalizeDeleteInput, normalizeDeleteResult } from './families/delete';
 import { normalizeDiffInput } from './families/diff';
-import { normalizePatchInput } from './families/patch';
+import { normalizePatchInput, normalizePatchResult } from './families/patch';
 import { normalizeReasoningInput, normalizeReasoningResult } from './families/reasoning';
-import { normalizeCodeSearchInput, normalizeGlobInput, normalizeGrepInput, normalizeLsInput } from './families/search';
-import { normalizeWriteInput } from './families/write';
-import { normalizeWebFetchInput, normalizeWebSearchInput } from './families/web';
+import {
+    normalizeCodeSearchInput,
+    normalizeCodeSearchResult,
+    normalizeGlobInput,
+    normalizeGlobResult,
+    normalizeGrepInput,
+    normalizeGrepResult,
+    normalizeLsInput,
+    normalizeLsResult,
+} from './families/search';
+import { normalizeWriteInput, normalizeWriteResult } from './families/write';
+import { normalizeTodoReadInput, normalizeTodoResult, normalizeTodoWriteInput } from './families/todo';
+import { normalizeWebFetchInput, normalizeWebFetchResult, normalizeWebSearchInput, normalizeWebSearchResult } from './families/web';
+import { normalizeTaskInput, normalizeTaskResult } from './families/task';
+import { normalizeChangeTitleResult } from './families/changeTitle';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -31,24 +45,56 @@ export function canonicalizeToolNameV2(opts: {
 }): string {
     const name = opts.toolName;
     const lower = name.toLowerCase();
+    const record = asRecord(opts.toolInput) ?? {};
+
+    // Provider prompts that are represented as permission requests ("Unknown tool" etc.).
+    // Auggie emits a workspace indexing prompt with toolName="Unknown tool". Normalize it so the UI can render it.
+    if (lower === 'unknown tool') {
+        const title =
+            typeof (record as any).title === 'string'
+                ? String((record as any).title)
+                : typeof (record as any)?.toolCall?.title === 'string'
+                    ? String((record as any).toolCall.title)
+                    : null;
+        if (title === 'Workspace Indexing Permission') return 'WorkspaceIndexingPermission';
+    }
 
     // Shell / terminal.
     if (lower === 'execute' || lower === 'shell' || name === 'GeminiBash' || name === 'CodexBash') return 'Bash';
 
     // Files.
     if (lower === 'read') return 'Read';
+    if (lower === 'delete' || lower === 'remove') {
+        const changes = asRecord((record as any).changes);
+        if (changes && Object.keys(changes).length > 0) return 'Patch';
+        return 'Delete';
+    }
     if (lower === 'write') {
         const callId = opts.callId ?? '';
-        const record = asRecord(opts.toolInput) ?? {};
         const hasTodos = Array.isArray((record as any).todos) && (record as any).todos.length > 0;
         if (callId.startsWith('write_todos') || hasTodos) return 'TodoWrite';
         return 'Write';
     }
     if (lower === 'edit') {
-        const record = asRecord(opts.toolInput) ?? {};
+        const hasEdits = Array.isArray((record as any).edits) && (record as any).edits.length > 0;
+        const hasOldNew =
+            typeof (record as any).old_string === 'string' ||
+            typeof (record as any).new_string === 'string' ||
+            typeof (record as any).oldText === 'string' ||
+            typeof (record as any).newText === 'string';
+        const hasFullFileContent =
+            typeof (record as any).file_content === 'string'
+                ? (record as any).file_content.trim().length > 0
+                : typeof (record as any).content === 'string'
+                    ? (record as any).content.trim().length > 0
+                    : typeof (record as any).text === 'string'
+                        ? (record as any).text.trim().length > 0
+                        : false;
         const changes = asRecord((record as any).changes);
         if (changes && Object.keys(changes).length > 0) return 'Patch';
-        if (Array.isArray((record as any).edits) && (record as any).edits.length > 0) return 'MultiEdit';
+        if (hasEdits) return 'MultiEdit';
+        // Some providers (e.g. Auggie/OpenCode ACP) use "Edit" to write a full file's content.
+        if (hasFullFileContent && !hasOldNew) return 'Write';
         return 'Edit';
     }
 
@@ -141,7 +187,59 @@ export function normalizeToolCallInputV2(opts: {
         return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
     }
 
-    if (opts.canonicalToolName === 'Write' || opts.canonicalToolName === 'TodoWrite') {
+    if (opts.canonicalToolName === 'Delete') {
+        const normalized = normalizeDeleteInput(opts.rawInput);
+        const meta: ToolNormalizationHappyMetaV2 = {
+            v: 2,
+            protocol: opts.protocol,
+            provider: opts.provider,
+            rawToolName: opts.toolName,
+            canonicalToolName: opts.canonicalToolName,
+        };
+        const withHappy = mergeHappyMeta(normalized, meta);
+        return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
+    }
+
+    if (opts.canonicalToolName === 'TodoWrite') {
+        const normalized = normalizeTodoWriteInput(opts.rawInput);
+        const meta: ToolNormalizationHappyMetaV2 = {
+            v: 2,
+            protocol: opts.protocol,
+            provider: opts.provider,
+            rawToolName: opts.toolName,
+            canonicalToolName: opts.canonicalToolName,
+        };
+        const withHappy = mergeHappyMeta(normalized, meta);
+        return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
+    }
+
+    if (opts.canonicalToolName === 'TodoRead') {
+        const normalized = normalizeTodoReadInput(opts.rawInput);
+        const meta: ToolNormalizationHappyMetaV2 = {
+            v: 2,
+            protocol: opts.protocol,
+            provider: opts.provider,
+            rawToolName: opts.toolName,
+            canonicalToolName: opts.canonicalToolName,
+        };
+        const withHappy = mergeHappyMeta(normalized, meta);
+        return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
+    }
+
+    if (opts.canonicalToolName === 'Task') {
+        const normalized = normalizeTaskInput(opts.toolName, opts.rawInput);
+        const meta: ToolNormalizationHappyMetaV2 = {
+            v: 2,
+            protocol: opts.protocol,
+            provider: opts.provider,
+            rawToolName: opts.toolName,
+            canonicalToolName: opts.canonicalToolName,
+        };
+        const withHappy = mergeHappyMeta(normalized, meta);
+        return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
+    }
+
+    if (opts.canonicalToolName === 'Write') {
         const normalized = normalizeWriteInput(opts.rawInput);
         const meta: ToolNormalizationHappyMetaV2 = {
             v: 2,
@@ -154,8 +252,21 @@ export function normalizeToolCallInputV2(opts: {
         return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
     }
 
-    if (opts.canonicalToolName === 'Edit' || opts.canonicalToolName === 'MultiEdit') {
+    if (opts.canonicalToolName === 'Edit') {
         const normalized = normalizeEditInput(opts.rawInput);
+        const meta: ToolNormalizationHappyMetaV2 = {
+            v: 2,
+            protocol: opts.protocol,
+            provider: opts.provider,
+            rawToolName: opts.toolName,
+            canonicalToolName: opts.canonicalToolName,
+        };
+        const withHappy = mergeHappyMeta(normalized, meta);
+        return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
+    }
+
+    if (opts.canonicalToolName === 'MultiEdit') {
+        const normalized = normalizeMultiEditInput(opts.rawInput);
         const meta: ToolNormalizationHappyMetaV2 = {
             v: 2,
             protocol: opts.protocol,
@@ -341,8 +452,47 @@ export function normalizeToolResultV2(opts: {
         if (opts.canonicalToolName === 'Read') {
             return normalizeReadResult(opts.rawOutput);
         }
+        if (opts.canonicalToolName === 'Write') {
+            return normalizeWriteResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'Edit' || opts.canonicalToolName === 'MultiEdit') {
+            return normalizeEditResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'TodoWrite' || opts.canonicalToolName === 'TodoRead') {
+            return normalizeTodoResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'Glob') {
+            return normalizeGlobResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'Grep') {
+            return normalizeGrepResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'CodeSearch') {
+            return normalizeCodeSearchResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'LS') {
+            return normalizeLsResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'WebSearch') {
+            return normalizeWebSearchResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'WebFetch') {
+            return normalizeWebFetchResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'Delete') {
+            return normalizeDeleteResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'Patch') {
+            return normalizePatchResult(opts.rawOutput);
+        }
         if (opts.canonicalToolName === 'Reasoning') {
             return normalizeReasoningResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'Task') {
+            return normalizeTaskResult(opts.rawOutput);
+        }
+        if (opts.canonicalToolName === 'change_title') {
+            return normalizeChangeTitleResult(opts.rawOutput);
         }
         const record = asRecord(opts.rawOutput);
         if (record) return { ...record };

@@ -37,7 +37,6 @@ vi.mock('@/components/tools/knownTools', () => ({
 const renderedToolViewSpy = vi.fn();
 
 vi.mock('./views/_registry', () => ({
-    getToolFullViewComponent: () => null,
     getToolViewComponent: () => (props: any) => {
         renderedToolViewSpy(props);
         return React.createElement('SpecificToolView', null);
@@ -124,4 +123,3 @@ describe('ToolView (detail level: title)', () => {
         expect(tree.root.findAllByType('StructuredResultView' as any)).toHaveLength(0);
     });
 });
-

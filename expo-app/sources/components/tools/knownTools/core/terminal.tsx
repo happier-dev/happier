@@ -25,7 +25,7 @@ export const coreTerminalTools = {
         result: z.object({
             stderr: z.string(),
             stdout: z.string(),
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const cmd = extractShellCommand(opts.tool.input);
             if (typeof cmd === 'string' && cmd.length > 0) {
@@ -51,14 +51,14 @@ export const coreTerminalTools = {
         icon: ICON_EXIT,
         input: z.object({
             plan: z.string().describe('The plan you came up with')
-        }).partial().loose()
+        }).partial().passthrough()
     },
     'exit_plan_mode': {
         title: t('tools.names.planProposal'),
         icon: ICON_EXIT,
         input: z.object({
             plan: z.string().describe('The plan you came up with')
-        }).partial().loose()
+        }).partial().passthrough()
     },
 } satisfies Record<string, KnownToolDefinition>;
 

@@ -30,7 +30,7 @@ export const coreTaskTools = {
         input: z.object({
             prompt: z.string().describe('The task for the agent to perform'),
             subagent_type: z.string().optional().describe('The type of specialized agent to use')
-        }).partial().loose()
+        }).partial().passthrough()
     },
 } satisfies Record<string, KnownToolDefinition>;
 

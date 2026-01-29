@@ -33,8 +33,8 @@ export const providerShellTools = {
                 type: z.string().describe('Type of parsed command (read, write, bash, etc.)'),
                 cmd: z.string().optional().describe('The command string'),
                 name: z.string().optional().describe('File name or resource name')
-            }).loose()).optional().describe('Parsed command information')
-        }).partial().loose(),
+            }).passthrough()).optional().describe('Parsed command information')
+        }).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             // For single read commands, show the actual command
             if (opts.tool.input?.parsed_cmd &&
@@ -96,7 +96,7 @@ export const providerShellTools = {
         input: z.object({
             command: z.array(z.string()).describe('The command array to execute'),
             cwd: z.string().optional().describe('Current working directory')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (opts.tool.input?.command && Array.isArray(opts.tool.input.command)) {
                 let cmdArray = opts.tool.input.command;
@@ -114,7 +114,7 @@ export const providerShellTools = {
         icon: ICON_TERMINAL,
         minimal: true,
         isMutable: true,
-        input: z.object({}).partial().loose()
+        input: z.object({}).partial().passthrough()
     },
     'execute': {
         title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
@@ -138,7 +138,7 @@ export const providerShellTools = {
         },
         icon: ICON_TERMINAL,
         isMutable: true,
-        input: z.object({}).partial().loose(),
+        input: z.object({}).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const cmd = extractShellCommand(opts.tool.input);
             if (cmd) return cmd;

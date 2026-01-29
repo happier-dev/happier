@@ -16,14 +16,19 @@ function extractReasoningMarkdown(result: unknown): string | null {
     return null;
 }
 
-export const ReasoningView = React.memo<ToolViewProps>(({ tool }) => {
+function truncate(text: string, maxChars: number): string {
+    if (text.length <= maxChars) return text;
+    return text.slice(0, Math.max(0, maxChars - 1)) + '…';
+}
+
+export const ReasoningView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     const markdown = extractReasoningMarkdown(tool.result);
     if (!markdown) return null;
 
     return (
-        <ToolSectionView>
+        <ToolSectionView fullWidth={detailLevel === 'full'}>
             <View style={{ width: '100%' }}>
-                <MarkdownView markdown={markdown} />
+                <MarkdownView markdown={detailLevel === 'full' ? markdown : truncate(markdown, 900)} />
             </View>
         </ToolSectionView>
     );

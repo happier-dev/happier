@@ -30,7 +30,7 @@ export const providerAskUserQuestionTools = {
                 })).describe('Available choices'),
                 multiSelect: z.boolean().describe('Allow multiple selections')
             })).describe('Questions to ask the user')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (opts.tool.input?.questions && Array.isArray(opts.tool.input.questions)) {
                 const count = opts.tool.input.questions.length;

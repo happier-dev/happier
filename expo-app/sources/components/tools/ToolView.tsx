@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Text, View, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons, Octicons } from '@expo/vector-icons';
-import { getToolFullViewComponent, getToolViewComponent } from './views/_registry';
+import { getToolViewComponent } from './views/_registry';
 import { Message, ToolCall } from '@/sync/typesMessage';
 import { CodeView } from '../CodeView';
 import { ToolSectionView } from './ToolSectionView';
@@ -42,15 +42,18 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     const { tool, onPress, sessionId, messageId } = props;
     const router = useRouter();
     const { theme } = useUnistyles();
+    const [isExpanded, setIsExpanded] = React.useState(false);
     const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
     const isWaitingForPermission = toolForRendering.permission?.status === 'pending' && toolForRendering.state === 'running';
     const parsedToolInput = toolForRendering.input;
     const toolViewDetailLevelDefault = useSetting('toolViewDetailLevelDefault');
     const toolViewDetailLevelDefaultLocalControl = useSetting('toolViewDetailLevelDefaultLocalControl');
     const toolViewDetailLevelByToolName = useSetting('toolViewDetailLevelByToolName');
+    const toolViewTapAction = useSetting('toolViewTapAction');
+    const toolViewExpandedDetailLevelDefault = useSetting('toolViewExpandedDetailLevelDefault');
+    const toolViewExpandedDetailLevelByToolName = useSetting('toolViewExpandedDetailLevelByToolName');
 
-    // Create default onPress handler for navigation
-    const handlePress = React.useCallback(() => {
+    const handleOpen = React.useCallback(() => {
         if (onPress) {
             onPress();
         } else if (sessionId && messageId) {
@@ -58,8 +61,11 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         }
     }, [onPress, sessionId, messageId, router]);
 
-    // Enable pressable if either onPress is provided or we have navigation params
-    const isPressable = !!(onPress || (sessionId && messageId));
+    const canOpen = !!(onPress || (sessionId && messageId));
+
+    const handleToggleExpanded = React.useCallback(() => {
+        setIsExpanded((v) => !v);
+    }, []);
 
     const inferredTool = inferToolNameForRendering({
         toolName: toolForRendering.name,
@@ -130,13 +136,18 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         }
     }
 
-    const effectiveDetailLevel = resolveToolViewDetailLevel({
+    const collapsedDetailLevel = resolveToolViewDetailLevel({
         toolName: normalizedToolName,
         toolInput: toolForRendering.input,
         detailLevelDefault: toolViewDetailLevelDefault,
         detailLevelDefaultLocalControl: toolViewDetailLevelDefaultLocalControl,
         detailLevelByToolName: toolViewDetailLevelByToolName as any,
     });
+
+    const expandedDetailLevel: 'summary' | 'full' =
+        (toolViewExpandedDetailLevelByToolName as any)?.[normalizedToolName] ?? toolViewExpandedDetailLevelDefault;
+
+    const effectiveDetailLevel = isExpanded ? expandedDetailLevel : collapsedDetailLevel;
 
     // Apply the per-tool detail level preference for the timeline card.
     // - title: hide the tool body
@@ -202,53 +213,66 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         }
     }
 
+    const primaryTapAction: 'expand' | 'open' =
+        toolViewTapAction === 'open' && canOpen ? 'open' : 'expand';
+    const primaryOnPress = primaryTapAction === 'open' ? handleOpen : handleToggleExpanded;
+
+    const secondaryTapAction: 'expand' | 'open' | null =
+        primaryTapAction === 'open'
+            ? 'expand'
+            : canOpen
+                ? 'open'
+                : null;
+    const secondaryOnPress =
+        secondaryTapAction === 'open'
+            ? handleOpen
+            : secondaryTapAction === 'expand'
+                ? handleToggleExpanded
+                : null;
+
     return (
         <View style={styles.container}>
-            {isPressable ? (
-                <TouchableOpacity style={styles.header} onPress={handlePress} activeOpacity={0.8}>
-                    <View style={styles.headerLeft}>
-                        <View style={styles.iconContainer}>
-                            {icon}
-                        </View>
-                        <View style={styles.titleContainer}>
-                            <Text style={styles.toolName} numberOfLines={1}>{toolTitle}{status ? <Text style={styles.status}>{` ${status}`}</Text> : null}</Text>
-                            {description && (
-                                <Text style={styles.toolDescription} numberOfLines={1}>
-                                    {description}
-                                </Text>
-                            )}
-                        </View>
-                        {tool.state === 'running' && !isWaitingForPermission && (
-                            <View style={styles.elapsedContainer}>
-                                <ElapsedView from={tool.createdAt} />
-                            </View>
-                        )}
-                        {statusIcon}
+            <View style={styles.header}>
+                <TouchableOpacity style={styles.headerMain} onPress={primaryOnPress} activeOpacity={0.8}>
+                    <View style={styles.iconContainer}>
+                        {icon}
                     </View>
+                    <View style={styles.titleContainer}>
+                        <Text style={styles.toolName} numberOfLines={1}>{toolTitle}{status ? <Text style={styles.status}>{` ${status}`}</Text> : null}</Text>
+                        {description && (
+                            <Text style={styles.toolDescription} numberOfLines={1}>
+                                {description}
+                            </Text>
+                        )}
+                    </View>
+                    {tool.state === 'running' && !isWaitingForPermission && (
+                        <View style={styles.elapsedContainer}>
+                            <ElapsedView from={tool.createdAt} />
+                        </View>
+                    )}
+                    {statusIcon}
                 </TouchableOpacity>
-            ) : (
-                <View style={styles.header}>
-                    <View style={styles.headerLeft}>
-                        <View style={styles.iconContainer}>
-                            {icon}
-                        </View>
-                        <View style={styles.titleContainer}>
-                            <Text style={styles.toolName} numberOfLines={1}>{toolTitle}{status ? <Text style={styles.status}>{` ${status}`}</Text> : null}</Text>
-                            {description && (
-                                <Text style={styles.toolDescription} numberOfLines={1}>
-                                    {description}
-                                </Text>
-                            )}
-                        </View>
-                        {tool.state === 'running' && !isWaitingForPermission && (
-                            <View style={styles.elapsedContainer}>
-                                <ElapsedView from={tool.createdAt} />
-                            </View>
+
+                {secondaryOnPress ? (
+                    <TouchableOpacity
+                        onPress={secondaryOnPress}
+                        activeOpacity={0.8}
+                        style={styles.secondaryAction}
+                        accessibilityRole="button"
+                        accessibilityLabel={secondaryTapAction === 'open' ? t('toolView.open') : t('toolView.expand')}
+                    >
+                        {secondaryTapAction === 'open' ? (
+                            <Ionicons name="open-outline" size={18} color={theme.colors.textSecondary} />
+                        ) : (
+                            <Ionicons
+                                name={isExpanded ? 'chevron-up-outline' : 'chevron-down-outline'}
+                                size={18}
+                                color={theme.colors.textSecondary}
+                            />
                         )}
-                        {statusIcon}
-                    </View>
-                </View>
-            )}
+                    </TouchableOpacity>
+                ) : null}
+            </View>
 
             {/* Content area - either custom children or tool-specific view */}
             {(() => {
@@ -259,10 +283,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 }
 
                 // Try to use a specific tool view component first
-                const SpecificToolView =
-                    effectiveDetailLevel === 'full'
-                        ? getToolFullViewComponent(normalizedToolName) ?? getToolViewComponent(normalizedToolName)
-                        : getToolViewComponent(normalizedToolName);
+                const SpecificToolView = getToolViewComponent(normalizedToolName);
                 if (SpecificToolView) {
                     return (
                         <View style={styles.content}>
@@ -271,6 +292,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                                 metadata={props.metadata}
                                 messages={props.messages ?? []}
                                 sessionId={sessionId}
+                                detailLevel={effectiveDetailLevel}
                                 interaction={props.interaction}
                             />
                             {toolForRendering.state === 'error' && toolForRendering.result &&
@@ -379,11 +401,14 @@ const styles = StyleSheet.create((theme) => ({
         padding: 12,
         backgroundColor: theme.colors.surfaceHighest,
     },
-    headerLeft: {
+    headerMain: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
         flex: 1,
+    },
+    secondaryAction: {
+        marginLeft: 8,
     },
     iconContainer: {
         width: 24,

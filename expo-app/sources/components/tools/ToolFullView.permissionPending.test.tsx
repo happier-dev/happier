@@ -36,7 +36,6 @@ vi.mock('@/text', () => ({
 }));
 
 vi.mock('./views/_registry', () => ({
-    getToolFullViewComponent: () => null,
     getToolViewComponent: () => null,
 }));
 

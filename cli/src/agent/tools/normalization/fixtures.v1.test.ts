@@ -148,6 +148,25 @@ describe('tool normalization fixtures (v1)', () => {
         const patchInput = asRecord(codexPatchNorm.input);
         expect(asRecord(patchInput?.changes)).toBeTruthy();
 
+        const codexMultiPatch = fixtures.examples['codex/codex/tool-call/CodexPatch']?.find(
+            (ev) => ev.payload?.callId === 'call_PATCH_MULTI_FILE',
+        );
+        expect(codexMultiPatch).toBeTruthy();
+        const codexMultiPatchNorm = normalizeToolCallV2({
+            protocol: 'codex',
+            provider: 'codex',
+            toolName: codexMultiPatch!.payload.name,
+            rawInput: codexMultiPatch!.payload.input,
+            callId: codexMultiPatch!.payload.callId,
+        });
+        expect(codexMultiPatchNorm.canonicalToolName).toBe('Patch');
+        const multiPatchInput = asRecord(codexMultiPatchNorm.input);
+        const multiChanges = asRecord(multiPatchInput?.changes);
+        expect(multiChanges).toBeTruthy();
+        expect(Object.keys(multiChanges!)).toHaveLength(2);
+        const deleted = asRecord(multiChanges?.['/Users/leeroy/Development/happy-local/.tmp/tooltrace-codex-multi-delete.txt']);
+        expect(asRecord(deleted?.delete)).toBeTruthy();
+
         const reasoning = fixtures.examples['acp/gemini/tool-call/GeminiReasoning']?.[0];
         expect(reasoning).toBeTruthy();
         const reasoningNorm = normalizeToolCallV2({
@@ -169,6 +188,56 @@ describe('tool normalization fixtures (v1)', () => {
             callId: codexChangeTitle!.payload.callId,
         });
         expect(codexChangeTitleNorm.canonicalToolName).toBe('change_title');
+    });
+
+    it('canonicalizes ACP lowercase tool names into canonical families (including heuristics for edit/write/fetch)', () => {
+        const fixtures = loadFixtureV1();
+
+        const normalizeFirst = (key: string, index = 0) => {
+            const ev = fixtures.examples[key]?.[index];
+            expect(ev).toBeTruthy();
+            const payload = ev!.payload ?? {};
+            return normalizeToolCallV2({
+                protocol: ev!.protocol as any,
+                provider: String(ev!.provider ?? 'unknown'),
+                toolName: String(payload.name ?? ''),
+                rawInput: payload.input,
+                callId: typeof payload.callId === 'string' ? payload.callId : undefined,
+            });
+        };
+
+        // execute → Bash (multiple ACP providers)
+        expect(normalizeFirst('acp/opencode/tool-call/execute').canonicalToolName).toBe('Bash');
+        expect(normalizeFirst('acp/codex/tool-call/execute').canonicalToolName).toBe('Bash');
+        expect(normalizeFirst('acp/gemini/tool-call/execute').canonicalToolName).toBe('Bash');
+
+        // read → Read
+        expect(normalizeFirst('acp/opencode/tool-call/read').canonicalToolName).toBe('Read');
+        expect(normalizeFirst('acp/codex/tool-call/read').canonicalToolName).toBe('Read');
+        expect(normalizeFirst('acp/gemini/tool-call/read').canonicalToolName).toBe('Read');
+
+        // glob → Glob
+        expect(normalizeFirst('acp/opencode/tool-call/glob').canonicalToolName).toBe('Glob');
+        expect(normalizeFirst('acp/gemini/tool-call/glob').canonicalToolName).toBe('Glob');
+
+        // search → CodeSearch
+        expect(normalizeFirst('acp/opencode/tool-call/search').canonicalToolName).toBe('CodeSearch');
+        expect(normalizeFirst('acp/codex/tool-call/search').canonicalToolName).toBe('CodeSearch');
+        expect(normalizeFirst('acp/gemini/tool-call/search').canonicalToolName).toBe('CodeSearch');
+        expect(normalizeFirst('acp/auggie/tool-call/search').canonicalToolName).toBe('CodeSearch');
+
+        // edit → Edit | Patch | Write (provider-dependent)
+        expect(normalizeFirst('acp/opencode/tool-call/edit', 0).canonicalToolName).toBe('Write');
+        expect(normalizeFirst('acp/opencode/tool-call/edit', 1).canonicalToolName).toBe('Edit');
+        expect(normalizeFirst('acp/codex/tool-call/edit', 0).canonicalToolName).toBe('Patch');
+
+        // write → Write | TodoWrite (callId-dependent)
+        expect(normalizeFirst('acp/gemini/tool-call/write', 0).canonicalToolName).toBe('Write');
+        expect(normalizeFirst('acp/gemini/tool-call/write', 1).canonicalToolName).toBe('TodoWrite');
+
+        // fetch → WebSearch (query) | WebFetch (url)
+        expect(normalizeFirst('acp/auggie/tool-call/fetch', 0).canonicalToolName).toBe('WebSearch');
+        expect(normalizeFirst('acp/auggie/tool-call/fetch', 1).canonicalToolName).toBe('WebFetch');
     });
 
     it('normalizes tool-call inputs for file/search/web tools (surfaces key fields when provided)', () => {
@@ -215,6 +284,22 @@ describe('tool normalization fixtures (v1)', () => {
             expect(Array.isArray(input?.todos)).toBe(true);
         }
 
+        // TodoWrite (Gemini ACP can omit actual todo content; normalization must still provide a stable `todos: []` schema)
+        {
+            const ev = sample('acp/gemini/tool-call/TodoWrite');
+            const norm = normalizeFirstCall(ev);
+            expect(norm.canonicalToolName).toBe('TodoWrite');
+            const input = asRecord(norm.input);
+            expect(Array.isArray(input?.todos)).toBe(true);
+        }
+
+        // TodoRead
+        {
+            const ev = sample('acp/gemini/tool-call/TodoRead');
+            const norm = normalizeFirstCall(ev);
+            expect(norm.canonicalToolName).toBe('TodoRead');
+        }
+
         // Edit
         {
             const ev = sample('claude/claude/tool-call/Edit');
@@ -244,6 +329,15 @@ describe('tool normalization fixtures (v1)', () => {
             expect(typeof input?.pattern).toBe('string');
         }
 
+        // Glob (ACP lowercase variant)
+        {
+            const ev = sample('acp/opencode/tool-call/glob');
+            const norm = normalizeFirstCall(ev);
+            expect(norm.canonicalToolName).toBe('Glob');
+            const input = asRecord(norm.input);
+            expect(typeof input?.pattern).toBe('string');
+        }
+
         // Grep
         {
             const ev = sample('claude/claude/tool-call/Grep');
@@ -251,6 +345,24 @@ describe('tool normalization fixtures (v1)', () => {
             expect(norm.canonicalToolName).toBe('Grep');
             const input = asRecord(norm.input);
             expect(typeof input?.pattern).toBe('string');
+        }
+
+        // Grep (ACP lowercase variant)
+        {
+            const ev = sample('acp/opencode/tool-call/grep');
+            const norm = normalizeFirstCall(ev);
+            expect(norm.canonicalToolName).toBe('Grep');
+            const input = asRecord(norm.input);
+            expect(typeof input?.pattern).toBe('string');
+        }
+
+        // LS
+        {
+            const ev = sample('acp/opencode/tool-call/ls');
+            const norm = normalizeFirstCall(ev);
+            expect(norm.canonicalToolName).toBe('LS');
+            const input = asRecord(norm.input);
+            expect(typeof input?.path).toBe('string');
         }
 
         // WebSearch
@@ -286,6 +398,7 @@ describe('tool normalization fixtures (v1)', () => {
             const norm = normalizeFirstCall(ev);
             expect(norm.canonicalToolName).toBe('Task');
             const input = asRecord(norm.input);
+            expect(input?.operation).toBe('create');
             expect(typeof input?.subject).toBe('string');
         }
 
@@ -305,6 +418,25 @@ describe('tool normalization fixtures (v1)', () => {
             expect(norm.canonicalToolName).toBe('WebSearch');
             const input = asRecord(norm.input);
             expect(typeof input?.query).toBe('string');
+        }
+
+        // Auggie Edit actually writes full file content (normalize to Write)
+        {
+            const ev = sample('acp/auggie/tool-call/Edit');
+            const norm = normalizeFirstCall(ev);
+            expect(norm.canonicalToolName).toBe('Write');
+            const input = asRecord(norm.input);
+            expect(typeof input?.file_path).toBe('string');
+            expect(typeof input?.content).toBe('string');
+        }
+
+        // Auggie delete is a file deletion (normalize to Delete)
+        {
+            const ev = sample('acp/auggie/tool-call/delete');
+            const norm = normalizeFirstCall(ev);
+            expect(norm.canonicalToolName).toBe('Delete');
+            const input = asRecord(norm.input);
+            expect(input).toMatchObject({ file_paths: ['tool_validation_results.md'] });
         }
     });
 
@@ -339,6 +471,31 @@ describe('tool normalization fixtures (v1)', () => {
                 expect(asRecord(normalized.input)?._raw).toBeDefined();
             }
         }
+    });
+
+    it('canonicalizes Auggie workspace indexing permission prompts for consistent rendering', () => {
+        const fixtures = loadFixtureV1();
+        const ev = fixtures.examples['acp/auggie/permission-request/Unknown tool']?.[0];
+        expect(ev).toBeTruthy();
+
+        const payload = ev!.payload ?? {};
+        const toolName = String(payload.toolName ?? '');
+        const rawInput =
+            payload?.options?.toolCall
+            ?? payload?.options?.input
+            ?? payload?.options
+            ?? {};
+        const callId = typeof payload.permissionId === 'string' ? payload.permissionId : undefined;
+
+        const normalized = normalizeToolCallV2({
+            protocol: ev!.protocol as any,
+            provider: String(ev!.provider ?? 'unknown'),
+            toolName,
+            rawInput,
+            callId,
+        });
+
+        expect(normalized.canonicalToolName).toBe('WorkspaceIndexingPermission');
     });
 
     it('normalizes tool-result events into objects with V2 metadata (using tool-call mappings when available)', () => {
@@ -423,7 +580,225 @@ describe('tool normalization fixtures (v1)', () => {
                     const content = outRecord?.content;
                     expect(content == null || typeof content === 'string').toBe(true);
                 }
+                if (canonicalToolName === 'TodoWrite' || canonicalToolName === 'TodoRead') {
+                    const todos = outRecord?.todos;
+                    expect(Array.isArray(todos)).toBe(true);
+                    if (Array.isArray(todos) && todos.length > 0) {
+                        const first = asRecord(todos[0]);
+                        expect(typeof first?.content).toBe('string');
+                        expect(typeof first?.status).toBe('string');
+                    }
+                }
+                if (canonicalToolName === 'Patch') {
+                    const raw = asRecord(rawOutput);
+                    const rawApplied =
+                        typeof raw?.success === 'boolean'
+                            ? raw.success
+                            : typeof raw?.ok === 'boolean'
+                                ? raw.ok
+                                : typeof raw?.applied === 'boolean'
+                                    ? raw.applied
+                                    : null;
+                    if (typeof rawApplied === 'boolean') {
+                        expect(outRecord?.applied).toBe(rawApplied);
+                    }
+                    const stdout = outRecord?.stdout;
+                    const stderr = outRecord?.stderr;
+                    expect(stdout == null || typeof stdout === 'string').toBe(true);
+                    expect(stderr == null || typeof stderr === 'string').toBe(true);
+                }
+                if (canonicalToolName === 'Glob') {
+                    const matches = outRecord?.matches;
+                    expect(Array.isArray(matches)).toBe(true);
+                    if (Array.isArray(matches) && matches.length > 0) {
+                        expect(matches.every((m: any) => typeof m === 'string')).toBe(true);
+                    }
+                }
+                if (canonicalToolName === 'Grep') {
+                    const matches = outRecord?.matches;
+                    expect(Array.isArray(matches)).toBe(true);
+                    if (Array.isArray(matches) && matches.length > 0) {
+                        const first = asRecord(matches[0]);
+                        // Prefer the canonical `filePath` field, but allow excerpt-only matches when providers redact or summarize.
+                        const hasFilePath = typeof first?.filePath === 'string';
+                        const hasExcerpt = typeof first?.excerpt === 'string';
+                        expect(hasFilePath || hasExcerpt).toBe(true);
+                    }
+                }
+                if (canonicalToolName === 'CodeSearch') {
+                    const matches = outRecord?.matches;
+                    expect(Array.isArray(matches)).toBe(true);
+                    if (Array.isArray(matches) && matches.length > 0) {
+                        const first = asRecord(matches[0]);
+                        // Either we parsed structured output (filePath/line/excerpt) or we fell back to an excerpt-only match.
+                        const hasFilePath = typeof first?.filePath === 'string';
+                        const hasExcerpt = typeof first?.excerpt === 'string';
+                        expect(hasFilePath || hasExcerpt).toBe(true);
+                    }
+                }
+                if (canonicalToolName === 'LS') {
+                    const entries = outRecord?.entries;
+                    expect(Array.isArray(entries)).toBe(true);
+                    if (Array.isArray(entries) && entries.length > 0) {
+                        expect(entries.every((m: any) => typeof m === 'string')).toBe(true);
+                    }
+                }
             }
+        }
+    });
+
+    it('normalizes web tool results into stable schemas (WebSearch.results[], WebFetch.status/text/errorMessage)', () => {
+        const fixtures = loadFixtureV1();
+
+        const fetchCalls = fixtures.examples['acp/auggie/tool-call/fetch'];
+        expect(fetchCalls).toBeTruthy();
+        const fetchResults = fixtures.examples['acp/auggie/tool-result/fetch'];
+        expect(fetchResults).toBeTruthy();
+
+        const pickCall = (predicate: (input: any) => boolean) => {
+            const ev = fetchCalls!.find((e) => predicate(e.payload?.input));
+            expect(ev).toBeTruthy();
+            return ev!;
+        };
+
+        const pickResultByCallId = (callId: string) => {
+            const ev = fetchResults!.find((e) => e.payload?.callId === callId);
+            expect(ev).toBeTruthy();
+            return ev!;
+        };
+
+        // WebSearch (query → results list)
+        {
+            const call = pickCall((input) => typeof input?.query === 'string' && String(input.query).includes('TypeScript'));
+            const callId = call.payload.callId as string;
+            const { canonicalToolName } = normalizeToolCallV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                toolName: call.payload.name,
+                rawInput: call.payload.input,
+                callId,
+            });
+            expect(canonicalToolName).toBe('WebSearch');
+
+            const resultEv = pickResultByCallId(callId);
+            const normalized = normalizeToolResultV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                rawToolName: 'fetch',
+                canonicalToolName,
+                rawOutput: resultEv.payload.output,
+            });
+
+            const outRecord = asRecord(normalized);
+            expect(Array.isArray(outRecord?.results)).toBe(true);
+        }
+
+        // WebSearch empty response (results should still exist and be a list)
+        {
+            const call = pickCall((input) => typeof input?.query === 'string' && String(input.query).includes('no results'));
+            const callId = call.payload.callId as string;
+            const { canonicalToolName } = normalizeToolCallV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                toolName: call.payload.name,
+                rawInput: call.payload.input,
+                callId,
+            });
+            expect(canonicalToolName).toBe('WebSearch');
+
+            const resultEv = pickResultByCallId(callId);
+            const normalized = normalizeToolResultV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                rawToolName: 'fetch',
+                canonicalToolName,
+                rawOutput: resultEv.payload.output,
+            });
+
+            const outRecord = asRecord(normalized);
+            expect(outRecord).toMatchObject({ results: [] });
+        }
+
+        // WebSearch string-only response (should normalize into results[])
+        {
+            const call = pickCall((input) => typeof input?.query === 'string' && String(input.query).includes('string-only'));
+            const callId = call.payload.callId as string;
+            const { canonicalToolName } = normalizeToolCallV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                toolName: call.payload.name,
+                rawInput: call.payload.input,
+                callId,
+            });
+            expect(canonicalToolName).toBe('WebSearch');
+
+            const resultEv = pickResultByCallId(callId);
+            const normalized = normalizeToolResultV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                rawToolName: 'fetch',
+                canonicalToolName,
+                rawOutput: resultEv.payload.output,
+            });
+
+            const outRecord = asRecord(normalized);
+            expect(Array.isArray(outRecord?.results)).toBe(true);
+            const first = Array.isArray(outRecord?.results) ? asRecord(outRecord?.results[0]) : null;
+            expect(typeof first?.snippet).toBe('string');
+        }
+
+        // WebFetch (url → status + text)
+        {
+            const call = pickCall((input) => typeof input?.url === 'string' && String(input.url).includes('example.com'));
+            const callId = call.payload.callId as string;
+            const { canonicalToolName } = normalizeToolCallV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                toolName: call.payload.name,
+                rawInput: call.payload.input,
+                callId,
+            });
+            expect(canonicalToolName).toBe('WebFetch');
+
+            const resultEv = pickResultByCallId(callId);
+            const normalized = normalizeToolResultV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                rawToolName: 'fetch',
+                canonicalToolName,
+                rawOutput: resultEv.payload.output,
+            });
+
+            const outRecord = asRecord(normalized);
+            expect(typeof outRecord?.status).toBe('number');
+            expect(typeof outRecord?.text).toBe('string');
+        }
+
+        // WebFetch error (status ≥ 400 should surface a stable errorMessage when provided)
+        {
+            const call = pickCall((input) => typeof input?.url === 'string' && String(input.url).includes('blocked.example.com'));
+            const callId = call.payload.callId as string;
+            const { canonicalToolName } = normalizeToolCallV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                toolName: call.payload.name,
+                rawInput: call.payload.input,
+                callId,
+            });
+            expect(canonicalToolName).toBe('WebFetch');
+
+            const resultEv = pickResultByCallId(callId);
+            const normalized = normalizeToolResultV2({
+                protocol: 'acp',
+                provider: 'auggie',
+                rawToolName: 'fetch',
+                canonicalToolName,
+                rawOutput: resultEv.payload.output,
+            });
+
+            const outRecord = asRecord(normalized);
+            expect(typeof outRecord?.status).toBe('number');
+            expect(typeof outRecord?.errorMessage).toBe('string');
         }
     });
 });

@@ -23,7 +23,7 @@ export const coreWebTools = {
         input: z.object({
             url: z.string().url().describe('The URL to fetch content from'),
             prompt: z.string().describe('The prompt to run on the fetched content')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.url === 'string') {
                 try {
@@ -49,7 +49,7 @@ export const coreWebTools = {
             query: z.string().min(2).describe('The search query to use'),
             allowed_domains: z.array(z.string()).optional().describe('Only include results from these domains'),
             blocked_domains: z.array(z.string()).optional().describe('Never include results from these domains')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.query === 'string') {
                 const query = opts.tool.input.query.length > 30

@@ -20,7 +20,7 @@ export const coreNotebookTools = {
         input: z.object({
             notebook_path: z.string().describe('The absolute path to the Jupyter notebook file'),
             cell_id: z.string().optional().describe('The ID of a specific cell to read')
-        }).partial().loose()
+        }).partial().passthrough()
     },
     'NotebookEdit': {
         title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
@@ -38,7 +38,7 @@ export const coreNotebookTools = {
             cell_id: z.string().optional().describe('The ID of the cell to edit'),
             cell_type: z.enum(['code', 'markdown']).optional().describe('The type of the cell'),
             edit_mode: z.enum(['replace', 'insert', 'delete']).optional().describe('The type of edit to make')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.notebook_path === 'string') {
                 const path = resolvePath(opts.tool.input.notebook_path, opts.metadata);
