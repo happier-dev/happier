@@ -1,157 +1,247 @@
-# Tool Normalization (CLI)
+# Tool Normalization & Rendering (End-to-End)
 
-This document describes the **current** tool normalization + tracing + fixtures workflow implemented in `happy-cli`.
+This document describes the **final, current** tool pipeline in Happy:
 
-It is intended for developers who:
-- add support for new tools or tool variants
-- improve tool rendering reliability (by making tool input/output schemas stable)
-- refresh fixtures when providers evolve
+- how tool calls/results are captured from providers
+- how the CLI normalizes tool payloads into canonical shapes (V2)
+- how the app renders those tools consistently (including legacy sessions + Claude local-control)
+- how to capture traces, curate fixtures, and update the normalization safely when providers drift
+
+It is written for developers working on **tool reliability and UX** (not for historical context).
+
+---
 
 ## Goals
 
-- Emit **canonical** tool-call and tool-result shapes (V2) across providers/protocols.
-- Preserve the raw provider payloads for debugging while keeping render-friendly fields stable.
-- Catch provider drift via a small, curated, fixture-driven regression suite.
+- Provide stable, renderer-friendly tool shapes across providers and protocols.
+- Preserve raw provider payloads for debugging without leaking provider-specific shapes into the UI.
+- Make provider drift visible and easy to update via trace + fixture-driven regression tests.
+- Keep tool rendering configurable (title/summary/full + optional debug/raw view) without branching per provider.
 
-## Where the code lives
+---
 
-- Tool normalization (V2 canonicalization)
+## Glossary
+
+- **Tool call**: a request from the model to run a tool (e.g. `Read`, `Bash`, `Patch`).
+- **Tool result**: the output from running that tool.
+- **Canonical tool name**: the UI renderer key (e.g. `Read`, `Bash`, `Patch`, `TodoWrite`).
+- **V2 tool payload**: a normalized tool input/result that includes `_happy` metadata (and `_raw`).
+- **Legacy session**: sessions created before V2 tool normalization was emitted by the CLI.
+- **Claude local-control**: sessions where the app mirrors a local terminal transcript and reconstructs tool events client-side.
+
+---
+
+## Architecture: the tool pipeline
+
+### 1) Provider → backend/protocol
+
+Backends run providers via one of the supported protocols:
+
+- **ACP** (agent control protocol): tool calls/results stream through the ACP engine.
+- **Codex MCP** (Codex via MCP): tool calls/results stream via Codex-specific integration.
+- **Claude**:
+  - **remote**: backend emits structured events over the daemon protocol
+  - **local-control**: the app reconstructs tool events from the transcript (no `_happy` metadata)
+
+### 2) CLI boundary normalization (V2)
+
+At the **CLI boundary** (before events become “session messages”), tool calls/results are normalized into V2:
+
+- tool name is canonicalized (`canonicalToolName`)
+- tool input/result is normalized into a stable shape suitable for rendering
+- `_raw` is preserved for debugging
+
+This is the **preferred** normalization path.
+
+### 3) App rendering normalization (fallback)
+
+The app prefers V2 (`_happy.canonicalToolName`) when present. For sessions without `_happy` metadata (legacy + Claude local-control),
+the app applies a **rendering-only normalization** to infer a canonical tool name and coerce a minimal render-friendly input/result.
+
+This is intentionally narrower than CLI normalization: it exists to keep older data renderable.
+
+---
+
+## CLI: tool normalization (V2)
+
+### Code locations
+
+- V2 canonicalization + per-tool families:
   - `packages/happy-cli/src/agent/tools/normalization/index.ts`
   - `packages/happy-cli/src/agent/tools/normalization/families/*`
   - `packages/happy-cli/src/agent/tools/normalization/types.ts`
-- Tool tracing (JSONL recorder + fixtures extraction)
-  - `packages/happy-cli/src/agent/tools/trace/toolTrace.ts`
-  - `packages/happy-cli/src/agent/tools/trace/curateToolTraceFixtures.ts`
-  - `scripts/tool-trace-fixtures-v1.ts`
-  - `scripts/tool-trace-fixtures.v1.allowlist.txt`
-- Tests (drift prevention)
-  - `packages/happy-cli/src/agent/tools/normalization/fixtures.v1.test.ts`
-  - `packages/happy-cli/src/agent/tools/trace/toolTraceFixturesAllowlist.test.ts`
+- Entry points where tool events are normalized before sending/storing:
+  - `packages/happy-cli/src/api/apiSession.ts` (ACP + Codex MCP paths)
 
-## Canonical tool metadata (`_happy` + `_raw`)
+### Canonical tool metadata (`_happy` + `_raw`)
 
-When the CLI emits a normalized tool event, the normalized input/result is wrapped with:
+Normalized tool input/results are wrapped with:
 
-- `_happy` (V2): stable metadata used for routing/rendering and debugging
-- `_raw`: the original provider payload, truncated for safety
+- `_happy`: stable metadata used for routing/rendering and debugging
+- `_raw`: original provider payload (truncated for safety)
 
-Example `_happy` fields (not exhaustive):
+Example `_happy` fields (non-exhaustive):
+
 - `v`: `2`
 - `protocol`: `acp | codex | claude`
 - `provider`: provider id string (e.g. `gemini`, `codex`, `opencode`, `claude`, `auggie`)
-- `rawToolName`: the provider’s tool name
-- `canonicalToolName`: the CLI’s canonical tool name (renderer key)
+- `rawToolName`: provider tool name
+- `canonicalToolName`: canonical renderer key
 
-## Canonical tool names
+### Canonical tool names
 
-Canonical tool names are chosen so UI renderers can be provider-agnostic.
+Canonical tool names are selected so UI renderers can be provider-agnostic. The mapping lives in:
 
-The mapping is implemented by:
 - `canonicalizeToolNameV2(...)` in `packages/happy-cli/src/agent/tools/normalization/index.ts`
 
-If you introduce a new tool name or a provider-specific alias, update `canonicalizeToolNameV2` and add a test in:
-- `packages/happy-cli/src/agent/tools/normalization/index.test.ts`
+Per-tool normalization is implemented in `families/*` (intention-based groupings like search/tools, file edits, etc.).
 
-## Normalization entrypoints
+---
 
-The core API used by provider/protocol adapters:
+## CLI: tool tracing + fixtures
 
-- `normalizeToolCallV2({ protocol, provider, toolName, rawInput, callId? })`
-  - returns `{ canonicalToolName, input }` where `input` contains `_happy` + `_raw`
-- `normalizeToolResultV2({ protocol, provider, rawToolName, canonicalToolName, rawOutput })`
-  - returns a normalized output object with `_happy` + `_raw`
+Tool tracing captures real provider payloads as JSONL so we can curate fixtures and prevent regressions.
 
-Per-tool logic lives in `packages/happy-cli/src/agent/tools/normalization/families/*`. Keep those files small and intention-based
-(e.g. `search.ts` covers `Glob`/`Grep`/`CodeSearch`/`LS`), rather than protocol-based.
+### Enable tracing
 
-Some providers return “summary-only” results for certain tools (notably Gemini ACP’s `glob` / `search`), e.g. content blocks like
-`Found N matches` without file lists. In those cases we still normalize into a minimal renderable shape so the UI can show
-something (while keeping `_raw` for debugging), even if the provider didn’t return full detail.
-
-## Tool tracing (capturing real provider payloads)
-
-### Enable tracing (stack-scoped)
-
-Set:
+Stack-scoped env vars:
 
 - `HAPPY_STACKS_TOOL_TRACE=1`
 
-Optional:
+Optional overrides:
+
 - `HAPPY_STACKS_TOOL_TRACE_DIR=/path/to/dir` (defaults to `$HAPPY_HOME_DIR/tool-traces`)
-- `HAPPY_STACKS_TOOL_TRACE_FILE=/path/to/file.jsonl` (forces a single output file)
+- `HAPPY_STACKS_TOOL_TRACE_FILE=/path/to/file.jsonl` (forces a single file)
 
-Tool traces are written as JSONL (one event per line) and are safe to commit **only after** fixture curation (see below).
+Implementation:
 
-### Output location
+- `packages/happy-cli/src/agent/tools/trace/toolTrace.ts`
 
-Default stack location:
+### Curated fixtures (v1)
 
-`~/.happy/stacks/<stack>/cli/tool-traces/*.jsonl`
-
-## Fixtures (how drift is caught)
-
-We keep a small committed fixture set so tests are deterministic and stable.
-
-### The committed fixture
+Committed fixtures:
 
 - `packages/happy-cli/src/agent/tools/normalization/__fixtures__/tool-trace-fixtures.v1.json`
 
-This file contains a curated subset of tool trace events, keyed by:
+Allowlist (the “what do we keep?” control):
 
-`<protocol>/<provider>/<kind>/<toolName?>`
+- `packages/happy-cli/scripts/tool-trace-fixtures.v1.allowlist.txt`
 
-Notes:
-- `tool-result` / `tool-call-result` keys are tool-name-suffixed when possible (e.g. `acp/opencode/tool-result/read`).
-- Fixtures are **curated**: we prefer higher-signal examples and cap the count per key.
+Fixture generation script:
 
-### The allowlist
+- `packages/happy-cli/scripts/tool-trace-fixtures-v1.ts`
 
-- `scripts/tool-trace-fixtures.v1.allowlist.txt`
-
-This is the single “what do we keep?” control.
-
-The allowlist and committed fixture keys are kept in sync by:
-- `packages/happy-cli/src/agent/tools/trace/toolTraceFixturesAllowlist.test.ts`
-
-### Regenerating fixtures
-
-From `packages/happy-cli/`:
+Run (from repo root):
 
 ```bash
-yarn tool:trace:fixtures:v1 --stack leeroy-wip --write
+cd packages/happy-cli
+yarn tool:trace:fixtures:v1 --stack <stack> --write
 ```
 
-This:
-- reads all trace JSONL files for the stack
-- curates examples per allowlisted key
-- writes the committed fixture file
+### Tests
 
-If you need to change coverage, edit the allowlist file first, then regenerate.
-
-## Tests: what must pass
-
-The drift regression suite asserts normalization invariants and key transformations:
+The drift regression suite is fixture-driven:
 
 - `packages/happy-cli/src/agent/tools/normalization/fixtures.v1.test.ts`
 - `packages/happy-cli/src/agent/tools/normalization/index.test.ts`
 - `packages/happy-cli/src/agent/tools/trace/toolTraceFixturesAllowlist.test.ts`
 
-Run the CLI tests via Happy Stacks (recommended):
+Run via Happy Stacks:
 
 ```bash
 happys stack test <stack> happy-cli
 ```
 
-## Adding a new tool (workflow)
+---
 
-1) Capture traces that exercise the tool (with tracing enabled).
-2) Add fixture keys to `scripts/tool-trace-fixtures.v1.allowlist.txt`.
-3) Regenerate fixtures: `yarn tool:trace:fixtures:v1 --write`.
-4) Add tests in `packages/happy-cli/src/agent/tools/normalization/index.test.ts` for:
-   - canonical name mapping
-   - result schema normalization
-5) Implement per-tool normalization in `packages/happy-cli/src/agent/tools/normalization/families/*` and wire it in `index.ts`.
-6) Run stack-scoped tests: `happys stack test <stack> happy-cli`.
+## App: rendering + fallback normalization
 
-If a provider changes its tool payload shape later, the fixture suite will fail once fixtures are refreshed, which
-forces the normalization layer to be updated intentionally.
+### Tool renderers
+
+The app uses **one renderer per canonical tool name**, registered in:
+
+- `packages/happy-app/sources/components/tools/views/_registry.tsx`
+
+The timeline tool card renderer:
+
+- `packages/happy-app/sources/components/tools/ToolView.tsx`
+
+The full tool view (always uses the same renderer with `detailLevel="full"` when available):
+
+- `packages/happy-app/sources/components/tools/ToolFullView.tsx`
+
+### Detail levels + user preferences
+
+Tool cards support multiple levels:
+
+- `title`: header only (no tool body)
+- `summary`: compact body
+- `full`: expanded in-place body (when supported by the tool view)
+
+Additionally, `ToolFullView` supports an optional debug/raw view toggle controlled by:
+
+- `toolViewShowDebugByDefault`
+
+Preferences are synced per-user in:
+
+- `packages/happy-app/sources/sync/settings.ts`
+
+Relevant keys:
+
+- `toolViewDetailLevelDefault`
+- `toolViewDetailLevelDefaultLocalControl`
+- `toolViewDetailLevelByToolName`
+- `toolViewExpandedDetailLevelDefault`
+- `toolViewExpandedDetailLevelByToolName`
+- `toolViewTapAction` (`expand | open`)
+
+### Fallback normalization for rendering (legacy + Claude local-control)
+
+When `_happy.canonicalToolName` is missing, the app normalizes tool calls for rendering via:
+
+- `packages/happy-app/sources/components/tools/utils/normalizeToolCallForRendering.ts`
+- helpers in `packages/happy-app/sources/components/tools/utils/normalize/*`
+
+This normalization:
+
+- infers a canonical tool name for renderer routing
+- coerces common legacy aliases into a stable renderable shape
+- keeps the original raw values in `tool.input`/`tool.result` when possible (no data loss)
+
+This path covers two cases:
+
+1) **Legacy sessions** (pre V2 CLI normalization)
+2) **Claude local-control** reconstructed tools (transcript-derived; no `_happy` metadata)
+
+---
+
+## Claude local-control: reconstructing tool events
+
+Claude local-control sessions reconstruct tool events from the transcript and normalize them into the app’s raw message schema.
+
+Key files:
+
+- `packages/happy-app/sources/sync/typesRaw/schemas.ts` (accepts/transforms tool formats)
+- `packages/happy-app/sources/sync/typesRaw/normalize.ts` (canonicalizes tool_use/tool_result blocks)
+
+These reconstructed tools then flow into the same UI pipeline and render via the same registry + views.
+
+---
+
+## Updating normalization when providers drift
+
+When a provider changes tool shapes, the recommended workflow is:
+
+1) Enable tool tracing and reproduce the tool calls.
+2) Curate fixture keys (edit allowlist).
+3) Regenerate fixtures.
+4) Update CLI normalization (`families/*` + canonical name mapping) and add/adjust tests.
+5) Ensure the app still renders legacy + Claude local-control sessions (fallback normalization should remain conservative).
+6) Run stack-scoped tests:
+   - `happys stack test <stack> happy-cli`
+   - `happys stack test <stack> happy` (app test suite)
+
+The canonical rule:
+
+- Prefer fixing drift in **CLI V2 normalization**.
+- Only extend the app fallback normalization when you must keep older stored shapes renderable.
