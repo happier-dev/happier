@@ -1,6 +1,12 @@
 {
     "name": "monorepo",
     "private": true,
+    "scripts": {
+        "build:packages": "yarn workspace @happy/agents build && yarn workspace @happy/protocol build",
+        "ci:act": "bash scripts/ci/run-act-tests.sh",
+        "test": "yarn --cwd packages/happy-app test && yarn --cwd packages/happy-cli test && yarn --cwd packages/happy-server test",
+        "typecheck": "yarn --cwd packages/happy-app typecheck && yarn --cwd packages/happy-cli typecheck && yarn --cwd packages/happy-server typecheck"
+    },
     "workspaces": {
         "packages": [
             "packages/happy-app",
