@@ -33,17 +33,13 @@ vi.mock('../CodeView', () => ({
 const renderedFullViewSpy = vi.fn();
 const renderedViewSpy = vi.fn();
 
-const getToolFullViewComponentSpy = vi.fn((toolName: string) => {
+const getToolViewComponentSpy = vi.fn((toolName: string) => {
     if (toolName === 'execute') {
         return (props: any) => {
             renderedFullViewSpy(props);
             return React.createElement('FullToolView', { name: toolName });
         };
     }
-    return null;
-});
-
-const getToolViewComponentSpy = vi.fn((toolName: string) => {
     if (toolName === 'Read') {
         return (props: any) => {
             renderedViewSpy(props);
@@ -54,7 +50,6 @@ const getToolViewComponentSpy = vi.fn((toolName: string) => {
 });
 
 vi.mock('./views/_registry', () => ({
-    getToolFullViewComponent: getToolFullViewComponentSpy,
     getToolViewComponent: getToolViewComponentSpy,
 }));
 
@@ -74,10 +69,9 @@ vi.mock('./PermissionFooter', () => ({
 }));
 
 describe('ToolFullView (inference + view selection)', () => {
-    it('uses tool.input._acp.kind to select a full view component', async () => {
+    it('uses tool.input._acp.kind to select a renderer and forces detailLevel=full', async () => {
         renderedFullViewSpy.mockReset();
         renderedViewSpy.mockReset();
-        getToolFullViewComponentSpy.mockClear();
         getToolViewComponentSpy.mockClear();
         const { ToolFullView } = await import('./ToolFullView');
 
@@ -100,13 +94,13 @@ describe('ToolFullView (inference + view selection)', () => {
 
         expect(tree.root.findAllByType('FullToolView' as any)).toHaveLength(1);
         expect(renderedFullViewSpy).toHaveBeenCalled();
-        expect(getToolFullViewComponentSpy).toHaveBeenCalledWith('execute');
+        expect(getToolViewComponentSpy).toHaveBeenCalledWith('execute');
+        expect(renderedFullViewSpy).toHaveBeenCalledWith(expect.objectContaining({ detailLevel: 'full' }));
     });
 
-    it('falls back to the normal tool view component when no full view component exists', async () => {
+    it('renders the normal tool view component and forces detailLevel=full', async () => {
         renderedFullViewSpy.mockReset();
         renderedViewSpy.mockReset();
-        getToolFullViewComponentSpy.mockClear();
         getToolViewComponentSpy.mockClear();
         const { ToolFullView } = await import('./ToolFullView');
 
@@ -131,5 +125,6 @@ describe('ToolFullView (inference + view selection)', () => {
         expect(renderedViewSpy).toHaveBeenCalled();
         expect(renderedFullViewSpy).not.toHaveBeenCalled();
         expect(getToolViewComponentSpy).toHaveBeenCalledWith('Read');
+        expect(renderedViewSpy).toHaveBeenCalledWith(expect.objectContaining({ detailLevel: 'full' }));
     });
 });

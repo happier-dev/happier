@@ -12,7 +12,7 @@ export const providerSearchTools = {
         input: z.object({
             items: z.array(z.any()).optional(),
             locations: z.array(z.any()).optional()
-        }).partial().loose()
+        }).partial().passthrough()
     },
 } satisfies Record<string, KnownToolDefinition>;
 

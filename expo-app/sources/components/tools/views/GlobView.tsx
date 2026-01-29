@@ -5,50 +5,36 @@ import { ToolSectionView } from '../ToolSectionView';
 import type { ToolViewProps } from './_registry';
 import { maybeParseJson } from '../utils/parseJson';
 
-function coerceStringArray(value: unknown): string[] | null {
-    if (!Array.isArray(value)) return null;
-    const out: string[] = [];
-    for (const item of value) {
-        if (typeof item !== 'string') return null;
-        out.push(item);
-    }
-    return out;
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
 }
 
-function getGlobMatches(result: unknown): string[] {
+function getMatches(result: unknown): string[] {
     const parsed = maybeParseJson(result);
-
-    const direct = coerceStringArray(parsed);
-    if (direct) return direct;
-
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const obj = parsed as Record<string, unknown>;
-        const candidates = [obj.files, obj.matches, obj.paths, obj.results];
-        for (const candidate of candidates) {
-            const arr = coerceStringArray(candidate);
-            if (arr) return arr;
-        }
-    }
-
-    return [];
+    const record = asRecord(parsed);
+    const matches = record?.matches;
+    if (!Array.isArray(matches)) return [];
+    return matches.filter((m): m is string => typeof m === 'string');
 }
 
-export const GlobView = React.memo<ToolViewProps>(({ tool }) => {
+export const GlobView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     const { theme } = useUnistyles();
     if (tool.state !== 'completed') return null;
 
-    const matches = getGlobMatches(tool.result);
+    const matches = getMatches(tool.result);
     if (matches.length === 0) return null;
 
-    const max = 8;
+    const isFullView = detailLevel === 'full';
+    const max = isFullView ? 40 : 8;
     const shown = matches.slice(0, max);
     const more = matches.length - shown.length;
 
     return (
-        <ToolSectionView>
+        <ToolSectionView fullWidth={isFullView}>
             <View style={styles.container}>
                 {shown.map((path, idx) => (
-                    <Text key={`${idx}-${path}`} style={styles.path} numberOfLines={1}>
+                    <Text key={`${idx}-${path}`} style={styles.path} numberOfLines={isFullView ? 2 : 1}>
                         {path}
                     </Text>
                 ))}

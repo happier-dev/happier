@@ -17,12 +17,12 @@ export const coreReasoningTools = {
         minimal: true,
         input: z.object({
             title: z.string().optional().describe('Optional title for the reasoning'),
-        }).partial().loose(),
+        }).partial().passthrough(),
         result: z.object({
             content: z.string().optional().describe('Reasoning content (markdown)'),
             text: z.string().optional().describe('Reasoning text'),
             status: z.enum(['completed', 'in_progress', 'canceled', 'error']).optional(),
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (opts.tool.input?.title && typeof opts.tool.input.title === 'string') {
                 return opts.tool.input.title;

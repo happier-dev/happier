@@ -11,8 +11,8 @@ export const providerUiTools = {
         noStatus: true,
         input: z.object({
             title: z.string().optional().describe('New session title')
-        }).partial().loose(),
-        result: z.object({}).partial().loose()
+        }).partial().passthrough(),
+        result: z.object({}).partial().passthrough()
     },
     WorkspaceIndexingPermission: {
         title: 'Workspace indexing',
@@ -29,7 +29,7 @@ export const providerUiTools = {
                 name: z.string().optional(),
                 kind: z.string().optional(),
             }).partial()).optional(),
-        }).partial().loose(),
-        result: z.object({}).partial().loose(),
+        }).partial().passthrough(),
+        result: z.object({}).partial().passthrough(),
     },
 } satisfies Record<string, KnownToolDefinition>;

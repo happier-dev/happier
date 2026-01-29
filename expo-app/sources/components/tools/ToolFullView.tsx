@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { ToolCall, Message } from '@/sync/typesMessage';
 import { CodeView } from '../CodeView';
 import { Metadata } from '@/sync/storageTypes';
-import { getToolFullViewComponent, getToolViewComponent } from './views/_registry';
+import { getToolViewComponent } from './views/_registry';
 import { layout } from '../layout';
 import { useLocalSetting } from '@/sync/storage';
 import { StyleSheet } from 'react-native-unistyles';
@@ -45,10 +45,8 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
     }, [toolForRendering.name, toolForRendering.input, toolForRendering.description]);
 
     // Check if there's a specialized content view for this tool.
-    // Prefer a dedicated full view, but fall back to the regular tool view when available.
-    const SpecializedFullView =
-        getToolFullViewComponent(normalizedToolName) ??
-        getToolViewComponent(normalizedToolName);
+    // ToolFullView always renders the same tool renderer in `detailLevel="full"` mode.
+    const SpecializedFullView = getToolViewComponent(normalizedToolName);
     const screenWidth = useWindowDimensions().width;
     const toolViewShowDebugByDefault = useSetting('toolViewShowDebugByDefault');
     const [showDebug, setShowDebug] = React.useState<boolean>(toolViewShowDebugByDefault);
@@ -65,6 +63,7 @@ export function ToolFullView({ tool, sessionId, metadata, messages = [], interac
                         metadata={metadata || null}
                         messages={messages}
                         sessionId={sessionId}
+                        detailLevel="full"
                         interaction={interaction}
                     />
                 ) : (

@@ -35,12 +35,14 @@ function truncateLines(text: string, maxLines: number): { text: string; truncate
     return { text: lines.slice(0, maxLines).join('\n'), truncated: true };
 }
 
-export const ReadView = React.memo<ToolViewProps>(({ tool }) => {
+export const ReadView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     if (tool.state !== 'completed') return null;
     const extracted = extractReadContent(tool.result);
     if (!extracted) return null;
 
-    const { text, truncated } = truncateLines(extracted.content, 20);
+    // Protect the UI from extremely large reads; keep `_raw` for debugging.
+    const maxLines = detailLevel === 'full' ? 400 : 20;
+    const { text, truncated } = truncateLines(extracted.content, maxLines);
     return (
         <ToolSectionView fullWidth>
             <View style={styles.container}>

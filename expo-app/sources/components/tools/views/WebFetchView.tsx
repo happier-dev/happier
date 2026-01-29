@@ -28,17 +28,34 @@ function getText(result: unknown): string | null {
     return null;
 }
 
-export const WebFetchView = React.memo<ToolViewProps>(({ tool }) => {
+function getStatus(result: unknown): number | null {
+    const parsed = maybeParseJson(result);
+    const obj = asRecord(parsed);
+    if (!obj) return null;
+    return typeof obj.status === 'number' ? obj.status : null;
+}
+
+export const WebFetchView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     if (tool.state !== 'completed') return null;
     const url = typeof tool.input?.url === 'string' ? tool.input.url : null;
     const text = getText(tool.result);
+    const status = getStatus(tool.result);
     if (!url && !text) return null;
 
     return (
-        <ToolSectionView>
+        <ToolSectionView fullWidth={detailLevel === 'full'}>
             <View style={styles.container}>
-                {url ? <Text style={styles.url} numberOfLines={2}>{url}</Text> : null}
-                {text ? <CodeView code={truncate(text, 2200)} /> : null}
+                {url ? (
+                    <View style={styles.header}>
+                        <Text style={styles.url} numberOfLines={2}>
+                            {url}
+                        </Text>
+                        {typeof status === 'number' ? (
+                            <Text style={styles.status}>{`HTTP ${status}`}</Text>
+                        ) : null}
+                    </View>
+                ) : null}
+                {text ? <CodeView code={detailLevel === 'full' ? text : truncate(text, 2200)} /> : null}
             </View>
         </ToolSectionView>
     );
@@ -51,7 +68,17 @@ const styles = StyleSheet.create((theme) => ({
         backgroundColor: theme.colors.surfaceHigh,
         gap: 10,
     },
+    header: {
+        flexDirection: 'row',
+        gap: 8,
+    },
     url: {
+        flex: 1,
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        fontFamily: 'Menlo',
+    },
+    status: {
         fontSize: 12,
         color: theme.colors.textSecondary,
         fontFamily: 'Menlo',

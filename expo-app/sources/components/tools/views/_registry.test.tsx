@@ -8,16 +8,11 @@ vi.mock('./WriteView', () => ({ WriteView: () => null }));
 vi.mock('./TodoView', () => ({ TodoView: () => null }));
 vi.mock('./ExitPlanToolView', () => ({ ExitPlanToolView: () => null }));
 vi.mock('./MultiEditView', () => ({ MultiEditView: () => null }));
+vi.mock('./EnterPlanModeView', () => ({ EnterPlanModeView: () => null }));
 vi.mock('./TaskView', () => ({ TaskView: () => null }));
-vi.mock('./BashViewFull', () => ({ BashViewFull: () => null }));
-vi.mock('./EditViewFull', () => ({ EditViewFull: () => null }));
-vi.mock('./MultiEditViewFull', () => ({ MultiEditViewFull: () => null }));
-vi.mock('./CodexBashView', () => ({ CodexBashView: () => null }));
 vi.mock('./PatchView', () => ({ PatchView: () => null }));
 vi.mock('./DiffView', () => ({ DiffView: () => null }));
 vi.mock('./AskUserQuestionView', () => ({ AskUserQuestionView: () => null }));
-vi.mock('./GeminiEditView', () => ({ GeminiEditView: () => null }));
-vi.mock('./GeminiExecuteView', () => ({ GeminiExecuteView: () => null }));
 vi.mock('./AcpHistoryImportView', () => ({ AcpHistoryImportView: () => null }));
 vi.mock('./GlobView', () => ({ GlobView: () => null }));
 vi.mock('./GrepView', () => ({ GrepView: () => null }));
@@ -26,6 +21,7 @@ vi.mock('./WebSearchView', () => ({ WebSearchView: () => null }));
 vi.mock('./CodeSearchView', () => ({ CodeSearchView: () => null }));
 vi.mock('./ReasoningView', () => ({ ReasoningView: () => null }));
 vi.mock('./WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null }));
+vi.mock('./DeleteView', () => ({ DeleteView: () => null }));
 
 describe('toolViewRegistry', () => {
     it('registers a Read view for lowercase read tool name', async () => {
@@ -42,5 +38,16 @@ describe('toolViewRegistry', () => {
         }
 
         expect(getToolViewComponent('read')).toBe(ReadView);
+    });
+
+    it('returns a renderer for canonical Patch tools', async () => {
+        let getToolViewComponent: (name: string) => any;
+        try {
+            ({ getToolViewComponent } = await import('./_registry'));
+        } catch (e: any) {
+            throw new Error(e?.stack ? String(e.stack) : String(e));
+        }
+
+        expect(getToolViewComponent('Patch')).not.toBeNull();
     });
 });

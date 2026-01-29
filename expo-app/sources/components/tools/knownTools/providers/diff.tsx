@@ -14,10 +14,10 @@ export const providerDiffTools = {
         noStatus: true,  // Always successful, stateless like Task
         input: z.object({
             unified_diff: z.string().describe('Unified diff content')
-        }).partial().loose(),
+        }).partial().passthrough(),
         result: z.object({
             status: z.literal('completed').describe('Always completed')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             // Try to extract filename from unified diff
             if (opts.tool.input?.unified_diff && typeof opts.tool.input.unified_diff === 'string') {
@@ -46,10 +46,10 @@ export const providerDiffTools = {
             unified_diff: z.string().optional().describe('Unified diff content'),
             filePath: z.string().optional().describe('File path'),
             description: z.string().optional().describe('Edit description')
-        }).partial().loose(),
+        }).partial().passthrough(),
         result: z.object({
             status: z.literal('completed').describe('Always completed')
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             // Try to extract filename from filePath first
             if (opts.tool.input?.filePath && typeof opts.tool.input.filePath === 'string') {

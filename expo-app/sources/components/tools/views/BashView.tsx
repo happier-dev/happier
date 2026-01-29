@@ -7,9 +7,10 @@ import { extractShellCommand } from '../utils/shellCommand';
 import { maybeParseJson } from '../utils/parseJson';
 import { extractStdStreams, tailTextWithEllipsis } from '../utils/stdStreams';
 
-export const BashView = React.memo((props: { tool: ToolCall, metadata: Metadata | null }) => {
+export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata | null; detailLevel?: 'title' | 'summary' | 'full' }) => {
     const { input, result, state } = props.tool;
     const command = extractShellCommand(input) ?? (typeof (input as any)?.command === 'string' ? (input as any).command : '');
+    const isFullView = props.detailLevel === 'full';
 
     const parsedStreams = extractStdStreams(result);
     let unparsedOutput: string | null = null;
@@ -26,12 +27,18 @@ export const BashView = React.memo((props: { tool: ToolCall, metadata: Metadata 
         error = result;
     }
 
-    const maxStreamingChars = 2000;
+    const maxStreamingChars = isFullView ? 8000 : 2000;
+    const maxCompletedChars = 6000;
     const streamingStdout = parsedStreams?.stdout ? tailTextWithEllipsis(parsedStreams.stdout, maxStreamingChars) : null;
     const streamingStderr = parsedStreams?.stderr ? tailTextWithEllipsis(parsedStreams.stderr, maxStreamingChars) : null;
-    const maxCompletedChars = 6000;
-    const completedStdout = parsedStreams?.stdout ? tailTextWithEllipsis(parsedStreams.stdout, maxCompletedChars) : null;
-    const completedStderr = parsedStreams?.stderr ? tailTextWithEllipsis(parsedStreams.stderr, maxCompletedChars) : null;
+    const completedStdout =
+        parsedStreams?.stdout
+            ? (isFullView ? parsedStreams.stdout : tailTextWithEllipsis(parsedStreams.stdout, maxCompletedChars))
+            : unparsedOutput;
+    const completedStderr =
+        parsedStreams?.stderr
+            ? (isFullView ? parsedStreams.stderr : tailTextWithEllipsis(parsedStreams.stderr, maxCompletedChars))
+            : null;
 
     return (
         <>
@@ -42,6 +49,7 @@ export const BashView = React.memo((props: { tool: ToolCall, metadata: Metadata 
                     stderr={state === 'running' ? streamingStderr : (state === 'completed' ? completedStderr : null)}
                     error={error}
                     hideEmptyOutput
+                    fullWidth={isFullView}
                 />
             </ToolSectionView>
         </>

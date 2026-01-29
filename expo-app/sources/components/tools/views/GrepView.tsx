@@ -5,77 +5,53 @@ import { ToolSectionView } from '../ToolSectionView';
 import type { ToolViewProps } from './_registry';
 import { maybeParseJson } from '../utils/parseJson';
 
-type GrepMatch = { file?: string; path?: string; line?: number; text?: string };
+type GrepMatch = { filePath?: string; line?: number; excerpt?: string };
 
-function coerceMatches(value: unknown): GrepMatch[] {
-    const parsed = maybeParseJson(value);
-
-    if (Array.isArray(parsed)) {
-        const out: GrepMatch[] = [];
-        for (const item of parsed) {
-            if (typeof item === 'string') {
-                out.push({ text: item });
-            } else if (item && typeof item === 'object' && !Array.isArray(item)) {
-                const obj = item as Record<string, unknown>;
-                out.push({
-                    file: typeof obj.file === 'string' ? obj.file : undefined,
-                    path: typeof obj.path === 'string' ? obj.path : undefined,
-                    line: typeof obj.line === 'number' ? obj.line : undefined,
-                    text: typeof obj.text === 'string' ? obj.text : undefined,
-                });
-            }
-        }
-        return out;
-    }
-
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const obj = parsed as Record<string, unknown>;
-        const candidates = [obj.matches, obj.results, obj.items];
-        for (const candidate of candidates) {
-            if (Array.isArray(candidate)) {
-                return coerceMatches(candidate);
-            }
-        }
-        if (typeof obj.stdout === 'string') {
-            return obj.stdout
-                .split('\n')
-                .map((line) => line.trim())
-                .filter(Boolean)
-                .map((text) => ({ text }));
-        }
-    }
-
-    if (typeof parsed === 'string' && parsed.trim()) {
-        return parsed
-            .split('\n')
-            .map((line) => line.trim())
-            .filter(Boolean)
-            .map((text) => ({ text }));
-    }
-
-    return [];
+function asRecord(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return value as Record<string, unknown>;
 }
 
-export const GrepView = React.memo<ToolViewProps>(({ tool }) => {
+function getMatches(result: unknown): GrepMatch[] {
+    const parsed = maybeParseJson(result);
+    const record = asRecord(parsed);
+    const matches = record?.matches;
+    if (!Array.isArray(matches)) return [];
+
+    const out: GrepMatch[] = [];
+    for (const item of matches) {
+        const obj = asRecord(item);
+        if (!obj) continue;
+        out.push({
+            filePath: typeof (obj as any).filePath === 'string' ? (obj as any).filePath : undefined,
+            line: typeof (obj as any).line === 'number' ? (obj as any).line : undefined,
+            excerpt: typeof (obj as any).excerpt === 'string' ? (obj as any).excerpt : undefined,
+        });
+    }
+    return out;
+}
+
+export const GrepView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     if (tool.state !== 'completed') return null;
-    const matches = coerceMatches(tool.result);
+    const matches = getMatches(tool.result);
     if (matches.length === 0) return null;
 
-    const max = 6;
+    const isFullView = detailLevel === 'full';
+    const max = isFullView ? 24 : 6;
     const shown = matches.slice(0, max);
     const more = matches.length - shown.length;
 
     return (
-        <ToolSectionView>
+        <ToolSectionView fullWidth={isFullView}>
             <View style={styles.container}>
                 {shown.map((m, idx) => {
-                    const label = (m.path ?? m.file)
-                        ? `${m.path ?? m.file}${typeof m.line === 'number' ? `:${m.line}` : ''}`
+                    const label = m.filePath
+                        ? `${m.filePath}${typeof m.line === 'number' ? `:${m.line}` : ''}`
                         : null;
                     return (
                         <View key={idx} style={styles.row}>
-                            {label ? <Text style={styles.label} numberOfLines={1}>{label}</Text> : null}
-                            {m.text ? <Text style={styles.text} numberOfLines={2}>{m.text}</Text> : null}
+                            {label ? <Text style={styles.label} numberOfLines={isFullView ? 2 : 1}>{label}</Text> : null}
+                            {m.excerpt ? <Text style={styles.text} numberOfLines={isFullView ? 6 : 2}>{m.excerpt}</Text> : null}
                         </View>
                     );
                 })}

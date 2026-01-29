@@ -89,16 +89,50 @@ describe('normalizeToolCallV2', () => {
             toolName: 'edit',
             rawInput: {
                 edits: [
-                    { file_path: '/tmp/a.txt', old_string: 'a', new_string: 'b' },
-                    { file_path: '/tmp/b.txt', old_string: 'c', new_string: 'd' },
+                    { filePath: '/tmp/a.txt', oldText: 'a', newText: 'b', replaceAll: true },
+                    { path: '/tmp/b.txt', old_string: 'c', new_string: 'd' },
                 ],
             },
             callId: 'call-multiedit',
         });
 
         expect(normalized.canonicalToolName).toBe('MultiEdit');
+        expect(normalized.input).toMatchObject({ edits: expect.any(Array) });
+        expect((normalized.input as any).edits).toEqual([
+            { file_path: '/tmp/a.txt', old_string: 'a', new_string: 'b', replace_all: true },
+            { file_path: '/tmp/b.txt', old_string: 'c', new_string: 'd' },
+        ]);
+    });
+
+    it('treats edit calls that include full content as Write (OpenCode ACP compatibility)', () => {
+        const normalized = normalizeToolCallV2({
+            protocol: 'acp',
+            provider: 'opencode',
+            toolName: 'edit',
+            rawInput: { file_path: '/tmp/a.txt', content: 'hello' },
+            callId: 'call-edit-as-write-content',
+        });
+
+        expect(normalized.canonicalToolName).toBe('Write');
         expect(normalized.input).toMatchObject({
-            edits: expect.any(Array),
+            file_path: '/tmp/a.txt',
+            content: 'hello',
+        });
+    });
+
+    it('treats edit calls that include full file_content as Write (Auggie compatibility)', () => {
+        const normalized = normalizeToolCallV2({
+            protocol: 'acp',
+            provider: 'auggie',
+            toolName: 'Edit',
+            rawInput: { path: 'tool_validation_results.md', file_content: '# hi' },
+            callId: 'call-edit-as-write',
+        });
+
+        expect(normalized.canonicalToolName).toBe('Write');
+        expect(normalized.input).toMatchObject({
+            file_path: 'tool_validation_results.md',
+            content: '# hi',
         });
     });
 
@@ -116,18 +150,45 @@ describe('normalizeToolCallV2', () => {
     });
 
     it('maps Task* variants to Task (unifies task helpers)', () => {
-        expect(
-            normalizeToolCallV2({ protocol: 'claude', provider: 'claude', toolName: 'TaskCreate', rawInput: { subject: 'x' }, callId: 't1' })
-                .canonicalToolName
-        ).toBe('Task');
-        expect(
-            normalizeToolCallV2({ protocol: 'claude', provider: 'claude', toolName: 'TaskList', rawInput: {}, callId: 't2' })
-                .canonicalToolName
-        ).toBe('Task');
-        expect(
-            normalizeToolCallV2({ protocol: 'claude', provider: 'claude', toolName: 'TaskUpdate', rawInput: { taskId: '1' }, callId: 't3' })
-                .canonicalToolName
-        ).toBe('Task');
+        const created = normalizeToolCallV2({
+            protocol: 'claude',
+            provider: 'claude',
+            toolName: 'TaskCreate',
+            rawInput: { subject: 'x' },
+            callId: 't1',
+        });
+        expect(created.canonicalToolName).toBe('Task');
+        expect(created.input).toMatchObject({ operation: 'create' });
+
+        const listed = normalizeToolCallV2({
+            protocol: 'claude',
+            provider: 'claude',
+            toolName: 'TaskList',
+            rawInput: {},
+            callId: 't2',
+        });
+        expect(listed.canonicalToolName).toBe('Task');
+        expect(listed.input).toMatchObject({ operation: 'list' });
+
+        const updated = normalizeToolCallV2({
+            protocol: 'claude',
+            provider: 'claude',
+            toolName: 'TaskUpdate',
+            rawInput: { taskId: '1' },
+            callId: 't3',
+        });
+        expect(updated.canonicalToolName).toBe('Task');
+        expect(updated.input).toMatchObject({ operation: 'update' });
+
+        const ran = normalizeToolCallV2({
+            protocol: 'claude',
+            provider: 'claude',
+            toolName: 'Task',
+            rawInput: { description: 'Explore' },
+            callId: 't4',
+        });
+        expect(ran.canonicalToolName).toBe('Task');
+        expect(ran.input).toMatchObject({ operation: 'run' });
     });
 
     it('maps fetch to WebFetch/WebSearch based on payload shape', () => {
@@ -276,6 +337,61 @@ describe('normalizeToolCallV2', () => {
         });
     });
 
+    it('derives Patch.modify.old_content/new_content from unified_diff when providers omit old/new', () => {
+        const normalized = normalizeToolCallV2({
+            protocol: 'codex',
+            provider: 'codex',
+            toolName: 'CodexPatch',
+            rawInput: {
+                changes: {
+                    '/tmp/a.txt': {
+                        type: 'update',
+                        unified_diff: 'diff --git a/a b/b\n--- a/a\n+++ b/b\n@@ -1 +1 @@\n-old\n+new\n',
+                        move_path: null,
+                    },
+                },
+            },
+            callId: 'call-patch-preview',
+        });
+
+        expect(normalized.canonicalToolName).toBe('Patch');
+        expect(normalized.input).toMatchObject({
+            changes: {
+                '/tmp/a.txt': {
+                    modify: {
+                        old_content: 'old',
+                        new_content: 'new',
+                    },
+                },
+            },
+        });
+    });
+
+    it('normalizes delete Patch changes into Patch.changes[...].delete even when providers omit content', () => {
+        const normalized = normalizeToolCallV2({
+            protocol: 'codex',
+            provider: 'codex',
+            toolName: 'CodexPatch',
+            rawInput: {
+                changes: {
+                    '/tmp/deleted.txt': {
+                        type: 'delete',
+                    },
+                },
+            },
+            callId: 'call-patch-delete-empty',
+        });
+
+        expect(normalized.canonicalToolName).toBe('Patch');
+        expect(normalized.input).toMatchObject({
+            changes: {
+                '/tmp/deleted.txt': {
+                    delete: { content: '' },
+                },
+            },
+        });
+    });
+
     it('normalizes diff aliases into Diff.unified_diff', () => {
         const normalized = normalizeToolCallV2({
             protocol: 'codex',
@@ -289,6 +405,42 @@ describe('normalizeToolCallV2', () => {
         expect(normalized.input).toMatchObject({
             unified_diff: 'diff --git a/a b/b\n@@ -1 +1 @@\n-a\n+b\n',
         });
+    });
+
+    it('maps delete/remove to Delete when no changes map is present (stable file_paths schema)', () => {
+        const normalized = normalizeToolCallV2({
+            protocol: 'acp',
+            provider: 'auggie',
+            toolName: 'delete',
+            rawInput: { filePath: '/tmp/a.txt' },
+            callId: 'del-1',
+        });
+
+        expect(normalized.canonicalToolName).toBe('Delete');
+        expect(normalized.input).toMatchObject({ file_paths: ['/tmp/a.txt'] });
+
+        const remove = normalizeToolCallV2({
+            protocol: 'acp',
+            provider: 'opencode',
+            toolName: 'remove',
+            rawInput: { file_paths: ['a.txt', 'b.txt'] },
+            callId: 'del-2',
+        });
+        expect(remove.canonicalToolName).toBe('Delete');
+        expect(remove.input).toMatchObject({ file_paths: ['a.txt', 'b.txt'] });
+    });
+
+    it('treats delete calls with a changes map as Patch (back-compat)', () => {
+        const normalized = normalizeToolCallV2({
+            protocol: 'acp',
+            provider: 'codex',
+            toolName: 'delete',
+            rawInput: { changes: { '/tmp/a.txt': { delete: { content: '' } } } },
+            callId: 'del-3',
+        });
+
+        expect(normalized.canonicalToolName).toBe('Patch');
+        expect(normalized.input).toMatchObject({ changes: expect.any(Object) });
     });
 });
 
@@ -307,6 +459,53 @@ describe('normalizeToolResultV2', () => {
             _happy: expect.objectContaining({ v: 2, protocol: 'acp', provider: 'opencode', rawToolName: 'execute', canonicalToolName: 'Bash' }),
             _raw: expect.anything(),
         });
+    });
+
+    it('extracts <return-code>/<output> blocks from tagged bash stdout (Auggie)', () => {
+        const rawOutput = [
+            'Here are the results from executing the command.',
+            '<return-code>',
+            '0',
+            '</return-code>',
+            '<output>',
+            'HELLO',
+            '</output>',
+        ].join('\n');
+
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'auggie',
+            rawToolName: 'execute',
+            canonicalToolName: 'Bash',
+            rawOutput: { stdout: rawOutput },
+        });
+
+        expect(normalized).toMatchObject({
+            stdout: 'HELLO',
+            exit_code: 0,
+            _happy: expect.anything(),
+            _raw: expect.anything(),
+        });
+    });
+
+    it('normalizes Delete results into a stable deleted boolean and error message', () => {
+        const ok = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'auggie',
+            rawToolName: 'delete',
+            canonicalToolName: 'Delete',
+            rawOutput: { ok: true },
+        });
+        expect(ok).toMatchObject({ deleted: true });
+
+        const notFound = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'auggie',
+            rawToolName: 'delete',
+            canonicalToolName: 'Delete',
+            rawOutput: { ok: false, error: 'Not found' },
+        });
+        expect(notFound).toMatchObject({ deleted: false, error: 'Not found' });
     });
 
     it('parses opencode <file> read outputs into a canonical Read.file.content', () => {
@@ -364,6 +563,321 @@ describe('normalizeToolResultV2', () => {
                 canonicalToolName: 'Reasoning',
             }),
             _raw: expect.anything(),
+        });
+    });
+
+    it('normalizes empty TodoWrite outputs into a stable todos list', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'write',
+            canonicalToolName: 'TodoWrite',
+            rawOutput: [],
+        });
+
+        expect(normalized).toMatchObject({
+            todos: [],
+            _happy: expect.objectContaining({ canonicalToolName: 'TodoWrite' }),
+            _raw: expect.anything(),
+        });
+    });
+
+    it('parses opencode search output into CodeSearch.matches', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'opencode',
+            rawToolName: 'search',
+            canonicalToolName: 'CodeSearch',
+            rawOutput: [
+                'Found 1 matches',
+                '/tmp/happy-tool-trace.txt:',
+                '  Line 2: beta',
+            ].join('\n'),
+        });
+
+        expect(normalized).toMatchObject({
+            matches: [
+                {
+                    filePath: '/tmp/happy-tool-trace.txt',
+                    line: 2,
+                    excerpt: 'beta',
+                },
+            ],
+        });
+    });
+
+    it('coerces Gemini content-block results into a minimal Glob.matches list', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'glob',
+            canonicalToolName: 'Glob',
+            rawOutput: [
+                { type: 'content', content: { type: 'text', text: 'Found 3 matching file(s)' } },
+            ],
+        });
+
+        expect(normalized).toMatchObject({
+            matches: ['Found 3 matching file(s)'],
+        });
+    });
+
+    it('coerces Gemini content-block results into a minimal CodeSearch.matches list', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'search',
+            canonicalToolName: 'CodeSearch',
+            rawOutput: [
+                { type: 'content', content: { type: 'text', text: 'Found 5 matches' } },
+            ],
+        });
+
+        expect(normalized).toMatchObject({
+            matches: [{ excerpt: 'Found 5 matches' }],
+        });
+    });
+
+    it('normalizes Glob result arrays into Glob.matches', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'claude',
+            provider: 'claude',
+            rawToolName: 'Glob',
+            canonicalToolName: 'Glob',
+            rawOutput: ['a.txt', 'b.txt'],
+        });
+
+        expect(normalized).toMatchObject({
+            matches: ['a.txt', 'b.txt'],
+        });
+    });
+
+    it('normalizes Grep output lines into Grep.matches', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'claude',
+            provider: 'claude',
+            rawToolName: 'Grep',
+            canonicalToolName: 'Grep',
+            rawOutput: [
+                '/tmp/a.txt:3: hello world',
+                '/tmp/b.txt:10: goodbye',
+            ].join('\n'),
+        });
+
+        expect(normalized).toMatchObject({
+            matches: [
+                { filePath: '/tmp/a.txt', line: 3, excerpt: 'hello world' },
+                { filePath: '/tmp/b.txt', line: 10, excerpt: 'goodbye' },
+            ],
+        });
+    });
+
+    it('normalizes WebSearch results into a stable list', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'claude',
+            provider: 'claude',
+            rawToolName: 'WebSearch',
+            canonicalToolName: 'WebSearch',
+            rawOutput: [{ title: 'Example', url: 'https://example.com', snippet: 'hi' }],
+        });
+
+        expect(normalized).toMatchObject({
+            results: [{ title: 'Example', url: 'https://example.com', snippet: 'hi' }],
+        });
+    });
+
+    it('normalizes WebFetch into {status,text} when available', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'claude',
+            provider: 'claude',
+            rawToolName: 'WebFetch',
+            canonicalToolName: 'WebFetch',
+            rawOutput: { status: 200, text: 'ok' },
+        });
+
+        expect(normalized).toMatchObject({
+            status: 200,
+            text: 'ok',
+        });
+    });
+
+    it('coerces Gemini content-block WebSearch outputs into a minimal results list', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'web_search',
+            canonicalToolName: 'WebSearch',
+            rawOutput: [{ type: 'content', content: { type: 'text', text: 'Found 2 results' } }],
+        });
+
+        expect(normalized).toMatchObject({
+            results: [{ snippet: 'Found 2 results' }],
+        });
+    });
+
+    it('coerces Gemini content-block WebFetch outputs into a minimal text payload', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'web_fetch',
+            canonicalToolName: 'WebFetch',
+            rawOutput: [{ type: 'content', content: { type: 'text', text: 'Fetched ok' } }],
+        });
+
+        expect(normalized).toMatchObject({
+            text: 'Fetched ok',
+        });
+    });
+
+    it('coerces Gemini content-block Read outputs into a canonical file.content', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'read_file',
+            canonicalToolName: 'Read',
+            rawOutput: [{ type: 'content', content: { type: 'text', text: 'Line 1\nLine 2' } }],
+        });
+
+        expect(normalized).toMatchObject({
+            file: { content: 'Line 1\nLine 2' },
+        });
+    });
+
+    it('normalizes Edit results into a stable applied shape when providers return ok=true', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'edit',
+            canonicalToolName: 'Edit',
+            rawOutput: { ok: true },
+        });
+
+        expect(normalized).toMatchObject({
+            applied: true,
+            ok: true,
+        });
+    });
+
+    it('normalizes Edit results into a stable applied/error shape when providers return failures', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'edit',
+            canonicalToolName: 'Edit',
+            rawOutput: { ok: false, error: 'Permission denied' },
+        });
+
+        expect(normalized).toMatchObject({
+            applied: false,
+            ok: false,
+            error: 'Permission denied',
+        });
+    });
+
+    it('normalizes Write results into a stable applied shape when providers return ok=true', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'write',
+            canonicalToolName: 'Write',
+            rawOutput: { ok: true },
+        });
+
+        expect(normalized).toMatchObject({
+            applied: true,
+            ok: true,
+        });
+    });
+
+    it('normalizes Write results into a stable applied/error shape when providers return failures', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'acp',
+            provider: 'gemini',
+            rawToolName: 'write',
+            canonicalToolName: 'Write',
+            rawOutput: { ok: false, error: 'Permission denied' },
+        });
+
+        expect(normalized).toMatchObject({
+            applied: false,
+            ok: false,
+            error: 'Permission denied',
+        });
+    });
+
+    it('normalizes change_title tool results into a stable title/message shape', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'codex',
+            provider: 'codex',
+            rawToolName: 'mcp__happy__change_title',
+            canonicalToolName: 'change_title',
+            rawOutput: { content: [{ type: 'text', text: 'Successfully changed chat title to: \"Hello\"' }], isError: false },
+        });
+
+        expect(normalized).toMatchObject({
+            title: 'Hello',
+        });
+    });
+
+    it('normalizes Patch results into a stable applied/message shape', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'codex',
+            provider: 'codex',
+            rawToolName: 'CodexPatch',
+            canonicalToolName: 'Patch',
+            rawOutput: { stdout: 'Success. Updated files.', stderr: '', success: true },
+        });
+
+        expect(normalized).toMatchObject({
+            applied: true,
+            stdout: 'Success. Updated files.',
+            stderr: '',
+        });
+    });
+
+    it('normalizes Patch results into a stable applied/errorMessage shape on failure', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'codex',
+            provider: 'codex',
+            rawToolName: 'CodexPatch',
+            canonicalToolName: 'Patch',
+            rawOutput: { stdout: '', stderr: 'Permission denied', success: false },
+        });
+
+        expect(normalized).toMatchObject({
+            applied: false,
+            errorMessage: 'Permission denied',
+        });
+    });
+
+    it('normalizes Diff results into a stable status shape', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'codex',
+            provider: 'codex',
+            rawToolName: 'CodexDiff',
+            canonicalToolName: 'Diff',
+            rawOutput: { status: 'completed' },
+        });
+
+        expect(normalized).toMatchObject({
+            status: 'completed',
+        });
+    });
+
+    it('normalizes Task tool_result content blocks into Task.content', () => {
+        const normalized = normalizeToolResultV2({
+            protocol: 'claude',
+            provider: 'claude',
+            rawToolName: 'Task',
+            canonicalToolName: 'Task',
+            rawOutput: [
+                { type: 'text', text: 'Line 1' },
+                { type: 'text', text: 'Line 2' },
+            ],
+        });
+
+        expect(normalized).toMatchObject({
+            content: 'Line 1\nLine 2',
         });
     });
 });

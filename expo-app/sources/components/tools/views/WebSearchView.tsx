@@ -45,22 +45,25 @@ function coerceResults(value: unknown): WebResult[] {
     return out;
 }
 
-export const WebSearchView = React.memo<ToolViewProps>(({ tool }) => {
+export const WebSearchView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     if (tool.state !== 'completed') return null;
     const results = coerceResults(tool.result);
     if (results.length === 0) return null;
 
-    const shown = results.slice(0, 5);
+    // NOTE: `detailLevel` controls how much of the tool output is rendered inline.
+    // Summary keeps the timeline compact; full is used for expanded cards and the ToolFullView screen.
+    const isFullView = detailLevel === 'full';
+    const shown = results.slice(0, isFullView ? 20 : 5);
     const more = results.length - shown.length;
 
     return (
-        <ToolSectionView>
+        <ToolSectionView fullWidth={isFullView}>
             <View style={styles.container}>
                 {shown.map((r, idx) => (
                     <View key={idx} style={styles.row}>
-                        {r.title ? <Text style={styles.title} numberOfLines={2}>{r.title}</Text> : null}
-                        {r.url ? <Text style={styles.url} numberOfLines={1}>{r.url}</Text> : null}
-                        {r.snippet ? <Text style={styles.snippet} numberOfLines={3}>{r.snippet}</Text> : null}
+                        {r.title ? <Text style={styles.title} numberOfLines={isFullView ? 3 : 2}>{r.title}</Text> : null}
+                        {r.url ? <Text style={styles.url} numberOfLines={isFullView ? 2 : 1}>{r.url}</Text> : null}
+                        {r.snippet ? <Text style={styles.snippet} numberOfLines={isFullView ? 6 : 3}>{r.snippet}</Text> : null}
                     </View>
                 ))}
                 {more > 0 ? <Text style={styles.more}>+{more} more</Text> : null}

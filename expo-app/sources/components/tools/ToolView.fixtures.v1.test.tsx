@@ -61,12 +61,13 @@ const renderedFullSpy = vi.fn();
 
 vi.mock('./views/_registry', () => ({
     getToolViewComponent: (toolName: string) => (props: any) => {
+        const detailLevel = props?.detailLevel ?? 'summary';
+        if (detailLevel === 'full') {
+            renderedFullSpy({ toolName, props });
+            return React.createElement('FullToolView', { name: toolName });
+        }
         renderedSummarySpy({ toolName, props });
         return React.createElement('SummaryToolView', { name: toolName });
-    },
-    getToolFullViewComponent: (toolName: string) => (props: any) => {
-        renderedFullSpy({ toolName, props });
-        return React.createElement('FullToolView', { name: toolName });
     },
 }));
 
@@ -94,6 +95,9 @@ vi.mock('@/sync/storage', () => ({
         if (key === 'toolViewDetailLevelDefault') return mockDetailLevelDefault;
         if (key === 'toolViewDetailLevelDefaultLocalControl') return mockDetailLevelDefault;
         if (key === 'toolViewDetailLevelByToolName') return {};
+        if (key === 'toolViewTapAction') return 'expand';
+        if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
+        if (key === 'toolViewExpandedDetailLevelByToolName') return {};
         return null;
     },
 }));

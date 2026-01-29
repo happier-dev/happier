@@ -14,10 +14,10 @@ export const coreDiffTools = {
         noStatus: true,
         input: z.object({
             unified_diff: z.string().describe('Unified diff content'),
-        }).partial().loose(),
+        }).partial().passthrough(),
         result: z.object({
             status: z.literal('completed').optional(),
-        }).partial().loose(),
+        }).partial().passthrough(),
         extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const diff = opts.tool.input?.unified_diff;
             if (typeof diff !== 'string' || !diff) return null;

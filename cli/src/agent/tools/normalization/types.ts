@@ -6,6 +6,7 @@ export type CanonicalToolName =
     | 'Write'
     | 'Edit'
     | 'MultiEdit'
+    | 'Delete'
     | 'Glob'
     | 'Grep'
     | 'LS'
@@ -29,4 +30,3 @@ export type ToolNormalizationHappyMetaV2 = {
     rawToolName: string;
     canonicalToolName: string;
 };
-

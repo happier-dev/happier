@@ -24,7 +24,6 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('./views/_registry', () => ({
     getToolViewComponent: () => null,
-    getToolFullViewComponent: () => null,
 }));
 
 vi.mock('@/components/tools/knownTools', () => ({
