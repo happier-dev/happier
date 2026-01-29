@@ -1,6 +1,7 @@
 import { log } from "@/utils/log";
 import { FastifyError } from "fastify";
 import { Fastify } from "../types";
+import { FastifyError } from "fastify";
 import { readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { resolveUiConfig } from "@/app/api/uiConfig";
