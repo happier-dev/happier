@@ -884,8 +884,6 @@ export const pt: TranslationStructure = {
         expand: 'Expandir/recolher',
         input: 'Entrada',
         output: 'Saída',
-        open: 'Abrir',
-        expand: 'Expandir',
     },
 
     tools: {

@@ -894,8 +894,6 @@ export const ru: TranslationStructure = {
         expand: 'Развернуть/свернуть',
         input: 'Входные данные',
         output: 'Результат',
-        open: 'Открыть',
-        expand: 'Развернуть',
     },
 
     tools: {

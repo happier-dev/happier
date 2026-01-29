@@ -884,8 +884,6 @@ export const ca: TranslationStructure = {
         expand: 'Expandir/contraure',
         input: 'Entrada',
         output: 'Sortida',
-        open: 'Obrir',
-        expand: 'Expandir',
     },
 
     tools: {
