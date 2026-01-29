@@ -1137,8 +1137,6 @@ export const it: TranslationStructure = {
         expand: 'Espandi/Comprimi',
         input: 'Input',
         output: 'Output',
-        open: 'Apri',
-        expand: 'Espandi',
     },
 
     tools: {

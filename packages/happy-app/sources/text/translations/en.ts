@@ -897,8 +897,6 @@ export const en = {
         expand: 'Expand/collapse',
         input: 'Input',
         output: 'Output',
-        open: 'Open',
-        expand: 'Expand',
     },
 
     tools: {

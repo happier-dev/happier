@@ -884,8 +884,6 @@ export const es: TranslationStructure = {
         expand: 'Expandir/contraer',
         input: 'Entrada',
         output: 'Salida',
-        open: 'Abrir',
-        expand: 'Expandir',
     },
 
     tools: {

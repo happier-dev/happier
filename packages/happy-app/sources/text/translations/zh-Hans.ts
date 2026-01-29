@@ -885,8 +885,6 @@ export const zhHans: TranslationStructure = {
         expand: '展开/折叠',
         input: '输入',
         output: '输出',
-        open: '打开',
-        expand: '展开',
     },
 
     tools: {
