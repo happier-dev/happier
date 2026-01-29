@@ -51,46 +51,58 @@ export async function initDbSqlite(): Promise<void> {
 
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    client.$use(async (params, next) => {
-        // Only retry writes (reads are generally safe and should fail fast if they fail).
-        const action = params.action;
-        const isWrite =
-            action === "create" ||
-            action === "createMany" ||
-            action === "update" ||
-            action === "updateMany" ||
-            action === "upsert" ||
-            action === "delete" ||
-            action === "deleteMany";
+    const clientWithRetries = (client as any).$extends({
+        query: {
+            $allModels: {
+                $allOperations: async ({
+                    operation,
+                    args,
+                    query,
+                }: {
+                    operation: string;
+                    args: unknown;
+                    query: (args: unknown) => Promise<unknown>;
+                }) => {
+                    const isWrite =
+                        operation === "create" ||
+                        operation === "createMany" ||
+                        operation === "update" ||
+                        operation === "updateMany" ||
+                        operation === "upsert" ||
+                        operation === "delete" ||
+                        operation === "deleteMany";
 
-        if (!isWrite) {
-            return await next(params);
-        }
+                    if (!isWrite) {
+                        return await query(args);
+                    }
 
-        const maxRetries = 6;
-        let attempt = 0;
-        while (true) {
-            try {
-                return await next(params);
-            } catch (e) {
-                if (!isSqliteBusyError(e) || attempt >= maxRetries) {
-                    throw e;
-                }
-                const backoffMs = 25 * Math.pow(2, attempt);
-                attempt += 1;
-                await sleep(backoffMs);
-            }
-        }
-    });
+                    const maxRetries = 6;
+                    let attempt = 0;
+                    while (true) {
+                        try {
+                            return await query(args);
+                        } catch (e) {
+                            if (!isSqliteBusyError(e) || attempt >= maxRetries) {
+                                throw e;
+                            }
+                            const backoffMs = 25 * Math.pow(2, attempt);
+                            attempt += 1;
+                            await sleep(backoffMs);
+                        }
+                    }
+                },
+            },
+        },
+    }) as PrismaClientType;
 
     // These PRAGMAs are applied per connection; Prisma may use a pool, but even setting them once
     // on startup helps CI stability. We keep the connection open; shutdown handler will disconnect.
-    await client.$connect();
+    await clientWithRetries.$connect();
     // NOTE: Some PRAGMAs (e.g. `journal_mode`) return results; use `$queryRaw*` to avoid P2010.
-    await client.$queryRawUnsafe("PRAGMA journal_mode=WAL");
-    await client.$queryRawUnsafe("PRAGMA busy_timeout=5000");
+    await clientWithRetries.$queryRawUnsafe("PRAGMA journal_mode=WAL");
+    await clientWithRetries.$queryRawUnsafe("PRAGMA busy_timeout=5000");
 
-    _db = client;
+    _db = clientWithRetries;
 }
 
 export function isPrismaErrorCode(err: unknown, code: string): boolean {
