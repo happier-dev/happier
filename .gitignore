@@ -29,6 +29,11 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 
+# local caches (dev / CI)
+.tmp-home/
+.yarn-cache/
+.yarn-global/
+
 # macOS
 .DS_Store
 *.pem
