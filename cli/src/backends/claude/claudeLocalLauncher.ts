@@ -1,5 +1,5 @@
 import { logger } from "@/ui/logger";
-import { claudeLocal } from "./claudeLocal";
+import { claudeLocal, ExitCodeError } from "./claudeLocal";
 import { Session, type SessionFoundInfo } from "./session";
 import { Future } from "@/utils/future";
 import { createSessionScanner } from "./utils/sessionScanner";
@@ -37,7 +37,9 @@ function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: Permis
     return filtered.length > 0 ? filtered : undefined;
 }
 
-export async function claudeLocalLauncher(session: Session): Promise<'switch' | 'exit'> {
+export type LauncherResult = { type: 'switch' } | { type: 'exit', code: number };
+
+export async function claudeLocalLauncher(session: Session): Promise<LauncherResult> {
 
     // Create scanner
     const scanner = await createSessionScanner({
@@ -68,7 +70,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
 
 
     // Handle abort
-    let exitReason: 'switch' | 'exit' | null = null;
+        let exitReason: LauncherResult | null = null;
     const processAbortController = new AbortController();
     let exitFuture = new Future<void>();
     try {
@@ -106,7 +108,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
 
             // Switching to remote mode
             if (!exitReason) {
-                exitReason = 'switch';
+                exitReason = { type: 'switch' };
             }
 
             // Reset sent messages
@@ -122,7 +124,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
 
             // Switching to remote mode
             if (!exitReason) {
-                exitReason = 'switch';
+                exitReason = { type: 'switch' };
             }
 
             // Abort
@@ -161,7 +163,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
                 serverPreview: serverPending.preview,
             });
             if (!confirmed) {
-                return 'switch';
+                return { type: 'switch' };
             }
 
             // Discard server-side pending messages first, so remote mode does not replay them later.
@@ -175,7 +177,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
                     type: 'message',
                     message: `Failed to discard pending messages before switching to local mode: ${formatErrorForUi(e)}`,
                 });
-                return 'switch';
+                return { type: 'switch' };
             }
 
             // Mark committed queued remote messages as discarded in session metadata so the UI can render them correctly.
@@ -188,7 +190,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
                     type: 'message',
                     message: `Failed to mark queued messages as discarded before switching to local mode: ${formatErrorForUi(e)}`,
                 });
-                return 'switch';
+                return { type: 'switch' };
             }
 
             if (queuedCount > 0) {
@@ -264,11 +266,16 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
 
                 // Normal exit
                 if (!exitReason) {
-                    exitReason = 'exit';
+                    exitReason = { type: 'exit', code: 0 };
                     break;
                 }
             } catch (e) {
                 logger.debug('[local]: launch error', e);
+                // If Claude exited with non-zero exit code, propagate it
+                if (e instanceof ExitCodeError) {
+                    exitReason = { type: 'exit', code: e.exitCode };
+                    break;
+                }
                 if (expectsFork && session.sessionId === null) {
                     // If the local spawn failed before Claude reported the forked session,
                     // restore the previous session info so remote mode can still resume it.
@@ -287,7 +294,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
                             type: 'message',
                             message: `Claude process failed ${maxRetries} times. Switching back to remote mode.`,
                         });
-                        exitReason = 'switch';
+                        exitReason = { type: 'switch' };
                         break;
                     }
 
@@ -318,7 +325,7 @@ export async function claudeLocalLauncher(session: Session): Promise<'switch' | 
     }
 
     // Return
-    return exitReason || 'exit';
+    return exitReason || { type: 'exit', code: 0 };
 }
     async function confirmDiscardQueuedMessages(opts: { queuedCount: number; queuedPreview: string[]; serverCount: number; serverPreview: string[] }): Promise<boolean> {
         if (!process.stdin.isTTY || !process.stdout.isTTY) {
