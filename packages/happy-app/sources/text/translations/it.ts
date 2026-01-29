@@ -1135,6 +1135,8 @@ export const it: TranslationStructure = {
     toolView: {
         input: 'Input',
         output: 'Output',
+        open: 'Apri',
+        expand: 'Espandi',
     },
 
     tools: {

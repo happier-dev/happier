@@ -8,7 +8,25 @@ import url from 'node:url';
 // Resolve symlinks so repoRootDir/expoAppDir are computed from the real filesystem location.
 const toolsDir = path.dirname(fs.realpathSync(url.fileURLToPath(import.meta.url)));
 const expoAppDir = path.resolve(toolsDir, '..');
-const repoRootDir = path.resolve(expoAppDir, '..');
+
+function findRepoRoot(startDir) {
+    let dir = startDir;
+    for (let i = 0; i < 8; i++) {
+        if (
+            fs.existsSync(path.resolve(dir, 'package.json')) &&
+            fs.existsSync(path.resolve(dir, 'yarn.lock'))
+        ) {
+            return dir;
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+    }
+    // Fallback: historic layout had the app at repoRoot/expo-app.
+    return path.resolve(startDir, '..');
+}
+
+const repoRootDir = findRepoRoot(expoAppDir);
 const patchDir = path.resolve(expoAppDir, 'patches');
 const patchDirFromRepoRoot = path.relative(repoRootDir, patchDir);
 const patchDirFromExpoApp = path.relative(expoAppDir, patchDir);

@@ -882,6 +882,8 @@ export const pt: TranslationStructure = {
     toolView: {
         input: 'Entrada',
         output: 'Saída',
+        open: 'Abrir',
+        expand: 'Expandir',
     },
 
     tools: {
