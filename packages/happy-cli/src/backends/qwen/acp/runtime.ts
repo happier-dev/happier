@@ -7,7 +7,9 @@ import type { ApiSessionClient } from '@/api/apiSession';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
 
-export function createOpenCodeAcpRuntime(params: {
+import { maybeUpdateQwenSessionIdMetadata } from '@/backends/qwen/utils/qwenSessionIdMetadata';
+
+export function createQwenAcpRuntime(params: {
   directory: string;
   session: ApiSessionClient;
   messageBuffer: MessageBuffer;
@@ -15,10 +17,11 @@ export function createOpenCodeAcpRuntime(params: {
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
 }) {
+  const lastPublishedQwenSessionId = { value: null as string | null };
   let backend: AgentBackend | null = null;
 
   return createAcpRuntime({
-    provider: 'opencode',
+    provider: 'qwen',
     directory: params.directory,
     session: params.session,
     messageBuffer: params.messageBuffer,
@@ -27,14 +30,21 @@ export function createOpenCodeAcpRuntime(params: {
     onThinkingChange: params.onThinkingChange,
     ensureBackend: async () => {
       if (backend) return backend;
-      const created = await createCatalogAcpBackend('opencode', {
+      const created = await createCatalogAcpBackend('qwen', {
         cwd: params.directory,
         mcpServers: params.mcpServers,
         permissionHandler: params.permissionHandler,
       });
       backend = created.backend;
-      logger.debug('[OpenCodeACP] Backend created');
+      logger.debug('[QwenACP] Backend created');
       return backend;
+    },
+    onSessionIdChange: (nextSessionId) => {
+      maybeUpdateQwenSessionIdMetadata({
+        getQwenSessionId: () => nextSessionId,
+        updateHappySessionMetadata: (updater) => params.session.updateMetadata(updater),
+        lastPublished: lastPublishedQwenSessionId,
+      });
     },
   });
 }

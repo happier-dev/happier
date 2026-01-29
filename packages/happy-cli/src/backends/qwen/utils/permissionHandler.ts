@@ -1,5 +1,5 @@
 /**
- * OpenCode Permission Handler
+ * Qwen Permission Handler
  *
  * Uses the shared Codex-like ACP permission mode logic.
  */
@@ -14,19 +14,19 @@ import {
 
 export type { PermissionResult, PendingRequest };
 
-export function isOpenCodeWriteLikeToolName(toolName: string): boolean {
+export function isQwenWriteLikeToolName(toolName: string): boolean {
   return isDefaultWriteLikeToolName(toolName);
 }
 
-export class OpenCodePermissionHandler extends CodexLikePermissionHandler {
+export class QwenPermissionHandler extends CodexLikePermissionHandler {
   constructor(
     session: ApiSessionClient,
     opts?: { onAbortRequested?: (() => void | Promise<void>) | null },
   ) {
     super({
       session,
-      logPrefix: '[OpenCode]',
-      isWriteLikeToolName: isOpenCodeWriteLikeToolName,
+      logPrefix: '[Qwen]',
+      isWriteLikeToolName: isQwenWriteLikeToolName,
       onAbortRequested: typeof opts?.onAbortRequested === 'function' ? opts.onAbortRequested : null,
     });
   }
