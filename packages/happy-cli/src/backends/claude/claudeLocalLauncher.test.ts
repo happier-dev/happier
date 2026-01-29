@@ -13,6 +13,13 @@ vi.mock('node:readline', () => ({
 const mockClaudeLocal = vi.fn();
 vi.mock('./claudeLocal', () => ({
   claudeLocal: mockClaudeLocal,
+  ExitCodeError: class ExitCodeError extends Error {
+    exitCode: number;
+    constructor(exitCode: number) {
+      super(`ExitCodeError(${exitCode})`);
+      this.exitCode = exitCode;
+    }
+  },
 }));
 
 const mockCreateSessionScanner = vi.fn();
@@ -76,7 +83,7 @@ describe('claudeLocalLauncher', () => {
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const result = await claudeLocalLauncher(session);
 
-    expect(result).toBe('exit');
+    expect(result).toEqual({ type: 'exit', code: 0 });
     expect(sendSessionEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'message',
@@ -130,7 +137,7 @@ describe('claudeLocalLauncher', () => {
       // and draining the entire timer queue can hit Vitest's safety limit. Advancing time just
       // beyond the retry backoff window is enough to validate the bounded retry behavior.
       await vi.advanceTimersByTimeAsync(30_000);
-      await expect(launcherPromise).resolves.toBe('switch');
+      await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
       expect(sendSessionEvent).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
@@ -175,7 +182,7 @@ describe('claudeLocalLauncher', () => {
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const result = await claudeLocalLauncher(session);
 
-    expect(result).toBe('exit');
+    expect(result).toEqual({ type: 'exit', code: 0 });
     expect(sendSessionEvent).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'message',
@@ -223,7 +230,7 @@ describe('claudeLocalLauncher', () => {
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const result = await claudeLocalLauncher(session);
 
-    expect(result).toBe('exit');
+    expect(result).toEqual({ type: 'exit', code: 0 });
     expect(mockCreateSessionScanner).toHaveBeenCalledWith(
       expect.objectContaining({
         sessionId: 'sess_1',
@@ -301,7 +308,7 @@ describe('claudeLocalLauncher', () => {
 
     const switchHandler = handlersByMethod.switch[0];
     expect(await switchHandler({ to: 'remote' })).toBe(true);
-    await expect(launcherPromise).resolves.toBe('switch');
+    await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
 
     expect(optsSessionId).toBe('sess_0');
     expect(sessionIdAtSpawn).toBeNull();
@@ -377,7 +384,7 @@ describe('claudeLocalLauncher', () => {
 
     // Switching to remote should abort and exit local launcher
     expect(await switchHandler({ to: 'remote' })).toBe(true);
-    await expect(launcherPromise).resolves.toBe('switch');
+    await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
 
     session.cleanup();
   });
@@ -419,7 +426,7 @@ describe('claudeLocalLauncher', () => {
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const result = await claudeLocalLauncher(session);
 
-    expect(result).toBe('switch');
+    expect(result).toEqual({ type: 'switch' });
     expect(mockClaudeLocal).not.toHaveBeenCalled();
 
     session.cleanup();
@@ -465,7 +472,7 @@ describe('claudeLocalLauncher', () => {
     const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
     const result = await claudeLocalLauncher(session);
 
-    expect(result).toBe('exit');
+    expect(result).toEqual({ type: 'exit', code: 0 });
     expect(session.queue.size()).toBe(0);
     expect(sendSessionEvent).toHaveBeenCalledWith(
       expect.objectContaining({

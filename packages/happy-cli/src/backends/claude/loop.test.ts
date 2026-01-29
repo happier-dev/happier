@@ -22,7 +22,7 @@ vi.mock('@/ui/logger', () => ({
 
 describe('loop', () => {
   it('updates Session.mode so keepAlive reports correct mode', async () => {
-    mockClaudeLocalLauncher.mockResolvedValueOnce('switch')
+    mockClaudeLocalLauncher.mockResolvedValueOnce({ type: 'switch' })
     mockClaudeRemoteLauncher.mockResolvedValueOnce('exit')
 
     const keepAlive = vi.fn()
