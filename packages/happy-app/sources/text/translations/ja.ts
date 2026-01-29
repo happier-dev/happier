@@ -1129,6 +1129,8 @@ export const ja: TranslationStructure = {
     toolView: {
         input: '入力',
         output: '出力',
+        open: '開く',
+        expand: '展開',
     },
 
     tools: {

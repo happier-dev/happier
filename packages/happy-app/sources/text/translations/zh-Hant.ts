@@ -5,7 +5,36 @@
  * - Functions with typed object parameters for dynamic text
  */
 
-import { TranslationStructure } from "../_default";
+import type { TranslationStructure } from '../_types';
+import { zhHans } from './zh-Hans';
+
+type DeepPartial<T> = {
+    [K in keyof T]?: T[K] extends (...args: any[]) => any
+        ? T[K]
+        : T[K] extends readonly unknown[]
+            ? T[K]
+            : T[K] extends object
+                ? DeepPartial<T[K]>
+                : T[K];
+};
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function deepMerge<T>(base: T, overrides: DeepPartial<T>): T {
+    if (!isPlainObject(base) || !isPlainObject(overrides)) return (overrides ?? base) as T;
+
+    const result: Record<string, unknown> = { ...(base as Record<string, unknown>) };
+    for (const [key, value] of Object.entries(overrides)) {
+        if (value === undefined) continue;
+        const baseValue = (base as any)[key];
+        result[key] = isPlainObject(baseValue) && isPlainObject(value)
+            ? deepMerge(baseValue, value as any)
+            : value;
+    }
+    return result as T;
+}
 
 /**
  * Chinese plural helper function
@@ -16,7 +45,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
     return count === 1 ? singular : plural;
 }
 
-export const zhHant: TranslationStructure = {
+const zhHantOverrides: DeepPartial<TranslationStructure> = {
     tabs: {
         // Tab navigation labels
         inbox: '收件匣',
@@ -906,7 +935,7 @@ export const zhHant: TranslationStructure = {
         enterTmuxTempDir: '輸入暫存目錄路徑',
         tmuxUpdateEnvironment: '自動更新環境',
         nameRequired: '設定檔名稱為必填',
-        deleteConfirm: '確定要刪除設定檔「{name}」嗎？',
+        deleteConfirm: ({ name }: { name: string }) => `確定要刪除設定檔「${name}」嗎？`,
         editProfile: '編輯設定檔',
         addProfileTitle: '新增設定檔',
         delete: {
@@ -917,3 +946,5 @@ export const zhHant: TranslationStructure = {
         },
     }
 } as const;
+
+export const zhHant: TranslationStructure = deepMerge(zhHans, zhHantOverrides);

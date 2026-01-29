@@ -883,6 +883,8 @@ export const zhHans: TranslationStructure = {
     toolView: {
         input: '输入',
         output: '输出',
+        open: '打开',
+        expand: '展开',
     },
 
     tools: {
