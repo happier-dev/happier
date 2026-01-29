@@ -85,7 +85,10 @@ export async function stopCaffeinate(): Promise<void> {
             caffeinateProcess.kill('SIGTERM');
             
             // Give it a moment to terminate gracefully
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            await new Promise((resolve) => {
+                const timeout = setTimeout(resolve, 1000) as unknown as { unref?: () => void };
+                timeout.unref?.();
+            });
 
             if (caffeinateProcess && !caffeinateProcess.killed) {
                 logger.debug('[caffeinate] Force killing caffeinate process');
