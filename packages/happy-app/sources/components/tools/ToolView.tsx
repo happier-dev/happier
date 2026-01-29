@@ -196,7 +196,6 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     let isToolUseError = false;
     if (toolForRendering.state === 'error' && toolForRendering.result && parseToolUseError(toolForRendering.result).isToolUseError) {
         isToolUseError = true;
-        console.log('isToolUseError', toolForRendering.result);
     }
 
     // Check permission status first for denied/canceled states
