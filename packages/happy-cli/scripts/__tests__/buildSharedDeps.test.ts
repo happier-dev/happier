@@ -9,7 +9,7 @@ describe('buildSharedDeps', () => {
       throw new Error('tsc failed');
     });
 
-    expect(() => runTsc('/repo/packages/protocol/tsconfig.json', { execFileSync })).toThrow(
+    expect(() => runTsc('/repo/packages/happy-protocol/tsconfig.json', { execFileSync })).toThrow(
       /tsconfig\.json/i,
     );
   });

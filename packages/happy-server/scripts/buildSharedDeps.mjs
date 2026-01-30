@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -34,28 +34,12 @@ function runTsc(tsconfigPath) {
   execFileSync(tscBin, ['-p', tsconfigPath], { stdio: 'inherit' });
 }
 
-function ensureSymlink({ linkPath, targetPath }) {
-  try {
-    rmSync(linkPath, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
-  mkdirSync(resolve(linkPath, '..'), { recursive: true });
-  symlinkSync(targetPath, linkPath, process.platform === 'win32' ? 'junction' : 'dir');
-}
-
-// Ensure @happy/agents is resolvable from the protocol workspace.
-ensureSymlink({
-  linkPath: resolve(repoRoot, 'packages', 'protocol', 'node_modules', '@happy', 'agents'),
-  targetPath: resolve(repoRoot, 'packages', 'agents'),
-});
-
 // Build shared packages (dist/ is the runtime contract).
-runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
-runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
+runTsc(resolve(repoRoot, 'packages', 'happy-agents', 'tsconfig.json'));
+runTsc(resolve(repoRoot, 'packages', 'happy-protocol', 'tsconfig.json'));
 
 // Sanity check: ensure protocol dist entry exists.
-const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');
+const protocolDist = resolve(repoRoot, 'packages', 'happy-protocol', 'dist', 'index.js');
 if (!existsSync(protocolDist)) {
   throw new Error(`Expected @happy/protocol build output missing: ${protocolDist}`);
 }
