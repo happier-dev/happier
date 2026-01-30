@@ -38,11 +38,11 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "postinstall": "yarn --cwd ../agents -s build && yarn -s build",
+    "postinstall": "yarn --cwd ../happy-agents -s build && yarn -s build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@happy/agents": "link:../agents"
+    "@happy/agents": "0.0.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2"

@@ -64,6 +64,7 @@
     "dev:local-server": "$npm_execpath run build && tsx --env-file .env.dev-local-server src/index.ts",
     "dev:integration-test-env": "$npm_execpath run build && tsx --env-file .env.integration-test src/index.ts",
     "prepublishOnly": "$npm_execpath run build && $npm_execpath test",
+    "prepack": "node scripts/bundleWorkspaceDeps.mjs",
     "release": "$npm_execpath install && release-it",
     "build:shared": "node scripts/buildSharedDeps.mjs",
     "pretypecheck": "yarn -s build:shared",
@@ -92,7 +93,13 @@
     "link:dev": "node scripts/link-dev.cjs",
     "unlink:dev": "node scripts/link-dev.cjs unlink"
   },
+  "bundledDependencies": [
+    "@happy/agents",
+    "@happy/protocol"
+  ],
   "dependencies": {
+    "@happy/agents": "0.0.0",
+    "@happy/protocol": "0.0.0",
     "@agentclientprotocol/sdk": "^0.8.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@stablelib/base64": "^2.0.1",
@@ -124,8 +131,6 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "@happy/agents": "link:../agents",
-    "@happy/protocol": "link:../protocol",
     "@eslint/compat": "^1",
     "@types/node": ">=20",
     "cross-env": "^10.1.0",
