@@ -1,0 +1,7 @@
+# Happy-local is multi-component (multiple repos per stack).
+# Validators must NOT run ad-hoc `git diff` in the orchestration repo.
+# The canonical per-component PR-style diff is captured as command evidence (`task-diff`).
+diffReview:
+  mode: evidence
+  evidenceCommand: task-diff
+

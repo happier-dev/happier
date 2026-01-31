@@ -1,0 +1,530 @@
+import './utils/env/env.mjs';
+import { parseArgs } from './utils/cli/args.mjs';
+import { pathExists } from './utils/fs/fs.mjs';
+import { killProcessTree, runCapture, spawnProc } from './utils/proc/proc.mjs';
+import { componentDirEnvKey, getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
+import { killPortListeners } from './utils/net/ports.mjs';
+import { getServerComponentName, isHappyServerRunning, waitForServerReady } from './utils/server/server.mjs';
+import { ensureCliBuilt, ensureDepsInstalled, pmExecBin, pmSpawnScript, requireDir } from './utils/proc/pm.mjs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { maybeResetTailscaleServe } from './tailscale.mjs';
+import { isDaemonRunning, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
+import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
+import { assertServerComponentDirMatches, assertServerPrismaProviderMatches } from './utils/server/validate.mjs';
+import { resolveServerStartScript } from './utils/server/flavor_scripts.mjs';
+import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
+import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded, resolveAutoCopyFromMainEnabled } from './utils/stack/startup.mjs';
+import { recordStackRuntimeStart, recordStackRuntimeUpdate } from './utils/stack/runtime_state.mjs';
+import { resolveStackContext } from './utils/stack/context.mjs';
+import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls.mjs';
+import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
+import { openUrlInBrowser } from './utils/ui/browser.mjs';
+import { ensureDevExpoServer, resolveExpoTailscaleEnabled } from './utils/dev/expo_dev.mjs';
+import { maybeRunInteractiveStackAuthSetup } from './utils/auth/interactive_stack_auth.mjs';
+import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
+import { daemonStartGate, formatDaemonAuthRequiredError } from './utils/auth/daemon_gate.mjs';
+import { resolveServerUiEnv } from './utils/server/ui_env.mjs';
+import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
+import { cmd, sectionTitle } from './utils/ui/layout.mjs';
+import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
+
+/**
+ * Run the local stack in "production-like" mode:
+ * - server (happy-server-light by default)
+ * - happy-cli daemon
+ * - optionally serve prebuilt UI (via server or gateway)
+ *
+ * Optional: Expo dev-client Metro for mobile reviewers (`--mobile`).
+ */
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const { flags, kv } = parseArgs(argv);
+  const json = wantsJson(argv, { flags });
+  if (wantsHelp(argv, { flags })) {
+    printResult({
+      json,
+      data: {
+        flags: [
+          '--server=happy-server|happy-server-light',
+          '--no-ui',
+          '--no-daemon',
+          '--restart',
+          '--no-browser',
+          '--mobile',
+          '--expo-tailscale',
+          '--bind=loopback|lan',
+          '--loopback',
+          '--lan',
+        ],
+        json: true,
+      },
+      text: [
+        '[start] usage:',
+        '  happys start [--server=happy-server|happy-server-light] [--restart] [--json]',
+        '  happys start --mobile        # also start Expo dev-client Metro for mobile',
+        '  happys start --expo-tailscale # forward Expo to Tailscale interface for remote access',
+        '  happys start --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
+        '  (legacy in a cloned repo): pnpm start [-- --server=happy-server|happy-server-light] [--json]',
+        '  note: --json prints the resolved config (dry-run) and exits.',
+        '',
+        'note:',
+        '  If run from inside a component checkout/worktree, that checkout is used for this run (without requiring `happys wt use`).',
+      ].join('\n'),
+    });
+    return;
+  }
+
+  const rootDir = getRootDir(import.meta.url);
+
+  // Optional bind-mode override (affects Expo host/origins; best-effort sets HOST too).
+  const bindMode = resolveBindModeFromArgs({ flags, kv });
+  if (bindMode) {
+    applyBindModeToEnv(process.env, bindMode);
+  }
+
+  const inferred = inferComponentFromCwd({
+    rootDir,
+    invokedCwd: getInvokedCwd(process.env),
+    components: ['happy', 'happy-cli', 'happy-server-light', 'happy-server'],
+  });
+  if (inferred) {
+    const stacksKey = componentDirEnvKey(inferred.component);
+    const legacyKey = stacksKey.replace(/^HAPPY_STACKS_/, 'HAPPY_LOCAL_');
+    // Stack env should win. Only infer from CWD when the component dir isn't already configured.
+    if (!(process.env[stacksKey] ?? '').toString().trim() && !(process.env[legacyKey] ?? '').toString().trim()) {
+      process.env[stacksKey] = inferred.repoDir;
+    }
+  }
+
+  const serverPort = resolveServerPortFromEnv({ defaultPort: 3005 });
+
+  // Internal URL used by local processes on this machine.
+  const internalServerUrl = `http://127.0.0.1:${serverPort}`;
+  // Public URL is what you might share/open (e.g. https://<machine>.<tailnet>.ts.net).
+  // We auto-prefer the Tailscale HTTPS URL when available, unless explicitly overridden.
+  const { defaultPublicUrl, envPublicUrl, publicServerUrl: publicServerUrlPreview } = getPublicServerUrlEnvOverride({ serverPort });
+  let publicServerUrl = publicServerUrlPreview;
+
+  const serverComponentName = getServerComponentName({ kv });
+  if (serverComponentName === 'both') {
+    throw new Error(`[local] --server=both is not supported for run (pick one: happy-server-light or happy-server)`);
+  }
+
+  const startDaemon = !flags.has('--no-daemon') && (process.env.HAPPY_LOCAL_DAEMON ?? '1') !== '0';
+  const serveUiWanted = !flags.has('--no-ui') && (process.env.HAPPY_LOCAL_SERVE_UI ?? '1') !== '0';
+  const serveUi = serveUiWanted;
+  const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
+  const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
+  const noBrowser = flags.has('--no-browser') || (process.env.HAPPY_STACKS_NO_BROWSER ?? process.env.HAPPY_LOCAL_NO_BROWSER ?? '').toString().trim() === '1';
+  const uiPrefix = process.env.HAPPY_LOCAL_UI_PREFIX?.trim() ? process.env.HAPPY_LOCAL_UI_PREFIX.trim() : '/';
+  const autostart = getDefaultAutostartPaths();
+  const uiBuildDir = process.env.HAPPY_LOCAL_UI_BUILD_DIR?.trim()
+    ? process.env.HAPPY_LOCAL_UI_BUILD_DIR.trim()
+    : join(autostart.baseDir, 'ui');
+
+  const enableTailscaleServe = (process.env.HAPPY_LOCAL_TAILSCALE_SERVE ?? '0') === '1';
+
+  const serverDir = getComponentDir(rootDir, serverComponentName);
+  const cliDir = getComponentDir(rootDir, 'happy-cli');
+  const uiDir = getComponentDir(rootDir, 'happy');
+  const serverStartScript = resolveServerStartScript({ serverComponentName, serverDir });
+
+  assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
+  assertServerPrismaProviderMatches({ serverComponentName, serverDir });
+
+  await requireDir(serverComponentName, serverDir);
+  await requireDir('happy-cli', cliDir);
+  if (startMobile) {
+    await requireDir('happy', uiDir);
+  }
+
+  const cliBin = join(cliDir, 'bin', 'happy.mjs');
+
+  const cliHomeDir = process.env.HAPPY_LOCAL_CLI_HOME_DIR?.trim()
+    ? process.env.HAPPY_LOCAL_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+    : join(autostart.baseDir, 'cli');
+  const restart = flags.has('--restart');
+
+  if (json) {
+    printResult({
+      json,
+      data: {
+        mode: 'start',
+        serverComponentName,
+        serverDir,
+        uiDir,
+        cliDir,
+        serverPort,
+        internalServerUrl,
+        publicServerUrl,
+        startDaemon,
+        serveUi,
+        startMobile,
+        uiPrefix,
+        uiBuildDir,
+        cliHomeDir,
+      },
+    });
+    return;
+  }
+
+  const uiBuildDirExists = await pathExists(uiBuildDir);
+  if (serveUi && !uiBuildDirExists) {
+    if (serverComponentName === 'happy-server-light') {
+      throw new Error(
+        `[local] UI build directory not found at ${uiBuildDir}. ` +
+          `Run: ${cmd('happys build')} (legacy in a cloned repo: pnpm build)`
+      );
+    }
+    // For happy-server, UI serving is optional.
+    console.log(`${yellow('!')} UI build directory not found at ${uiBuildDir}; UI serving will be disabled`);
+  }
+
+  const children = [];
+  let shuttingDown = false;
+  const baseEnv = { ...process.env };
+  const stackCtx = resolveStackContext({ env: baseEnv, autostart });
+  const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
+
+  // Ensure happy-cli is install+build ready before starting the daemon.
+  const buildCli = (baseEnv.HAPPY_STACKS_CLI_BUILD ?? baseEnv.HAPPY_LOCAL_CLI_BUILD ?? '1').toString().trim() !== '0';
+  await ensureCliBuilt(cliDir, { buildCli });
+
+  // Ensure server deps exist before any Prisma/docker work.
+  await ensureDepsInstalled(serverDir, serverComponentName);
+  if (startMobile) {
+    await ensureDepsInstalled(uiDir, 'happy');
+  }
+
+  // Public URL automation:
+  // - Only the main stack should ever auto-enable Tailscale Serve by default.
+  // - Non-main stacks default to localhost unless the user explicitly configured a public URL
+  //   OR Tailscale Serve is already configured for this stack's internal URL (status matches).
+  const allowEnableTailscale =
+    !stackMode ||
+    stackName === 'main' ||
+    (baseEnv.HAPPY_STACKS_TAILSCALE_SERVE ?? baseEnv.HAPPY_LOCAL_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
+  const resolvedUrls = await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale });
+  if (stackMode && stackName !== 'main' && !resolvedUrls.envPublicUrl) {
+    const src = String(resolvedUrls.publicServerUrlSource ?? '');
+    const hasStackScopedTailscale = src.startsWith('tailscale-');
+    publicServerUrl = hasStackScopedTailscale ? resolvedUrls.publicServerUrl : resolvedUrls.defaultPublicUrl;
+  } else {
+    publicServerUrl = resolvedUrls.publicServerUrl;
+  }
+
+  const serverAlreadyRunning = await isHappyServerRunning(internalServerUrl);
+  const daemonAlreadyRunning = startDaemon ? isDaemonRunning(cliHomeDir) : false;
+  if (!restart && serverAlreadyRunning && (!startDaemon || daemonAlreadyRunning)) {
+    console.log(
+      `${green('✓')} start: already running ${dim('(')}` +
+        `${dim('server=')}${cyan(internalServerUrl)}` +
+        `${startDaemon ? ` ${dim('daemon=')}${daemonAlreadyRunning ? green('running') : dim('stopped')}` : ''}` +
+        `${dim(')')}`
+    );
+    return;
+  }
+
+  // Stack runtime state (stack-scoped commands only): record the runner PID + chosen ports so stop/restart never kills other stacks.
+  if (stackMode && runtimeStatePath) {
+    await recordStackRuntimeStart(runtimeStatePath, {
+      stackName,
+      script: 'run.mjs',
+      ephemeral,
+      ownerPid: process.pid,
+      ports: { server: serverPort },
+    }).catch(() => {});
+  }
+
+  // Server
+  // If a previous run left a server behind, free the port first (prevents false "ready" checks).
+  // NOTE: In stack mode we avoid killing arbitrary port listeners (fail-closed instead).
+  if ((!serverAlreadyRunning || restart) && !stackMode) {
+    await killPortListeners(serverPort, { label: 'server' });
+  }
+
+  const serverEnv = {
+    ...baseEnv,
+    PORT: String(serverPort),
+    // Used by server-light for generating public file URLs.
+    PUBLIC_URL: publicServerUrl,
+    // Avoid noisy failures if a previous run left the metrics port busy.
+    // You can override with METRICS_ENABLED=true if you want it.
+    METRICS_ENABLED: baseEnv.METRICS_ENABLED ?? 'false',
+    ...resolveServerUiEnv({ serveUi, uiBuildDir, uiPrefix, uiBuildDirExists }),
+  };
+  let serverLightAccountCount = null;
+  let happyServerAccountCount = null;
+  if (serverComponentName === 'happy-server-light') {
+    const dataDir = baseEnv.HAPPY_SERVER_LIGHT_DATA_DIR?.trim()
+      ? baseEnv.HAPPY_SERVER_LIGHT_DATA_DIR.trim()
+      : join(autostart.baseDir, 'server-light');
+    serverEnv.HAPPY_SERVER_LIGHT_DATA_DIR = dataDir;
+    serverEnv.HAPPY_SERVER_LIGHT_FILES_DIR = baseEnv.HAPPY_SERVER_LIGHT_FILES_DIR?.trim()
+      ? baseEnv.HAPPY_SERVER_LIGHT_FILES_DIR.trim()
+      : join(dataDir, 'files');
+    serverEnv.DATABASE_URL = baseEnv.DATABASE_URL?.trim()
+      ? baseEnv.DATABASE_URL.trim()
+      : `file:${join(dataDir, 'happy-server-light.sqlite')}`;
+
+    // Reliability: ensure DB schema exists before daemon hits /v1/machines (health checks don't cover DB readiness).
+    // If the server is already running and we are not restarting, do NOT run migrations here (SQLite can lock).
+    const acct = await getAccountCountForServerComponent({
+      serverComponentName,
+      serverDir,
+      env: serverEnv,
+      bestEffort: Boolean(serverAlreadyRunning && !restart),
+    });
+    serverLightAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
+  }
+  let effectiveInternalServerUrl = internalServerUrl;
+  if (serverComponentName === 'happy-server') {
+    const managed = (baseEnv.HAPPY_STACKS_MANAGED_INFRA ?? baseEnv.HAPPY_LOCAL_MANAGED_INFRA ?? '1') !== '0';
+    if (managed) {
+      const envPath = baseEnv.HAPPY_STACKS_ENV_FILE ?? baseEnv.HAPPY_LOCAL_ENV_FILE ?? '';
+      const infra = await ensureHappyServerManagedInfra({
+        stackName: autostart.stackName,
+        baseDir: autostart.baseDir,
+        serverPort,
+        publicServerUrl,
+        envPath,
+        env: baseEnv,
+      });
+
+      // Backend runs on a separate port; gateway owns the public port.
+      const backendPortRaw = (baseEnv.HAPPY_STACKS_HAPPY_SERVER_BACKEND_PORT ?? baseEnv.HAPPY_LOCAL_HAPPY_SERVER_BACKEND_PORT ?? '').trim();
+      const backendPort = backendPortRaw ? Number(backendPortRaw) : serverPort + 10;
+      const backendUrl = `http://127.0.0.1:${backendPort}`;
+      if (!stackMode) {
+        await killPortListeners(backendPort, { label: 'happy-server-backend' });
+      }
+
+      const backendEnv = { ...serverEnv, ...infra.env, PORT: String(backendPort) };
+      const autoMigrate = (baseEnv.HAPPY_STACKS_PRISMA_MIGRATE ?? baseEnv.HAPPY_LOCAL_PRISMA_MIGRATE ?? '1') !== '0';
+      if (autoMigrate) {
+        await applyHappyServerMigrations({ serverDir, env: backendEnv });
+      }
+      // Account probe should use the *actual* DATABASE_URL/infra env (ephemeral stacks do not persist it in env files).
+      const acct = await getAccountCountForServerComponent({
+        serverComponentName,
+        serverDir,
+        env: backendEnv,
+        bestEffort: true,
+      });
+      happyServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
+
+      const backend = await pmSpawnScript({ label: 'server', dir: serverDir, script: 'start', env: backendEnv });
+      children.push(backend);
+      if (stackMode && runtimeStatePath) {
+        await recordStackRuntimeUpdate(runtimeStatePath, {
+          ports: { server: serverPort, backend: backendPort },
+          processes: { happyServerBackendPid: backend.pid },
+        }).catch(() => {});
+      }
+      await waitForServerReady(backendUrl);
+
+      const gatewayArgs = [
+        join(rootDir, 'scripts', 'ui_gateway.mjs'),
+        `--port=${serverPort}`,
+        `--backend-url=${backendUrl}`,
+        `--minio-port=${infra.env.S3_PORT}`,
+        `--bucket=${infra.env.S3_BUCKET}`,
+      ];
+      if (serveUi && (await pathExists(uiBuildDir))) {
+        gatewayArgs.push(`--ui-dir=${uiBuildDir}`);
+      } else {
+        gatewayArgs.push('--no-ui');
+      }
+
+      const gateway = spawnProc('ui', process.execPath, gatewayArgs, { ...backendEnv, PORT: String(serverPort) }, { cwd: rootDir });
+      children.push(gateway);
+      if (stackMode && runtimeStatePath) {
+        await recordStackRuntimeUpdate(runtimeStatePath, { processes: { uiGatewayPid: gateway.pid } }).catch(() => {});
+      }
+      await waitForServerReady(internalServerUrl);
+      effectiveInternalServerUrl = internalServerUrl;
+
+      // Skip default server spawn below
+    }
+  }
+
+  // Default server start (happy-server-light, or happy-server without managed infra).
+  if (!(serverComponentName === 'happy-server' && (baseEnv.HAPPY_STACKS_MANAGED_INFRA ?? baseEnv.HAPPY_LOCAL_MANAGED_INFRA ?? '1') !== '0')) {
+    if (!serverAlreadyRunning || restart) {
+      const server = await pmSpawnScript({ label: 'server', dir: serverDir, script: serverStartScript, env: serverEnv });
+      children.push(server);
+      if (stackMode && runtimeStatePath) {
+        await recordStackRuntimeUpdate(runtimeStatePath, { processes: { serverPid: server.pid } }).catch(() => {});
+      }
+      await waitForServerReady(internalServerUrl);
+    } else {
+      console.log(`${green('✓')} server: already running at ${cyan(internalServerUrl)}`);
+    }
+  }
+
+  if (enableTailscaleServe) {
+    try {
+      const status = await runCapture(process.execPath, [join(rootDir, 'scripts', 'tailscale.mjs'), 'status']);
+      const line = status.split('\n').find((l) => l.toLowerCase().includes('https://'))?.trim();
+      if (line) {
+        console.log(`${green('✓')} tailscale serve: ${cyan(line)}`);
+      } else {
+        console.log(`${green('✓')} tailscale serve enabled`);
+      }
+    } catch {
+      console.log(`${green('✓')} tailscale serve enabled`);
+    }
+  }
+
+  if (serveUi) {
+    const localUi = effectiveInternalServerUrl.replace(/\/+$/, '') + '/';
+    console.log('');
+    console.log(sectionTitle('Web UI'));
+    console.log(`${green('✓')} local:  ${cyan(localUi)}`);
+    if (publicServerUrl && publicServerUrl !== effectiveInternalServerUrl && publicServerUrl !== localUi && publicServerUrl !== defaultPublicUrl) {
+      const pubUi = publicServerUrl.replace(/\/+$/, '') + '/';
+      console.log(`${green('✓')} public: ${cyan(pubUi)}`);
+    }
+    if (enableTailscaleServe) {
+      console.log(`${dim('Tip:')} use the HTTPS *.ts.net URL for remote access`);
+    }
+
+    console.log('');
+    console.log(sectionTitle('Terminal usage'));
+    console.log(dim(`To run ${cyan('happy')} against this stack (and have sessions appear in the UI), export:`));
+    console.log(cmd(`export HAPPY_SERVER_URL="${effectiveInternalServerUrl}"`));
+    console.log(cmd(`export HAPPY_HOME_DIR="${cliHomeDir}"`));
+    console.log(cmd(`export HAPPY_WEBAPP_URL="${publicServerUrl}"`));
+
+    // Auto-open UI (interactive only) using the stack-scoped hostname when applicable.
+    const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    if (isInteractive && !noBrowser) {
+      const prefix = uiPrefix.startsWith('/') ? uiPrefix : `/${uiPrefix}`;
+      const openUrl = await preferStackLocalhostUrl(`http://localhost:${serverPort}${prefix}`, { stackName: autostart.stackName });
+      const res = await openUrlInBrowser(openUrl);
+      if (!res.ok) {
+        console.warn(`[local] ui: failed to open browser automatically (${res.error}).`);
+      }
+    }
+  }
+
+  // Daemon
+  if (startDaemon) {
+    const gate = daemonStartGate({ env: baseEnv, cliHomeDir });
+    if (!gate.ok) {
+      const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+      // In orchestrated auth flows, keep server/UI up and let the orchestrator start daemon post-auth.
+      if (gate.reason === 'auth_flow_missing_credentials') {
+        console.log('[local] auth flow: skipping daemon start until credentials exist');
+      } else if (!isInteractive) {
+        throw new Error(formatDaemonAuthRequiredError({ stackName: autostart.stackName, cliHomeDir }));
+      }
+    } else {
+    const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    if (serverComponentName === 'happy-server' && happyServerAccountCount == null) {
+      const acct = await getAccountCountForServerComponent({
+        serverComponentName,
+        serverDir,
+        env: serverEnv,
+        bestEffort: true,
+      });
+      happyServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
+    }
+    const accountCount =
+      serverComponentName === 'happy-server-light' ? serverLightAccountCount : happyServerAccountCount;
+    const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: baseEnv, stackName: autostart.stackName, isInteractive });
+    await maybeRunInteractiveStackAuthSetup({
+      rootDir,
+      env: baseEnv,
+      stackName: autostart.stackName,
+      cliHomeDir,
+      accountCount,
+      isInteractive,
+      autoSeedEnabled,
+    });
+    await prepareDaemonAuthSeedIfNeeded({
+      rootDir,
+      env: baseEnv,
+      stackName: autostart.stackName,
+      cliHomeDir,
+      startDaemon,
+      isInteractive,
+      accountCount,
+      quiet: false,
+    });
+    await startLocalDaemonWithAuth({
+      cliBin,
+      cliHomeDir,
+      internalServerUrl: effectiveInternalServerUrl,
+      publicServerUrl,
+      isShuttingDown: () => shuttingDown,
+      forceRestart: restart,
+        env: baseEnv,
+        stackName: autostart.stackName,
+    });
+    }
+  }
+
+  // Optional: start Expo dev-client Metro for mobile reviewers.
+  if (startMobile) {
+    const expoRes = await ensureDevExpoServer({
+      startUi: false,
+      startMobile: true,
+      uiDir,
+      autostart,
+      baseEnv,
+      apiServerUrl: publicServerUrl,
+      restart,
+      stackMode,
+      runtimeStatePath,
+      stackName,
+      envPath,
+      children,
+      expoTailscale,
+    });
+    if (expoRes?.tailscale?.ok && expoRes.tailscale.tailscaleIp && expoRes.port) {
+      console.log(`[local] expo tailscale: http://${expoRes.tailscale.tailscaleIp}:${expoRes.port}`);
+    }
+  }
+
+  const shutdown = async () => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    console.log('\n[local] shutting down...');
+
+    if (startDaemon) {
+        await stopLocalDaemon({ cliBin, internalServerUrl: effectiveInternalServerUrl, cliHomeDir });
+    }
+
+    for (const child of children) {
+      if (child.exitCode == null) {
+        killProcessTree(child, 'SIGINT');
+      }
+    }
+
+    await delay(1500);
+    for (const child of children) {
+      if (child.exitCode == null) {
+        killProcessTree(child, 'SIGKILL');
+      }
+    }
+
+    await maybeResetTailscaleServe();
+  };
+
+  process.on('SIGINT', () => shutdown().then(() => process.exit(0)));
+  process.on('SIGTERM', () => shutdown().then(() => process.exit(0)));
+
+  // Keep running
+  await new Promise(() => {});
+}
+
+main().catch((err) => {
+  console.error('[local] failed:', err);
+  process.exit(1);
+});

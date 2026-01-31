@@ -1,0 +1,196 @@
+reviews:
+  profile: chill
+  request_changes_workflow: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+    - main
+    - master
+    - develop
+  high_level_summary: true
+  review_status_comment: true
+  poem: false
+  collapse_walkthrough: false
+  auto_approve:
+    enabled: false
+chat:
+  auto_reply: true
+knowledge_base:
+  learnings:
+    scope: project
+language: en-US
+early_access: false
+path_instructions:
+- path: '**/*.md'
+  instructions: 'Review documentation for:
+
+    - Clarity and accuracy
+
+    - Proper formatting
+
+    - Working links
+
+    - Code example correctness
+
+    '
+- path: tests/**/*
+  instructions: 'Review tests for:
+
+    - Adequate coverage
+
+    - Clear test names
+
+    - Proper assertions
+
+    - Edge case handling
+
+    '
+- path: '**/README.md'
+  instructions: 'Review README for:
+
+    - Clear project description
+
+    - Installation instructions
+
+    - Usage examples
+
+    - Contributing guidelines
+
+    '
+- path: '**/*.ts'
+  instructions: 'Review TypeScript code for:
+
+    - Type safety and proper type annotations
+
+    - Avoid ''any'' types where possible
+
+    - Use of strict mode features
+
+    - Proper interface/type definitions
+
+    - Generic usage and constraints
+
+    '
+- path: '**/*.tsx'
+  instructions: 'Review TypeScript React components for:
+
+    - Proper component typing (FC, props interfaces)
+
+    - Type-safe event handlers
+
+    - Correct hook typing (useState, useEffect, etc.)
+
+    - Props interface documentation
+
+    '
+- path: '**/tsconfig*.json'
+  instructions: 'Review TypeScript configuration for:
+
+    - Strict mode settings
+
+    - Module resolution strategy
+
+    - Target and lib settings
+
+    - Path aliases configuration
+
+    '
+- path: '**/*.jsx'
+  instructions: 'Review React JSX code for:
+
+    - Component composition and hierarchy
+
+    - Proper key usage in lists
+
+    - Event handler naming (handleClick vs onClick)
+
+    - Accessibility (a11y) attributes
+
+    - Conditional rendering patterns
+
+    '
+- path: '**/*.tsx'
+  instructions: 'Review React TypeScript components for:
+
+    - Component structure and organization
+
+    - Props validation and defaults
+
+    - Hook dependencies correctness
+
+    - Memo/callback optimization opportunities
+
+    - Component lifecycle patterns
+
+    '
+- path: '**/components/**/*'
+  instructions: 'Review React components for:
+
+    - Single responsibility principle
+
+    - Reusability and composability
+
+    - State management approach
+
+    - Performance considerations
+
+    - Error boundaries where appropriate
+
+    '
+- path: '**/hooks/**/*'
+  instructions: 'Review custom hooks for:
+
+    - Proper hook naming (useXxx)
+
+    - Dependencies array correctness
+
+    - Cleanup in useEffect
+
+    - Hook composition patterns
+
+    - Testability
+
+    '
+- path: prisma/**/*
+  instructions: 'Review database code for:
+
+    - N+1 query prevention (use include/select wisely)
+
+    - Proper index usage for performance
+
+    - Referential integrity and cascade behavior
+
+    - Migration safety (data loss prevention)
+
+    - Transaction usage where needed
+
+    '
+- path: '**/*.prisma'
+  instructions: 'Evaluate schema design:
+
+    - Proper relation definitions and naming
+
+    - Appropriate field types and constraints
+
+    - Index optimization for common queries
+
+    - Data model normalization
+
+    - Enum usage and validation
+
+    '
+- path: '**/db/**/*'
+  instructions: 'Focus on database access patterns:
+
+    - Query efficiency and optimization
+
+    - Proper error handling
+
+    - Connection management
+
+    - Transaction boundaries
+
+    - Data validation before persistence
+
+    '

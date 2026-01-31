@@ -1,0 +1,102 @@
+---
+id: RULE.CONTEXT.BUDGET_MINIMIZE
+title: Preserve context budget – load only what's needed
+category: context
+blocking: false
+contexts: []
+origins:
+- core
+source:
+  file: guidelines/orchestrators/SESSION_WORKFLOW.md
+---
+
+# Preserve context budget – load only what's needed
+
+## Body
+Preserve context budget:
+- Load only the minimum files/sections necessary for the current decision.
+- Prefer diffs + focused snippets over whole files.
+
+Reference: `guidelines/orchestrators/SESSION_WORKFLOW.md`
+
+---
+id: RULE.CONTEXT.CWAM_REASSURANCE
+title: Context window anxiety management (CWAM)
+category: context
+blocking: false
+contexts:
+- context_window
+origins:
+- core
+---
+
+# Context window anxiety management (CWAM)
+
+## Body
+Keep working methodically and protect context:
+- Prefer small, deterministic steps over rushing.
+- Avoid pasting large logs; summarize and reference artifacts by path.
+- If approaching limits, follow the project's compaction/recovery guidance.
+
+---
+id: RULE.CONTEXT.NO_BIG_FILES
+title: Do not load big files unless necessary
+category: context
+blocking: false
+contexts: []
+origins:
+- core
+source:
+  file: guidelines/orchestrators/SESSION_WORKFLOW.md
+---
+
+# Do not load big files unless necessary
+
+## Body
+Avoid loading huge inputs:
+- Do not paste logs/build artefacts/large generated files into prompts.
+- Extract only the minimal relevant excerpt and reference the full artifact by path.
+
+Reference: `guidelines/orchestrators/SESSION_WORKFLOW.md`
+
+---
+id: RULE.CONTEXT.SNIPPET_ONLY
+title: Share snippets not whole files in prompts
+category: context
+blocking: false
+contexts: []
+origins:
+- core
+source:
+  file: guidelines/orchestrators/SESSION_WORKFLOW.md
+---
+
+# Share snippets not whole files in prompts
+
+## Body
+Share snippets, not entire files:
+- Provide the minimal relevant function/component/section with small surrounding context.
+- Combine multiple small snippets when cross-references are required instead of dumping a full file.
+
+Reference: `guidelines/orchestrators/SESSION_WORKFLOW.md`
+
+---
+id: RULE.CONTEXT7.POSTTRAINING_REQUIRED
+title: Context7 Required For Post-Training Packages
+category: context
+blocking: false
+contexts: []
+origins:
+- core
+source:
+  file: guidelines/shared/CONTEXT7.md
+---
+
+# Context7 Required For Post-Training Packages
+
+## Body
+If work touches any configured post-training package:
+- Refresh up-to-date docs via Context7 BEFORE implementation decisions.
+- Use `edison config show context7 --format yaml` as the source of truth for what is “post-training”.
+
+Reference: `guidelines/shared/CONTEXT7.md`

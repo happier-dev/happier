@@ -1,0 +1,15 @@
+# Cursor AI ignore rules
+#
+# Goal:
+# - Keep real secret env files out of AI context.
+# - Allow the non-secret template file `.env.example` (and similar) to be read/edited.
+
+# Secret env files (default-deny)
+.env*
+env.local
+
+# Allowlist env templates (default-allow)
+!.env.example
+!.env.*.example
+!.project
+!.edison

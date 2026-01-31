@@ -1,0 +1,16 @@
+.project/
+.edison/
+.claude/
+.cursor/
+.codex/
+.pal/
+.augment/
+.specify/
+.openspec/
+specs/
+.worktrees/
+.mcp.json
+.env
+.env.*.local
+env.local
+
