@@ -1,0 +1,21 @@
+---
+title: Deployment
+description: Deploy server and clients with a reverse proxy and static hosting.
+---
+
+## Recommended layout
+
+We recommend separating your services/domains so you can deploy and scale them independently:
+
+- `api.happier.dev` → server (HTTP API + Socket.IO)
+- `app.happier.dev` → app web UI (static)
+- `happier.dev` → marketing site (static)
+- `docs.happier.dev` → docs site
+
+This keeps the API scalable and lets you deploy UI/sites independently.
+
+## Practical approach
+
+- Run the API server behind a reverse proxy that handles TLS and routing.
+- Serve the UI/website/docs as static sites (or via lightweight web servers) behind the same reverse proxy.
+- Keep secrets in your deployment platform (env vars), not in git.

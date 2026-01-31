@@ -1,0 +1,33 @@
+---
+title: Getting started
+description: Install, connect, and run Happier locally.
+---
+
+## Prerequisites
+
+- Node.js + Yarn
+- Docker (recommended for the **full** server flavor)
+
+## Quickstart
+
+1. Install the CLI (published to npm):
+
+```bash
+npm install -g @happier-dev/cli
+```
+
+2. Start the server locally (choose one):
+
+- **full flavor** (Postgres + Redis + S3/Minio): run the server package in dev mode.
+- **light flavor** (single-machine): run the light entrypoint.
+
+3. Point the app/CLI to your server URL:
+
+- App: set the “Custom server URL” setting.
+- CLI: set the server URL env var (or use your stack wrapper if you have one).
+
+## What’s next
+
+- Read about **deployment** and domains: `/docs/deployment`.
+- Learn the **architecture** and sync model: `/docs/architecture`.
+

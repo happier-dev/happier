@@ -1,0 +1,39 @@
+---
+title: Local development
+description: Run server + UI locally while iterating.
+---
+
+## Server
+
+From the repo root:
+
+```bash
+yarn install
+```
+
+Then run the server:
+
+- Full flavor:
+```bash
+yarn --cwd packages/server dev
+```
+
+- Light flavor:
+```bash
+yarn --cwd packages/server dev:light
+```
+
+## App (web UI)
+
+The app can run as Expo web locally:
+
+```bash
+yarn --cwd packages/app web
+```
+
+## Website
+
+```bash
+yarn --cwd packages/website dev
+```
+
