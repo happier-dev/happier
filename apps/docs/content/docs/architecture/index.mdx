@@ -1,0 +1,22 @@
+---
+title: Architecture overview
+description: How server, CLI, and app fit together.
+---
+
+## Components
+
+- **Server**: stores encrypted payloads + sync metadata, provides HTTP API and realtime updates.
+- **CLI**: runs local agents/LLMs, keeps sessions synced, talks to the server for multi-device.
+- **App**: mobile/web UI for sessions and devices.
+
+## Realtime vs HTTP
+
+- Realtime (Socket.IO) is used for **push notifications** (“something changed”).
+- HTTP is used for **authoritative reads/writes** and catch-up after disconnects.
+
+## Multi-device reliability
+
+Clients should be able to reconnect and reconcile:
+
+- If a device missed realtime updates, it should fetch changes from the server and refresh state deterministically.
+

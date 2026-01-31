@@ -1,0 +1,15 @@
+---
+title: Security
+description: Privacy and threat model.
+---
+
+## End-to-end encryption (E2EE)
+
+Messages and sensitive session payloads are encrypted on-device. The server stores encrypted blobs and sync metadata, but cannot read content.
+
+## What the server can see
+
+- Account identifiers and basic metadata needed to route sync.
+- Encrypted blobs (ciphertext).
+- Operational metadata for running the service (timestamps, sizes).
+
