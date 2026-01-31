@@ -64,7 +64,7 @@ export const lightTheme = {
         //
 
         groupped: {
-            background: Platform.select({ ios: '#F5F5F5', default: '#F5F5F5' }),
+            background: Platform.select({ ios: '#F8F9FC', default: '#F8F9FC' }),
             chevron: Platform.select({ ios: '#C7C7CC', default: '#49454F' }),
             sectionTitle: Platform.select({ ios: '#8E8E93', default: '#49454F' }),
         },

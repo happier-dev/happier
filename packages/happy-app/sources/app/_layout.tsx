@@ -104,10 +104,10 @@ async function loadFonts() {
                 // Keep existing font
                 SpaceMono: require('@/assets/fonts/SpaceMono-Regular.ttf'),
 
-                // IBM Plex Sans family
-                'IBMPlexSans-Regular': require('@/assets/fonts/IBMPlexSans-Regular.ttf'),
-                'IBMPlexSans-Italic': require('@/assets/fonts/IBMPlexSans-Italic.ttf'),
-                'IBMPlexSans-SemiBold': require('@/assets/fonts/IBMPlexSans-SemiBold.ttf'),
+                // Inter family (default typography)
+                'Inter-Regular': require('@/assets/fonts/Inter-Regular.ttf'),
+                'Inter-Italic': require('@/assets/fonts/Inter-Italic.ttf'),
+                'Inter-SemiBold': require('@/assets/fonts/Inter-SemiBold.ttf'),
 
                 // IBM Plex Mono family  
                 'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),
@@ -128,10 +128,10 @@ async function loadFonts() {
                         // Keep existing font
                         SpaceMono: require('@/assets/fonts/SpaceMono-Regular.ttf'),
 
-                        // IBM Plex Sans family
-                        'IBMPlexSans-Regular': require('@/assets/fonts/IBMPlexSans-Regular.ttf'),
-                        'IBMPlexSans-Italic': require('@/assets/fonts/IBMPlexSans-Italic.ttf'),
-                        'IBMPlexSans-SemiBold': require('@/assets/fonts/IBMPlexSans-SemiBold.ttf'),
+                        // Inter family (default typography)
+                        'Inter-Regular': require('@/assets/fonts/Inter-Regular.ttf'),
+                        'Inter-Italic': require('@/assets/fonts/Inter-Italic.ttf'),
+                        'Inter-SemiBold': require('@/assets/fonts/Inter-SemiBold.ttf'),
 
                         // IBM Plex Mono family  
                         'IBMPlexMono-Regular': require('@/assets/fonts/IBMPlexMono-Regular.ttf'),

@@ -42,7 +42,7 @@ export default function RootLayout() {
                 headerBackTitle: t('common.back'),
                 headerShadowVisible: false,
                 contentStyle: {
-                    backgroundColor: theme.colors.surface,
+                    backgroundColor: theme.colors.groupped.background,
                 },
                 headerStyle: {
                     backgroundColor: theme.colors.header.background,

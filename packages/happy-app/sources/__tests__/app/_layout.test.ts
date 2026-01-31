@@ -76,6 +76,7 @@ vi.mock('react-native-unistyles', () => {
                 theme: {
                     colors: {
                         surface: '#fff',
+                        groupped: { background: '#F8F9FC' },
                         header: { background: '#fff', tint: '#000' },
                     },
                 },

@@ -3,13 +3,13 @@ import { Platform } from 'react-native';
 /**
  * Typography system for Happy Coder app
  * 
- * Default typography: IBM Plex Sans
+ * Default typography: Inter
  * Monospace typography: IBM Plex Mono  
  * Logo typography: Bricolage Grotesque (specific use only)
  * 
  * Usage Examples:
  * 
- * // Default typography (IBM Plex Sans)
+ * // Default typography (Inter)
  * <Text style={{ fontSize: 16, ...Typography.default() }}>Regular text</Text>
  * <Text style={{ fontSize: 16, ...Typography.default('italic') }}>Italic text</Text>
  * <Text style={{ fontSize: 16, ...Typography.default('semiBold') }}>Semi-bold text</Text>
@@ -31,11 +31,11 @@ import { Platform } from 'react-native';
 
 // Font family constants
 export const FontFamilies = {
-  // IBM Plex Sans (default typography)
+  // Inter (default typography)
   default: {
-    regular: 'IBMPlexSans-Regular',
-    italic: 'IBMPlexSans-Italic', 
-    semiBold: 'IBMPlexSans-SemiBold',
+    regular: 'Inter-Regular',
+    italic: 'Inter-Italic', 
+    semiBold: 'Inter-SemiBold',
   },
   
   // IBM Plex Mono (default monospace)
@@ -79,7 +79,7 @@ export const FontWeights = {
 
 // Style utilities for easy inline usage
 export const Typography = {
-  // Default font styles (IBM Plex Sans)
+  // Default font styles (Inter)
   default: (weight: 'regular' | 'italic' | 'semiBold' = 'regular') => ({
     fontFamily: getDefaultFont(weight),
   }),
