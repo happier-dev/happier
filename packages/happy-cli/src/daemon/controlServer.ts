@@ -9,7 +9,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { logger } from '@/ui/logger';
 import { Metadata } from '@/api/types';
 import { TrackedSession } from './types';
-import { SpawnSessionOptions, SpawnSessionResult } from '@/modules/common/registerCommonHandlers';
+import { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 export function startDaemonControlServer({
   getChildren,
@@ -19,7 +19,7 @@ export function startDaemonControlServer({
   onHappySessionWebhook
 }: {
   getChildren: () => TrackedSession[];
-  stopSession: (sessionId: string) => boolean;
+  stopSession: (sessionId: string) => Promise<boolean>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void;
@@ -99,7 +99,7 @@ export function startDaemonControlServer({
       const { sessionId } = request.body;
 
       logger.debug(`[CONTROL SERVER] Stop session request: ${sessionId}`);
-      const success = stopSession(sessionId);
+      const success = await stopSession(sessionId);
       return { success };
     });
 
@@ -124,7 +124,8 @@ export function startDaemonControlServer({
           }),
           500: z.object({
             success: z.boolean(),
-            error: z.string().optional()
+            error: z.string().optional(),
+            errorCode: z.string().optional(),
           })
         }
       }
@@ -163,7 +164,8 @@ export function startDaemonControlServer({
           reply.code(500);
           return { 
             success: false,
-            error: result.errorMessage
+            error: result.errorMessage,
+            errorCode: result.errorCode,
           };
       }
     });

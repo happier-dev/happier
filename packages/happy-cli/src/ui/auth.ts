@@ -7,7 +7,7 @@ import { displayQRCode } from "./qrcode";
 import { delay } from "@/utils/time";
 import { writeCredentialsLegacy, readCredentials, updateSettings, Credentials, writeCredentialsDataKey } from "@/persistence";
 import { generateWebAuthUrl } from "@/api/webAuth";
-import { openBrowser } from "@/utils/browser";
+import { openBrowser } from '@/ui/openBrowser';
 import { AuthSelector, AuthMethod } from "./ink/AuthSelector";
 import { render } from 'ink';
 import React from 'react';
@@ -113,15 +113,22 @@ async function doWebAuth(keypair: tweetnacl.BoxKeyPair): Promise<Credentials | n
     console.log('\nWeb Authentication\n');
 
     const webUrl = generateWebAuthUrl(keypair.publicKey);
-    console.log('Opening your browser...');
+    const noOpenRaw = (process.env.HAPPY_NO_BROWSER_OPEN ?? '').toString().trim();
+    const noOpen = Boolean(noOpenRaw) && noOpenRaw !== '0' && noOpenRaw.toLowerCase() !== 'false';
+    if (!noOpen) {
+        console.log('Opening your browser...');
 
-    const browserOpened = await openBrowser(webUrl);
+        const browserOpened = await openBrowser(webUrl);
 
-    if (browserOpened) {
-        console.log('✓ Browser opened\n');
-        console.log('Complete authentication in your browser window.');
+        if (browserOpened) {
+            console.log('✓ Browser opened\n');
+            console.log('Complete authentication in your browser window.');
+        } else {
+            console.log('Could not open browser automatically.');
+        }
     } else {
-        console.log('Could not open browser automatically.');
+        console.log('Browser opening is disabled (HAPPY_NO_BROWSER_OPEN is set).');
+        console.log('Open the URL below in the browser profile/account you want to authenticate.');
     }
 
     // I changed this to always show the URL because we got a report from

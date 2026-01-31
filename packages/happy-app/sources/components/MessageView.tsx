@@ -1,22 +1,32 @@
 import * as React from "react";
-import { View, Text } from "react-native";
-import { StyleSheet } from 'react-native-unistyles';
+import { View, Text, Pressable } from "react-native";
+import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
+import { Modal } from '@/modal';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { MarkdownView } from "./markdown/MarkdownView";
 import { t } from '@/text';
 import { Message, UserTextMessage, AgentTextMessage, ToolCallMessage } from "@/sync/typesMessage";
 import { Metadata } from "@/sync/storageTypes";
-import { layout } from "./layout";
+import { layout } from "@/components/layout";
 import { ToolView } from "./tools/ToolView";
 import { AgentEvent } from "@/sync/typesRaw";
 import { sync } from '@/sync/sync';
 import { Option } from './markdown/MarkdownView';
 import { useSetting } from "@/sync/storage";
+import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommittedMessages";
 
 export const MessageView = (props: {
   message: Message;
   metadata: Metadata | null;
   sessionId: string;
   getMessageById?: (id: string) => Message | null;
+  interaction?: {
+    canSendMessages: boolean;
+    canApprovePermissions: boolean;
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    disableToolNavigation?: boolean;
+  };
 }) => {
   return (
     <View style={styles.messageContainer} renderToHardwareTextureAndroid={true}>
@@ -26,6 +36,7 @@ export const MessageView = (props: {
           metadata={props.metadata}
           sessionId={props.sessionId}
           getMessageById={props.getMessageById}
+          interaction={props.interaction}
         />
       </View>
     </View>
@@ -38,13 +49,19 @@ function RenderBlock(props: {
   metadata: Metadata | null;
   sessionId: string;
   getMessageById?: (id: string) => Message | null;
+  interaction?: {
+    canSendMessages: boolean;
+    canApprovePermissions: boolean;
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    disableToolNavigation?: boolean;
+  };
 }): React.ReactElement {
   switch (props.message.kind) {
     case 'user-text':
-      return <UserTextBlock message={props.message} sessionId={props.sessionId} />;
+      return <UserTextBlock message={props.message} metadata={props.metadata} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
 
     case 'agent-text':
-      return <AgentTextBlock message={props.message} sessionId={props.sessionId} />;
+      return <AgentTextBlock message={props.message} sessionId={props.sessionId} canSendMessages={props.interaction?.canSendMessages ?? true} />;
 
     case 'tool-call':
       return <ToolCallBlock
@@ -52,6 +69,7 @@ function RenderBlock(props: {
         metadata={props.metadata}
         sessionId={props.sessionId}
         getMessageById={props.getMessageById}
+        interaction={props.interaction}
       />;
 
     case 'agent-event':
@@ -67,16 +85,35 @@ function RenderBlock(props: {
 
 function UserTextBlock(props: {
   message: UserTextMessage;
+  metadata: Metadata | null;
   sessionId: string;
+  canSendMessages: boolean;
 }) {
+  const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
   const handleOptionPress = React.useCallback((option: Option) => {
-    sync.sendMessage(props.sessionId, option.title);
-  }, [props.sessionId]);
+    void (async () => {
+      try {
+        if (!props.canSendMessages) {
+          Modal.alert(t('session.sharing.viewOnly'), t('session.sharing.noEditPermission'));
+          return;
+        }
+        await sync.submitMessage(props.sessionId, option.title);
+      } catch (e) {
+        Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
+      }
+    })();
+  }, [props.canSendMessages, props.sessionId]);
 
   return (
     <View style={styles.userMessageContainer}>
-      <View style={styles.userMessageBubble}>
+      <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
         <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
+        {isDiscarded && (
+          <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+        )}
+        <View style={styles.messageActionsRow}>
+          <CopyMessageButton markdown={props.message.displayText || props.message.text} />
+        </View>
         {/* {__DEV__ && (
           <Text style={styles.debugText}>{JSON.stringify(props.message.meta)}</Text>
         )} */}
@@ -88,21 +125,96 @@ function UserTextBlock(props: {
 function AgentTextBlock(props: {
   message: AgentTextMessage;
   sessionId: string;
+  canSendMessages: boolean;
 }) {
   const experiments = useSetting('experiments');
+  const expShowThinkingMessages = useSetting('expShowThinkingMessages');
+  const showThinkingMessages = experiments && expShowThinkingMessages;
   const handleOptionPress = React.useCallback((option: Option) => {
-    sync.sendMessage(props.sessionId, option.title);
-  }, [props.sessionId]);
+    void (async () => {
+      try {
+        if (!props.canSendMessages) {
+          Modal.alert(t('session.sharing.viewOnly'), t('session.sharing.noEditPermission'));
+          return;
+        }
+        await sync.submitMessage(props.sessionId, option.title);
+      } catch (e) {
+        Modal.alert(t('common.error'), e instanceof Error ? e.message : 'Failed to send message');
+      }
+    })();
+  }, [props.canSendMessages, props.sessionId]);
 
   // Hide thinking messages unless experiments is enabled
-  if (props.message.isThinking && !experiments) {
+  if (props.message.isThinking && !showThinkingMessages) {
     return null;
   }
 
   return (
     <View style={styles.agentMessageContainer}>
       <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} />
+      <View style={styles.messageActionsRow}>
+        <CopyMessageButton markdown={props.message.text} />
+      </View>
     </View>
+  );
+}
+
+function CopyMessageButton(props: { markdown: string }) {
+  const { theme } = useUnistyles();
+  const [copied, setCopied] = React.useState(false);
+  const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const markdown = props.markdown || '';
+  const isCopyable = markdown.trim().length > 0;
+
+  const handlePress = React.useCallback(async () => {
+    if (!isCopyable) return;
+
+    try {
+      await Clipboard.setStringAsync(markdown);
+      setCopied(true);
+
+      if (resetTimer.current) {
+        clearTimeout(resetTimer.current);
+      }
+      resetTimer.current = setTimeout(() => {
+        setCopied(false);
+      }, 1200);
+    } catch (error) {
+      console.error('Failed to copy message:', error);
+      Modal.alert(t('common.error'), t('textSelection.failedToCopy'));
+    }
+  }, [isCopyable, markdown]);
+
+  React.useEffect(() => {
+    return () => {
+      if (resetTimer.current) {
+        clearTimeout(resetTimer.current);
+      }
+    };
+  }, []);
+
+  if (!isCopyable) {
+    return null;
+  }
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={t('common.copy')}
+      style={({ pressed }) => [
+        styles.copyMessageButton,
+        pressed && styles.copyMessageButtonPressed,
+      ]}
+    >
+      <Ionicons
+        name={copied ? "checkmark-outline" : "copy-outline"}
+        size={14}
+        color={copied ? theme.colors.success : theme.colors.textSecondary}
+      />
+    </Pressable>
   );
 }
 
@@ -154,6 +266,12 @@ function ToolCallBlock(props: {
   metadata: Metadata | null;
   sessionId: string;
   getMessageById?: (id: string) => Message | null;
+  interaction?: {
+    canSendMessages: boolean;
+    canApprovePermissions: boolean;
+    permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    disableToolNavigation?: boolean;
+  };
 }) {
   if (!props.message.tool) {
     return null;
@@ -165,7 +283,8 @@ function ToolCallBlock(props: {
         metadata={props.metadata}
         messages={props.message.children}
         sessionId={props.sessionId}
-        messageId={props.message.id}
+        messageId={props.interaction?.disableToolNavigation ? undefined : props.message.id}
+        interaction={props.interaction}
       />
     </View>
   );
@@ -197,6 +316,14 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: 12,
     maxWidth: '100%',
   },
+  userMessageBubbleDiscarded: {
+    opacity: 0.65,
+  },
+  discardedCommittedMessageLabel: {
+    marginTop: 6,
+    fontSize: 12,
+    color: theme.colors.agentEventText,
+  },
   agentMessageContainer: {
     marginHorizontal: 16,
     marginBottom: 12,
@@ -214,6 +341,20 @@ const styles = StyleSheet.create((theme) => ({
   },
   toolContainer: {
     marginHorizontal: 8,
+  },
+  messageActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 6,
+  },
+  copyMessageButton: {
+    padding: 4,
+    borderRadius: 8,
+    opacity: 0.6,
+    cursor: 'pointer',
+  },
+  copyMessageButtonPressed: {
+    opacity: 1,
   },
   debugText: {
     color: theme.colors.agentEventText,

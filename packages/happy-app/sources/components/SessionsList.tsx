@@ -3,7 +3,7 @@ import { View, Pressable, FlatList, Platform } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { Text } from '@/components/StyledText';
 import { usePathname } from 'expo-router';
-import { SessionListViewItem } from '@/sync/storage';
+import { SessionListViewItem, useHasUnreadMessages } from '@/sync/storage';
 import { Ionicons } from '@expo/vector-icons';
 import { getSessionName, useSessionStatus, getSessionSubtitle, getSessionAvatarId } from '@/utils/sessionUtils';
 import { Avatar } from './Avatar';
@@ -19,12 +19,12 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/responsive';
 import { requestReview } from '@/utils/requestReview';
 import { UpdateBanner } from './UpdateBanner';
-import { layout } from './layout';
+import { layout } from '@/components/layout';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { t } from '@/text';
 import { useRouter } from 'expo-router';
-import { Item } from './Item';
-import { ItemGroup } from './ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { sessionDelete } from '@/sync/ops';
 import { HappyError } from '@/utils/errors';
@@ -204,7 +204,6 @@ export function SessionsList() {
     const compactSessionView = useSetting('compactSessionView');
     const router = useRouter();
     const selectable = isTablet;
-    const experiments = useSetting('experiments');
     const dataWithSelected = selectable ? React.useMemo(() => {
         return data?.map(item => ({
             ...item,
@@ -279,8 +278,8 @@ export function SessionsList() {
                 const prevItem = index > 0 && dataWithSelected ? dataWithSelected[index - 1] : null;
                 const nextItem = index < (dataWithSelected?.length || 0) - 1 && dataWithSelected ? dataWithSelected[index + 1] : null;
 
-                const isFirst = prevItem?.type === 'header';
-                const isLast = nextItem?.type === 'header' || nextItem == null || nextItem?.type === 'active-sessions';
+                const isFirst = prevItem?.type === 'header' || prevItem?.type === 'project-group';
+                const isLast = nextItem?.type === 'header' || nextItem?.type === 'project-group' || nextItem == null || nextItem?.type === 'active-sessions';
                 const isSingle = isFirst && isLast;
 
                 return (
@@ -290,6 +289,7 @@ export function SessionsList() {
                         isFirst={isFirst}
                         isLast={isLast}
                         isSingle={isSingle}
+                        variant={item.variant}
                     />
                 );
         }
@@ -323,12 +323,13 @@ export function SessionsList() {
 }
 
 // Sub-component that handles session message logic
-const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }: {
+const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, variant }: {
     session: Session;
     selected?: boolean;
     isFirst?: boolean;
     isLast?: boolean;
     isSingle?: boolean;
+    variant?: 'default' | 'no-path';
 }) => {
     const styles = stylesheet;
     const sessionStatus = useSessionStatus(session);
@@ -365,6 +366,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
     const avatarId = React.useMemo(() => {
         return getSessionAvatarId(session);
     }, [session]);
+    const hasUnreadMessages = useHasUnreadMessages(session.id);
 
     const itemContent = (
         <Pressable
@@ -387,7 +389,13 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
             }}
         >
             <View style={styles.avatarContainer}>
-                <Avatar id={avatarId} size={48} monochrome={!sessionStatus.isConnected} flavor={session.metadata?.flavor} />
+                <Avatar
+                    id={avatarId}
+                    size={48}
+                    monochrome={!sessionStatus.isConnected}
+                    flavor={session.metadata?.flavor}
+                    hasUnreadMessages={hasUnreadMessages}
+                />
                 {session.draft && (
                     <View style={styles.draftIconContainer}>
                         <Ionicons
@@ -410,9 +418,11 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
                 </View>
 
                 {/* Subtitle line */}
-                <Text style={styles.sessionSubtitle} numberOfLines={1}>
-                    {sessionSubtitle}
-                </Text>
+                {variant !== 'no-path' && (
+                    <Text style={styles.sessionSubtitle} numberOfLines={1}>
+                        {sessionSubtitle}
+                    </Text>
+                )}
 
                 {/* Status line with dot */}
                 <View style={styles.statusRow}>

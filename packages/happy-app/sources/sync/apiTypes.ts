@@ -20,6 +20,14 @@ export const ApiMessageSchema = z.object({
 
 export type ApiMessage = z.infer<typeof ApiMessageSchema>;
 
+export const ApiSessionMessagesResponseSchema = z.object({
+    messages: z.array(ApiMessageSchema),
+    hasMore: z.boolean().optional(),
+    nextBeforeSeq: z.number().nullable().optional(),
+});
+
+export type ApiSessionMessagesResponse = z.infer<typeof ApiSessionMessagesResponseSchema>;
+
 //
 // Updates
 //
@@ -147,6 +155,42 @@ export const ApiKvBatchUpdateSchema = z.object({
     }))
 });
 
+// Session sharing event schemas
+export const ApiSessionSharedSchema = z.object({
+    t: z.literal('session-shared'),
+    sessionId: z.string(),
+});
+
+export const ApiSessionShareUpdatedSchema = z.object({
+    t: z.literal('session-share-updated'),
+    sessionId: z.string(),
+    shareId: z.string(),
+});
+
+export const ApiSessionShareRevokedSchema = z.object({
+    t: z.literal('session-share-revoked'),
+    sessionId: z.string(),
+    shareId: z.string(),
+});
+
+// Public share event schemas
+export const ApiPublicShareCreatedSchema = z.object({
+    t: z.literal('public-share-created'),
+    sessionId: z.string(),
+    publicShareId: z.string(),
+});
+
+export const ApiPublicShareUpdatedSchema = z.object({
+    t: z.literal('public-share-updated'),
+    sessionId: z.string(),
+    publicShareId: z.string(),
+});
+
+export const ApiPublicShareDeletedSchema = z.object({
+    t: z.literal('public-share-deleted'),
+    sessionId: z.string(),
+});
+
 export const ApiUpdateSchema = z.discriminatedUnion('t', [
     ApiUpdateNewMessageSchema,
     ApiUpdateNewSessionSchema,
@@ -159,7 +203,13 @@ export const ApiUpdateSchema = z.discriminatedUnion('t', [
     ApiDeleteArtifactSchema,
     ApiRelationshipUpdatedSchema,
     ApiNewFeedPostSchema,
-    ApiKvBatchUpdateSchema
+    ApiKvBatchUpdateSchema,
+    ApiSessionSharedSchema,
+    ApiSessionShareUpdatedSchema,
+    ApiSessionShareRevokedSchema,
+    ApiPublicShareCreatedSchema,
+    ApiPublicShareUpdatedSchema,
+    ApiPublicShareDeletedSchema,
 ]);
 
 export type ApiUpdateNewMessage = z.infer<typeof ApiUpdateNewMessageSchema>;

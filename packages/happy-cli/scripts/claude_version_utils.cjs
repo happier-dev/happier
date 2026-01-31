@@ -131,7 +131,9 @@ function detectSourceFromPath(resolvedPath) {
     // Windows-specific detection (detect by path patterns, not current platform)
     if (normalizedPath.includes('appdata') || normalizedPath.includes('program files') || normalizedPath.endsWith('.exe')) {
         // Windows npm
-        if (normalizedPath.includes('appdata') && normalizedPath.includes('npm') && normalizedPath.includes('node_modules')) {
+        if (normalizedPath.includes('appdata') && normalizedPath.includes('npm') && normalizedPath.includes('node_modules') &&
+            normalizedPath.includes('@anthropic-ai') && normalizedPath.includes('claude-code') &&
+            !normalizedPath.includes('.claude-code-')) {
             return 'npm';
         }
 
@@ -477,6 +479,27 @@ function getClaudeCliPath() {
  * Run Claude CLI, handling both JavaScript and binary files
  * @param {string} cliPath - Path to CLI (from getClaudeCliPath)
  */
+function attachChildSignalForwarding(child, proc = process) {
+    const forwardSignal = (signal) => {
+        try {
+            if (child && child.pid && !child.killed) {
+                child.kill(signal);
+            }
+        } catch {
+            // ignore
+        }
+    };
+
+    const signals = ['SIGTERM', 'SIGINT'];
+    if (proc.platform !== 'win32') {
+        signals.push('SIGHUP');
+    }
+
+    for (const signal of signals) {
+        proc.on(signal, () => forwardSignal(signal));
+    }
+}
+
 function runClaudeCli(cliPath) {
     const { pathToFileURL } = require('url');
     const { spawn } = require('child_process');
@@ -497,6 +520,11 @@ function runClaudeCli(cliPath) {
             stdio: 'inherit',
             env: process.env
         });
+
+        // Forward signals to child process so it gets killed when parent is killed.
+        // This prevents orphaned Claude processes when switching between local/remote modes.
+        attachChildSignalForwarding(child);
+
         child.on('exit', (code) => {
             process.exit(code || 0);
         });
@@ -514,6 +542,6 @@ module.exports = {
     getVersion,
     compareVersions,
     getClaudeCliPath,
-    runClaudeCli
+    runClaudeCli,
+    attachChildSignalForwarding
 };
-

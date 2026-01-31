@@ -42,6 +42,47 @@ Happy CLI (`handy-cli`) is a command-line tool that wraps Claude Code to enable 
 - Console output only for user-facing messages
 - Special handling for large JSON objects with truncation
 
+## Folder Structure & Naming Conventions (2026-01)
+
+These conventions are **additive** to the guidelines above. The goal is to keep the CLI easy to reason about and avoid “god files”.
+
+### Naming
+- Buckets are lowercase (e.g. `api`, `daemon`, `terminal`, `ui`, `commands`, `integrations`, `utils`).
+- Feature folders are `camelCase` (e.g. `agentInput`, `newSession`).
+- Allowed `_*.ts` markers (organization only) inside module-ish folders: `_types.ts`, `_shared.ts`, `_constants.ts`.
+
+### CLI taxonomy (target intent)
+
+Top-level domains are “first class” and should remain few:
+- `src/agent/` — agent runtime framework (ACP, transports, adapters, factories)
+- `src/api/` — server communication, crypto, queues, RPC
+- `src/rpc/handlers/` — RPC method registration + validation (session surface)
+- `src/capabilities/` — capability engine (probes, registry, snapshots, deps)
+- `src/daemon/` — daemon lifecycle/control/diagnostics
+- `src/integrations/` — OS/tool wrappers and services (tmux, ripgrep, difftastic, proxy, watcher)
+- `src/terminal/` — terminal UX/runtime integration (flags, attach plans, headless helpers)
+- `src/ui/` — user-facing UI and logging (Ink, formatting, QR, auth UI)
+- `src/commands/` — user-facing subcommands
+- `src/backends/claude/`, `src/backends/codex/`, `src/backends/gemini/`, `src/backends/opencode/` — agent backends (vendor-specific logic + entrypoints)
+- `src/cli/` — argument parsing and command dispatch (keeps `src/index.ts` small)
+- `src/utils/` — shared helpers; prefer named subfolders under `utils/` over dumping unrelated code at the root of `utils/`
+
+### Specific structure goals
+
+- `tmux` is an integration → prefer `src/integrations/tmux/*`.
+- Shared “agent startup/runtime” helpers live in agent runtime → prefer `src/agent/runtime/*`.
+- `toolTrace` is runtime instrumentation → prefer `src/agent/tools/trace/*`.
+- CLI parsing is CLI domain → prefer `src/cli/parsers/*`.
+
+### When to create subfolders
+
+Avoid flat folders growing without structure:
+- If a domain folder becomes “busy” (many files, multiple concerns), add subfolders by subdomain (e.g. `api/session`, `daemon/control`, `daemon/diagnostics`).
+- Prefer “noun folders” (e.g. `api/session/`, `daemon/lifecycle/`) over `misc/`.
+
+### “Canonical entrypoints” rule
+If a file path is already the established entrypoint (e.g. `api/apiMachine.ts`, `daemon/run.ts`), keep it as the entrypoint and extract internals under subfolders so the file stays readable and reviewable.
+
 ## Architecture & Key Components
 
 ### 1. API Module (`/src/api/`)
@@ -59,7 +100,7 @@ Handles server communication and encryption.
 - Optimistic concurrency control for state updates
 - RPC handler registration for remote procedure calls
 
-### 2. Claude Integration (`/src/claude/`)
+### 2. Claude Integration (`/src/backends/claude/`)
 Core Claude Code integration layer.
 
 - **`loop.ts`**: Main control loop managing interactive/remote modes

@@ -77,35 +77,75 @@ export default React.memo(() => {
             </View>
         );
     }
+
+    const tool = message.kind === 'tool-call' ? message.tool : null;
+    const toolHeaderTitle = React.useCallback(() => {
+        return tool ? <ToolHeader tool={tool} /> : null;
+    }, [tool]);
+    const toolHeaderRight = React.useCallback(() => {
+        return tool ? <ToolStatusIndicator tool={tool} /> : null;
+    }, [tool]);
+
+    const toolScreenOptions = React.useMemo(() => {
+        return {
+            headerTitle: toolHeaderTitle,
+            headerRight: toolHeaderRight,
+            headerStyle: {
+                backgroundColor: theme.colors.header.background,
+            },
+            headerTintColor: theme.colors.header.tint,
+            headerShadowVisible: false,
+        } as const;
+    }, [theme.colors.header.background, theme.colors.header.tint, toolHeaderRight, toolHeaderTitle]);
+
+    const interaction = React.useMemo(() => {
+        const isOwner = !session.accessLevel;
+        const canSendMessages = isOwner || session.accessLevel === 'edit' || session.accessLevel === 'admin';
+        const canApprovePermissions = isOwner || session.canApprovePermissions === true;
+        const permissionDisabledReason = isOwner
+            ? undefined
+            : (session.accessLevel === 'view' ? 'readOnly' : 'notGranted');
+        return { canSendMessages, canApprovePermissions, permissionDisabledReason } as const;
+    }, [session.accessLevel, session.canApprovePermissions]);
     
     return (
         <>
-            {message && message.kind === 'tool-call' && message.tool && (
+            {tool && (
                 <Stack.Screen
-                    options={{
-                        headerTitle: () => <ToolHeader tool={message.tool} />,
-                        headerRight: () => <ToolStatusIndicator tool={message.tool} />,
-                        headerStyle: {
-                            backgroundColor: theme.colors.header.background,
-                        },
-                        headerTintColor: theme.colors.header.tint,
-                        headerShadowVisible: false,
-                    }}
+                    options={toolScreenOptions}
                 />
             )}
             <Deferred>
-                <FullView message={message} />
+                <FullView
+                    message={message}
+                    sessionId={sessionId!}
+                    metadata={(session as any)?.metadata ?? null}
+                    interaction={interaction}
+                />
             </Deferred>
         </>
     );
 });
 
-function FullView(props: { message: Message }) {
+function FullView(props: {
+    message: Message;
+    sessionId: string;
+    metadata: any;
+    interaction: { canSendMessages: boolean; canApprovePermissions: boolean; permissionDisabledReason?: 'readOnly' | 'notGranted' };
+}) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     
     if (props.message.kind === 'tool-call') {
-        return <ToolFullView tool={props.message.tool} messages={props.message.children} />
+        return (
+            <ToolFullView
+                tool={props.message.tool}
+                messages={props.message.children}
+                sessionId={props.sessionId}
+                metadata={props.metadata}
+                interaction={props.interaction}
+            />
+        );
     }
     if (props.message.kind === 'agent-text') {
         return (

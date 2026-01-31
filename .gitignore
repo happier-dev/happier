@@ -10,6 +10,7 @@ web-build/
 expo-env.d.ts
 /ios
 /android
+packages/*/dist/
 
 # Native
 .kotlin/
@@ -28,6 +29,11 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 
+# local caches (dev / CI)
+.tmp-home/
+.yarn-cache/
+.yarn-global/
+
 # macOS
 .DS_Store
 *.pem
@@ -45,6 +51,7 @@ yarn-error.*
 CLAUDE.local.md
 
 .dev/worktree/*
+.project/
 
 # Development planning notes (keep local, don't commit)
 notes/

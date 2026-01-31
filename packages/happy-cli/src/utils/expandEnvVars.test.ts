@@ -134,6 +134,96 @@ describe('expandEnvironmentVariables', () => {
         });
     });
 
+    it('should use default for ${VAR:-default} when VAR is missing', () => {
+        const envVars = {
+            TARGET: '${MISSING_VAR:-default-value}',
+        };
+        const sourceEnv = {};
+
+        const result = expandEnvironmentVariables(envVars, sourceEnv);
+        expect(result).toEqual({
+            TARGET: 'default-value',
+        });
+    });
+
+    it('should use default for ${VAR:=default} when VAR is missing', () => {
+        const envVars = {
+            TARGET: '${MISSING_VAR:=default-value}',
+        };
+        const sourceEnv = {};
+
+        const result = expandEnvironmentVariables(envVars, sourceEnv);
+        expect(result).toEqual({
+            TARGET: 'default-value',
+        });
+    });
+
+    it('reuses ${VAR:=default} assignments for subsequent references in the same value', () => {
+        const envVars = {
+            TARGET: '${MISSING_VAR:=default-value}-${MISSING_VAR}',
+        };
+        const sourceEnv = {};
+
+        const result = expandEnvironmentVariables(envVars, sourceEnv);
+        expect(result).toEqual({
+            TARGET: 'default-value-default-value',
+        });
+    });
+
+    it('supports nested default expansions', () => {
+        const envVars = {
+            TARGET: '${MISSING_VAR:-${FALLBACK_VAR}}',
+        };
+        const sourceEnv = {
+            FALLBACK_VAR: 'fallback-value',
+        };
+
+        const result = expandEnvironmentVariables(envVars, sourceEnv);
+        expect(result).toEqual({
+            TARGET: 'fallback-value',
+        });
+    });
+
+    it('supports nested defaults in := assignments', () => {
+        const envVars = {
+            TARGET: '${MISSING_VAR:=${FALLBACK_VAR:-default-value}}-${MISSING_VAR}',
+        };
+        const sourceEnv = {};
+
+        const result = expandEnvironmentVariables(envVars, sourceEnv);
+        expect(result).toEqual({
+            TARGET: 'default-value-default-value',
+        });
+    });
+
+    it('treats empty string as missing for ${VAR:-default}', () => {
+        const envVars = {
+            TARGET: '${EMPTY_VAR:-default-value}',
+        };
+        const sourceEnv = {
+            EMPTY_VAR: '',
+        };
+
+        const result = expandEnvironmentVariables(envVars, sourceEnv);
+        expect(result).toEqual({
+            TARGET: 'default-value',
+        });
+    });
+
+    it('treats empty string as missing for ${VAR:=default}', () => {
+        const envVars = {
+            TARGET: '${EMPTY_VAR:=default-value}',
+        };
+        const sourceEnv = {
+            EMPTY_VAR: '',
+        };
+
+        const result = expandEnvironmentVariables(envVars, sourceEnv);
+        expect(result).toEqual({
+            TARGET: 'default-value',
+        });
+    });
+
     it('should handle multiple variables with same source', () => {
         const envVars = {
             VAR1: '${SHARED}',

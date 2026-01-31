@@ -1,53 +1,62 @@
 import { eventRouter } from "@/app/events/eventRouter";
 import { log } from "@/utils/log";
 import { Socket } from "socket.io";
+import { RPC_ERROR_CODES } from "@happy/protocol/rpc";
+import { SOCKET_RPC_EVENTS } from "@happy/protocol/socketRpc";
+import { db } from "@/storage/db";
+import { canApprovePermissions } from "@/app/share/accessControl";
 
-export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<string, Socket>) {
+export function rpcHandler(
+    userId: string,
+    socket: Socket,
+    userRpcListeners: Map<string, Socket>,
+    allRpcListeners: Map<string, Map<string, Socket>>,
+) {
     
     // RPC register - Register this socket as a listener for an RPC method
-    socket.on('rpc-register', async (data: any) => {
+    socket.on(SOCKET_RPC_EVENTS.REGISTER, async (data: any) => {
         try {
             const { method } = data;
 
             if (!method || typeof method !== 'string') {
-                socket.emit('rpc-error', { type: 'register', error: 'Invalid method name' });
+                socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Invalid method name' });
                 return;
             }
 
             // Check if method was already registered
-            const previousSocket = rpcListeners.get(method);
+            const previousSocket = userRpcListeners.get(method);
             if (previousSocket && previousSocket !== socket) {
                 // log({ module: 'websocket-rpc' }, `RPC method ${method} re-registered: ${previousSocket.id} -> ${socket.id}`);
             }
 
             // Register this socket as the listener for this method
-            rpcListeners.set(method, socket);
+            userRpcListeners.set(method, socket);
 
-            socket.emit('rpc-registered', { method });
+            socket.emit(SOCKET_RPC_EVENTS.REGISTERED, { method });
             // log({ module: 'websocket-rpc' }, `RPC method registered: ${method} on socket ${socket.id} (user: ${userId})`);
             // log({ module: 'websocket-rpc' }, `Active RPC methods for user ${userId}: ${Array.from(rpcListeners.keys()).join(', ')}`);
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in rpc-register: ${error}`);
-            socket.emit('rpc-error', { type: 'register', error: 'Internal error' });
+            socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'register', error: 'Internal error' });
         }
     });
 
     // RPC unregister - Remove this socket as a listener for an RPC method
-    socket.on('rpc-unregister', async (data: any) => {
+    socket.on(SOCKET_RPC_EVENTS.UNREGISTER, async (data: any) => {
         try {
             const { method } = data;
 
             if (!method || typeof method !== 'string') {
-                socket.emit('rpc-error', { type: 'unregister', error: 'Invalid method name' });
+                socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'unregister', error: 'Invalid method name' });
                 return;
             }
 
-            if (rpcListeners.get(method) === socket) {
-                rpcListeners.delete(method);
+            if (userRpcListeners.get(method) === socket) {
+                userRpcListeners.delete(method);
                 // log({ module: 'websocket-rpc' }, `RPC method unregistered: ${method} from socket ${socket.id} (user: ${userId})`);
 
-                if (rpcListeners.size === 0) {
-                    rpcListeners.delete(userId);
+                if (userRpcListeners.size === 0) {
+                    allRpcListeners.delete(userId);
                     // log({ module: 'websocket-rpc' }, `All RPC methods unregistered for user ${userId}`);
                 } else {
                     // log({ module: 'websocket-rpc' }, `Remaining RPC methods for user ${userId}: ${Array.from(rpcListeners.keys()).join(', ')}`);
@@ -56,15 +65,15 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
                 // log({ module: 'websocket-rpc' }, `RPC unregister ignored: ${method} not registered on socket ${socket.id}`);
             }
 
-            socket.emit('rpc-unregistered', { method });
+            socket.emit(SOCKET_RPC_EVENTS.UNREGISTERED, { method });
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in rpc-unregister: ${error}`);
-            socket.emit('rpc-error', { type: 'unregister', error: 'Internal error' });
+            socket.emit(SOCKET_RPC_EVENTS.ERROR, { type: 'unregister', error: 'Internal error' });
         }
     });
 
     // RPC call - Call an RPC method on another socket of the same user
-    socket.on('rpc-call', async (data: any, callback: (response: any) => void) => {
+    socket.on(SOCKET_RPC_EVENTS.CALL, async (data: any, callback: (response: any) => void) => {
         try {
             const { method, params } = data;
 
@@ -78,13 +87,53 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
                 return;
             }
 
-            const targetSocket = rpcListeners.get(method);
+            // Delegated permission approvals (cross-user forwarding) are allowed ONLY for `${sessionId}:permission`.
+            // All other RPC methods are restricted to "same-user" forwarding.
+            let targetSocket: Socket | undefined = undefined;
+            if (typeof method === 'string') {
+                const lastColon = method.lastIndexOf(':');
+                const suffix = lastColon >= 0 ? method.slice(lastColon + 1) : '';
+                if (suffix === 'permission') {
+                    const sessionId = lastColon >= 0 ? method.slice(0, lastColon) : '';
+                    if (sessionId && sessionId !== 'permission') {
+                        const session = await db.session.findUnique({
+                            where: { id: sessionId },
+                            select: { accountId: true },
+                        });
+                        const ownerId = session?.accountId;
+                        if (ownerId && ownerId !== userId) {
+                            const allowed = await canApprovePermissions(userId, sessionId);
+                            if (!allowed) {
+                                if (callback) {
+                                    callback({
+                                        ok: false,
+                                        error: 'Forbidden',
+                                    });
+                                }
+                                return;
+                            }
+                            const ownerListeners = allRpcListeners.get(ownerId);
+                            targetSocket = ownerListeners?.get(method);
+                            if (targetSocket) {
+                                log({ module: 'websocket-rpc' }, `Delegated permission RPC: ${userId} -> ${ownerId} (${sessionId})`);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!targetSocket) {
+                targetSocket = userRpcListeners.get(method);
+            }
             if (!targetSocket || !targetSocket.connected) {
                 // log({ module: 'websocket-rpc' }, `RPC call failed: Method ${method} not available (disconnected or not registered)`);
                 if (callback) {
                     callback({
                         ok: false,
-                        error: 'RPC method not available'
+                        error: 'RPC method not available',
+                        // Backward compatible: older clients rely on the error string.
+                        // Newer clients should prefer this structured code.
+                        errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
                     });
                 }
                 return;
@@ -108,7 +157,7 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
 
             // Forward the RPC request to the target socket using emitWithAck
             try {
-                const response = await targetSocket.timeout(30000).emitWithAck('rpc-request', {
+                const response = await targetSocket.timeout(30000).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, {
                     method,
                     params
                 });
@@ -151,7 +200,7 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
     socket.on('disconnect', () => {
 
         const methodsToRemove: string[] = [];
-        for (const [method, registeredSocket] of rpcListeners.entries()) {
+        for (const [method, registeredSocket] of userRpcListeners.entries()) {
             if (registeredSocket === socket) {
                 methodsToRemove.push(method);
             }
@@ -159,11 +208,11 @@ export function rpcHandler(userId: string, socket: Socket, rpcListeners: Map<str
 
         if (methodsToRemove.length > 0) {
             // log({ module: 'websocket-rpc' }, `Cleaning up RPC methods on disconnect for socket ${socket.id}: ${methodsToRemove.join(', ')}`);
-            methodsToRemove.forEach(method => rpcListeners.delete(method));
+            methodsToRemove.forEach(method => userRpcListeners.delete(method));
         }
 
-        if (rpcListeners.size === 0) {
-            rpcListeners.delete(userId);
+        if (userRpcListeners.size === 0) {
+            allRpcListeners.delete(userId);
             // log({ module: 'websocket-rpc' }, `All RPC listeners removed for user ${userId}`);
         }
     });

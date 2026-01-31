@@ -6,6 +6,13 @@ import { AvatarGradient } from "./AvatarGradient";
 import { AvatarBrutalist } from "./AvatarBrutalist";
 import { useSetting } from '@/sync/storage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import {
+    DEFAULT_AGENT_ID,
+    resolveAgentIdFromFlavor,
+    getAgentAvatarOverlaySizes,
+    getAgentIconSource,
+    getAgentIconTintColor,
+} from '@/agents/catalog';
 
 interface AvatarProps {
     id: string;
@@ -16,13 +23,8 @@ interface AvatarProps {
     flavor?: string | null;
     imageUrl?: string | null;
     thumbhash?: string | null;
+    hasUnreadMessages?: boolean;
 }
-
-const flavorIcons = {
-    claude: require('@/assets/images/icon-claude.png'),
-    codex: require('@/assets/images/icon-gpt.png'),
-    gemini: require('@/assets/images/icon-gemini.png'),
-};
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -41,13 +43,29 @@ const styles = StyleSheet.create((theme) => ({
         shadowRadius: 2,
         elevation: 3,
     },
+    unreadBadge: {
+        position: 'absolute',
+        top: -2,
+        right: -2,
+        backgroundColor: theme.colors.textLink,
+        borderRadius: 100,
+        borderWidth: 1.5,
+        borderColor: theme.colors.surface,
+    },
 }));
 
 export const Avatar = React.memo((props: AvatarProps) => {
-    const { flavor, size = 48, imageUrl, thumbhash, ...avatarProps } = props;
+    const { flavor, size = 48, imageUrl, thumbhash, hasUnreadMessages, ...avatarProps } = props;
     const avatarStyle = useSetting('avatarStyle');
     const showFlavorIcons = useSetting('showFlavorIcons');
     const { theme } = useUnistyles();
+
+    const agentId = resolveAgentIdFromFlavor(flavor);
+
+    const unreadBadgeSize = Math.round(size * 0.22);
+    const unreadBadgeElement = hasUnreadMessages ? (
+        <View style={[styles.unreadBadge, { width: unreadBadgeSize, height: unreadBadgeSize }]} />
+    ) : null;
 
     // Render custom image if provided
     if (imageUrl) {
@@ -64,33 +82,32 @@ export const Avatar = React.memo((props: AvatarProps) => {
             />
         );
 
-        // Add flavor icon overlay if enabled
-        if (showFlavorIcons && flavor) {
-            const effectiveFlavor = flavor || 'claude';
-            const flavorIcon = flavorIcons[effectiveFlavor as keyof typeof flavorIcons] || flavorIcons.claude;
-            const circleSize = Math.round(size * 0.35);
-            const iconSize = effectiveFlavor === 'codex'
-                ? Math.round(size * 0.25)
-                : effectiveFlavor === 'claude'
-                    ? Math.round(size * 0.28)
-                    : Math.round(size * 0.35);
+            const showFlavorOverlay = Boolean(showFlavorIcons && agentId);
+            if (showFlavorOverlay || hasUnreadMessages) {
+            const iconAgentId = agentId ?? DEFAULT_AGENT_ID;
+            const flavorIcon = getAgentIconSource(iconAgentId);
+            const tintColor = getAgentIconTintColor(iconAgentId, theme);
+            const { circleSize, iconSize } = getAgentAvatarOverlaySizes(iconAgentId, size);
 
             return (
                 <View style={[styles.container, { width: size, height: size }]}>
                     {imageElement}
-                    <View style={[styles.flavorIcon, {
-                        width: circleSize,
-                        height: circleSize,
-                        alignItems: 'center',
-                        justifyContent: 'center'
-                    }]}>
-                        <Image
-                            source={flavorIcon}
-                            style={{ width: iconSize, height: iconSize }}
-                            contentFit="contain"
-                            tintColor={effectiveFlavor === 'codex' ? theme.colors.text : undefined}
-                        />
-                    </View>
+                {showFlavorOverlay && (
+                        <View style={[styles.flavorIcon, {
+                            width: circleSize,
+                            height: circleSize,
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }]}>
+                            <Image
+                                source={flavorIcon}
+                                style={{ width: iconSize, height: iconSize }}
+                                contentFit="contain"
+                                tintColor={tintColor}
+                            />
+                        </View>
+                    )}
+                    {unreadBadgeElement}
                 </View>
             );
         }
@@ -109,36 +126,31 @@ export const Avatar = React.memo((props: AvatarProps) => {
         AvatarComponent = AvatarGradient;
     }
 
-    // Determine flavor icon for generated avatars
-    const effectiveFlavor = flavor || 'claude';
-    const flavorIcon = flavorIcons[effectiveFlavor as keyof typeof flavorIcons] || flavorIcons.claude;
-    // Make icons smaller while keeping same circle size
-    // Claude slightly bigger than codex
-    const circleSize = Math.round(size * 0.35);
-    const iconSize = effectiveFlavor === 'codex'
-        ? Math.round(size * 0.25)
-        : effectiveFlavor === 'claude'
-            ? Math.round(size * 0.28)
-            : Math.round(size * 0.35);
+    const iconAgentId = agentId ?? DEFAULT_AGENT_ID;
+    const flavorIcon = getAgentIconSource(iconAgentId);
+    const tintColor = getAgentIconTintColor(iconAgentId, theme);
+    const { circleSize, iconSize } = getAgentAvatarOverlaySizes(iconAgentId, size);
 
-    // Only wrap in container if showing flavor icons
-    if (showFlavorIcons) {
+    if (showFlavorIcons || hasUnreadMessages) {
         return (
             <View style={[styles.container, { width: size, height: size }]}>
                 <AvatarComponent {...avatarProps} size={size} />
-                <View style={[styles.flavorIcon, {
-                    width: circleSize,
-                    height: circleSize,
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                }]}>
-                    <Image
-                        source={flavorIcon}
-                        style={{ width: iconSize, height: iconSize }}
-                        contentFit="contain"
-                        tintColor={effectiveFlavor === 'codex' ? theme.colors.text : undefined}
-                    />
-                </View>
+                {showFlavorIcons && (
+                    <View style={[styles.flavorIcon, {
+                        width: circleSize,
+                        height: circleSize,
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                    }]}>
+                        <Image
+                            source={flavorIcon}
+                            style={{ width: iconSize, height: iconSize }}
+                            contentFit="contain"
+                            tintColor={tintColor}
+                        />
+                    </View>
+                )}
+                {unreadBadgeElement}
             </View>
         );
     }

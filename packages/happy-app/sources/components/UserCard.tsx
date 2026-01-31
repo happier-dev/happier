@@ -1,16 +1,20 @@
 import React from 'react';
 import { UserProfile, getDisplayName } from '@/sync/friendTypes';
-import { Item } from '@/components/Item';
+import { Item } from '@/components/ui/lists/Item';
 import { Avatar } from '@/components/Avatar';
 
 interface UserCardProps {
     user: UserProfile;
     onPress?: () => void;
+    disabled?: boolean;
+    subtitle?: string;
 }
 
 export function UserCard({ 
     user, 
-    onPress
+    onPress,
+    disabled,
+    subtitle
 }: UserCardProps) {
     const displayName = getDisplayName(user);
     const avatarUrl = user.avatar?.url || user.avatar?.path;
@@ -26,16 +30,17 @@ export function UserCard({
     );
 
     // Create subtitle
-    const subtitle = `@${user.username}`;
+    const subtitleText = subtitle ?? `@${user.username}`;
 
     return (
         <Item
             title={displayName}
-            subtitle={subtitle}
+            subtitle={subtitleText}
             subtitleLines={1}
             leftElement={avatarElement}
             onPress={onPress}
             showChevron={!!onPress}
+            disabled={disabled}
         />
     );
 }

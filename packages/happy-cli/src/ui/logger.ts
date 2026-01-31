@@ -47,6 +47,7 @@ function getSessionLogPath(): string {
 
 class Logger {
   private dangerouslyUnencryptedServerLoggingUrl: string | undefined
+  private hasLoggedFileWriteError: boolean = false
 
   constructor(
     public readonly logFilePath = getSessionLogPath()
@@ -84,9 +85,7 @@ class Logger {
     maxStringLength: number = 100,
     maxArrayLength: number = 10,
   ): void {
-    if (!process.env.DEBUG) {
-      this.debug(`In production, skipping message inspection`)
-    }
+    if (!process.env.DEBUG) return;
 
     // Some of our messages are huge, but we still want to show them in the logs
     const truncateStrings = (obj: unknown): unknown => {
@@ -222,11 +221,13 @@ class Logger {
     try {
       appendFileSync(this.logFilePath, logLine)
     } catch (appendError) {
-      if (process.env.DEBUG) {
-        console.error('[DEV MODE ONLY THROWING] Failed to append to log file:', appendError)
-        throw appendError
+      // Never throw from logging: log files are best-effort and should not break the CLI.
+      // When DEBUG is set, surface the first write failure for easier debugging.
+      if (process.env.DEBUG && !this.hasLoggedFileWriteError) {
+        console.error('[DEV MODE ONLY] Failed to append to log file:', appendError)
+        this.hasLoggedFileWriteError = true
       }
-      // In production, fail silently to avoid disturbing Claude session
+      // In production (and after the first DEBUG warning), fail silently to avoid disturbing the session.
     }
   }
 }

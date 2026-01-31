@@ -3,6 +3,11 @@ import { settingsParse, applySettings, settingsDefaults, type Settings, AIBacken
 import { getBuiltInProfile } from './profileUtils';
 
 describe('settings', () => {
+    const makeSettings = (overrides: Partial<Settings> = {}): Settings => ({
+        ...settingsDefaults,
+        ...overrides,
+    });
+
     describe('settingsParse', () => {
         it('should return defaults when given invalid input', () => {
             expect(settingsParse(null)).toEqual(settingsDefaults);
@@ -89,148 +94,122 @@ describe('settings', () => {
                 }
             });
         });
+
+        it('should default per-experiment toggles to true when experiments is true (migration)', () => {
+            const parsed = settingsParse({
+                experiments: true,
+                // Note: per-experiment keys intentionally omitted (older clients)
+            } as any);
+
+            expect((parsed as any).expUsageReporting).toBe(true);
+            expect((parsed as any).expFileViewer).toBe(true);
+            expect((parsed as any).expShowThinkingMessages).toBe(true);
+            expect((parsed as any).expSessionType).toBe(true);
+            expect((parsed as any).expZen).toBe(true);
+            expect((parsed as any).expVoiceAuthFlow).toBe(true);
+            expect((parsed as any).expInboxFriends).toBe(true);
+        });
+
+        it('should default per-experiment toggles to false when experiments is false (migration)', () => {
+            const parsed = settingsParse({
+                experiments: false,
+                // Note: per-experiment keys intentionally omitted (older clients)
+            } as any);
+
+            expect((parsed as any).expUsageReporting).toBe(false);
+            expect((parsed as any).expFileViewer).toBe(false);
+            expect((parsed as any).expShowThinkingMessages).toBe(false);
+            expect((parsed as any).expSessionType).toBe(false);
+            expect((parsed as any).expZen).toBe(false);
+            expect((parsed as any).expVoiceAuthFlow).toBe(false);
+            expect((parsed as any).expInboxFriends).toBe(false);
+        });
+
+        it('defaults per-agent new-session permission modes', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.claude).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.codex).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('default');
+        });
+
+        it('migrates legacy lastUsedPermissionMode into per-agent defaults when missing', () => {
+            const parsed = settingsParse({
+                lastUsedAgent: 'claude',
+                lastUsedPermissionMode: 'plan',
+            } as any);
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.claude).toBe('plan');
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.codex).toBe('safe-yolo');
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('safe-yolo');
+        });
+
+        it('should preserve explicit per-experiment toggles when present (no forced override)', () => {
+            const parsed = settingsParse({
+                experiments: true,
+                expUsageReporting: true,
+                expFileViewer: false,
+                expShowThinkingMessages: true,
+                expSessionType: false,
+                expZen: true,
+                expVoiceAuthFlow: false,
+                expInboxFriends: false,
+            } as any);
+
+            expect((parsed as any).expUsageReporting).toBe(true);
+            expect((parsed as any).expFileViewer).toBe(false);
+            expect((parsed as any).expShowThinkingMessages).toBe(true);
+            expect((parsed as any).expSessionType).toBe(false);
+            expect((parsed as any).expZen).toBe(true);
+            expect((parsed as any).expVoiceAuthFlow).toBe(false);
+            expect((parsed as any).expInboxFriends).toBe(false);
+        });
+
+        it('should keep valid secrets when one secret entry is invalid', () => {
+            const validSecret = {
+                id: 'secret-1',
+                name: 'My Secret',
+                kind: 'apiKey',
+                encryptedValue: { _isSecretValue: true, value: 'abc' },
+                createdAt: 1,
+                updatedAt: 1,
+            };
+            const invalidSecret = {
+                id: '',
+                name: '',
+                kind: 'apiKey',
+                encryptedValue: { _isSecretValue: true, value: 'def' },
+                createdAt: 2,
+                updatedAt: 2,
+            };
+            const parsed = settingsParse({
+                viewInline: true,
+                secrets: [validSecret, invalidSecret],
+            } as any);
+
+            expect(parsed.viewInline).toBe(true);
+            expect(parsed.secrets).toEqual([validSecret]);
+        });
     });
 
     describe('applySettings', () => {
         it('should apply delta to existing settings', () => {
-            const currentSettings: Settings = {
-                schemaVersion: 1,
-                viewInline: false,
-                expandTodos: true,
-                showLineNumbers: true,
-                showLineNumbersInToolViews: false,
-                wrapLinesInDiffs: false,
-                analyticsOptOut: false,
-                inferenceOpenAIKey: null,
-                experiments: false,
-                useEnhancedSessionWizard: false,
-                alwaysShowContextSize: false,
-                agentInputEnterToSend: true,
-                avatarStyle: 'gradient',
-                showFlavorIcons: false,
-                compactSessionView: false,
-                hideInactiveSessions: false,
-                reviewPromptAnswered: false,
-                reviewPromptLikedApp: null,
-                voiceAssistantLanguage: null,
-                preferredLanguage: null,
-                recentMachinePaths: [],
-                lastUsedAgent: null,
-                lastUsedPermissionMode: null,
-                lastUsedModelMode: null,
-                profiles: [],
-                lastUsedProfile: null,
-                favoriteDirectories: [],
-                favoriteMachines: [],
-                dismissedCLIWarnings: { perMachine: {}, global: {} },
-            };
-            const delta: Partial<Settings> = {
-                viewInline: true
-            };
+            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient' });
+            const delta: Partial<Settings> = { viewInline: true };
             expect(applySettings(currentSettings, delta)).toEqual({
+                ...currentSettings,
                 schemaVersion: 1, // Preserved from currentSettings
                 viewInline: true,
-                expandTodos: true,
-                showLineNumbers: true,
-                showLineNumbersInToolViews: false,
-                wrapLinesInDiffs: false,
-                analyticsOptOut: false,
-                inferenceOpenAIKey: null,
-                experiments: false,
-                useEnhancedSessionWizard: false,
-                alwaysShowContextSize: false,
-                agentInputEnterToSend: true,
-                avatarStyle: 'gradient', // This should be preserved from currentSettings
-                showFlavorIcons: false,
-                compactSessionView: false,
-                hideInactiveSessions: false,
-                reviewPromptAnswered: false,
-                reviewPromptLikedApp: null,
-                voiceAssistantLanguage: null,
-                preferredLanguage: null,
-                recentMachinePaths: [],
-                lastUsedAgent: null,
-                lastUsedPermissionMode: null,
-                lastUsedModelMode: null,
-                profiles: [],
-                lastUsedProfile: null,
-                favoriteDirectories: [],
-                favoriteMachines: [],
-                dismissedCLIWarnings: { perMachine: {}, global: {} },
             });
         });
 
         it('should merge with defaults', () => {
-            const currentSettings: Settings = {
-                schemaVersion: 1,
-                viewInline: true,
-                expandTodos: true,
-                showLineNumbers: true,
-                showLineNumbersInToolViews: false,
-                wrapLinesInDiffs: false,
-                analyticsOptOut: false,
-                inferenceOpenAIKey: null,
-                experiments: false,
-                useEnhancedSessionWizard: false,
-                alwaysShowContextSize: false,
-                agentInputEnterToSend: true,
-                avatarStyle: 'gradient',
-                showFlavorIcons: false,
-                compactSessionView: false,
-                hideInactiveSessions: false,
-                reviewPromptAnswered: false,
-                reviewPromptLikedApp: null,
-                voiceAssistantLanguage: null,
-                preferredLanguage: null,
-                recentMachinePaths: [],
-                lastUsedAgent: null,
-                lastUsedPermissionMode: null,
-                lastUsedModelMode: null,
-                profiles: [],
-                lastUsedProfile: null,
-                favoriteDirectories: [],
-                favoriteMachines: [],
-                dismissedCLIWarnings: { perMachine: {}, global: {} },
-            };
+            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient', viewInline: true });
             const delta: Partial<Settings> = {};
             expect(applySettings(currentSettings, delta)).toEqual(currentSettings);
         });
 
         it('should override existing values with delta', () => {
-            const currentSettings: Settings = {
-                schemaVersion: 1,
-                viewInline: true,
-                expandTodos: true,
-                showLineNumbers: true,
-                showLineNumbersInToolViews: false,
-                wrapLinesInDiffs: false,
-                analyticsOptOut: false,
-                inferenceOpenAIKey: null,
-                experiments: false,
-                useEnhancedSessionWizard: false,
-                alwaysShowContextSize: false,
-                agentInputEnterToSend: true,
-                avatarStyle: 'gradient',
-                showFlavorIcons: false,
-                compactSessionView: false,
-                hideInactiveSessions: false,
-                reviewPromptAnswered: false,
-                reviewPromptLikedApp: null,
-                voiceAssistantLanguage: null,
-                preferredLanguage: null,
-                recentMachinePaths: [],
-                lastUsedAgent: null,
-                lastUsedPermissionMode: null,
-                lastUsedModelMode: null,
-                profiles: [],
-                lastUsedProfile: null,
-                favoriteDirectories: [],
-                favoriteMachines: [],
-                dismissedCLIWarnings: { perMachine: {}, global: {} },
-            };
-            const delta: Partial<Settings> = {
-                viewInline: false
-            };
+            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient', viewInline: true });
+            const delta: Partial<Settings> = { viewInline: false };
             expect(applySettings(currentSettings, delta)).toEqual({
                 ...currentSettings,
                 viewInline: false
@@ -238,37 +217,7 @@ describe('settings', () => {
         });
 
         it('should handle empty delta', () => {
-            const currentSettings: Settings = {
-                schemaVersion: 1,
-                viewInline: true,
-                expandTodos: true,
-                showLineNumbers: true,
-                showLineNumbersInToolViews: false,
-                wrapLinesInDiffs: false,
-                analyticsOptOut: false,
-                inferenceOpenAIKey: null,
-                experiments: false,
-                useEnhancedSessionWizard: false,
-                alwaysShowContextSize: false,
-                agentInputEnterToSend: true,
-                avatarStyle: 'gradient',
-                showFlavorIcons: false,
-                compactSessionView: false,
-                hideInactiveSessions: false,
-                reviewPromptAnswered: false,
-                reviewPromptLikedApp: null,
-                voiceAssistantLanguage: null,
-                preferredLanguage: null,
-                recentMachinePaths: [],
-                lastUsedAgent: null,
-                lastUsedPermissionMode: null,
-                lastUsedModelMode: null,
-                profiles: [],
-                lastUsedProfile: null,
-                favoriteDirectories: [],
-                favoriteMachines: [],
-                dismissedCLIWarnings: { perMachine: {}, global: {} },
-            };
+            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient', viewInline: true });
             expect(applySettings(currentSettings, {})).toEqual(currentSettings);
         });
 
@@ -288,37 +237,7 @@ describe('settings', () => {
         });
 
         it('should handle extra fields in delta', () => {
-            const currentSettings: Settings = {
-                schemaVersion: 1,
-                viewInline: true,
-                expandTodos: true,
-                showLineNumbers: true,
-                showLineNumbersInToolViews: false,
-                wrapLinesInDiffs: false,
-                analyticsOptOut: false,
-                inferenceOpenAIKey: null,
-                experiments: false,
-                useEnhancedSessionWizard: false,
-                alwaysShowContextSize: false,
-                agentInputEnterToSend: true,
-                avatarStyle: 'gradient',
-                showFlavorIcons: false,
-                compactSessionView: false,
-                hideInactiveSessions: false,
-                reviewPromptAnswered: false,
-                reviewPromptLikedApp: null,
-                voiceAssistantLanguage: null,
-                preferredLanguage: null,
-                recentMachinePaths: [],
-                lastUsedAgent: null,
-                lastUsedPermissionMode: null,
-                lastUsedModelMode: null,
-                profiles: [],
-                lastUsedProfile: null,
-                favoriteDirectories: [],
-                favoriteMachines: [],
-                dismissedCLIWarnings: { perMachine: {}, global: {} },
-            };
+            const currentSettings = makeSettings({ schemaVersion: 1, avatarStyle: 'gradient', viewInline: true });
             const delta: any = {
                 viewInline: false,
                 newField: 'new value'
@@ -350,37 +269,25 @@ describe('settings', () => {
 
     describe('settingsDefaults', () => {
         it('should have correct default values', () => {
-            expect(settingsDefaults).toEqual({
-                schemaVersion: 2,
-                viewInline: false,
-                expandTodos: true,
-                showLineNumbers: true,
-                showLineNumbersInToolViews: false,
-                wrapLinesInDiffs: false,
-                analyticsOptOut: false,
-                inferenceOpenAIKey: null,
-                experiments: false,
-                alwaysShowContextSize: false,
-                avatarStyle: 'brutalist',
-                showFlavorIcons: false,
-                compactSessionView: false,
-                agentInputEnterToSend: true,
-                hideInactiveSessions: false,
-                reviewPromptAnswered: false,
-                reviewPromptLikedApp: null,
-                voiceAssistantLanguage: null,
-                preferredLanguage: null,
-                recentMachinePaths: [],
-                lastUsedAgent: null,
-                lastUsedPermissionMode: null,
-                lastUsedModelMode: null,
-                profiles: [],
-                lastUsedProfile: null,
-                favoriteDirectories: ['~/src', '~/Desktop', '~/Documents'],
-                favoriteMachines: [],
-                dismissedCLIWarnings: { perMachine: {}, global: {} },
-                useEnhancedSessionWizard: false,
+            expect(settingsDefaults.schemaVersion).toBe(2);
+            expect(settingsDefaults.experiments).toBe(false);
+            expect(settingsDefaults.experimentalAgents).toEqual({});
+            expect(settingsDefaults.sessionDefaultPermissionModeByAgent).toMatchObject({
+                claude: 'default',
+                codex: 'default',
+                gemini: 'default',
             });
+            expect(settingsDefaults.toolViewDetailLevelDefault).toBe('summary');
+            expect(settingsDefaults.toolViewDetailLevelDefaultLocalControl).toBe('title');
+            expect(settingsDefaults.toolViewDetailLevelByToolName).toEqual({});
+            expect((settingsDefaults as any).toolViewTapAction).toBe('expand');
+            expect((settingsDefaults as any).toolViewExpandedDetailLevelDefault).toBe('full');
+            expect((settingsDefaults as any).toolViewExpandedDetailLevelByToolName).toEqual({});
+            expect(settingsDefaults.toolViewShowDebugByDefault).toBe(false);
+            expect((settingsDefaults as any).expGemini).toBeUndefined();
+            expect((settingsDefaults as any).sessionDefaultPermissionModeClaude).toBeUndefined();
+            expect((settingsDefaults as any).sessionDefaultPermissionModeCodex).toBeUndefined();
+            expect((settingsDefaults as any).sessionDefaultPermissionModeGemini).toBeUndefined();
         });
 
         it('should be a valid Settings object', () => {
@@ -388,6 +295,17 @@ describe('settings', () => {
             expect(parsed).toEqual(settingsDefaults);
         });
     });
+
+    describe('profiles', () => {
+        it('accepts the built-in profiles schema', () => {
+            const profile = getBuiltInProfile('anthropic');
+            expect(profile).toBeTruthy();
+            const parsed = AIBackendProfileSchema.safeParse(profile);
+            expect(parsed.success).toBe(true);
+        });
+    });
+
+    // Keep the remainder of the file intact; avoid pinning full defaults objects in tests.
 
     describe('forward/backward compatibility', () => {
         it('should handle settings from older version (missing new fields)', () => {
@@ -495,6 +413,30 @@ describe('settings', () => {
             expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
         });
 
+        it('validates built-in Codex profile', () => {
+            const profile = getBuiltInProfile('codex');
+            expect(profile).not.toBeNull();
+            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
+        });
+
+        it('validates built-in Gemini profile', () => {
+            const profile = getBuiltInProfile('gemini');
+            expect(profile).not.toBeNull();
+            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
+        });
+
+        it('validates built-in Gemini API key profile', () => {
+            const profile = getBuiltInProfile('gemini-api-key');
+            expect(profile).not.toBeNull();
+            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
+        });
+
+        it('validates built-in Gemini Vertex profile', () => {
+            const profile = getBuiltInProfile('gemini-vertex');
+            expect(profile).not.toBeNull();
+            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
+        });
+
         it('accepts all 7 permission modes', () => {
             const modes = ['default', 'acceptEdits', 'bypassPermissions', 'plan', 'read-only', 'safe-yolo', 'yolo'];
             modes.forEach(mode => {
@@ -542,6 +484,88 @@ describe('settings', () => {
             };
             expect(() => AIBackendProfileSchema.parse(invalidProfile)).toThrow();
         });
+
+        it('accepts profiles with multiple required secret env vars', () => {
+            const profile = {
+                id: crypto.randomUUID(),
+                name: 'Test Profile',
+                envVarRequirements: [
+                    { name: 'OPENAI_API_KEY', kind: 'secret', required: true },
+                    { name: 'ANTHROPIC_AUTH_TOKEN', kind: 'secret', required: true },
+                ],
+                compatibility: { claude: true, codex: true, gemini: true },
+            };
+            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
+        });
+
+        it('accepts machine-login profiles that also declare secret requirements', () => {
+            const profile = {
+                id: crypto.randomUUID(),
+                name: 'Test Profile',
+                authMode: 'machineLogin',
+                requiresMachineLogin: 'claude-code',
+                envVarRequirements: [{ name: 'OPENAI_API_KEY', kind: 'secret', required: true }],
+                compatibility: { claude: true, codex: true, gemini: true },
+            };
+            expect(() => AIBackendProfileSchema.parse(profile)).not.toThrow();
+        });
+
+        it('rejects requiresMachineLogin when authMode is not machineLogin', () => {
+            const invalidProfile = {
+                id: crypto.randomUUID(),
+                name: 'Test Profile',
+                authMode: undefined,
+                requiresMachineLogin: 'claude-code',
+                envVarRequirements: [],
+                compatibility: { claude: true, codex: true, gemini: true },
+            };
+            expect(() => AIBackendProfileSchema.parse(invalidProfile)).toThrow();
+        });
+    });
+
+    describe('SavedSecret validation', () => {
+        it('accepts valid secrets entries in settingsParse', () => {
+            const now = Date.now();
+            const parsed = settingsParse({
+                secrets: [
+                    { id: 'k1', name: 'My Secret', kind: 'apiKey', encryptedValue: { _isSecretValue: true, value: 'sk-test' }, createdAt: now, updatedAt: now },
+                ],
+            });
+            expect(parsed.secrets.length).toBe(1);
+            expect(parsed.secrets[0]?.name).toBe('My Secret');
+            // settingsParse should tolerate plaintext values (legacy/input form),
+            // but the runtime should seal them before persisting.
+            expect(parsed.secrets[0]?.encryptedValue?.value).toBe('sk-test');
+        });
+
+        it('drops invalid secrets entries (missing value)', () => {
+            const parsed = settingsParse({
+                secrets: [
+                    { id: 'k1', name: 'Missing value', kind: 'apiKey', encryptedValue: { _isSecretValue: true } },
+                ],
+            } as any);
+            // settingsParse validates per-field, so invalid field should fall back to default.
+            expect(parsed.secrets).toEqual([]);
+        });
+
+        it('accepts encrypted-at-rest secrets entries (SecretString.encryptedValue)', () => {
+            const now = Date.now();
+            const parsed = settingsParse({
+                secrets: [
+                    { id: 'k1', name: 'My Secret', kind: 'apiKey', encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'Zm9v' } }, createdAt: now, updatedAt: now },
+                ],
+            } as any);
+            expect(parsed.secrets.length).toBe(1);
+            expect(parsed.secrets[0]?.name).toBe('My Secret');
+            expect(parsed.secrets[0]?.encryptedValue?.encryptedValue?.t).toBe('enc-v1');
+        });
+    });
+
+    describe('secretBindingsByProfileId', () => {
+        it('defaults to an empty object', () => {
+            const parsed = settingsParse({});
+            expect(parsed.secretBindingsByProfileId).toEqual({});
+        });
     });
 
     describe('version-mismatch scenario (bug fix)', () => {
@@ -560,9 +584,10 @@ describe('settings', () => {
                     {
                         id: 'server-profile',
                         name: 'Server Profile',
-                        anthropicConfig: {},
                         environmentVariables: [],
+                        defaultPermissionModeByAgent: {},
                         compatibility: { claude: true, codex: true, gemini: true },
+                        envVarRequirements: [],
                         isBuiltIn: false,
                         createdAt: Date.now(),
                         updatedAt: Date.now(),
@@ -578,9 +603,10 @@ describe('settings', () => {
                     {
                         id: 'local-profile',
                         name: 'Local Profile',
-                        anthropicConfig: {},
                         environmentVariables: [],
+                        defaultPermissionModeByAgent: {},
                         compatibility: { claude: true, codex: true, gemini: true },
+                        envVarRequirements: [],
                         isBuiltIn: false,
                         createdAt: Date.now(),
                         updatedAt: Date.now(),
@@ -680,9 +706,10 @@ describe('settings', () => {
                 profiles: [{
                     id: 'test-profile',
                     name: 'Test',
-                    anthropicConfig: {},
                     environmentVariables: [],
+                    defaultPermissionModeByAgent: {},
                     compatibility: { claude: true, codex: true, gemini: true },
+                    envVarRequirements: [],
                     isBuiltIn: false,
                     createdAt: Date.now(),
                     updatedAt: Date.now(),
@@ -713,7 +740,6 @@ describe('settings', () => {
                 profiles: [{
                     id: 'device-b-profile',
                     name: 'Device B Profile',
-                    anthropicConfig: {},
                     environmentVariables: [],
                     compatibility: { claude: true, codex: true },
                     isBuiltIn: false,
@@ -825,17 +851,17 @@ describe('settings', () => {
                 profiles: [{
                     id: 'server-profile-1',
                     name: 'Server Profile',
-                    anthropicConfig: {},
                     environmentVariables: [],
                     compatibility: { claude: true, codex: true },
+                    envVarRequirements: [],
                     isBuiltIn: false,
                     createdAt: 1000,
                     updatedAt: 1000,
                     version: '1.0.0',
                 }],
                 dismissedCLIWarnings: {
-                    perMachine: { 'machine-1': ['warning-1'] },
-                    global: ['global-warning']
+                    perMachine: { 'machine-1': { claude: true } },
+                    global: { codex: true }
                 }
             });
 
@@ -844,9 +870,10 @@ describe('settings', () => {
                 profiles: [{
                     id: 'local-profile-1',
                     name: 'Local Profile',
-                    anthropicConfig: {},
                     environmentVariables: [],
+                    defaultPermissionModeByAgent: {},
                     compatibility: { claude: true, codex: true, gemini: true },
+                    envVarRequirements: [],
                     isBuiltIn: false,
                     createdAt: 2000,
                     updatedAt: 2000,

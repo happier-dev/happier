@@ -1,0 +1,50 @@
+{
+  "name": "@happy/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./spawnSession": {
+      "types": "./dist/spawnSession.d.ts",
+      "default": "./dist/spawnSession.js"
+    },
+    "./rpc": {
+      "types": "./dist/rpc.d.ts",
+      "default": "./dist/rpc.js"
+    },
+    "./checklists": {
+      "types": "./dist/checklists.d.ts",
+      "default": "./dist/checklists.js"
+    },
+    "./capabilities": {
+      "types": "./dist/capabilities.d.ts",
+      "default": "./dist/capabilities.js"
+    },
+    "./socketRpc": {
+      "types": "./dist/socketRpc.d.ts",
+      "default": "./dist/socketRpc.js"
+    }
+  },
+  "files": [
+    "dist",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "postinstall": "yarn --cwd ../agents -s build && yarn -s build",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@happy/agents": "link:../agents"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

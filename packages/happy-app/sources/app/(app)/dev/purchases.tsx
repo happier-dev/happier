@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { View, Text, TextInput, ActivityIndicator } from 'react-native';
 import { Stack } from 'expo-router';
-import { Item } from '@/components/Item';
-import { ItemGroup } from '@/components/ItemGroup';
-import { ItemList } from '@/components/ItemList';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { storage } from '@/sync/storage';
 import { sync } from '@/sync/sync';
 import { Typography } from '@/constants/Typography';
@@ -80,13 +80,17 @@ export default function PurchasesDevScreen() {
         }
     };
 
+    const screenOptions = React.useMemo(() => {
+        return {
+            title: 'Purchases',
+            headerShown: true,
+        } as const;
+    }, []);
+
     return (
         <>
             <Stack.Screen
-                options={{
-                    title: 'Purchases',
-                    headerShown: true
-                }}
+                options={screenOptions}
             />
 
             <ItemList>

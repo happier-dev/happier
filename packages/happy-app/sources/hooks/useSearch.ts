@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
+export type UseSearchError = 'searchFailed';
+
 /**
  * Production-ready search hook with automatic debouncing, caching, and retry logic.
  * 
@@ -12,46 +14,49 @@ import { useEffect, useRef, useState, useCallback } from 'react';
  * 
  * @param query - The search query string
  * @param searchFn - The async function to perform the search
- * @returns Object with results array and isSearching boolean
+ * @returns Object with results array, isSearching boolean, and a stable error code (if any)
  */
 export function useSearch<T>(
     query: string,
     searchFn: (query: string) => Promise<T[]>
-): { results: T[]; isSearching: boolean } {
+): { results: T[]; isSearching: boolean; error: UseSearchError | null } {
     const [results, setResults] = useState<T[]>([]);
     const [isSearching, setIsSearching] = useState(false);
+    const [error, setError] = useState<UseSearchError | null>(null);
     
     // Permanent cache for search results
     const cacheRef = useRef<Map<string, T[]>>(new Map());
-    
-    // Ref to prevent parallel queries
-    const isSearchingRef = useRef(false);
+    const requestIdRef = useRef(0);
     
     // Timeout ref for debouncing
     const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     
     // Perform the search with retry logic
     const performSearch = useCallback(async (searchQuery: string) => {
-        // Skip if already searching
-        if (isSearchingRef.current) {
-            return;
-        }
-        
         // Check cache first
         const cached = cacheRef.current.get(searchQuery);
         if (cached) {
             setResults(cached);
+            setError(null);
             return;
         }
         
-        // Mark as searching
-        isSearchingRef.current = true;
+        const requestId = ++requestIdRef.current;
         setIsSearching(true);
+        setError(null);
         
-        // Retry logic with exponential backoff
-        let retryDelay = 1000; // Start with 1 second
-        
-        while (true) {
+        // IMPORTANT: do not retry forever. Persistent errors (bad auth/config) would otherwise
+        // cause infinite background requests and a "stuck loading" UI.
+        const maxAttempts = 2;
+        let attempt = 0;
+        let retryDelay = 750; // Start with 0.75s
+        try {
+            while (attempt < maxAttempts) {
+                // If a new search started, abandon this one.
+                if (requestIdRef.current !== requestId) {
+                    return;
+                }
+                attempt++;
             try {
                 const searchResults = await searchFn(searchQuery);
                 
@@ -60,22 +65,25 @@ export function useSearch<T>(
                 
                 // Update state
                 setResults(searchResults);
-                break; // Success, exit the retry loop
+                setError(null);
+                return; // Success
                 
             } catch (error) {
-                // Wait before retrying
+                if (attempt >= maxAttempts) {
+                    setResults([]);
+                    setError('searchFailed');
+                    return;
+                }
+                // Wait before retrying (bounded)
                 await new Promise(resolve => setTimeout(resolve, retryDelay));
-                
-                // Exponential backoff with max delay of 30 seconds
-                retryDelay = Math.min(retryDelay * 2, 30000);
-                
-                // Continue retrying (loop will continue)
+                retryDelay = Math.min(retryDelay * 2, 5000);
+            }
+            }
+        } finally {
+            if (requestIdRef.current === requestId) {
+                setIsSearching(false);
             }
         }
-        
-        // Mark as not searching
-        isSearchingRef.current = false;
-        setIsSearching(false);
     }, [searchFn]);
     
     // Effect to handle debounced search
@@ -89,6 +97,7 @@ export function useSearch<T>(
         if (!query.trim()) {
             setResults([]);
             setIsSearching(false);
+            setError(null);
             return;
         }
         
@@ -97,11 +106,13 @@ export function useSearch<T>(
         if (cached) {
             setResults(cached);
             setIsSearching(false);
+            setError(null);
             return;
         }
         
         // Set searching state immediately for better UX
         setIsSearching(true);
+        setError(null);
         
         // Debounce the actual search
         timeoutRef.current = setTimeout(() => {
@@ -116,5 +127,5 @@ export function useSearch<T>(
         };
     }, [query, performSearch]);
     
-    return { results, isSearching };
+    return { results, isSearching, error };
 }

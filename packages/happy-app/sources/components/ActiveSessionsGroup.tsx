@@ -9,10 +9,10 @@ import { getSessionName, useSessionStatus, getSessionAvatarId, formatPathRelativ
 import { Avatar } from './Avatar';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from './StatusDot';
-import { useAllMachines, useSetting } from '@/sync/storage';
+import { useAllMachines, useHasUnreadMessages, useSetting } from '@/sync/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { isMachineOnline } from '@/utils/machineUtils';
-import { machineSpawnNewSession, sessionKill } from '@/sync/ops';
+import { machineSpawnNewSession, sessionArchive } from '@/sync/ops';
 import { storage } from '@/sync/storage';
 import { Modal } from '@/modal';
 import { CompactGitStatus } from './CompactGitStatus';
@@ -39,6 +39,22 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         shadowOpacity: theme.colors.shadow.opacity,
         shadowRadius: 0,
         elevation: 1,
+    },
+    sharedBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginLeft: 6,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4,
+        backgroundColor: theme.colors.surfaceHighest,
+    },
+    sharedBadgeText: {
+        fontSize: 11,
+        fontWeight: '500',
+        color: theme.colors.textSecondary,
+        marginLeft: 4,
+        ...Typography.default(),
     },
     sectionHeader: {
         paddingTop: 12,
@@ -95,11 +111,13 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 4,
+        gap: 4,
     },
     sessionTitle: {
         fontSize: 15,
         fontWeight: '500',
         ...Typography.default('semiBold'),
+        flexShrink: 1,
     },
     sessionTitleConnected: {
         color: theme.colors.text,
@@ -344,8 +362,14 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
     const swipeableRef = React.useRef<Swipeable | null>(null);
     const swipeEnabled = Platform.OS !== 'web';
 
+    // Check if this is a shared session
+    const isSharedSession = !!session.owner;
+    const ownerName = session.ownerProfile
+        ? (session.ownerProfile.username || session.ownerProfile.firstName)
+        : null;
+
     const [archivingSession, performArchive] = useHappyAction(async () => {
-        const result = await sessionKill(session.id);
+        const result = await sessionArchive(session.id);
         if (!result.success) {
             throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
         }
@@ -370,6 +394,7 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
     const avatarId = React.useMemo(() => {
         return getSessionAvatarId(session);
     }, [session]);
+    const hasUnreadMessages = useHasUnreadMessages(session.id);
 
     const itemContent = (
         <Pressable
@@ -390,7 +415,13 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
             }}
         >
             <View style={styles.avatarContainer}>
-                <Avatar id={avatarId} size={48} monochrome={!sessionStatus.isConnected} flavor={session.metadata?.flavor} />
+                <Avatar
+                    id={avatarId}
+                    size={48}
+                    monochrome={!sessionStatus.isConnected}
+                    flavor={session.metadata?.flavor}
+                    hasUnreadMessages={hasUnreadMessages}
+                />
             </View>
             <View style={styles.sessionContent}>
                 {/* Title line */}
@@ -404,6 +435,14 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
                     >
                         {sessionName}
                     </Text>
+                    {isSharedSession && ownerName && (
+                        <View style={styles.sharedBadge}>
+                            <Ionicons name="people-outline" size={12} color={styles.sharedBadgeText.color} />
+                            <Text style={styles.sharedBadgeText} numberOfLines={1}>
+                                {ownerName}
+                            </Text>
+                        </View>
+                    )}
                 </View>
 
                 {/* Status line with dot */}

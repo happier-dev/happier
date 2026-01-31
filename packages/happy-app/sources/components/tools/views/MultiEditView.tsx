@@ -1,13 +1,15 @@
 import * as React from 'react';
-import { View, Text, StyleSheet, ScrollView } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { ToolSectionView } from '../../tools/ToolSectionView';
-import { ToolViewProps } from './_all';
+import { ToolViewProps } from './_registry';
 import { DiffView } from '@/components/diff/DiffView';
 import { knownTools } from '../../tools/knownTools';
 import { trimIdent } from '@/utils/trimIdent';
 import { useSetting } from '@/sync/storage';
+import { t } from '@/text';
 
-export const MultiEditView = React.memo<ToolViewProps>(({ tool }) => {
+export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
     const wrapLinesInDiffs = useSetting('wrapLinesInDiffs');
     
@@ -22,25 +24,52 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool }) => {
         return null;
     }
 
+    if (detailLevel === 'title') {
+        return (
+            <ToolSectionView>
+                <Text>{`${edits.length} edit${edits.length === 1 ? '' : 's'}`}</Text>
+            </ToolSectionView>
+        );
+    }
+
+    const isFull = detailLevel === 'full';
+    const maxEdits = isFull ? edits.length : 1;
+    const visibleEdits = edits.slice(0, maxEdits);
+    const remaining = edits.length - visibleEdits.length;
+    const showLineNumbers = isFull ? true : !!showLineNumbersInToolViews;
+
     const content = (
         <View style={{ flex: 1 }}>
-            {edits.map((edit, index) => {
+            {visibleEdits.map((edit, index) => {
                 const oldString = trimIdent(edit.old_string || '');
                 const newString = trimIdent(edit.new_string || '');
                 
                 return (
                     <View key={index}>
+                        {isFull ? (
+                            <View style={styles.editHeader}>
+                                <Text style={styles.editNumber}>
+                                    {t('tools.multiEdit.editNumber', { index: index + 1, total: edits.length })}
+                                </Text>
+                                {edit.replace_all ? (
+                                    <View style={styles.replaceAllBadge}>
+                                        <Text style={styles.replaceAllText}>{t('tools.multiEdit.replaceAll')}</Text>
+                                    </View>
+                                ) : null}
+                            </View>
+                        ) : null}
                         <DiffView 
                             oldText={oldString} 
                             newText={newString} 
                             wrapLines={wrapLinesInDiffs}
-                            showLineNumbers={showLineNumbersInToolViews}
-                            showPlusMinusSymbols={showLineNumbersInToolViews}
+                            showLineNumbers={showLineNumbers}
+                            showPlusMinusSymbols={showLineNumbers}
                         />
-                        {index < edits.length - 1 && <View style={styles.separator} />}
+                        {isFull && index < visibleEdits.length - 1 ? <View style={styles.separator} /> : null}
                     </View>
                 );
             })}
+            {!isFull && remaining > 0 ? <Text style={styles.more}>{`+${remaining} more`}</Text> : null}
         </View>
     );
 
@@ -70,7 +99,35 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool }) => {
 });
 
 const styles = StyleSheet.create({
+    editHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 8,
+    },
+    editNumber: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#5856D6',
+    },
+    replaceAllBadge: {
+        backgroundColor: '#5856D6',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 12,
+        marginLeft: 8,
+    },
+    replaceAllText: {
+        fontSize: 12,
+        color: '#fff',
+        fontWeight: '600',
+    },
     separator: {
         height: 8,
+    },
+    more: {
+        marginTop: 8,
+        fontSize: 12,
+        color: '#8E8E93',
+        fontFamily: 'Menlo',
     },
 });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useSession, useSessionMessages } from "@/sync/storage";
+import { useSession, useSessionMessages, useSessionPendingMessages } from "@/sync/storage";
 import { ActivityIndicator, FlatList, Platform, View } from 'react-native';
 import { useCallback } from 'react';
 import { useHeaderHeight } from '@/utils/responsive';
@@ -7,44 +7,133 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MessageView } from './MessageView';
 import { Metadata, Session } from '@/sync/storageTypes';
 import { ChatFooter } from './ChatFooter';
-import { Message } from '@/sync/typesMessage';
+import { buildChatListItems, type ChatListItem } from '@/components/sessions/chatListItems';
+import { PendingUserTextMessageView } from '@/components/sessions/pending/PendingUserTextMessageView';
+import { sync } from '@/sync/sync';
 
-export const ChatList = React.memo((props: { session: Session }) => {
-    const { messages } = useSessionMessages(props.session.id);
+export type ChatListBottomNotice = {
+    title: string;
+    body: string;
+};
+
+export const ChatList = React.memo((props: { session: Session; bottomNotice?: ChatListBottomNotice | null }) => {
+    const { messages, isLoaded } = useSessionMessages(props.session.id);
+    const { messages: pendingMessages } = useSessionPendingMessages(props.session.id);
+    const items = React.useMemo(() => buildChatListItems({ messages, pendingMessages }), [messages, pendingMessages]);
+
+    const interaction = React.useMemo(() => {
+        const isOwner = !props.session.accessLevel;
+        const canSendMessages =
+            isOwner || props.session.accessLevel === 'edit' || props.session.accessLevel === 'admin';
+        const canApprovePermissions =
+            isOwner || props.session.canApprovePermissions === true;
+        const permissionDisabledReason = isOwner
+            ? undefined
+            : (props.session.accessLevel === 'view' ? 'readOnly' : 'notGranted');
+        return { canSendMessages, canApprovePermissions, permissionDisabledReason } as const;
+    }, [props.session.accessLevel, props.session.canApprovePermissions]);
+
     return (
         <ChatListInternal
             metadata={props.session.metadata}
             sessionId={props.session.id}
-            messages={messages}
+            items={items}
+            committedMessagesCount={messages.length}
+            isLoaded={isLoaded}
+            bottomNotice={props.bottomNotice}
+            interaction={interaction}
         />
     )
 });
 
-const ListHeader = React.memo(() => {
+const ListHeader = React.memo((props: { isLoadingOlder: boolean }) => {
     const headerHeight = useHeaderHeight();
     const safeArea = useSafeAreaInsets();
-    return <View style={{ flexDirection: 'row', alignItems: 'center', height: headerHeight + safeArea.top + 32 }} />;
+    return (
+        <View>
+            {props.isLoadingOlder && (
+                <View style={{ paddingVertical: 12 }}>
+                    <ActivityIndicator size="small" />
+                </View>
+            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', height: headerHeight + safeArea.top + 32 }} />
+        </View>
+    );
 });
 
-const ListFooter = React.memo((props: { sessionId: string }) => {
+const ListFooter = React.memo((props: { sessionId: string; bottomNotice?: ChatListBottomNotice | null }) => {
     const session = useSession(props.sessionId)!;
     return (
-        <ChatFooter controlledByUser={session.agentState?.controlledByUser || false} />
+        <ChatFooter
+            controlledByUser={session.agentState?.controlledByUser || false}
+            notice={props.bottomNotice ?? null}
+        />
     )
 });
 
 const ChatListInternal = React.memo((props: {
     metadata: Metadata | null,
     sessionId: string,
-    messages: Message[],
+    items: ChatListItem[],
+    committedMessagesCount: number,
+    isLoaded: boolean,
+    bottomNotice?: ChatListBottomNotice | null,
+    interaction: {
+        canSendMessages: boolean;
+        canApprovePermissions: boolean;
+        permissionDisabledReason?: 'readOnly' | 'notGranted';
+    };
 }) => {
-    const keyExtractor = useCallback((item: any) => item.id, []);
-    const renderItem = useCallback(({ item }: { item: any }) => (
-        <MessageView message={item} metadata={props.metadata} sessionId={props.sessionId} />
-    ), [props.metadata, props.sessionId]);
+    const [isLoadingOlder, setIsLoadingOlder] = React.useState(false);
+    const [hasMoreOlder, setHasMoreOlder] = React.useState<boolean | null>(null);
+    const loadOlderInFlight = React.useRef(false);
+
+    const keyExtractor = useCallback((item: ChatListItem) => item.id, []);
+    const renderItem = useCallback(({ item }: { item: ChatListItem }) => {
+        if (item.kind === 'pending-user-text') {
+            return (
+                <PendingUserTextMessageView
+                    sessionId={props.sessionId}
+                    message={item.pending}
+                    otherPendingCount={item.otherPendingCount}
+                />
+            );
+        }
+        return (
+            <MessageView
+                message={item.message}
+                metadata={props.metadata}
+                sessionId={props.sessionId}
+                interaction={props.interaction}
+            />
+        );
+    }, [props.interaction, props.metadata, props.sessionId]);
+
+    const loadOlder = useCallback(async () => {
+        if (!props.isLoaded || props.committedMessagesCount === 0) {
+            return;
+        }
+        if (loadOlderInFlight.current || hasMoreOlder === false) {
+            return;
+        }
+        loadOlderInFlight.current = true;
+        setIsLoadingOlder(true);
+        try {
+            const result = await sync.loadOlderMessages(props.sessionId);
+            if (result.status === 'no_more') {
+                setHasMoreOlder(false);
+            } else if (result.status === 'loaded') {
+                setHasMoreOlder(result.hasMore);
+            }
+        } finally {
+            setIsLoadingOlder(false);
+            loadOlderInFlight.current = false;
+        }
+    }, [props.isLoaded, props.committedMessagesCount, props.sessionId, hasMoreOlder]);
+
     return (
         <FlatList
-            data={props.messages}
+            data={props.items}
             inverted={true}
             keyExtractor={keyExtractor}
             maintainVisibleContentPosition={{
@@ -54,8 +143,12 @@ const ChatListInternal = React.memo((props: {
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
             renderItem={renderItem}
-            ListHeaderComponent={<ListFooter sessionId={props.sessionId} />}
-            ListFooterComponent={<ListHeader />}
+            onEndReachedThreshold={0.2}
+            onEndReached={() => {
+                void loadOlder();
+            }}
+            ListHeaderComponent={<ListFooter sessionId={props.sessionId} bottomNotice={props.bottomNotice} />}
+            ListFooterComponent={<ListHeader isLoadingOlder={isLoadingOlder} />}
         />
     )
 });

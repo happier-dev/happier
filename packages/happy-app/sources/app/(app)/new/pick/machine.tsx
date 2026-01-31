@@ -1,15 +1,169 @@
 import React from 'react';
-import { View, Text } from 'react-native';
-import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
-import { CommonActions, useNavigation } from '@react-navigation/native';
+import { Pressable, Text, View, Platform } from 'react-native';
+import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { CommonActions } from '@react-navigation/native';
 import { Typography } from '@/constants/Typography';
-import { useAllMachines, useSessions } from '@/sync/storage';
-import { Ionicons } from '@expo/vector-icons';
-import { isMachineOnline } from '@/utils/machineUtils';
+import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/storage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
-import { ItemList } from '@/components/ItemList';
-import { SearchableListSelector } from '@/components/SearchableListSelector';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
+import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
+import { Ionicons } from '@expo/vector-icons';
+import { sync } from '@/sync/sync';
+import { prefetchMachineCapabilities } from '@/hooks/useMachineCapabilitiesCache';
+import { invalidateMachineEnvPresence } from '@/hooks/useMachineEnvPresence';
+import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
+import { HeaderTitleWithAction } from '@/components/navigation/HeaderTitleWithAction';
+
+function useMachinePickerScreenOptions(params: {
+    title: string;
+    onBack: () => void;
+    onRefresh: () => void;
+    isRefreshing: boolean;
+    theme: { colors: { header: { tint: string }; textSecondary: string } };
+}) {
+    const headerLeft = React.useCallback(() => (
+        <Pressable
+            onPress={params.onBack}
+            hitSlop={10}
+            style={({ pressed }) => ({ padding: 2, opacity: pressed ? 0.7 : 1 })}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.back')}
+        >
+            <Ionicons name="chevron-back" size={22} color={params.theme.colors.header.tint} />
+        </Pressable>
+    ), [params.onBack, params.theme.colors.header.tint]);
+
+    const headerTitle = React.useCallback(({ tintColor }: { children: string; tintColor?: string }) => (
+        <HeaderTitleWithAction
+            title={params.title}
+            tintColor={tintColor ?? params.theme.colors.header.tint}
+            actionLabel={t('common.refresh')}
+            actionIconName="refresh-outline"
+            actionColor={params.theme.colors.textSecondary}
+            actionDisabled={params.isRefreshing}
+            actionLoading={params.isRefreshing}
+            onActionPress={params.onRefresh}
+        />
+    ), [params.isRefreshing, params.onRefresh, params.theme.colors.header.tint, params.theme.colors.textSecondary, params.title]);
+
+    return React.useMemo(() => ({
+        headerShown: true,
+        title: params.title,
+        headerTitle,
+        headerBackTitle: t('common.back'),
+        // /new is presented as `containedModal` on iOS. Ensure picker screens are too,
+        // otherwise they can be pushed "behind" the modal (invisible but on the back stack).
+        presentation: Platform.OS === 'ios' ? ('containedModal' as const) : undefined,
+        headerLeft,
+    }), [headerLeft, headerTitle]);
+}
+
+export default React.memo(function MachinePickerScreen() {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const router = useRouter();
+    const navigation = useNavigation();
+    const params = useLocalSearchParams<{ selectedId?: string }>();
+    const machines = useAllMachines();
+    const sessions = useSessions();
+    const useMachinePickerSearch = useSetting('useMachinePickerSearch');
+    const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
+
+    const selectedMachine = machines.find(m => m.id === params.selectedId) || null;
+
+    const [isRefreshing, setIsRefreshing] = React.useState(false);
+    const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
+
+    const handleRefresh = React.useCallback(async () => {
+        if (isRefreshing) return;
+        setIsRefreshing(true);
+        try {
+            // Always refresh the machine list (new machines / metadata updates).
+            await sync.refreshMachinesThrottled({ staleMs: 0, force: true });
+
+            // Refresh machine-scoped caches only for the currently-selected machine (if any).
+            if (selectedMachineId) {
+                invalidateMachineEnvPresence({ machineId: selectedMachineId });
+                await Promise.all([
+                    prefetchMachineCapabilities({ machineId: selectedMachineId, request: CAPABILITIES_REQUEST_NEW_SESSION }),
+                ]);
+            }
+        } finally {
+            setIsRefreshing(false);
+        }
+    }, [isRefreshing, selectedMachineId]);
+
+    const screenOptions = useMachinePickerScreenOptions({
+        title: t('newSession.selectMachineTitle'),
+        onBack: () => router.back(),
+        onRefresh: () => { void handleRefresh(); },
+        isRefreshing,
+        theme,
+    });
+
+    const handleSelectMachine = (machine: typeof machines[0]) => {
+        // Support both callback pattern (feature branch wizard) and navigation params (main)
+        const machineId = machine.id;
+
+        // Navigation params approach from main for backward compatibility
+        const state = navigation.getState();
+        const previousRoute = state?.routes?.[state.index - 1];
+        if (state && state.index > 0 && previousRoute) {
+            navigation.dispatch({
+                ...CommonActions.setParams({ machineId }),
+                source: previousRoute.key,
+            });
+        }
+
+        router.back();
+    };
+
+    // Compute recent machines from sessions
+    const recentMachines = React.useMemo(() => {
+        return getRecentMachinesFromSessions({ machines, sessions });
+    }, [sessions, machines]);
+
+    if (machines.length === 0) {
+        return (
+            <>
+                <Stack.Screen options={screenOptions} />
+                <View style={styles.container}>
+                    <View style={styles.emptyContainer}>
+                        <Text style={styles.emptyText}>
+                            {t('newSession.noMachinesFound')}
+                        </Text>
+                    </View>
+                </View>
+            </>
+        );
+    }
+
+    return (
+        <>
+            <Stack.Screen options={screenOptions} />
+            <ItemList>
+                <MachineSelector
+                    machines={machines}
+                    selectedMachine={selectedMachine}
+                    recentMachines={recentMachines}
+                    favoriteMachines={machines.filter(m => favoriteMachines.includes(m.id))}
+                    onSelect={handleSelectMachine}
+                    showFavorites={true}
+                    showSearch={useMachinePickerSearch}
+                    onToggleFavorite={(machine) => {
+                        const isInFavorites = favoriteMachines.includes(machine.id);
+                        setFavoriteMachines(isInFavorites
+                            ? favoriteMachines.filter(id => id !== machine.id)
+                            : [...favoriteMachines, machine.id]
+                        );
+                    }}
+                />
+            </ItemList>
+        </>
+    );
+});
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -29,148 +183,3 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.default(),
     },
 }));
-
-export default function MachinePickerScreen() {
-    const { theme } = useUnistyles();
-    const styles = stylesheet;
-    const router = useRouter();
-    const navigation = useNavigation();
-    const params = useLocalSearchParams<{ selectedId?: string }>();
-    const machines = useAllMachines();
-    const sessions = useSessions();
-
-    const selectedMachine = machines.find(m => m.id === params.selectedId) || null;
-
-    const handleSelectMachine = (machine: typeof machines[0]) => {
-        // Support both callback pattern (feature branch wizard) and navigation params (main)
-        const machineId = machine.id;
-
-        // Navigation params approach from main for backward compatibility
-        const state = navigation.getState();
-        const previousRoute = state?.routes?.[state.index - 1];
-        if (state && state.index > 0 && previousRoute) {
-            navigation.dispatch({
-                ...CommonActions.setParams({ machineId }),
-                source: previousRoute.key,
-            } as never);
-        }
-
-        router.back();
-    };
-
-    // Compute recent machines from sessions
-    const recentMachines = React.useMemo(() => {
-        const machineIds = new Set<string>();
-        const machinesWithTimestamp: Array<{ machine: typeof machines[0]; timestamp: number }> = [];
-
-        sessions?.forEach(item => {
-            if (typeof item === 'string') return; // Skip section headers
-            const session = item as any;
-            if (session.metadata?.machineId && !machineIds.has(session.metadata.machineId)) {
-                const machine = machines.find(m => m.id === session.metadata.machineId);
-                if (machine) {
-                    machineIds.add(machine.id);
-                    machinesWithTimestamp.push({
-                        machine,
-                        timestamp: session.updatedAt || session.createdAt
-                    });
-                }
-            }
-        });
-
-        return machinesWithTimestamp
-            .sort((a, b) => b.timestamp - a.timestamp)
-            .map(item => item.machine);
-    }, [sessions, machines]);
-
-    if (machines.length === 0) {
-        return (
-            <>
-                <Stack.Screen
-                    options={{
-                        headerShown: true,
-                        headerTitle: 'Select Machine',
-                        headerBackTitle: t('common.back')
-                    }}
-                />
-                <View style={styles.container}>
-                    <View style={styles.emptyContainer}>
-                        <Text style={styles.emptyText}>
-                            No machines available
-                        </Text>
-                    </View>
-                </View>
-            </>
-        );
-    }
-
-    return (
-        <>
-            <Stack.Screen
-                options={{
-                    headerShown: true,
-                    headerTitle: 'Select Machine',
-                    headerBackTitle: t('common.back')
-                }}
-            />
-            <ItemList>
-                <SearchableListSelector<typeof machines[0]>
-                    config={{
-                        getItemId: (machine) => machine.id,
-                        getItemTitle: (machine) => machine.metadata?.displayName || machine.metadata?.host || machine.id,
-                        getItemSubtitle: undefined,
-                        getItemIcon: (machine) => (
-                            <Ionicons
-                                name="desktop-outline"
-                                size={24}
-                                color={theme.colors.textSecondary}
-                            />
-                        ),
-                        getRecentItemIcon: (machine) => (
-                            <Ionicons
-                                name="time-outline"
-                                size={24}
-                                color={theme.colors.textSecondary}
-                            />
-                        ),
-                        getItemStatus: (machine) => {
-                            const offline = !isMachineOnline(machine);
-                            return {
-                                text: offline ? 'offline' : 'online',
-                                color: offline ? theme.colors.status.disconnected : theme.colors.status.connected,
-                                dotColor: offline ? theme.colors.status.disconnected : theme.colors.status.connected,
-                                isPulsing: !offline,
-                            };
-                        },
-                        formatForDisplay: (machine) => machine.metadata?.displayName || machine.metadata?.host || machine.id,
-                        parseFromDisplay: (text) => {
-                            return machines.find(m =>
-                                m.metadata?.displayName === text || m.metadata?.host === text || m.id === text
-                            ) || null;
-                        },
-                        filterItem: (machine, searchText) => {
-                            const displayName = (machine.metadata?.displayName || '').toLowerCase();
-                            const host = (machine.metadata?.host || '').toLowerCase();
-                            const search = searchText.toLowerCase();
-                            return displayName.includes(search) || host.includes(search);
-                        },
-                        searchPlaceholder: "Type to filter machines...",
-                        recentSectionTitle: "Recent Machines",
-                        favoritesSectionTitle: "Favorite Machines",
-                        noItemsMessage: "No machines available",
-                        showFavorites: false,  // Simpler modal experience - no favorites in modal
-                        showRecent: true,
-                        showSearch: true,
-                        allowCustomInput: false,
-                        compactItems: true,
-                    }}
-                    items={machines}
-                    recentItems={recentMachines}
-                    favoriteItems={[]}
-                    selectedItem={selectedMachine}
-                    onSelect={handleSelectMachine}
-                />
-            </ItemList>
-        </>
-    );
-}

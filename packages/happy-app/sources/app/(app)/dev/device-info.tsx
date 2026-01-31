@@ -3,9 +3,9 @@ import { View, Text, ScrollView, Dimensions, Platform, PixelRatio } from 'react-
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Stack } from 'expo-router';
 import { Typography } from '@/constants/Typography';
-import { ItemGroup } from '@/components/ItemGroup';
-import { Item } from '@/components/Item';
-import { ItemList } from '@/components/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import Constants from 'expo-constants';
 import { useIsTablet, getDeviceType, calculateDeviceDimensions, useHeaderHeight } from '@/utils/responsive';
 import { layout } from '@/components/layout';
@@ -29,14 +29,18 @@ export default function DeviceInfo() {
     });
     
     const { widthInches, heightInches, diagonalInches } = dimensions;
+
+    const screenOptions = React.useMemo(() => {
+        return {
+            title: 'Device Info',
+            headerLargeTitle: false,
+        } as const;
+    }, []);
     
     return (
         <>
             <Stack.Screen
-                options={{
-                    title: 'Device Info',
-                    headerLargeTitle: false,
-                }}
+                options={screenOptions}
             />
             <ItemList>
                 <ItemGroup title="Safe Area Insets">

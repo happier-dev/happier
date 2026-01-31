@@ -8,12 +8,14 @@ import { useAuth } from '@/auth/AuthContext';
 import { storage } from '@/sync/storage';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { ItemList } from '@/components/ItemList';
-import { ItemGroup } from '@/components/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { useRouter } from 'expo-router';
+import { useRequireInboxFriendsEnabled } from '@/hooks/useRequireInboxFriendsEnabled';
 
 export default function FriendsScreen() {
+    const enabled = useRequireInboxFriendsEnabled();
     const { credentials } = useAuth();
     const router = useRouter();
     const friends = useAcceptedFriends();
@@ -91,6 +93,8 @@ export default function FriendsScreen() {
     }, [doRemove]);
 
     const isProcessing = (id: string) => processingId === id && (acceptLoading || rejectLoading || removeLoading);
+
+    if (!enabled) return null;
 
     return (
         <ItemList style={{ paddingTop: 0 }}>

@@ -36,14 +36,14 @@
         "default": "./dist/lib.mjs"
       }
     },
-    "./codex/happyMcpStdioBridge": {
+    "./backends/codex/happyMcpStdioBridge": {
       "require": {
-        "types": "./dist/codex/happyMcpStdioBridge.d.cts",
-        "default": "./dist/codex/happyMcpStdioBridge.cjs"
+        "types": "./dist/backends/codex/happyMcpStdioBridge.d.cts",
+        "default": "./dist/backends/codex/happyMcpStdioBridge.cjs"
       },
       "import": {
-        "types": "./dist/codex/happyMcpStdioBridge.d.mts",
-        "default": "./dist/codex/happyMcpStdioBridge.mjs"
+        "types": "./dist/backends/codex/happyMcpStdioBridge.d.mts",
+        "default": "./dist/backends/codex/happyMcpStdioBridge.mjs"
       }
     }
   },
@@ -65,7 +65,13 @@
     "dev:integration-test-env": "$npm_execpath run build && tsx --env-file .env.integration-test src/index.ts",
     "prepublishOnly": "$npm_execpath run build && $npm_execpath test",
     "release": "$npm_execpath install && release-it",
-    "postinstall": "node scripts/unpack-tools.cjs",
+    "build:shared": "node scripts/buildSharedDeps.mjs",
+    "pretypecheck": "yarn -s build:shared",
+    "prebuild": "yarn -s build:shared",
+    "pretest": "yarn -s build:shared",
+    "postinstall": "node scripts/unpack-tools.cjs && yarn -s build:shared",
+    "tool:trace:extract": "tsx scripts/tool-trace-extract.ts",
+    "tool:trace:fixtures:v1": "tsx scripts/tool-trace-fixtures-v1.ts",
     "// ==== Dev/Stable Variant Management ====": "",
     "stable": "node scripts/env-wrapper.cjs stable",
     "dev:variant": "node scripts/env-wrapper.cjs dev",
@@ -118,6 +124,8 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "@happy/agents": "link:../agents",
+    "@happy/protocol": "link:../protocol",
     "@eslint/compat": "^1",
     "@types/node": ">=20",
     "cross-env": "^10.1.0",

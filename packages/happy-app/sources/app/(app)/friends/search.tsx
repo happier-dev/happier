@@ -8,17 +8,21 @@ import { UserProfile } from '@/sync/friendTypes';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { trackFriendsConnect } from '@/track';
-import { ItemList } from '@/components/ItemList';
-import { ItemGroup } from '@/components/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useSearch } from '@/hooks/useSearch';
+import { useRequireInboxFriendsEnabled } from '@/hooks/useRequireInboxFriendsEnabled';
 
 export default function SearchFriendsScreen() {
+    const enabled = useRequireInboxFriendsEnabled();
     const { credentials } = useAuth();
     const [searchQuery, setSearchQuery] = useState('');
     const [processingUserId, setProcessingUserId] = useState<string | null>(null);
     
+    if (!enabled) return null;
+
     // Use the new search hook
-    const { results: searchResults, isSearching } = useSearch(
+    const { results: searchResults, isSearching, error: searchError } = useSearch(
         searchQuery,
         useCallback((query: string) => {
             if (!credentials) {
@@ -66,6 +70,8 @@ export default function SearchFriendsScreen() {
     );
     
     const hasSearched = searchQuery.trim().length > 0;
+    const searchErrorText =
+        searchError === 'searchFailed' ? t('errors.searchFailed') : null;
 
     return (
         <KeyboardAvoidingView
@@ -99,6 +105,9 @@ export default function SearchFriendsScreen() {
                             </View>
                         )}
                     </View>
+                    {searchErrorText ? (
+                        <Text style={styles.errorText}>{searchErrorText}</Text>
+                    ) : null}
                 </ItemGroup>
 
                 <ItemGroup
@@ -174,6 +183,12 @@ const styles = StyleSheet.create((theme) => ({
         top: 0,
         bottom: 0,
         justifyContent: 'center',
+    },
+    errorText: {
+        paddingHorizontal: 16,
+        paddingTop: 6,
+        fontSize: 13,
+        color: theme.colors.status.error,
     },
     resultsGroup: {
         marginBottom: 16,

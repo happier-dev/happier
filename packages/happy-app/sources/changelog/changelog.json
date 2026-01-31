@@ -1,6 +1,16 @@
 {
   "entries": [
     {
+      "version": 6,
+      "date": "2026-01-31",
+      "summary": "This update refreshes the app’s look and feel with a cleaner type system and a softer default background across the main UI.",
+      "changes": [
+        "Updated the default app font to Inter for improved readability and consistency across platforms.",
+        "Updated the app’s main background color from pure white to #F8F9FC."
+      ],
+      "rawMarkdown": "## Version 6 - 2026-01-31\n\n\nThis update refreshes the app’s look and feel with a cleaner type system and a softer default background across the main UI.\n\n- Updated the default app font to Inter for improved readability and consistency across platforms.\n- Updated the app’s main background color from pure white to #F8F9FC."
+    },
+    {
       "version": 5,
       "date": "2025-12-22",
       "summary": "This release expands AI agent support and refines the voice experience, while improving markdown rendering for a better chat experience.",
@@ -65,5 +75,5 @@
       "rawMarkdown": "## Version 1 - 2025-05-12\n\n\nWelcome to Happy - your secure, encrypted mobile companion for Claude Code. This inaugural release establishes the foundation for private, powerful AI interactions on the go.\n\n- Implemented end-to-end encrypted session management ensuring complete privacy\n- Integrated intelligent voice assistant with natural conversation capabilities\n- Added experimental file manager with syntax highlighting and tree navigation\n- Built seamless real-time synchronization across all your devices\n- Established native support for iOS, Android, and responsive web interfaces"
     }
   ],
-  "latestVersion": 5
+  "latestVersion": 6
 }

@@ -7,73 +7,14 @@ import { io, Socket } from 'socket.io-client';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from './types';
-import { registerCommonHandlers, SpawnSessionOptions, SpawnSessionResult } from '../modules/common/registerCommonHandlers';
+import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
+import { SOCKET_RPC_EVENTS } from '@happy/protocol/socketRpc';
 
-interface ServerToDaemonEvents {
-    update: (data: Update) => void;
-    'rpc-request': (data: { method: string, params: string }, callback: (response: string) => void) => void;
-    'rpc-registered': (data: { method: string }) => void;
-    'rpc-unregistered': (data: { method: string }) => void;
-    'rpc-error': (data: { type: string, error: string }) => void;
-    auth: (data: { success: boolean, user: string }) => void;
-    error: (data: { message: string }) => void;
-}
-
-interface DaemonToServerEvents {
-    'machine-alive': (data: {
-        machineId: string;
-        time: number;
-    }) => void;
-
-    'machine-update-metadata': (data: {
-        machineId: string;
-        metadata: string; // Encrypted MachineMetadata
-        expectedVersion: number
-    }, cb: (answer: {
-        result: 'error'
-    } | {
-        result: 'version-mismatch'
-        version: number,
-        metadata: string
-    } | {
-        result: 'success',
-        version: number,
-        metadata: string
-    }) => void) => void;
-
-    'machine-update-state': (data: {
-        machineId: string;
-        daemonState: string; // Encrypted DaemonState
-        expectedVersion: number
-    }, cb: (answer: {
-        result: 'error'
-    } | {
-        result: 'version-mismatch'
-        version: number,
-        daemonState: string
-    } | {
-        result: 'success',
-        version: number,
-        daemonState: string
-    }) => void) => void;
-
-    'rpc-register': (data: { method: string }) => void;
-    'rpc-unregister': (data: { method: string }) => void;
-    'rpc-call': (data: { method: string, params: any }, callback: (response: {
-        ok: boolean
-        result?: any
-        error?: string
-    }) => void) => void;
-}
-
-type MachineRpcHandlers = {
-    spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
-    stopSession: (sessionId: string) => boolean;
-    requestShutdown: () => void;
-}
+import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
+import { registerMachineRpcHandlers, type MachineRpcHandlers } from './machine/rpcHandlers';
 
 export class ApiMachineClient {
     private socket!: Socket<ServerToDaemonEvents, DaemonToServerEvents>;
@@ -92,7 +33,7 @@ export class ApiMachineClient {
             logger: (msg, data) => logger.debug(msg, data)
         });
 
-        registerCommonHandlers(this.rpcHandlerManager, process.cwd());
+        registerSessionHandlers(this.rpcHandlerManager, process.cwd());
     }
 
     setRPCHandlers({
@@ -100,59 +41,9 @@ export class ApiMachineClient {
         stopSession,
         requestShutdown
     }: MachineRpcHandlers) {
-        // Register spawn session handler
-        this.rpcHandlerManager.registerHandler('spawn-happy-session', async (params: any) => {
-            const { directory, sessionId, machineId, approvedNewDirectoryCreation, agent, token, environmentVariables } = params || {};
-            logger.debug(`[API MACHINE] Spawning session with params: ${JSON.stringify(params)}`);
-
-            if (!directory) {
-                throw new Error('Directory is required');
-            }
-
-            const result = await spawnSession({ directory, sessionId, machineId, approvedNewDirectoryCreation, agent, token, environmentVariables });
-
-            switch (result.type) {
-                case 'success':
-                    logger.debug(`[API MACHINE] Spawned session ${result.sessionId}`);
-                    return { type: 'success', sessionId: result.sessionId };
-
-                case 'requestToApproveDirectoryCreation':
-                    logger.debug(`[API MACHINE] Requesting directory creation approval for: ${result.directory}`);
-                    return { type: 'requestToApproveDirectoryCreation', directory: result.directory };
-
-                case 'error':
-                    throw new Error(result.errorMessage);
-            }
-        });
-
-        // Register stop session handler  
-        this.rpcHandlerManager.registerHandler('stop-session', (params: any) => {
-            const { sessionId } = params || {};
-
-            if (!sessionId) {
-                throw new Error('Session ID is required');
-            }
-
-            const success = stopSession(sessionId);
-            if (!success) {
-                throw new Error('Session not found or failed to stop');
-            }
-
-            logger.debug(`[API MACHINE] Stopped session ${sessionId}`);
-            return { message: 'Session stopped' };
-        });
-
-        // Register stop daemon handler
-        this.rpcHandlerManager.registerHandler('stop-daemon', () => {
-            logger.debug('[API MACHINE] Received stop-daemon RPC request');
-
-            // Trigger shutdown callback after a delay
-            setTimeout(() => {
-                logger.debug('[API MACHINE] Initiating daemon shutdown from RPC');
-                requestShutdown();
-            }, 100);
-
-            return { message: 'Daemon stop request acknowledged, starting shutdown sequence...' };
+        registerMachineRpcHandlers({
+            rpcHandlerManager: this.rpcHandlerManager,
+            handlers: { spawnSession, stopSession, requestShutdown }
         });
     }
 
@@ -164,6 +55,11 @@ export class ApiMachineClient {
     async updateMachineMetadata(handler: (metadata: MachineMetadata | null) => MachineMetadata): Promise<void> {
         await backoff(async () => {
             const updated = handler(this.machine.metadata);
+
+            // No-op: don't write if nothing changed.
+            if (this.machine.metadata && JSON.stringify(updated) === JSON.stringify(this.machine.metadata)) {
+                return;
+            }
 
             const answer = await this.socket.emitWithAck('machine-update-metadata', {
                 machineId: this.machine.id,
@@ -213,7 +109,15 @@ export class ApiMachineClient {
         });
     }
 
-    connect() {
+    emitSessionEnd(payload: { sid: string; time: number; exit?: any }) {
+        // May be called before connect() finishes; best-effort only.
+        if (!this.socket) {
+            return;
+        }
+        this.socket.emit('session-end', payload);
+    }
+
+    connect(params?: { onConnect?: () => void | Promise<void> }) {
         const serverUrl = configuration.serverUrl.replace(/^http/, 'ws');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
@@ -250,6 +154,13 @@ export class ApiMachineClient {
 
             // Start keep-alive
             this.startKeepAlive();
+
+            // Optional hook for callers that need a "connected" moment
+            if (params?.onConnect) {
+                Promise.resolve(params.onConnect()).catch(() => {
+                    // Best-effort hook; ignore errors to avoid destabilizing the daemon.
+                });
+            }
         });
 
         this.socket.on('disconnect', () => {
@@ -259,7 +170,7 @@ export class ApiMachineClient {
         });
 
         // Single consolidated RPC handler
-        this.socket.on('rpc-request', async (data: { method: string, params: string }, callback: (response: string) => void) => {
+        this.socket.on(SOCKET_RPC_EVENTS.REQUEST, async (data: { method: string, params: string }, callback: (response: string) => void) => {
             logger.debugLargeJson(`[API MACHINE] Received RPC request:`, data);
             callback(await this.rpcHandlerManager.handleRequest(data));
         });

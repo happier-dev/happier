@@ -377,6 +377,48 @@ describe('reducer', () => {
     });
 
     describe('AgentState permissions', () => {
+        it('should treat permission-request tool-call inputs as pending permissions (no AgentState required)', () => {
+            const state = createReducer();
+
+            const messages: NormalizedMessage[] = [
+                {
+                    id: 'perm-msg-1',
+                    localId: null,
+                    createdAt: 1000,
+                    role: 'agent',
+                    isSidechain: false,
+                    content: [{
+                        type: 'tool-call',
+                        id: 'write_file-123',
+                        name: 'write',
+                        input: {
+                            permissionId: 'write_file-123',
+                            toolCall: {
+                                toolCallId: 'write_file-123',
+                                status: 'pending',
+                                title: 'Writing to .tmp/example.txt',
+                                content: [{ path: 'example.txt', type: 'diff', oldText: '', newText: 'hello' }],
+                                locations: [{ path: '/Users/example/.tmp/example.txt' }],
+                            },
+                        },
+                        description: 'write',
+                        uuid: 'perm-msg-1',
+                        parentUUID: null,
+                    }],
+                },
+            ];
+
+            const result = reducer(state, messages);
+            expect(result.messages).toHaveLength(1);
+
+            const msg = result.messages[0];
+            expect(msg.kind).toBe('tool-call');
+            if (msg.kind !== 'tool-call') return;
+
+            expect(msg.tool.permission).toEqual({ id: 'write_file-123', status: 'pending' });
+            expect(msg.tool.startedAt).toBeNull();
+        });
+
         it('should create tool messages for pending permission requests', () => {
             const state = createReducer();
             const agentState: AgentState = {
@@ -680,8 +722,14 @@ describe('reducer', () => {
             expect(state.toolIdToMessageId.has('tool-completed')).toBe(true);
             
             // Second call with same AgentState - should not create duplicates
+            const sizeBefore = state.messages.size;
+            const idsBefore = new Set(Array.from(state.messages.keys()));
             const result2 = reducer(state, [], agentState);
-            expect(result2.messages).toHaveLength(0); // No new messages
+            // Reducer may return updated existing messages, but must not add duplicates.
+            expect(state.messages.size).toBe(sizeBefore);
+            for (const msg of result2.messages) {
+                expect(idsBefore.has(msg.id)).toBe(true);
+            }
             
             // Verify the mappings still exist and haven't changed
             expect(state.toolIdToMessageId.size).toBe(2);
@@ -1306,6 +1354,115 @@ describe('reducer', () => {
             }
         });
 
+        it('should treat streaming tool results as incremental output without completing', () => {
+            const state = createReducer();
+
+            const toolCallMessages: NormalizedMessage[] = [
+                {
+                    id: 'msg-1',
+                    localId: null,
+                    createdAt: 1000,
+                    role: 'agent',
+                    content: [{
+                        type: 'tool-call',
+                        id: 'tool-1',
+                        name: 'Bash',
+                        input: { command: 'echo hello' },
+                        description: null,
+                        uuid: 'tool-uuid-1',
+                        parentUUID: null
+                    }],
+                    isSidechain: false
+                }
+            ];
+
+            const result1 = reducer(state, toolCallMessages);
+            expect(result1.messages).toHaveLength(1);
+            expect(result1.messages[0].kind).toBe('tool-call');
+            if (result1.messages[0].kind === 'tool-call') {
+                expect(result1.messages[0].tool.state).toBe('running');
+                expect(result1.messages[0].tool.completedAt).toBeNull();
+            }
+
+            const streamChunk1: NormalizedMessage[] = [
+                {
+                    id: 'msg-2',
+                    localId: null,
+                    createdAt: 1100,
+                    role: 'agent',
+                    content: [{
+                        type: 'tool-result',
+                        tool_use_id: 'tool-1',
+                        content: { _stream: true, _terminal: true, stdoutChunk: 'hello\\n' },
+                        is_error: false,
+                        uuid: 'result-uuid-1',
+                        parentUUID: null
+                    }],
+                    isSidechain: false
+                }
+            ];
+
+            const result2 = reducer(state, streamChunk1);
+            expect(result2.messages).toHaveLength(1);
+            if (result2.messages[0].kind === 'tool-call') {
+                expect(result2.messages[0].tool.state).toBe('running');
+                expect(result2.messages[0].tool.completedAt).toBeNull();
+                expect(result2.messages[0].tool.result).toEqual({ stdout: 'hello\\n' });
+            }
+
+            const streamChunk2: NormalizedMessage[] = [
+                {
+                    id: 'msg-3',
+                    localId: null,
+                    createdAt: 1150,
+                    role: 'agent',
+                    content: [{
+                        type: 'tool-result',
+                        tool_use_id: 'tool-1',
+                        content: { _stream: true, stdoutChunk: 'world\\n' },
+                        is_error: false,
+                        uuid: 'result-uuid-2',
+                        parentUUID: null
+                    }],
+                    isSidechain: false
+                }
+            ];
+
+            const result3 = reducer(state, streamChunk2);
+            expect(result3.messages).toHaveLength(1);
+            if (result3.messages[0].kind === 'tool-call') {
+                expect(result3.messages[0].tool.state).toBe('running');
+                expect(result3.messages[0].tool.completedAt).toBeNull();
+                expect(result3.messages[0].tool.result).toEqual({ stdout: 'hello\\nworld\\n' });
+            }
+
+            const finalResult: NormalizedMessage[] = [
+                {
+                    id: 'msg-4',
+                    localId: null,
+                    createdAt: 1200,
+                    role: 'agent',
+                    content: [{
+                        type: 'tool-result',
+                        tool_use_id: 'tool-1',
+                        content: { exitCode: 0 },
+                        is_error: false,
+                        uuid: 'result-uuid-3',
+                        parentUUID: null
+                    }],
+                    isSidechain: false
+                }
+            ];
+
+            const result4 = reducer(state, finalResult);
+            expect(result4.messages).toHaveLength(1);
+            if (result4.messages[0].kind === 'tool-call') {
+                expect(result4.messages[0].tool.state).toBe('completed');
+                expect(result4.messages[0].tool.completedAt).toBe(1200);
+                expect(result4.messages[0].tool.result).toEqual({ exitCode: 0, stdout: 'hello\\nworld\\n' });
+            }
+        });
+
         it('should handle interleaved messages from multiple sources correctly', () => {
             const state = createReducer();
             
@@ -1717,9 +1874,10 @@ describe('reducer', () => {
             expect(state.messages.size).toBe(1);
             
             // Process again with same state - should not create duplicate
+            const sizeBefore = state.messages.size;
             const result2 = reducer(state, [], agentState);
-            expect(result2.messages).toHaveLength(0); // No new messages
-            expect(state.messages.size).toBe(1); // Still only one message
+            // Reducer may return updated existing messages, but must not add duplicates.
+            expect(state.messages.size).toBe(sizeBefore); // Still only one message
             
             // Verify the message has correct permission status
             const message = state.messages.get(pendingMessageId!);

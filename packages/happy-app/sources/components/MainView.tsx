@@ -21,6 +21,8 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { isUsingCustomServer } from '@/sync/serverConfig';
 import { trackFriendsSearch } from '@/track';
+import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
+import { useInboxFriendsEnabled } from '@/hooks/useInboxFriendsEnabled';
 
 interface MainViewProps {
     variant: 'phone' | 'sidebar';
@@ -111,62 +113,13 @@ type ActiveTabType = 'sessions' | 'inbox' | 'settings';
 // Header title component with connection status
 const HeaderTitle = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => {
     const { theme } = useUnistyles();
-    const socketStatus = useSocketStatus();
-
-    const connectionStatus = React.useMemo(() => {
-        const { status } = socketStatus;
-        switch (status) {
-            case 'connected':
-                return {
-                    color: theme.colors.status.connected,
-                    isPulsing: false,
-                    text: t('status.connected'),
-                };
-            case 'connecting':
-                return {
-                    color: theme.colors.status.connecting,
-                    isPulsing: true,
-                    text: t('status.connecting'),
-                };
-            case 'disconnected':
-                return {
-                    color: theme.colors.status.disconnected,
-                    isPulsing: false,
-                    text: t('status.disconnected'),
-                };
-            case 'error':
-                return {
-                    color: theme.colors.status.error,
-                    isPulsing: false,
-                    text: t('status.error'),
-                };
-            default:
-                return {
-                    color: theme.colors.status.default,
-                    isPulsing: false,
-                    text: '',
-                };
-        }
-    }, [socketStatus, theme]);
 
     return (
         <View style={styles.titleContainer}>
             <Text style={styles.titleText}>
                 {t(TAB_TITLES[activeTab])}
             </Text>
-            {connectionStatus.text && (
-                <View style={styles.statusContainer}>
-                    <StatusDot
-                        color={connectionStatus.color}
-                        isPulsing={connectionStatus.isPulsing}
-                        size={6}
-                        style={{ marginRight: 4 }}
-                    />
-                    <Text style={[styles.statusText, { color: connectionStatus.color }]}>
-                        {connectionStatus.text}
-                    </Text>
-                </View>
-            )}
+            <ConnectionStatusControl variant="header" />
         </View>
     );
 });
@@ -230,10 +183,25 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const router = useRouter();
     const friendRequests = useFriendRequests();
     const realtimeStatus = useRealtimeStatus();
+    const inboxFriendsEnabled = useInboxFriendsEnabled();
 
     // Tab state management
     // NOTE: Zen tab removed - the feature never got to a useful state
     const [activeTab, setActiveTab] = React.useState<TabType>('sessions');
+
+    React.useEffect(() => {
+        if (inboxFriendsEnabled) return;
+        if (activeTab !== 'inbox') return;
+        setActiveTab('sessions');
+    }, [activeTab, inboxFriendsEnabled]);
+
+    const headerTab: ActiveTabType = React.useMemo(() => {
+        const normalized = (activeTab === 'inbox' || activeTab === 'sessions' || activeTab === 'settings')
+            ? activeTab
+            : 'sessions';
+        if (!inboxFriendsEnabled && normalized === 'inbox') return 'sessions';
+        return normalized;
+    }, [activeTab, inboxFriendsEnabled]);
 
     const handleNewSession = React.useCallback(() => {
         router.push('/new');
@@ -247,14 +215,14 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     const renderTabContent = React.useCallback(() => {
         switch (activeTab) {
             case 'inbox':
-                return <InboxView />;
+                return inboxFriendsEnabled ? <InboxView /> : <SessionsListWrapper />;
             case 'settings':
                 return <SettingsViewWrapper />;
             case 'sessions':
             default:
                 return <SessionsListWrapper />;
         }
-    }, [activeTab]);
+    }, [activeTab, inboxFriendsEnabled]);
 
     // Sidebar variant
     if (variant === 'sidebar') {
@@ -302,8 +270,8 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
             <View style={styles.phoneContainer}>
                 <View style={{ backgroundColor: theme.colors.groupped.background }}>
                     <Header
-                        title={<HeaderTitle activeTab={activeTab as ActiveTabType} />}
-                        headerRight={() => <HeaderRight activeTab={activeTab as ActiveTabType} />}
+                        title={<HeaderTitle activeTab={headerTab} />}
+                        headerRight={() => <HeaderRight activeTab={headerTab} />}
                         headerLeft={() => <HeaderLogo />}
                         headerShadowVisible={false}
                         headerTransparent={true}

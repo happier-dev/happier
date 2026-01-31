@@ -1,6 +1,6 @@
 import { Platform, Alert } from 'react-native';
 import { t } from '@/text';
-import { AlertButton, ModalConfig, CustomModalConfig, IModal } from './types';
+import { AlertButton, ModalConfig, CustomModalConfig, IModal, type CustomModalInjectedProps } from './types';
 
 class ModalManagerClass implements IModal {
     private showModalFn: ((config: Omit<ModalConfig, 'id'>) => string) | null = null;
@@ -95,16 +95,24 @@ class ModalManagerClass implements IModal {
         }
     }
 
-    show(config: Omit<CustomModalConfig, 'id' | 'type'>): string {
+    show<P extends CustomModalInjectedProps>(config: {
+        component: CustomModalConfig<P>['component'];
+        props?: CustomModalConfig<P>['props'];
+        closeOnBackdrop?: boolean;
+    }): string {
         if (!this.showModalFn) {
             console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
             return '';
         }
 
-        return this.showModalFn({
-            ...config,
-            type: 'custom'
-        });
+        const modalConfig: Omit<CustomModalConfig, 'id'> = {
+            type: 'custom',
+            component: config.component as unknown as CustomModalConfig['component'],
+            props: config.props as unknown as CustomModalConfig['props'],
+            closeOnBackdrop: config.closeOnBackdrop,
+        };
+
+        return this.showModalFn(modalConfig);
     }
 
     hide(id: string): void {
@@ -152,51 +160,26 @@ class ModalManagerClass implements IModal {
             inputType?: 'default' | 'secure-text' | 'email-address' | 'numeric';
         }
     ): Promise<string | null> {
-        if (Platform.OS === 'ios' && !options?.inputType) {
-            // Use native Alert.prompt on iOS (only supports basic text input)
-            return new Promise<string | null>((resolve) => {
-                // @ts-ignore - Alert.prompt is iOS only
-                Alert.prompt(
-                    title,
-                    message,
-                    [
-                        {
-                            text: options?.cancelText || t('common.cancel'),
-                            style: 'cancel',
-                            onPress: () => resolve(null)
-                        },
-                        {
-                            text: options?.confirmText || t('common.ok'),
-                            onPress: (text?: string) => resolve(text || null)
-                        }
-                    ],
-                    'plain-text',
-                    options?.defaultValue,
-                    'default'
-                );
-            });
-        } else {
-            // Use custom modal for web and Android
-            if (!this.showModalFn) {
-                console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
-                return null;
-            }
-
-            const modalId = this.showModalFn({
-                type: 'prompt',
-                title,
-                message,
-                placeholder: options?.placeholder,
-                defaultValue: options?.defaultValue,
-                cancelText: options?.cancelText,
-                confirmText: options?.confirmText,
-                inputType: options?.inputType
-            } as Omit<ModalConfig, 'id'>);
-
-            return new Promise<string | null>((resolve) => {
-                this.promptResolvers.set(modalId, resolve);
-            });
+        // Use custom modal everywhere (iOS/Android/web) so behavior is consistent.
+        if (!this.showModalFn) {
+            console.error('ModalManager not initialized. Make sure ModalProvider is mounted.');
+            return null;
         }
+
+        const modalId = this.showModalFn({
+            type: 'prompt',
+            title,
+            message,
+            placeholder: options?.placeholder,
+            defaultValue: options?.defaultValue,
+            cancelText: options?.cancelText,
+            confirmText: options?.confirmText,
+            inputType: options?.inputType
+        } as Omit<ModalConfig, 'id'>);
+
+        return new Promise<string | null>((resolve) => {
+            this.promptResolvers.set(modalId, resolve);
+        });
     }
 }
 

@@ -1,0 +1,490 @@
+// AUTO-GENERATED FILE - DO NOT EDIT.
+// Source: prisma/schema.prisma
+// Regenerate: yarn schema:sync
+
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider        = "prisma-client-js"
+    previewFeatures = ["metrics"]
+    output          = "../../generated/sqlite-client"
+}
+
+datasource db {
+    provider = "sqlite"
+    url      = env("DATABASE_URL")
+}
+
+//
+// Account
+//
+
+model Account {
+    id              String      @id @default(cuid())
+    publicKey       String      @unique
+    /// X25519 (NaCl box) public key for encrypting session DEKs to this account
+    contentPublicKey Bytes?
+    /// Ed25519 signature binding contentPublicKey to publicKey
+    contentPublicKeySig Bytes?
+    seq             Int         @default(0)
+    feedSeq         BigInt      @default(0)
+    createdAt       DateTime    @default(now())
+    updatedAt       DateTime    @updatedAt
+    settings        String?
+    settingsVersion Int         @default(0)
+    githubUserId    String?     @unique
+    githubUser      GithubUser? @relation(fields: [githubUserId], references: [id])
+
+    // Profile
+    firstName String?
+    lastName  String?
+    username  String? @unique
+    /// [ImageRef]
+    avatar    Json?
+
+    Session                Session[]
+    AccountPushToken       AccountPushToken[]
+    TerminalAuthRequest    TerminalAuthRequest[]
+    AccountAuthRequest     AccountAuthRequest[]
+    UsageReport            UsageReport[]
+    Machine                Machine[]
+    UploadedFile           UploadedFile[]
+    ServiceAccountToken    ServiceAccountToken[]
+    RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
+    RelationshipsTo        UserRelationship[]         @relation("RelationshipsTo")
+    Artifact               Artifact[]
+    AccessKey              AccessKey[]
+    UserFeedItem           UserFeedItem[]
+    UserKVStore            UserKVStore[]
+    SharedBySessions       SessionShare[]             @relation("SharedBySessions")
+    SharedWithSessions     SessionShare[]             @relation("SharedWithSessions")
+    SessionShareAccessLogs SessionShareAccessLog[]    @relation("SessionShareAccessLogs")
+    PublicSessionShares    PublicSessionShare[]       @relation("PublicSessionShares")
+    PublicShareAccessLogs  PublicShareAccessLog[]     @relation("PublicShareAccessLogs")
+    PublicShareBlockedUsers PublicShareBlockedUser[]  @relation("PublicShareBlockedUsers")
+}
+
+model TerminalAuthRequest {
+    id                String   @id @default(cuid())
+    publicKey         String   @unique
+    supportsV2        Boolean  @default(false)
+    response          String?
+    responseAccountId String?
+    responseAccount   Account? @relation(fields: [responseAccountId], references: [id])
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+}
+
+model AccountAuthRequest {
+    id                String   @id @default(cuid())
+    publicKey         String   @unique
+    response          String?
+    responseAccountId String?
+    responseAccount   Account? @relation(fields: [responseAccountId], references: [id])
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+}
+
+model AccountPushToken {
+    id        String   @id @default(cuid())
+    accountId String
+    account   Account  @relation(fields: [accountId], references: [id])
+    token     String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([accountId, token])
+}
+
+//
+// Sessions
+//
+
+model Session {
+    id                String              @id @default(cuid())
+    tag               String
+    accountId         String
+    account           Account             @relation(fields: [accountId], references: [id])
+    metadata          String
+    metadataVersion   Int                 @default(0)
+    agentState        String?
+    agentStateVersion Int                 @default(0)
+    dataEncryptionKey Bytes?
+    seq               Int                 @default(0)
+    active            Boolean             @default(true)
+    lastActiveAt      DateTime            @default(now())
+    createdAt         DateTime            @default(now())
+    updatedAt         DateTime            @updatedAt
+    messages          SessionMessage[]
+    usageReports      UsageReport[]
+    accessKeys        AccessKey[]
+    shares            SessionShare[]
+    publicShare       PublicSessionShare?
+
+    @@unique([accountId, tag])
+    @@index([accountId, updatedAt])
+}
+
+model SessionMessage {
+    id        String   @id @default(cuid())
+    sessionId String
+    session   Session  @relation(fields: [sessionId], references: [id])
+    localId   String?
+    seq       Int
+    /// [SessionMessageContent]
+    content   Json
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([sessionId, localId])
+    @@index([sessionId, seq])
+}
+
+//
+// Github
+//
+
+model GithubUser {
+    id        String    @id
+    /// [GitHubProfile]
+    profile   Json
+    token     Bytes?
+    createdAt DateTime  @default(now())
+    updatedAt DateTime  @updatedAt
+    Account   Account[]
+}
+
+model GithubOrganization {
+    id        String   @id
+    /// [GitHubOrg]
+    profile   Json
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+//
+// Utility
+//
+
+model GlobalLock {
+    key       String   @id @default(cuid())
+    value     String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+    expiresAt DateTime
+}
+
+model RepeatKey {
+    key       String   @id
+    value     String
+    createdAt DateTime @default(now())
+    expiresAt DateTime
+}
+
+model SimpleCache {
+    key       String   @id
+    value     String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+//
+// Usage Reporting
+//
+
+model UsageReport {
+    id        String   @id @default(cuid())
+    key       String
+    accountId String
+    account   Account  @relation(fields: [accountId], references: [id])
+    sessionId String?
+    session   Session? @relation(fields: [sessionId], references: [id])
+    /// [UsageReportData]
+    data      Json
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([accountId, sessionId, key])
+    @@index([accountId])
+    @@index([sessionId])
+}
+
+//
+// Machines
+//
+
+model Machine {
+    id                 String      @id
+    accountId          String
+    account            Account     @relation(fields: [accountId], references: [id])
+    metadata           String // Encrypted - contains static machine info
+    metadataVersion    Int         @default(0)
+    daemonState        String? // Encrypted - contains dynamic daemon state
+    daemonStateVersion Int         @default(0)
+    dataEncryptionKey  Bytes?
+    seq                Int         @default(0)
+    active             Boolean     @default(true)
+    lastActiveAt       DateTime    @default(now())
+    createdAt          DateTime    @default(now())
+    updatedAt          DateTime    @updatedAt
+    accessKeys         AccessKey[]
+
+    @@unique([accountId, id])
+    @@index([accountId])
+}
+
+model UploadedFile {
+    id        String   @id @default(cuid())
+    accountId String
+    account   Account  @relation(fields: [accountId], references: [id])
+    path      String
+    width     Int?
+    height    Int?
+    thumbhash String?
+    reuseKey  String?
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([accountId, path])
+    @@index([accountId])
+}
+
+model ServiceAccountToken {
+    id         String    @id @default(cuid())
+    accountId  String
+    account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    vendor     String
+    token      Bytes // Encrypted token
+    metadata   Json? // Optional vendor metadata
+    lastUsedAt DateTime?
+    createdAt  DateTime  @default(now())
+    updatedAt  DateTime  @updatedAt
+
+    @@unique([accountId, vendor])
+    @@index([accountId])
+}
+
+//
+// Artifacts
+//
+
+model Artifact {
+    id                String   @id // UUID provided by client
+    accountId         String
+    account           Account  @relation(fields: [accountId], references: [id])
+    header            Bytes // Encrypted header (can contain JSON)
+    headerVersion     Int      @default(0)
+    body              Bytes // Encrypted body
+    bodyVersion       Int      @default(0)
+    dataEncryptionKey Bytes // Encryption key for this artifact
+    seq               Int      @default(0)
+    createdAt         DateTime @default(now())
+    updatedAt         DateTime @updatedAt
+
+    @@index([accountId])
+    @@index([accountId, updatedAt])
+}
+
+//
+// Access Keys
+//
+
+model AccessKey {
+    id          String   @id @default(cuid())
+    accountId   String
+    account     Account  @relation(fields: [accountId], references: [id])
+    machineId   String
+    machine     Machine  @relation(fields: [accountId, machineId], references: [accountId, id])
+    sessionId   String
+    session     Session  @relation(fields: [sessionId], references: [id])
+    data        String // Encrypted data
+    dataVersion Int      @default(0)
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    @@unique([accountId, machineId, sessionId])
+    @@index([accountId])
+    @@index([sessionId])
+    @@index([machineId])
+}
+
+//
+// Social Network - Relationships
+//
+
+enum RelationshipStatus {
+    none
+    requested
+    pending
+    friend
+    rejected
+}
+
+model UserRelationship {
+    fromUserId     String
+    fromUser       Account            @relation("RelationshipsFrom", fields: [fromUserId], references: [id], onDelete: Cascade)
+    toUserId       String
+    toUser         Account            @relation("RelationshipsTo", fields: [toUserId], references: [id], onDelete: Cascade)
+    status         RelationshipStatus @default(pending)
+    createdAt      DateTime           @default(now())
+    updatedAt      DateTime           @updatedAt
+    acceptedAt     DateTime?
+    lastNotifiedAt DateTime?
+
+    @@id([fromUserId, toUserId])
+    @@index([toUserId, status])
+    @@index([fromUserId, status])
+}
+
+//
+// Feed
+//
+
+model UserFeedItem {
+    id        String   @id @default(cuid())
+    userId    String
+    user      Account  @relation(fields: [userId], references: [id], onDelete: Cascade)
+    counter   BigInt
+    repeatKey String?
+    /// [FeedBody]
+    body      Json
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([userId, counter])
+    @@unique([userId, repeatKey])
+    @@index([userId, counter])
+}
+
+//
+// Key-Value Storage
+//
+
+model UserKVStore {
+    id        String   @id @default(cuid())
+    accountId String
+    account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    key       String   // Unencrypted for indexing
+    value     Bytes?   // Encrypted value, null when "deleted"
+    version   Int      @default(0)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([accountId, key])
+    @@index([accountId])
+}
+
+//
+// Session Sharing
+//
+
+/// Access level for session sharing
+enum ShareAccessLevel {
+    /// Read-only access - can view session content but cannot interact
+    view
+    /// Edit access - can send messages and approve tool execution
+    edit
+    /// Admin access - can manage sharing settings and archive session
+    admin
+}
+
+/// Direct session share between users (friend-to-friend sharing)
+model SessionShare {
+    id                String           @id @default(cuid())
+    sessionId         String
+    session           Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+    sharedByUserId    String
+    sharedByUser      Account          @relation("SharedBySessions", fields: [sharedByUserId], references: [id])
+    sharedWithUserId  String
+    sharedWithUser    Account          @relation("SharedWithSessions", fields: [sharedWithUserId], references: [id])
+    accessLevel       ShareAccessLevel @default(view)
+    /// Whether this recipient can approve permission prompts for this session (delegated to the owner daemon)
+    canApprovePermissions Boolean       @default(false)
+    /// NaCl Box encrypted dataEncryptionKey for the recipient
+    encryptedDataKey  Bytes
+    createdAt         DateTime         @default(now())
+    updatedAt         DateTime         @updatedAt
+    accessLogs        SessionShareAccessLog[]
+
+    @@unique([sessionId, sharedWithUserId])
+    @@index([sharedWithUserId])
+    @@index([sharedByUserId])
+    @@index([sessionId])
+}
+
+/// Access log for direct session shares
+model SessionShareAccessLog {
+    id             String       @id @default(cuid())
+    sessionShareId String
+    sessionShare   SessionShare @relation(fields: [sessionShareId], references: [id], onDelete: Cascade)
+    userId         String
+    user           Account      @relation("SessionShareAccessLogs", fields: [userId], references: [id])
+    accessedAt     DateTime     @default(now())
+    ipAddress      String?
+    userAgent      String?
+
+    @@index([sessionShareId])
+    @@index([userId])
+    @@index([accessedAt])
+}
+
+/// Public session share via shareable link (always view-only for security)
+model PublicSessionShare {
+    id                String                    @id @default(cuid())
+    sessionId         String                    @unique
+    session           Session                   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+    createdByUserId   String
+    createdByUser     Account                   @relation("PublicSessionShares", fields: [createdByUserId], references: [id])
+    /// sha256(token) (32 bytes)
+    tokenHash         Bytes                     @unique
+    /// Encrypted dataEncryptionKey for public access
+    encryptedDataKey  Bytes
+    /// Optional expiration time (null = no expiration)
+    expiresAt         DateTime?
+    /// Maximum number of uses (null = unlimited)
+    maxUses           Int?
+    /// Current use count
+    useCount          Int                       @default(0)
+    /// Whether user consent is required to view (enables detailed access logging)
+    isConsentRequired Boolean                   @default(false)
+    createdAt         DateTime                  @default(now())
+    updatedAt         DateTime                  @updatedAt
+    accessLogs        PublicShareAccessLog[]
+    blockedUsers      PublicShareBlockedUser[]
+
+    @@index([tokenHash])
+    @@index([sessionId])
+}
+
+/// Access log for public session shares
+model PublicShareAccessLog {
+    id            String             @id @default(cuid())
+    publicShareId String
+    publicShare   PublicSessionShare @relation(fields: [publicShareId], references: [id], onDelete: Cascade)
+    /// User ID if authenticated, null for anonymous access
+    userId        String?
+    user          Account?           @relation("PublicShareAccessLogs", fields: [userId], references: [id])
+    accessedAt    DateTime           @default(now())
+    ipAddress     String?
+    userAgent     String?
+
+    @@index([publicShareId])
+    @@index([userId])
+    @@index([accessedAt])
+}
+
+/// Blocked users for public session shares
+model PublicShareBlockedUser {
+    id            String             @id @default(cuid())
+    publicShareId String
+    publicShare   PublicSessionShare @relation(fields: [publicShareId], references: [id], onDelete: Cascade)
+    userId        String
+    user          Account            @relation("PublicShareBlockedUsers", fields: [userId], references: [id])
+    blockedAt     DateTime           @default(now())
+    reason        String?
+
+    @@unique([publicShareId, userId])
+    @@index([publicShareId])
+    @@index([userId])
+}

@@ -1,8 +1,9 @@
 import { z } from 'zod'
-import { UsageSchema } from '@/claude/types'
+import { UsageSchema } from '@/api/usage'
+import { SOCKET_RPC_EVENTS } from '@happy/protocol/socketRpc'
 
 /**
- * Permission mode type - includes both Claude and Codex modes
+ * Permission mode values - includes both Claude and Codex modes
  * Must match MessageMetaSchema.permissionMode enum values
  *
  * Claude modes: default, acceptEdits, bypassPermissions, plan
@@ -13,7 +14,45 @@ import { UsageSchema } from '@/claude/types'
  * - safe-yolo → default
  * - read-only → default
  */
-export type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'
+const CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES = ['read-only', 'safe-yolo', 'yolo'] as const
+export const CODEX_GEMINI_PERMISSION_MODES = ['default', ...CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES] as const
+
+const CLAUDE_ONLY_PERMISSION_MODES = ['acceptEdits', 'bypassPermissions', 'plan'] as const
+
+// Keep stable ordering for readability/help text:
+// default, claude-only, then codex/gemini-only.
+export const PERMISSION_MODES = [
+  'default',
+  ...CLAUDE_ONLY_PERMISSION_MODES,
+  ...CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES,
+] as const
+
+export type PermissionMode = (typeof PERMISSION_MODES)[number]
+
+export function isPermissionMode(value: string): value is PermissionMode {
+  return PERMISSION_MODES.includes(value as PermissionMode)
+}
+
+export type CodexGeminiPermissionMode = (typeof CODEX_GEMINI_PERMISSION_MODES)[number]
+
+export function isCodexGeminiPermissionMode(value: PermissionMode): value is CodexGeminiPermissionMode {
+  return (CODEX_GEMINI_PERMISSION_MODES as readonly string[]).includes(value)
+}
+
+// Codex supports the Codex/Gemini subset, plus bypassPermissions as an alias for yolo/full access.
+export const CODEX_PERMISSION_MODES = [
+  'default',
+  'read-only',
+  'safe-yolo',
+  'yolo',
+  'bypassPermissions',
+] as const
+
+export type CodexPermissionMode = (typeof CODEX_PERMISSION_MODES)[number]
+
+export function isCodexPermissionMode(value: PermissionMode): value is CodexPermissionMode {
+  return (CODEX_PERMISSION_MODES as readonly string[]).includes(value)
+}
 
 /**
  * Usage data type from Claude
@@ -37,6 +76,7 @@ export const UpdateBodySchema = z.object({
   message: z.object({
     id: z.string(),
     seq: z.number(),
+    localId: z.string().nullish().optional(),
     content: SessionMessageContentSchema
   }),
   sid: z.string(), // Session ID
@@ -47,7 +87,9 @@ export type UpdateBody = z.infer<typeof UpdateBodySchema>
 
 export const UpdateSessionBodySchema = z.object({
   t: z.literal('update-session'),
-  sid: z.string(),
+  // Server payloads historically used `sid`, but some deployments send `id`.
+  sid: z.string().optional(),
+  id: z.string().optional(),
   metadata: z.object({
     version: z.number(),
     value: z.string()
@@ -56,6 +98,10 @@ export const UpdateSessionBodySchema = z.object({
     version: z.number(),
     value: z.string()
   }).nullish()
+}).superRefine((value, ctx) => {
+  if (!value.sid && !value.id) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Missing session id (sid/id)' })
+  }
 })
 
 export type UpdateSessionBody = z.infer<typeof UpdateSessionBodySchema>
@@ -99,10 +145,10 @@ export type Update = z.infer<typeof UpdateSchema>
  */
 export interface ServerToClientEvents {
   update: (data: Update) => void
-  'rpc-request': (data: { method: string, params: string }, callback: (response: string) => void) => void
-  'rpc-registered': (data: { method: string }) => void
-  'rpc-unregistered': (data: { method: string }) => void
-  'rpc-error': (data: { type: string, error: string }) => void
+  [SOCKET_RPC_EVENTS.REQUEST]: (data: { method: string, params: string }, callback: (response: string) => void) => void
+  [SOCKET_RPC_EVENTS.REGISTERED]: (data: { method: string }) => void
+  [SOCKET_RPC_EVENTS.UNREGISTERED]: (data: { method: string }) => void
+  [SOCKET_RPC_EVENTS.ERROR]: (data: { type: string, error: string }) => void
   ephemeral: (data: { type: 'activity', id: string, active: boolean, activeAt: number, thinking: boolean }) => void
   auth: (data: { success: boolean, user: string }) => void
   error: (data: { message: string }) => void
@@ -113,7 +159,7 @@ export interface ServerToClientEvents {
  * Socket events from client to server
  */
 export interface ClientToServerEvents {
-  message: (data: { sid: string, message: any }) => void
+  message: (data: { sid: string, message: any, localId?: string | null }) => void
   'session-alive': (data: {
     sid: string;
     time: number;
@@ -144,9 +190,9 @@ export interface ClientToServerEvents {
     agentState: string | null
   }) => void) => void,
   'ping': (callback: () => void) => void
-  'rpc-register': (data: { method: string }) => void
-  'rpc-unregister': (data: { method: string }) => void
-  'rpc-call': (data: { method: string, params: string }, callback: (response: {
+  [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void
+  [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void
+  [SOCKET_RPC_EVENTS.CALL]: (data: { method: string, params: string }, callback: (response: {
     ok: boolean
     result?: string
     error?: string
@@ -218,7 +264,7 @@ export type Machine = {
   id: string,
   encryptionKey: Uint8Array;
   encryptionVariant: 'legacy' | 'dataKey';
-  metadata: MachineMetadata,
+  metadata: MachineMetadata | null,
   metadataVersion: number,
   daemonState: DaemonState | null,
   daemonStateVersion: number,
@@ -242,7 +288,7 @@ export type SessionMessage = z.infer<typeof SessionMessageSchema>
  */
 export const MessageMetaSchema = z.object({
   sentFrom: z.string().optional(), // Source identifier
-  permissionMode: z.enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'read-only', 'safe-yolo', 'yolo']).optional(), // Permission mode for this message
+  permissionMode: z.enum(PERMISSION_MODES).optional(), // Permission mode for this message
   model: z.string().nullable().optional(), // Model name for this message (null = reset)
   fallbackModel: z.string().nullable().optional(), // Fallback model for this message (null = reset)
   customSystemPrompt: z.string().nullable().optional(), // Custom system prompt for this message (null = reset)
@@ -278,6 +324,7 @@ export const UserMessageSchema = z.object({
     type: z.literal('text'),
     text: z.string()
   }),
+  localId: z.string().nullish().optional(),
   localKey: z.string().optional(), // Mobile messages include this
   meta: MessageMetaSchema.optional()
 })
@@ -305,14 +352,51 @@ export type Metadata = {
   version?: string,
   name?: string,
   os?: string,
+  /**
+   * Terminal/attach metadata for this Happy session (non-secret).
+   * Used by the UI (Session Details) and CLI attach flows.
+   */
+  terminal?: {
+    mode: 'plain' | 'tmux',
+    requested?: 'plain' | 'tmux',
+    fallbackReason?: string,
+    tmux?: {
+      target: string,
+      tmpDir?: string | null,
+    },
+  },
+  /**
+   * Session-scoped profile identity (non-secret).
+   * Used for display/debugging across devices; runtime behavior is still driven by env vars at spawn.
+   * Null indicates "no profile".
+   */
+  profileId?: string | null,
   summary?: {
     text: string,
     updatedAt: number
   },
   machineId?: string,
   claudeSessionId?: string, // Claude Code session ID
+  codexSessionId?: string, // Codex session/conversation ID (uuid)
+  geminiSessionId?: string, // Gemini ACP session ID (opaque)
+  opencodeSessionId?: string, // OpenCode ACP session ID (opaque)
+  auggieSessionId?: string, // Auggie ACP session ID (opaque)
+  qwenSessionId?: string, // Qwen Code ACP session ID (opaque)
+  kimiSessionId?: string, // Kimi ACP session ID (opaque)
+  auggieAllowIndexing?: boolean, // Auggie indexing enablement (spawn-time)
   tools?: string[],
   slashCommands?: string[],
+  slashCommandDetails?: Array<{
+    command: string,
+    description?: string
+  }>,
+  acpHistoryImportV1?: {
+    v: 1,
+    provider: 'gemini' | 'codex' | 'opencode' | string,
+    remoteSessionId: string,
+    importedAt: number,
+    lastImportedFingerprint?: string
+  },
   homeDir: string,
   happyHomeDir: string,
   happyLibDir: string,
@@ -325,11 +409,43 @@ export type Metadata = {
   lifecycleStateSince?: number,
   archivedBy?: string,
   archiveReason?: string,
-  flavor?: string
+  flavor?: string,
+  /**
+   * Current permission mode for the session, published by the CLI so the app can seed UI state
+   * even when there are no user messages carrying meta.permissionMode yet (e.g. local-only start).
+   */
+  permissionMode?: PermissionMode,
+  /** Timestamp (ms) for permissionMode, used for "latest wins" arbitration across devices. */
+  permissionModeUpdatedAt?: number,
+  /**
+   * Encrypted, session-scoped pending queue (v1) stored in session metadata.
+   *
+   * This queue is consumed by agents on the machine to materialize user messages into the
+   * server transcript when the user has chosen a "pending queue" send mode.
+   */
+  messageQueueV1?: {
+    v: 1,
+    queue: Array<{
+      localId: string,
+      message: string,
+      createdAt: number,
+      updatedAt: number
+    }>,
+    inFlight?: {
+      localId: string,
+      message: string,
+      createdAt: number,
+      updatedAt: number,
+      claimedAt: number
+    } | null
+  }
 };
 
 export type AgentState = {
   controlledByUser?: boolean | null | undefined
+  capabilities?: {
+    askUserQuestionAnswersInPermission?: boolean | null | undefined
+  } | null | undefined
   requests?: {
     [id: string]: {
       tool: string,
@@ -346,8 +462,9 @@ export type AgentState = {
       status: 'canceled' | 'denied' | 'approved',
       reason?: string,
       mode?: PermissionMode,
-      decision?: 'approved' | 'approved_for_session' | 'denied' | 'abort',
-      allowTools?: string[]
+      decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort',
+      allowedTools?: string[]
+      allowTools?: string[] // legacy alias
     }
   }
 }

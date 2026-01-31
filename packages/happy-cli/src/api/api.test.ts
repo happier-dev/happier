@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ApiClient } from './api';
 import axios from 'axios';
-import { connectionState } from '@/utils/serverConnectionErrors';
+import { connectionState } from '@/api/offline/serverConnectionErrors';
 
 // Use vi.hoisted to ensure mock functions are available when vi.mock factory runs
 const { mockPost, mockIsAxiosError } = vi.hoisted(() => ({
@@ -176,64 +176,74 @@ describe('Api server error handling', () => {
             connectionState.reset();
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-            // Mock axios to return 500 error
-            mockPost.mockRejectedValue({
-                response: { status: 500 },
-                isAxiosError: true
-            });
+            try {
+                // Mock axios to return 500 error
+                mockPost.mockRejectedValue({
+                    response: { status: 500 },
+                    isAxiosError: true
+                });
 
-            const result = await api.getOrCreateSession({
-                tag: 'test-tag',
-                metadata: testMetadata,
-                state: null
-            });
+                const result = await api.getOrCreateSession({
+                    tag: 'test-tag',
+                    metadata: testMetadata,
+                    state: null
+                });
 
-            expect(result).toBeNull();
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happy server unreachable')
-            );
-            consoleSpy.mockRestore();
+                expect(result).toBeNull();
+                expect(consoleSpy).toHaveBeenCalledWith(
+                    expect.stringContaining('⚠️  Happy server unreachable')
+                );
+            } finally {
+                consoleSpy.mockRestore();
+            }
         });
 
         it('should return null when server returns 503 Service Unavailable', async () => {
             connectionState.reset();
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
-            // Mock axios to return 503 error
-            mockPost.mockRejectedValue({
-                response: { status: 503 },
-                isAxiosError: true
-            });
+            try {
+                // Mock axios to return 503 error
+                mockPost.mockRejectedValue({
+                    response: { status: 503 },
+                    isAxiosError: true
+                });
 
-            const result = await api.getOrCreateSession({
-                tag: 'test-tag',
-                metadata: testMetadata,
-                state: null
-            });
+                const result = await api.getOrCreateSession({
+                    tag: 'test-tag',
+                    metadata: testMetadata,
+                    state: null
+                });
 
-            expect(result).toBeNull();
-            expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happy server unreachable')
-            );
-            consoleSpy.mockRestore();
+                expect(result).toBeNull();
+                expect(consoleSpy).toHaveBeenCalledWith(
+                    expect.stringContaining('⚠️  Happy server unreachable')
+                );
+            } finally {
+                consoleSpy.mockRestore();
+            }
         });
 
         it('should re-throw non-connection errors', async () => {
-            // Mock axios to throw a different type of error (e.g., authentication error)
-            const authError = new Error('Invalid API key');
-            (authError as any).code = 'UNAUTHORIZED';
-            mockPost.mockRejectedValue(authError);
-
-            await expect(
-                api.getOrCreateSession({ tag: 'test-tag', metadata: testMetadata, state: null })
-            ).rejects.toThrow('Failed to get or create session: Invalid API key');
-
-            // Should not show the offline mode message
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-            expect(consoleSpy).not.toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happy server unreachable')
-            );
-            consoleSpy.mockRestore();
+
+            try {
+                // Mock axios to throw a different type of error (e.g., authentication error)
+                const authError = new Error('Invalid API key');
+                (authError as any).code = 'UNAUTHORIZED';
+                mockPost.mockRejectedValue(authError);
+
+                await expect(
+                    api.getOrCreateSession({ tag: 'test-tag', metadata: testMetadata, state: null })
+                ).rejects.toThrow('Failed to get or create session: Invalid API key');
+
+                // Should not show the offline mode message
+                expect(consoleSpy).not.toHaveBeenCalledWith(
+                    expect.stringContaining('⚠️  Happy server unreachable')
+                );
+            } finally {
+                consoleSpy.mockRestore();
+            }
         });
     });
 

@@ -18,9 +18,13 @@ import { accessKeysRoutes } from "./routes/accessKeysRoutes";
 import { enableMonitoring } from "./utils/enableMonitoring";
 import { enableErrorHandlers } from "./utils/enableErrorHandlers";
 import { enableAuthentication } from "./utils/enableAuthentication";
+import { enableOptionalStatics } from "./utils/enableOptionalStatics";
 import { userRoutes } from "./routes/userRoutes";
 import { feedRoutes } from "./routes/feedRoutes";
 import { kvRoutes } from "./routes/kvRoutes";
+import { shareRoutes } from "./routes/shareRoutes";
+import { publicShareRoutes } from "./routes/publicShareRoutes";
+import { featuresRoutes } from "./routes/featuresRoutes";
 
 export async function startApi() {
 
@@ -37,9 +41,11 @@ export async function startApi() {
         allowedHeaders: '*',
         methods: ['GET', 'POST', 'DELETE']
     });
-    app.get('/', function (request, reply) {
-        reply.send('Welcome to Happy Server!');
+    app.register(import('@fastify/rate-limit'), {
+        global: false // Only apply to routes with explicit config
     });
+
+    enableOptionalStatics(app);
 
     // Create typed provider
     app.setValidatorCompiler(validatorCompiler);
@@ -62,10 +68,13 @@ export async function startApi() {
     accessKeysRoutes(typed);
     devRoutes(typed);
     versionRoutes(typed);
+    featuresRoutes(typed);
     voiceRoutes(typed);
     userRoutes(typed);
     feedRoutes(typed);
     kvRoutes(typed);
+    shareRoutes(typed);
+    publicShareRoutes(typed);
 
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;

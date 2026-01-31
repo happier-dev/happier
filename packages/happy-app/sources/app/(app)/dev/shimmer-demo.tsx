@@ -1,17 +1,22 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { Stack } from 'expo-router';
 import { ShimmerView } from '@/components/ShimmerView';
-import { ItemGroup } from '@/components/ItemGroup';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function ShimmerDemoScreen() {
+    const screenOptions = React.useMemo(() => {
+        return {
+            headerTitle: 'Shimmer View Demo',
+        } as const;
+    }, []);
+
     return (
         <>
             <Stack.Screen
-                options={{
-                    headerTitle: 'Shimmer View Demo',
-                }}
+                options={screenOptions}
             />
             
             <ScrollView style={styles.container}>

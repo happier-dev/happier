@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView } from 'react-native';
 import { Stack } from 'expo-router';
 import { ToolView } from '@/components/tools/ToolView';
-import { ItemGroup } from '@/components/ItemGroup';
-import { Item } from '@/components/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
+import { StyleSheet } from 'react-native-unistyles';
 
 export default function Tools2Screen() {
     const [selectedExample, setSelectedExample] = useState<string>('all');
@@ -375,12 +376,16 @@ export function formatTime(date: Date): string {
         );
     };
 
+    const screenOptions = React.useMemo(() => {
+        return {
+            headerTitle: 'Tool Views Demo',
+        } as const;
+    }, []);
+
     return (
         <>
             <Stack.Screen
-                options={{
-                    headerTitle: 'Tool Views Demo',
-                }}
+                options={screenOptions}
             />
             
             <ScrollView style={styles.container}>

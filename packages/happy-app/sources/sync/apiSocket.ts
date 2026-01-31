@@ -1,6 +1,9 @@
 import { io, Socket } from 'socket.io-client';
 import { TokenStorage } from '@/auth/tokenStorage';
 import { Encryption } from './encryption/encryption';
+import { observeServerTimestamp } from './time';
+import { createRpcCallError } from './rpcErrors';
+import { SOCKET_RPC_EVENTS } from '@happy/protocol/socketRpc';
 
 //
 // Types
@@ -32,6 +35,7 @@ class ApiSocket {
     private messageHandlers: Map<string, (data: any) => void> = new Map();
     private reconnectedListeners: Set<() => void> = new Set();
     private statusListeners: Set<(status: 'disconnected' | 'connecting' | 'connected' | 'error') => void> = new Set();
+    private errorListeners: Set<(error: Error | null) => void> = new Set();
     private currentStatus: 'disconnected' | 'connecting' | 'connected' | 'error' = 'disconnected';
 
     //
@@ -95,6 +99,11 @@ class ApiSocket {
         return () => this.statusListeners.delete(listener);
     };
 
+    onError = (listener: (error: Error | null) => void) => {
+        this.errorListeners.add(listener);
+        return () => this.errorListeners.delete(listener);
+    };
+
     //
     // Message Handling
     //
@@ -117,7 +126,7 @@ class ApiSocket {
             throw new Error(`Session encryption not found for ${sessionId}`);
         }
         
-        const result = await this.socket!.emitWithAck('rpc-call', {
+        const result: any = await this.socket!.emitWithAck(SOCKET_RPC_EVENTS.CALL, {
             method: `${sessionId}:${method}`,
             params: await sessionEncryption.encryptRaw(params)
         });
@@ -125,7 +134,10 @@ class ApiSocket {
         if (result.ok) {
             return await sessionEncryption.decryptRaw(result.result) as R;
         }
-        throw new Error('RPC call failed');
+        throw createRpcCallError({
+            error: typeof result.error === 'string' ? result.error : 'RPC call failed',
+            errorCode: typeof result.errorCode === 'string' ? result.errorCode : undefined,
+        });
     }
 
     /**
@@ -137,7 +149,7 @@ class ApiSocket {
             throw new Error(`Machine encryption not found for ${machineId}`);
         }
 
-        const result = await this.socket!.emitWithAck('rpc-call', {
+        const result: any = await this.socket!.emitWithAck(SOCKET_RPC_EVENTS.CALL, {
             method: `${machineId}:${method}`,
             params: await machineEncryption.encryptRaw(params)
         });
@@ -145,7 +157,10 @@ class ApiSocket {
         if (result.ok) {
             return await machineEncryption.decryptRaw(result.result) as R;
         }
-        throw new Error('RPC call failed');
+        throw createRpcCallError({
+            error: typeof result.error === 'string' ? result.error : 'RPC call failed',
+            errorCode: typeof result.errorCode === 'string' ? result.errorCode : undefined,
+        });
     }
 
     send(event: string, data: any) {
@@ -180,10 +195,26 @@ class ApiSocket {
             ...options?.headers
         };
 
-        return fetch(url, {
+        const response = await fetch(url, {
             ...options,
             headers
         });
+
+        // Best-effort server time calibration using the HTTP Date header ("server now").
+        // This avoids deriving "now" from potentially stale resource timestamps (e.g. session.updatedAt).
+        try {
+            const dateHeader = response.headers.get('date');
+            if (dateHeader) {
+                const serverNow = Date.parse(dateHeader);
+                if (!Number.isNaN(serverNow)) {
+                    observeServerTimestamp(serverNow);
+                }
+            }
+        } catch {
+            // Best-effort only
+        }
+
+        return response;
     }
 
     //
@@ -220,6 +251,8 @@ class ApiSocket {
             // console.log('🔌 SyncSocket: Connected, recovered: ' + this.socket?.recovered);
             // console.log('🔌 SyncSocket: Socket ID:', this.socket?.id);
             this.updateStatus('connected');
+            // Clear last error on successful connect
+            this.errorListeners.forEach(listener => listener(null));
             if (!this.socket?.recovered) {
                 this.reconnectedListeners.forEach(listener => listener());
             }
@@ -234,11 +267,13 @@ class ApiSocket {
         this.socket.on('connect_error', (error) => {
             // console.error('🔌 SyncSocket: Connection error', error);
             this.updateStatus('error');
+            this.errorListeners.forEach(listener => listener(error));
         });
 
         this.socket.on('error', (error) => {
             // console.error('🔌 SyncSocket: Error', error);
             this.updateStatus('error');
+            this.errorListeners.forEach(listener => listener(error));
         });
 
         // Message handling

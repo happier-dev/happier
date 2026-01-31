@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { TodoView } from "@/-zen/components/TodoView";
 import { Button, ScrollView, TextInput, View } from "react-native";
-import { randomUUID } from 'expo-crypto';
-import { ItemList } from '@/components/ItemList';
-import { ItemGroup } from '@/components/ItemGroup';
+import { randomUUID } from '@/platform/randomUUID';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { layout } from '@/components/layout';
 import { TodoList } from '@/-zen/components/TodoList';
 

@@ -1,5 +1,3 @@
-import type { TranslationStructure } from '../_default';
-
 /**
  * English plural helper function
  * English has 2 plural forms: singular, plural
@@ -14,10 +12,10 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * ENGLISH TRANSLATIONS - DEDICATED FILE
  *
  * This file represents the new translation architecture where each language
- * has its own dedicated file instead of being embedded in _default.ts.
+ * has its own dedicated file instead of being embedded in _types.ts.
  *
  * STRUCTURE CHANGE:
- * - Previously: All languages in _default.ts as objects
+ * - Previously: All languages in a single default file
  * - Now: Separate files for each language (en.ts, ru.ts, pl.ts, es.ts, etc.)
  * - Benefit: Better maintainability, smaller files, easier language management
  *
@@ -29,7 +27,7 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * - Type safety enforced by TranslationStructure interface
  * - New translation keys must be added to ALL language files
  */
-export const en: TranslationStructure = {
+export const en = {
     tabs: {
         // Tab navigation labels
         inbox: 'Inbox',
@@ -46,6 +44,8 @@ export const en: TranslationStructure = {
 
     common: {
         // Simple string constants
+        add: 'Add',
+        actions: 'Actions',
         cancel: 'Cancel',
         authenticate: 'Authenticate',
         save: 'Save',
@@ -62,7 +62,11 @@ export const en: TranslationStructure = {
         yes: 'Yes',
         no: 'No',
         discard: 'Discard',
+        discardChanges: 'Discard changes',
+        unsavedChangesWarning: 'You have unsaved changes.',
+        keepEditing: 'Keep editing',
         version: 'Version',
+        details: 'Details',
         copy: 'Copy',
         copied: 'Copied',
         scanning: 'Scanning...',
@@ -75,6 +79,18 @@ export const en: TranslationStructure = {
         retry: 'Retry',
         delete: 'Delete',
         optional: 'optional',
+        noMatches: 'No matches',
+        all: 'All',
+        machine: 'machine',
+        clearSearch: 'Clear search',
+        refresh: 'Refresh',
+    },
+
+    dropdown: {
+        category: {
+            general: 'General',
+            results: 'Results',
+        },
     },
 
     profile: {
@@ -111,6 +127,16 @@ export const en: TranslationStructure = {
         enterSecretKey: 'Please enter a secret key',
         invalidSecretKey: 'Invalid secret key. Please check and try again.',
         enterUrlManually: 'Enter URL manually',
+        openMachine: 'Open machine',
+        terminalUrlPlaceholder: 'happy://terminal?...',
+        restoreQrInstructions: '1. Open Happy on your mobile device\n2. Go to Settings → Account\n3. Tap "Link New Device"\n4. Scan this QR code',
+        restoreWithSecretKeyInstead: 'Restore with Secret Key Instead',
+        restoreWithSecretKeyDescription: 'Enter your secret key to restore access to your account.',
+        secretKeyPlaceholder: 'XXXXX-XXXXX-XXXXX...',
+        unsupported: {
+            connectTitle: ({ name }: { name: string }) => `Connect ${name}`,
+            runCommandInTerminal: 'Run the following command in your terminal:',
+        },
     },
 
     settings: {
@@ -151,6 +177,12 @@ export const en: TranslationStructure = {
         usageSubtitle: 'View your API usage and costs',
         profiles: 'Profiles',
         profilesSubtitle: 'Manage environment variable profiles for sessions',
+        secrets: 'Secrets',
+        secretsSubtitle: 'Manage saved secrets (never shown again after entry)',
+        terminal: 'Terminal',
+        session: 'Session',
+        sessionSubtitleTmuxEnabled: 'Tmux enabled',
+        sessionSubtitleMessageSendingAndTmux: 'Message sending and tmux',
 
         // Dynamic settings messages
         accountConnected: ({ service }: { service: string }) => `${service} account connected`,
@@ -188,6 +220,21 @@ export const en: TranslationStructure = {
         wrapLinesInDiffsDescription: 'Wrap long lines instead of horizontal scrolling in diff views',
         alwaysShowContextSize: 'Always Show Context Size',
         alwaysShowContextSizeDescription: 'Display context usage even when not near limit',
+        agentInputActionBarLayout: 'Input Action Bar',
+        agentInputActionBarLayoutDescription: 'Choose how action chips are displayed above the input',
+        agentInputActionBarLayoutOptions: {
+            auto: 'Auto',
+            wrap: 'Wrap',
+            scroll: 'Scrollable',
+            collapsed: 'Collapsed',
+        },
+        agentInputChipDensity: 'Action Chip Density',
+        agentInputChipDensityDescription: 'Choose whether action chips show labels or icons',
+        agentInputChipDensityOptions: {
+            auto: 'Auto',
+            labels: 'Labels',
+            icons: 'Icons only',
+        },
         avatarStyle: 'Avatar Style',
         avatarStyleDescription: 'Choose session avatar appearance',
         avatarOptions: {
@@ -208,11 +255,31 @@ export const en: TranslationStructure = {
         experimentalFeatures: 'Experimental Features',
         experimentalFeaturesEnabled: 'Experimental features enabled',
         experimentalFeaturesDisabled: 'Using stable features only',
-        webFeatures: 'Web Features',
-        webFeaturesDescription: 'Features available only in the web version of the app.',
+        experimentalOptions: 'Experimental options',
+        experimentalOptionsDescription: 'Choose which experimental features are enabled.',
+        expUsageReporting: 'Usage reporting',
+        expUsageReportingSubtitle: 'Enable usage and token reporting screens',
+        expFileViewer: 'File viewer',
+        expFileViewerSubtitle: 'Enable the session file viewer entrypoint',
+        expShowThinkingMessages: 'Show thinking messages',
+        expShowThinkingMessagesSubtitle: 'Show assistant thinking/status messages in chat',
+        expSessionType: 'Session type selector',
+        expSessionTypeSubtitle: 'Show the session type selector (simple vs worktree)',
+        expZen: 'Zen',
+        expZenSubtitle: 'Enable the Zen navigation entry',
+        expVoiceAuthFlow: 'Voice auth flow',
+        expVoiceAuthFlowSubtitle: 'Use authenticated voice token flow (paywall-aware)',
+            expInboxFriends: 'Inbox & Friends',
+            expInboxFriendsSubtitle: 'Enable the Inbox tab and Friends features',
+            expCodexResume: 'Codex resume',
+            expCodexResumeSubtitle: 'Enable Codex session resume using a separate Codex install (experimental)',
+            expCodexAcp: 'Codex ACP',
+            expCodexAcpSubtitle: 'Use Codex via ACP (codex-acp) instead of MCP (experimental)',
+            webFeatures: 'Web Features',
+            webFeaturesDescription: 'Features available only in the web version of the app.',
         enterToSend: 'Enter to Send',
-        enterToSendEnabled: 'Press Enter to send messages',
-        enterToSendDisabled: 'Press ⌘+Enter to send messages',
+        enterToSendEnabled: 'Press Enter to send (Shift+Enter for a new line)',
+        enterToSendDisabled: 'Enter inserts a new line',
         commandPalette: 'Command Palette',
         commandPaletteEnabled: 'Press ⌘K to open',
         commandPaletteDisabled: 'Quick command access disabled',
@@ -220,9 +287,20 @@ export const en: TranslationStructure = {
         markdownCopyV2Subtitle: 'Long press opens copy modal',
         hideInactiveSessions: 'Hide inactive sessions',
         hideInactiveSessionsSubtitle: 'Show only active chats in your list',
+        groupInactiveSessionsByProject: 'Group inactive sessions by project',
+        groupInactiveSessionsByProjectSubtitle: 'Organize inactive chats under each project',
         enhancedSessionWizard: 'Enhanced Session Wizard',
         enhancedSessionWizardEnabled: 'Profile-first session launcher active',
         enhancedSessionWizardDisabled: 'Using standard session launcher',
+        profiles: 'AI Profiles',
+        profilesEnabled: 'Profile selection enabled',
+        profilesDisabled: 'Profile selection disabled',
+        pickerSearch: 'Picker Search',
+        pickerSearchSubtitle: 'Show a search field in machine and path pickers',
+        machinePickerSearch: 'Machine search',
+        machinePickerSearchSubtitle: 'Show a search field in machine pickers',
+        pathPickerSearch: 'Path search',
+        pathPickerSearchSubtitle: 'Show a search field in path pickers',
     },
 
     errors: {
@@ -248,6 +326,7 @@ export const en: TranslationStructure = {
         webViewLoadFailed: 'Failed to load authentication page',
         failedToLoadProfile: 'Failed to load user profile',
         userNotFound: 'User not found',
+        invalidShareLink: 'Invalid or expired share link',
         sessionDeleted: 'Session has been deleted',
         sessionDeletedDescription: 'This session has been permanently removed',
 
@@ -270,11 +349,84 @@ export const en: TranslationStructure = {
         failedToRemoveFriend: 'Failed to remove friend',
         searchFailed: 'Search failed. Please try again.',
         failedToSendRequest: 'Failed to send friend request',
+        failedToResumeSession: 'Failed to resume session',
+        failedToSendMessage: 'Failed to send message',
+        cannotShareWithSelf: 'Cannot share with yourself',
+        canOnlyShareWithFriends: 'Can only share with friends',
+        shareNotFound: 'Share not found',
+        publicShareNotFound: 'Public share not found or expired',
+        consentRequired: 'Consent required for access',
+        maxUsesReached: 'Maximum uses reached',
+        missingPermissionId: 'Missing permission request id',
+        codexResumeNotInstalledTitle: 'Codex resume is not installed on this machine',
+        codexResumeNotInstalledMessage:
+            'To resume a Codex conversation, install the Codex resume server on the target machine (Machine Details → Codex resume).',
+        codexAcpNotInstalledTitle: 'Codex ACP is not installed on this machine',
+        codexAcpNotInstalledMessage:
+            'To use the Codex ACP experiment, install codex-acp on the target machine (Machine Details → Codex ACP) or disable the experiment.',
+    },
+
+    deps: {
+        installNotSupported: 'Update Happy CLI to install this dependency.',
+        installFailed: 'Install failed',
+        installed: 'Installed',
+        installLog: ({ path }: { path: string }) => `Install log: ${path}`,
+        installable: {
+            codexResume: {
+                title: 'Codex resume server',
+                installSpecTitle: 'Codex resume install source',
+            },
+            codexAcp: {
+                title: 'Codex ACP adapter',
+                installSpecTitle: 'Codex ACP install source',
+            },
+            installSpecDescription: 'NPM/Git/file spec passed to `npm install` (experimental). Leave empty to use daemon default.',
+        },
+        ui: {
+            notAvailable: 'Not available',
+            notAvailableUpdateCli: 'Not available (update CLI)',
+            errorRefresh: 'Error (refresh)',
+            installed: 'Installed',
+            installedWithVersion: ({ version }: { version: string }) => `Installed (v${version})`,
+            installedUpdateAvailable: ({ installedVersion, latestVersion }: { installedVersion: string; latestVersion: string }) =>
+                `Installed (v${installedVersion}) — update available (v${latestVersion})`,
+            notInstalled: 'Not installed',
+            latest: 'Latest',
+            latestSubtitle: ({ version, tag }: { version: string; tag: string }) => `${version} (tag: ${tag})`,
+            registryCheck: 'Registry check',
+            registryCheckFailed: ({ error }: { error: string }) => `Failed: ${error}`,
+            installSource: 'Install source',
+            installSourceDefault: '(default)',
+            installSpecPlaceholder: 'e.g. file:/path/to/pkg or github:owner/repo#branch',
+            lastInstallLog: 'Last install log',
+            installLogTitle: 'Install log',
+        },
     },
 
     newSession: {
         // Used by new-session screen and launch flows
         title: 'Start New Session',
+        selectAiProfileTitle: 'Select AI Profile',
+        selectAiProfileDescription: 'Select an AI profile to apply environment variables and defaults to your session.',
+        changeProfile: 'Change Profile',
+        aiBackendSelectedByProfile: 'AI backend is selected by your profile. To change it, select a different profile.',
+        selectAiBackendTitle: 'Select AI Backend',
+        aiBackendLimitedByProfileAndMachineClis: 'Limited by your selected profile and available CLIs on this machine.',
+        aiBackendSelectWhichAiRuns: 'Select which AI runs your session.',
+        aiBackendNotCompatibleWithSelectedProfile: 'Not compatible with the selected profile.',
+        aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) => `${cli} CLI not detected on this machine.`,
+        selectMachineTitle: 'Select Machine',
+        selectMachineDescription: 'Choose where this session runs.',
+        selectPathTitle: 'Select Path',
+        selectWorkingDirectoryTitle: 'Select Working Directory',
+        selectWorkingDirectoryDescription: 'Pick the folder used for commands and context.',
+        selectPermissionModeTitle: 'Select Permission Mode',
+        selectPermissionModeDescription: 'Control how strictly actions require approval.',
+        selectModelTitle: 'Select AI Model',
+        selectModelDescription: 'Choose the model used by this session.',
+        selectSessionTypeTitle: 'Select Session Type',
+        selectSessionTypeDescription: 'Choose a simple session or one tied to a Git worktree.',
+        searchPathsPlaceholder: 'Search paths...',
         noMachinesFound: 'No machines found. Start a Happy session on your computer first.',
         allMachinesOffline: 'All machines appear offline',
         machineDetails: 'View machine details →',
@@ -290,18 +442,94 @@ export const en: TranslationStructure = {
         notConnectedToServer: 'Not connected to server. Check your internet connection.',
         noMachineSelected: 'Please select a machine to start the session',
         noPathSelected: 'Please select a directory to start the session in',
+        machinePicker: {
+            searchPlaceholder: 'Search machines...',
+            recentTitle: 'Recent',
+            favoritesTitle: 'Favorites',
+            allTitle: 'All',
+            emptyMessage: 'No machines available',
+        },
+        pathPicker: {
+            enterPathTitle: 'Enter Path',
+            enterPathPlaceholder: 'Enter a path...',
+            customPathTitle: 'Custom Path',
+            recentTitle: 'Recent',
+            favoritesTitle: 'Favorites',
+            suggestedTitle: 'Suggested',
+            allTitle: 'All',
+            emptyRecent: 'No recent paths',
+            emptyFavorites: 'No favorite paths',
+            emptySuggested: 'No suggested paths',
+            emptyAll: 'No paths',
+        },
         sessionType: {
             title: 'Session Type',
             simple: 'Simple',
             worktree: 'Worktree',
             comingSoon: 'Coming soon',
         },
+        profileAvailability: {
+            requiresAgent: ({ agent }: { agent: string }) => `Requires ${agent}`,
+            cliNotDetected: ({ cli }: { cli: string }) => `${cli} CLI not detected`,
+        },
+        cliBanners: {
+            cliNotDetectedTitle: ({ cli }: { cli: string }) => `${cli} CLI Not Detected`,
+            dontShowFor: "Don't show this popup for",
+            thisMachine: 'this machine',
+            anyMachine: 'any machine',
+            installCommand: ({ command }: { command: string }) => `Install: ${command} •`,
+            installCliIfAvailable: ({ cli }: { cli: string }) => `Install ${cli} CLI if available •`,
+            viewInstallationGuide: 'View Installation Guide →',
+            viewGeminiDocs: 'View Gemini Docs →',
+        },
         worktree: {
             creating: ({ name }: { name: string }) => `Creating worktree '${name}'...`,
             notGitRepo: 'Worktrees require a git repository',
             failed: ({ error }: { error: string }) => `Failed to create worktree: ${error}`,
             success: 'Worktree created successfully',
-        }
+        },
+        resume: {
+            title: 'Resume session',
+            optional: 'Resume: Optional',
+            pickerTitle: 'Resume session',
+            subtitle: ({ agent }: { agent: string }) => `Paste a ${agent} session ID to resume`,
+            placeholder: ({ agent }: { agent: string }) => `Paste ${agent} session ID…`,
+            paste: 'Paste',
+            save: 'Save',
+            clearAndRemove: 'Clear',
+            helpText: 'You can find session IDs in the Session Info screen.',
+            cannotApplyBody: 'This resume ID can’t be applied right now. Happy will start a new session instead.',
+        },
+        codexResumeBanner: {
+            title: 'Codex resume',
+            updateAvailable: 'Update available',
+            systemCodexVersion: ({ version }: { version: string }) => `System codex: ${version}`,
+            resumeServerVersion: ({ version }: { version: string }) => `Codex resume server: ${version}`,
+            notInstalled: 'not installed',
+            latestVersion: ({ version }: { version: string }) => `(latest ${version})`,
+            registryCheckFailed: ({ error }: { error: string }) => `Registry check failed: ${error}`,
+            install: 'Install',
+            update: 'Update',
+            reinstall: 'Reinstall',
+        },
+        codexResumeInstallModal: {
+            installTitle: 'Install Codex resume?',
+            updateTitle: 'Update Codex resume?',
+            reinstallTitle: 'Reinstall Codex resume?',
+            description: 'This installs an experimental Codex MCP server wrapper used only for resume operations.',
+        },
+        codexAcpBanner: {
+            title: 'Codex ACP',
+            install: 'Install',
+            update: 'Update',
+            reinstall: 'Reinstall',
+        },
+        codexAcpInstallModal: {
+            installTitle: 'Install Codex ACP?',
+            updateTitle: 'Update Codex ACP?',
+            reinstallTitle: 'Reinstall Codex ACP?',
+            description: 'This installs an experimental ACP adapter around Codex that supports loading/resuming threads.',
+        },
     },
 
     sessionHistory: {
@@ -315,11 +543,109 @@ export const en: TranslationStructure = {
     },
 
     session: {
-        inputPlaceholder: 'Type a message ...',
+        inputPlaceholder: 'What would you like to work on?',
+        resuming: 'Resuming...',
+        resumeFailed: 'Failed to resume session',
+        resumeSupportNoteChecking: 'Note: Happy is still checking whether this machine can resume the provider session.',
+        resumeSupportNoteUnverified: 'Note: Happy couldn’t verify resume support for this machine.',
+        resumeSupportDetails: {
+            cliNotDetected: 'CLI not detected on the machine.',
+            capabilityProbeFailed: 'Capability probe failed.',
+            acpProbeFailed: 'ACP probe failed.',
+            loadSessionFalse: 'Agent does not support loading sessions.',
+        },
+        inactiveResumable: 'Inactive (resumable)',
+        inactiveMachineOffline: 'Inactive (machine offline)',
+        inactiveNotResumable: 'Inactive',
+        inactiveNotResumableNoticeTitle: 'This session can’t be resumed',
+        inactiveNotResumableNoticeBody: ({ provider }: { provider: string }) =>
+            `This session ended and can’t be resumed because ${provider} doesn’t support restoring its context here. Start a new session to continue.`,
+        machineOfflineNoticeTitle: 'Machine is offline',
+        machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
+            `“${machine}” is offline, so Happy can’t resume this session yet. Bring it online to continue.`,
+        machineOfflineCannotResume: 'Machine is offline. Bring it online to resume this session.',
+
+        sharing: {
+            title: 'Sharing',
+            directSharing: 'Direct sharing',
+            addShare: 'Share with a friend',
+            accessLevel: 'Access level',
+            shareWith: 'Share with',
+            sharedWith: 'Shared with',
+            noShares: 'Not shared',
+            viewOnly: 'View only',
+            viewOnlyDescription: 'Can view the session but can’t send messages.',
+            viewOnlyMode: 'View-only (shared session)',
+            noEditPermission: 'You have read-only access to this session.',
+            canEdit: 'Can edit',
+            canEditDescription: 'Can send messages.',
+            canManage: 'Can manage',
+            canManageDescription: 'Can manage sharing settings.',
+            stopSharing: 'Stop sharing',
+            recipientMissingKeys: 'This user hasn’t registered encryption keys yet.',
+            permissionApprovals: 'Can approve permissions',
+            allowPermissionApprovals: 'Allow permission approvals',
+            allowPermissionApprovalsDescription: 'Allows this user to approve permission prompts and run tools on your machine.',
+            permissionApprovalsDisabledTitle: 'Permission approvals are disabled',
+            permissionApprovalsDisabledPublic: 'Public links are read-only. Permission approvals are not available.',
+            permissionApprovalsDisabledReadOnly: 'You have view-only access to this session.',
+            permissionApprovalsDisabledNotGranted: 'The owner did not allow you to approve permissions for this session.',
+            publicReadOnlyTitle: 'Public link (read-only)',
+            publicReadOnlyBody: 'This session is shared via a public link. You can view messages and tool outputs, but you can’t interact or approve permissions.',
+
+            publicLink: 'Public link',
+            publicLinkActive: 'Public link is active',
+            publicLinkDescription: 'Create a link that lets anyone view this session.',
+            createPublicLink: 'Create public link',
+            regeneratePublicLink: 'Regenerate public link',
+            deletePublicLink: 'Delete public link',
+            linkToken: 'Link token',
+            tokenNotRecoverable: 'Token not available',
+            tokenNotRecoverableDescription: 'For security reasons, public-link tokens are stored hashed and can’t be recovered. Regenerate the link to create a new token.',
+
+            expiresIn: 'Expires in',
+            expiresOn: 'Expires on',
+            days7: '7 days',
+            days30: '30 days',
+            never: 'Never',
+
+            maxUsesLabel: 'Maximum uses',
+            unlimited: 'Unlimited',
+            uses10: '10 uses',
+            uses50: '50 uses',
+            usageCount: 'Usage count',
+            usageCountWithMax: ({ used, max }: { used: number; max: number }) => `${used}/${max} uses`,
+            usageCountUnlimited: ({ used }: { used: number }) => `${used} uses`,
+
+            requireConsent: 'Require consent',
+            requireConsentDescription: 'Ask viewers to consent before their access is logged.',
+            consentRequired: 'Consent required',
+            consentDescription: 'This link requires your consent to log your IP address and user agent.',
+            acceptAndView: 'Accept and view',
+            sharedBy: ({ name }: { name: string }) => `Shared by ${name}`,
+
+            shareNotFound: 'Share link not found or expired',
+            failedToDecrypt: 'Failed to decrypt the session',
+            noMessages: 'No messages yet',
+            session: 'Session',
+        },
     },
 
     commandPalette: {
         placeholder: 'Type a command or search...',
+        noCommandsFound: 'No commands found',
+    },
+
+    commandView: {
+        completedWithNoOutput: '[Command completed with no output]',
+    },
+
+    voiceAssistant: {
+        connecting: 'Connecting...',
+        active: 'Voice Assistant Active',
+        connectionError: 'Connection Error',
+        label: 'Voice Assistant',
+        tapToEnd: 'Tap to end',
     },
 
     server: {
@@ -351,8 +677,22 @@ export const en: TranslationStructure = {
         happySessionId: 'Happy Session ID',
         claudeCodeSessionId: 'Claude Code Session ID',
         claudeCodeSessionIdCopied: 'Claude Code Session ID copied to clipboard',
+        aiProfile: 'AI Profile',
         aiProvider: 'AI Provider',
         failedToCopyClaudeCodeSessionId: 'Failed to copy Claude Code Session ID',
+        codexSessionId: 'Codex Session ID',
+        codexSessionIdCopied: 'Codex Session ID copied to clipboard',
+        failedToCopyCodexSessionId: 'Failed to copy Codex Session ID',
+        opencodeSessionId: 'OpenCode Session ID',
+        opencodeSessionIdCopied: 'OpenCode Session ID copied to clipboard',
+        auggieSessionId: 'Auggie Session ID',
+        auggieSessionIdCopied: 'Auggie Session ID copied to clipboard',
+        geminiSessionId: 'Gemini Session ID',
+        geminiSessionIdCopied: 'Gemini Session ID copied to clipboard',
+        qwenSessionId: 'Qwen Code Session ID',
+        qwenSessionIdCopied: 'Qwen Code Session ID copied to clipboard',
+        kimiSessionId: 'Kimi Session ID',
+        kimiSessionIdCopied: 'Kimi Session ID copied to clipboard',
         metadataCopied: 'Metadata copied to clipboard',
         failedToCopyMetadata: 'Failed to copy metadata',
         failedToKillSession: 'Failed to kill session',
@@ -362,8 +702,11 @@ export const en: TranslationStructure = {
         lastUpdated: 'Last Updated',
         sequence: 'Sequence',
         quickActions: 'Quick Actions',
+        copyResumeCommand: 'Copy resume command',
         viewMachine: 'View Machine',
         viewMachineSubtitle: 'View machine details and sessions',
+        manageSharing: 'Manage sharing',
+        manageSharingSubtitle: 'Share this session with others',
         killSessionSubtitle: 'Immediately terminate the session',
         archiveSessionSubtitle: 'Archive this session and stop it',
         metadata: 'Metadata',
@@ -372,8 +715,14 @@ export const en: TranslationStructure = {
         operatingSystem: 'Operating System',
         processId: 'Process ID',
         happyHome: 'Happy Home',
+        attachFromTerminal: 'Attach from terminal',
+        tmuxTarget: 'Tmux target',
+        tmuxFallback: 'Tmux fallback',
         copyMetadata: 'Copy Metadata',
         agentState: 'Agent State',
+        rawJsonDevMode: 'Raw JSON (Dev Mode)',
+        sessionStatus: 'Session Status',
+        fullSessionObject: 'Full Session Object',
         controlledByUser: 'Controlled by User',
         pendingRequests: 'Pending Requests',
         activity: 'Activity',
@@ -390,6 +739,11 @@ export const en: TranslationStructure = {
         deleteSessionWarning: 'This action cannot be undone. All messages and data associated with this session will be permanently deleted.',
         failedToDeleteSession: 'Failed to delete session',
         sessionDeleted: 'Session deleted successfully',
+        renameSession: 'Rename Session',
+        renameSessionSubtitle: 'Change the display name for this session',
+        renameSessionPlaceholder: 'Enter session name...',
+        failedToRenameSession: 'Failed to rename session',
+        sessionRenamed: 'Session renamed successfully',
 
     },
 
@@ -401,16 +755,57 @@ export const en: TranslationStructure = {
             runIt: 'Run it',
             scanQrCode: 'Scan the QR code',
             openCamera: 'Open Camera',
+            installCommand: '$ npm i -g happy-coder',
+            runCommand: '$ happy',
+        },
+        emptyMessages: {
+            noMessagesYet: 'No messages yet',
+            created: ({ time }: { time: string }) => `Created ${time}`,
+        },
+        emptySessionsTablet: {
+            noActiveSessions: 'No active sessions',
+            startNewSessionDescription: 'Start a new session on any of your connected machines.',
+            startNewSessionButton: 'Start New Session',
+            openTerminalToStart: 'Open a new terminal on your computer to start session.',
+        },
+    },
+
+    zen: {
+        title: 'Zen',
+        add: {
+            placeholder: 'What needs to be done?',
+        },
+        home: {
+            noTasksYet: 'No tasks yet. Tap + to add one.',
+        },
+        view: {
+            workOnTask: 'Work on task',
+            clarify: 'Clarify',
+            delete: 'Delete',
+            linkedSessions: 'Linked Sessions',
+            tapTaskTextToEdit: 'Tap the task text to edit',
         },
     },
 
     agentInput: {
+        envVars: {
+            title: 'Env Vars',
+            titleWithCount: ({ count }: { count: number }) => `Env Vars (${count})`,
+        },
+        resumeChip: {
+            withId: ({ title, id }: { title: string; id: string }) => `${title}: ${id}`,
+            withIdTruncated: ({ title, prefix, suffix }: { title: string; prefix: string; suffix: string }) =>
+                `${title}: ${prefix}…${suffix}`,
+        },
         permissionMode: {
             title: 'PERMISSION MODE',
             default: 'Default',
             acceptEdits: 'Accept Edits',
             plan: 'Plan Mode',
             bypassPermissions: 'Yolo Mode',
+            badgeAccept: 'Accept',
+            badgePlan: 'Plan',
+            badgeYolo: 'YOLO',
             badgeAcceptAllEdits: 'Accept All Edits',
             badgeBypassAllPermissions: 'Bypass All Permissions',
             badgePlanMode: 'Plan Mode',
@@ -418,7 +813,15 @@ export const en: TranslationStructure = {
         agent: {
             claude: 'Claude',
             codex: 'Codex',
+            opencode: 'OpenCode',
             gemini: 'Gemini',
+            auggie: 'Auggie',
+            qwen: 'Qwen Code',
+            kimi: 'Kimi',
+        },
+        auggieIndexingChip: {
+            on: 'Indexing on',
+            off: 'Indexing off',
         },
         model: {
             title: 'MODEL',
@@ -430,7 +833,7 @@ export const en: TranslationStructure = {
             readOnly: 'Read Only Mode',
             safeYolo: 'Safe YOLO',
             yolo: 'YOLO',
-            badgeReadOnly: 'Read Only Mode',
+            badgeReadOnly: 'Read Only',
             badgeSafeYolo: 'Safe YOLO',
             badgeYolo: 'YOLO',
         },
@@ -454,12 +857,32 @@ export const en: TranslationStructure = {
             badgeSafeYolo: 'Safe YOLO',
             badgeYolo: 'YOLO',
         },
+        geminiModel: {
+            title: 'GEMINI MODEL',
+            gemini25Pro: {
+                label: 'Gemini 2.5 Pro',
+                description: 'Most capable',
+            },
+            gemini25Flash: {
+                label: 'Gemini 2.5 Flash',
+                description: 'Fast & efficient',
+            },
+            gemini25FlashLite: {
+                label: 'Gemini 2.5 Flash Lite',
+                description: 'Fastest',
+            },
+        },
         context: {
             remaining: ({ percent }: { percent: number }) => `${percent}% left`,
         },
         suggestion: {
             fileLabel: 'FILE',
             folderLabel: 'FOLDER',
+        },
+        actionMenu: {
+            title: 'ACTIONS',
+            files: 'Files',
+            stop: 'Stop',
         },
         noMachinesAvailable: 'No machines',
     },
@@ -476,6 +899,8 @@ export const en: TranslationStructure = {
     },
 
     toolView: {
+        open: 'Open details',
+        expand: 'Expand/collapse',
         input: 'Input',
         output: 'Output',
     },
@@ -489,6 +914,9 @@ export const en: TranslationStructure = {
             completed: 'Tool completed successfully',
             noOutput: 'No output was produced',
             running: 'Tool is running...',
+            debug: 'Debug',
+            show: 'Show',
+            hide: 'Hide',
             rawJsonDevMode: 'Raw JSON (Dev Mode)',
         },
         taskView: {
@@ -519,6 +947,10 @@ export const en: TranslationStructure = {
             applyChanges: 'Update file',
             viewDiff: 'Current file changes',
             question: 'Question',
+            changeTitle: 'Change Title',
+        },
+        geminiExecute: {
+            cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
         },
         askUserQuestion: {
             submit: 'Submit Answer',
@@ -526,6 +958,18 @@ export const en: TranslationStructure = {
             other: 'Other',
             otherDescription: 'Type your own answer',
             otherPlaceholder: 'Type your answer...',
+        },
+        exitPlanMode: {
+            approve: 'Approve Plan',
+            reject: 'Reject',
+            requestChanges: 'Request changes',
+            requestChangesPlaceholder: 'Tell Claude what you want to change in this plan…',
+            requestChangesSend: 'Send feedback',
+            requestChangesEmpty: 'Please write what you want to change.',
+            requestChangesFailed: 'Failed to request changes. Please try again.',
+            responded: 'Response sent',
+            approvalMessage: 'I approve this plan. Please proceed with the implementation.',
+            rejectionMessage: 'I do not approve this plan. Please revise it or ask me what changes I would like.',
         },
         desc: {
             terminalCmd: ({ cmd }: { cmd: string }) => `Terminal(cmd: ${cmd})`,
@@ -684,6 +1128,11 @@ export const en: TranslationStructure = {
         deviceLinkedSuccessfully: 'Device linked successfully',
         terminalConnectedSuccessfully: 'Terminal connected successfully',
         invalidAuthUrl: 'Invalid authentication URL',
+        microphoneAccessRequiredTitle: 'Microphone Access Required',
+        microphoneAccessRequiredRequestPermission: 'Happy needs access to your microphone for voice chat. Please grant permission when prompted.',
+        microphoneAccessRequiredEnableInSettings: 'Happy needs access to your microphone for voice chat. Please enable microphone access in your device settings.',
+        microphoneAccessRequiredBrowserInstructions: 'Please allow microphone access in your browser settings. You may need to click the lock icon in the address bar and enable microphone permission for this site.',
+        openSettings: 'Open Settings',
         developerMode: 'Developer Mode',
         developerModeEnabled: 'Developer mode enabled',
         developerModeDisabled: 'Developer mode disabled',
@@ -738,6 +1187,15 @@ export const en: TranslationStructure = {
         daemon: 'Daemon',
         status: 'Status',
         stopDaemon: 'Stop Daemon',
+        stopDaemonConfirmTitle: 'Stop Daemon?',
+        stopDaemonConfirmBody: 'You will not be able to spawn new sessions on this machine until you restart the daemon on your computer again. Your current sessions will stay alive.',
+        daemonStoppedTitle: 'Daemon Stopped',
+        stopDaemonFailed: 'Failed to stop daemon. It may not be running.',
+        renameTitle: 'Rename Machine',
+        renameDescription: 'Give this machine a custom name. Leave empty to use the default hostname.',
+        renamePlaceholder: 'Enter machine name',
+        renamedSuccess: 'Machine renamed successfully',
+        renameFailed: 'Failed to rename machine',
         lastKnownPid: 'Last Known PID',
         lastKnownHttpPort: 'Last Known HTTP Port',
         startedAt: 'Started At',
@@ -754,20 +1212,40 @@ export const en: TranslationStructure = {
         lastSeen: 'Last Seen',
         never: 'Never',
         metadataVersion: 'Metadata Version',
+        detectedClis: 'Detected CLIs',
+        detectedCliNotDetected: 'Not detected',
+        detectedCliUnknown: 'Unknown',
+        detectedCliNotSupported: 'Not supported (update happy-cli)',
         untitledSession: 'Untitled Session',
         back: 'Back',
+        notFound: 'Machine not found',
+        unknownMachine: 'unknown machine',
+        unknownPath: 'unknown path',
+        tmux: {
+            overrideTitle: 'Override global tmux settings',
+            overrideEnabledSubtitle: 'Custom tmux settings apply to new sessions on this machine.',
+            overrideDisabledSubtitle: 'New sessions use the global tmux settings.',
+            notDetectedSubtitle: 'tmux is not detected on this machine.',
+            notDetectedMessage: 'tmux is not detected on this machine. Install tmux and refresh detection.',
+        },
     },
 
     message: {
         switchedToMode: ({ mode }: { mode: string }) => `Switched to ${mode} mode`,
+        discarded: 'Discarded',
         unknownEvent: 'Unknown event',
         usageLimitUntil: ({ time }: { time: string }) => `Usage limit reached until ${time}`,
         unknownTime: 'unknown time',
     },
 
+    chatFooter: {
+        permissionsTerminalOnly: 'Permissions are shown in the terminal only. Reset or send a message to control from the app.',
+    },
+
     codex: {
         // Codex permission dialog buttons
         permissions: {
+            yesAlwaysAllowCommand: 'Yes, always allow globally',
             yesForSession: "Yes, and don't ask for a session",
             stopAndExplain: 'Stop, and explain what to do',
         }
@@ -778,6 +1256,9 @@ export const en: TranslationStructure = {
         permissions: {
             yesAllowAllEdits: 'Yes, allow all edits during this session',
             yesForTool: "Yes, don't ask again for this tool",
+            yesForCommandPrefix: "Yes, don't ask again for this command prefix",
+            yesForSubcommand: "Yes, don't ask again for this subcommand",
+            yesForCommandName: "Yes, don't ask again for this command",
             noTellClaude: 'No, and provide feedback',
         }
     },
@@ -791,6 +1272,7 @@ export const en: TranslationStructure = {
         textCopied: 'Text copied to clipboard',
         failedToCopy: 'Failed to copy text to clipboard',
         noTextToCopy: 'No text available to copy',
+        failedToOpen: 'Failed to open text selection. Please try again.',
     },
 
     markdown: {
@@ -811,11 +1293,14 @@ export const en: TranslationStructure = {
         edit: 'Edit Artifact',
         delete: 'Delete',
         updateError: 'Failed to update artifact. Please try again.',
+        deleteError: 'Failed to delete artifact. Please try again.',
         notFound: 'Artifact not found',
         discardChanges: 'Discard changes?',
         discardChangesDescription: 'You have unsaved changes. Are you sure you want to discard them?',
         deleteConfirm: 'Delete artifact?',
         deleteConfirmDescription: 'This action cannot be undone',
+        noContent: 'No content',
+        untitled: 'Untitled',
         titleLabel: 'TITLE',
         titlePlaceholder: 'Enter a title for your artifact',
         bodyLabel: 'CONTENT',
@@ -877,6 +1362,8 @@ export const en: TranslationStructure = {
         cancelRequestConfirm: ({ name }: { name: string }) => `Cancel your friendship request to ${name}?`,
         denyRequest: 'Deny friendship',
         nowFriendsWith: ({ name }: { name: string }) => `You are now friends with ${name}`,
+        sharedSessions: 'Shared sessions',
+        noSharedSessions: 'No shared sessions yet',
     },
 
     usage: {
@@ -901,12 +1388,57 @@ export const en: TranslationStructure = {
         friendAcceptedGeneric: 'Friend request accepted',
     },
 
+    secrets: {
+        addTitle: 'New secret',
+        savedTitle: 'Saved secrets',
+        badgeReady: 'Secrets',
+        badgeRequired: 'Secret required',
+        missingForProfile: ({ env }: { env: string | null }) =>
+            `Missing secret (${env ?? 'secret'}). Configure it on the machine or select/enter a secret.`,
+        defaultForProfileTitle: 'Default secret',
+        defineDefaultForProfileTitle: 'Define default secret for this profile',
+        addSubtitle: 'Add a saved secret',
+        noneTitle: 'None',
+        noneSubtitle: 'Use machine environment or enter a secret for this session',
+        emptyTitle: 'No saved keys',
+        emptySubtitle: 'Add one to use secret-required profiles without setting machine env vars.',
+        savedHiddenSubtitle: 'Saved (value hidden)',
+        defaultLabel: 'Default',
+        fields: {
+            name: 'Name',
+            value: 'Value',
+        },
+        placeholders: {
+            nameExample: 'e.g. Work OpenAI',
+        },
+        validation: {
+            nameRequired: 'Name is required.',
+            valueRequired: 'Value is required.',
+        },
+        actions: {
+            replace: 'Replace',
+            replaceValue: 'Replace value',
+            setDefault: 'Set as default',
+            unsetDefault: 'Unset default',
+        },
+        prompts: {
+            renameTitle: 'Rename secret',
+            renameDescription: 'Update the friendly name for this key.',
+            replaceValueTitle: 'Replace secret value',
+            replaceValueDescription: 'Paste the new secret value. This value will not be shown again after saving.',
+            deleteTitle: 'Delete secret',
+            deleteConfirm: ({ name }: { name: string }) => `Delete “${name}”? This cannot be undone.`,
+        },
+    },
+
     profiles: {
         // Profile management feature
         title: 'Profiles',
         subtitle: 'Manage environment variable profiles for sessions',
-        noProfile: 'No Profile',
-        noProfileDescription: 'Use default environment settings',
+        sessionUses: ({ profile }: { profile: string }) => `This session uses: ${profile}`,
+        profilesFixedPerSession: 'Profiles are fixed per session. To use a different profile, start a new session.',
+        noProfile: 'Default Environment',
+        noProfileDescription: 'Use the machine environment without profile variables',
         defaultModel: 'Default Model',
         addProfile: 'Add Profile',
         profileName: 'Profile Name',
@@ -921,9 +1453,234 @@ export const en: TranslationStructure = {
         enterTmuxTempDir: 'Enter temp directory path',
         tmuxUpdateEnvironment: 'Update environment automatically',
         nameRequired: 'Profile name is required',
-        deleteConfirm: 'Are you sure you want to delete the profile "{name}"?',
+        deleteConfirm: ({ name }: { name: string }) => `Are you sure you want to delete the profile "${name}"?`,
         editProfile: 'Edit Profile',
         addProfileTitle: 'Add New Profile',
+        builtIn: 'Built-in',
+        custom: 'Custom',
+        builtInSaveAsHint: 'Saving a built-in profile creates a new custom profile.',
+        builtInNames: {
+            anthropic: 'Anthropic (Default)',
+            deepseek: 'DeepSeek (Reasoner)',
+            zai: 'Z.AI (GLM-4.6)',
+            codex: 'Codex (Default)',
+            openai: 'OpenAI (GPT-5)',
+            azureOpenai: 'Azure OpenAI',
+            gemini: 'Gemini (Default)',
+            geminiApiKey: 'Gemini (API key)',
+            geminiVertex: 'Gemini (Vertex AI)',
+        },
+        groups: {
+            favorites: 'Favorites',
+            custom: 'Your Profiles',
+            builtIn: 'Built-in Profiles',
+        },
+        actions: {
+            viewEnvironmentVariables: 'Environment Variables',
+            addToFavorites: 'Add to favorites',
+            removeFromFavorites: 'Remove from favorites',
+            editProfile: 'Edit profile',
+            duplicateProfile: 'Duplicate profile',
+            deleteProfile: 'Delete profile',
+        },
+        copySuffix: '(Copy)',
+        duplicateName: 'A profile with this name already exists',
+        setupInstructions: {
+            title: 'Setup Instructions',
+            viewOfficialGuide: 'View Official Setup Guide',
+        },
+        machineLogin: {
+            title: 'CLI login',
+            subtitle: 'This profile relies on a CLI login cache on the selected machine.',
+            status: {
+                loggedIn: 'Logged in',
+                notLoggedIn: 'Not logged in',
+            },
+            claudeCode: {
+                title: 'Claude Code',
+                instructions: 'Run `claude`, then type `/login` to sign in.',
+                warning: 'Note: setting `ANTHROPIC_AUTH_TOKEN` overrides CLI login.',
+            },
+            codex: {
+                title: 'Codex',
+                instructions: 'Run `codex login` to sign in.',
+            },
+            geminiCli: {
+                title: 'Gemini CLI',
+                instructions: 'Run `gemini auth` to sign in.',
+            },
+        },
+        requirements: {
+            secretRequired: 'Secret',
+            configured: 'Configured on machine',
+            notConfigured: 'Not configured',
+            checking: 'Checking…',
+            missingConfigForProfile: ({ env }: { env: string }) => `This profile requires ${env} to be configured on the machine.`,
+            modalTitle: 'Secret required',
+            modalBody: 'This profile requires a secret.\n\nSupported options:\n• Use machine environment (recommended)\n• Use saved secret from app settings\n• Enter a secret for this session only',
+            sectionTitle: 'Requirements',
+            sectionSubtitle: 'These fields are used to preflight readiness and to avoid surprise failures.',
+            secretEnvVarPromptDescription: 'Enter the required secret environment variable name (e.g. OPENAI_API_KEY).',
+            modalHelpWithEnv: ({ env }: { env: string }) => `This profile needs ${env}. Choose one option below.`,
+            modalHelpGeneric: 'This profile needs a secret. Choose one option below.',
+            chooseOptionTitle: 'Choose an option',
+            machineEnvStatus: {
+                theMachine: 'the machine',
+                checkFor: ({ env }: { env: string }) => `Check for ${env}`,
+                checking: ({ env }: { env: string }) => `Checking ${env}…`,
+                found: ({ env, machine }: { env: string; machine: string }) => `${env} found on ${machine}`,
+                notFound: ({ env, machine }: { env: string; machine: string }) => `${env} not found on ${machine}`,
+            },
+            machineEnvSubtitle: {
+                checking: 'Checking daemon environment…',
+                found: 'Found in the daemon environment on the machine.',
+                notFound: 'Set it in the daemon environment on the machine and restart the daemon.',
+            },
+            options: {
+                none: {
+                    title: 'None',
+                    subtitle: 'Does not require a secret or CLI login.',
+                },
+                machineLogin: {
+                    subtitle: 'Requires the CLI to be logged in on the machine.',
+                    longSubtitle: 'Requires being logged in via the CLI for the AI backend you choose on the target machine.',
+                },
+                useMachineEnvironment: {
+                    title: 'Use machine environment',
+                    subtitleWithEnv: ({ env }: { env: string }) => `Use ${env} from the daemon environment.`,
+                    subtitleGeneric: 'Use the secret from the daemon environment.',
+                },
+                useSavedSecret: {
+                    title: 'Use a saved secret',
+                    subtitle: 'Select (or add) a saved secret in the app.',
+                },
+                enterOnce: {
+                    title: 'Enter a secret',
+                    subtitle: 'Paste a secret for this session only (won’t be saved).',
+                },
+            },
+            secretEnvVar: {
+                title: 'Secret environment variable',
+                subtitle: 'Enter the env var name this provider expects for its secret (e.g. OPENAI_API_KEY).',
+                label: 'Environment variable name',
+            },
+            sections: {
+                machineEnvironment: 'Machine environment',
+                useOnceTitle: 'Use once',
+                useOnceLabel: 'Enter a secret',
+                useOnceFooter: 'Paste a secret for this session only. It won’t be saved.',
+            },
+            actions: {
+                useMachineEnvironment: {
+                    subtitle: 'Start with the key already present on the machine.',
+                },
+                useOnceButton: 'Use once (session only)',
+            },
+        },
+        defaultSessionType: 'Default Session Type',
+        defaultPermissionMode: {
+            title: 'Default Permission Mode',
+            descriptions: {
+                default: 'Ask for permissions',
+                acceptEdits: 'Auto-approve edits',
+                plan: 'Plan before executing',
+                bypassPermissions: 'Skip all permissions',
+            },
+        },
+        aiBackend: {
+            title: 'AI Backend',
+            selectAtLeastOneError: 'Select at least one AI backend.',
+            claudeSubtitle: 'Claude CLI',
+            codexSubtitle: 'Codex CLI',
+            opencodeSubtitle: 'OpenCode CLI',
+            geminiSubtitleExperimental: 'Gemini CLI (experimental)',
+            auggieSubtitle: 'Auggie CLI',
+            qwenSubtitleExperimental: 'Qwen Code CLI (experimental)',
+            kimiSubtitleExperimental: 'Kimi CLI (experimental)',
+        },
+        tmux: {
+            title: 'Tmux',
+            spawnSessionsTitle: 'Spawn Sessions in Tmux',
+            spawnSessionsEnabledSubtitle: 'Sessions spawn in new tmux windows.',
+            spawnSessionsDisabledSubtitle: 'Sessions spawn in regular shell (no tmux integration)',
+            isolatedServerTitle: 'Isolated tmux server',
+            isolatedServerEnabledSubtitle: 'Start sessions in an isolated tmux server (recommended).',
+            isolatedServerDisabledSubtitle: 'Start sessions in your default tmux server.',
+            sessionNamePlaceholder: 'Empty = current/most recent session',
+            tempDirPlaceholder: 'Leave blank to auto-generate',
+        },
+        previewMachine: {
+            title: 'Preview Machine',
+            itemTitle: 'Preview machine for environment variables preview',
+            selectMachine: 'Select machine',
+            resolveSubtitle: 'Used only to preview the resolved values below (does not change what is saved).',
+            selectSubtitle: 'Select a machine to preview the resolved values below.',
+        },
+        environmentVariables: {
+            title: 'Environment Variables',
+            addVariable: 'Add Variable',
+            namePlaceholder: 'Variable name (e.g., MY_CUSTOM_VAR)',
+            valuePlaceholder: 'Value (e.g., my-value or ${MY_VAR})',
+            validation: {
+                nameRequired: 'Enter a variable name.',
+                invalidNameFormat: 'Variable names must be uppercase letters, numbers, and underscores, and cannot start with a number.',
+                duplicateName: 'That variable already exists.',
+            },
+            card: {
+                valueLabel: 'Value:',
+                fallbackValueLabel: 'Fallback value:',
+                valueInputPlaceholder: 'Value',
+                defaultValueInputPlaceholder: 'Default value',
+                fallbackDisabledForVault: 'Fallbacks are disabled when using the secret vault.',
+                secretNotRetrieved: 'Secret value - not retrieved for security',
+                secretToggleLabel: 'Hide value in UI',
+                secretToggleSubtitle: 'Hide the value in the UI and avoid fetching it from the machine for preview.',
+                secretToggleEnforcedByDaemon: 'Enforced by daemon',
+                secretToggleEnforcedByVault: 'Enforced by secret vault',
+                secretToggleResetToAuto: 'Reset to auto',
+                requirementRequiredLabel: 'Required',
+                requirementRequiredSubtitle: 'Block session creation when this variable is missing.',
+                requirementUseVaultLabel: 'Use secret vault',
+                requirementUseVaultSubtitle: 'Use a saved secret for this variable (no fallback values).',
+                defaultSecretLabel: 'Default secret',
+                overridingDefault: ({ expectedValue }: { expectedValue: string }) =>
+                    `Overriding documented default: ${expectedValue}`,
+                useMachineEnvToggle: 'Use value from machine environment',
+                resolvedOnSessionStart: 'Resolved when the session starts on the selected machine.',
+                sourceVariableLabel: 'Source variable',
+                sourceVariablePlaceholder: 'Source variable name (e.g., Z_AI_MODEL)',
+                checkingMachine: ({ machine }: { machine: string }) => `Checking ${machine}...`,
+                emptyOnMachine: ({ machine }: { machine: string }) => `Empty on ${machine}`,
+                emptyOnMachineUsingFallback: ({ machine }: { machine: string }) => `Empty on ${machine} (using fallback)`,
+                notFoundOnMachine: ({ machine }: { machine: string }) => `Not found on ${machine}`,
+                notFoundOnMachineUsingFallback: ({ machine }: { machine: string }) => `Not found on ${machine} (using fallback)`,
+                valueFoundOnMachine: ({ machine }: { machine: string }) => `Value found on ${machine}`,
+                differsFromDocumented: ({ expectedValue }: { expectedValue: string }) =>
+                    `Differs from documented value: ${expectedValue}`,
+            },
+            preview: {
+                secretValueHidden: ({ value }: { value: string }) => `${value} - hidden for security`,
+                hiddenValue: '***hidden***',
+                emptyValue: '(empty)',
+                sessionWillReceive: ({ name, value }: { name: string; value: string }) =>
+                    `Session will receive: ${name} = ${value}`,
+            },
+            previewModal: {
+                titleWithProfile: ({ profileName }: { profileName: string }) => `Env Vars · ${profileName}`,
+                descriptionPrefix: 'These environment variables are sent when starting the session. Values are resolved using the daemon on',
+                descriptionFallbackMachine: 'the selected machine',
+                descriptionSuffix: '.',
+                emptyMessage: 'No environment variables are set for this profile.',
+                checkingSuffix: '(checking…)',
+                detail: {
+                    fixed: 'Fixed',
+                    machine: 'Machine',
+                    checking: 'Checking',
+                    fallback: 'Fallback',
+                    missing: 'Missing',
+                },
+            },
+        },
         delete: {
             title: 'Delete Profile',
             message: ({ name }: { name: string }) => `Are you sure you want to delete "${name}"? This action cannot be undone.`,
@@ -931,6 +1688,8 @@ export const en: TranslationStructure = {
             cancel: 'Cancel',
         },
     }
-} as const;
+};
+
+export type TranslationStructure = typeof en;
 
 export type TranslationsEn = typeof en;

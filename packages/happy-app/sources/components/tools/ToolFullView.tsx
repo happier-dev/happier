@@ -4,83 +4,134 @@ import { Ionicons } from '@expo/vector-icons';
 import { ToolCall, Message } from '@/sync/typesMessage';
 import { CodeView } from '../CodeView';
 import { Metadata } from '@/sync/storageTypes';
-import { getToolFullViewComponent } from './views/_all';
+import { getToolViewComponent } from './views/_registry';
 import { layout } from '../layout';
 import { useLocalSetting } from '@/sync/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
+import { StructuredResultView } from './views/StructuredResultView';
+import { normalizeToolCallForRendering } from './utils/normalizeToolCallForRendering';
+import { inferToolNameForRendering } from './utils/toolNameInference';
+import { knownTools } from '@/components/tools/knownTools';
+import { PermissionFooter } from './PermissionFooter';
+import { useSetting } from '@/sync/storage';
+
+const KNOWN_TOOL_KEYS = Object.keys(knownTools);
 
 interface ToolFullViewProps {
     tool: ToolCall;
+    sessionId?: string;
     metadata?: Metadata | null;
     messages?: Message[];
+    interaction?: {
+        canSendMessages: boolean;
+        canApprovePermissions: boolean;
+        permissionDisabledReason?: 'public' | 'readOnly' | 'notGranted';
+    };
 }
 
-export function ToolFullView({ tool, metadata, messages = [] }: ToolFullViewProps) {
-    // Check if there's a specialized content view for this tool
-    const SpecializedFullView = getToolFullViewComponent(tool.name);
+export function ToolFullView({ tool, sessionId, metadata, messages = [], interaction }: ToolFullViewProps) {
+    const toolForRendering = React.useMemo<ToolCall>(() => normalizeToolCallForRendering(tool), [tool]);
+
+    const normalizedToolName = React.useMemo(() => {
+        if (toolForRendering.name.startsWith('mcp__')) return toolForRendering.name;
+        const inferred = inferToolNameForRendering({
+            toolName: toolForRendering.name,
+            toolInput: toolForRendering.input,
+            toolDescription: toolForRendering.description,
+            knownToolKeys: KNOWN_TOOL_KEYS,
+        });
+        return inferred.normalizedToolName;
+    }, [toolForRendering.name, toolForRendering.input, toolForRendering.description]);
+
+    // Check if there's a specialized content view for this tool.
+    // ToolFullView always renders the same tool renderer in `detailLevel="full"` mode.
+    const SpecializedFullView = getToolViewComponent(normalizedToolName);
     const screenWidth = useWindowDimensions().width;
-    const devModeEnabled = (useLocalSetting('devModeEnabled') || __DEV__);
-    console.log('ToolFullView', devModeEnabled);
+    const toolViewShowDebugByDefault = useSetting('toolViewShowDebugByDefault');
+    const [showDebug, setShowDebug] = React.useState<boolean>(toolViewShowDebugByDefault);
+    const isWaitingForPermission =
+        toolForRendering.permission?.status === 'pending' && toolForRendering.state !== 'completed';
 
     return (
         <ScrollView style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
             <View style={styles.contentWrapper}>
                 {/* Tool-specific content or generic fallback */}
                 {SpecializedFullView ? (
-                    <SpecializedFullView tool={tool} metadata={metadata || null} messages={messages} />
+                    <SpecializedFullView
+                        tool={toolForRendering}
+                        metadata={metadata || null}
+                        messages={messages}
+                        sessionId={sessionId}
+                        detailLevel="full"
+                        interaction={interaction}
+                    />
                 ) : (
                     <>
                     {/* Generic fallback for tools without specialized views */}
                     {/* Tool Description */}
-                    {tool.description && (
+                    {toolForRendering.description && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
                                 <Ionicons name="information-circle" size={20} color="#5856D6" />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.description')}</Text>
                             </View>
-                            <Text style={styles.description}>{tool.description}</Text>
+                            <Text style={styles.description}>{toolForRendering.description}</Text>
                         </View>
                     )}
                     {/* Input Parameters */}
-                    {tool.input && (
+                    {toolForRendering.input && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
                                 <Ionicons name="log-in" size={20} color="#5856D6" />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.inputParams')}</Text>
                             </View>
-                            <CodeView code={JSON.stringify(tool.input, null, 2)} />
+                            <CodeView code={JSON.stringify(toolForRendering.input, null, 2)} />
                         </View>
                     )}
 
                     {/* Result/Output */}
-                    {tool.state === 'completed' && tool.result && (
+                    {toolForRendering.state === 'completed' && toolForRendering.result && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
                                 <Ionicons name="log-out" size={20} color="#34C759" />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
                             </View>
                             <CodeView
-                                code={typeof tool.result === 'string' ? tool.result : JSON.stringify(tool.result, null, 2)}
+                                code={typeof toolForRendering.result === 'string' ? toolForRendering.result : JSON.stringify(toolForRendering.result, null, 2)}
                             />
                         </View>
                     )}
 
+                    {toolForRendering.state === 'running' && toolForRendering.result && (
+                        <View style={styles.section}>
+                            <View style={styles.sectionHeader}>
+                                <Ionicons name="log-out" size={20} color="#34C759" />
+                                <Text style={styles.sectionTitle}>{t('tools.fullView.output')}</Text>
+                            </View>
+                            <StructuredResultView tool={toolForRendering} metadata={metadata || null} messages={messages} sessionId={sessionId} />
+                        </View>
+                    )}
+
                     {/* Error Details */}
-                    {tool.state === 'error' && tool.result && (
+                    {toolForRendering.state === 'error' && toolForRendering.result && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
                                 <Ionicons name="close-circle" size={20} color="#FF3B30" />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.error')}</Text>
                             </View>
                             <View style={styles.errorContainer}>
-                                <Text style={styles.errorText}>{String(tool.result)}</Text>
+                                <Text style={styles.errorText}>
+                                    {typeof toolForRendering.result === 'string'
+                                        ? toolForRendering.result
+                                        : JSON.stringify(toolForRendering.result, null, 2)}
+                                </Text>
                             </View>
                         </View>
                     )}
 
                     {/* No Output Message */}
-                    {tool.state === 'completed' && !tool.result && (
+                    {toolForRendering.state === 'completed' && !toolForRendering.result && (
                         <View style={styles.section}>
                             <View style={styles.emptyOutputContainer}>
                                 <Ionicons name="checkmark-circle-outline" size={48} color="#34C759" />
@@ -92,30 +143,50 @@ export function ToolFullView({ tool, metadata, messages = [] }: ToolFullViewProp
 
                 </>
                 )}
+
+                {/* Permission footer - allow approve/deny from the full view */}
+                {isWaitingForPermission && toolForRendering.permission && sessionId && toolForRendering.name !== 'AskUserQuestion' && toolForRendering.name !== 'ExitPlanMode' && toolForRendering.name !== 'exit_plan_mode' && toolForRendering.name !== 'AcpHistoryImport' && (
+                    <PermissionFooter
+                        permission={toolForRendering.permission}
+                        sessionId={sessionId}
+                        toolName={normalizedToolName}
+                        toolInput={toolForRendering.input}
+                        metadata={metadata || null}
+                        canApprovePermissions={interaction?.canApprovePermissions ?? true}
+                        disabledReason={interaction?.permissionDisabledReason}
+                    />
+                )}
                 
-                {/* Raw JSON View (Dev Mode Only) */}
-                {devModeEnabled && (
-                    <View style={styles.section}>
-                        <View style={styles.sectionHeader}>
-                            <Ionicons name="code-slash" size={20} color="#FF9500" />
-                            <Text style={styles.sectionTitle}>{t('tools.fullView.rawJsonDevMode')}</Text>
-                        </View>
-                        <CodeView 
+                {/* Debug/raw payloads (opt-in) */}
+                <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                        <Ionicons name="code-slash" size={20} color="#FF9500" />
+                        <Text style={styles.sectionTitle}>{t('tools.fullView.debug')}</Text>
+                        <Text
+                            style={[styles.toolId, { marginLeft: 8 }]}
+                            onPress={() => setShowDebug((v) => !v)}
+                        >
+                            {showDebug ? t('tools.fullView.hide') : t('tools.fullView.show')}
+                        </Text>
+                    </View>
+                    {showDebug && (
+                        <CodeView
                             code={JSON.stringify({
                                 name: tool.name,
-                                state: tool.state,
-                                description: tool.description,
-                                input: tool.input,
-                                result: tool.result,
-                                createdAt: tool.createdAt,
-                                startedAt: tool.startedAt,
-                                completedAt: tool.completedAt,
-                                permission: tool.permission,
-                                messages
-                            }, null, 2)} 
+                                normalizedName: normalizedToolName,
+                                state: toolForRendering.state,
+                                description: toolForRendering.description,
+                                input: toolForRendering.input,
+                                result: toolForRendering.result,
+                                createdAt: toolForRendering.createdAt,
+                                startedAt: toolForRendering.startedAt,
+                                completedAt: toolForRendering.completedAt,
+                                permission: toolForRendering.permission,
+                                messages,
+                            }, null, 2)}
                         />
-                    </View>
-                )}
+                    )}
+                </View>
             </View>
         </ScrollView>
     );

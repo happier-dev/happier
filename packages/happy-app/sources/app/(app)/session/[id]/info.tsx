@@ -3,23 +3,28 @@ import { View, Text, Animated } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
-import { Item } from '@/components/Item';
-import { ItemGroup } from '@/components/ItemGroup';
-import { ItemList } from '@/components/ItemList';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { Avatar } from '@/components/Avatar';
-import { useSession, useIsDataReady } from '@/sync/storage';
+import { useSession, useIsDataReady, useSetting } from '@/sync/storage';
 import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
-import { sessionKill, sessionDelete } from '@/sync/ops';
+import { sessionArchive, sessionDelete, sessionRename } from '@/sync/ops';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/layout';
 import { t } from '@/text';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/versionUtils';
+import { getAttachCommandForSession, getTmuxFallbackReason, getTmuxTargetForSession } from '@/utils/sessions/terminalSessionDetails';
 import { CodeView } from '@/components/CodeView';
 import { Session } from '@/sync/storageTypes';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { HappyError } from '@/utils/errors';
+import { resolveProfileById } from '@/sync/profileUtils';
+import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
+import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
+import { useSessionSharingSupport } from '@/hooks/useSessionSharingSupport';
 
 // Animated status dot component
 function StatusDot({ color, isPulsing, size = 8 }: { color: string; isPulsing?: boolean; size?: number }) {
@@ -66,9 +71,48 @@ function SessionInfoContent({ session }: { session: Session }) {
     const devModeEnabled = __DEV__;
     const sessionName = getSessionName(session);
     const sessionStatus = useSessionStatus(session);
-    
+    const useProfiles = useSetting('useProfiles');
+    const profiles = useSetting('profiles');
+    const experimentsEnabled = useSetting('experiments');
+    const sharingSupported = useSessionSharingSupport();
     // Check if CLI version is outdated
     const isCliOutdated = session.metadata?.version && !isVersionSupported(session.metadata.version, MINIMUM_CLI_VERSION);
+    const canManageSharing = !session.accessLevel || session.accessLevel === 'admin';
+    const agentId = resolveAgentIdFromFlavor(session.metadata?.flavor) ?? DEFAULT_AGENT_ID;
+    const core = getAgentCore(agentId);
+
+    const vendorResumeLabelKey = core.resume.uiVendorResumeIdLabelKey;
+    const vendorResumeCopiedKey = core.resume.uiVendorResumeIdCopiedKey;
+    const vendorResumeId = React.useMemo(() => {
+        const field = core.resume.vendorResumeIdField;
+        if (!field) return null;
+        const raw = (session.metadata as any)?.[field];
+        const id = typeof raw === 'string' ? raw.trim() : '';
+        return id.length > 0 ? id : null;
+    }, [core.resume.vendorResumeIdField, session.metadata]);
+
+    const profileLabel = React.useMemo(() => {
+        const profileId = session.metadata?.profileId;
+        if (profileId === null || profileId === '') return t('profiles.noProfile');
+        if (typeof profileId !== 'string') return t('status.unknown');
+        const resolved = resolveProfileById(profileId, profiles);
+        if (resolved) {
+            return getProfileDisplayName(resolved);
+        }
+        return t('status.unknown');
+    }, [profiles, session.metadata?.profileId]);
+
+    const attachCommand = React.useMemo(() => {
+        return getAttachCommandForSession({ sessionId: session.id, terminal: session.metadata?.terminal });
+    }, [session.id, session.metadata?.terminal]);
+
+    const tmuxTarget = React.useMemo(() => {
+        return getTmuxTargetForSession(session.metadata?.terminal);
+    }, [session.metadata?.terminal]);
+
+    const tmuxFallbackReason = React.useMemo(() => {
+        return getTmuxFallbackReason(session.metadata?.terminal);
+    }, [session.metadata?.terminal]);
 
     const handleCopySessionId = useCallback(async () => {
         if (!session) return;
@@ -79,6 +123,16 @@ function SessionInfoContent({ session }: { session: Session }) {
             Modal.alert(t('common.error'), t('sessionInfo.failedToCopySessionId'));
         }
     }, [session]);
+
+    const handleCopyAttachCommand = useCallback(async () => {
+        if (!attachCommand) return;
+        try {
+            await Clipboard.setStringAsync(attachCommand);
+            Modal.alert(t('common.copied'), t('items.copiedToClipboard', { label: t('sessionInfo.attachFromTerminal') }));
+        } catch (error) {
+            Modal.alert(t('common.error'), t('sessionInfo.failedToCopyMetadata'));
+        }
+    }, [attachCommand]);
 
     const handleCopyMetadata = useCallback(async () => {
         if (!session?.metadata) return;
@@ -92,7 +146,7 @@ function SessionInfoContent({ session }: { session: Session }) {
 
     // Use HappyAction for archiving - it handles errors automatically
     const [archivingSession, performArchive] = useHappyAction(async () => {
-        const result = await sessionKill(session.id);
+        const result = await sessionArchive(session.id);
         if (!result.success) {
             throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
         }
@@ -140,19 +194,43 @@ function SessionInfoContent({ session }: { session: Session }) {
         );
     }, [performDelete]);
 
+    const handleRenameSession = useCallback(async () => {
+        const newName = await Modal.prompt(
+            t('sessionInfo.renameSession'),
+            t('sessionInfo.renameSessionSubtitle'),
+            {
+                defaultValue: sessionName,
+                placeholder: t('sessionInfo.renameSessionPlaceholder'),
+                confirmText: t('common.save'),
+                cancelText: t('common.cancel')
+            }
+        );
+
+        if (newName?.trim()) {
+            const result = await sessionRename(session.id, newName.trim());
+            if (!result.success) {
+                Modal.alert(t('common.error'), result.message || t('sessionInfo.failedToRenameSession'));
+            }
+        }
+    }, [sessionName, session.id]);
+
     const formatDate = useCallback((timestamp: number) => {
         return new Date(timestamp).toLocaleString();
     }, []);
 
-    const handleCopyUpdateCommand = useCallback(async () => {
-        const updateCommand = 'npm install -g happy-coder@latest';
+    const handleCopyCommand = useCallback(async (command: string) => {
         try {
-            await Clipboard.setStringAsync(updateCommand);
-            Modal.alert(t('common.success'), updateCommand);
+            await Clipboard.setStringAsync(command);
+            Modal.alert(t('common.success'), command);
         } catch (error) {
             Modal.alert(t('common.error'), t('common.error'));
         }
     }, []);
+
+    const handleCopyUpdateCommand = useCallback(async () => {
+        const updateCommand = 'npm install -g happy-coder@latest';
+        await handleCopyCommand(updateCommand);
+    }, [handleCopyCommand]);
 
     return (
         <>
@@ -198,25 +276,25 @@ function SessionInfoContent({ session }: { session: Session }) {
                     </ItemGroup>
                 )}
 
-                {/* Session Details */}
-                <ItemGroup>
-                    <Item
-                        title={t('sessionInfo.happySessionId')}
+	                {/* Session Details */}
+	                <ItemGroup>
+	                    <Item
+	                        title={t('sessionInfo.happySessionId')}
                         subtitle={`${session.id.substring(0, 8)}...${session.id.substring(session.id.length - 8)}`}
                         icon={<Ionicons name="finger-print-outline" size={29} color="#007AFF" />}
                         onPress={handleCopySessionId}
                     />
-                    {session.metadata?.claudeSessionId && (
+                    {vendorResumeId && vendorResumeLabelKey && vendorResumeCopiedKey && (
                         <Item
-                            title={t('sessionInfo.claudeCodeSessionId')}
-                            subtitle={`${session.metadata.claudeSessionId.substring(0, 8)}...${session.metadata.claudeSessionId.substring(session.metadata.claudeSessionId.length - 8)}`}
-                            icon={<Ionicons name="code-outline" size={29} color="#9C27B0" />}
+                            title={t(vendorResumeLabelKey)}
+                            subtitle={`${vendorResumeId.substring(0, 8)}...${vendorResumeId.substring(vendorResumeId.length - 8)}`}
+                            icon={<Ionicons name={core.ui.agentPickerIconName as any} size={29} color="#007AFF" />}
                             onPress={async () => {
                                 try {
-                                    await Clipboard.setStringAsync(session.metadata!.claudeSessionId!);
-                                    Modal.alert(t('common.success'), t('sessionInfo.claudeCodeSessionIdCopied'));
+                                    await Clipboard.setStringAsync(vendorResumeId);
+                                    Modal.alert(t('common.success'), t(vendorResumeCopiedKey));
                                 } catch (error) {
-                                    Modal.alert(t('common.error'), t('sessionInfo.failedToCopyClaudeCodeSessionId'));
+                                    Modal.alert(t('common.error'), t('sessionInfo.failedToCopyMetadata'));
                                 }
                             }}
                         />
@@ -249,12 +327,35 @@ function SessionInfoContent({ session }: { session: Session }) {
 
                 {/* Quick Actions */}
                 <ItemGroup title={t('sessionInfo.quickActions')}>
+                    <Item
+                        title={t('sessionInfo.renameSession')}
+                        subtitle={t('sessionInfo.renameSessionSubtitle')}
+                        icon={<Ionicons name="pencil-outline" size={29} color="#007AFF" />}
+                        onPress={handleRenameSession}
+                    />
+                    {!session.active && Boolean(vendorResumeId) && (
+                        <Item
+                            title={t('sessionInfo.copyResumeCommand')}
+                            subtitle={`happy resume ${session.id}`}
+                            icon={<Ionicons name="terminal-outline" size={29} color="#9C27B0" />}
+                            showChevron={false}
+                            onPress={() => handleCopyCommand(`happy resume ${session.id}`)}
+                        />
+                    )}
                     {session.metadata?.machineId && (
                         <Item
                             title={t('sessionInfo.viewMachine')}
                             subtitle={t('sessionInfo.viewMachineSubtitle')}
                             icon={<Ionicons name="server-outline" size={29} color="#007AFF" />}
                             onPress={() => router.push(`/machine/${session.metadata?.machineId}`)}
+                        />
+                    )}
+                    {canManageSharing && sharingSupported && (
+                        <Item
+                            title={t('sessionInfo.manageSharing')}
+                            subtitle={t('sessionInfo.manageSharingSubtitle')}
+                            icon={<Ionicons name="share-outline" size={29} color="#007AFF" />}
+                            onPress={() => router.push(`/session/${session.id}/sharing`)}
                         />
                     )}
                     {sessionStatus.isConnected && (
@@ -307,22 +408,31 @@ function SessionInfoContent({ session }: { session: Session }) {
                                 showChevron={false}
                             />
                         )}
-                        <Item
-                            title={t('sessionInfo.aiProvider')}
-                            subtitle={(() => {
-                                const flavor = session.metadata.flavor || 'claude';
-                                if (flavor === 'claude') return 'Claude';
-                                if (flavor === 'gpt' || flavor === 'openai') return 'Codex';
-                                if (flavor === 'gemini') return 'Gemini';
-                                return flavor;
-                            })()}
-                            icon={<Ionicons name="sparkles-outline" size={29} color="#5856D6" />}
-                            showChevron={false}
-                        />
-                        {session.metadata.hostPid && (
-                            <Item
-                                title={t('sessionInfo.processId')}
-                                subtitle={session.metadata.hostPid.toString()}
+	                        <Item
+	                            title={t('sessionInfo.aiProvider')}
+	                            subtitle={(() => {
+                                    const flavor = session.metadata.flavor;
+                                    const agentId = resolveAgentIdFromFlavor(flavor);
+                                    if (agentId) return t(getAgentCore(agentId).displayNameKey);
+                                    return typeof flavor === 'string' && flavor.length > 0
+                                        ? flavor
+                                        : t(getAgentCore(DEFAULT_AGENT_ID).displayNameKey);
+                                })()}
+	                            icon={<Ionicons name="sparkles-outline" size={29} color="#5856D6" />}
+	                            showChevron={false}
+	                        />
+                            {useProfiles && session.metadata?.profileId !== undefined && (
+                                <Item
+                                    title={t('sessionInfo.aiProfile')}
+                                    detail={profileLabel}
+                                    icon={<Ionicons name="person-circle-outline" size={29} color="#5856D6" />}
+                                    showChevron={false}
+                                />
+                            )}
+	                        {session.metadata.hostPid && (
+	                            <Item
+	                                title={t('sessionInfo.processId')}
+	                                subtitle={session.metadata.hostPid.toString()}
                                 icon={<Ionicons name="terminal-outline" size={29} color="#5856D6" />}
                                 showChevron={false}
                             />
@@ -332,6 +442,31 @@ function SessionInfoContent({ session }: { session: Session }) {
                                 title={t('sessionInfo.happyHome')}
                                 subtitle={formatPathRelativeToHome(session.metadata.happyHomeDir, session.metadata.homeDir)}
                                 icon={<Ionicons name="home-outline" size={29} color="#5856D6" />}
+                                showChevron={false}
+                            />
+                        )}
+                        {!!attachCommand && (
+                            <Item
+                                title={t('sessionInfo.attachFromTerminal')}
+                                subtitle={attachCommand}
+                                icon={<Ionicons name="terminal-outline" size={29} color="#5856D6" />}
+                                onPress={handleCopyAttachCommand}
+                                showChevron={false}
+                            />
+                        )}
+                        {!!tmuxTarget && (
+                            <Item
+                                title={t('sessionInfo.tmuxTarget')}
+                                subtitle={tmuxTarget}
+                                icon={<Ionicons name="albums-outline" size={29} color="#5856D6" />}
+                                showChevron={false}
+                            />
+                        )}
+                        {!!tmuxFallbackReason && (
+                            <Item
+                                title={t('sessionInfo.tmuxFallback')}
+                                subtitle={tmuxFallbackReason}
+                                icon={<Ionicons name="alert-circle-outline" size={29} color="#FF9500" />}
                                 showChevron={false}
                             />
                         )}
@@ -383,11 +518,11 @@ function SessionInfoContent({ session }: { session: Session }) {
 
                 {/* Raw JSON (Dev Mode Only) */}
                 {devModeEnabled && (
-                    <ItemGroup title="Raw JSON (Dev Mode)">
+                    <ItemGroup title={t('sessionInfo.rawJsonDevMode')}>
                         {session.agentState && (
                             <>
                                 <Item
-                                    title="Agent State"
+                                    title={t('sessionInfo.agentState')}
                                     icon={<Ionicons name="code-working-outline" size={29} color="#FF9500" />}
                                     showChevron={false}
                                 />
@@ -402,7 +537,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                         {session.metadata && (
                             <>
                                 <Item
-                                    title="Metadata"
+                                    title={t('sessionInfo.metadata')}
                                     icon={<Ionicons name="information-circle-outline" size={29} color="#5856D6" />}
                                     showChevron={false}
                                 />
@@ -417,7 +552,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                         {sessionStatus && (
                             <>
                                 <Item
-                                    title="Session Status"
+                                    title={t('sessionInfo.sessionStatus')}
                                     icon={<Ionicons name="analytics-outline" size={29} color="#007AFF" />}
                                     showChevron={false}
                                 />
@@ -437,7 +572,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                         )}
                         {/* Full Session Object */}
                         <Item
-                            title="Full Session Object"
+                            title={t('sessionInfo.fullSessionObject')}
                             icon={<Ionicons name="document-text-outline" size={29} color="#34C759" />}
                             showChevron={false}
                         />

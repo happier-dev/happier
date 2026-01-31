@@ -1,21 +1,38 @@
-import { Stack } from 'expo-router';
+import { Stack, router, useSegments } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
 import { Typography } from '@/constants/Typography';
 import { createHeader } from '@/components/navigation/Header';
 import { Platform, TouchableOpacity, Text } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { isRunningOnMac } from '@/utils/platform';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
+import { useAuth } from '@/auth/AuthContext';
+import { isPublicRouteForUnauthenticated } from '@/auth/authRouting';
 
 export const unstable_settings = {
     initialRouteName: 'index',
 };
 
 export default function RootLayout() {
+    const auth = useAuth();
+    const segments = useSegments();
+    const { theme } = useUnistyles();
+
+    const shouldRedirect = !auth.isAuthenticated && !isPublicRouteForUnauthenticated(segments);
+    React.useEffect(() => {
+        if (!shouldRedirect) return;
+        router.replace('/');
+    }, [shouldRedirect]);
+
+    // Avoid rendering protected screens for a frame during redirect.
+    if (shouldRedirect) {
+        return null;
+    }
+
     // Use custom header on Android and Mac Catalyst, native header on iOS (non-Catalyst)
     const shouldUseCustomHeader = Platform.OS === 'android' || isRunningOnMac() || Platform.OS === 'web';
-    const { theme } = useUnistyles();
 
     return (
         <Stack
@@ -25,7 +42,7 @@ export default function RootLayout() {
                 headerBackTitle: t('common.back'),
                 headerShadowVisible: false,
                 contentStyle: {
-                    backgroundColor: theme.colors.surface,
+                    backgroundColor: theme.colors.groupped.background,
                 },
                 headerStyle: {
                     backgroundColor: theme.colors.header.background,
@@ -100,6 +117,14 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="session/[id]/sharing"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('session.sharing.title'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="settings/account"
                 options={{
                     headerTitle: t('settings.account'),
@@ -115,6 +140,12 @@ export default function RootLayout() {
                 name="settings/features"
                 options={{
                     headerTitle: t('settings.features'),
+                }}
+            />
+            <Stack.Screen
+                name="settings/profiles"
+                options={{
+                    headerTitle: t('settingsFeatures.profiles'),
                 }}
             />
             <Stack.Screen
@@ -312,6 +343,13 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="new/pick/profile"
+                options={{
+                    headerTitle: '',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="new/pick/profile-edit"
                 options={{
                     headerTitle: '',
@@ -319,10 +357,37 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="new/pick/secret-requirement"
+                options={{
+                    headerShown: false,
+                    // /new is presented modally on iOS. Ensure this overlay screen is too,
+                    // otherwise it can end up pushed "behind" the modal (invisible but on the back stack).
+                    presentation: Platform.OS === 'ios' ? 'containedModal' : 'modal',
+                }}
+            />
+            <Stack.Screen
                 name="new/index"
                 options={{
                     headerTitle: t('newSession.title'),
-                    headerBackTitle: t('common.back'),
+                    headerShown: true,
+                    headerBackTitle: t('common.cancel'),
+                    presentation: 'modal',
+                    gestureEnabled: true,
+                    fullScreenGestureEnabled: true,
+                    // Swipe-to-dismiss is not consistently available across platforms; always provide a close button.
+                    headerBackVisible: false,
+                    headerLeft: () => null,
+                    headerRight: () => (
+                        <TouchableOpacity
+                            onPress={() => router.back()}
+                            hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                            style={{ paddingHorizontal: 12, paddingVertical: 6 }}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('common.cancel')}
+                        >
+                            <Ionicons name="close" size={22} color={theme.colors.header.tint} />
+                        </TouchableOpacity>
+                    ),
                 }}
             />
             <Stack.Screen

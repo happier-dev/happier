@@ -1,14 +1,19 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, RefreshControl, Platform, Pressable, TextInput } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import { Item } from '@/components/Item';
-import { ItemGroup } from '@/components/ItemGroup';
-import { ItemList } from '@/components/ItemList';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroupTitleWithAction } from '@/components/ui/lists/ItemGroupTitleWithAction';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
-import { useSessions, useAllMachines, useMachine } from '@/sync/storage';
+import { useSessions, useAllMachines, useMachine, storage, useSetting, useSettingMutable, useSettings } from '@/sync/storage';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import type { Session } from '@/sync/storageTypes';
-import { machineStopDaemon, machineUpdateMetadata } from '@/sync/ops';
+import {
+    machineSpawnNewSession,
+    machineStopDaemon,
+    machineUpdateMetadata,
+} from '@/sync/ops';
 import { Modal } from '@/modal';
 import { formatPathRelativeToHome, getSessionName, getSessionSubtitle } from '@/utils/sessionUtils';
 import { isMachineOnline } from '@/utils/machineUtils';
@@ -16,9 +21,15 @@ import { sync } from '@/sync/sync';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
-import { machineSpawnNewSession } from '@/sync/ops';
 import { resolveAbsolutePath } from '@/utils/pathUtils';
 import { MultiTextInput, type MultiTextInputHandle } from '@/components/MultiTextInput';
+import { DetectedClisList } from '@/components/machines/DetectedClisList';
+import { useMachineCapabilitiesCache } from '@/hooks/useMachineCapabilitiesCache';
+import { resolveTerminalSpawnOptions } from '@/sync/terminalSettings';
+import { Switch } from '@/components/Switch';
+import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
+import { InstallableDepInstaller } from '@/components/machines/InstallableDepInstaller';
+import { getInstallableDepRegistryEntries } from '@/capabilities/installableDepsRegistry';
 
 const styles = StyleSheet.create((theme) => ({
     pathInputContainer: {
@@ -60,6 +71,39 @@ const styles = StyleSheet.create((theme) => ({
             default: theme.colors.permissionButton?.inactive?.background ?? theme.colors.surfaceHigh,
         }) as any,
     },
+    tmuxInputContainer: {
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+    },
+    tmuxFieldLabel: {
+        ...Typography.default('semiBold'),
+        fontSize: 13,
+        color: theme.colors.groupped.sectionTitle,
+        marginBottom: 4,
+    },
+    tmuxTextInput: {
+        ...Typography.default('regular'),
+        backgroundColor: theme.colors.input.background,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: Platform.select({ ios: 10, default: 12 }),
+        fontSize: Platform.select({ ios: 17, default: 16 }),
+        lineHeight: Platform.select({ ios: 22, default: 24 }),
+        letterSpacing: Platform.select({ ios: -0.41, default: 0.15 }),
+        color: theme.colors.input.text,
+        ...(Platform.select({
+            web: {
+                outline: 'none',
+                outlineStyle: 'none',
+                outlineWidth: 0,
+                outlineColor: 'transparent',
+                boxShadow: 'none',
+                WebkitBoxShadow: 'none',
+                WebkitAppearance: 'none',
+            },
+            default: {},
+        }) as object),
+    },
 }));
 
 export default function MachineDetailScreen() {
@@ -76,7 +120,87 @@ export default function MachineDetailScreen() {
     const [isSpawning, setIsSpawning] = useState(false);
     const inputRef = useRef<MultiTextInputHandle>(null);
     const [showAllPaths, setShowAllPaths] = useState(false);
-    // Variant D only
+    const isOnline = !!machine && isMachineOnline(machine);
+    const metadata = machine?.metadata;
+
+    const terminalUseTmux = useSetting('sessionUseTmux');
+    const terminalTmuxSessionName = useSetting('sessionTmuxSessionName');
+    const terminalTmuxIsolated = useSetting('sessionTmuxIsolated');
+    const terminalTmuxTmpDir = useSetting('sessionTmuxTmpDir');
+    const [terminalTmuxByMachineId, setTerminalTmuxByMachineId] = useSettingMutable('sessionTmuxByMachineId');
+    const settings = useSettings();
+    const experimentsEnabled = settings.experiments === true;
+
+    const { state: detectedCapabilities, refresh: refreshDetectedCapabilities } = useMachineCapabilitiesCache({
+        machineId: machineId ?? null,
+        enabled: Boolean(machineId && isOnline),
+        request: CAPABILITIES_REQUEST_MACHINE_DETAILS,
+    });
+
+    const tmuxOverride = machineId ? terminalTmuxByMachineId?.[machineId] : undefined;
+    const tmuxOverrideEnabled = Boolean(tmuxOverride);
+
+    const tmuxAvailable = React.useMemo(() => {
+        const snapshot =
+            detectedCapabilities.status === 'loaded'
+                ? detectedCapabilities.snapshot
+                : detectedCapabilities.status === 'loading'
+                    ? detectedCapabilities.snapshot
+                    : detectedCapabilities.status === 'error'
+                        ? detectedCapabilities.snapshot
+                        : undefined;
+        const result = snapshot?.response.results['tool.tmux'];
+        if (!result || !result.ok) return null;
+        const data = result.data as any;
+        return typeof data?.available === 'boolean' ? data.available : null;
+    }, [detectedCapabilities]);
+
+    const setTmuxOverrideEnabled = useCallback((enabled: boolean) => {
+        if (!machineId) return;
+        if (enabled) {
+            setTerminalTmuxByMachineId({
+                ...terminalTmuxByMachineId,
+                [machineId]: {
+                    useTmux: terminalUseTmux,
+                    sessionName: terminalTmuxSessionName,
+                    isolated: terminalTmuxIsolated,
+                    tmpDir: terminalTmuxTmpDir,
+                },
+            });
+            return;
+        }
+
+        const next = { ...terminalTmuxByMachineId };
+        delete next[machineId];
+        setTerminalTmuxByMachineId(next);
+    }, [
+        machineId,
+        setTerminalTmuxByMachineId,
+        terminalTmuxByMachineId,
+        terminalUseTmux,
+        terminalTmuxIsolated,
+        terminalTmuxSessionName,
+        terminalTmuxTmpDir,
+    ]);
+
+    const updateTmuxOverride = useCallback((patch: Partial<NonNullable<typeof tmuxOverride>>) => {
+        if (!machineId || !tmuxOverride) return;
+        setTerminalTmuxByMachineId({
+            ...terminalTmuxByMachineId,
+            [machineId]: {
+                ...tmuxOverride,
+                ...patch,
+            },
+        });
+    }, [machineId, setTerminalTmuxByMachineId, terminalTmuxByMachineId, tmuxOverride]);
+
+    const setTmuxOverrideUseTmux = useCallback((next: boolean) => {
+        if (next && tmuxAvailable === false) {
+            Modal.alert(t('common.error'), t('machine.tmux.notDetectedMessage'));
+            return;
+        }
+        updateTmuxOverride({ useTmux: next });
+    }, [tmuxAvailable, updateTmuxOverride]);
 
     const machineSessions = useMemo(() => {
         if (!sessions || !machineId) return [];
@@ -113,9 +237,7 @@ export default function MachineDetailScreen() {
     const daemonStatus = useMemo(() => {
         if (!machine) return 'unknown';
 
-        // Check metadata for daemon status
-        const metadata = machine.metadata as any;
-        if (metadata?.daemonLastKnownStatus === 'shutting-down') {
+        if (machine.metadata?.daemonLastKnownStatus === 'shutting-down') {
             return 'stopped';
         }
 
@@ -126,25 +248,25 @@ export default function MachineDetailScreen() {
     const handleStopDaemon = async () => {
         // Show confirmation modal using alert with buttons
         Modal.alert(
-            'Stop Daemon?',
-            'You will not be able to spawn new sessions on this machine until you restart the daemon on your computer again. Your current sessions will stay alive.',
+            t('machine.stopDaemonConfirmTitle'),
+            t('machine.stopDaemonConfirmBody'),
             [
                 {
-                    text: 'Cancel',
+                    text: t('common.cancel'),
                     style: 'cancel'
                 },
                 {
-                    text: 'Stop Daemon',
+                    text: t('machine.stopDaemon'),
                     style: 'destructive',
                     onPress: async () => {
                         setIsStoppingDaemon(true);
                         try {
                             const result = await machineStopDaemon(machineId!);
-                            Modal.alert('Daemon Stopped', result.message);
+                            Modal.alert(t('machine.daemonStoppedTitle'), result.message);
                             // Refresh to get updated metadata
                             await sync.refreshMachines();
                         } catch (error) {
-                            Modal.alert(t('common.error'), 'Failed to stop daemon. It may not be running.');
+                            Modal.alert(t('common.error'), t('machine.stopDaemonFailed'));
                         } finally {
                             setIsStoppingDaemon(false);
                         }
@@ -158,19 +280,116 @@ export default function MachineDetailScreen() {
 
     const handleRefresh = async () => {
         setIsRefreshing(true);
-        await sync.refreshMachines();
-        setIsRefreshing(false);
+        try {
+            await sync.refreshMachines();
+            refreshDetectedCapabilities();
+        } finally {
+            setIsRefreshing(false);
+        }
     };
+
+    const refreshCapabilities = useCallback(async () => {
+        if (!machineId) return;
+        // On direct loads/refreshes, machine encryption/socket may not be ready yet.
+        // Refreshing machines first makes this much more reliable and avoids misclassifying
+        // transient failures as “not supported / update CLI”.
+        await sync.refreshMachines();
+        refreshDetectedCapabilities();
+    }, [machineId, refreshDetectedCapabilities]);
+
+    const capabilitiesSnapshot = useMemo(() => {
+        const snapshot =
+            detectedCapabilities.status === 'loaded'
+                ? detectedCapabilities.snapshot
+                : detectedCapabilities.status === 'loading'
+                    ? detectedCapabilities.snapshot
+                    : detectedCapabilities.status === 'error'
+                        ? detectedCapabilities.snapshot
+                        : undefined;
+        return snapshot ?? null;
+    }, [detectedCapabilities]);
+
+    const installableDepEntries = useMemo(() => {
+        const entries = getInstallableDepRegistryEntries();
+        const results = capabilitiesSnapshot?.response.results;
+        return entries.map((entry) => {
+            const enabledFlag = (settings as any)[entry.enabledSettingKey] === true;
+            const enabled = Boolean(machineId && experimentsEnabled && enabledFlag);
+            const depStatus = entry.getDepStatus(results);
+            const detectResult = entry.getDetectResult(results);
+            return { entry, enabled, depStatus, detectResult };
+        });
+    }, [capabilitiesSnapshot, experimentsEnabled, machineId, settings]);
+
+    React.useEffect(() => {
+        if (!machineId) return;
+        if (!isOnline) return;
+        if (!experimentsEnabled) return;
+
+        const results = capabilitiesSnapshot?.response.results;
+        if (!results) return;
+
+        const requests = installableDepEntries
+            .filter((d) => d.enabled)
+            .filter((d) => d.entry.shouldPrefetchRegistry({ requireExistingResult: true, result: d.detectResult, data: d.depStatus }))
+            .flatMap((d) => d.entry.buildRegistryDetectRequest().requests ?? []);
+
+        if (requests.length === 0) return;
+
+        refreshDetectedCapabilities({
+            request: { requests },
+            timeoutMs: 12_000,
+        });
+    }, [capabilitiesSnapshot, experimentsEnabled, installableDepEntries, isOnline, machineId, refreshDetectedCapabilities]);
+
+    const detectedClisTitle = useMemo(() => {
+        const headerTextStyle = [
+            Typography.default('regular'),
+            {
+                color: theme.colors.groupped.sectionTitle,
+                fontSize: Platform.select({ ios: 13, default: 14 }),
+                lineHeight: Platform.select({ ios: 18, default: 20 }),
+                letterSpacing: Platform.select({ ios: -0.08, default: 0.1 }),
+                textTransform: 'uppercase' as const,
+                fontWeight: Platform.select({ ios: 'normal', default: '500' }) as any,
+            },
+        ];
+
+        const canRefresh = isOnline && detectedCapabilities.status !== 'loading';
+
+        return (
+            <ItemGroupTitleWithAction
+                title={t('machine.detectedClis')}
+                titleStyle={headerTextStyle as any}
+                action={{
+                    accessibilityLabel: t('common.refresh'),
+                    iconName: 'refresh',
+                    iconColor: isOnline ? theme.colors.textSecondary : theme.colors.divider,
+                    disabled: !canRefresh,
+                    loading: detectedCapabilities.status === 'loading',
+                    onPress: () => void refreshCapabilities(),
+                }}
+            />
+        );
+    }, [
+        detectedCapabilities.status,
+        isOnline,
+        machine,
+        refreshCapabilities,
+        theme.colors.divider,
+        theme.colors.groupped.sectionTitle,
+        theme.colors.textSecondary,
+    ]);
 
     const handleRenameMachine = async () => {
         if (!machine || !machineId) return;
 
         const newDisplayName = await Modal.prompt(
-            'Rename Machine',
-            'Give this machine a custom name. Leave empty to use the default hostname.',
+            t('machine.renameTitle'),
+            t('machine.renameDescription'),
             {
                 defaultValue: machine.metadata?.displayName || '',
-                placeholder: machine.metadata?.host || 'Enter machine name',
+                placeholder: machine.metadata?.host || t('machine.renamePlaceholder'),
                 cancelText: t('common.cancel'),
                 confirmText: t('common.rename')
             }
@@ -190,11 +409,11 @@ export default function MachineDetailScreen() {
                     machine.metadataVersion
                 );
                 
-                Modal.alert(t('common.success'), 'Machine renamed successfully');
+                Modal.alert(t('common.success'), t('machine.renamedSuccess'));
             } catch (error) {
                 Modal.alert(
-                    'Error',
-                    error instanceof Error ? error.message : 'Failed to rename machine'
+                    t('common.error'),
+                    error instanceof Error ? error.message : t('machine.renameFailed')
                 );
                 // Refresh to get latest state
                 await sync.refreshMachines();
@@ -211,20 +430,33 @@ export default function MachineDetailScreen() {
             if (!isMachineOnline(machine)) return;
             setIsSpawning(true);
             const absolutePath = resolveAbsolutePath(pathToUse, machine?.metadata?.homeDir);
+            const terminal = resolveTerminalSpawnOptions({
+                settings: storage.getState().settings,
+                machineId,
+            });
             const result = await machineSpawnNewSession({
                 machineId: machineId!,
                 directory: absolutePath,
-                approvedNewDirectoryCreation
+                approvedNewDirectoryCreation,
+                terminal,
             });
             switch (result.type) {
                 case 'success':
                     // Dismiss machine picker & machine detail screen
                     router.back();
                     router.back();
-                    navigateToSession(result.sessionId);
+                    if (result.sessionId) {
+                        navigateToSession(result.sessionId);
+                    } else {
+                        Modal.alert(t('common.error'), t('newSession.failedToStart'));
+                    }
                     break;
                 case 'requestToApproveDirectoryCreation': {
-                    const approved = await Modal.confirm('Create Directory?', `The directory '${result.directory}' does not exist. Would you like to create it?`, { cancelText: t('common.cancel'), confirmText: t('common.create') });
+                    const approved = await Modal.confirm(
+                        t('newSession.directoryDoesNotExist'),
+                        t('newSession.createDirectoryConfirm', { directory: result.directory }),
+                        { cancelText: t('common.cancel'), confirmText: t('common.create') }
+                    );
                     if (approved) {
                         await handleStartSession(true);
                     }
@@ -235,7 +467,7 @@ export default function MachineDetailScreen() {
                     break;
             }
         } catch (error) {
-            let errorMessage = 'Failed to start session. Make sure the daemon is running on the target machine.';
+            let errorMessage = t('newSession.failedToStart');
             if (error instanceof Error && !error.message.includes('Failed to spawn session')) {
                 errorMessage = error.message;
             }
@@ -246,87 +478,110 @@ export default function MachineDetailScreen() {
     };
 
     const pastUsedRelativePath = useCallback((session: Session) => {
-        if (!session.metadata) return 'unknown path';
+        if (!session.metadata) return t('machine.unknownPath');
         return formatPathRelativeToHome(session.metadata.path, session.metadata.homeDir);
     }, []);
+
+    const headerBackTitle = t('machine.back');
+
+    const notFoundScreenOptions = React.useMemo(() => {
+        return {
+            headerShown: true,
+            headerTitle: '',
+            headerBackTitle,
+        } as const;
+    }, [headerBackTitle]);
+
+    const machineName =
+        machine?.metadata?.displayName ||
+        machine?.metadata?.host ||
+        t('machine.unknownMachine');
+    const machineIsOnline = machine ? isMachineOnline(machine) : false;
+
+    const headerTitle = React.useCallback(() => {
+        if (!machine) return null;
+        return (
+            <View>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Ionicons
+                        name="desktop-outline"
+                        size={18}
+                        color={theme.colors.header.tint}
+                        style={{ marginRight: 6 }}
+                    />
+                    <Text style={[Typography.default('semiBold'), { fontSize: 17, color: theme.colors.header.tint }]}>
+                        {machineName}
+                    </Text>
+                </View>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+                    <View style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: 3,
+                        backgroundColor: machineIsOnline ? '#34C759' : '#999',
+                        marginRight: 4
+                    }} />
+                    <Text style={[Typography.default(), {
+                        fontSize: 12,
+                        color: machineIsOnline ? '#34C759' : '#999'
+                    }]}>
+                        {machineIsOnline ? t('status.online') : t('status.offline')}
+                    </Text>
+                </View>
+            </View>
+        );
+    }, [machineIsOnline, machine, machineName, theme.colors.header.tint]);
+
+    const headerRight = React.useCallback(() => {
+        if (!machine) return null;
+        return (
+            <Pressable
+                onPress={handleRenameMachine}
+                hitSlop={10}
+                style={{
+                    opacity: isRenamingMachine ? 0.5 : 1
+                }}
+                disabled={isRenamingMachine}
+            >
+                <Octicons
+                    name="pencil"
+                    size={20}
+                    color={theme.colors.text}
+                />
+            </Pressable>
+        );
+    }, [handleRenameMachine, isRenamingMachine, machine, theme.colors.text]);
+
+    const screenOptions = React.useMemo(() => {
+        return {
+            headerShown: true,
+            headerTitle,
+            headerRight,
+            headerBackTitle,
+        } as const;
+    }, [headerBackTitle, headerRight, headerTitle]);
 
     if (!machine) {
         return (
             <>
                 <Stack.Screen
-                    options={{
-                        headerShown: true,
-                        headerTitle: '',
-                        headerBackTitle: t('machine.back')
-                    }}
+                    options={notFoundScreenOptions}
                 />
                 <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                     <Text style={[Typography.default(), { fontSize: 16, color: '#666' }]}>
-                        Machine not found
+                        {t('machine.notFound')}
                     </Text>
                 </View>
             </>
         );
     }
 
-    const metadata = machine.metadata;
-    const machineName = metadata?.displayName || metadata?.host || 'unknown machine';
-
     const spawnButtonDisabled = !customPath.trim() || isSpawning || !isMachineOnline(machine!);
 
     return (
         <>
             <Stack.Screen
-                options={{
-                    headerShown: true,
-                    headerTitle: () => (
-                        <View style={{ alignItems: 'center' }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <Ionicons
-                                    name="desktop-outline"
-                                    size={18}
-                                    color={theme.colors.header.tint}
-                                    style={{ marginRight: 6 }}
-                                />
-                                <Text style={[Typography.default('semiBold'), { fontSize: 17, color: theme.colors.header.tint }]}>
-                                    {machineName}
-                                </Text>
-                            </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
-                                <View style={{
-                                    width: 6,
-                                    height: 6,
-                                    borderRadius: 3,
-                                    backgroundColor: isMachineOnline(machine) ? '#34C759' : '#999',
-                                    marginRight: 4
-                                }} />
-                                <Text style={[Typography.default(), {
-                                    fontSize: 12,
-                                    color: isMachineOnline(machine) ? '#34C759' : '#999'
-                                }]}>
-                                    {isMachineOnline(machine) ? t('status.online') : t('status.offline')}
-                                </Text>
-                            </View>
-                        </View>
-                    ),
-                    headerRight: () => (
-                        <Pressable
-                            onPress={handleRenameMachine}
-                            hitSlop={10}
-                            style={{
-                                opacity: isRenamingMachine ? 0.5 : 1
-                            }}
-                            disabled={isRenamingMachine}
-                        >
-                            <Octicons
-                                name="pencil"
-                                size={24}
-                                color={theme.colors.text}
-                            />
-                        </Pressable>
-                    ),
-                    headerBackTitle: t('machine.back')
-                }}
+                options={screenOptions}
             />
             <ItemList
                 refreshControl={
@@ -399,7 +654,6 @@ export default function MachineDetailScreen() {
                                         disabled={!isMachineOnline(machine)}
                                         selected={isSelected}
                                         showChevron={false}
-                                        pressableStyle={isSelected ? { backgroundColor: theme.colors.surfaceSelected } : undefined}
                                         showDivider={!hideDivider}
                                     />
                                 );
@@ -420,6 +674,121 @@ export default function MachineDetailScreen() {
                         </ItemGroup>
                     </>
                 )}
+
+                {/* Machine-specific tmux override */}
+                {!!machineId && (
+                    <ItemGroup title={t('profiles.tmux.title')}>
+                        <Item
+                            title={t('machine.tmux.overrideTitle')}
+                            subtitle={tmuxOverrideEnabled ? t('machine.tmux.overrideEnabledSubtitle') : t('machine.tmux.overrideDisabledSubtitle')}
+                            rightElement={<Switch value={tmuxOverrideEnabled} onValueChange={setTmuxOverrideEnabled} />}
+                            showChevron={false}
+                            onPress={() => setTmuxOverrideEnabled(!tmuxOverrideEnabled)}
+                        />
+
+                                {tmuxOverrideEnabled && tmuxOverride && (
+                            <>
+                                <Item
+                                    title={t('profiles.tmux.spawnSessionsTitle')}
+                                    subtitle={
+                                        tmuxAvailable === false
+                                            ? t('machine.tmux.notDetectedSubtitle')
+                                            : (tmuxOverride.useTmux ? t('profiles.tmux.spawnSessionsEnabledSubtitle') : t('profiles.tmux.spawnSessionsDisabledSubtitle'))
+                                    }
+                                    rightElement={
+                                        <Switch
+                                            value={tmuxOverride.useTmux}
+                                            onValueChange={setTmuxOverrideUseTmux}
+                                            disabled={tmuxAvailable === false && !tmuxOverride.useTmux}
+                                        />
+                                    }
+                                    showChevron={false}
+                                    onPress={() => setTmuxOverrideUseTmux(!tmuxOverride.useTmux)}
+                                />
+
+                                {tmuxOverride.useTmux && (
+                                    <>
+                                        <View style={[styles.tmuxInputContainer, { paddingTop: 0 }]}>
+                                            <Text style={styles.tmuxFieldLabel}>
+                                                {t('profiles.tmuxSession')} ({t('common.optional')})
+                                            </Text>
+                                            <TextInput
+                                                style={styles.tmuxTextInput}
+                                                placeholder={t('profiles.tmux.sessionNamePlaceholder')}
+                                                placeholderTextColor={theme.colors.input.placeholder}
+                                                value={tmuxOverride.sessionName}
+                                                onChangeText={(value) => updateTmuxOverride({ sessionName: value })}
+                                            />
+                                        </View>
+
+                                        <Item
+                                            title={t('profiles.tmux.isolatedServerTitle')}
+                                            subtitle={tmuxOverride.isolated ? t('profiles.tmux.isolatedServerEnabledSubtitle') : t('profiles.tmux.isolatedServerDisabledSubtitle')}
+                                            rightElement={<Switch value={tmuxOverride.isolated} onValueChange={(next) => updateTmuxOverride({ isolated: next })} />}
+                                            showChevron={false}
+                                            onPress={() => updateTmuxOverride({ isolated: !tmuxOverride.isolated })}
+                                        />
+
+                                        {tmuxOverride.isolated && (
+                                            <View style={[styles.tmuxInputContainer, { paddingTop: 0, paddingBottom: 16 }]}>
+                                                <Text style={styles.tmuxFieldLabel}>
+                                                    {t('profiles.tmuxTempDir')} ({t('common.optional')})
+                                                </Text>
+                                                <TextInput
+                                                    style={styles.tmuxTextInput}
+                                                    placeholder={t('profiles.tmux.tempDirPlaceholder')}
+                                                    placeholderTextColor={theme.colors.input.placeholder}
+                                                    value={tmuxOverride.tmpDir ?? ''}
+                                                    onChangeText={(value) => updateTmuxOverride({ tmpDir: value.trim().length > 0 ? value : null })}
+                                                    autoCapitalize="none"
+                                                    autoCorrect={false}
+                                                />
+                                            </View>
+                                        )}
+                                    </>
+                                )}
+                            </>
+                        )}
+                    </ItemGroup>
+                )}
+
+                {/* Detected CLIs */}
+                <ItemGroup title={detectedClisTitle}>
+                    <DetectedClisList state={detectedCapabilities} />
+                </ItemGroup>
+
+                {installableDepEntries.map(({ entry, enabled, depStatus }) => (
+                    <InstallableDepInstaller
+                        key={entry.key}
+                        machineId={machineId ?? ''}
+                        enabled={enabled}
+                        groupTitle={`${t(entry.groupTitleKey)}${entry.experimental ? ' (experimental)' : ''}`}
+                        depId={entry.depId}
+                        depTitle={entry.depTitle}
+                        depIconName={entry.depIconName as any}
+                        depStatus={depStatus}
+                        capabilitiesStatus={detectedCapabilities.status}
+                        installSpecSettingKey={entry.installSpecSettingKey}
+                        installSpecTitle={entry.installSpecTitle}
+                        installSpecDescription={entry.installSpecDescription}
+                        installLabels={{
+                            install: t(entry.installLabels.installKey),
+                            update: t(entry.installLabels.updateKey),
+                            reinstall: t(entry.installLabels.reinstallKey),
+                        }}
+                        installModal={{
+                            installTitle: t(entry.installModal.installTitleKey),
+                            updateTitle: t(entry.installModal.updateTitleKey),
+                            reinstallTitle: t(entry.installModal.reinstallTitleKey),
+                            description: t(entry.installModal.descriptionKey),
+                        }}
+                        refreshStatus={() => void refreshCapabilities()}
+                        refreshRegistry={() => {
+                            if (!machineId) return;
+                            refreshDetectedCapabilities({ request: entry.buildRegistryDetectRequest(), timeoutMs: 12_000 });
+                        }}
+                    />
+                ))}
 
                 {/* Daemon */}
                 <ItemGroup title={t('machine.daemon')}>

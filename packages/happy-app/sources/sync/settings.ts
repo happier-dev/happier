@@ -1,94 +1,47 @@
 import * as z from 'zod';
+import { dbgSettings, isSettingsSyncDebugEnabled } from './debugSettings';
+import { SecretStringSchema } from './secretSettings';
+import { pruneSecretBindings } from './secretBindings';
+import { PERMISSION_MODES } from '@/constants/PermissionModes';
+import type { AgentType } from './modelOptions';
+import { mapPermissionModeAcrossAgents } from './permissionMapping';
+import type { PermissionMode } from './permissionTypes';
+import { isPermissionMode, normalizePermissionModeForGroup } from './permissionTypes';
+import { AGENT_IDS, DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog';
 
 //
 // Configuration Profile Schema (for environment variable profiles)
 //
 
-// Environment variable schemas for different AI providers
-// Note: baseUrl fields accept either valid URLs or ${VAR} or ${VAR:-default} template strings
-const AnthropicConfigSchema = z.object({
-    baseUrl: z.string().refine(
-        (val) => {
-            if (!val) return true; // Optional
-            // Allow ${VAR} and ${VAR:-default} template strings
-            if (/^\$\{[A-Z_][A-Z0-9_]*(:-[^}]*)?\}$/.test(val)) return true;
-            // Otherwise validate as URL
-            try {
-                new URL(val);
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        { message: 'Must be a valid URL or ${VAR} or ${VAR:-default} template string' }
-    ).optional(),
-    authToken: z.string().optional(),
-    model: z.string().optional(),
-});
-
-const OpenAIConfigSchema = z.object({
-    apiKey: z.string().optional(),
-    baseUrl: z.string().refine(
-        (val) => {
-            if (!val) return true;
-            // Allow ${VAR} and ${VAR:-default} template strings
-            if (/^\$\{[A-Z_][A-Z0-9_]*(:-[^}]*)?\}$/.test(val)) return true;
-            try {
-                new URL(val);
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        { message: 'Must be a valid URL or ${VAR} or ${VAR:-default} template string' }
-    ).optional(),
-    model: z.string().optional(),
-});
-
-const AzureOpenAIConfigSchema = z.object({
-    apiKey: z.string().optional(),
-    endpoint: z.string().refine(
-        (val) => {
-            if (!val) return true;
-            // Allow ${VAR} and ${VAR:-default} template strings
-            if (/^\$\{[A-Z_][A-Z0-9_]*(:-[^}]*)?\}$/.test(val)) return true;
-            try {
-                new URL(val);
-                return true;
-            } catch {
-                return false;
-            }
-        },
-        { message: 'Must be a valid URL or ${VAR} or ${VAR:-default} template string' }
-    ).optional(),
-    apiVersion: z.string().optional(),
-    deploymentName: z.string().optional(),
-});
-
-const TogetherAIConfigSchema = z.object({
-    apiKey: z.string().optional(),
-    model: z.string().optional(),
-});
-
-// Tmux configuration schema
-const TmuxConfigSchema = z.object({
-    sessionName: z.string().optional(),
-    tmpDir: z.string().optional(),
-    updateEnvironment: z.boolean().optional(),
-});
-
 // Environment variables schema with validation
 const EnvironmentVariableSchema = z.object({
     name: z.string().regex(/^[A-Z_][A-Z0-9_]*$/, 'Invalid environment variable name'),
     value: z.string(),
+    // User override:
+    // - true: force secret handling in UI (and hint daemon)
+    // - false: force non-secret handling in UI (unless daemon enforces)
+    // - undefined: auto classification
+    isSecret: z.boolean().optional(),
 });
 
-// Profile compatibility schema
-const ProfileCompatibilitySchema = z.object({
-    claude: z.boolean().default(true),
-    codex: z.boolean().default(true),
-    gemini: z.boolean().default(true),
+const RequiredEnvVarKindSchema = z.enum(['secret', 'config']);
+
+const EnvVarRequirementSchema = z.object({
+    name: z.string().regex(/^[A-Z_][A-Z0-9_]*$/, 'Invalid environment variable name'),
+    kind: RequiredEnvVarKindSchema.default('secret'),
+    // Required=true blocks session creation when unsatisfied.
+    // Required=false is “optional” (still useful for vault binding, but does not block).
+    required: z.boolean().default(true),
 });
+
+const RequiresMachineLoginSchema = z.string().min(1);
+
+// Profile compatibility schema
+const ProfileCompatibilitySchema = z.record(z.string(), z.boolean()).default({});
+
+const DEFAULT_SESSION_PERMISSION_MODE_BY_AGENT: Record<AgentId, PermissionMode> = Object.fromEntries(
+    AGENT_IDS.map((id) => [id, 'default']),
+) as any;
 
 export const AIBackendProfileSchema = z.object({
     // Accept both UUIDs (user profiles) and simple strings (built-in profiles like 'anthropic')
@@ -97,32 +50,36 @@ export const AIBackendProfileSchema = z.object({
     name: z.string().min(1).max(100),
     description: z.string().max(500).optional(),
 
-    // Agent-specific configurations
-    anthropicConfig: AnthropicConfigSchema.optional(),
-    openaiConfig: OpenAIConfigSchema.optional(),
-    azureOpenAIConfig: AzureOpenAIConfigSchema.optional(),
-    togetherAIConfig: TogetherAIConfigSchema.optional(),
-
-    // Tmux configuration
-    tmuxConfig: TmuxConfigSchema.optional(),
-
-    // Startup bash script (executed before spawning session)
-    startupBashScript: z.string().optional(),
-
     // Environment variables (validated)
     environmentVariables: z.array(EnvironmentVariableSchema).default([]),
 
     // Default session type for this profile
     defaultSessionType: z.enum(['simple', 'worktree']).optional(),
 
-    // Default permission mode for this profile
-    defaultPermissionMode: z.enum(['default', 'acceptEdits', 'bypassPermissions', 'plan', 'read-only', 'safe-yolo', 'yolo']).optional(),
+    // Legacy default permission mode for this profile (kept for backwards compatibility).
+    defaultPermissionMode: z.enum(PERMISSION_MODES).optional(),
+
+    // Per-agent default permission mode overrides for new sessions when this profile is selected.
+    // When unset, the account-level per-agent defaults apply.
+    defaultPermissionModeByAgent: z.record(z.string(), z.enum(PERMISSION_MODES)).default({}),
 
     // Default model mode for this profile
     defaultModelMode: z.string().optional(),
 
     // Compatibility metadata
-    compatibility: ProfileCompatibilitySchema.default({ claude: true, codex: true, gemini: true }),
+    compatibility: ProfileCompatibilitySchema.default({}),
+
+    // Authentication / requirements metadata (used by UI gating)
+    // - machineLogin: profile relies on a machine-local CLI login cache
+    authMode: z.enum(['machineLogin']).optional(),
+
+    // For machine-login profiles, specify which CLI must be logged in on the target machine.
+    // This is used for UX copy and for optional login-status detection.
+    requiresMachineLogin: RequiresMachineLoginSchema.optional(),
+
+    // Explicit environment variable requirements for this profile at runtime.
+    // Secret requirements are satisfied by machine env, vault binding, or “enter once”.
+    envVarRequirements: z.array(EnvVarRequirementSchema).default([]),
 
     // Built-in profile indicator
     isBuiltIn: z.boolean().default(false),
@@ -131,14 +88,88 @@ export const AIBackendProfileSchema = z.object({
     createdAt: z.number().default(() => Date.now()),
     updatedAt: z.number().default(() => Date.now()),
     version: z.string().default('1.0.0'),
-});
+})
+    // NOTE: Zod v4 marks `superRefine` as deprecated in favor of `.check(...)`.
+    // We use chained `.refine(...)` here to preserve per-field error paths/messages.
+    .refine((profile) => {
+        return !(profile.requiresMachineLogin && profile.authMode !== 'machineLogin');
+    }, {
+        path: ['requiresMachineLogin'],
+        message: 'requiresMachineLogin may only be set when authMode=machineLogin',
+    });
 
 export type AIBackendProfile = z.infer<typeof AIBackendProfileSchema>;
 
+//
+// Session / tmux settings
+//
+
+const SessionTmuxMachineOverrideSchema = z.object({
+    useTmux: z.boolean(),
+    sessionName: z.string(),
+    isolated: z.boolean(),
+    tmpDir: z.string().nullable(),
+});
+
+export const SavedSecretSchema = z.object({
+    id: z.string().min(1),
+    name: z.string().min(1).max(100),
+    kind: z.enum(['apiKey', 'token', 'password', 'other']).default('apiKey'),
+    // Secret-at-rest container:
+    // - plaintext is set via `encryptedValue.value` (input only; must not be persisted)
+    // - ciphertext persists in `encryptedValue.encryptedValue`
+    encryptedValue: SecretStringSchema,
+    createdAt: z.number().default(() => Date.now()),
+    updatedAt: z.number().default(() => Date.now()),
+}).refine((key) => {
+    const hasValue = typeof key.encryptedValue.value === 'string' && key.encryptedValue.value.trim().length > 0;
+    const hasEnc = Boolean(key.encryptedValue.encryptedValue && typeof key.encryptedValue.encryptedValue.c === 'string' && key.encryptedValue.encryptedValue.c.length > 0);
+    return hasValue || hasEnc;
+}, {
+    path: ['encryptedValue'],
+    message: 'Secret must include a value or encrypted value',
+});
+
+export type SavedSecret = z.infer<typeof SavedSecretSchema>;
+
 // Helper functions for profile validation and compatibility
-export function validateProfileForAgent(profile: AIBackendProfile, agent: 'claude' | 'codex' | 'gemini'): boolean {
-    return profile.compatibility[agent];
+export function isProfileCompatibleWithAgent(
+    profile: Pick<AIBackendProfile, 'compatibility' | 'isBuiltIn'>,
+    agentId: AgentId,
+): boolean {
+    const explicit = profile.compatibility?.[agentId];
+    if (typeof explicit === 'boolean') return explicit;
+    return profile.isBuiltIn ? false : true;
 }
+
+function mergeEnvironmentVariables(
+    existing: unknown,
+    additions: Record<string, string | undefined>
+): Array<{ name: string; value: string }> {
+    const map = new Map<string, string>();
+
+    if (Array.isArray(existing)) {
+        for (const entry of existing) {
+            if (!entry || typeof entry !== 'object') continue;
+            const name = (entry as any).name;
+            const value = (entry as any).value;
+            if (typeof name !== 'string' || typeof value !== 'string') continue;
+            map.set(name, value);
+        }
+    }
+
+    for (const [name, value] of Object.entries(additions)) {
+        if (typeof value !== 'string') continue;
+        if (!map.has(name)) {
+            map.set(name, value);
+        }
+    }
+
+    return Array.from(map.entries()).map(([name, value]) => ({ name, value }));
+}
+
+// NOTE: We intentionally do NOT support legacy provider config objects (e.g. `openaiConfig`).
+// Profiles must use `environmentVariables` + `envVarRequirements` only.
 
 /**
  * Converts a profile into environment variables for session spawning.
@@ -157,8 +188,8 @@ export function validateProfileForAgent(profile: AIBackendProfile, agent: 'claud
  *    Sent: ANTHROPIC_AUTH_TOKEN=${Z_AI_AUTH_TOKEN} (literal string with placeholder)
  *
  * 4. DAEMON EXPANDS ${VAR} from its process.env when spawning session:
- *    - Tmux mode: Shell expands via `export ANTHROPIC_AUTH_TOKEN="${Z_AI_AUTH_TOKEN}";` before launching
- *    - Non-tmux mode: Node.js spawn with env: { ...process.env, ...profileEnvVars } (shell expansion in child)
+ *    - Tmux mode: daemon interpolates ${VAR} / ${VAR:-default} / ${VAR:=default} in env values before launching (shells do not expand placeholders inside env values automatically)
+ *    - Non-tmux mode: daemon interpolates ${VAR} / ${VAR:-default} / ${VAR:=default} in env values before calling spawn() (Node does not expand placeholders)
  *
  * 5. SESSION RECEIVES actual expanded values:
  *    ANTHROPIC_AUTH_TOKEN=sk-real-key (expanded from daemon's Z_AI_AUTH_TOKEN, not literal ${Z_AI_AUTH_TOKEN})
@@ -172,7 +203,7 @@ export function validateProfileForAgent(profile: AIBackendProfile, agent: 'claud
  * - Each session uses its selected backend for its entire lifetime (no mid-session switching)
  * - Keep secrets in shell environment, not in GUI/profile storage
  *
- * PRIORITY ORDER when spawning (daemon/run.ts):
+ * PRIORITY ORDER when spawning:
  * Final env = { ...daemon.process.env, ...expandedProfileVars, ...authVars }
  * authVars override profile, profile overrides daemon.process.env
  */
@@ -183,45 +214,6 @@ export function getProfileEnvironmentVariables(profile: AIBackendProfile): Recor
     profile.environmentVariables.forEach(envVar => {
         envVars[envVar.name] = envVar.value;
     });
-
-    // Add Anthropic config
-    if (profile.anthropicConfig) {
-        if (profile.anthropicConfig.baseUrl) envVars.ANTHROPIC_BASE_URL = profile.anthropicConfig.baseUrl;
-        if (profile.anthropicConfig.authToken) envVars.ANTHROPIC_AUTH_TOKEN = profile.anthropicConfig.authToken;
-        if (profile.anthropicConfig.model) envVars.ANTHROPIC_MODEL = profile.anthropicConfig.model;
-    }
-
-    // Add OpenAI config
-    if (profile.openaiConfig) {
-        if (profile.openaiConfig.apiKey) envVars.OPENAI_API_KEY = profile.openaiConfig.apiKey;
-        if (profile.openaiConfig.baseUrl) envVars.OPENAI_BASE_URL = profile.openaiConfig.baseUrl;
-        if (profile.openaiConfig.model) envVars.OPENAI_MODEL = profile.openaiConfig.model;
-    }
-
-    // Add Azure OpenAI config
-    if (profile.azureOpenAIConfig) {
-        if (profile.azureOpenAIConfig.apiKey) envVars.AZURE_OPENAI_API_KEY = profile.azureOpenAIConfig.apiKey;
-        if (profile.azureOpenAIConfig.endpoint) envVars.AZURE_OPENAI_ENDPOINT = profile.azureOpenAIConfig.endpoint;
-        if (profile.azureOpenAIConfig.apiVersion) envVars.AZURE_OPENAI_API_VERSION = profile.azureOpenAIConfig.apiVersion;
-        if (profile.azureOpenAIConfig.deploymentName) envVars.AZURE_OPENAI_DEPLOYMENT_NAME = profile.azureOpenAIConfig.deploymentName;
-    }
-
-    // Add Together AI config
-    if (profile.togetherAIConfig) {
-        if (profile.togetherAIConfig.apiKey) envVars.TOGETHER_API_KEY = profile.togetherAIConfig.apiKey;
-        if (profile.togetherAIConfig.model) envVars.TOGETHER_MODEL = profile.togetherAIConfig.model;
-    }
-
-    // Add Tmux config
-    if (profile.tmuxConfig) {
-        // Empty string means "use current/most recent session", so include it
-        if (profile.tmuxConfig.sessionName !== undefined) envVars.TMUX_SESSION_NAME = profile.tmuxConfig.sessionName;
-        // Empty string may be valid for tmpDir to use tmux defaults
-        if (profile.tmuxConfig.tmpDir !== undefined) envVars.TMUX_TMPDIR = profile.tmuxConfig.tmpDir;
-        if (profile.tmuxConfig.updateEnvironment !== undefined) {
-            envVars.TMUX_UPDATE_ENVIRONMENT = profile.tmuxConfig.updateEnvironment.toString();
-        }
-    }
 
     return envVars;
 }
@@ -249,6 +241,8 @@ export function isProfileVersionCompatible(profileVersion: string, requiredVersi
 //
 
 // Current schema version for backward compatibility
+// NOTE: This schemaVersion is for the Happy app's settings blob (synced via the server).
+// happy-cli maintains its own local settings schemaVersion separately.
 export const SUPPORTED_SCHEMA_VERSION = 2;
 
 export const SettingsSchema = z.object({
@@ -263,13 +257,48 @@ export const SettingsSchema = z.object({
     wrapLinesInDiffs: z.boolean().describe('Whether to wrap long lines in diff views'),
     analyticsOptOut: z.boolean().describe('Whether to opt out of anonymous analytics'),
     experiments: z.boolean().describe('Whether to enable experimental features'),
+    // Per-agent experimental gating (still subject to `experiments` master switch).
+    // Unknown keys are supported to avoid schema churn when adding new agents.
+    experimentalAgents: z.record(z.string(), z.boolean()).default({}).describe('Per-agent experimental toggles'),
+    // Per-experiment toggles (gated by `experiments` master switch in UI/usage)
+    expUsageReporting: z.boolean().describe('Experimental: enable usage reporting UI'),
+    expFileViewer: z.boolean().describe('Experimental: enable session file viewer'),
+    expShowThinkingMessages: z.boolean().describe('Experimental: show assistant thinking messages'),
+    expSessionType: z.boolean().describe('Experimental: show session type selector (simple vs worktree)'),
+    expZen: z.boolean().describe('Experimental: enable Zen navigation/experience'),
+    expVoiceAuthFlow: z.boolean().describe('Experimental: enable authenticated voice token flow'),
+    expInboxFriends: z.boolean().describe('Experimental: enable inbox/friends UI + related UX'),
+    // Intentionally NOT auto-enabled when `experiments` is enabled; this toggles extra local installation + security surface area.
+    expCodexResume: z.boolean().describe('Experimental: enable Codex vendor-resume and resume-codex installer UI'),
+    // Experimental configuration for the Codex resume installer (used only when expCodexResume is enabled).
+    codexResumeInstallSpec: z.string().describe('Codex resume installer spec (npm/git/file); empty uses daemon default'),
+    // Experimental: route Codex through ACP (codex-acp) instead of MCP.
+    expCodexAcp: z.boolean().describe('Experimental: enable Codex ACP backend (requires codex-acp install)'),
+    // Experimental configuration for the Codex ACP installer (used only when expCodexAcp is enabled).
+    codexAcpInstallSpec: z.string().describe('Codex ACP installer spec (npm/git/file); empty uses daemon default'),
+    useProfiles: z.boolean().describe('Whether to enable AI backend profiles feature'),
     useEnhancedSessionWizard: z.boolean().describe('A/B test flag: Use enhanced profile-based session wizard UI'),
+    // Default permission modes for new sessions (account-level; per agent).
+    // Values are normalized per-agent when used in UI/session creation.
+    sessionDefaultPermissionModeByAgent: z.record(z.string(), z.enum(PERMISSION_MODES)).default(DEFAULT_SESSION_PERMISSION_MODE_BY_AGENT).describe('Default permission mode per agent for new sessions'),
+    sessionUseTmux: z.boolean().describe('Whether new sessions should start in tmux by default'),
+    sessionTmuxSessionName: z.string().describe('Default tmux session name for new sessions'),
+    sessionTmuxIsolated: z.boolean().describe('Whether to use an isolated tmux server for new sessions'),
+    sessionTmuxTmpDir: z.string().nullable().describe('Optional TMUX_TMPDIR override for isolated tmux server'),
+    sessionTmuxByMachineId: z.record(z.string(), SessionTmuxMachineOverrideSchema).default({}).describe('Per-machine overrides for tmux session spawning'),
+    // Legacy combined toggle (kept for backward compatibility; see settingsParse migration)
+    usePickerSearch: z.boolean().describe('Whether to show search in machine/path picker UIs (legacy combined toggle)'),
+    useMachinePickerSearch: z.boolean().describe('Whether to show search in machine picker UIs'),
+    usePathPickerSearch: z.boolean().describe('Whether to show search in path picker UIs'),
     alwaysShowContextSize: z.boolean().describe('Always show context size in agent input'),
     agentInputEnterToSend: z.boolean().describe('Whether pressing Enter submits/sends in the agent input (web)'),
+    agentInputActionBarLayout: z.enum(['auto', 'wrap', 'scroll', 'collapsed']).describe('Agent input action bar layout'),
+    agentInputChipDensity: z.enum(['auto', 'labels', 'icons']).describe('Agent input action chip density'),
     avatarStyle: z.string().describe('Avatar display style'),
     showFlavorIcons: z.boolean().describe('Whether to show AI provider icons in avatars'),
     compactSessionView: z.boolean().describe('Whether to use compact view for active sessions'),
     hideInactiveSessions: z.boolean().describe('Hide inactive sessions in the main list'),
+    groupInactiveSessionsByProject: z.boolean().describe('Group inactive sessions by project in the main list'),
     reviewPromptAnswered: z.boolean().describe('Whether the review prompt has been answered'),
     reviewPromptLikedApp: z.boolean().nullish().describe('Whether user liked the app when asked'),
     voiceAssistantLanguage: z.string().nullable().describe('Preferred language for voice assistant (null for auto-detect)'),
@@ -281,26 +310,33 @@ export const SettingsSchema = z.object({
     lastUsedAgent: z.string().nullable().describe('Last selected agent type for new sessions'),
     lastUsedPermissionMode: z.string().nullable().describe('Last selected permission mode for new sessions'),
     lastUsedModelMode: z.string().nullable().describe('Last selected model mode for new sessions'),
+    sessionMessageSendMode: z.enum(['agent_queue', 'interrupt', 'server_pending']).describe('How the app submits messages while an agent is running'),
     // Profile management settings
     profiles: z.array(AIBackendProfileSchema).describe('User-defined profiles for AI backend and environment variables'),
     lastUsedProfile: z.string().nullable().describe('Last selected profile for new sessions'),
+    secrets: z.array(SavedSecretSchema).default([]).describe('Saved secrets (encrypted settings). Values are never re-displayed in UI.'),
+    secretBindingsByProfileId: z.record(z.string(), z.record(z.string(), z.string())).default({}).describe('Default saved secret ID per profile and env var name'),
     // Favorite directories for quick path selection
     favoriteDirectories: z.array(z.string()).describe('User-defined favorite directories for quick access in path selection'),
     // Favorite machines for quick machine selection
     favoriteMachines: z.array(z.string()).describe('User-defined favorite machines (machine IDs) for quick access in machine selection'),
+    // Favorite profiles for quick profile selection (built-in or custom profile IDs)
+    favoriteProfiles: z.array(z.string()).describe('User-defined favorite profiles (profile IDs) for quick access in profile selection'),
     // Dismissed CLI warning banners (supports both per-machine and global dismissal)
     dismissedCLIWarnings: z.object({
-        perMachine: z.record(z.string(), z.object({
-            claude: z.boolean().optional(),
-            codex: z.boolean().optional(),
-            gemini: z.boolean().optional(),
-        })).default({}),
-        global: z.object({
-            claude: z.boolean().optional(),
-            codex: z.boolean().optional(),
-            gemini: z.boolean().optional(),
-        }).default({}),
+        perMachine: z.record(z.string(), z.record(z.string(), z.boolean()).default({})).default({}),
+        global: z.record(z.string(), z.boolean()).default({}),
     }).default({ perMachine: {}, global: {} }).describe('Tracks which CLI installation warnings user has dismissed (per-machine or globally)'),
+
+    // Tool rendering detail level preferences (synced per user).
+    // Keep flat: use toolView* prefix (see tool-normalization-refactor-plan.md).
+    toolViewDetailLevelDefault: z.enum(['title', 'summary', 'full']).describe('Default tool detail level in the session timeline'),
+    toolViewDetailLevelDefaultLocalControl: z.enum(['title', 'summary', 'full']).describe('Default tool detail level for local-control transcript mirroring'),
+    toolViewDetailLevelByToolName: z.record(z.string(), z.enum(['title', 'summary', 'full'])).default({}).describe('Per-tool detail level overrides (keyed by canonical tool name)'),
+    toolViewShowDebugByDefault: z.boolean().describe('Whether to auto-expand debug/raw tool payloads in the full tool view'),
+    toolViewTapAction: z.enum(['expand', 'open']).describe('Primary tap action on tool cards (timeline)'),
+    toolViewExpandedDetailLevelDefault: z.enum(['summary', 'full']).describe('Default expanded tool detail level in the session timeline'),
+    toolViewExpandedDetailLevelByToolName: z.record(z.string(), z.enum(['summary', 'full'])).default({}).describe('Per-tool expanded detail level overrides (keyed by canonical tool name)'),
 });
 
 //
@@ -332,13 +368,38 @@ export const settingsDefaults: Settings = {
     wrapLinesInDiffs: false,
     analyticsOptOut: false,
     experiments: false,
+    experimentalAgents: {},
+    expUsageReporting: false,
+    expFileViewer: false,
+    expShowThinkingMessages: false,
+    expSessionType: false,
+    expZen: false,
+    expVoiceAuthFlow: false,
+    expInboxFriends: false,
+    expCodexResume: false,
+    codexResumeInstallSpec: '',
+    expCodexAcp: false,
+    codexAcpInstallSpec: '',
+    useProfiles: false,
+    sessionDefaultPermissionModeByAgent: DEFAULT_SESSION_PERMISSION_MODE_BY_AGENT,
+    sessionUseTmux: false,
+    sessionTmuxSessionName: 'happy',
+    sessionTmuxIsolated: true,
+    sessionTmuxTmpDir: null,
+    sessionTmuxByMachineId: {},
     useEnhancedSessionWizard: false,
+    usePickerSearch: false,
+    useMachinePickerSearch: false,
+    usePathPickerSearch: false,
     alwaysShowContextSize: false,
     agentInputEnterToSend: true,
+    agentInputActionBarLayout: 'auto',
+    agentInputChipDensity: 'auto',
     avatarStyle: 'brutalist',
     showFlavorIcons: false,
     compactSessionView: false,
     hideInactiveSessions: false,
+    groupInactiveSessionsByProject: false,
     reviewPromptAnswered: false,
     reviewPromptLikedApp: null,
     voiceAssistantLanguage: null,
@@ -347,15 +408,28 @@ export const settingsDefaults: Settings = {
     lastUsedAgent: null,
     lastUsedPermissionMode: null,
     lastUsedModelMode: null,
+    sessionMessageSendMode: 'agent_queue',
     // Profile management defaults
     profiles: [],
     lastUsedProfile: null,
-    // Default favorite directories (real common directories on Unix-like systems)
-    favoriteDirectories: ['~/src', '~/Desktop', '~/Documents'],
+    secrets: [],
+    secretBindingsByProfileId: {},
+    // Favorite directories (empty by default)
+    favoriteDirectories: [],
     // Favorite machines (empty by default)
     favoriteMachines: [],
+    // Favorite profiles (empty by default)
+    favoriteProfiles: [],
     // Dismissed CLI warnings (empty by default)
     dismissedCLIWarnings: { perMachine: {}, global: {} },
+
+    toolViewDetailLevelDefault: 'summary',
+    toolViewDetailLevelDefaultLocalControl: 'title',
+    toolViewDetailLevelByToolName: {},
+    toolViewShowDebugByDefault: false,
+    toolViewTapAction: 'expand',
+    toolViewExpandedDetailLevelDefault: 'full',
+    toolViewExpandedDetailLevelByToolName: {},
 };
 Object.freeze(settingsDefaults);
 
@@ -369,28 +443,183 @@ export function settingsParse(settings: unknown): Settings {
         return { ...settingsDefaults };
     }
 
-    const parsed = SettingsSchemaPartial.safeParse(settings);
-    if (!parsed.success) {
-        // For invalid settings, preserve unknown fields but use defaults for known fields
-        const unknownFields = { ...(settings as any) };
-        // Remove all known schema fields from unknownFields
-        const knownFields = Object.keys(SettingsSchema.shape);
-        knownFields.forEach(key => delete unknownFields[key]);
-        return { ...settingsDefaults, ...unknownFields };
-    }
+    const isDev = typeof __DEV__ !== 'undefined' && __DEV__;
+    const debug = isSettingsSyncDebugEnabled();
+
+    // IMPORTANT: be tolerant of partially-invalid settings objects.
+    // A single invalid field (e.g. one malformed profile) must not reset all other known settings to defaults.
+    const input = settings as Record<string, unknown>;
+    const result: any = { ...settingsDefaults };
+
+    // Parse known fields individually to avoid whole-object failure.
+    (Object.keys(SettingsSchema.shape) as Array<keyof typeof SettingsSchema.shape>).forEach((key) => {
+        if (!Object.prototype.hasOwnProperty.call(input, key)) return;
+
+        // Special-case profiles: validate per profile entry, keep valid ones.
+        if (key === 'profiles') {
+            const profilesValue = input[key];
+            if (Array.isArray(profilesValue)) {
+                const parsedProfiles: AIBackendProfile[] = [];
+                for (const rawProfile of profilesValue) {
+                    const parsedProfile = AIBackendProfileSchema.safeParse(rawProfile);
+                    if (parsedProfile.success) {
+                        parsedProfiles.push(parsedProfile.data);
+                    } else if (isDev) {
+                        console.warn('[settingsParse] Dropping invalid profile entry', parsedProfile.error.issues);
+                    }
+                }
+                result.profiles = parsedProfiles;
+            }
+            return;
+        }
+
+        // Special-case secrets: validate per secret entry, keep valid ones.
+        if (key === 'secrets') {
+            const secretsValue = input[key];
+            if (Array.isArray(secretsValue)) {
+                const parsedSecrets: SavedSecret[] = [];
+                for (const rawSecret of secretsValue) {
+                    const parsedSecret = SavedSecretSchema.safeParse(rawSecret);
+                    if (parsedSecret.success) {
+                        parsedSecrets.push(parsedSecret.data);
+                    } else if (isDev || debug) {
+                        console.warn('[settingsParse] Dropping invalid secret entry', parsedSecret.error.issues);
+                    }
+                }
+                result.secrets = parsedSecrets;
+            }
+            return;
+        }
+
+        const schema = SettingsSchema.shape[key];
+        const parsedField = schema.safeParse(input[key]);
+        if (parsedField.success) {
+            result[key] = parsedField.data;
+        } else if (isDev || debug) {
+            console.warn(`[settingsParse] Invalid settings field "${String(key)}" - using default`, parsedField.error.issues);
+            if (debug) {
+                dbgSettings('settingsParse: invalid field', {
+                    key: String(key),
+                    issues: parsedField.error.issues.map((i) => ({
+                        path: i.path,
+                        code: i.code,
+                        message: i.message,
+                    })),
+                });
+            }
+        }
+    });
 
     // Migration: Convert old 'zh' language code to 'zh-Hans'
-    if (parsed.data.preferredLanguage === 'zh') {
-        console.log('[Settings Migration] Converting language code from "zh" to "zh-Hans"');
-        parsed.data.preferredLanguage = 'zh-Hans';
+    if (result.preferredLanguage === 'zh') {
+        result.preferredLanguage = 'zh-Hans';
     }
 
-    // Merge defaults, parsed settings, and preserve unknown fields
-    const unknownFields = { ...(settings as any) };
-    // Remove known fields from unknownFields to preserve only the unknown ones
-    Object.keys(parsed.data).forEach(key => delete unknownFields[key]);
+    // Migration: Convert legacy combined picker-search toggle into per-picker toggles.
+    // Only apply if new fields were not present in persisted settings.
+    const hasMachineSearch = 'useMachinePickerSearch' in input;
+    const hasPathSearch = 'usePathPickerSearch' in input;
+    if (!hasMachineSearch && !hasPathSearch) {
+        const legacy = SettingsSchema.shape.usePickerSearch.safeParse(input.usePickerSearch);
+        if (legacy.success && legacy.data === true) {
+            result.useMachinePickerSearch = true;
+            result.usePathPickerSearch = true;
+        }
+    }
 
-    return { ...settingsDefaults, ...parsed.data, ...unknownFields };
+    // Migration: Rename terminal/message send settings to session-prefixed names.
+    // These settings have not been deployed broadly, but we still migrate to avoid breaking local dev devices.
+    if (!('sessionUseTmux' in input) && 'terminalUseTmux' in input) {
+        const parsed = z.boolean().safeParse((input as any).terminalUseTmux);
+        if (parsed.success) result.sessionUseTmux = parsed.data;
+    }
+    if (!('sessionTmuxSessionName' in input) && 'terminalTmuxSessionName' in input) {
+        const parsed = z.string().safeParse((input as any).terminalTmuxSessionName);
+        if (parsed.success) result.sessionTmuxSessionName = parsed.data;
+    }
+    if (!('sessionTmuxIsolated' in input) && 'terminalTmuxIsolated' in input) {
+        const parsed = z.boolean().safeParse((input as any).terminalTmuxIsolated);
+        if (parsed.success) result.sessionTmuxIsolated = parsed.data;
+    }
+    if (!('sessionTmuxTmpDir' in input) && 'terminalTmuxTmpDir' in input) {
+        const parsed = z.string().nullable().safeParse((input as any).terminalTmuxTmpDir);
+        if (parsed.success) result.sessionTmuxTmpDir = parsed.data;
+    }
+    if (!('sessionTmuxByMachineId' in input) && 'terminalTmuxByMachineId' in input) {
+        const parsed = z.record(z.string(), SessionTmuxMachineOverrideSchema).safeParse((input as any).terminalTmuxByMachineId);
+        if (parsed.success) result.sessionTmuxByMachineId = parsed.data;
+    }
+    if (!('sessionMessageSendMode' in input) && 'messageSendMode' in input) {
+        const parsed = z.enum(['agent_queue', 'interrupt', 'server_pending'] as const).safeParse((input as any).messageSendMode);
+        if (parsed.success) result.sessionMessageSendMode = parsed.data;
+    }
+
+    // Migration: introduce per-agent default permission modes for new sessions.
+    //
+    // Sources (in priority order):
+    // 1) New field: `sessionDefaultPermissionModeByAgent`
+    // 2) Legacy: `lastUsedPermissionMode` + `lastUsedAgent` (seed defaults to preserve user intent)
+    const hasPerAgentPermissionDefaults = ('sessionDefaultPermissionModeByAgent' in input);
+    if (!hasPerAgentPermissionDefaults) {
+        const byAgent: Record<string, PermissionMode> = { ...(result.sessionDefaultPermissionModeByAgent as any) };
+        const rawMode = (input as any).lastUsedPermissionMode;
+        const rawAgent = (input as any).lastUsedAgent;
+        if (isPermissionMode(rawMode)) {
+            const from: AgentType = isAgentId(rawAgent) ? rawAgent : DEFAULT_AGENT_ID;
+            for (const to of AGENT_IDS) {
+                const mapped = mapPermissionModeAcrossAgents(rawMode as PermissionMode, from, to);
+                const group = getAgentCore(to).permissions.modeGroup;
+                byAgent[to] = normalizePermissionModeForGroup(mapped, group);
+            }
+        }
+
+        result.sessionDefaultPermissionModeByAgent = byAgent as any;
+    }
+
+    // Migration: Introduce per-experiment toggles.
+    // If persisted settings only had `experiments` (older clients), default ALL experiment toggles
+    // to match the master switch so existing users keep the same behavior.
+    const experimentKeys = [
+        'expUsageReporting',
+        'expFileViewer',
+        'expShowThinkingMessages',
+        'expSessionType',
+        'expZen',
+        'expVoiceAuthFlow',
+        'expInboxFriends',
+    ] as const;
+    const hasAnyExperimentKey =
+        experimentKeys.some((k) => k in input) ||
+        ('experimentalAgents' in input);
+    if (!hasAnyExperimentKey) {
+        const enableAll = result.experiments === true;
+        for (const key of experimentKeys) {
+            result[key] = enableAll;
+        }
+    }
+
+    const DROPPED_KEYS = new Set([
+        // Removed in favor of `defaultPermissionModeByAgent`.
+        'defaultPermissionModeClaude',
+        'defaultPermissionModeCodex',
+        'defaultPermissionModeGemini',
+    ]);
+
+    // Preserve unknown fields (forward compatibility).
+    for (const [key, value] of Object.entries(input)) {
+        if (key === '__proto__') continue;
+        if (DROPPED_KEYS.has(key)) continue;
+        if (!Object.prototype.hasOwnProperty.call(SettingsSchema.shape, key)) {
+            Object.defineProperty(result, key, {
+                value,
+                enumerable: true,
+                configurable: true,
+                writable: true,
+            });
+        }
+    }
+
+    return pruneSecretBindings(result as Settings);
 }
 
 //
@@ -409,5 +638,5 @@ export function applySettings(settings: Settings, delta: Partial<Settings>): Set
         }
     });
 
-    return result;
+    return pruneSecretBindings(result as Settings);
 }

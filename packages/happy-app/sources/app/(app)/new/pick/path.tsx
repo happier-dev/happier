@@ -1,32 +1,162 @@
-import React, { useState, useMemo, useRef } from 'react';
-import { View, Text, ScrollView, Pressable } from 'react-native';
-import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
-import { CommonActions, useNavigation } from '@react-navigation/native';
-import { ItemGroup } from '@/components/ItemGroup';
-import { Item } from '@/components/Item';
+import React, { useState, useMemo } from 'react';
+import { View, Text, Pressable, Platform } from 'react-native';
+import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Typography } from '@/constants/Typography';
-import { useAllMachines, useSessions, useSetting } from '@/sync/storage';
+import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/storage';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { layout } from '@/components/layout';
 import { t } from '@/text';
-import { MultiTextInput, MultiTextInputHandle } from '@/components/MultiTextInput';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { layout } from '@/components/layout';
+import { PathSelector } from '@/components/sessions/new/components/PathSelector';
+import { SearchHeader } from '@/components/ui/forms/SearchHeader';
+import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
+
+export default React.memo(function PathPickerScreen() {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+    const router = useRouter();
+    const navigation = useNavigation();
+    const params = useLocalSearchParams<{ machineId?: string; selectedPath?: string }>();
+    const machines = useAllMachines();
+    const sessions = useSessions();
+    const recentMachinePaths = useSetting('recentMachinePaths');
+    const usePathPickerSearch = useSetting('usePathPickerSearch');
+    const [favoriteDirectoriesRaw, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
+    const favoriteDirectories = favoriteDirectoriesRaw ?? [];
+
+    const [customPath, setCustomPath] = useState(params.selectedPath || '');
+    const [pathSearchQuery, setPathSearchQuery] = useState('');
+
+    // Get the selected machine
+    const machine = useMemo(() => {
+        return machines.find(m => m.id === params.machineId);
+    }, [machines, params.machineId]);
+
+    // Get recent paths for this machine - prioritize from settings, then fall back to sessions
+    const recentPaths = useMemo(() => {
+        if (!params.machineId) return [];
+        return getRecentPathsForMachine({
+            machineId: params.machineId,
+            recentMachinePaths,
+            sessions,
+        });
+    }, [params.machineId, recentMachinePaths, sessions]);
+
+
+    const handleSelectPath = React.useCallback((pathOverride?: string) => {
+        const rawPath = typeof pathOverride === 'string' ? pathOverride : customPath;
+        const pathToUse = rawPath.trim() || machine?.metadata?.homeDir || '/home';
+        router.setParams({ path: pathToUse });
+        navigation.goBack();
+    }, [customPath, machine, navigation, router]);
+
+    const handleBackPress = React.useCallback(() => {
+        navigation.goBack();
+    }, [navigation]);
+
+    const headerTitle = t('newSession.selectPathTitle');
+    const headerBackTitle = t('common.back');
+
+    const headerLeft = React.useCallback(() => {
+        return (
+            <Pressable
+                onPress={handleBackPress}
+                hitSlop={10}
+                style={({ pressed }) => ({
+                    marginLeft: 10,
+                    opacity: pressed ? 0.7 : 1,
+                    padding: 4,
+                })}
+            >
+                <Ionicons name="chevron-back" size={22} color={theme.colors.header.tint} />
+            </Pressable>
+        );
+    }, [handleBackPress, theme.colors.header.tint]);
+
+    const canConfirmCustomPath = customPath.trim().length > 0;
+
+    const headerRight = React.useCallback(() => {
+        return (
+            <Pressable
+                onPress={() => handleSelectPath()}
+                disabled={!canConfirmCustomPath}
+                style={({ pressed }) => ({
+                    opacity: pressed ? 0.7 : 1,
+                    padding: 4,
+                })}
+            >
+                <Ionicons
+                    name="checkmark"
+                    size={24}
+                    color={theme.colors.header.tint}
+                />
+            </Pressable>
+        );
+    }, [canConfirmCustomPath, handleSelectPath, theme.colors.header.tint]);
+
+    const screenOptions = React.useMemo(() => {
+        return {
+            headerShown: true,
+            title: headerTitle,
+            headerTitle,
+            headerBackTitle,
+            presentation: Platform.OS === 'ios' ? 'containedModal' : undefined,
+            headerLeft,
+            headerRight,
+        } as const;
+    }, [headerBackTitle, headerLeft, headerRight, headerTitle]);
+
+    if (!machine) {
+        return (
+            <>
+                <Stack.Screen
+                    options={screenOptions}
+                />
+                <ItemList>
+                    <View style={styles.emptyContainer}>
+                        <Text style={styles.emptyText}>{t('newSession.noMachineSelected')}</Text>
+                    </View>
+                </ItemList>
+            </>
+        );
+    }
+
+    return (
+        <>
+            <Stack.Screen
+                options={screenOptions}
+            />
+            <ItemList style={{ paddingTop: 0 }} keyboardShouldPersistTaps="handled">
+                {usePathPickerSearch && (
+                    <SearchHeader
+                        value={pathSearchQuery}
+                        onChangeText={setPathSearchQuery}
+                        placeholder={t('newSession.searchPathsPlaceholder')}
+                    />
+                )}
+                <View style={styles.contentWrapper}>
+                    <PathSelector
+                        machineHomeDir={machine.metadata?.homeDir || '/home'}
+                        selectedPath={customPath}
+                        onChangeSelectedPath={setCustomPath}
+                        submitBehavior="confirm"
+                        onSubmitSelectedPath={handleSelectPath}
+                        recentPaths={recentPaths}
+                        usePickerSearch={usePathPickerSearch}
+                        searchVariant="none"
+                        searchQuery={pathSearchQuery}
+                        onChangeSearchQuery={setPathSearchQuery}
+                        favoriteDirectories={favoriteDirectories}
+                        onChangeFavoriteDirectories={setFavoriteDirectories}
+                    />
+                </View>
+            </ItemList>
+        </>
+    );
+});
 
 const stylesheet = StyleSheet.create((theme) => ({
-    container: {
-        flex: 1,
-        backgroundColor: theme.colors.groupped.background,
-    },
-    scrollContainer: {
-        flex: 1,
-    },
-    scrollContent: {
-        alignItems: 'center',
-    },
-    contentWrapper: {
-        width: '100%',
-        maxWidth: layout.maxWidth,
-    },
     emptyContainer: {
         flex: 1,
         justifyContent: 'center',
@@ -38,6 +168,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         textAlign: 'center',
         ...Typography.default(),
+    },
+    contentWrapper: {
+        width: '100%',
+        maxWidth: layout.maxWidth,
+        alignSelf: 'center',
     },
     pathInputContainer: {
         flexDirection: 'row',
@@ -57,245 +192,3 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderColor: theme.colors.divider,
     },
 }));
-
-export default function PathPickerScreen() {
-    const { theme } = useUnistyles();
-    const styles = stylesheet;
-    const router = useRouter();
-    const navigation = useNavigation();
-    const params = useLocalSearchParams<{ machineId?: string; selectedPath?: string }>();
-    const machines = useAllMachines();
-    const sessions = useSessions();
-    const inputRef = useRef<MultiTextInputHandle>(null);
-    const recentMachinePaths = useSetting('recentMachinePaths');
-
-    const [customPath, setCustomPath] = useState(params.selectedPath || '');
-
-    // Get the selected machine
-    const machine = useMemo(() => {
-        return machines.find(m => m.id === params.machineId);
-    }, [machines, params.machineId]);
-
-    // Get recent paths for this machine - prioritize from settings, then fall back to sessions
-    const recentPaths = useMemo(() => {
-        if (!params.machineId) return [];
-
-        const paths: string[] = [];
-        const pathSet = new Set<string>();
-
-        // First, add paths from recentMachinePaths (these are the most recent)
-        recentMachinePaths.forEach(entry => {
-            if (entry.machineId === params.machineId && !pathSet.has(entry.path)) {
-                paths.push(entry.path);
-                pathSet.add(entry.path);
-            }
-        });
-
-        // Then add paths from sessions if we need more
-        if (sessions) {
-            const pathsWithTimestamps: Array<{ path: string; timestamp: number }> = [];
-
-            sessions.forEach(item => {
-                if (typeof item === 'string') return; // Skip section headers
-
-                const session = item as any;
-                if (session.metadata?.machineId === params.machineId && session.metadata?.path) {
-                    const path = session.metadata.path;
-                    if (!pathSet.has(path)) {
-                        pathSet.add(path);
-                        pathsWithTimestamps.push({
-                            path,
-                            timestamp: session.updatedAt || session.createdAt
-                        });
-                    }
-                }
-            });
-
-            // Sort session paths by most recent first and add them
-            pathsWithTimestamps
-                .sort((a, b) => b.timestamp - a.timestamp)
-                .forEach(item => paths.push(item.path));
-        }
-
-        return paths;
-    }, [sessions, params.machineId, recentMachinePaths]);
-
-
-    const handleSelectPath = React.useCallback(() => {
-        const pathToUse = customPath.trim() || machine?.metadata?.homeDir || '/home';
-        // Pass path back via navigation params (main's pattern, received by new/index.tsx)
-        const state = navigation.getState();
-        const previousRoute = state?.routes?.[state.index - 1];
-        if (state && state.index > 0 && previousRoute) {
-            navigation.dispatch({
-                ...CommonActions.setParams({ path: pathToUse }),
-                source: previousRoute.key,
-            } as never);
-        }
-        router.back();
-    }, [customPath, router, machine, navigation]);
-
-    if (!machine) {
-        return (
-            <>
-                <Stack.Screen
-                    options={{
-                        headerShown: true,
-                        headerTitle: 'Select Path',
-                        headerBackTitle: t('common.back'),
-                        headerRight: () => (
-                            <Pressable
-                                onPress={handleSelectPath}
-                                disabled={!customPath.trim()}
-                                style={({ pressed }) => ({
-                                    marginRight: 16,
-                                    opacity: pressed ? 0.7 : 1,
-                                    padding: 4,
-                                })}
-                            >
-                                <Ionicons
-                                    name="checkmark"
-                                    size={24}
-                                    color={theme.colors.header.tint}
-                                />
-                            </Pressable>
-                        )
-                    }}
-                />
-                <View style={styles.container}>
-                    <View style={styles.emptyContainer}>
-                        <Text style={styles.emptyText}>
-                            No machine selected
-                        </Text>
-                    </View>
-                </View>
-            </>
-        );
-    }
-
-    return (
-        <>
-            <Stack.Screen
-                options={{
-                    headerShown: true,
-                    headerTitle: 'Select Path',
-                    headerBackTitle: t('common.back'),
-                    headerRight: () => (
-                        <Pressable
-                            onPress={handleSelectPath}
-                            disabled={!customPath.trim()}
-                            style={({ pressed }) => ({
-                                opacity: pressed ? 0.7 : 1,
-                                padding: 4,
-                            })}
-                        >
-                            <Ionicons
-                                name="checkmark"
-                                size={24}
-                                color={theme.colors.header.tint}
-                            />
-                        </Pressable>
-                    )
-                }}
-            />
-            <View style={styles.container}>
-                <ScrollView
-                    style={styles.scrollContainer}
-                    contentContainerStyle={styles.scrollContent}
-                    keyboardShouldPersistTaps="handled"
-                >
-                    <View style={styles.contentWrapper}>
-                        <ItemGroup title="Enter Path">
-                            <View style={styles.pathInputContainer}>
-                                <View style={[styles.pathInput, { paddingVertical: 8 }]}>
-                                    <MultiTextInput
-                                        ref={inputRef}
-                                        value={customPath}
-                                        onChangeText={setCustomPath}
-                                        placeholder="Enter path (e.g. /home/user/projects)"
-                                        maxHeight={76}
-                                        paddingTop={8}
-                                        paddingBottom={8}
-                                        // onSubmitEditing={handleSelectPath}
-                                        // blurOnSubmit={true}
-                                        // returnKeyType="done"
-                                    />
-                                </View>
-                            </View>
-                        </ItemGroup>
-
-                        {recentPaths.length > 0 && (
-                            <ItemGroup title="Recent Paths">
-                                {recentPaths.map((path, index) => {
-                                    const isSelected = customPath.trim() === path;
-                                    const isLast = index === recentPaths.length - 1;
-
-                                    return (
-                                        <Item
-                                            key={path}
-                                            title={path}
-                                            leftElement={
-                                                <Ionicons
-                                                    name="folder-outline"
-                                                    size={18}
-                                                    color={theme.colors.textSecondary}
-                                                />
-                                            }
-                                            onPress={() => {
-                                                setCustomPath(path);
-                                                setTimeout(() => inputRef.current?.focus(), 50);
-                                            }}
-                                            selected={isSelected}
-                                            showChevron={false}
-                                            pressableStyle={isSelected ? { backgroundColor: theme.colors.surfaceSelected } : undefined}
-                                            showDivider={!isLast}
-                                        />
-                                    );
-                                })}
-                            </ItemGroup>
-                        )}
-
-                        {recentPaths.length === 0 && (
-                            <ItemGroup title="Suggested Paths">
-                                {(() => {
-                                    const homeDir = machine.metadata?.homeDir || '/home';
-                                    const suggestedPaths = [
-                                        homeDir,
-                                        `${homeDir}/projects`,
-                                        `${homeDir}/Documents`,
-                                        `${homeDir}/Desktop`
-                                    ];
-                                    return suggestedPaths.map((path, index) => {
-                                        const isSelected = customPath.trim() === path;
-
-                                        return (
-                                            <Item
-                                                key={path}
-                                                title={path}
-                                                leftElement={
-                                                    <Ionicons
-                                                        name="folder-outline"
-                                                        size={18}
-                                                        color={theme.colors.textSecondary}
-                                                    />
-                                                }
-                                                onPress={() => {
-                                                    setCustomPath(path);
-                                                    setTimeout(() => inputRef.current?.focus(), 50);
-                                                }}
-                                                selected={isSelected}
-                                                showChevron={false}
-                                                pressableStyle={isSelected ? { backgroundColor: theme.colors.surfaceSelected } : undefined}
-                                                showDivider={index < 3}
-                                            />
-                                        );
-                                    });
-                                })()}
-                            </ItemGroup>
-                        )}
-                    </View>
-                </ScrollView>
-            </View>
-        </>
-    );
-}

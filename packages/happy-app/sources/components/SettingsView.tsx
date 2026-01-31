@@ -1,15 +1,16 @@
-import { View, ScrollView, Pressable, Platform, Linking } from 'react-native';
+import { View, ScrollView, Pressable, Platform, Linking, Text as RNText, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import * as React from 'react';
 import { Text } from '@/components/StyledText';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
 import { useAuth } from '@/auth/AuthContext';
 import { Typography } from "@/constants/Typography";
-import { Item } from '@/components/Item';
-import { ItemGroup } from '@/components/ItemGroup';
-import { ItemList } from '@/components/ItemList';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { useConnectTerminal } from '@/hooks/useConnectTerminal';
 import { useEntitlement, useLocalSettingMutable, useSetting } from '@/sync/storage';
 import { sync } from '@/sync/sync';
@@ -28,6 +29,9 @@ import { useProfile } from '@/sync/storage';
 import { getDisplayName, getAvatarUrl, getBio } from '@/sync/profile';
 import { Avatar } from '@/components/Avatar';
 import { t } from '@/text';
+import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
+import { HappyError } from '@/utils/errors';
+import { DEFAULT_AGENT_ID, getAgentCore, getAgentIconSource, getAgentIconTintColor, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog';
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -37,14 +41,62 @@ export const SettingsView = React.memo(function SettingsView() {
     const [devModeEnabled, setDevModeEnabled] = useLocalSettingMutable('devModeEnabled');
     const isPro = __DEV__ || useEntitlement('pro');
     const experiments = useSetting('experiments');
+    const expUsageReporting = useSetting('expUsageReporting');
+    const useProfiles = useSetting('useProfiles');
+    const terminalUseTmux = useSetting('sessionUseTmux');
     const isCustomServer = isUsingCustomServer();
     const allMachines = useAllMachines();
     const profile = useProfile();
     const displayName = getDisplayName(profile);
     const avatarUrl = getAvatarUrl(profile);
     const bio = getBio(profile);
+    const [githubUnavailableReason, setGithubUnavailableReason] = React.useState<string | null>(null);
+
+    const anthropicAgentId = resolveAgentIdFromConnectedServiceId('anthropic') ?? DEFAULT_AGENT_ID;
+    const anthropicAgentCore = getAgentCore(anthropicAgentId);
 
     const { connectTerminal, connectWithUrl, isLoading } = useConnectTerminal();
+    const [refreshingMachines, refreshMachines] = useHappyAction(async () => {
+        await sync.refreshMachinesThrottled({ force: true });
+    });
+
+    useFocusEffect(
+        React.useCallback(() => {
+            void sync.refreshMachinesThrottled({ staleMs: 30_000 });
+        }, [])
+    );
+
+    const machinesTitle = React.useMemo(() => {
+        const headerTextStyle = [
+            Typography.default('regular'),
+            {
+                color: theme.colors.groupped.sectionTitle,
+                fontSize: Platform.select({ ios: 13, default: 14 }),
+                lineHeight: Platform.select({ ios: 18, default: 20 }),
+                letterSpacing: Platform.select({ ios: -0.08, default: 0.1 }),
+                textTransform: 'uppercase' as const,
+                fontWeight: Platform.select({ ios: 'normal', default: '500' }) as any,
+            },
+        ];
+
+        return (
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <RNText style={headerTextStyle as any}>{t('settings.machines')}</RNText>
+                <Pressable
+                    onPress={refreshMachines}
+                    hitSlop={10}
+                    style={{ padding: 2 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Refresh"
+                    disabled={refreshingMachines}
+                >
+                    {refreshingMachines
+                        ? <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                        : <Ionicons name="refresh" size={18} color={theme.colors.textSecondary} />}
+                </Pressable>
+            </View>
+        );
+    }, [refreshMachines, refreshingMachines, theme.colors.groupped.sectionTitle, theme.colors.textSecondary]);
 
     const handleGitHub = async () => {
         const url = 'https://github.com/slopus/happy';
@@ -92,8 +144,16 @@ export const SettingsView = React.memo(function SettingsView() {
 
     // GitHub connection
     const [connectingGitHub, connectGitHub] = useHappyAction(async () => {
-        const params = await getGitHubOAuthParams(auth.credentials!);
-        await Linking.openURL(params.url);
+        setGithubUnavailableReason(null);
+        try {
+            const params = await getGitHubOAuthParams(auth.credentials!);
+            await Linking.openURL(params.url);
+        } catch (e) {
+            if (e instanceof HappyError && e.canTryAgain === false) {
+                setGithubUnavailableReason(e.message);
+            }
+            throw e;
+        }
     });
 
     // GitHub disconnection
@@ -110,14 +170,18 @@ export const SettingsView = React.memo(function SettingsView() {
 
     // Anthropic connection
     const [connectingAnthropic, connectAnthropic] = useHappyAction(async () => {
-        router.push('/settings/connect/claude');
+        const route = anthropicAgentCore.connectedService.connectRoute;
+        if (route) {
+            router.push(route);
+        }
     });
 
     // Anthropic disconnection
     const [disconnectingAnthropic, handleDisconnectAnthropic] = useHappyAction(async () => {
+        const serviceName = anthropicAgentCore.connectedService.name;
         const confirmed = await Modal.confirm(
-            t('modals.disconnectService', { service: 'Claude' }),
-            t('modals.disconnectServiceConfirm', { service: 'Claude' }),
+            t('modals.disconnectService', { service: serviceName }),
+            t('modals.disconnectServiceConfirm', { service: serviceName }),
             { confirmText: t('modals.disconnect'), destructive: true }
         );
         if (confirmed) {
@@ -210,15 +274,16 @@ export const SettingsView = React.memo(function SettingsView() {
 
             <ItemGroup title={t('settings.connectedAccounts')}>
                 <Item
-                    title="Claude Code"
+                    title={anthropicAgentCore.connectedService.name}
                     subtitle={isAnthropicConnected
                         ? t('settingsAccount.statusActive')
                         : t('settings.connectAccount')
                     }
                     icon={
                         <Image
-                            source={require('@/assets/images/icon-claude.png')}
+                            source={getAgentIconSource(anthropicAgentId)}
                             style={{ width: 29, height: 29 }}
+                            tintColor={getAgentIconTintColor(anthropicAgentId, theme)}
                             contentFit="contain"
                         />
                     }
@@ -230,7 +295,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.github')}
                     subtitle={isGitHubConnected
                         ? t('settings.githubConnected', { login: profile.github?.login! })
-                        : t('settings.connectGithubAccount')
+                        : (githubUnavailableReason ?? t('settings.connectGithubAccount'))
                     }
                     icon={
                         <Ionicons
@@ -239,7 +304,10 @@ export const SettingsView = React.memo(function SettingsView() {
                             color={isGitHubConnected ? theme.colors.status.connected : theme.colors.textSecondary}
                         />
                     }
-                    onPress={isGitHubConnected ? handleDisconnectGitHub : connectGitHub}
+                    onPress={isGitHubConnected
+                        ? handleDisconnectGitHub
+                        : (githubUnavailableReason ? undefined : connectGitHub)
+                    }
                     loading={connectingGitHub || disconnectingGitHub}
                     showChevron={false}
                 />
@@ -257,7 +325,7 @@ export const SettingsView = React.memo(function SettingsView() {
 
             {/* Machines (sorted: online first, then last seen desc) */}
             {allMachines.length > 0 && (
-                <ItemGroup title={t('settings.machines')}>
+                <ItemGroup title={machinesTitle}>
                     {[...allMachines].map((machine) => {
                         const isOnline = isMachineOnline(machine);
                         const host = machine.metadata?.host || 'Unknown';
@@ -268,14 +336,37 @@ export const SettingsView = React.memo(function SettingsView() {
                         const title = displayName || host;
 
                         // Build subtitle: show hostname if different from title, plus platform and status
-                        let subtitle = '';
+                        let subtitleTop = '';
                         if (displayName && displayName !== host) {
-                            subtitle = host;
+                            subtitleTop = host;
                         }
-                        if (platform) {
-                            subtitle = subtitle ? `${subtitle} • ${platform}` : platform;
-                        }
-                        subtitle = subtitle ? `${subtitle} • ${isOnline ? t('status.online') : t('status.offline')}` : (isOnline ? t('status.online') : t('status.offline'));
+                        const statusText = isOnline ? t('status.online') : t('status.offline');
+                        const statusLineText = platform ? `${platform} • ${statusText}` : statusText;
+
+                        const subtitle = (
+                            <View style={{ gap: 2 }}>
+                                {subtitleTop ? (
+                                    <RNText style={[Typography.default(), { fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20 }]}>
+                                        {subtitleTop}
+                                    </RNText>
+                                ) : null}
+                                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                    <RNText
+                                        style={[
+                                            Typography.default(),
+                                            { fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20, flexShrink: 1 }
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {statusLineText}
+                                    </RNText>
+                                    <RNText style={[Typography.default(), { fontSize: 14, color: theme.colors.textSecondary, lineHeight: 20, opacity: 0.8 }]}>
+                                        {' • '}
+                                    </RNText>
+                                    <MachineCliGlyphs machineId={machine.id} isOnline={isOnline} />
+                                </View>
+                            </View>
+                        );
 
                         return (
                             <Item
@@ -302,38 +393,54 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.account')}
                     subtitle={t('settings.accountSubtitle')}
                     icon={<Ionicons name="person-circle-outline" size={29} color="#007AFF" />}
-                    onPress={() => router.push('/settings/account')}
+                    onPress={() => router.push('/(app)/settings/account')}
                 />
                 <Item
                     title={t('settings.appearance')}
                     subtitle={t('settings.appearanceSubtitle')}
                     icon={<Ionicons name="color-palette-outline" size={29} color="#5856D6" />}
-                    onPress={() => router.push('/settings/appearance')}
+                    onPress={() => router.push('/(app)/settings/appearance')}
                 />
                 <Item
                     title={t('settings.voiceAssistant')}
                     subtitle={t('settings.voiceAssistantSubtitle')}
                     icon={<Ionicons name="mic-outline" size={29} color="#34C759" />}
-                    onPress={() => router.push('/settings/voice')}
+                    onPress={() => router.push('/(app)/settings/voice')}
                 />
                 <Item
                     title={t('settings.featuresTitle')}
                     subtitle={t('settings.featuresSubtitle')}
                     icon={<Ionicons name="flask-outline" size={29} color="#FF9500" />}
-                    onPress={() => router.push('/settings/features')}
+                    onPress={() => router.push('/(app)/settings/features')}
                 />
                 <Item
-                    title={t('settings.profiles')}
-                    subtitle={t('settings.profilesSubtitle')}
-                    icon={<Ionicons name="person-outline" size={29} color="#AF52DE" />}
-                    onPress={() => router.push('/settings/profiles')}
+                    title={t('settings.session')}
+                    subtitle={terminalUseTmux ? t('settings.sessionSubtitleTmuxEnabled') : t('settings.sessionSubtitleMessageSendingAndTmux')}
+                    icon={<Ionicons name="terminal-outline" size={29} color="#5856D6" />}
+                    onPress={() => router.push('/(app)/settings/session')}
                 />
-                {experiments && (
+                {useProfiles && (
+                    <Item
+                        title={t('settings.profiles')}
+                        subtitle={t('settings.profilesSubtitle')}
+                        icon={<Ionicons name="person-outline" size={29} color="#AF52DE" />}
+                        onPress={() => router.push('/(app)/settings/profiles')}
+                    />
+                )}
+                {useProfiles && (
+                    <Item
+                        title={t('settings.secrets')}
+                        subtitle={t('settings.secretsSubtitle')}
+                        icon={<Ionicons name="key-outline" size={29} color="#AF52DE" />}
+                        onPress={() => router.push('/(app)/settings/secrets')}
+                    />
+                )}
+                {experiments && expUsageReporting && (
                     <Item
                         title={t('settings.usage')}
                         subtitle={t('settings.usageSubtitle')}
                         icon={<Ionicons name="analytics-outline" size={29} color="#007AFF" />}
-                        onPress={() => router.push('/settings/usage')}
+                        onPress={() => router.push('/(app)/settings/usage')}
                     />
                 )}
             </ItemGroup>
@@ -344,7 +451,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     <Item
                         title={t('settings.developerTools')}
                         icon={<Ionicons name="construct-outline" size={29} color="#5856D6" />}
-                        onPress={() => router.push('/dev')}
+                        onPress={() => router.push('/(app)/dev')}
                     />
                 </ItemGroup>
             )}
@@ -357,7 +464,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
                     onPress={() => {
                         trackWhatsNewClicked();
-                        router.push('/changelog');
+                        router.push('/(app)/changelog');
                     }}
                 />
                 <Item

@@ -1,5 +1,12 @@
 # Changelog
 
+## Version 6 - 2026-01-31
+
+This update refreshes the app’s look and feel with a cleaner type system and a softer default background across the main UI.
+
+- Updated the default app font to Inter for improved readability and consistency across platforms.
+- Updated the app’s main background color from pure white to #F8F9FC.
+
 ## Version 5 - 2025-12-22
 
 This release expands AI agent support and refines the voice experience, while improving markdown rendering for a better chat experience.

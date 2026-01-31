@@ -4,9 +4,9 @@ import { Stack } from 'expo-router';
 import Constants from 'expo-constants';
 import * as Updates from 'expo-updates';
 import { Ionicons } from '@expo/vector-icons';
-import { Item } from '@/components/Item';
-import { ItemGroup } from '@/components/ItemGroup';
-import { ItemList } from '@/components/ItemList';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -180,14 +180,18 @@ export default function ExpoConstantsScreen() {
     
     // Check if running embedded update
     const isEmbedded = ExpoUpdates?.isEmbeddedLaunch;
+
+    const screenOptions = React.useMemo(() => {
+        return {
+            title: 'Expo Constants',
+            headerLargeTitle: false,
+        } as const;
+    }, []);
     
     return (
         <>
             <Stack.Screen
-                options={{
-                    title: 'Expo Constants',
-                    headerLargeTitle: false,
-                }}
+                options={screenOptions}
             />
             <ItemList>
                 {/* Main Configuration */}

@@ -137,7 +137,7 @@ export function startSocket(app: Fastify) {
             userRpcListeners = new Map<string, Socket>();
             rpcListeners.set(userId, userRpcListeners);
         }
-        rpcHandler(userId, socket, userRpcListeners);
+        rpcHandler(userId, socket, userRpcListeners, rpcListeners);
         usageHandler(userId, socket);
         sessionUpdateHandler(userId, socket, connection);
         pingHandler(socket);

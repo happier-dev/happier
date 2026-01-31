@@ -9,10 +9,10 @@ import { getSessionName, useSessionStatus, getSessionAvatarId, formatPathRelativ
 import { Avatar } from './Avatar';
 import { Typography } from '@/constants/Typography';
 import { StatusDot } from './StatusDot';
-import { useAllMachines, useSetting } from '@/sync/storage';
+import { useAllMachines, useHasUnreadMessages, useSetting } from '@/sync/storage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { isMachineOnline } from '@/utils/machineUtils';
-import { machineSpawnNewSession, sessionKill } from '@/sync/ops';
+import { machineSpawnNewSession, sessionArchive } from '@/sync/ops';
 import { resolveAbsolutePath } from '@/utils/pathUtils';
 import { storage } from '@/sync/storage';
 import { Modal } from '@/modal';
@@ -249,7 +249,13 @@ export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: Acti
                             <View style={styles.sectionHeaderLeft}>
                                 {avatarId && (
                                     <View style={styles.sectionHeaderAvatar}>
-                                        <Avatar id={avatarId} size={24} flavor={firstSession?.metadata?.flavor} />
+                                        {firstSession && (
+                                            <ProjectHeaderAvatar
+                                                avatarId={avatarId}
+                                                flavor={firstSession.metadata?.flavor}
+                                                sessionId={firstSession.id}
+                                            />
+                                        )}
                                     </View>
                                 )}
                                 <Text style={styles.sectionHeaderPath}>
@@ -288,6 +294,11 @@ export function ActiveSessionsGroupCompact({ sessions, selectedSessionId }: Acti
     );
 }
 
+const ProjectHeaderAvatar = React.memo(({ avatarId, flavor, sessionId }: { avatarId: string; flavor?: string | null; sessionId: string }) => {
+    const hasUnreadMessages = useHasUnreadMessages(sessionId);
+    return <Avatar id={avatarId} size={24} flavor={flavor} hasUnreadMessages={hasUnreadMessages} />;
+});
+
 // Compact session row component with status line
 const CompactSessionRow = React.memo(({ session, selected, showBorder }: { session: Session; selected?: boolean; showBorder?: boolean }) => {
     const styles = stylesheet;
@@ -300,7 +311,7 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
     const swipeEnabled = Platform.OS !== 'web';
 
     const [archivingSession, performArchive] = useHappyAction(async () => {
-        const result = await sessionKill(session.id);
+        const result = await sessionArchive(session.id);
         if (!result.success) {
             throw new HappyError(result.message || t('sessionInfo.failedToArchiveSession'), false);
         }

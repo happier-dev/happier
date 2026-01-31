@@ -3,8 +3,8 @@ import { View, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { Text } from '@/components/StyledText';
 import { Typography } from '@/constants/Typography';
-import { ItemGroup } from '@/components/ItemGroup';
-import { ItemList } from '@/components/ItemList';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { RoundButton } from '@/components/RoundButton';
 import { Modal } from '@/modal';
 import { layout } from '@/components/layout';
@@ -158,14 +158,21 @@ export default function ServerConfigScreen() {
         }
     };
 
+    const headerTitle = t('server.serverConfiguration');
+    const headerBackTitle = t('common.back');
+
+    const screenOptions = React.useMemo(() => {
+        return {
+            headerShown: true,
+            headerTitle,
+            headerBackTitle,
+        } as const;
+    }, [headerBackTitle, headerTitle]);
+
     return (
         <>
             <Stack.Screen
-                options={{
-                    headerShown: true,
-                    headerTitle: t('server.serverConfiguration'),
-                    headerBackTitle: t('common.back'),
-                }}
+                options={screenOptions}
             />
 
             <KeyboardAvoidingView 

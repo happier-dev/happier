@@ -1,6 +1,6 @@
-import { useSocketStatus, useFriendRequests, useSettings } from '@/sync/storage';
+import { useSocketStatus, useFriendRequests, useSetting, useSyncError } from '@/sync/storage';
 import * as React from 'react';
-import { Text, View, Pressable, useWindowDimensions } from 'react-native';
+import { Platform, Text, View, Pressable, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useHeaderHeight } from '@/utils/responsive';
@@ -15,6 +15,10 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useInboxHasContent } from '@/hooks/useInboxHasContent';
 import { Ionicons } from '@expo/vector-icons';
+import { sync } from '@/sync/sync';
+import { PopoverBoundaryProvider } from '@/components/ui/popover';
+import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
+import { useInboxFriendsEnabled } from '@/hooks/useInboxFriendsEnabled';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -23,6 +27,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         backgroundColor: theme.colors.groupped.background,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.divider,
+        overflow: 'visible',
     },
     header: {
         flexDirection: 'row',
@@ -30,6 +35,8 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingHorizontal: 16,
         backgroundColor: theme.colors.groupped.background,
         position: 'relative',
+        zIndex: 100,
+        overflow: 'visible',
     },
     logoContainer: {
         width: 32,
@@ -44,7 +51,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         right: 0,
         flexDirection: 'column',
         alignItems: 'center',
-        pointerEvents: 'none',
+        overflow: 'visible',
     },
     titleContainerLeft: {
         flex: 1,
@@ -52,6 +59,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         alignItems: 'flex-start',
         marginLeft: 8,
         justifyContent: 'center',
+        overflow: 'visible',
     },
     titleText: {
         fontSize: 17,
@@ -127,6 +135,39 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         borderRadius: 3,
         backgroundColor: theme.colors.text,
     },
+    banner: {
+        marginHorizontal: 12,
+        marginBottom: 8,
+        marginTop: 6,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderRadius: 12,
+        backgroundColor: theme.colors.surface,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.divider,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+    },
+    bannerText: {
+        flex: 1,
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        ...Typography.default(),
+    },
+    bannerButton: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 10,
+        backgroundColor: theme.colors.groupped.background,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.divider,
+    },
+    bannerButtonText: {
+        fontSize: 12,
+        color: theme.colors.text,
+        ...Typography.default('semiBold'),
+    },
 }));
 
 export const SidebarView = React.memo(() => {
@@ -137,9 +178,13 @@ export const SidebarView = React.memo(() => {
     const headerHeight = useHeaderHeight();
     const socketStatus = useSocketStatus();
     const realtimeStatus = useRealtimeStatus();
+    const syncError = useSyncError();
+    const popoverBoundaryRef = React.useRef<any>(null);
     const friendRequests = useFriendRequests();
     const inboxHasContent = useInboxHasContent();
-    const settings = useSettings();
+    const experimentsEnabled = useSetting('experiments');
+    const expZen = useSetting('expZen');
+    const inboxFriendsEnabled = useInboxFriendsEnabled();
 
     // Compute connection status once per render (theme-reactive, no stale memoization)
     const connectionStatus = (() => {
@@ -187,9 +232,10 @@ export const SidebarView = React.memo(() => {
     // Uses same formula as SidebarNavigator.tsx:18 for consistency
     const { width: windowWidth } = useWindowDimensions();
     const sidebarWidth = Math.min(Math.max(Math.floor(windowWidth * 0.3), 250), 360);
-    // With experiments: 4 icons (148px total), threshold 408px > max 360px → always left-justify
-    // Without experiments: 3 icons (108px total), threshold 328px → left-justify below ~340px
-    const shouldLeftJustify = settings.experiments || sidebarWidth < 340;
+    const showZen = experimentsEnabled && expZen;
+    // With Zen enabled: 4 icons (148px total), threshold 408px > max 360px → always left-justify
+    // Without Zen: 3 icons (108px total), threshold 328px → left-justify below ~340px
+    const shouldLeftJustify = showZen || sidebarWidth < 340;
 
     const handleNewSession = React.useCallback(() => {
         router.push('/new');
@@ -199,25 +245,21 @@ export const SidebarView = React.memo(() => {
     const titleContent = (
         <>
             <Text style={styles.titleText}>{t('sidebar.sessionsTitle')}</Text>
-            {connectionStatus.text && (
-                <View style={styles.statusContainer}>
-                    <StatusDot
-                        color={connectionStatus.color}
-                        isPulsing={connectionStatus.isPulsing}
-                        size={6}
-                        style={styles.statusDot}
+            {connectionStatus.text ? (
+                <View style={Platform.OS === 'web' ? ({ pointerEvents: 'auto' } as any) : undefined}>
+                    <ConnectionStatusControl
+                        variant="sidebar"
+                        alignSelf={shouldLeftJustify ? 'flex-start' : 'center'}
                     />
-                    <Text style={[styles.statusText, { color: connectionStatus.textColor }]}>
-                        {connectionStatus.text}
-                    </Text>
                 </View>
-            )}
+            ) : null}
         </>
     );
 
     return (
         <>
-            <View style={[styles.container, { paddingTop: safeArea.top }]}>
+            <View ref={popoverBoundaryRef} style={[styles.container, { paddingTop: safeArea.top }]}>
+                <PopoverBoundaryProvider boundaryRef={popoverBoundaryRef}>
                 <View style={[styles.header, { height: headerHeight }]}>
                     {/* Logo - always first */}
                     <View style={styles.logoContainer}>
@@ -237,7 +279,7 @@ export const SidebarView = React.memo(() => {
 
                     {/* Navigation icons */}
                     <View style={styles.rightContainer}>
-                        {settings.experiments && (
+                        {showZen && (
                             <Pressable
                                 onPress={() => router.push('/(app)/zen')}
                                 hitSlop={15}
@@ -250,28 +292,30 @@ export const SidebarView = React.memo(() => {
                                 />
                             </Pressable>
                         )}
-                        <Pressable
-                            onPress={() => router.push('/(app)/inbox')}
-                            hitSlop={15}
-                            style={styles.notificationButton}
-                        >
-                            <Image
-                                source={require('@/assets/images/brutalist/Brutalism 27.png')}
-                                contentFit="contain"
-                                style={[{ width: 32, height: 32 }]}
-                                tintColor={theme.colors.header.tint}
-                            />
-                            {friendRequests.length > 0 && (
-                                <View style={styles.badge}>
-                                    <Text style={styles.badgeText}>
-                                        {friendRequests.length > 99 ? '99+' : friendRequests.length}
-                                    </Text>
-                                </View>
-                            )}
-                            {inboxHasContent && friendRequests.length === 0 && (
-                                <View style={styles.indicatorDot} />
-                            )}
-                        </Pressable>
+                        {inboxFriendsEnabled && (
+                            <Pressable
+                                onPress={() => router.push('/(app)/inbox')}
+                                hitSlop={15}
+                                style={styles.notificationButton}
+                            >
+                                <Image
+                                    source={require('@/assets/images/brutalist/Brutalism 27.png')}
+                                    contentFit="contain"
+                                    style={[{ width: 32, height: 32 }]}
+                                    tintColor={theme.colors.header.tint}
+                                />
+                                {friendRequests.length > 0 && (
+                                    <View style={styles.badge}>
+                                        <Text style={styles.badgeText}>
+                                            {friendRequests.length > 99 ? '99+' : friendRequests.length}
+                                        </Text>
+                                    </View>
+                                )}
+                                {inboxHasContent && friendRequests.length === 0 && (
+                                    <View style={styles.indicatorDot} />
+                                )}
+                            </Pressable>
+                        )}
                         <Pressable
                             onPress={() => router.push('/settings')}
                             hitSlop={15}
@@ -293,15 +337,47 @@ export const SidebarView = React.memo(() => {
 
                     {/* Centered title - absolute positioned over full header */}
                     {!shouldLeftJustify && (
-                        <View style={styles.titleContainer}>
+                        <View
+                            // On native, this overlay must be `box-none` so it doesn't block the header buttons.
+                            // On web, use CSS-compatible pointer-events values (RN `box-none` isn't valid CSS).
+                            pointerEvents={Platform.OS === 'web' ? undefined : 'box-none'}
+                            style={[styles.titleContainer, Platform.OS === 'web' ? ({ pointerEvents: 'none' } as any) : null]}
+                        >
                             {titleContent}
                         </View>
                     )}
                 </View>
+                {(syncError || socketStatus.status === 'error' || socketStatus.status === 'disconnected') && (
+                    <View style={styles.banner}>
+                        <Text style={styles.bannerText} numberOfLines={2}>
+                            {syncError?.message
+                                ?? socketStatus.lastError
+                                ?? (socketStatus.status === 'disconnected' ? t('status.disconnected') : t('status.error'))}
+                        </Text>
+                        {syncError?.kind === 'auth' ? (
+                            <Pressable
+                                onPress={() => router.push('/restore')}
+                                style={styles.bannerButton}
+                                accessibilityRole="button"
+                            >
+                                <Text style={styles.bannerButtonText}>{t('connect.restoreAccount')}</Text>
+                            </Pressable>
+                        ) : syncError?.retryable !== false ? (
+                            <Pressable
+                                onPress={() => sync.retryNow()}
+                                style={styles.bannerButton}
+                                accessibilityRole="button"
+                            >
+                                <Text style={styles.bannerButtonText}>{t('common.retry')}</Text>
+                            </Pressable>
+                        ) : null}
+                    </View>
+                )}
                 {realtimeStatus !== 'disconnected' && (
                     <VoiceAssistantStatusBar variant="sidebar" />
                 )}
                 <MainView variant="sidebar" />
+                </PopoverBoundaryProvider>
             </View>
             <FABWide onPress={handleNewSession} />
         </>

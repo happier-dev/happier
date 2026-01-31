@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { Fastify } from "../types";
 import { db } from "@/storage/db";
-import { RelationshipStatus } from "@prisma/client";
+import { RelationshipStatus, type RelationshipStatus as RelationshipStatusType } from "@/storage/prisma";
 import { friendAdd } from "@/app/social/friendAdd";
 import { Context } from "@/context";
 import { friendRemove } from "@/app/social/friendRemove";
@@ -50,7 +50,7 @@ export async function userRoutes(app: Fastify) {
                 toUserId: id
             }
         });
-        const status: RelationshipStatus = relationship?.status || RelationshipStatus.none;
+        const status: RelationshipStatusType = relationship?.status || RelationshipStatus.none;
 
         // Build user profile
         return reply.send({
@@ -74,13 +74,15 @@ export async function userRoutes(app: Fastify) {
     }, async (request, reply) => {
         const { query } = request.query;
 
+        const username =
+            process.env.HAPPY_SERVER_FLAVOR === 'light'
+                ? { startsWith: query }
+                : { startsWith: query, mode: 'insensitive' as const };
+
         // Search for users by username, first 10 matches
         const users = await db.account.findMany({
             where: {
-                username: {
-                    startsWith: query,
-                    mode: 'insensitive'
-                }
+                username
             },
             include: {
                 githubUser: true
@@ -99,7 +101,7 @@ export async function userRoutes(app: Fastify) {
                     toUserId: user.id
                 }
             });
-            const status: RelationshipStatus = relationship?.status || RelationshipStatus.none;
+            const status: RelationshipStatusType = relationship?.status || RelationshipStatus.none;
             return buildUserProfile(user, status);
         }));
 
@@ -179,5 +181,8 @@ const UserProfileSchema = z.object({
     }).nullable(),
     username: z.string(),
     bio: z.string().nullable(),
-    status: RelationshipStatusSchema
+    status: RelationshipStatusSchema,
+    publicKey: z.string(),
+    contentPublicKey: z.string().nullable(),
+    contentPublicKeySig: z.string().nullable(),
 });

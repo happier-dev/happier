@@ -2,11 +2,13 @@ import { eventRouter, buildNewSessionUpdate } from "@/app/events/eventRouter";
 import { type Fastify } from "../types";
 import { db } from "@/storage/db";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { allocateUserSeq } from "@/storage/seq";
 import { sessionDelete } from "@/app/session/sessionDelete";
+import { checkSessionAccess } from "@/app/share/accessControl";
+import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 
 export function sessionRoutes(app: Fastify) {
 
@@ -16,58 +18,95 @@ export function sessionRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
 
-        const sessions = await db.session.findMany({
-            where: { accountId: userId },
-            orderBy: { updatedAt: 'desc' },
-            take: 150,
-            select: {
-                id: true,
-                seq: true,
-                createdAt: true,
-                updatedAt: true,
-                metadata: true,
-                metadataVersion: true,
-                agentState: true,
-                agentStateVersion: true,
-                dataEncryptionKey: true,
-                active: true,
-                lastActiveAt: true,
-                // messages: {
-                //     orderBy: { seq: 'desc' },
-                //     take: 1,
-                //     select: {
-                //         id: true,
-                //         seq: true,
-                //         content: true,
-                //         localId: true,
-                //         createdAt: true
-                //     }
-                // }
-            }
-        });
+        const [ownedSessions, shares] = await Promise.all([
+            db.session.findMany({
+                where: { accountId: userId },
+                orderBy: { updatedAt: 'desc' },
+                take: 150,
+                select: {
+                    id: true,
+                    seq: true,
+                    createdAt: true,
+                    updatedAt: true,
+                    metadata: true,
+                    metadataVersion: true,
+                    agentState: true,
+                    agentStateVersion: true,
+                    dataEncryptionKey: true,
+                    active: true,
+                    lastActiveAt: true,
+                }
+            }),
+            db.sessionShare.findMany({
+                where: { sharedWithUserId: userId },
+                orderBy: { session: { updatedAt: 'desc' } },
+                take: 150,
+                select: {
+                    accessLevel: true,
+                    canApprovePermissions: true,
+                    encryptedDataKey: true,
+                    sharedByUserId: true,
+                    sharedByUser: { select: PROFILE_SELECT },
+                    session: {
+                        select: {
+                            id: true,
+                            seq: true,
+                            createdAt: true,
+                            updatedAt: true,
+                            metadata: true,
+                            metadataVersion: true,
+                            agentState: true,
+                            agentStateVersion: true,
+                            active: true,
+                            lastActiveAt: true,
+                        }
+                    }
+                }
+            }),
+        ]);
 
-        return reply.send({
-            sessions: sessions.map((v) => {
-                // const lastMessage = v.messages[0];
-                const sessionUpdatedAt = v.updatedAt.getTime();
-                // const lastMessageCreatedAt = lastMessage ? lastMessage.createdAt.getTime() : 0;
-
+        const sessions = [
+            ...ownedSessions.map((v) => ({
+                id: v.id,
+                seq: v.seq,
+                createdAt: v.createdAt.getTime(),
+                updatedAt: v.updatedAt.getTime(),
+                active: v.active,
+                activeAt: v.lastActiveAt.getTime(),
+                metadata: v.metadata,
+                metadataVersion: v.metadataVersion,
+                agentState: v.agentState,
+                agentStateVersion: v.agentStateVersion,
+                dataEncryptionKey: v.dataEncryptionKey ? Buffer.from(v.dataEncryptionKey).toString('base64') : null,
+                lastMessage: null,
+            })),
+            ...shares.map((share) => {
+                const v = share.session;
                 return {
                     id: v.id,
                     seq: v.seq,
                     createdAt: v.createdAt.getTime(),
-                    updatedAt: sessionUpdatedAt,
+                    updatedAt: v.updatedAt.getTime(),
                     active: v.active,
                     activeAt: v.lastActiveAt.getTime(),
                     metadata: v.metadata,
                     metadataVersion: v.metadataVersion,
                     agentState: v.agentState,
                     agentStateVersion: v.agentStateVersion,
-                    dataEncryptionKey: v.dataEncryptionKey ? Buffer.from(v.dataEncryptionKey).toString('base64') : null,
-                    lastMessage: null
+                    // Important: for shared sessions, return the recipient-wrapped DEK.
+                    dataEncryptionKey: Buffer.from(share.encryptedDataKey).toString('base64'),
+                    lastMessage: null,
+                    owner: share.sharedByUserId,
+                    ownerProfile: toShareUserProfile(share.sharedByUser),
+                    accessLevel: share.accessLevel,
+                    canApprovePermissions: share.canApprovePermissions,
                 };
-            })
-        });
+            }),
+        ]
+            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .slice(0, 150);
+
+        return reply.send({ sessions });
     });
 
     // V2 Sessions API - Active sessions only
@@ -309,29 +348,32 @@ export function sessionRoutes(app: Fastify) {
         schema: {
             params: z.object({
                 sessionId: z.string()
-            })
+            }),
+            querystring: z.object({
+                limit: z.coerce.number().int().min(1).max(500).default(150),
+                beforeSeq: z.coerce.number().int().min(1).optional(),
+            }).optional(),
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
+        const { limit = 150, beforeSeq } = request.query || {};
 
-        // Verify session belongs to user
-        const session = await db.session.findFirst({
-            where: {
-                id: sessionId,
-                accountId: userId
-            }
-        });
-
-        if (!session) {
+        const access = await checkSessionAccess(userId, sessionId);
+        if (!access) {
             return reply.code(404).send({ error: 'Session not found' });
         }
 
+        const where: Prisma.SessionMessageWhereInput = { sessionId };
+        if (beforeSeq !== undefined) {
+            where.seq = { lt: beforeSeq };
+        }
+
         const messages = await db.sessionMessage.findMany({
-            where: { sessionId },
-            orderBy: { createdAt: 'desc' },
-            take: 150,
+            where,
+            orderBy: { seq: 'desc' },
+            take: limit + 1,
             select: {
                 id: true,
                 seq: true,
@@ -342,15 +384,23 @@ export function sessionRoutes(app: Fastify) {
             }
         });
 
+        const hasMore = messages.length > limit;
+        const resultMessages = hasMore ? messages.slice(0, limit) : messages;
+        const nextBeforeSeq = hasMore && resultMessages.length > 0
+            ? resultMessages[resultMessages.length - 1].seq
+            : null;
+
         return reply.send({
-            messages: messages.map((v) => ({
+            messages: resultMessages.map((v) => ({
                 id: v.id,
                 seq: v.seq,
                 content: v.content,
                 localId: v.localId,
                 createdAt: v.createdAt.getTime(),
                 updatedAt: v.updatedAt.getTime()
-            }))
+            })),
+            hasMore,
+            nextBeforeSeq
         });
     });
 

@@ -1,0 +1,737 @@
+import type { NormalizedMessage, RawRecord } from '../typesRaw';
+import { normalizeRawMessage } from '../typesRaw';
+import { computeNextSessionSeqFromUpdate } from '../realtimeSessionSeq';
+import type { Session } from '../storageTypes';
+import type { Metadata } from '../storageTypes';
+import { computeNextReadStateV1 } from '../readStateV1';
+import { getServerUrl } from '../serverConfig';
+import type { AuthCredentials } from '@/auth/tokenStorage';
+import { HappyError } from '@/utils/errors';
+import type { ApiMessage, ApiSessionMessagesResponse } from '../apiTypes';
+import { ApiSessionMessagesResponseSchema } from '../apiTypes';
+import { storage } from '../storage';
+import type { Encryption } from '../encryption/encryption';
+import { nowServerMs } from '../time';
+import { systemPrompt } from '../prompt/systemPrompt';
+import { Platform } from 'react-native';
+import { isRunningOnMac } from '@/utils/platform';
+import { randomUUID } from '@/platform/randomUUID';
+import { buildOutgoingMessageMeta } from '../messageMeta';
+import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
+import {
+    deleteMessageQueueV1DiscardedItem,
+    deleteMessageQueueV1Item,
+    discardMessageQueueV1Item,
+    enqueueMessageQueueV1Item,
+    restoreMessageQueueV1DiscardedItem,
+    updateMessageQueueV1Item,
+} from '../messageQueueV1';
+import { decodeMessageQueueV1ToPendingMessages, reconcilePendingMessagesFromMetadata } from '../messageQueueV1Pending';
+
+type SessionMessageEncryption = {
+    decryptMessage: (message: any) => Promise<any>;
+};
+
+function inferTaskLifecycleFromMessageContent(content: unknown): { isTaskComplete: boolean; isTaskStarted: boolean } {
+    const rawContent = content as { content?: { type?: string; data?: { type?: string } } } | null;
+    const contentType = rawContent?.content?.type;
+    const dataType = rawContent?.content?.data?.type;
+
+    const isTaskComplete =
+        (contentType === 'acp' || contentType === 'codex') &&
+        (dataType === 'task_complete' || dataType === 'turn_aborted');
+
+    const isTaskStarted = (contentType === 'acp' || contentType === 'codex') && dataType === 'task_started';
+
+    return { isTaskComplete, isTaskStarted };
+}
+
+type SessionEncryption = {
+    decryptAgentState: (version: number, value: string | null) => Promise<any>;
+    decryptMetadata: (version: number, value: string) => Promise<any>;
+};
+
+export async function handleNewMessageSocketUpdate(params: {
+    updateData: any;
+    getSessionEncryption: (sessionId: string) => SessionMessageEncryption | null;
+    getSession: (sessionId: string) => Session | undefined;
+    applySessions: (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
+    fetchSessions: () => void;
+    applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    isMutableToolCall: (sessionId: string, toolUseId: string) => boolean;
+    invalidateGitStatus: (sessionId: string) => void;
+    onSessionVisible: (sessionId: string) => void;
+}): Promise<void> {
+    const {
+        updateData,
+        getSessionEncryption,
+        getSession,
+        applySessions,
+        fetchSessions,
+        applyMessages,
+        isMutableToolCall,
+        invalidateGitStatus,
+        onSessionVisible,
+    } = params;
+
+    // Get encryption
+    const encryption = getSessionEncryption(updateData.body.sid);
+    if (!encryption) {
+        // Should never happen
+        console.error(`Session ${updateData.body.sid} not found`);
+        fetchSessions(); // Just fetch sessions again
+        return;
+    }
+
+    // Decrypt message
+    let lastMessage: NormalizedMessage | null = null;
+    if (updateData.body.message) {
+        const decrypted = await encryption.decryptMessage(updateData.body.message);
+        if (decrypted) {
+            lastMessage = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
+
+            // Check for task lifecycle events to update thinking state.
+            // This ensures UI updates even if volatile activity updates are lost.
+            const { isTaskComplete, isTaskStarted } = inferTaskLifecycleFromMessageContent(decrypted.content);
+
+            // Update session
+            const session = getSession(updateData.body.sid);
+            if (session) {
+                const nextSessionSeq = computeNextSessionSeqFromUpdate({
+                    currentSessionSeq: session.seq ?? 0,
+                    updateType: 'new-message',
+                    containerSeq: updateData.seq,
+                    messageSeq: updateData.body.message?.seq,
+                });
+
+                applySessions([
+                    {
+                        ...session,
+                        updatedAt: updateData.createdAt,
+                        seq: nextSessionSeq,
+                        // Update thinking state based on task lifecycle events
+                        ...(isTaskComplete ? { thinking: false } : {}),
+                        ...(isTaskStarted ? { thinking: true } : {}),
+                    },
+                ]);
+            } else {
+                // Fetch sessions again if we don't have this session
+                fetchSessions();
+            }
+
+            // Update messages
+            if (lastMessage) {
+                applyMessages(updateData.body.sid, [lastMessage]);
+                let hasMutableTool = false;
+                if (lastMessage.role === 'agent' && lastMessage.content[0] && lastMessage.content[0].type === 'tool-result') {
+                    hasMutableTool = isMutableToolCall(updateData.body.sid, lastMessage.content[0].tool_use_id);
+                }
+                if (hasMutableTool) {
+                    invalidateGitStatus(updateData.body.sid);
+                }
+            }
+        }
+    }
+
+    // Ping session
+    onSessionVisible(updateData.body.sid);
+}
+
+export function handleDeleteSessionSocketUpdate(params: {
+    sessionId: string;
+    deleteSession: (sessionId: string) => void;
+    removeSessionEncryption: (sessionId: string) => void;
+    removeProjectManagerSession: (sessionId: string) => void;
+    clearGitStatusForSession: (sessionId: string) => void;
+    log: { log: (message: string) => void };
+}) {
+    const { sessionId, deleteSession, removeSessionEncryption, removeProjectManagerSession, clearGitStatusForSession, log } = params;
+
+    // Remove session from storage
+    deleteSession(sessionId);
+
+    // Remove encryption keys from memory
+    removeSessionEncryption(sessionId);
+
+    // Remove from project manager
+    removeProjectManagerSession(sessionId);
+
+    // Clear any cached git status
+    clearGitStatusForSession(sessionId);
+
+    log.log(`🗑️ Session ${sessionId} deleted from local storage`);
+}
+
+export async function buildUpdatedSessionFromSocketUpdate(params: {
+    session: Session;
+    updateBody: any;
+    updateSeq: number;
+    updateCreatedAt: number;
+    sessionEncryption: SessionEncryption;
+}): Promise<{ nextSession: Session; agentState: any }> {
+    const { session, updateBody, updateSeq, updateCreatedAt, sessionEncryption } = params;
+
+    const agentState = updateBody.agentState
+        ? await sessionEncryption.decryptAgentState(updateBody.agentState.version, updateBody.agentState.value)
+        : session.agentState;
+
+    const metadata = updateBody.metadata
+        ? await sessionEncryption.decryptMetadata(updateBody.metadata.version, updateBody.metadata.value)
+        : session.metadata;
+
+    const nextSession: Session = {
+        ...session,
+        agentState,
+        agentStateVersion: updateBody.agentState ? updateBody.agentState.version : session.agentStateVersion,
+        metadata,
+        metadataVersion: updateBody.metadata ? updateBody.metadata.version : session.metadataVersion,
+        updatedAt: updateCreatedAt,
+        seq: computeNextSessionSeqFromUpdate({
+            currentSessionSeq: session.seq ?? 0,
+            updateType: 'update-session',
+            containerSeq: updateSeq,
+            messageSeq: undefined,
+        }),
+    };
+
+    return { nextSession, agentState };
+}
+
+export async function repairInvalidReadStateV1(params: {
+    sessionId: string;
+    sessionSeqUpperBound: number;
+    attempted: Set<string>;
+    inFlight: Set<string>;
+    getSession: (sessionId: string) => { metadata?: Metadata | null } | undefined;
+    updateSessionMetadataWithRetry: (sessionId: string, updater: (metadata: Metadata) => Metadata) => Promise<void>;
+    now: () => number;
+}): Promise<void> {
+    const { sessionId, sessionSeqUpperBound, attempted, inFlight, getSession, updateSessionMetadataWithRetry, now } = params;
+
+    if (attempted.has(sessionId) || inFlight.has(sessionId)) {
+        return;
+    }
+
+    const session = getSession(sessionId);
+    const readState = session?.metadata?.readStateV1;
+    if (!readState) return;
+    if (readState.sessionSeq <= sessionSeqUpperBound) return;
+
+    attempted.add(sessionId);
+    inFlight.add(sessionId);
+    try {
+        await updateSessionMetadataWithRetry(sessionId, (metadata) => {
+            const prev = metadata.readStateV1;
+            if (!prev) return metadata;
+            if (prev.sessionSeq <= sessionSeqUpperBound) return metadata;
+
+            const result = computeNextReadStateV1({
+                prev,
+                sessionSeq: sessionSeqUpperBound,
+                pendingActivityAt: prev.pendingActivityAt,
+                now: now(),
+            });
+            if (!result.didChange) return metadata;
+            return { ...metadata, readStateV1: result.next };
+        });
+    } catch {
+        // ignore
+    } finally {
+        inFlight.delete(sessionId);
+    }
+}
+
+type UpdateSessionMetadataWithRetry = (sessionId: string, updater: (metadata: Metadata) => Metadata) => Promise<void>;
+
+export async function fetchAndApplyPendingMessages(params: {
+    sessionId: string;
+    encryption: Encryption;
+}): Promise<void> {
+    const { sessionId, encryption } = params;
+
+    const sessionEncryption = encryption.getSessionEncryption(sessionId);
+    if (!sessionEncryption) {
+        storage.getState().applyPendingLoaded(sessionId);
+        storage.getState().applyDiscardedPendingMessages(sessionId, []);
+        return;
+    }
+
+    const session = storage.getState().sessions[sessionId];
+    if (!session) {
+        storage.getState().applyPendingLoaded(sessionId);
+        storage.getState().applyDiscardedPendingMessages(sessionId, []);
+        return;
+    }
+
+    const decoded = await decodeMessageQueueV1ToPendingMessages({
+        messageQueueV1: session.metadata?.messageQueueV1,
+        messageQueueV1Discarded: session.metadata?.messageQueueV1Discarded,
+        decryptRaw: (encrypted) => sessionEncryption.decryptRaw(encrypted),
+    });
+
+    const existingPendingState = storage.getState().sessionPending[sessionId];
+    const reconciled = reconcilePendingMessagesFromMetadata({
+        messageQueueV1: session.metadata?.messageQueueV1,
+        messageQueueV1Discarded: session.metadata?.messageQueueV1Discarded,
+        decodedPending: decoded.pending,
+        decodedDiscarded: decoded.discarded,
+        existingPending: existingPendingState?.messages ?? [],
+        existingDiscarded: existingPendingState?.discarded ?? [],
+    });
+
+    storage.getState().applyPendingMessages(sessionId, reconciled.pending);
+    storage.getState().applyDiscardedPendingMessages(sessionId, reconciled.discarded);
+}
+
+export async function enqueuePendingMessage(params: {
+    sessionId: string;
+    text: string;
+    displayText?: string;
+    encryption: Encryption;
+    updateSessionMetadataWithRetry: UpdateSessionMetadataWithRetry;
+}): Promise<void> {
+    const { sessionId, text, displayText, encryption, updateSessionMetadataWithRetry } = params;
+
+    storage.getState().markSessionOptimisticThinking(sessionId);
+
+    const sessionEncryption = encryption.getSessionEncryption(sessionId);
+    if (!sessionEncryption) {
+        storage.getState().clearSessionOptimisticThinking(sessionId);
+        throw new Error(`Session ${sessionId} not found`);
+    }
+
+    const session = storage.getState().sessions[sessionId];
+    if (!session) {
+        storage.getState().clearSessionOptimisticThinking(sessionId);
+        throw new Error(`Session ${sessionId} not found in storage`);
+    }
+
+    const permissionMode = session.permissionMode || 'default';
+    const flavor = session.metadata?.flavor;
+    const agentId = resolveAgentIdFromFlavor(flavor);
+    const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
+    const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
+
+    const localId = randomUUID();
+
+    let sentFrom: string;
+    if (Platform.OS === 'web') {
+        sentFrom = 'web';
+    } else if (Platform.OS === 'android') {
+        sentFrom = 'android';
+    } else if (Platform.OS === 'ios') {
+        sentFrom = isRunningOnMac() ? 'mac' : 'ios';
+    } else {
+        sentFrom = 'web';
+    }
+
+    const content: RawRecord = {
+        role: 'user',
+        content: {
+            type: 'text',
+            text,
+        },
+        meta: buildOutgoingMessageMeta({
+            sentFrom,
+            permissionMode: permissionMode || 'default',
+            model,
+            appendSystemPrompt: systemPrompt,
+            displayText,
+        }),
+    };
+
+    const createdAt = nowServerMs();
+    const updatedAt = createdAt;
+    const encryptedRawRecord = await sessionEncryption.encryptRawRecord(content);
+
+    storage.getState().upsertPendingMessage(sessionId, {
+        id: localId,
+        localId,
+        createdAt,
+        updatedAt,
+        text,
+        displayText,
+        rawRecord: content,
+    });
+
+    try {
+        await updateSessionMetadataWithRetry(sessionId, (metadata) =>
+            enqueueMessageQueueV1Item(metadata, {
+                localId,
+                message: encryptedRawRecord,
+                createdAt,
+                updatedAt,
+            }),
+        );
+    } catch (e) {
+        storage.getState().removePendingMessage(sessionId, localId);
+        storage.getState().clearSessionOptimisticThinking(sessionId);
+        throw e;
+    }
+}
+
+export async function updatePendingMessage(params: {
+    sessionId: string;
+    pendingId: string;
+    text: string;
+    encryption: Encryption;
+    updateSessionMetadataWithRetry: UpdateSessionMetadataWithRetry;
+}): Promise<void> {
+    const { sessionId, pendingId, text, encryption, updateSessionMetadataWithRetry } = params;
+
+    const sessionEncryption = encryption.getSessionEncryption(sessionId);
+    if (!sessionEncryption) {
+        throw new Error(`Session ${sessionId} not found`);
+    }
+
+    const existing = storage.getState().sessionPending[sessionId]?.messages?.find((m) => m.id === pendingId);
+    if (!existing) {
+        throw new Error('Pending message not found');
+    }
+
+    const content: RawRecord = existing.rawRecord
+        ? {
+              ...(existing.rawRecord as any),
+              content: {
+                  type: 'text',
+                  text,
+              },
+          }
+        : {
+              role: 'user',
+              content: { type: 'text', text },
+              meta: {
+                  appendSystemPrompt: systemPrompt,
+              },
+          };
+
+    const encryptedRawRecord = await sessionEncryption.encryptRawRecord(content);
+    const updatedAt = nowServerMs();
+
+    await updateSessionMetadataWithRetry(sessionId, (metadata) =>
+        updateMessageQueueV1Item(metadata, {
+            localId: pendingId,
+            message: encryptedRawRecord,
+            createdAt: existing.createdAt,
+            updatedAt,
+        }),
+    );
+
+    storage.getState().upsertPendingMessage(sessionId, {
+        ...existing,
+        text,
+        updatedAt,
+        rawRecord: content,
+    });
+}
+
+export async function deletePendingMessage(params: {
+    sessionId: string;
+    pendingId: string;
+    updateSessionMetadataWithRetry: UpdateSessionMetadataWithRetry;
+}): Promise<void> {
+    const { sessionId, pendingId, updateSessionMetadataWithRetry } = params;
+
+    await updateSessionMetadataWithRetry(sessionId, (metadata) => deleteMessageQueueV1Item(metadata, pendingId));
+    storage.getState().removePendingMessage(sessionId, pendingId);
+}
+
+export async function discardPendingMessage(params: {
+    sessionId: string;
+    pendingId: string;
+    opts?: { reason?: 'switch_to_local' | 'manual' };
+    updateSessionMetadataWithRetry: UpdateSessionMetadataWithRetry;
+    encryption: Encryption;
+}): Promise<void> {
+    const { sessionId, pendingId, opts, updateSessionMetadataWithRetry, encryption } = params;
+
+    const discardedAt = nowServerMs();
+    await updateSessionMetadataWithRetry(sessionId, (metadata) =>
+        discardMessageQueueV1Item(metadata, {
+            localId: pendingId,
+            discardedAt,
+            discardedReason: opts?.reason ?? 'manual',
+        }),
+    );
+    await fetchAndApplyPendingMessages({ sessionId, encryption });
+}
+
+export async function restoreDiscardedPendingMessage(params: {
+    sessionId: string;
+    pendingId: string;
+    updateSessionMetadataWithRetry: UpdateSessionMetadataWithRetry;
+    encryption: Encryption;
+}): Promise<void> {
+    const { sessionId, pendingId, updateSessionMetadataWithRetry, encryption } = params;
+
+    await updateSessionMetadataWithRetry(sessionId, (metadata) =>
+        restoreMessageQueueV1DiscardedItem(metadata, { localId: pendingId, now: nowServerMs() }),
+    );
+    await fetchAndApplyPendingMessages({ sessionId, encryption });
+}
+
+export async function deleteDiscardedPendingMessage(params: {
+    sessionId: string;
+    pendingId: string;
+    updateSessionMetadataWithRetry: UpdateSessionMetadataWithRetry;
+    encryption: Encryption;
+}): Promise<void> {
+    const { sessionId, pendingId, updateSessionMetadataWithRetry, encryption } = params;
+
+    await updateSessionMetadataWithRetry(sessionId, (metadata) => deleteMessageQueueV1DiscardedItem(metadata, pendingId));
+    await fetchAndApplyPendingMessages({ sessionId, encryption });
+}
+
+type SessionListEncryption = {
+    decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+    initializeSessions: (sessionKeys: Map<string, Uint8Array | null>) => Promise<void>;
+    getSessionEncryption: (sessionId: string) => SessionEncryption | null;
+};
+
+export async function fetchAndApplySessions(params: {
+    credentials: AuthCredentials;
+    encryption: SessionListEncryption;
+    sessionDataKeys: Map<string, Uint8Array>;
+    applySessions: (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
+    repairInvalidReadStateV1: (params: { sessionId: string; sessionSeqUpperBound: number }) => Promise<void>;
+    log: { log: (message: string) => void };
+}): Promise<void> {
+    const { credentials, encryption, sessionDataKeys, applySessions, repairInvalidReadStateV1, log } = params;
+
+    const API_ENDPOINT = getServerUrl();
+    const response = await fetch(`${API_ENDPOINT}/v1/sessions`, {
+        headers: {
+            'Authorization': `Bearer ${credentials.token}`,
+            'Content-Type': 'application/json',
+        },
+    });
+
+    if (!response.ok) {
+        if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
+            throw new HappyError(`Failed to fetch sessions (${response.status})`, false);
+        }
+        throw new Error(`Failed to fetch sessions: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const sessions = data.sessions as Array<{
+        id: string;
+        seq: number;
+        metadata: string;
+        metadataVersion: number;
+        agentState: string | null;
+        agentStateVersion: number;
+        dataEncryptionKey: string | null;
+        active: boolean;
+        activeAt: number;
+        createdAt: number;
+        updatedAt: number;
+        lastMessage: ApiMessage | null;
+        // Sharing (present only for sessions shared with the current user)
+        owner?: string;
+        ownerProfile?: {
+            id: string;
+            username: string | null;
+            firstName: string | null;
+            lastName: string | null;
+            avatar: string | null;
+        };
+        accessLevel?: 'view' | 'edit' | 'admin';
+        canApprovePermissions?: boolean;
+    }>;
+
+    // Initialize all session encryptions first
+    const sessionKeys = new Map<string, Uint8Array | null>();
+    for (const session of sessions) {
+        if (session.dataEncryptionKey) {
+            const decrypted = await encryption.decryptEncryptionKey(session.dataEncryptionKey);
+            if (!decrypted) {
+                console.error(`Failed to decrypt data encryption key for session ${session.id}`);
+                continue;
+            }
+            sessionKeys.set(session.id, decrypted);
+            sessionDataKeys.set(session.id, decrypted);
+        } else {
+            sessionKeys.set(session.id, null);
+            sessionDataKeys.delete(session.id);
+        }
+    }
+    await encryption.initializeSessions(sessionKeys);
+
+    // Decrypt sessions
+    const decryptedSessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[] = [];
+    for (const session of sessions) {
+        // Get session encryption (should always exist after initialization)
+        const sessionEncryption = encryption.getSessionEncryption(session.id);
+        if (!sessionEncryption) {
+            console.error(`Session encryption not found for ${session.id} - this should never happen`);
+            continue;
+        }
+
+        // Decrypt metadata using session-specific encryption
+        const metadata = await sessionEncryption.decryptMetadata(session.metadataVersion, session.metadata);
+
+        // Decrypt agent state using session-specific encryption
+        const agentState = await sessionEncryption.decryptAgentState(session.agentStateVersion, session.agentState);
+
+        // Put it all together
+        decryptedSessions.push({
+            ...session,
+            thinking: false,
+            thinkingAt: 0,
+            metadata,
+            agentState,
+        });
+    }
+
+    // Apply to storage
+    applySessions(decryptedSessions);
+    log.log(`📥 fetchSessions completed - processed ${decryptedSessions.length} sessions`);
+
+    void (async () => {
+        for (const session of decryptedSessions) {
+            const readState = session.metadata?.readStateV1;
+            if (!readState) continue;
+            if (readState.sessionSeq <= session.seq) continue;
+            await repairInvalidReadStateV1({ sessionId: session.id, sessionSeqUpperBound: session.seq });
+        }
+    })();
+}
+
+type SessionMessagesEncryption = {
+    decryptMessages: (messages: ApiMessage[]) => Promise<any[]>;
+};
+
+export async function fetchAndApplyMessages(params: {
+    sessionId: string;
+    getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
+    request: (path: string) => Promise<Response>;
+    sessionReceivedMessages: Map<string, Set<string>>;
+    applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    markMessagesLoaded: (sessionId: string) => void;
+    onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
+    log: { log: (message: string) => void };
+}): Promise<void> {
+    const { sessionId, getSessionEncryption, request, sessionReceivedMessages, applyMessages, markMessagesLoaded, log } =
+        params;
+
+    log.log(`💬 fetchMessages starting for session ${sessionId} - acquiring lock`);
+
+    // Get encryption - may not be ready yet if session was just created
+    // Throwing an error triggers backoff retry in InvalidateSync
+    const encryption = getSessionEncryption(sessionId);
+    if (!encryption) {
+        log.log(`💬 fetchMessages: Session encryption not ready for ${sessionId}, will retry`);
+        throw new Error(`Session encryption not ready for ${sessionId}`);
+    }
+
+    // Request (apiSocket.request calibrates server time best-effort from the HTTP Date header)
+    const response = await request(`/v1/sessions/${sessionId}/messages`);
+    const json = await response.json();
+    const parsed = ApiSessionMessagesResponseSchema.safeParse(json);
+    if (!parsed.success) {
+        throw new Error(`Invalid /messages response: ${parsed.error.message}`);
+    }
+    const data = parsed.data;
+    params.onMessagesPage?.(data);
+
+    // Collect existing messages
+    let eixstingMessages = sessionReceivedMessages.get(sessionId);
+    if (!eixstingMessages) {
+        eixstingMessages = new Set<string>();
+        sessionReceivedMessages.set(sessionId, eixstingMessages);
+    }
+
+    // Decrypt and normalize messages
+    const normalizedMessages: NormalizedMessage[] = [];
+
+    // Filter out existing messages and prepare for batch decryption
+    const messagesToDecrypt: ApiMessage[] = [];
+    for (const msg of [...data.messages].reverse()) {
+        if (!eixstingMessages.has(msg.id)) {
+            messagesToDecrypt.push(msg);
+        }
+    }
+
+    // Batch decrypt all messages at once
+    const decryptedMessages = await encryption.decryptMessages(messagesToDecrypt);
+
+    // Process decrypted messages
+    for (let i = 0; i < decryptedMessages.length; i++) {
+        const decrypted = decryptedMessages[i];
+        if (decrypted) {
+            eixstingMessages.add(decrypted.id);
+            // Normalize the decrypted message
+            const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
+            if (normalized) {
+                normalizedMessages.push(normalized);
+            }
+        }
+    }
+
+    // Apply to storage
+    applyMessages(sessionId, normalizedMessages);
+    markMessagesLoaded(sessionId);
+    log.log(`💬 fetchMessages completed for session ${sessionId} - processed ${normalizedMessages.length} messages`);
+}
+
+export async function fetchAndApplyOlderMessages(params: {
+    sessionId: string;
+    beforeSeq: number;
+    limit: number;
+    getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
+    request: (path: string) => Promise<Response>;
+    sessionReceivedMessages: Map<string, Set<string>>;
+    applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
+    log: { log: (message: string) => void };
+}): Promise<{ applied: number; page: ApiSessionMessagesResponse }> {
+    const { sessionId, beforeSeq, limit, getSessionEncryption, request, sessionReceivedMessages, applyMessages, log } = params;
+
+    // Get encryption - may not be ready yet if session was just created
+    const encryption = getSessionEncryption(sessionId);
+    if (!encryption) {
+        throw new Error(`Session encryption not ready for ${sessionId}`);
+    }
+
+    const qs = new URLSearchParams({ beforeSeq: String(beforeSeq), limit: String(limit) });
+    const response = await request(`/v1/sessions/${sessionId}/messages?${qs.toString()}`);
+    const json = await response.json();
+    const parsed = ApiSessionMessagesResponseSchema.safeParse(json);
+    if (!parsed.success) {
+        throw new Error(`Invalid /messages response: ${parsed.error.message}`);
+    }
+    const data = parsed.data;
+    params.onMessagesPage?.(data);
+
+    let eixstingMessages = sessionReceivedMessages.get(sessionId);
+    if (!eixstingMessages) {
+        eixstingMessages = new Set<string>();
+        sessionReceivedMessages.set(sessionId, eixstingMessages);
+    }
+
+    const messagesToDecrypt: ApiMessage[] = [];
+    for (const msg of [...data.messages].reverse()) {
+        if (!eixstingMessages.has(msg.id)) {
+            messagesToDecrypt.push(msg);
+        }
+    }
+
+    const decryptedMessages = await encryption.decryptMessages(messagesToDecrypt);
+
+    const normalizedMessages: NormalizedMessage[] = [];
+    for (let i = 0; i < decryptedMessages.length; i++) {
+        const decrypted = decryptedMessages[i];
+        if (decrypted) {
+            eixstingMessages.add(decrypted.id);
+            const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
+            if (normalized) {
+                normalizedMessages.push(normalized);
+            }
+        }
+    }
+
+    applyMessages(sessionId, normalizedMessages);
+    log.log(`💬 fetchOlderMessages completed for session ${sessionId} - applied ${normalizedMessages.length} messages`);
+    return { applied: normalizedMessages.length, page: data };
+}

@@ -23,22 +23,7 @@ export type {
   AgentFactoryOptions,
 } from './core';
 
-export { AgentRegistry, agentRegistry } from './core';
-
 // ACP backend (low-level)
 export * from './acp';
 
-// Agent factories (high-level, recommended)
-export * from './factories';
-
-/**
- * Initialize all agent backends and register them with the global registry.
- *
- * Call this function during application startup to make all agents available.
- */
-export function initializeAgents(): void {
-  // Import and register agents from factories
-  const { registerGeminiAgent } = require('./factories/gemini');
-  registerGeminiAgent();
-}
-
+// Note: ACP backend creation is catalog-driven (see `@/agent/acp/createCatalogAcpBackend`).

@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { ToolViewProps } from "./_all";
-import { knownTools } from '../../tools/knownTools';
+import { View, Text } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import type { ToolViewProps } from './_registry';
 import { ToolSectionView } from '../../tools/ToolSectionView';
 
 export interface Todo {
@@ -11,80 +11,83 @@ export interface Todo {
     id?: string;
 }
 
-export const TodoView = React.memo<ToolViewProps>(({ tool }) => {
-    let todosList: Todo[] = [];
-    
-    // Try to get todos from input first
-    let parsedArguments = knownTools.TodoWrite.input.safeParse(tool.input);
-    if (parsedArguments.success && parsedArguments.data.todos) {
-        todosList = parsedArguments.data.todos;
-    }
-    
-    // If we have a properly structured result, use newTodos from there
-    let parsed = knownTools.TodoWrite.result.safeParse(tool.result);
-    if (parsed.success && parsed.data.newTodos) {
-        todosList = parsed.data.newTodos;
-    }
-    
-    // If we have todos to display, show them
-    if (todosList.length > 0) {
-        return (
-            <ToolSectionView>
-                <View style={styles.container}>
-                    {todosList.map((todo, index) => {
-                        const isCompleted = todo.status === 'completed';
-                        const isInProgress = todo.status === 'in_progress';
-                        const isPending = todo.status === 'pending';
+export const TodoView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
+    if (tool.state !== 'completed') return null;
 
-                        let textStyle: any = styles.todoText;
-                        let icon = '☐';
+    const listFromResult = Array.isArray((tool.result as any)?.todos) ? ((tool.result as any).todos as Todo[]) : null;
+    const listFromLegacyResult = Array.isArray((tool.result as any)?.newTodos) ? ((tool.result as any).newTodos as Todo[]) : null;
+    const listFromInput = Array.isArray((tool.input as any)?.todos) ? ((tool.input as any).todos as Todo[]) : null;
 
-                        if (isCompleted) {
-                            textStyle = [styles.todoText, styles.completedText];
-                            icon = '☑';
-                        } else if (isInProgress) {
-                            textStyle = [styles.todoText, styles.inProgressText];
-                            icon = '☐';
-                        } else if (isPending) {
-                            textStyle = [styles.todoText, styles.pendingText];
-                        }
+    const todosList = listFromResult ?? listFromLegacyResult ?? listFromInput ?? [];
+    if (todosList.length === 0) return null;
 
-                        return (
-                            <View key={todo.id || `todo-${index}`} style={styles.todoItem}>
-                                <Text style={textStyle}>
-                                    {icon} {todo.content}
-                                </Text>
-                            </View>
-                        );
-                    })}
-                </View>
-            </ToolSectionView>
-        )
-    }
+    const isFullView = detailLevel === 'full';
+    const shown = todosList.slice(0, isFullView ? 50 : 6);
+    const more = todosList.length - shown.length;
 
-    return null;
+    return (
+        <ToolSectionView fullWidth={isFullView}>
+            <View style={styles.container}>
+                {shown.map((todo, index) => {
+                    const isCompleted = todo.status === 'completed';
+                    const isInProgress = todo.status === 'in_progress';
+                    const isPending = todo.status === 'pending';
+
+                    let textStyle: any = styles.todoText;
+                    let icon = '☐';
+
+                    if (isCompleted) {
+                        textStyle = [styles.todoText, styles.completedText];
+                        icon = '☑';
+                    } else if (isInProgress) {
+                        textStyle = [styles.todoText, styles.inProgressText];
+                        icon = '☐';
+                    } else if (isPending) {
+                        textStyle = [styles.todoText, styles.pendingText];
+                    }
+
+                    return (
+                        <View key={todo.id || `todo-${index}`} style={styles.todoItem}>
+                            <Text style={textStyle} numberOfLines={isFullView ? 3 : 2}>
+                                {icon} {todo.content}
+                            </Text>
+                        </View>
+                    );
+                })}
+                {more > 0 ? <Text style={styles.more}>+{more} more</Text> : null}
+            </View>
+        </ToolSectionView>
+    );
 });
 
-const styles = StyleSheet.create({
+const styles = StyleSheet.create((theme) => ({
     container: {
-        gap: 4,
+        padding: 12,
+        borderRadius: 8,
+        backgroundColor: theme.colors.surfaceHigh,
+        gap: 6,
     },
     todoItem: {
         paddingVertical: 2,
     },
     todoText: {
         fontSize: 14,
-        color: '#000',
+        color: theme.colors.text,
         flex: 1,
     },
     completedText: {
-        color: '#34C759',
+        color: theme.colors.success,
         textDecorationLine: 'line-through',
     },
     inProgressText: {
-        color: '#007AFF',
+        color: theme.colors.text,
     },
     pendingText: {
-        color: '#666',
+        color: theme.colors.textSecondary,
     },
-});
+    more: {
+        fontSize: 12,
+        color: theme.colors.textSecondary,
+        fontFamily: 'Menlo',
+    },
+}));

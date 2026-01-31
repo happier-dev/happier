@@ -1,128 +1,154 @@
-import { useState, useEffect } from 'react';
-import { machineBash } from '@/sync/ops';
+import { useMemo, useRef } from 'react';
+import { useMachine } from '@/sync/storage';
+import { isMachineOnline } from '@/utils/machineUtils';
+import { useMachineCapabilitiesCache } from '@/hooks/useMachineCapabilitiesCache';
+import type { CapabilityDetectResult, CliCapabilityData, TmuxCapabilityData } from '@/sync/capabilitiesProtocol';
+import { AGENT_IDS, type AgentId, getAgentCore } from '@/agents/catalog';
+import { CHECKLIST_IDS } from '@happy/protocol/checklists';
 
-interface CLIAvailability {
-    claude: boolean | null; // null = unknown/loading, true = installed, false = not installed
-    codex: boolean | null;
-    gemini: boolean | null;
+export type CLIAvailability = Readonly<{
+    available: Readonly<Record<AgentId, boolean | null>>; // null = unknown/loading, true = installed, false = not installed
+    login: Readonly<Record<AgentId, boolean | null>>; // null = unknown/unsupported
+    tmux: boolean | null;
     isDetecting: boolean; // Explicit loading state
     timestamp: number; // When detection completed
     error?: string; // Detection error message (for debugging)
+}>;
+
+export interface UseCLIDetectionOptions {
+    /**
+     * When false, the hook will be cache-only (no automatic detection refresh).
+     */
+    autoDetect?: boolean;
+    /**
+     * When true, requests login status detection (best-effort; may return null).
+     */
+    includeLoginStatus?: boolean;
 }
 
-/**
- * Detects which CLI tools (claude, codex, gemini) are installed on a remote machine.
- *
- * NON-BLOCKING: Detection runs asynchronously in useEffect. UI shows all profiles
- * while detection is in progress, then updates when results arrive.
- *
- * Detection is automatic when machineId changes. Uses existing machineBash() RPC
- * to run `command -v` checks on the remote machine.
- *
- * CONSERVATIVE FALLBACK: If detection fails (network error, timeout, bash error),
- * sets all CLIs to null and timestamp to 0, hiding status from UI.
- * User discovers CLI availability when attempting to spawn.
- *
- * @param machineId - The machine to detect CLIs on (null = no detection)
- * @returns CLI availability status for claude, codex, and gemini
- *
- * @example
- * const cliAvailability = useCLIDetection(selectedMachineId);
- * if (cliAvailability.claude === false) {
- *     // Show "Claude CLI not detected" warning
- * }
- */
-export function useCLIDetection(machineId: string | null): CLIAvailability {
-    const [availability, setAvailability] = useState<CLIAvailability>({
-        claude: null,
-        codex: null,
-        gemini: null,
-        isDetecting: false,
-        timestamp: 0,
+function readCliAvailable(result: CapabilityDetectResult | undefined): boolean | null {
+    if (!result || !result.ok) return null;
+    const data = result.data as Partial<CliCapabilityData> | undefined;
+    return typeof data?.available === 'boolean' ? data.available : null;
+}
+
+function readCliLogin(result: CapabilityDetectResult | undefined): boolean | null {
+    if (!result || !result.ok) return null;
+    const data = result.data as Partial<CliCapabilityData> | undefined;
+    const v = data?.isLoggedIn;
+    return typeof v === 'boolean' ? v : null;
+}
+
+function readTmuxAvailable(result: CapabilityDetectResult | undefined): boolean | null {
+    if (!result || !result.ok) return null;
+    const data = result.data as Partial<TmuxCapabilityData> | undefined;
+    return typeof data?.available === 'boolean' ? data.available : null;
+}
+
+export function useCLIDetection(machineId: string | null, options?: UseCLIDetectionOptions): CLIAvailability {
+    const machine = useMachine(machineId ?? '');
+    const isOnline = useMemo(() => {
+        if (!machineId || !machine) return false;
+        return isMachineOnline(machine);
+    }, [machine, machineId]);
+
+    const includeLoginStatus = Boolean(options?.includeLoginStatus);
+    const request = useMemo(() => {
+        if (!includeLoginStatus) return { checklistId: CHECKLIST_IDS.NEW_SESSION };
+        const overrides: Record<string, { params: { includeLoginStatus: true } }> = {};
+        for (const agentId of AGENT_IDS) {
+            overrides[`cli.${getAgentCore(agentId).cli.detectKey}`] = { params: { includeLoginStatus: true } };
+        }
+        return {
+            checklistId: CHECKLIST_IDS.NEW_SESSION,
+            overrides: overrides as any,
+        };
+    }, [includeLoginStatus]);
+
+    const { state: cached } = useMachineCapabilitiesCache({
+        machineId,
+        enabled: isOnline && options?.autoDetect !== false,
+        request,
     });
 
-    useEffect(() => {
-        if (!machineId) {
-            setAvailability({ claude: null, codex: null, gemini: null, isDetecting: false, timestamp: 0 });
-            return;
+    const lastSuccessfulDetectAtRef = useRef<number>(0);
+    const fallbackDetectAtRef = useRef<number>(0);
+
+    return useMemo((): CLIAvailability => {
+        if (!machineId || !isOnline) {
+            const available: Record<AgentId, boolean | null> = {} as any;
+            const login: Record<AgentId, boolean | null> = {} as any;
+            for (const agentId of AGENT_IDS) {
+                available[agentId] = null;
+                login[agentId] = null;
+            }
+            return {
+                available,
+                login,
+                tmux: null,
+                isDetecting: false,
+                timestamp: 0,
+            };
         }
 
-        let cancelled = false;
+        const snapshot =
+            cached.status === 'loaded'
+                ? cached.snapshot
+                : cached.status === 'loading'
+                    ? cached.snapshot
+                    : cached.status === 'error'
+                        ? cached.snapshot
+                        : undefined;
 
-        const detectCLIs = async () => {
-            // Set detecting flag (non-blocking - UI stays responsive)
-            setAvailability(prev => ({ ...prev, isDetecting: true }));
-            console.log('[useCLIDetection] Starting detection for machineId:', machineId);
+        const results = snapshot?.response.results ?? {};
+        const resultsById = results as Record<string, CapabilityDetectResult | undefined>;
+        const now = Date.now();
+        const latestCheckedAt = Math.max(
+            0,
+            ...(Object.values(results)
+                .map((r) => (r && typeof r.checkedAt === 'number' ? r.checkedAt : 0))),
+        );
 
-            try {
-                // Use single bash command to check both CLIs efficiently
-                // command -v is POSIX compliant and more reliable than which
-                const result = await machineBash(
-                    machineId,
-                    '(command -v claude >/dev/null 2>&1 && echo "claude:true" || echo "claude:false") && ' +
-                    '(command -v codex >/dev/null 2>&1 && echo "codex:true" || echo "codex:false") && ' +
-                    '(command -v gemini >/dev/null 2>&1 && echo "gemini:true" || echo "gemini:false")',
-                    '/'
-                );
+        if (cached.status === 'loaded' && latestCheckedAt > 0) {
+            lastSuccessfulDetectAtRef.current = latestCheckedAt;
+            fallbackDetectAtRef.current = 0;
+        } else if (cached.status === 'loaded' && latestCheckedAt === 0 && lastSuccessfulDetectAtRef.current === 0 && fallbackDetectAtRef.current === 0) {
+            // Older/broken snapshots could omit checkedAt values; keep a stable "loaded" timestamp
+            // rather than flapping Date.now() on re-renders.
+            fallbackDetectAtRef.current = now;
+        }
 
-                if (cancelled) return;
-                console.log('[useCLIDetection] Result:', { success: result.success, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr });
-
-                if (result.success && result.exitCode === 0) {
-                    // Parse output: "claude:true\ncodex:false\ngemini:false"
-                    const lines = result.stdout.trim().split('\n');
-                    const cliStatus: { claude?: boolean; codex?: boolean; gemini?: boolean } = {};
-
-                    lines.forEach(line => {
-                        const [cli, status] = line.split(':');
-                        if (cli && status) {
-                            cliStatus[cli.trim() as 'claude' | 'codex' | 'gemini'] = status.trim() === 'true';
-                        }
-                    });
-
-                    console.log('[useCLIDetection] Parsed CLI status:', cliStatus);
-                    setAvailability({
-                        claude: cliStatus.claude ?? null,
-                        codex: cliStatus.codex ?? null,
-                        gemini: cliStatus.gemini ?? null,
-                        isDetecting: false,
-                        timestamp: Date.now(),
-                    });
-                } else {
-                    // Detection command failed - CONSERVATIVE fallback (don't assume availability)
-                    console.log('[useCLIDetection] Detection failed (success=false or exitCode!=0):', result);
-                    setAvailability({
-                        claude: null,
-                        codex: null,
-                        gemini: null,
-                        isDetecting: false,
-                        timestamp: 0,
-                        error: `Detection failed: ${result.stderr || 'Unknown error'}`,
-                    });
-                }
-            } catch (error) {
-                if (cancelled) return;
-
-                // Network/RPC error - CONSERVATIVE fallback (don't assume availability)
-                console.log('[useCLIDetection] Network/RPC error:', error);
-                setAvailability({
-                    claude: null,
-                    codex: null,
-                    gemini: null,
-                    isDetecting: false,
-                    timestamp: 0,
-                    error: error instanceof Error ? error.message : 'Detection error',
-                });
+        if (!snapshot) {
+            const available: Record<AgentId, boolean | null> = {} as any;
+            const login: Record<AgentId, boolean | null> = {} as any;
+            for (const agentId of AGENT_IDS) {
+                available[agentId] = null;
+                login[agentId] = null;
             }
+            return {
+                available,
+                login,
+                tmux: null,
+                isDetecting: cached.status === 'loading',
+                timestamp: 0,
+                ...(cached.status === 'error' ? { error: 'Detection error' } : {}),
+            };
+        }
+
+        const available: Record<AgentId, boolean | null> = {} as any;
+        const login: Record<AgentId, boolean | null> = {} as any;
+        for (const agentId of AGENT_IDS) {
+            const capId = `cli.${getAgentCore(agentId).cli.detectKey}`;
+            available[agentId] = readCliAvailable(resultsById[capId]);
+            login[agentId] = includeLoginStatus ? readCliLogin(resultsById[capId]) : null;
+        }
+
+        return {
+            available,
+            login,
+            tmux: readTmuxAvailable(results['tool.tmux']),
+            isDetecting: cached.status === 'loading',
+            timestamp: lastSuccessfulDetectAtRef.current || latestCheckedAt || fallbackDetectAtRef.current || 0,
         };
-
-        detectCLIs();
-
-        // Cleanup: Cancel detection if component unmounts or machineId changes
-        return () => {
-            cancelled = true;
-        };
-    }, [machineId]);
-
-    return availability;
+    }, [cached, includeLoginStatus, isOnline, machineId]);
 }

@@ -6,7 +6,7 @@
  *
  * Uses the official @agentclientprotocol/sdk from Zed Industries.
  *
- * For agent-specific backends, use the factories in src/agent/factories/.
+ * For agent-specific backends, use the provider ACP backends (e.g. `@/backends/gemini/acp/backend`).
  */
 
 // Core ACP backend
@@ -31,11 +31,12 @@ export {
   handlePlanUpdate,
   handleThinkingUpdate,
 } from './sessionUpdateHandlers';
-
 // Factory helper for generic ACP backends
 export { createAcpBackend, type CreateAcpBackendOptions } from './createAcpBackend';
+
+// Catalog-driven ACP backend creation
+export * from './createCatalogAcpBackend';
 
 // Legacy aliases for backwards compatibility
 export { AcpBackend as AcpSdkBackend } from './AcpBackend';
 export type { AcpBackendOptions as AcpSdkBackendOptions } from './AcpBackend';
-
