@@ -1,5 +1,5 @@
 # Stage 1: install dependencies with workspace context
-FROM node:20 AS deps
+FROM node:22 AS deps
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y python3 ffmpeg make g++ build-essential && rm -rf /var/lib/apt/lists/*
@@ -37,7 +37,7 @@ COPY packages/server ./packages/server
 RUN yarn workspace @happier-dev/server build
 
 # Stage 3: runtime
-FROM node:20 AS runner
+FROM node:22 AS runner
 
 WORKDIR /repo
 
