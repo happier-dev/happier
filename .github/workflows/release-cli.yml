@@ -27,7 +27,7 @@ on:
           - latest
           - next
       run_tests:
-        description: "Run packages/cli tests before publishing"
+        description: "Run apps/cli tests before publishing"
         required: true
         default: true
         type: boolean
@@ -72,14 +72,14 @@ jobs:
 
       - name: Run cli tests
         if: inputs.run_tests
-        run: yarn --cwd packages/cli test
+        run: yarn --cwd apps/cli test
 
       - name: Commit version bump (main)
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add packages/cli/package.json
+          git add apps/cli/package.json
           git commit -m "chore(release): bump cli to v${{ steps.bump_cli.outputs.version }}"
 
       - name: Push main
@@ -94,7 +94,7 @@ jobs:
             echo "NPM_TOKEN is required to publish." >&2
             exit 1
           fi
-          cd packages/cli
+          cd apps/cli
           yarn prepublishOnly
           npm publish --access public --tag "${{ inputs.npm_tag }}"
 

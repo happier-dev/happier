@@ -67,11 +67,11 @@ This is intentionally narrower than CLI normalization: it exists to keep older d
 ### Code locations
 
 - V2 canonicalization + per-tool families:
-  - `packages/cli/src/agent/tools/normalization/index.ts`
-  - `packages/cli/src/agent/tools/normalization/families/*`
-  - `packages/cli/src/agent/tools/normalization/types.ts`
+  - `apps/cli/src/agent/tools/normalization/index.ts`
+  - `apps/cli/src/agent/tools/normalization/families/*`
+  - `apps/cli/src/agent/tools/normalization/types.ts`
 - Entry points where tool events are normalized before sending/storing:
-  - `packages/cli/src/api/apiSession.ts` (ACP + Codex MCP paths)
+  - `apps/cli/src/api/apiSession.ts` (ACP + Codex MCP paths)
 
 ### Canonical tool metadata (`_happy` + `_raw`)
 
@@ -92,7 +92,7 @@ Example `_happy` fields (non-exhaustive):
 
 Canonical tool names are selected so UI renderers can be provider-agnostic. The mapping lives in:
 
-- `canonicalizeToolNameV2(...)` in `packages/cli/src/agent/tools/normalization/index.ts`
+- `canonicalizeToolNameV2(...)` in `apps/cli/src/agent/tools/normalization/index.ts`
 
 Per-tool normalization is implemented in `families/*` (intention-based groupings like search/tools, file edits, etc.).
 
@@ -115,26 +115,26 @@ Optional overrides:
 
 Implementation:
 
-- `packages/cli/src/agent/tools/trace/toolTrace.ts`
+- `apps/cli/src/agent/tools/trace/toolTrace.ts`
 
 ### Curated fixtures (v1)
 
 Committed fixtures:
 
-- `packages/cli/src/agent/tools/normalization/__fixtures__/tool-trace-fixtures.v1.json`
+- `apps/cli/src/agent/tools/normalization/__fixtures__/tool-trace-fixtures.v1.json`
 
 Allowlist (the “what do we keep?” control):
 
-- `packages/cli/scripts/tool-trace-fixtures.v1.allowlist.txt`
+- `apps/cli/scripts/tool-trace-fixtures.v1.allowlist.txt`
 
 Fixture generation script:
 
-- `packages/cli/scripts/tool-trace-fixtures-v1.ts`
+- `apps/cli/scripts/tool-trace-fixtures-v1.ts`
 
 Run (from repo root):
 
 ```bash
-cd packages/cli
+cd apps/cli
 yarn tool:trace:fixtures:v1 --stack <stack> --write
 ```
 
@@ -142,9 +142,9 @@ yarn tool:trace:fixtures:v1 --stack <stack> --write
 
 The drift regression suite is fixture-driven:
 
-- `packages/cli/src/agent/tools/normalization/fixtures.v1.test.ts`
-- `packages/cli/src/agent/tools/normalization/index.test.ts`
-- `packages/cli/src/agent/tools/trace/toolTraceFixturesAllowlist.test.ts`
+- `apps/cli/src/agent/tools/normalization/fixtures.v1.test.ts`
+- `apps/cli/src/agent/tools/normalization/index.test.ts`
+- `apps/cli/src/agent/tools/trace/toolTraceFixturesAllowlist.test.ts`
 
 Run via `happys`:
 
@@ -160,15 +160,15 @@ happys stack test <stack> happy-cli
 
 The app uses **one renderer per canonical tool name**, registered in:
 
-- `packages/app/sources/components/tools/views/_registry.tsx`
+- `apps/ui/sources/components/tools/views/_registry.tsx`
 
 The timeline tool card renderer:
 
-- `packages/app/sources/components/tools/ToolView.tsx`
+- `apps/ui/sources/components/tools/ToolView.tsx`
 
 The full tool view (always uses the same renderer with `detailLevel="full"` when available):
 
-- `packages/app/sources/components/tools/ToolFullView.tsx`
+- `apps/ui/sources/components/tools/ToolFullView.tsx`
 
 ### Detail levels + user preferences
 
@@ -184,7 +184,7 @@ Additionally, `ToolFullView` supports an optional debug/raw view toggle controll
 
 Preferences are synced per-user in:
 
-- `packages/app/sources/sync/settings.ts`
+- `apps/ui/sources/sync/settings.ts`
 
 Relevant keys:
 
@@ -199,8 +199,8 @@ Relevant keys:
 
 When `_happy.canonicalToolName` is missing, the app normalizes tool calls for rendering via:
 
-- `packages/app/sources/components/tools/utils/normalizeToolCallForRendering.ts`
-- helpers in `packages/app/sources/components/tools/utils/normalize/*`
+- `apps/ui/sources/components/tools/utils/normalizeToolCallForRendering.ts`
+- helpers in `apps/ui/sources/components/tools/utils/normalize/*`
 
 This normalization:
 
@@ -221,8 +221,8 @@ Claude local-control sessions reconstruct tool events from the transcript and no
 
 Key files:
 
-- `packages/app/sources/sync/typesRaw/schemas.ts` (accepts/transforms tool formats)
-- `packages/app/sources/sync/typesRaw/normalize.ts` (canonicalizes tool_use/tool_result blocks)
+- `apps/ui/sources/sync/typesRaw/schemas.ts` (accepts/transforms tool formats)
+- `apps/ui/sources/sync/typesRaw/normalize.ts` (canonicalizes tool_use/tool_result blocks)
 
 These reconstructed tools then flow into the same UI pipeline and render via the same registry + views.
 

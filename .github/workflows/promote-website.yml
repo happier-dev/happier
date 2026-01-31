@@ -10,8 +10,18 @@ on:
         options:
           - preview
           - production
+      source_ref:
+        description: "Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
+        required: true
+        default: auto
+        type: string
+      allow_cross_promote:
+        description: "Allow promoting a non-default source ref to the selected environment (use with care)."
+        required: true
+        default: false
+        type: boolean
       bump:
-        description: "Version bump on main (website)"
+        description: "Version bump on source ref (website)"
         required: true
         type: choice
         options:
@@ -20,7 +30,7 @@ on:
           - minor
           - major
       run_build:
-        description: "Run packages/website build before promoting"
+        description: "Run apps/website build before promoting"
         required: true
         default: true
         type: boolean
@@ -36,10 +46,38 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
+      - name: Resolve source ref
+        id: resolve
+        run: |
+          set -euo pipefail
+          env_name="${{ inputs.environment }}"
+          src="${{ inputs.source_ref }}"
+          if [ "$src" = "auto" ]; then
+            if [ "$env_name" = "preview" ]; then
+              src="dev"
+            else
+              src="main"
+            fi
+          fi
+
+          # Guardrails: allow using non-default source ref only when explicitly confirmed.
+          if [ "$env_name" = "production" ] && [ "$src" != "main" ] && [ "${{ inputs.allow_cross_promote }}" != "true" ]; then
+            echo "Refusing to promote '$src' to production without allow_cross_promote=true." >&2
+            exit 1
+          fi
+
+          # Bumps require a real branch target we can push back to.
+          if [ "${{ inputs.bump }}" != "none" ] && [ "$src" != "main" ] && [ "$src" != "dev" ]; then
+            echo "Refusing to bump versions when source_ref is not a branch (main/dev). Set bump=none or use a branch." >&2
+            exit 1
+          fi
+
+          echo "ref=$src" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source ref
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ steps.resolve.outputs.ref }}
           fetch-depth: 0
 
       - name: Setup Node
@@ -47,7 +85,10 @@ jobs:
         with:
           node-version: 20
 
-      - name: Bump website version (main)
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Bump website version (source ref)
         id: bump_website
         run: |
           set -euo pipefail
@@ -59,27 +100,29 @@ jobs:
           echo "skipped=false" >> "$GITHUB_OUTPUT"
           echo "version=$out" >> "$GITHUB_OUTPUT"
 
-      - name: Install + build website
+      - name: Build website
         if: inputs.run_build
         run: |
           set -euo pipefail
-          yarn --cwd packages/website install --frozen-lockfile --ignore-engines
-          yarn --cwd packages/website build
+          yarn --cwd apps/website build
 
-      - name: Commit version bump (main)
+      - name: Commit version bump (source ref)
         if: steps.bump_website.outputs.skipped != 'true'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add packages/website/package.json
+          git add apps/website/package.json
           git commit -m "chore(release): bump website to v${{ steps.bump_website.outputs.version }}"
 
-      - name: Push main
+      - name: Push source ref (only for branches)
         if: steps.bump_website.outputs.skipped != 'true'
-        run: git push origin HEAD:main
+        run: |
+          set -euo pipefail
+          src="${{ steps.resolve.outputs.ref }}"
+          git push origin "HEAD:refs/heads/$src"
 
-      - name: Promote main to deploy branch
+      - name: Promote source ref to deploy branch
         env:
           DEPLOY_REF: deploy/${{ inputs.environment }}/website
         run: |
@@ -90,4 +133,3 @@ jobs:
           else
             git push origin HEAD:"$DEPLOY_REF"
           fi
-

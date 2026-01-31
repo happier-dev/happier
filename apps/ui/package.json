@@ -36,8 +36,8 @@
     "preset": "jest-expo"
   },
   "dependencies": {
-    "@happier-dev/agents": "link:../agents",
-    "@happier-dev/protocol": "link:../protocol",
+    "@happier-dev/agents": "link:../../packages/agents",
+    "@happier-dev/protocol": "link:../../packages/protocol",
     "@config-plugins/react-native-webrtc": "^12.0.0",
     "@elevenlabs/react": "^0.12.3",
     "@elevenlabs/react-native": "^0.5.7",

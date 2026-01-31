@@ -1,6 +1,6 @@
 # Protocol
 
-This document describes the Happier wire protocol as implemented in `packages/server`. The protocol is intentionally small: JSON over HTTP for reads/actions and Socket.IO for real-time sync. Most payloads are end-to-end encrypted client-side; see `encryption.md` for the encryption boundaries and encoding details. For the full HTTP surface and auth flows, see `api.md`.
+This document describes the Happier wire protocol as implemented in `apps/server`. The protocol is intentionally small: JSON over HTTP for reads/actions and Socket.IO for real-time sync. Most payloads are end-to-end encrypted client-side; see `encryption.md` for the encryption boundaries and encoding details. For the full HTTP surface and auth flows, see `api.md`.
 
 ## Transport and versioning
 - HTTP API: JSON requests/responses on `/v1` and `/v2` routes.
@@ -199,6 +199,6 @@ See `api.md` for the full HTTP endpoint catalog and auth flows.
 - Versioned fields (metadata, agentState, daemonState, artifact header/body, access keys, KV) use optimistic concurrency with `expectedVersion` and return a version-mismatch response containing the current version/data.
 
 ## Implementation references
-- API routes: `packages/server/sources/app/api/routes`
-- Socket handlers: `packages/server/sources/app/api/socket`
-- Event routing: `packages/server/sources/app/events/eventRouter.ts`
+- API routes: `apps/server/sources/app/api/routes`
+- Socket handlers: `apps/server/sources/app/api/socket`
+- Event routing: `apps/server/sources/app/events/eventRouter.ts`

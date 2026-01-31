@@ -11,5 +11,5 @@ This folder documents how Happier works internally, with a focus on protocol, ba
 - cli-architecture.md: CLI and daemon architecture and how they interact with the server.
 
 ## Conventions
-- Paths and field names reflect the current implementation in `packages/server`.
+- Paths and field names reflect the current implementation in `apps/server`.
 - Examples are illustrative; the canonical source is the code.

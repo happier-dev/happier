@@ -28,7 +28,7 @@ export function classifyHappyProcess(proc: { pid: number; name?: string; cmd?: s
         cmd.includes('bin/happy.mjs') ||
         (cmd.includes('tsx') &&
           cmd.includes('src/index.ts') &&
-          (cmd.includes('packages/cli') || cmd.includes('happy-cli') || cmd.includes('@happier-dev/cli'))))) ||
+          (cmd.includes('apps/cli') || cmd.includes('happy-cli') || cmd.includes('@happier-dev/cli'))))) ||
     cmd.includes('happier.mjs') ||
     cmd.includes('happy.mjs') ||
     cmd.includes('@happier-dev/cli') ||

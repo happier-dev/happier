@@ -11,9 +11,9 @@
  * - --bump none|patch|minor|major (required)
  *
  * For "app", this updates:
- * - packages/app/package.json version
- * - packages/app/app.config.js expo.version (string literal)
- * - packages/app/src-tauri/*.json (if present) top-level "version"
+ * - apps/ui/package.json version
+ * - apps/ui/app.config.js expo.version (string literal)
+ * - apps/ui/src-tauri/*.json (if present) top-level "version"
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -131,10 +131,10 @@ function main() {
 
   const repoRoot = process.cwd();
   const componentDirByName = {
-    app: path.join(repoRoot, 'packages', 'app'),
-    cli: path.join(repoRoot, 'packages', 'cli'),
-    server: path.join(repoRoot, 'packages', 'server'),
-    website: path.join(repoRoot, 'packages', 'website'),
+    app: path.join(repoRoot, 'apps', 'ui'),
+    cli: path.join(repoRoot, 'apps', 'cli'),
+    server: path.join(repoRoot, 'apps', 'server'),
+    website: path.join(repoRoot, 'apps', 'website'),
   };
 
   if (!component || !(component in componentDirByName)) {

@@ -17,7 +17,7 @@ describe('bundleWorkspaceDeps', () => {
 
     const agentsDir = resolve(repoRoot, 'packages', 'agents');
     const protocolDir = resolve(repoRoot, 'packages', 'protocol');
-    const happyCliDir = resolve(repoRoot, 'packages', 'cli');
+    const happyCliDir = resolve(repoRoot, 'apps', 'cli');
 
     mkdirSync(resolve(agentsDir, 'dist'), { recursive: true });
     mkdirSync(resolve(protocolDir, 'dist'), { recursive: true });

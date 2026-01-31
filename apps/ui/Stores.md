@@ -62,7 +62,7 @@ Your code. Your privacy. Your Claude Code companion.
 ## URLs
 
 ### Privacy Policy
-https://github.com/happier-dev/happier/blob/main/packages/app/PRIVACY.md
+https://github.com/happier-dev/happier/blob/main/apps/ui/PRIVACY.md
 
 ### Support / Contact
 https://github.com/happier-dev/happier/issues

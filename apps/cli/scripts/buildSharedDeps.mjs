@@ -15,7 +15,7 @@ function findRepoRoot(startDir) {
     if (parent === dir) break;
     dir = parent;
   }
-  // Fallback for older layouts (repoRoot/packages/cli/scripts).
+  // Fallback for older layouts (repoRoot/apps/cli/scripts).
   return resolve(startDir, '..', '..', '..');
 }
 

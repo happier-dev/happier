@@ -8,20 +8,20 @@ WORKDIR /repo
 
 COPY package.json yarn.lock ./
 
-RUN mkdir -p packages/app packages/server packages/cli packages/agents packages/protocol
+RUN mkdir -p apps/ui apps/server apps/cli packages/agents packages/protocol
 
-COPY packages/app/package.json packages/app/
-COPY packages/server/package.json packages/server/
-COPY packages/cli/package.json packages/cli/
+COPY apps/ui/package.json apps/ui/
+COPY apps/server/package.json apps/server/
+COPY apps/cli/package.json apps/cli/
 COPY packages/agents/package.json packages/agents/
 COPY packages/protocol/package.json packages/protocol/
 
 # Workspace postinstall requirements
-COPY packages/app/patches packages/app/patches
-COPY packages/server/prisma packages/server/prisma
-COPY packages/cli/scripts packages/cli/scripts
-COPY packages/cli/tools packages/cli/tools
-COPY packages/app/tools packages/app/tools
+COPY apps/ui/patches apps/ui/patches
+COPY apps/server/prisma apps/server/prisma
+COPY apps/cli/scripts apps/cli/scripts
+COPY apps/cli/tools apps/cli/tools
+COPY apps/ui/tools apps/ui/tools
 COPY packages/agents/src packages/agents/src
 COPY packages/agents/tsconfig.json packages/agents/tsconfig.json
 COPY packages/protocol/src packages/protocol/src
@@ -32,7 +32,7 @@ RUN yarn install --frozen-lockfile --ignore-engines
 # Stage 2: build the server
 FROM deps AS builder
 
-COPY packages/server ./packages/server
+COPY apps/server ./apps/server
 
 RUN yarn workspace @happier-dev/server build
 
@@ -49,10 +49,10 @@ ENV NODE_ENV=production
 
 # Copy necessary files from the builder stage
 COPY --from=builder /repo/node_modules /repo/node_modules
-COPY --from=builder /repo/packages/server /repo/packages/server
+COPY --from=builder /repo/apps/server /repo/apps/server
 
 # Expose the port the app will run on
 EXPOSE 3000
 
 # Command to run the application
-CMD ["yarn", "--cwd", "packages/server", "start"]
+CMD ["yarn", "--cwd", "apps/server", "start"]
