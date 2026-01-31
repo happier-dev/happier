@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="none" role="img" aria-label="Happier providers mock screenshot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#07070B"/>
+      <stop offset="1" stop-color="#0B0B12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10B981"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <filter id="shadow" x="-40" y="-40" width="1680" height="980" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" rx="36" fill="url(#bg)"/>
+
+  <g opacity="0.9">
+    <rect x="70" y="70" width="1460" height="760" rx="22" fill="#0E0F16" stroke="rgba(255,255,255,0.10)"/>
+    <circle cx="110" cy="110" r="8" fill="#FF5F57"/>
+    <circle cx="135" cy="110" r="8" fill="#FFBD2E"/>
+    <circle cx="160" cy="110" r="8" fill="#28C840"/>
+    <text x="220" y="116" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="16" fill="rgba(255,255,255,0.6)">Happier • Providers</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="90" y="150" width="1420" height="650" rx="18" fill="#0B0C12" stroke="rgba(255,255,255,0.10)"/>
+  </g>
+
+  <!-- Header -->
+  <g>
+    <rect x="112" y="176" width="1376" height="74" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="140" y="210" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="22" fill="rgba(255,255,255,0.92)">Choose your provider</text>
+    <text x="140" y="234" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">Subscriptions or API keys — switch any time.</text>
+  </g>
+
+  <!-- Provider cards -->
+  <g opacity="0.98">
+    <rect x="112" y="270" width="1376" height="530" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+  </g>
+
+  <g>
+    <rect x="148" y="308" width="420" height="150" rx="20" fill="rgba(16,185,129,0.10)" stroke="rgba(16,185,129,0.25)"/>
+    <text x="188" y="362" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.92)">Claude Code</text>
+    <text x="188" y="392" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Run locally, resume anywhere.</text>
+    <circle cx="518" cy="350" r="16" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.18)"/>
+    <text x="512" y="356" font-family="Inter, system-ui" font-weight="900" font-size="12" fill="rgba(255,255,255,0.9)">✓</text>
+
+    <rect x="590" y="308" width="420" height="150" rx="20" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="630" y="362" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.90)">Codex</text>
+    <text x="630" y="392" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Use subscriptions or keys.</text>
+    <rect x="910" y="338" width="64" height="28" rx="10" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)"/>
+    <text x="924" y="357" font-family="Inter, system-ui" font-weight="800" font-size="12" fill="rgba(255,255,255,0.75)">API</text>
+
+    <rect x="1032" y="308" width="420" height="150" rx="20" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="1072" y="362" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.90)">Gemini</text>
+    <text x="1072" y="392" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Configurable and fast.</text>
+    <rect x="1352" y="338" width="76" height="28" rx="10" fill="rgba(56,189,248,0.12)" stroke="rgba(56,189,248,0.22)"/>
+    <text x="1368" y="357" font-family="Inter, system-ui" font-weight="800" font-size="12" fill="rgba(255,255,255,0.80)">PRO</text>
+  </g>
+
+  <g>
+    <rect x="148" y="478" width="420" height="150" rx="20" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="188" y="532" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.90)">OpenCode</text>
+    <text x="188" y="562" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Bring your own runtime.</text>
+
+    <rect x="590" y="478" width="862" height="150" rx="20" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+    <text x="630" y="532" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.92)">More providers</text>
+    <text x="630" y="562" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Happier is built to support more models and platforms over time.</text>
+    <rect x="630" y="586" width="320" height="10" rx="5" fill="url(#accent)" opacity="0.75"/>
+  </g>
+
+  <!-- Bottom note -->
+  <g opacity="0.9">
+    <text x="112" y="840" font-family="Inter, system-ui" font-size="12" fill="rgba(255,255,255,0.45)">Not affiliated with or endorsed by Anthropic, OpenAI, or Google.</text>
+  </g>
+</svg>

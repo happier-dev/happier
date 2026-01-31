@@ -1,0 +1,46 @@
+# Stage 1: install deps (website-local lockfile)
+FROM node:20-alpine AS deps
+
+WORKDIR /repo/packages/website
+
+COPY packages/website/package.json packages/website/yarn.lock ./
+RUN yarn install --frozen-lockfile --ignore-engines
+
+# Stage 2: build static site
+FROM deps AS builder
+
+COPY packages/website/index.html ./
+COPY packages/website/vite.config.js ./
+COPY packages/website/postcss.config.js ./
+COPY packages/website/tailwind.config.js ./
+COPY packages/website/public ./public
+COPY packages/website/src ./src
+
+RUN yarn build
+
+# Stage 3: serve with nginx
+FROM nginx:alpine AS runner
+
+COPY --from=builder /repo/packages/website/dist /usr/share/nginx/html
+
+RUN rm /etc/nginx/conf.d/default.conf
+RUN echo 'server { \
+    listen 80; \
+    server_name _; \
+    root /usr/share/nginx/html; \
+    \
+    location /assets/ { \
+        try_files $uri =404; \
+    } \
+    \
+    location /.well-known/ { \
+        try_files $uri =404; \
+    } \
+    \
+    location / { \
+        try_files $uri $uri/ /index.html; \
+    } \
+}' > /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+

@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="none" role="img" aria-label="Happier collaboration mock screenshot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#07070B"/>
+      <stop offset="1" stop-color="#0B0B12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10B981"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <filter id="shadow" x="-40" y="-40" width="1680" height="980" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" rx="36" fill="url(#bg)"/>
+
+  <g opacity="0.9">
+    <rect x="70" y="70" width="1460" height="760" rx="22" fill="#0E0F16" stroke="rgba(255,255,255,0.10)"/>
+    <circle cx="110" cy="110" r="8" fill="#FF5F57"/>
+    <circle cx="135" cy="110" r="8" fill="#FFBD2E"/>
+    <circle cx="160" cy="110" r="8" fill="#28C840"/>
+    <text x="220" y="116" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="16" fill="rgba(255,255,255,0.6)">Happier • Collaboration</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="90" y="150" width="1420" height="650" rx="18" fill="#0B0C12" stroke="rgba(255,255,255,0.10)"/>
+  </g>
+
+  <!-- Top bar -->
+  <g>
+    <rect x="112" y="176" width="1376" height="70" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="140" y="210" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="22" fill="rgba(255,255,255,0.92)">Share & collaborate</text>
+    <text x="140" y="234" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">Invite teammates, keep links private, and collaborate with end-to-end encryption.</text>
+
+    <!-- Avatars -->
+    <g>
+      <circle cx="1320" cy="211" r="16" fill="rgba(16,185,129,0.25)" stroke="rgba(16,185,129,0.55)"/>
+      <text x="1314" y="217" font-family="Inter, system-ui" font-weight="800" font-size="12" fill="rgba(255,255,255,0.9)">L</text>
+      <circle cx="1360" cy="211" r="16" fill="rgba(56,189,248,0.22)" stroke="rgba(56,189,248,0.55)"/>
+      <text x="1354" y="217" font-family="Inter, system-ui" font-weight="800" font-size="12" fill="rgba(255,255,255,0.9)">A</text>
+      <circle cx="1400" cy="211" r="16" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.18)"/>
+      <text x="1394" y="217" font-family="Inter, system-ui" font-weight="800" font-size="12" fill="rgba(255,255,255,0.9)">+</text>
+    </g>
+
+    <rect x="1450" y="194" width="38" height="34" rx="12" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)"/>
+  </g>
+
+  <!-- Two-pane layout -->
+  <g opacity="0.98">
+    <rect x="112" y="270" width="860" height="510" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+    <rect x="1000" y="270" width="488" height="510" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+  </g>
+
+  <!-- Left: editor-ish panel -->
+  <g>
+    <rect x="146" y="306" width="792" height="42" rx="12" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="168" y="333" font-family="Inter, system-ui" font-weight="700" font-size="13" fill="rgba(255,255,255,0.75)">src/auth/refresh.ts</text>
+
+    <!-- Lines -->
+    <g opacity="0.9">
+      <rect x="146" y="370" width="520" height="10" rx="5" fill="rgba(255,255,255,0.12)"/>
+      <rect x="146" y="392" width="640" height="10" rx="5" fill="rgba(255,255,255,0.10)"/>
+      <rect x="146" y="414" width="420" height="10" rx="5" fill="rgba(255,255,255,0.10)"/>
+      <rect x="146" y="448" width="720" height="10" rx="5" fill="rgba(255,255,255,0.10)"/>
+      <rect x="146" y="470" width="520" height="10" rx="5" fill="rgba(255,255,255,0.10)"/>
+      <rect x="146" y="492" width="610" height="10" rx="5" fill="rgba(255,255,255,0.10)"/>
+      <rect x="146" y="526" width="460" height="10" rx="5" fill="rgba(255,255,255,0.10)"/>
+      <rect x="146" y="548" width="700" height="10" rx="5" fill="rgba(255,255,255,0.10)"/>
+      <rect x="146" y="570" width="560" height="10" rx="5" fill="rgba(255,255,255,0.10)"/>
+    </g>
+
+    <!-- Presence cursors -->
+    <g>
+      <path d="M620 452l18 10-10 4-4 12-4-26z" fill="rgba(16,185,129,0.95)"/>
+      <text x="652" y="462" font-family="Inter, system-ui" font-weight="800" font-size="12" fill="rgba(16,185,129,0.95)">Leeroy</text>
+
+      <path d="M780 528l18 10-10 4-4 12-4-26z" fill="rgba(56,189,248,0.95)"/>
+      <text x="812" y="538" font-family="Inter, system-ui" font-weight="800" font-size="12" fill="rgba(56,189,248,0.95)">Alex</text>
+    </g>
+  </g>
+
+  <!-- Right: activity + share settings -->
+  <g>
+    <text x="1032" y="316" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.9)">Live activity</text>
+
+    <rect x="1028" y="340" width="432" height="82" rx="18" fill="rgba(16,185,129,0.10)" stroke="rgba(16,185,129,0.25)"/>
+    <text x="1056" y="374" font-family="Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.9)">Alex joined</text>
+    <text x="1056" y="398" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.6)">Private link • read/write</text>
+
+    <rect x="1028" y="438" width="432" height="82" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="1056" y="472" font-family="Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.85)">Agent running</text>
+    <rect x="1056" y="488" width="220" height="10" rx="5" fill="url(#accent)" opacity="0.8"/>
+
+    <text x="1032" y="566" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.9)">Share settings</text>
+    <rect x="1028" y="590" width="432" height="190" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+
+    <rect x="1056" y="624" width="376" height="44" rx="14" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="1078" y="652" font-family="Inter, system-ui" font-weight="700" font-size="13" fill="rgba(255,255,255,0.75)">Access</text>
+    <text x="1238" y="652" font-family="Inter, system-ui" font-weight="700" font-size="13" fill="rgba(255,255,255,0.6)">Read/Write</text>
+
+    <rect x="1056" y="682" width="376" height="44" rx="14" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="1078" y="710" font-family="Inter, system-ui" font-weight="700" font-size="13" fill="rgba(255,255,255,0.75)">Link</text>
+    <text x="1238" y="710" font-family="Inter, system-ui" font-weight="700" font-size="13" fill="rgba(255,255,255,0.6)">Private</text>
+  </g>
+</svg>
