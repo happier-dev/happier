@@ -47,8 +47,8 @@
     "yaml": "^2.4.2"
   },
   "dependencies": {
-    "@happier-dev/agents": "link:../agents",
-    "@happier-dev/protocol": "link:../protocol",
+    "@happier-dev/agents": "link:../../packages/agents",
+    "@happier-dev/protocol": "link:../../packages/protocol",
     "@date-fns/tz": "^1.2.0",
     "@fastify/bearer-auth": "^10.1.1",
     "@fastify/cors": "^10.0.1",

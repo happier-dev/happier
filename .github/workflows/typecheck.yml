@@ -3,13 +3,13 @@ name: Expo App TypeScript typecheck
 on:
     pull_request:
         paths:
-            - 'packages/app/**'
+            - 'apps/ui/**'
             - '.github/workflows/typecheck.yml'
     push:
         branches:
             - main
         paths:
-            - 'packages/app/**'
+            - 'apps/ui/**'
             - '.github/workflows/typecheck.yml'
 
 jobs:

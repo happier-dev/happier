@@ -1,6 +1,6 @@
 # Encryption and Data Encoding
 
-This document details how client data is encrypted, how encrypted blobs are structured, and how those blobs map onto protocol fields. It is based on `packages/cli/src/api/encryption.ts` and the server routes that accept/emit these values.
+This document details how client data is encrypted, how encrypted blobs are structured, and how those blobs map onto protocol fields. It is based on `apps/cli/src/api/encryption.ts` and the server routes that accept/emit these values.
 
 For transport and event shapes, see `protocol.md`. For HTTP endpoints, see `api.md`.
 
@@ -346,7 +346,7 @@ POST /v1/kv
 ```
 
 ## Client-side types (shapes used before encryption)
-These are the client-side structures that get encrypted and sent over the wire. They are defined in `packages/cli/src/api/types.ts`.
+These are the client-side structures that get encrypted and sent over the wire. They are defined in `apps/cli/src/api/types.ts`.
 
 ### Session message content (encrypted)
 The payload stored in `SessionMessage.content` is always encrypted and wrapped as:
@@ -543,7 +543,7 @@ graph TB
 - Non-encrypted identifiers (ids, tags, versions) are always plain strings/numbers.
 
 ## Implementation references
-- Client crypto: `packages/cli/src/api/encryption.ts`
-- Session message format: `packages/cli/src/api/types.ts`
-- Server message ingestion: `packages/server/sources/app/api/socket/sessionUpdateHandler.ts`
-- Artifact/KV routes: `packages/server/sources/app/api/routes/artifactsRoutes.ts`, `packages/server/sources/app/kv/kvMutate.ts`
+- Client crypto: `apps/cli/src/api/encryption.ts`
+- Session message format: `apps/cli/src/api/types.ts`
+- Server message ingestion: `apps/server/sources/app/api/socket/sessionUpdateHandler.ts`
+- Artifact/KV routes: `apps/server/sources/app/api/routes/artifactsRoutes.ts`, `apps/server/sources/app/kv/kvMutate.ts`

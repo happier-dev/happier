@@ -4,14 +4,14 @@
     "scripts": {
         "build:packages": "yarn workspace @happier-dev/agents build && yarn workspace @happier-dev/protocol build",
         "ci:act": "bash scripts/ci/run-act-tests.sh",
-        "test": "yarn --cwd packages/app test && yarn --cwd packages/cli test && yarn --cwd packages/server test",
-        "typecheck": "yarn --cwd packages/app typecheck && yarn --cwd packages/cli typecheck && yarn --cwd packages/server typecheck"
+        "test": "yarn --cwd apps/ui test && yarn --cwd apps/cli test && yarn --cwd apps/server test",
+        "typecheck": "yarn --cwd apps/ui typecheck && yarn --cwd apps/cli typecheck && yarn --cwd apps/server typecheck"
     },
     "workspaces": {
         "packages": [
-            "packages/app",
-            "packages/cli",
-            "packages/server",
+            "apps/ui",
+            "apps/cli",
+            "apps/server",
             "packages/agents",
             "packages/protocol"
         ],

@@ -1,6 +1,6 @@
 # CLI Architecture
 
-This document describes the Happier CLI (`packages/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
+This document describes the Happier CLI (`apps/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
 
 ## System overview
 
@@ -373,9 +373,9 @@ RPC is used to send commands over the Socket.IO connection:
 This mechanism allows the server and mobile clients to drive local actions without exposing a broad REST surface.
 
 ## Implementation references
-- CLI entry: `packages/cli/src/index.ts`
-- Daemon: `packages/cli/src/daemon`
-- Control server/client: `packages/cli/src/daemon/controlServer.ts`, `packages/cli/src/daemon/controlClient.ts`
-- API clients: `packages/cli/src/api`
-- Persistence: `packages/cli/src/persistence.ts`
-- Config: `packages/cli/src/configuration.ts`
+- CLI entry: `apps/cli/src/index.ts`
+- Daemon: `apps/cli/src/daemon`
+- Control server/client: `apps/cli/src/daemon/controlServer.ts`, `apps/cli/src/daemon/controlClient.ts`
+- API clients: `apps/cli/src/api`
+- Persistence: `apps/cli/src/persistence.ts`
+- Config: `apps/cli/src/configuration.ts`

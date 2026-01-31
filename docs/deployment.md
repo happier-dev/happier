@@ -1,6 +1,6 @@
 # Deployment
 
-This document describes how to deploy the Happier backend (`packages/server`) and the infrastructure it expects.
+This document describes how to deploy the Happier backend (`apps/server`) and the infrastructure it expects.
 
 ## Runtime overview
 - **App server:** Node.js running `tsx ./sources/main.ts` (Fastify + Socket.IO).
@@ -51,7 +51,7 @@ Key notes:
 - The image includes FFmpeg and Python for media processing.
 
 ## Kubernetes manifests
-Example manifests live in `packages/server/deploy`:
+Example manifests live in `apps/server/deploy`:
 - `handy.yaml`: Deployment + Service + ExternalSecrets for the server.
 - `happy-redis.yaml`: Redis StatefulSet + Service + ConfigMap.
 
@@ -69,7 +69,7 @@ The server package includes scripts for local infrastructure:
 Use `.env`/`.env.dev` to load local settings when running `yarn workspace @happier-dev/server dev`.
 
 ## Implementation references
-- Entrypoint: `packages/server/sources/main.ts`
+- Entrypoint: `apps/server/sources/main.ts`
 - Dockerfile: `Dockerfile.server`
-- Kubernetes manifests: `packages/server/deploy`
-- Env usage: `packages/server/sources` (`rg -n "process.env"`)
+- Kubernetes manifests: `apps/server/deploy`
+- Env usage: `apps/server/sources` (`rg -n "process.env"`)

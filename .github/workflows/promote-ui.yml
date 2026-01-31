@@ -10,9 +10,20 @@ on:
         options:
           - preview
           - production
-      bump:
-        description: "Version bump on main (app)"
+      source_ref:
+        description: "Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
         required: true
+        default: auto
+        type: string
+      allow_cross_promote:
+        description: "Allow promoting a non-default source ref to the selected environment (use with care)."
+        required: true
+        default: false
+        type: boolean
+      bump:
+        description: "Version bump on source ref (app)"
+        required: true
+        default: none
         type: choice
         options:
           - none
@@ -20,7 +31,7 @@ on:
           - minor
           - major
       deploy_web:
-        description: "Promote deploy/<env>/ui (Dokploy web deploy on push)"
+        description: "Promote deploy/<env>/ui (web deploy on push)"
         required: true
         default: true
         type: boolean
@@ -42,7 +53,7 @@ on:
           - android
           - all
       run_tests:
-        description: "Run packages/app tests before promoting"
+        description: "Run apps/ui tests before promoting"
         required: true
         default: true
         type: boolean
@@ -58,10 +69,38 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout main
+      - name: Resolve source ref
+        id: resolve
+        run: |
+          set -euo pipefail
+          env_name="${{ inputs.environment }}"
+          src="${{ inputs.source_ref }}"
+          if [ "$src" = "auto" ]; then
+            if [ "$env_name" = "preview" ]; then
+              src="dev"
+            else
+              src="main"
+            fi
+          fi
+
+          # Guardrails: allow using non-default source ref only when explicitly confirmed.
+          if [ "$env_name" = "production" ] && [ "$src" != "main" ] && [ "${{ inputs.allow_cross_promote }}" != "true" ]; then
+            echo "Refusing to promote '$src' to production without allow_cross_promote=true." >&2
+            exit 1
+          fi
+
+          # Bumps require a real branch target we can push back to.
+          if [ "${{ inputs.bump }}" != "none" ] && [ "$src" != "main" ] && [ "$src" != "dev" ]; then
+            echo "Refusing to bump versions when source_ref is not a branch (main/dev). Set bump=none or use a branch." >&2
+            exit 1
+          fi
+
+          echo "ref=$src" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source ref
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ steps.resolve.outputs.ref }}
           fetch-depth: 0
 
       - name: Setup Node
@@ -72,7 +111,7 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile --ignore-engines
 
-      - name: Bump app version (main)
+      - name: Bump app version (source ref)
         id: bump_app
         run: |
           set -euo pipefail
@@ -86,17 +125,17 @@ jobs:
 
       - name: Run app tests
         if: inputs.run_tests
-        run: yarn --cwd packages/app test
+        run: yarn --cwd apps/ui test
 
-      - name: Commit version bump (main)
+      - name: Commit version bump (source ref)
         if: steps.bump_app.outputs.skipped != 'true'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add packages/app/package.json packages/app/app.config.js
-          if [ -d packages/app/src-tauri ]; then
-            git add packages/app/src-tauri || true
+          git add apps/ui/package.json apps/ui/app.config.js
+          if [ -d apps/ui/src-tauri ]; then
+            git add apps/ui/src-tauri || true
           fi
           git commit -m "chore(release): bump app to v${{ steps.bump_app.outputs.version }}"
 
@@ -112,9 +151,9 @@ jobs:
             exit 1
           fi
           if [ "${{ inputs.environment }}" = "production" ]; then
-            yarn --cwd packages/app ota:production
+            yarn --cwd apps/ui ota:production
           else
-            yarn --cwd packages/app ota
+            yarn --cwd apps/ui ota
           fi
 
       - name: Expo native build
@@ -142,11 +181,14 @@ jobs:
           fi
           npx --yes eas-cli@latest submit --platform "${{ inputs.expo_platform }}" --latest --non-interactive
 
-      - name: Push main
+      - name: Push source ref (only for branches)
         if: steps.bump_app.outputs.skipped != 'true'
-        run: git push origin HEAD:main
+        run: |
+          set -euo pipefail
+          src="${{ steps.resolve.outputs.ref }}"
+          git push origin "HEAD:refs/heads/$src"
 
-      - name: Promote main to deploy branch (web)
+      - name: Promote source ref to deploy branch (web)
         if: inputs.deploy_web
         env:
           DEPLOY_REF: deploy/${{ inputs.environment }}/ui
@@ -158,4 +200,3 @@ jobs:
           else
             git push origin HEAD:"$DEPLOY_REF"
           fi
-

@@ -70,7 +70,7 @@ function copyIfExists(src, dest) {
 
 export function bundleWorkspaceDeps(opts = {}) {
   const repoRoot = opts.repoRoot ?? findRepoRoot(__dirname);
-  const happyCliDir = opts.happyCliDir ?? resolve(repoRoot, 'packages', 'cli');
+  const happyCliDir = opts.happyCliDir ?? resolve(repoRoot, 'apps', 'cli');
 
   const bundles = [
     {
@@ -100,7 +100,7 @@ export function bundleWorkspaceDeps(opts = {}) {
 
     const distDir = resolve(bundle.srcDir, 'dist');
     if (!existsSync(distDir)) {
-      throw new Error(`Missing dist/ for ${bundle.name}. Run: yarn -s build:shared (from packages/cli)`);
+      throw new Error(`Missing dist/ for ${bundle.name}. Run: yarn -s build:shared (from apps/cli)`);
     }
 
     resetDir(bundle.destDir);

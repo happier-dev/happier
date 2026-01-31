@@ -126,8 +126,8 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
-    "@happier-dev/agents": "link:../agents",
-    "@happier-dev/protocol": "link:../protocol",
+    "@happier-dev/agents": "link:../../packages/agents",
+    "@happier-dev/protocol": "link:../../packages/protocol",
     "@eslint/compat": "^1",
     "@types/node": ">=20",
     "cross-env": "^10.1.0",

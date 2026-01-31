@@ -57,32 +57,32 @@ What belongs here:
 Example:
 - `packages/protocol/src/spawnSession.ts` defines `SpawnSessionErrorCode` + `SpawnSessionResult`.
 
-### 3) CLI agent catalog: `packages/cli/src/backends/catalog.ts`
+### 3) CLI agent catalog: `apps/cli/src/backends/catalog.ts`
 
 This is the CLI’s explicit assembly of backends into a deterministic map:
 - `export const AGENTS: Record<CatalogAgentId, AgentCatalogEntry> = { ... }`
 - helper resolvers such as `resolveCatalogAgentId(...)`
 
 Backend folders live under:
-- `packages/cli/src/backends/<agentId>/**`
+- `apps/cli/src/backends/<agentId>/**`
 
-### 4) App agents catalog: `packages/app/sources/agents/catalog.ts`
+### 4) App agents catalog: `apps/ui/sources/agents/catalog.ts`
 
 This is the app’s single public surface for screens:
-- screens import only from `packages/app/sources/agents/catalog.ts`
+- screens import only from `apps/ui/sources/agents/catalog.ts`
 - it composes:
   - **core registry** (`registryCore.ts`) for identity + app config
   - **UI registry** (`registryUi.ts`) for assets/visuals (lazy loaded for Node-safe tests)
   - **behavior registry** (`registryUiBehavior.ts`) for provider-specific hooks
 
 Provider code lives under:
-- `packages/app/sources/agents/providers/<agentId>/**`
+- `apps/ui/sources/agents/providers/<agentId>/**`
 
 ---
 
 ## App registries (mental model)
 
-There are three layers inside `packages/app/sources/agents/`:
+There are three layers inside `apps/ui/sources/agents/`:
 
 1) **Core registry** (`registryCore.ts`)
    - identity + app-facing config (translations, settings gating, permissions, connected service UX, resume config, etc.)
@@ -159,7 +159,7 @@ Add/update:
 ### Step 2 — add the CLI backend folder
 
 Create:
-- `packages/cli/src/backends/myagent/`
+- `apps/cli/src/backends/myagent/`
 
 Common files (as needed):
 - `cli/command.ts` (subcommand handler)
@@ -172,7 +172,7 @@ Common files (as needed):
 ### Step 3 — export one catalog entry and wire it into the CLI catalog
 
 Create:
-- `packages/cli/src/backends/myagent/index.ts`
+- `apps/cli/src/backends/myagent/index.ts`
 
 Pattern:
 
@@ -191,7 +191,7 @@ export const agent = {
 ```
 
 Then edit:
-- `packages/cli/src/backends/catalog.ts`
+- `apps/cli/src/backends/catalog.ts`
 
 Add:
 
@@ -207,14 +207,14 @@ export const AGENTS = {
 ### Step 4 — add the app provider folder + registries
 
 Create provider modules:
-- `packages/app/sources/agents/providers/<agentId>/core.ts`
-- `packages/app/sources/agents/providers/<agentId>/ui.ts`
-- `packages/app/sources/agents/providers/<agentId>/uiBehavior.ts` (optional; only if you need overrides)
+- `apps/ui/sources/agents/providers/<agentId>/core.ts`
+- `apps/ui/sources/agents/providers/<agentId>/ui.ts`
+- `apps/ui/sources/agents/providers/<agentId>/uiBehavior.ts` (optional; only if you need overrides)
 
 Wire them into registries:
-- add `*_CORE` to `packages/app/sources/agents/registryCore.ts`
-- add `*_UI` to `packages/app/sources/agents/registryUi.ts`
-- add `*_UI_BEHAVIOR_OVERRIDE` to `packages/app/sources/agents/registryUiBehavior.ts` (only if you have overrides)
+- add `*_CORE` to `apps/ui/sources/agents/registryCore.ts`
+- add `*_UI` to `apps/ui/sources/agents/registryUi.ts`
+- add `*_UI_BEHAVIOR_OVERRIDE` to `apps/ui/sources/agents/registryUiBehavior.ts` (only if you have overrides)
 
 ### Step 5 — update `@happier-dev/protocol` only when the boundary truly changes
 
@@ -235,8 +235,8 @@ yarn test
 Scoped:
 
 ```bash
-yarn --cwd packages/cli typecheck
-yarn --cwd packages/app typecheck
+yarn --cwd apps/cli typecheck
+yarn --cwd apps/ui typecheck
 ```
 
 If you’re running this repo via happy-stacks, prefer:
@@ -247,7 +247,7 @@ If you’re running this repo via happy-stacks, prefer:
 
 ## Node-safe imports (tests)
 
-Some tests import `packages/app/sources/agents/catalog.ts` in a Node environment. Avoid importing native/icon modules from code that executes during those imports.
+Some tests import `apps/ui/sources/agents/catalog.ts` in a Node environment. Avoid importing native/icon modules from code that executes during those imports.
 
 Patterns we use:
 - `catalog.ts` lazy-loads `registryUi.ts` via `require('./registryUi')` to avoid loading image files in Node.
@@ -276,9 +276,9 @@ This doc explains how the **Agent Catalog** works in Happier, and how to add a n
   - capability detection/checklists
   - daemon spawn wiring
   - optional ACP backend factories
-  - Source: `packages/cli/src/backends/catalog.ts`
+  - Source: `apps/cli/src/backends/catalog.ts`
 - **Backend folder**: provider/agent-specific code and wiring.
-  - Source: `packages/cli/src/backends/<agentId>/**`
+  - Source: `apps/cli/src/backends/<agentId>/**`
 - **Protocol**: shared cross-boundary contracts between UI and CLI daemon.
   - Source: `@happier-dev/protocol` (`packages/protocol`).
 
@@ -312,7 +312,7 @@ What belongs here:
 Example:
 - `packages/protocol/src/spawnSession.ts` defines `SpawnSessionErrorCode` + `SpawnSessionResult`.
 
-### 3) CLI agent catalog: `packages/cli/src/backends/catalog.ts`
+### 3) CLI agent catalog: `apps/cli/src/backends/catalog.ts`
 
 Where the CLI assembles all backends into a single map:
 - `export const AGENTS: Record<CatalogAgentId, AgentCatalogEntry> = { ... }`
@@ -324,11 +324,11 @@ Where the CLI assembles all backends into a single map:
 
 Each backend folder exports one canonical entry object from its `index.ts`:
 
-- `packages/cli/src/backends/<agentId>/index.ts` exports:
+- `apps/cli/src/backends/<agentId>/index.ts` exports:
   - `export const agent = { ... } satisfies AgentCatalogEntry;`
 
 The global catalog imports those entries and assembles them:
-- `packages/cli/src/backends/catalog.ts`
+- `apps/cli/src/backends/catalog.ts`
 
 This keeps backend-specific wiring co-located, while preserving a deterministic, explicit catalog (no self-registration side effects).
 
@@ -336,7 +336,7 @@ This keeps backend-specific wiring co-located, while preserving a deterministic,
 
 ## AgentCatalogEntry hooks (CLI)
 
-Type: `packages/cli/src/backends/types.ts` (`AgentCatalogEntry`)
+Type: `apps/cli/src/backends/types.ts` (`AgentCatalogEntry`)
 
 ### Required
 
@@ -348,7 +348,7 @@ Type: `packages/cli/src/backends/types.ts` (`AgentCatalogEntry`)
 
 - `getCliCommandHandler(): Promise<CommandHandler>`
   - Provides the `happy <agentId> ...` CLI subcommand handler.
-  - Used by `packages/cli/src/cli/commandRegistry.ts`.
+  - Used by `apps/cli/src/cli/commandRegistry.ts`.
 
 - `getCliCapabilityOverride(): Promise<Capability>`
   - Defines the `cli.<agentId>` capability descriptor, if the generic one is not sufficient.
@@ -361,7 +361,7 @@ Type: `packages/cli/src/backends/types.ts` (`AgentCatalogEntry`)
 
 - `getCliDetect(): Promise<CliDetectSpec>`
   - Provides version/login-status probe argv patterns used by the CLI snapshot.
-  - Consumed by `packages/cli/src/capabilities/snapshots/cliSnapshot.ts`.
+  - Consumed by `apps/cli/src/capabilities/snapshots/cliSnapshot.ts`.
 
 - `getCloudConnectTarget(): Promise<CloudConnectTarget>`
   - Enables `happier connect <agentId>` for this agent.
@@ -386,7 +386,7 @@ Type: `packages/cli/src/backends/types.ts` (`AgentCatalogEntry`)
 
 ### Capability id conventions (CLI)
 
-Defined in `packages/cli/src/capabilities/types.ts`:
+Defined in `apps/cli/src/capabilities/types.ts`:
 - `cli.<agentId>`: base “agent detected + login status + (optional) ACP capability surface” probe
 - `tool.${string}`: tool capability (e.g. `tool.tmux`)
 - `dep.${string}`: dependency capability (e.g. `dep.codex-acp`)
@@ -436,7 +436,7 @@ Add:
 ### Step 2 — Create a backend folder in the CLI
 
 Create folder:
-- `packages/cli/src/backends/myagent/`
+- `apps/cli/src/backends/myagent/`
 
 Add whatever you need (examples):
 - `cli/command.ts` (subcommand handler)
@@ -449,7 +449,7 @@ Add whatever you need (examples):
 ### Step 3 — Export the catalog entry from `index.ts`
 
 Create:
-- `packages/cli/src/backends/myagent/index.ts`
+- `apps/cli/src/backends/myagent/index.ts`
 
 Pattern:
 ```ts
@@ -469,7 +469,7 @@ export const agent = {
 ### Step 4 — Add it to the catalog assembly
 
 Edit:
-- `packages/cli/src/backends/catalog.ts`
+- `apps/cli/src/backends/catalog.ts`
 
 Add:
 ```ts

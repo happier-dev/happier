@@ -22,7 +22,7 @@ const tscBin = (() => {
   const binName = process.platform === 'win32' ? 'tsc.cmd' : 'tsc';
   const candidates = [
     resolve(repoRoot, 'node_modules', '.bin', binName),
-    resolve(repoRoot, 'packages', 'server', 'node_modules', '.bin', binName),
+    resolve(repoRoot, 'apps', 'server', 'node_modules', '.bin', binName),
   ];
   for (const candidate of candidates) {
     if (existsSync(candidate)) return candidate;

@@ -5,20 +5,20 @@ WORKDIR /repo
 
 COPY package.json yarn.lock ./
 
-RUN mkdir -p packages/app packages/server packages/cli packages/agents packages/protocol
+RUN mkdir -p apps/ui apps/server apps/cli packages/agents packages/protocol
 
-COPY packages/app/package.json packages/app/
-COPY packages/server/package.json packages/server/
-COPY packages/cli/package.json packages/cli/
+COPY apps/ui/package.json apps/ui/
+COPY apps/server/package.json apps/server/
+COPY apps/cli/package.json apps/cli/
 COPY packages/agents/package.json packages/agents/
 COPY packages/protocol/package.json packages/protocol/
 
 # Workspace postinstall requirements
-COPY packages/app/patches packages/app/patches
-COPY packages/app/tools packages/app/tools
-COPY packages/server/prisma packages/server/prisma
-COPY packages/cli/scripts packages/cli/scripts
-COPY packages/cli/tools packages/cli/tools
+COPY apps/ui/patches apps/ui/patches
+COPY apps/ui/tools apps/ui/tools
+COPY apps/server/prisma apps/server/prisma
+COPY apps/cli/scripts apps/cli/scripts
+COPY apps/cli/tools apps/cli/tools
 COPY packages/agents/src packages/agents/src
 COPY packages/agents/tsconfig.json packages/agents/tsconfig.json
 COPY packages/protocol/src packages/protocol/src
@@ -37,14 +37,14 @@ ENV APP_ENV=production
 ENV EXPO_PUBLIC_POSTHOG_API_KEY=$POSTHOG_API_KEY
 ENV EXPO_PUBLIC_REVENUE_CAT_STRIPE=$REVENUE_CAT_STRIPE
 
-COPY packages/app ./packages/app
+COPY apps/ui ./apps/ui
 
 RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist
 
 # Stage 3: runtime with Nginx
 FROM nginx:alpine AS runner
 
-COPY --from=builder /repo/packages/app/dist /usr/share/nginx/html
+COPY --from=builder /repo/apps/ui/dist /usr/share/nginx/html
 
 # Remove default nginx configuration
 RUN rm /etc/nginx/conf.d/default.conf
