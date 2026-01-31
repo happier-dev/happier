@@ -132,22 +132,22 @@ async function main() {
     console.log(
       [
         '',
-        banner('init', { subtitle: 'Initialize ~/.happy-stacks (runtime + shims).' }),
+        banner('init', { subtitle: 'Initialize ~/.happier-stack (runtime + shims).' }),
         '',
         sectionTitle('usage:'),
         `  ${cyan('happys init')} [--canonical-home-dir=/path] [--home-dir=/path] [--workspace-dir=/path] [--runtime-dir=/path] [--storage-dir=/path] [--cli-root-dir=/path] [--tailscale-bin=/path] [--tailscale-cmd-timeout-ms=MS] [--tailscale-enable-timeout-ms=MS] [--tailscale-enable-timeout-ms-auto=MS] [--tailscale-reset-timeout-ms=MS] [--install-path] [--no-runtime] [--force-runtime] [--no-bootstrap] [--] [bootstrap args...]`,
         '',
         sectionTitle('what it does:'),
         bullets([
-          `${cyan('home')} — stores runtime, shims, caches (default: ${cyan('~/.happy-stacks')})`,
-          `${cyan('workspace')} — where component checkouts live (default: ${cyan('~/.happy-stacks/workspace')})`,
-          `${cyan('runtime')} — stable install used by services/SwiftBar (default: ${cyan('~/.happy-stacks/runtime')})`,
-          `${cyan('shims')} — installs ${cyan('happys')} / ${cyan('happy')} under ${cyan('~/.happy-stacks/bin')}`,
+          `${cyan('home')} — stores runtime, shims, caches (default: ${cyan('~/.happier-stack')})`,
+          `${cyan('workspace')} — where component checkouts live (default: ${cyan('~/.happier-stack/workspace')})`,
+          `${cyan('runtime')} — stable install used by services/SwiftBar (default: ${cyan('~/.happier-stack/runtime')})`,
+          `${cyan('shims')} — installs ${cyan('hapsta')} under ${cyan('~/.happier-stack/bin')}`,
         ]),
         '',
         sectionTitle('notes:'),
         bullets([
-          `Writes ${cyan('~/.happy-stacks/.env')} as a stable pointer file (helps launchd/SwiftBar find the install).`,
+          `Writes ${cyan('~/.happier-stack/.env')} as a stable pointer file (helps launchd/SwiftBar find the install).`,
           `Runtime install is skipped if the same version is already installed (use ${cyan('--force-runtime')} to reinstall).`,
           `Set ${cyan('HAPPY_STACKS_INIT_NO_RUNTIME=1')} to persist skipping runtime installs on this machine.`,
           `Optional: ${cyan('--install-path')} adds shims to your shell PATH (idempotent).`,
@@ -166,61 +166,45 @@ async function main() {
   // Other scripts load this pointer via `scripts/utils/env.mjs`, but `init.mjs` is often run before
   // anything else (or directly from a repo checkout). So we load it here too.
   const canonicalHomeDirRaw = parseArgValue(argv, 'canonical-home-dir');
-  const canonicalHomeDir = expandHome(firstNonEmpty(
-    canonicalHomeDirRaw,
-    process.env.HAPPY_STACKS_CANONICAL_HOME_DIR,
-    process.env.HAPPY_LOCAL_CANONICAL_HOME_DIR,
-    join(homedir(), '.happy-stacks'),
-  ));
+  const canonicalHomeDir = expandHome(
+    firstNonEmpty(canonicalHomeDirRaw, process.env.HAPPY_STACKS_CANONICAL_HOME_DIR, join(homedir(), '.happier-stack'))
+  );
   process.env.HAPPY_STACKS_CANONICAL_HOME_DIR = canonicalHomeDir;
-  process.env.HAPPY_LOCAL_CANONICAL_HOME_DIR = process.env.HAPPY_LOCAL_CANONICAL_HOME_DIR ?? canonicalHomeDir;
 
   const canonicalEnvPath = join(canonicalHomeDir, '.env');
   if (existsSync(canonicalEnvPath)) {
     await loadEnvFile(canonicalEnvPath, { override: false });
     await loadEnvFile(canonicalEnvPath, { override: true, overridePrefix: 'HAPPY_STACKS_' });
-    await loadEnvFile(canonicalEnvPath, { override: true, overridePrefix: 'HAPPY_LOCAL_' });
   }
 
   const homeDirRaw = parseArgValue(argv, 'home-dir');
-  const homeDir = expandHome(firstNonEmpty(
-    homeDirRaw,
-    process.env.HAPPY_STACKS_HOME_DIR,
-    process.env.HAPPY_LOCAL_HOME_DIR,
-    join(homedir(), '.happy-stacks'),
-  ));
+  const homeDir = expandHome(firstNonEmpty(homeDirRaw, process.env.HAPPY_STACKS_HOME_DIR, join(homedir(), '.happier-stack')));
   process.env.HAPPY_STACKS_HOME_DIR = homeDir;
-  process.env.HAPPY_LOCAL_HOME_DIR = process.env.HAPPY_LOCAL_HOME_DIR ?? homeDir;
 
   const workspaceDirRaw = parseArgValue(argv, 'workspace-dir');
   const workspaceDirExpanded = expandHome(firstNonEmpty(
     workspaceDirRaw,
     process.env.HAPPY_STACKS_WORKSPACE_DIR,
-    process.env.HAPPY_LOCAL_WORKSPACE_DIR,
     join(homeDir, 'workspace'),
   ));
   // If the user passes a relative --workspace-dir, interpret it as relative to the home dir
   // (not the current cwd). This keeps setup predictable, especially when invoked via `npx`.
   const workspaceDir = workspaceDirExpanded.startsWith('/') ? workspaceDirExpanded : resolve(homeDir, workspaceDirExpanded);
   process.env.HAPPY_STACKS_WORKSPACE_DIR = workspaceDir;
-  process.env.HAPPY_LOCAL_WORKSPACE_DIR = process.env.HAPPY_LOCAL_WORKSPACE_DIR ?? workspaceDir;
 
   const runtimeDirRaw = parseArgValue(argv, 'runtime-dir');
   const runtimeDir = expandHome(firstNonEmpty(
     runtimeDirRaw,
     process.env.HAPPY_STACKS_RUNTIME_DIR,
-    process.env.HAPPY_LOCAL_RUNTIME_DIR,
     join(homeDir, 'runtime'),
   ));
   process.env.HAPPY_STACKS_RUNTIME_DIR = runtimeDir;
-  process.env.HAPPY_LOCAL_RUNTIME_DIR = process.env.HAPPY_LOCAL_RUNTIME_DIR ?? runtimeDir;
 
   const storageDirRaw = parseArgValue(argv, 'storage-dir');
   const storageDirOverride = expandHome((storageDirRaw ?? '').trim());
   if (storageDirOverride) {
     // In sandbox mode, storage dir MUST be isolated and must override any pre-existing env.
     process.env.HAPPY_STACKS_STORAGE_DIR = isSandboxed() ? storageDirOverride : (process.env.HAPPY_STACKS_STORAGE_DIR ?? storageDirOverride);
-    process.env.HAPPY_LOCAL_STORAGE_DIR = process.env.HAPPY_LOCAL_STORAGE_DIR ?? process.env.HAPPY_STACKS_STORAGE_DIR;
   }
 
   const cliRootDirRaw = parseArgValue(argv, 'cli-root-dir');
@@ -285,13 +269,13 @@ async function main() {
     pointerUpdates.push({ key: 'HAPPY_STACKS_CLI_ROOT_DIR', value: cliRootDirOverride });
   }
 
-  // Write the "real" home env (used by runtime + scripts), AND a stable pointer at ~/.happy-stacks/.env.
+  // Write the "real" home env (used by runtime + scripts), AND a stable pointer at ~/.happier-stack/.env.
   // The pointer file allows launchd/SwiftBar/minimal shells to discover the actual install location
   // even when no env vars are exported.
   await ensureHomeEnvUpdated({ updates: pointerUpdates });
   await ensureCanonicalHomeEnvUpdated({ updates: pointerUpdates });
 
-  const initNoRuntimeRaw = (process.env.HAPPY_STACKS_INIT_NO_RUNTIME ?? process.env.HAPPY_LOCAL_INIT_NO_RUNTIME ?? '').trim();
+  const initNoRuntimeRaw = (process.env.HAPPY_STACKS_INIT_NO_RUNTIME ?? '').trim();
   const initNoRuntime = initNoRuntimeRaw === '1' || initNoRuntimeRaw.toLowerCase() === 'true' || initNoRuntimeRaw.toLowerCase() === 'yes';
   const forceRuntime = argv.includes('--force-runtime');
   const skipRuntime = argv.includes('--no-runtime') || (initNoRuntime && !forceRuntime);
@@ -470,4 +454,3 @@ main().catch((err) => {
   console.error('[init] failed:', err);
   process.exit(1);
 });
-

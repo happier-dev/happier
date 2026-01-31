@@ -196,7 +196,7 @@ HAPPY_STACKS_IOS_APP_NAME="Happy Local"
 ## EAS builds per stack (production / App Store-like)
 
 This section documents the end-to-end workflow for producing a **fully working** EAS Build (cloud) for a stack,
-with a **custom bundle id + app name** (example: `com.leeroybrun.happier` / `Happier`), while keeping upstream defaults unchanged when env vars are unset.
+with a **custom bundle id + app name** (example: `dev.happier.app` / `Happier`), while keeping upstream defaults unchanged when env vars are unset.
 
 ### Overview
 
@@ -222,7 +222,7 @@ happys wt new happy happier --from=origin --base=origin/happier
 Pin the `happier` stack to that worktree:
 
 ```bash
-happys stack wt happier -- use happy leeroybrun/happier
+happys stack wt happier -- use happy happier-dev/happier
 ```
 
 ### 2) Set the app identity in the stack env (local + build-time config)
@@ -233,10 +233,10 @@ These are evaluated by `packages/app/app.config.js` when building:
 happys stack env happier set \
   APP_ENV=production \
   EXPO_APP_NAME="Happier" \
-  EXPO_APP_BUNDLE_ID="com.leeroybrun.happier" \
+  EXPO_APP_BUNDLE_ID="dev.happier.app" \
   EXPO_APP_SCHEME="happier" \
   EXPO_APP_SLUG="happier" \
-  EXPO_APP_OWNER="leeroybrun"
+  EXPO_APP_OWNER="happier-dev"
 ```
 
 Notes:
@@ -272,9 +272,9 @@ happys stack eas happier env:list --environment production
 
 # Create (use env:update if it already exists):
 happys stack eas happier env:create --name EXPO_APP_NAME --value "Happier" --environment production --visibility plainText
-happys stack eas happier env:create --name EXPO_APP_BUNDLE_ID --value "com.leeroybrun.happier" --environment production --visibility plainText
+happys stack eas happier env:create --name EXPO_APP_BUNDLE_ID --value "dev.happier.app" --environment production --visibility plainText
 happys stack eas happier env:create --name EXPO_APP_SCHEME --value "happier" --environment production --visibility plainText
-happys stack eas happier env:create --name EXPO_APP_OWNER --value "leeroybrun" --environment production --visibility plainText
+happys stack eas happier env:create --name EXPO_APP_OWNER --value "happier-dev" --environment production --visibility plainText
 happys stack eas happier env:create --name EXPO_APP_SLUG --value "happier" --environment production --visibility plainText
 ```
 

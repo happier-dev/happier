@@ -359,7 +359,7 @@ async function killDaemonFromLockFile({ cliHomeDir }) {
     return false;
   }
 
-  // If pid is alive, confirm it looks like a happy daemon and terminate it.
+  // If pid is alive, confirm it looks like a happier daemon and terminate it.
   try {
     process.kill(pid, 0);
   } catch {

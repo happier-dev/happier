@@ -16,17 +16,17 @@ async function withTempRoot(t) {
 
 async function writeHappyMonorepoStub({ rootDir, worktreeRoot }) {
   const monoRoot = join(rootDir, 'components', 'happy');
-  await mkdir(join(monoRoot, 'expo-app'), { recursive: true });
-  await mkdir(join(monoRoot, 'cli'), { recursive: true });
-  await mkdir(join(monoRoot, 'server'), { recursive: true });
-  await writeFile(join(monoRoot, 'expo-app', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'server', 'package.json'), '{}\n', 'utf-8');
+  await mkdir(join(monoRoot, 'packages', 'app'), { recursive: true });
+  await mkdir(join(monoRoot, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(monoRoot, 'packages', 'server'), { recursive: true });
+  await writeFile(join(monoRoot, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
 
   // Also stub a monorepo worktree root (same structure) for spec parsing.
-  await mkdir(join(worktreeRoot, 'expo-app'), { recursive: true });
-  await mkdir(join(worktreeRoot, 'cli'), { recursive: true });
-  await mkdir(join(worktreeRoot, 'server'), { recursive: true });
+  await mkdir(join(worktreeRoot, 'packages', 'app'), { recursive: true });
+  await mkdir(join(worktreeRoot, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(worktreeRoot, 'packages', 'server'), { recursive: true });
   await writeFile(join(worktreeRoot, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
   return { monoRoot };
 }
@@ -40,15 +40,15 @@ test('worktreeSpecFromDir normalizes monorepo package dirs to the worktree spec'
   await writeHappyMonorepoStub({ rootDir, worktreeRoot: wtRoot });
 
   assert.equal(
-    worktreeSpecFromDir({ rootDir, component: 'happy', dir: join(wtRoot, 'expo-app'), env }),
+    worktreeSpecFromDir({ rootDir, component: 'happy', dir: join(wtRoot, 'packages', 'app'), env }),
     'slopus/pr/123-fix-monorepo'
   );
   assert.equal(
-    worktreeSpecFromDir({ rootDir, component: 'happy-cli', dir: join(wtRoot, 'cli'), env }),
+    worktreeSpecFromDir({ rootDir, component: 'happy-cli', dir: join(wtRoot, 'packages', 'cli'), env }),
     'slopus/pr/123-fix-monorepo'
   );
   assert.equal(
-    worktreeSpecFromDir({ rootDir, component: 'happy-server', dir: join(wtRoot, 'server'), env }),
+    worktreeSpecFromDir({ rootDir, component: 'happy-server', dir: join(wtRoot, 'packages', 'server'), env }),
     'slopus/pr/123-fix-monorepo'
   );
 });

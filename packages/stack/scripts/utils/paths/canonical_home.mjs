@@ -6,15 +6,10 @@ export function expandHome(p) {
 }
 
 export function getCanonicalHomeDirFromEnv(env = process.env) {
-  const fromEnv = (
-    (env.HAPPY_STACKS_CANONICAL_HOME_DIR ?? '').trim() ||
-    (env.HAPPY_LOCAL_CANONICAL_HOME_DIR ?? '').trim() ||
-    ''
-  );
-  return fromEnv ? expandHome(fromEnv) : join(homedir(), '.happy-stacks');
+  const fromEnv = (env.HAPPY_STACKS_CANONICAL_HOME_DIR ?? '').trim();
+  return fromEnv ? expandHome(fromEnv) : join(homedir(), '.happier-stack');
 }
 
 export function getCanonicalHomeEnvPathFromEnv(env = process.env) {
   return join(getCanonicalHomeDirFromEnv(env), '.env');
 }
-

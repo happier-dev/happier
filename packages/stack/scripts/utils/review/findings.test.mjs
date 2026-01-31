@@ -6,7 +6,7 @@ import { formatTriageMarkdown, parseCodeRabbitPlainOutput, parseCodexReviewText 
 test('parseCodeRabbitPlainOutput parses CodeRabbit plain blocks', () => {
   const out = [
     '============================================================================',
-    'File: cli/src/utils/spawnHappyCLI.invocation.test.ts',
+    'File: packages/cli/src/utils/spawnHappyCLI.invocation.test.ts',
     'Line: 17 to 31',
     'Type: potential_issue',
     '',
@@ -19,7 +19,7 @@ test('parseCodeRabbitPlainOutput parses CodeRabbit plain blocks', () => {
     'Do the thing.',
     '',
     '============================================================================',
-    'File: expo-app/sources/app/(app)/_layout.tsx',
+    'File: packages/app/sources/app/(app)/_layout.tsx',
     'Line: 29 to 35',
     'Type: potential_issue',
     '',
@@ -31,7 +31,7 @@ test('parseCodeRabbitPlainOutput parses CodeRabbit plain blocks', () => {
 
   const findings = parseCodeRabbitPlainOutput(out);
   assert.equal(findings.length, 2);
-  assert.equal(findings[0].file, 'cli/src/utils/spawnHappyCLI.invocation.test.ts');
+  assert.equal(findings[0].file, 'packages/cli/src/utils/spawnHappyCLI.invocation.test.ts');
   assert.deepEqual(findings[0].lines, { start: 17, end: 31 });
   assert.equal(findings[0].type, 'potential_issue');
   assert.equal(findings[0].title, 'Dynamic imports may be cached, causing test isolation issues.');
@@ -48,7 +48,7 @@ test('parseCodexReviewText extracts findings JSON trailer', () => {
       [
         {
           severity: 'major',
-          file: 'server/sources/main.light.ts',
+          file: 'packages/server/sources/main.light.ts',
           title: 'Do not exit after startup',
           recommendation: 'Remove process.exit(0) on success.',
         },
@@ -60,7 +60,7 @@ test('parseCodexReviewText extracts findings JSON trailer', () => {
 
   const findings = parseCodexReviewText(review);
   assert.equal(findings.length, 1);
-  assert.equal(findings[0].file, 'server/sources/main.light.ts');
+  assert.equal(findings[0].file, 'packages/server/sources/main.light.ts');
   assert.equal(findings[0].severity, 'major');
 });
 
@@ -120,17 +120,17 @@ test('parseCodexReviewText extracts findings JSON trailer when lines are log-pre
 test('parseCodexReviewText falls back to parsing [P#] bullet lines', () => {
   const review = [
     '[monorepo:codex:2/21] Review comment:',
-    '[monorepo:codex:2/21] - [P1] Fix thing one — /Users/me/repo/.project/review-worktrees/codex-2-of-21-abc/cli/src/foo.ts:10-12',
-    '[monorepo:codex:2/21] - [P3] Fix thing two — /Users/me/repo/.project/review-worktrees/codex-2-of-21-abc/expo-app/sources/bar.tsx:7',
+    '[monorepo:codex:2/21] - [P1] Fix thing one — /Users/me/repo/.project/review-worktrees/codex-2-of-21-abc/packages/cli/src/foo.ts:10-12',
+    '[monorepo:codex:2/21] - [P3] Fix thing two — /Users/me/repo/.project/review-worktrees/codex-2-of-21-abc/packages/app/sources/bar.tsx:7',
   ].join('\n');
 
   const findings = parseCodexReviewText(review);
   assert.equal(findings.length, 2);
-  assert.equal(findings[0].file, 'cli/src/foo.ts');
+  assert.equal(findings[0].file, 'packages/cli/src/foo.ts');
   assert.deepEqual(findings[0].lines, { start: 10, end: 12 });
   assert.equal(findings[0].severity, 'blocker');
   assert.equal(findings[0].title, 'Fix thing one');
-  assert.equal(findings[1].file, 'expo-app/sources/bar.tsx');
+  assert.equal(findings[1].file, 'packages/app/sources/bar.tsx');
   assert.deepEqual(findings[1].lines, { start: 7, end: 7 });
   assert.equal(findings[1].severity, 'minor');
   assert.equal(findings[1].title, 'Fix thing two');
@@ -141,12 +141,12 @@ test('parseCodexReviewText falls back when marker exists but JSON is missing/inv
     'instructions...',
     '===FINDINGS_JSON===',
     'this is not json',
-    '[monorepo:codex:2/21] - [P2] Fix thing — /Users/me/repo/.project/review-worktrees/codex-2-of-21-abc/server/src/x.ts:1-2',
+    '[monorepo:codex:2/21] - [P2] Fix thing — /Users/me/repo/.project/review-worktrees/codex-2-of-21-abc/packages/server/src/x.ts:1-2',
   ].join('\n');
 
   const findings = parseCodexReviewText(review);
   assert.equal(findings.length, 1);
-  assert.equal(findings[0].file, 'server/src/x.ts');
+  assert.equal(findings[0].file, 'packages/server/src/x.ts');
   assert.deepEqual(findings[0].lines, { start: 1, end: 2 });
   assert.equal(findings[0].severity, 'major');
 });

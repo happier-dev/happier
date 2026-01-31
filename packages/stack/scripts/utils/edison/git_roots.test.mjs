@@ -26,11 +26,10 @@ test('findGitRootForPath returns nearest ancestor containing .git marker', async
 test('normalizeGitRoots de-duplicates multiple paths inside the same repo', async (t) => {
   const root = await withTempRoot(t);
   const repoRoot = join(root, 'repo');
-  await mkdir(join(repoRoot, 'expo-app'), { recursive: true });
-  await mkdir(join(repoRoot, 'cli'), { recursive: true });
+  await mkdir(join(repoRoot, 'packages', 'app'), { recursive: true });
+  await mkdir(join(repoRoot, 'packages', 'cli'), { recursive: true });
   await writeFile(join(repoRoot, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
 
-  const roots = normalizeGitRoots([join(repoRoot, 'expo-app'), join(repoRoot, 'cli')]);
+  const roots = normalizeGitRoots([join(repoRoot, 'packages', 'app'), join(repoRoot, 'packages', 'cli')]);
   assert.deepEqual(roots, [repoRoot]);
 });
-

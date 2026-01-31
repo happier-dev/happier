@@ -26,7 +26,7 @@ test('patchIosXcodeProjectsForSigningAndIdentity patches legacy ios/Happy.xcodep
         'CODE_SIGN_IDENTITY = "Apple Development";',
         '"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";',
         'PROVISIONING_PROFILE_SPECIFIER = some-profile;',
-        'PRODUCT_BUNDLE_IDENTIFIER = com.leeroybrun.happier;',
+        'PRODUCT_BUNDLE_IDENTIFIER = dev.happier.app;',
         'PRODUCT_NAME = Happy;',
         '',
       ].join('\n'),
@@ -73,12 +73,12 @@ test('patchIosXcodeProjectsForSigningAndIdentity patches both Happydev + Happy p
 
     await mkdir(join(iosDir, 'Happy.xcodeproj'), { recursive: true });
     await mkdir(join(iosDir, 'Happy'), { recursive: true });
-    await writeFile(join(iosDir, 'Happy.xcodeproj', 'project.pbxproj'), 'PRODUCT_BUNDLE_IDENTIFIER = com.leeroybrun.happier;\n', 'utf-8');
+    await writeFile(join(iosDir, 'Happy.xcodeproj', 'project.pbxproj'), 'PRODUCT_BUNDLE_IDENTIFIER = dev.happier.app;\n', 'utf-8');
     await writeFile(join(iosDir, 'Happy', 'Info.plist'), '<key>CFBundleDisplayName</key><string>Happy</string>\n', 'utf-8');
 
     await mkdir(join(iosDir, 'Happydev.xcodeproj'), { recursive: true });
     await mkdir(join(iosDir, 'Happydev'), { recursive: true });
-    await writeFile(join(iosDir, 'Happydev.xcodeproj', 'project.pbxproj'), 'PRODUCT_BUNDLE_IDENTIFIER = com.leeroybrun.happier.dev;\n', 'utf-8');
+    await writeFile(join(iosDir, 'Happydev.xcodeproj', 'project.pbxproj'), 'PRODUCT_BUNDLE_IDENTIFIER = dev.happier.app.dev;\n', 'utf-8');
     await writeFile(join(iosDir, 'Happydev', 'Info.plist'), '<key>CFBundleDisplayName</key><string>Happy (dev)</string>\n', 'utf-8');
 
     await patchIosXcodeProjectsForSigningAndIdentity({

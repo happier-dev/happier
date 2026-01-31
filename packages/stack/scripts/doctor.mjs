@@ -55,7 +55,7 @@ async function fetchHealth(url) {
     return health;
   }
   const root = await tryGet('/');
-  if (root.ok && root.body?.includes('Welcome to Happy Server!')) {
+  if (root.ok && root.body?.includes('Welcome to Happier Server!')) {
     return root;
   }
   return health.ok ? health : root;
@@ -236,7 +236,7 @@ async function main() {
     if (!json) {
       console.log(`${red('x')} daemon: not running / status failed`);
       if (!hasAccessKey) {
-        const stackName = (process.env.HAPPY_STACKS_STACK ?? process.env.HAPPY_LOCAL_STACK ?? '').trim() || 'main';
+        const stackName = (process.env.HAPPY_STACKS_STACK ?? '').trim() || 'main';
         console.log(`  ${dim('↪ likely cause:')} missing credentials at ${accessKeyPath}`);
         console.log(`  ${dim('↪ fix:')} authenticate for this stack:`);
         console.log(`    ${cmd(stackName === 'main' ? 'happys auth login' : `happys stack auth ${stackName} login`)}`);
@@ -259,10 +259,8 @@ async function main() {
   if (process.platform === 'darwin') {
     try {
       const list = await runCapture('launchctl', ['list']);
-      const { primaryLabel, legacyLabel } = getDefaultAutostartPaths();
-      const primaryLine = list.split('\n').find((l) => l.includes(primaryLabel))?.trim() || null;
-      const legacyLine = list.split('\n').find((l) => l.includes(legacyLabel))?.trim() || null;
-      const line = primaryLine || legacyLine;
+      const { label } = getDefaultAutostartPaths();
+      const line = list.split('\n').find((l) => l.includes(label))?.trim() || null;
       report.checks.launchd = { ok: true, line: line || null };
       if (!json) console.log(`${green('✓')} launchd: ${line ? line : 'not loaded'}`);
     } catch {
@@ -280,7 +278,7 @@ async function main() {
     }
   }
 
-  // happy wrapper
+  // happy wrapper (CLI binary)
   try {
     const happyPath = await resolveCommandPath('happy');
     if (happyPath) {

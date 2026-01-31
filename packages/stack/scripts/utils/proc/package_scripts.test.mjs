@@ -29,20 +29,19 @@ test('detectPackageManagerCmd prefers yarn when run from a Happy monorepo packag
     await rm(root, { recursive: true, force: true });
   });
 
-  // Minimal Happy monorepo markers + yarn.lock at the monorepo root.
-  await mkdir(join(root, 'packages', 'happy-app'), { recursive: true });
-  await mkdir(join(root, 'packages', 'happy-cli'), { recursive: true });
-  await mkdir(join(root, 'packages', 'happy-server'), { recursive: true });
-  await writeFile(join(root, 'packages', 'happy-app', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(root, 'packages', 'happy-cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(root, 'packages', 'happy-server', 'package.json'), '{}\n', 'utf-8');
+  // Minimal monorepo markers + yarn.lock at the monorepo root.
+  await mkdir(join(root, 'packages', 'app'), { recursive: true });
+  await mkdir(join(root, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(root, 'packages', 'server'), { recursive: true });
+  await writeFile(join(root, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(root, 'package.json'), '{ "name": "monorepo", "private": true }\n', 'utf-8');
   await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
 
-  // Ensure pnpm isn't accidentally used in environments where it's installed globally.
+  // Ensure we don't accidentally depend on `pnpm` being present.
   await withEnv({ PATH: '/usr/bin:/bin' }, async () => {
-    const pm = await detectPackageManagerCmd(join(root, 'packages', 'happy-server'));
+    const pm = await detectPackageManagerCmd(join(root, 'packages', 'server'));
     assert.equal(pm.name, 'yarn');
   });
 });
-

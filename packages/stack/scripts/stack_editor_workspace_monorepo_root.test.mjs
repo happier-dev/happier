@@ -23,12 +23,12 @@ test('stack code workspace groups monorepo components to the monorepo root', asy
 
   try {
     const monoRoot = join(tmp, 'mono');
-    await mkdir(join(monoRoot, 'expo-app'), { recursive: true });
-    await mkdir(join(monoRoot, 'cli'), { recursive: true });
-    await mkdir(join(monoRoot, 'server'), { recursive: true });
-    await writeFile(join(monoRoot, 'expo-app', 'package.json'), '{}\n', 'utf-8');
-    await writeFile(join(monoRoot, 'cli', 'package.json'), '{}\n', 'utf-8');
-    await writeFile(join(monoRoot, 'server', 'package.json'), '{}\n', 'utf-8');
+    await mkdir(join(monoRoot, 'packages', 'app'), { recursive: true });
+    await mkdir(join(monoRoot, 'packages', 'cli'), { recursive: true });
+    await mkdir(join(monoRoot, 'packages', 'server'), { recursive: true });
+    await writeFile(join(monoRoot, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+    await writeFile(join(monoRoot, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+    await writeFile(join(monoRoot, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
 
     const envPath = join(storageDir, stackName, 'env');
     await mkdir(dirname(envPath), { recursive: true });
@@ -36,9 +36,9 @@ test('stack code workspace groups monorepo components to the monorepo root', asy
       envPath,
       [
         'HAPPY_STACKS_SERVER_COMPONENT=happy-server',
-        `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${join(monoRoot, 'expo-app')}`,
-        `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${join(monoRoot, 'cli')}`,
-        `HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER=${join(monoRoot, 'server')}`,
+        `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${join(monoRoot, 'packages', 'app')}`,
+        `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${join(monoRoot, 'packages', 'cli')}`,
+        `HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER=${join(monoRoot, 'packages', 'server')}`,
         '',
       ].join('\n'),
       'utf-8'
@@ -62,4 +62,3 @@ test('stack code workspace groups monorepo components to the monorepo root', asy
     await rm(tmp, { recursive: true, force: true });
   }
 });
-

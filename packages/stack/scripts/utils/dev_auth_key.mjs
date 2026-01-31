@@ -6,8 +6,8 @@ import { dirname, join } from 'node:path';
 import { expandHome } from './paths/canonical_home.mjs';
 
 export function resolveHappyStacksHomeDir(env = process.env) {
-  const fromEnv = (env.HAPPY_STACKS_HOME_DIR ?? env.HAPPY_LOCAL_HOME_DIR ?? '').toString().trim();
-  return fromEnv ? expandHome(fromEnv) : join(homedir(), '.happy-stacks');
+  const fromEnv = (env.HAPPY_STACKS_HOME_DIR ?? '').toString().trim();
+  return fromEnv ? expandHome(fromEnv) : join(homedir(), '.happier-stack');
 }
 
 export function getDevAuthKeyPath(env = process.env) {

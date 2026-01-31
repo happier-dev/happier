@@ -96,9 +96,8 @@ async function main() {
   });
   if (inferred) {
     const stacksKey = componentDirEnvKey(inferred.component);
-    const legacyKey = stacksKey.replace(/^HAPPY_STACKS_/, 'HAPPY_LOCAL_');
     // Stack env should win. Only infer from CWD when the component dir isn't already configured.
-    if (!(process.env[stacksKey] ?? '').toString().trim() && !(process.env[legacyKey] ?? '').toString().trim()) {
+    if (!(process.env[stacksKey] ?? '').toString().trim()) {
       process.env[stacksKey] = inferred.repoDir;
     }
   }
@@ -108,10 +107,10 @@ async function main() {
     throw new Error(`[local] --server=both is not supported for dev (pick one: happy-server-light or happy-server)`);
   }
 
-  const startUi = !flags.has('--no-ui') && (process.env.HAPPY_LOCAL_UI ?? '1') !== '0';
-  const startDaemon = !flags.has('--no-daemon') && (process.env.HAPPY_LOCAL_DAEMON ?? '1') !== '0';
+  const startUi = !flags.has('--no-ui');
+  const startDaemon = !flags.has('--no-daemon');
   const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
-  const noBrowser = flags.has('--no-browser') || (process.env.HAPPY_STACKS_NO_BROWSER ?? process.env.HAPPY_LOCAL_NO_BROWSER ?? '').toString().trim() === '1';
+  const noBrowser = flags.has('--no-browser') || (process.env.HAPPY_STACKS_NO_BROWSER ?? '').toString().trim() === '1';
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
 
   const serverDir = getComponentDir(rootDir, serverComponentName);
@@ -139,7 +138,7 @@ async function main() {
   const allowEnableTailscale =
     !stackMode ||
     stackName === 'main' ||
-    (baseEnv.HAPPY_STACKS_TAILSCALE_SERVE ?? baseEnv.HAPPY_LOCAL_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
+    (baseEnv.HAPPY_STACKS_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
   const resolvedUrls = await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale });
   const internalServerUrl = resolvedUrls.internalServerUrl;
   let publicServerUrl = resolvedUrls.publicServerUrl;
@@ -154,8 +153,8 @@ async function main() {
   // LAN rewrite (for dev-client) is centralized in ensureDevExpoServer.
   const uiApiUrl = resolvedUrls.defaultPublicUrl;
   const restart = flags.has('--restart');
-  const cliHomeDir = process.env.HAPPY_LOCAL_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPY_LOCAL_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+  const cliHomeDir = process.env.HAPPY_STACKS_CLI_HOME_DIR?.trim()
+    ? process.env.HAPPY_STACKS_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
     : join(autostart.baseDir, 'cli');
 
   if (json) {
@@ -184,7 +183,7 @@ async function main() {
 
   // Ensure happy-cli is install+build ready before starting the daemon.
   // Worktrees often don't have dist/ built yet, which causes MODULE_NOT_FOUND on dist/index.mjs.
-  const buildCli = (baseEnv.HAPPY_STACKS_CLI_BUILD ?? baseEnv.HAPPY_LOCAL_CLI_BUILD ?? '1').toString().trim() !== '0';
+  const buildCli = (baseEnv.HAPPY_STACKS_CLI_BUILD ?? '1').toString().trim() !== '0';
   await ensureDevCliReady({ cliDir, buildCli });
 
   // Watch mode (interactive only by default): rebuild happy-cli and restart daemon when code changes.
@@ -277,8 +276,8 @@ async function main() {
 
   let expoResEarly = null;
   const wantsAuthFlow =
-    (baseEnv.HAPPY_STACKS_AUTH_FLOW ?? baseEnv.HAPPY_LOCAL_AUTH_FLOW ?? '').toString().trim() === '1' ||
-    (baseEnv.HAPPY_STACKS_DAEMON_WAIT_FOR_AUTH ?? baseEnv.HAPPY_LOCAL_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
+    (baseEnv.HAPPY_STACKS_AUTH_FLOW ?? '').toString().trim() === '1' ||
+    (baseEnv.HAPPY_STACKS_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
 
   // CRITICAL (review-pr / setup-pr guided login):
   // In background/non-interactive runs, the daemon may block on auth. If we wait to start Expo web
@@ -306,7 +305,7 @@ async function main() {
     rootDir,
     // In dev mode, guided login must target the Expo web UI origin (not the server port).
     // Mark this as an auth-flow so URL resolution fails closed if Expo isn't ready.
-    env: startUi ? { ...baseEnv, HAPPY_STACKS_AUTH_FLOW: '1', HAPPY_LOCAL_AUTH_FLOW: '1' } : baseEnv,
+    env: startUi ? { ...baseEnv, HAPPY_STACKS_AUTH_FLOW: '1' } : baseEnv,
     stackName,
     cliHomeDir,
     accountCount,

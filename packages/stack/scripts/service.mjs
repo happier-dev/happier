@@ -53,13 +53,10 @@ function getAutostartEnv({ rootDir }) {
   // - default to the main stack env (outside the repo): ~/.happy/stacks/main/env
 
   const stacksEnvFile = process.env.HAPPY_STACKS_ENV_FILE?.trim() ? process.env.HAPPY_STACKS_ENV_FILE.trim() : '';
-  const localEnvFile = process.env.HAPPY_LOCAL_ENV_FILE?.trim() ? process.env.HAPPY_LOCAL_ENV_FILE.trim() : '';
-  const envFile = stacksEnvFile || localEnvFile || resolveStackEnvPath('main').envPath;
+  const envFile = stacksEnvFile || resolveStackEnvPath('main').envPath;
 
-  // Persist both prefixes for backwards compatibility.
   return {
     HAPPY_STACKS_ENV_FILE: envFile,
-    HAPPY_LOCAL_ENV_FILE: envFile,
   };
 }
 
@@ -75,7 +72,7 @@ export async function installService() {
     throw new Error('[local] service install is only supported on macOS (launchd) and Linux (systemd user).');
   }
   const rootDir = getRootDir(import.meta.url);
-  const { primaryLabel: label } = getDefaultAutostartPaths();
+  const { label } = getDefaultAutostartPaths();
   const env = getAutostartEnv({ rootDir });
   // Ensure the env file exists so the service never points at a missing path.
   try {
@@ -108,18 +105,11 @@ export async function uninstallService() {
     console.log(`${green('✓')} service uninstalled ${dim('(systemd user unit removed)')}`);
     return;
   }
-  const { primaryPlistPath, legacyPlistPath, primaryLabel, legacyLabel } = getDefaultAutostartPaths();
+  const { plistPath, label } = getDefaultAutostartPaths();
 
-  // Disable both labels (primary + legacy) best-effort.
-  await ensureMacAutostartDisabled({ label: primaryLabel });
-  await ensureMacAutostartDisabled({ label: legacyLabel });
+  await ensureMacAutostartDisabled({ label });
   try {
-    await rm(primaryPlistPath, { force: true });
-  } catch {
-    // ignore
-  }
-  try {
-    await rm(legacyPlistPath, { force: true });
+    await rm(plistPath, { force: true });
   } catch {
     // ignore
   }
@@ -149,7 +139,7 @@ async function ensureSystemdUserServiceEnabled({ rootDir, label, env }) {
   const exec = existsSync(happysShim) ? entry : `${process.execPath} ${entry}`;
 
   const unit = `[Unit]
-Description=Happy Stacks (${label})
+Description=Happier Stack (${label})
 After=network-online.target
 Wants=network-online.target
 
@@ -268,8 +258,8 @@ async function postStartDiagnostics() {
   const rootDir = getRootDir(import.meta.url);
   const internalUrl = getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
 
-  const cliHomeDir = process.env.HAPPY_LOCAL_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPY_LOCAL_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+  const cliHomeDir = process.env.HAPPY_STACKS_CLI_HOME_DIR?.trim()
+    ? process.env.HAPPY_STACKS_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
     : join(getDefaultAutostartPaths().baseDir, 'cli');
 
   let port = 3005;
@@ -651,7 +641,7 @@ async function main() {
       if (process.platform === 'darwin') {
         await showLogs();
       } else {
-        const lines = Number(process.env.HAPPY_STACKS_LOG_LINES ?? process.env.HAPPY_LOCAL_LOG_LINES ?? 120) || 120;
+        const lines = Number(process.env.HAPPY_STACKS_LOG_LINES ?? 120) || 120;
         await systemdLogs({ lines });
       }
       return;

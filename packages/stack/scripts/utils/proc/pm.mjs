@@ -40,18 +40,7 @@ async function computeGitWorktreeSignature(dir) {
   }
 }
 
-export async function requirePnpm() {
-  if (await commandExists('pnpm')) {
-    return;
-  }
-  throw new Error(
-    '[local] pnpm is required to install dependencies for Happy Stacks.\n' +
-      'Install it via Corepack: `corepack enable && corepack prepare pnpm@latest --activate`'
-  );
-}
-
 async function getComponentPm(dir, env = process.env) {
-  const yarnLock = join(dir, 'yarn.lock');
   const happyMonorepoRoot = await (async () => {
     try {
       return coerceHappyMonorepoRootFromPath(dir);
@@ -59,26 +48,13 @@ async function getComponentPm(dir, env = process.env) {
       return null;
     }
   })();
+  void happyMonorepoRoot;
 
-  // If this is a happy monorepo worktree and we're running from inside a package directory
-  // (e.g. packages/server), prefer the monorepo root yarn.lock to avoid accidentally
-  // using pnpm (which will try to fetch workspace-only packages from npm).
-  const hasYarnLock =
-    (await pathExists(yarnLock)) ||
-    (happyMonorepoRoot ? await pathExists(join(happyMonorepoRoot, 'yarn.lock')) : false);
-
-  if (hasYarnLock) {
-    // IMPORTANT: when happy-stacks itself is pinned to pnpm via Corepack, running `yarn`
-    // from the happy-stacks cwd can be blocked. Always probe yarn with cwd=componentDir.
-    if (!(await commandExists('yarn', { cwd: dir, env }))) {
-      throw new Error(`[local] yarn is required for component at ${dir} (yarn.lock present). Install it via Corepack: \`corepack enable\``);
-    }
-    return { name: 'yarn', cmd: 'yarn' };
+  // IMPORTANT: probe yarn with cwd=componentDir; yarn can be blocked depending on Corepack context.
+  if (!(await commandExists('yarn', { cwd: dir, env }))) {
+    throw new Error(`[local] yarn is required for component at ${dir}. Install it via Corepack: \`corepack enable\``);
   }
-
-  // Default fallback if no yarn.lock: use pnpm.
-  await requirePnpm();
-  return { name: 'pnpm', cmd: 'pnpm' };
+  return { name: 'yarn', cmd: 'yarn' };
 }
 
 const _yarnReadyKeys = new Set();
@@ -91,7 +67,7 @@ async function ensureYarnReady({ dir, env, quiet = false }) {
 
   // If stdin isn't a TTY (e.g. `happys tui ...` uses stdio:ignore for child stdin),
   // Corepack prompts can deadlock. Provide a single "yes" to unblock initial downloads.
-  const isTui = (e.HAPPY_STACKS_TUI ?? e.HAPPY_LOCAL_TUI ?? '').toString().trim() === '1';
+  const isTui = (e.HAPPY_STACKS_TUI ?? '').toString().trim() === '1';
   // Also auto-yes in quiet mode so guided flows don't get stuck on:
   //   "Corepack is about to download ... Do you want to continue? [Y/n]"
   const autoYes = isTui || !process.stdin.isTTY || quiet;
@@ -111,7 +87,7 @@ export async function requireDir(label, dir) {
 }
 
 function resolveStackCacheBaseDirFromEnv(env) {
-  const envFile = (env.HAPPY_STACKS_ENV_FILE ?? env.HAPPY_LOCAL_ENV_FILE ?? '').toString().trim();
+  const envFile = (env.HAPPY_STACKS_ENV_FILE ?? '').toString().trim();
   if (!envFile) return null;
   try {
     return join(dirname(envFile), 'cache');
@@ -122,14 +98,14 @@ function resolveStackCacheBaseDirFromEnv(env) {
 
 export async function applyStackCacheEnv(baseEnv) {
   const env = { ...(baseEnv && typeof baseEnv === 'object' ? baseEnv : process.env) };
-  const envFile = (env.HAPPY_STACKS_ENV_FILE ?? env.HAPPY_LOCAL_ENV_FILE ?? '').toString().trim();
+  const envFile = (env.HAPPY_STACKS_ENV_FILE ?? '').toString().trim();
   const stackCacheBase = resolveStackCacheBaseDirFromEnv(env);
   if (!stackCacheBase) return env;
 
   // Prisma engines currently default to ~/.cache/prisma (via os.homedir()).
   // In stack mode, isolate HOME for package-manager driven commands so Prisma/Yarn/NPM don't
   // depend on global home caches (and so sandboxed runs can succeed).
-  const isolateHomeRaw = (env.HAPPY_STACKS_PM_ISOLATE_HOME ?? env.HAPPY_LOCAL_PM_ISOLATE_HOME ?? '').toString().trim();
+  const isolateHomeRaw = (env.HAPPY_STACKS_PM_ISOLATE_HOME ?? '').toString().trim();
   const isolateHome = isolateHomeRaw ? isolateHomeRaw !== '0' : true;
   if (isolateHome && envFile) {
     const stackHome = join(dirname(envFile), 'home');
@@ -181,7 +157,6 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
   }
 
   const nodeModules = join(dir, 'node_modules');
-  const pnpmModulesMeta = join(dir, 'node_modules', '.modules.yaml');
   const stdio = quiet ? 'ignore' : 'inherit';
   const env = await applyStackCacheEnv(envIn);
   const pm = await getComponentPm(dir, env);
@@ -192,18 +167,6 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
   if (await pathExists(nodeModules)) {
     const yarnLock = join(dir, 'yarn.lock');
     const yarnIntegrity = join(nodeModules, '.yarn-integrity');
-    const pnpmLock = join(dir, 'pnpm-lock.yaml');
-
-    // If this repo is Yarn-managed (yarn.lock present) but node_modules was created by pnpm,
-    // reinstall with Yarn to restore upstream-locked dependency versions.
-    if (pm.name === 'yarn' && (await pathExists(pnpmModulesMeta))) {
-      if (!quiet) {
-        // eslint-disable-next-line no-console
-        console.log(`[local] converting ${label} dependencies back to yarn (reinstalling node_modules)...`);
-      }
-      await rm(nodeModules, { recursive: true, force: true });
-      await run(pm.cmd, ['install'], { cwd: dir, stdio, env });
-    }
 
     // If dependencies changed since the last install, re-run install even if node_modules exists.
     const mtimeMs = async (p) => {
@@ -251,18 +214,6 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
       }
     }
 
-    if (pm.name === 'pnpm' && (await pathExists(pnpmLock))) {
-      const lockM = await mtimeMs(pnpmLock);
-      const metaM = await mtimeMs(pnpmModulesMeta);
-      if (!metaM || lockM > metaM) {
-        if (!quiet) {
-          // eslint-disable-next-line no-console
-          console.log(`[local] refreshing ${label} dependencies (pnpm-lock changed)...`);
-        }
-        await run(pm.cmd, ['install'], { cwd: dir, stdio, env });
-      }
-    }
-
     return;
   }
 
@@ -281,10 +232,10 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
   // Default: build only when needed (fast + reliable for worktrees that haven't been built yet).
   //
   // You can force always-build by setting:
-  // - HAPPY_STACKS_CLI_BUILD_MODE=always (legacy: HAPPY_LOCAL_CLI_BUILD_MODE=always)
+  // - HAPPY_STACKS_CLI_BUILD_MODE=always
   // Or disable via:
-  // - HAPPY_STACKS_CLI_BUILD=0 (legacy: HAPPY_LOCAL_CLI_BUILD=0)
-  const modeRaw = (process.env.HAPPY_STACKS_CLI_BUILD_MODE ?? process.env.HAPPY_LOCAL_CLI_BUILD_MODE ?? 'auto').trim().toLowerCase();
+  // - HAPPY_STACKS_CLI_BUILD=0
+  const modeRaw = (process.env.HAPPY_STACKS_CLI_BUILD_MODE ?? 'auto').trim().toLowerCase();
   const mode = modeRaw === 'always' || modeRaw === 'auto' || modeRaw === 'never' ? modeRaw : 'auto';
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
   const buildStatePath = resolveBuildStatePath({ label: 'happy-cli', dir: cliDir });
@@ -380,7 +331,7 @@ if [[ -x "$HAPPYS" ]]; then
 fi
 
 # Fallback: run happy-stacks from runtime install if present.
-HOME_DIR="\${HAPPY_STACKS_HOME_DIR:-\${HAPPY_LOCAL_HOME_DIR:-$HOME/.happy-stacks}}"
+HOME_DIR="\${HAPPY_STACKS_HOME_DIR:-$HOME/.happier-stack}"
 RUNTIME="$HOME_DIR/runtime/node_modules/happy-stacks/bin/happys.mjs"
 if [[ -f "$RUNTIME" ]]; then
   exec node "$RUNTIME" happy "$@"
@@ -444,11 +395,7 @@ export async function pmExecBin(dirOrOpts, binArg, argsArg, optsArg) {
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir, env, quiet });
   }
-  if (pm.name === 'yarn') {
-    await run(pm.cmd, ['run', bin, ...args], { cwd: dir, env, stdio });
-    return;
-  }
-  await run(pm.cmd, ['exec', bin, ...args], { cwd: dir, env, stdio });
+  await run(pm.cmd, ['run', bin, ...args], { cwd: dir, env, stdio });
 }
 
 export async function pmSpawnBin(dir, label, bin, args, { env = process.env } = {}) {
@@ -466,10 +413,7 @@ export async function pmSpawnBin(dir, label, bin, args, { env = process.env } = 
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: componentDir, env: effectiveEnv, quiet });
   }
-  if (pm.name === 'yarn') {
-    return spawnProc(componentLabel, pm.cmd, ['run', componentBin, ...componentArgs], effectiveEnv, { cwd: componentDir, ...options });
-  }
-  return spawnProc(componentLabel, pm.cmd, ['exec', componentBin, ...componentArgs], effectiveEnv, { cwd: componentDir, ...options });
+  return spawnProc(componentLabel, pm.cmd, ['run', componentBin, ...componentArgs], effectiveEnv, { cwd: componentDir, ...options });
 }
 
 export async function pmSpawnScript(dir, label, script, args, { env = process.env } = {}) {
@@ -486,9 +430,6 @@ export async function pmSpawnScript(dir, label, script, args, { env = process.en
   const pm = await getComponentPm(componentDir, effectiveEnv);
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: componentDir, env: effectiveEnv, quiet });
-  }
-  if (pm.name === 'yarn') {
-    return spawnProc(componentLabel, pm.cmd, ['run', componentScript, ...componentArgs], effectiveEnv, { cwd: componentDir, ...options });
   }
   return spawnProc(componentLabel, pm.cmd, ['run', componentScript, ...componentArgs], effectiveEnv, { cwd: componentDir, ...options });
 }

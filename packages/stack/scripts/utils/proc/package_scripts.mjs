@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 
 import { pathExists } from '../fs/fs.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../paths/paths.mjs';
-import { requirePnpm } from './pm.mjs';
 
 export async function detectPackageManagerCmd(dir) {
   if (await pathExists(join(dir, 'yarn.lock'))) {
@@ -17,8 +16,8 @@ export async function detectPackageManagerCmd(dir) {
   if (happyMonorepoRoot && (await pathExists(join(happyMonorepoRoot, 'yarn.lock')))) {
     return { name: 'yarn', cmd: 'yarn', argsForScript: (script) => ['-s', script] };
   }
-  await requirePnpm();
-  return { name: 'pnpm', cmd: 'pnpm', argsForScript: (script) => ['--silent', script] };
+  // Yarn-only: if no lockfile is found, still default to yarn to avoid mixing package managers.
+  return { name: 'yarn', cmd: 'yarn', argsForScript: (script) => ['-s', script] };
 }
 
 export async function readPackageJsonScripts(dir) {

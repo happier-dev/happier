@@ -11,8 +11,8 @@ The goal is to keep day-to-day development clean and to make syncing changes rel
 
 ## Core idea
 
-- **Do product/feature work on an upstream-compatible branch** (example: `leeroybrun/dev`).
-- **Keep branding + fork-only config on a separate branch** (example: `leeroybrun/happier`).
+- **Do product/feature work on an upstream-compatible branch** (example: `happier-dev/dev`).
+- **Keep branding + fork-only config on a separate branch** (example: `happier-dev/happier`).
 - Periodically **merge** upstream-compatible changes into the branded fork branch.
 
 The branded branch should ideally contain only:
@@ -41,16 +41,16 @@ Everything else should stay identical to the upstream-compatible branch so merge
 Example (Happy monorepo component):
 
 - Upstream-compatible worktree:
-  - `components/.worktrees/happy/leeroybrun/dev`
-  - Branch: `leeroybrun/dev`
+  - `components/.worktrees/happy/happier-dev/dev`
+  - Branch: `happier-dev/dev`
 - Branded fork worktree:
-  - `components/.worktrees/happy/leeroybrun/happier`
-  - Branch: `leeroybrun/happier`
+  - `components/.worktrees/happy/happier-dev/happier`
+  - Branch: `happier-dev/happier`
 
 Pin your branded stack to the branded worktree (recommended):
 
 ```bash
-happys stack wt happier -- use happy leeroybrun/happier
+happys stack wt happier -- use happy happier-dev/happier
 ```
 
 Keep your stable/main stack on defaults, and use `happier` (or another stack) for branded testing/building.
@@ -100,7 +100,7 @@ Then set those **per stack** (in the stack env file) so the behavior is isolated
 
 Work in:
 
-- `components/.worktrees/happy/leeroybrun/dev`
+- `components/.worktrees/happy/happier-dev/dev`
 
 Keep it upstream-friendly:
 
@@ -112,7 +112,7 @@ Keep it upstream-friendly:
 In the branded worktree:
 
 ```bash
-happys wt git happy leeroybrun/happier -- merge leeroybrun/dev
+happys wt git happy happier-dev/happier -- merge happier-dev/dev
 ```
 
 Resolve conflicts (if any), then continue.
@@ -187,4 +187,3 @@ As a rule:
   - overrides identity via env
   - contains only necessary fork-only files
   - periodically merges from `dev`
-

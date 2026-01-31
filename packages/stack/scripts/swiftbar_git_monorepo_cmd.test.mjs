@@ -23,8 +23,8 @@ test('swiftbar git cache treats monorepo package dirs as git repos', async () =>
 
   const repoRoot = join(tmp, 'repo');
   await mkdir(repoRoot, { recursive: true });
-  await mkdir(join(repoRoot, 'expo-app'), { recursive: true });
-  await writeFile(join(repoRoot, 'expo-app', 'README.md'), 'hello\n', 'utf-8');
+  await mkdir(join(repoRoot, 'packages', 'app'), { recursive: true });
+  await writeFile(join(repoRoot, 'packages', 'app', 'README.md'), 'hello\n', 'utf-8');
 
   // Create a minimal git repo with one commit.
   await run('git', ['init'], { cwd: repoRoot });
@@ -46,7 +46,7 @@ test('swiftbar git cache treats monorepo package dirs as git repos', async () =>
     `set -euo pipefail`,
     `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
     `source "${rootDir}/extras/swiftbar/lib/git.sh"`,
-    `active_dir="${repoRoot}/expo-app"`,
+    `active_dir="${repoRoot}/packages/app"`,
     `git_cache_refresh_one main main happy "$active_dir" >/dev/null 2>&1 || true`,
     `key="$(git_cache_key main main happy "$active_dir")"`,
     `IFS=$'\\t' read -r meta info wts <<<"$(git_cache_paths "$key")"`,
@@ -64,4 +64,3 @@ test('swiftbar git cache treats monorepo package dirs as git repos', async () =>
 
   await rm(tmp, { recursive: true, force: true });
 });
-

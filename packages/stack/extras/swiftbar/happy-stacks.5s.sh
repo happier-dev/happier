@@ -3,7 +3,7 @@
 # <xbar.title>Happy Stacks</xbar.title>
 # <xbar.version>1.0.0</xbar.version>
 # <xbar.author>Happy Stacks</xbar.author>
-# <xbar.author.github>leeroybrun</xbar.author.github>
+# <xbar.author.github>happier-dev</xbar.author.github>
 # <xbar.desc>Monitor and control your Happy stacks from the menu bar</xbar.desc>
 # <xbar.dependencies>node</xbar.dependencies>
 # <swiftbar.hideAbout>true</swiftbar.hideAbout>

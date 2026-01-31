@@ -11,7 +11,7 @@ import { run, runCapture } from '../proc/proc.mjs';
 import { getCliHomeDirFromEnvOrDefault } from './dirs.mjs';
 
 function resolveWorkspaceDirFromStackEnv({ rootDir, stackEnv }) {
-  const raw = getEnvValueAny(stackEnv, ['HAPPY_STACKS_WORKSPACE_DIR', 'HAPPY_LOCAL_WORKSPACE_DIR']);
+  const raw = getEnvValueAny(stackEnv, ['HAPPY_STACKS_WORKSPACE_DIR']);
   if (!raw) {
     return getWorkspaceDir(rootDir, stackEnv);
   }
@@ -81,20 +81,20 @@ export async function writeStackCodeWorkspace({
   const stackEnv = await readEnvObjectFromFile(envPath);
 
   const serverComponent =
-    getEnvValueAny(stackEnv, ['HAPPY_STACKS_SERVER_COMPONENT', 'HAPPY_LOCAL_SERVER_COMPONENT']) || 'happy-server-light';
+    getEnvValueAny(stackEnv, ['HAPPY_STACKS_SERVER_COMPONENT']) || 'happy-server-light';
 
   const selectedComponents = includeAllComponents
     ? ['happy', 'happy-cli', 'happy-server-light', 'happy-server']
     : ['happy', 'happy-cli', serverComponent];
 
   const componentSpecs = [
-    { component: 'happy', keys: ['HAPPY_STACKS_COMPONENT_DIR_HAPPY', 'HAPPY_LOCAL_COMPONENT_DIR_HAPPY'] },
-    { component: 'happy-cli', keys: ['HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI', 'HAPPY_LOCAL_COMPONENT_DIR_HAPPY_CLI'] },
+    { component: 'happy', keys: ['HAPPY_STACKS_COMPONENT_DIR_HAPPY'] },
+    { component: 'happy-cli', keys: ['HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI'] },
     {
       component: 'happy-server-light',
-      keys: ['HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT', 'HAPPY_LOCAL_COMPONENT_DIR_HAPPY_SERVER_LIGHT'],
+      keys: ['HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT'],
     },
-    { component: 'happy-server', keys: ['HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER', 'HAPPY_LOCAL_COMPONENT_DIR_HAPPY_SERVER'] },
+    { component: 'happy-server', keys: ['HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER'] },
   ];
   const byName = new Map(componentSpecs.map((c) => [c.component, c.keys]));
 

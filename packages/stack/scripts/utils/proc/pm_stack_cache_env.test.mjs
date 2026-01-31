@@ -119,17 +119,17 @@ test('ensureDepsInstalled prefers yarn when component is inside the Happy monore
     await rm(root, { recursive: true, force: true });
   });
 
-  // Create the minimum Happy monorepo markers (packages/ layout) + root yarn.lock.
-  await mkdir(join(root, 'packages', 'happy-app'), { recursive: true });
-  await mkdir(join(root, 'packages', 'happy-cli'), { recursive: true });
-  await mkdir(join(root, 'packages', 'happy-server'), { recursive: true });
-  await writeFile(join(root, 'packages', 'happy-app', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(root, 'packages', 'happy-cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(root, 'packages', 'happy-server', 'package.json'), '{}\n', 'utf-8');
+  // Create the minimum monorepo markers (packages/ layout) + root yarn.lock.
+  await mkdir(join(root, 'packages', 'app'), { recursive: true });
+  await mkdir(join(root, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(root, 'packages', 'server'), { recursive: true });
+  await writeFile(join(root, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(root, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(root, 'package.json'), '{ "name": "monorepo", "private": true }\n', 'utf-8');
   await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
 
-  const componentDir = join(root, 'packages', 'happy-server');
+  const componentDir = join(root, 'packages', 'server');
 
   const binDir = join(root, 'bin');
   const outputPath = join(root, 'argv.txt');
@@ -137,7 +137,7 @@ test('ensureDepsInstalled prefers yarn when component is inside the Happy monore
 
   await withEnv(
     {
-      // Avoid leaking `pnpm` into PATH so the test fails loudly when pnpm is selected.
+      // Avoid leaking `pnpm` into PATH so the test fails loudly when a pnpm fallback is attempted.
       PATH: `${binDir}:/usr/bin:/bin`,
       OUTPUT_PATH: outputPath,
       HAPPY_STACKS_ENV_FILE: null,

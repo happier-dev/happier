@@ -460,7 +460,7 @@ async function cmdSetup({ rootDir, argv }) {
         '  happys setup --profile=selfhost',
         '  happys setup --profile=dev',
         '  happys setup --profile=dev --workspace-dir=~/Development/happy',
-        '  happys setup --happy-repo=leeroybrun/happier',
+        '  happys setup --happy-repo=happier-dev/happier',
         '  happys setup pr --happy=<pr-url|number> [--happy-server-light=<pr-url|number>]',
         '  happys setup --auth',
         '  happys setup --no-auth',
@@ -743,7 +743,7 @@ async function cmdSetup({ rootDir, argv }) {
         const a = getDefaultAutostartPaths();
         const autostartAlreadyInstalled =
           process.platform === 'darwin'
-            ? Boolean(existsSync(a.primaryPlistPath) || existsSync(a.legacyPlistPath))
+            ? Boolean(existsSync(a.plistPath))
             : process.platform === 'linux'
               ? Boolean(existsSync(a.systemdUnitPath))
               : false;

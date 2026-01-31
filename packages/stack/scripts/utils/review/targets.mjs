@@ -2,8 +2,8 @@ import { getComponentsDir, getComponentDir } from '../paths/paths.mjs';
 import { join } from 'node:path';
 
 export function isStackMode(env = process.env) {
-  const stack = String(env.HAPPY_STACKS_STACK ?? env.HAPPY_LOCAL_STACK ?? '').trim();
-  const envFile = String(env.HAPPY_STACKS_ENV_FILE ?? env.HAPPY_LOCAL_ENV_FILE ?? '').trim();
+  const stack = String(env.HAPPY_STACKS_STACK ?? '').trim();
+  const envFile = String(env.HAPPY_STACKS_ENV_FILE ?? '').trim();
   return Boolean(stack && envFile);
 }
 
@@ -21,4 +21,3 @@ export function resolveDefaultStackReviewComponents({ rootDir, components }) {
   }
   return out;
 }
-

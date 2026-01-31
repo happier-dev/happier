@@ -73,7 +73,7 @@ async function sendUiFile({ uiRoot, relPath, res }) {
 
 async function sendIndex({ uiRoot, res }) {
   const indexPath = resolve(uiRoot, 'index.html');
-  const html = (await readFile(indexPath, 'utf-8')) + '\n<!-- Welcome to Happy Server! -->\n';
+  const html = (await readFile(indexPath, 'utf-8')) + '\n<!-- Welcome to Happier Server! -->\n';
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' });
   res.end(html);
 }
@@ -186,7 +186,7 @@ async function main() {
           return;
         }
         res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-cache' });
-        res.end('Welcome to Happy Server!');
+        res.end('Welcome to Happier Server!');
         return;
       }
       if (url.startsWith('/ui/')) {
@@ -245,4 +245,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-
