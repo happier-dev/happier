@@ -19,6 +19,7 @@ COPY packages/app/patches packages/app/patches
 COPY packages/server/prisma packages/server/prisma
 COPY packages/cli/scripts packages/cli/scripts
 COPY packages/cli/tools packages/cli/tools
+COPY packages/app/tools packages/app/tools
 
 RUN yarn install --frozen-lockfile --ignore-engines
 
