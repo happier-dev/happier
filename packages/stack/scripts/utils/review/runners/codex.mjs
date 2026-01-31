@@ -52,7 +52,7 @@ export function buildCodexReviewArgs({ baseRef, jsonMode, prompt }) {
 export async function runCodexReview({ repoDir, baseRef, env, jsonMode, streamLabel, teeFile, teeLabel, prompt }) {
   const merged = { ...(env ?? {}) };
   const codexHome =
-    (merged.HAPPY_STACKS_CODEX_HOME_DIR ?? merged.HAPPY_LOCAL_CODEX_HOME_DIR ?? merged.CODEX_HOME ?? '').toString().trim();
+    (merged.HAPPY_STACKS_CODEX_HOME_DIR ?? merged.CODEX_HOME ?? '').toString().trim();
   if (codexHome) merged.CODEX_HOME = codexHome;
 
   const args = buildCodexReviewArgs({ baseRef, jsonMode, prompt });

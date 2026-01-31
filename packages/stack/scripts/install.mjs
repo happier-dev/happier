@@ -27,21 +27,21 @@ import { createStepPrinter } from './utils/cli/progress.mjs';
  */
 
 const DEFAULT_FORK_REPOS = {
-  serverLight: 'https://github.com/leeroybrun/happy-server-light.git',
+  serverLight: 'https://github.com/happier-dev/happy-server-light.git',
   // Monorepo fork (slopus/happy):
   // - packages/app (mobile app)
   // - packages/cli (happy-cli)
   // - packages/server (happy-server)
   // (legacy checkouts used expo-app/cli/server)
-  serverFull: 'https://github.com/leeroybrun/happy.git',
-  cli: 'https://github.com/leeroybrun/happy.git',
-  ui: 'https://github.com/leeroybrun/happy.git',
+  serverFull: 'https://github.com/happier-dev/happier.git',
+  cli: 'https://github.com/happier-dev/happier.git',
+  ui: 'https://github.com/happier-dev/happier.git',
 };
 
 const DEFAULT_UPSTREAM_REPOS = {
   // Server-light is not upstreamed yet; for now, use the maintained fork.
   // When upstream ships server-light, this default can switch to slopus/*.
-  serverLight: 'https://github.com/leeroybrun/happy-server-light.git',
+  serverLight: 'https://github.com/happier-dev/happy-server-light.git',
   serverFull: 'https://github.com/slopus/happy.git',
   // slopus/happy is now a monorepo that contains:
   // - packages/app (mobile app)
@@ -59,9 +59,9 @@ function repoUrlsFromOwners({ forkOwner, upstreamOwner }) {
     forks: {
       serverLight: fork('happy-server-light'),
       // Monorepo: UI + CLI + full server share a single repo.
-      serverFull: fork('happy'),
-      cli: fork('happy'),
-      ui: fork('happy'),
+      serverFull: fork('happier'),
+      cli: fork('happier'),
+      ui: fork('happier'),
     },
     upstream: {
       // Monorepo: UI + CLI + full server share a single repo.
@@ -412,7 +412,7 @@ async function main() {
   const defaultRepoSource = resolveRepoSource({ flags });
   const defaults = {
     repoSource: defaultRepoSource,
-    forkOwner: 'leeroybrun',
+    forkOwner: 'happier-dev',
     upstreamOwner: 'slopus',
     serverComponentName: getServerComponentName({ kv }),
     allowClone: !flags.has('--no-clone') && ((process.env.HAPPY_LOCAL_CLONE_MISSING ?? '1') !== '0' || flags.has('--clone')),

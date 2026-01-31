@@ -22,13 +22,13 @@ test('interactive stack new in monorepo mode does not prompt for happy-server-li
     process.env.HAPPY_STACKS_WORKSPACE_DIR = workspaceDir;
 
     const monoRoot = join(workspaceDir, 'components', '.worktrees', 'happy', 'slopus', 'tmp', 'mono-wt');
-    await mkdir(join(monoRoot, 'expo-app'), { recursive: true });
-    await mkdir(join(monoRoot, 'cli'), { recursive: true });
-    await mkdir(join(monoRoot, 'server'), { recursive: true });
+    await mkdir(join(monoRoot, 'packages', 'app'), { recursive: true });
+    await mkdir(join(monoRoot, 'packages', 'cli'), { recursive: true });
+    await mkdir(join(monoRoot, 'packages', 'server'), { recursive: true });
     await writeFile(join(monoRoot, '.git'), 'gitdir: dummy\n', 'utf-8');
-    await writeFile(join(monoRoot, 'expo-app', 'package.json'), '{}\n', 'utf-8');
-    await writeFile(join(monoRoot, 'cli', 'package.json'), '{}\n', 'utf-8');
-    await writeFile(join(monoRoot, 'server', 'package.json'), '{}\n', 'utf-8');
+    await writeFile(join(monoRoot, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+    await writeFile(join(monoRoot, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+    await writeFile(join(monoRoot, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
 
     const prompted = [];
     const out = await interactiveNew({
@@ -68,4 +68,3 @@ test('interactive stack new in monorepo mode does not prompt for happy-server-li
     await rm(tmp, { recursive: true, force: true });
   }
 });
-

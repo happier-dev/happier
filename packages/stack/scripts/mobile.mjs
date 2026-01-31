@@ -25,7 +25,7 @@ import { patchIosXcodeProjectsForSigningAndIdentity, resolveIosAppXcodeProjects 
  * Usage:
  *   happys mobile
  *   happys mobile --host=lan
- *   happys mobile --scheme=com.leeroybrun.happier.dev
+ *   happys mobile --scheme=dev.happier.app.dev
   *   happys mobile --no-metro
  *   happys mobile --run-ios --device="Your iPhone"
  */
@@ -81,7 +81,7 @@ async function main() {
   // - current: <happyDir>/packages/app (monorepo packages/)
   //
   // `happys mobile` should operate on the Expo project root, not the monorepo root.
-  const packagesAppDir = join(happyDir, 'packages', 'happy-app');
+  const packagesAppDir = join(happyDir, 'packages', 'app');
   const legacyExpoAppDir = join(happyDir, 'expo-app');
   const uiDir = existsSync(join(packagesAppDir, 'app.config.js'))
     ? packagesAppDir
@@ -101,7 +101,7 @@ async function main() {
   }
 
   // Default to the existing dev bundle identifier, which is also registered as a URL scheme
-  // (Info.plist includes `com.leeroybrun.happier.dev`), so iOS will open the dev build instead of the App Store app.
+  // (Info.plist includes `dev.happier.app.dev`), so iOS will open the dev build instead of the App Store app.
   const appEnv = process.env.APP_ENV ?? kv.get('--app-env') ?? 'development';
   const host = kv.get('--host') ?? process.env.HAPPY_STACKS_MOBILE_HOST ?? process.env.HAPPY_LOCAL_MOBILE_HOST ?? 'lan';
   const portRaw = kv.get('--port') ?? process.env.HAPPY_STACKS_MOBILE_PORT ?? process.env.HAPPY_LOCAL_MOBILE_PORT ?? '8081';

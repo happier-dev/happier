@@ -68,34 +68,7 @@ function resolveHomeDir() {
   if (fromEnv) {
     return expandHome(fromEnv);
   }
-  return join(homedir(), '.happy-stacks');
-}
-
-function applyStacksPrefixMapping() {
-  // Canonicalize env var prefix:
-  // - prefer HAPPY_STACKS_* when set
-  // - continue supporting HAPPY_LOCAL_* (legacy) during migration
-  const keys = new Set(Object.keys(process.env));
-  const suffixes = new Set();
-  for (const k of keys) {
-    if (k.startsWith('HAPPY_STACKS_')) suffixes.add(k.slice('HAPPY_STACKS_'.length));
-    if (k.startsWith('HAPPY_LOCAL_')) suffixes.add(k.slice('HAPPY_LOCAL_'.length));
-  }
-  for (const suffix of suffixes) {
-    const stacksKey = `HAPPY_STACKS_${suffix}`;
-    const localKey = `HAPPY_LOCAL_${suffix}`;
-    const stacksVal = (process.env[stacksKey] ?? '').trim();
-    const localVal = (process.env[localKey] ?? '').trim();
-    if (stacksVal) {
-      // Stacks wins.
-      process.env[stacksKey] = stacksVal;
-      process.env[localKey] = stacksVal;
-    } else if (localVal) {
-      // Legacy -> stacks.
-      process.env[localKey] = localVal;
-      process.env[stacksKey] = localVal;
-    }
-  }
+  return join(homedir(), '.happier-stack');
 }
 
 // If HAPPY_STACKS_HOME_DIR isn't set, try the canonical pointer file at <canonicalHomeDir>/.env first.
@@ -106,7 +79,6 @@ const canonicalEnvPath = getCanonicalHomeEnvPathFromEnv(process.env);
 if (!(process.env.HAPPY_STACKS_HOME_DIR ?? '').trim() && existsSync(canonicalEnvPath)) {
   await loadEnvFile(canonicalEnvPath, { override: false });
   await loadEnvFile(canonicalEnvPath, { override: true, overridePrefix: 'HAPPY_STACKS_' });
-  await loadEnvFile(canonicalEnvPath, { override: true, overridePrefix: 'HAPPY_LOCAL_' });
 }
 
 const __homeDir = resolveHomeDir();
@@ -129,11 +101,9 @@ const repoEnv = join(__cliRootDir, '.env');
 // 1) Load defaults first (lowest precedence)
 if (hasHomeConfig) {
   await loadEnvFile(homeEnv, { override: false });
-  await loadEnvFile(homeLocal, { override: true, overridePrefix: 'HAPPY_LOCAL_' });
   await loadEnvFile(homeLocal, { override: true, overridePrefix: 'HAPPY_STACKS_' });
 } else {
   await loadEnvFile(join(__cliRootDir, '.env'), { override: false });
-  await loadEnvFile(join(__cliRootDir, 'env.local'), { override: true, overridePrefix: 'HAPPY_LOCAL_' });
   await loadEnvFile(join(__cliRootDir, 'env.local'), { override: true, overridePrefix: 'HAPPY_STACKS_' });
 }
 
@@ -154,30 +124,20 @@ if (hasHomeConfig) {
 // if it exists: ~/.happy/stacks/main/env
 (() => {
   const stacksEnv = (process.env.HAPPY_STACKS_ENV_FILE ?? '').trim();
-  const localEnv = (process.env.HAPPY_LOCAL_ENV_FILE ?? '').trim();
-  if (stacksEnv || localEnv) {
+  if (stacksEnv) {
     return;
   }
-  const stackName = (process.env.HAPPY_STACKS_STACK ?? process.env.HAPPY_LOCAL_STACK ?? '').trim() || 'main';
-  const stacksStorageRootRaw = (process.env.HAPPY_STACKS_STORAGE_DIR ?? process.env.HAPPY_LOCAL_STORAGE_DIR ?? '').trim();
-  const stacksStorageRoot = stacksStorageRootRaw ? expandHome(stacksStorageRootRaw) : join(homedir(), '.happy', 'stacks');
-  const allowLegacy = !isSandboxed() || sandboxAllowsGlobalSideEffects();
-  // If the user explicitly overrides the stacks storage root, do not auto-discover a legacy env file from the real home dir.
-  // This keeps isolated runs (tests, sandboxes, custom dirs) from accidentally loading a "real" machine stack env file.
-  const legacyStacksRoot =
-    allowLegacy && !stacksStorageRootRaw
-      ? join(homedir(), '.happy', 'local', 'stacks')
-      : join(stacksStorageRoot, '__legacy_disabled__');
+  const stackName = (process.env.HAPPY_STACKS_STACK ?? '').trim() || 'main';
+  const stacksStorageRootRaw = (process.env.HAPPY_STACKS_STORAGE_DIR ?? '').trim();
+  const stacksStorageRoot = stacksStorageRootRaw ? expandHome(stacksStorageRootRaw) : join(homedir(), '.happier', 'stacks');
 
   const candidates = [
     join(stacksStorageRoot, stackName, 'env'),
-    join(legacyStacksRoot, stackName, 'env'),
   ];
   const envPath = candidates.find((p) => existsSync(p));
   if (!envPath) return;
 
   process.env.HAPPY_STACKS_ENV_FILE = envPath;
-  process.env.HAPPY_LOCAL_ENV_FILE = envPath;
 })();
 // 3) Load explicit env file overlay (stack env, or any caller-provided env file) last (highest precedence).
 //
@@ -186,16 +146,20 @@ if (hasHomeConfig) {
 // that must apply for true per-stack isolation. Do not filter by prefix here.
 {
   const stacksEnv = process.env.HAPPY_STACKS_ENV_FILE?.trim() ? process.env.HAPPY_STACKS_ENV_FILE.trim() : '';
-  const localEnv = process.env.HAPPY_LOCAL_ENV_FILE?.trim() ? process.env.HAPPY_LOCAL_ENV_FILE.trim() : '';
-  const unique = Array.from(new Set([stacksEnv, localEnv].filter(Boolean)));
+  const unique = Array.from(new Set([stacksEnv].filter(Boolean)));
   for (const p of unique) {
     // eslint-disable-next-line no-await-in-loop
     await loadEnvFile(p, { override: true });
   }
 }
 
-// Make both prefixes available to the rest of the codebase.
-applyStacksPrefixMapping();
+// Happy Stacks legacy compatibility is intentionally not supported here.
+// If a user still has HAPPY_LOCAL_* exported from an older install, ignore it.
+for (const k of Object.keys(process.env)) {
+  if (k.startsWith('HAPPY_LOCAL_')) {
+    delete process.env[k];
+  }
+}
 
 // Corepack strictness can prevent running Yarn in subfolders when the repo root is pinned to pnpm.
 // We intentionally keep component repos upstream-compatible (often Yarn), so relax strictness for child processes.

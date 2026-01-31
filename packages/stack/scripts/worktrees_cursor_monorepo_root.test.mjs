@@ -28,13 +28,13 @@ test('happys wt cursor opens the monorepo root (not a subpackage dir) in monorep
   const sandboxDir = join(tmp, 'sandbox');
 
   const monoRoot = join(workspaceDir, 'components', '.worktrees', 'happy', 'slopus', 'tmp', 'mono-wt');
-  await mkdir(join(monoRoot, 'expo-app'), { recursive: true });
-  await mkdir(join(monoRoot, 'cli'), { recursive: true });
-  await mkdir(join(monoRoot, 'server'), { recursive: true });
+  await mkdir(join(monoRoot, 'packages', 'app'), { recursive: true });
+  await mkdir(join(monoRoot, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(monoRoot, 'packages', 'server'), { recursive: true });
   await writeFile(join(monoRoot, '.git'), 'gitdir: dummy\n', 'utf-8');
-  await writeFile(join(monoRoot, 'expo-app', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'server', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
 
   const env = {
     ...process.env,

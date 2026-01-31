@@ -12,7 +12,7 @@ import { coercePort } from '../server/port.mjs';
 
 function resolveServerComponentFromStackEnv(env) {
   const v =
-    (env.HAPPY_STACKS_SERVER_COMPONENT ?? env.HAPPY_LOCAL_SERVER_COMPONENT ?? '').toString().trim() || 'happy-server-light';
+    (env.HAPPY_STACKS_SERVER_COMPONENT ?? '').toString().trim() || 'happy-server-light';
   return v === 'happy-server' ? 'happy-server' : 'happy-server-light';
 }
 
@@ -134,17 +134,17 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
   };
 
   const serverComponent = resolveServerComponentFromStackEnv(env);
-  const port = coercePort(env.HAPPY_STACKS_SERVER_PORT ?? env.HAPPY_LOCAL_SERVER_PORT);
-  const backendPort = coercePort(env.HAPPY_STACKS_HAPPY_SERVER_BACKEND_PORT ?? env.HAPPY_LOCAL_HAPPY_SERVER_BACKEND_PORT);
-  const cliHomeDir = (env.HAPPY_STACKS_CLI_HOME_DIR ?? env.HAPPY_LOCAL_CLI_HOME_DIR ?? join(baseDir, 'cli')).toString();
+  const port = coercePort(env.HAPPY_STACKS_SERVER_PORT);
+  const backendPort = coercePort(env.HAPPY_STACKS_HAPPY_SERVER_BACKEND_PORT);
+  const cliHomeDir = (env.HAPPY_STACKS_CLI_HOME_DIR ?? join(baseDir, 'cli')).toString();
   // IMPORTANT:
   // When stopping a stack, always prefer the stack's pinned happy-cli checkout/worktree.
   // Otherwise, PR stacks can accidentally run the base checkout's CLI bin, which may not be built
   // (we intentionally skip building base checkouts in some sandbox PR flows).
-  const pinnedCliDir = (env.HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI ?? env.HAPPY_LOCAL_COMPONENT_DIR_HAPPY_CLI ?? '').toString().trim();
+  const pinnedCliDir = (env.HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI ?? '').toString().trim();
   const cliDir = pinnedCliDir || getComponentDir(rootDir, 'happy-cli');
   const cliBin = join(cliDir, 'bin', 'happy.mjs');
-  const envPath = (env.HAPPY_STACKS_ENV_FILE ?? env.HAPPY_LOCAL_ENV_FILE ?? '').toString();
+  const envPath = (env.HAPPY_STACKS_ENV_FILE ?? '').toString();
 
   // Preferred: stop stack-started processes (by PID) recorded in stack.runtime.json.
   // This is safer than killing whatever happens to listen on a port, and doesn't rely on the runner's shutdown handler.
@@ -220,7 +220,7 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
   void backendPort;
   void port;
 
-  const managed = (env.HAPPY_STACKS_MANAGED_INFRA ?? env.HAPPY_LOCAL_MANAGED_INFRA ?? '1').toString().trim() !== '0';
+  const managed = (env.HAPPY_STACKS_MANAGED_INFRA ?? '1').toString().trim() !== '0';
   if (!noDocker && serverComponent === 'happy-server' && managed) {
     try {
       actions.infra = await stopHappyServerManagedInfra({ stackName, baseDir, removeVolumes: false });
@@ -235,11 +235,7 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
   // This is still safe because envPath is unique per stack; we also exclude our own PID.
   if (sweepOwned && envPath) {
     const needle1 = `HAPPY_STACKS_ENV_FILE=${envPath}`;
-    const needle2 = `HAPPY_LOCAL_ENV_FILE=${envPath}`;
-    const pids = [
-      ...(await listPidsWithEnvNeedle(needle1)),
-      ...(await listPidsWithEnvNeedle(needle2)),
-    ]
+    const pids = [...(await listPidsWithEnvNeedle(needle1))]
       .filter((pid) => pid !== process.pid)
       .filter((pid) => Number.isFinite(pid) && pid > 1);
 
@@ -257,4 +253,3 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
 
   return actions;
 }
-

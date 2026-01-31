@@ -38,7 +38,7 @@ const DEFAULT_COMPONENTS = ['happy', 'happy-cli', 'happy-server-light', 'happy-s
 const HAPPY_MONOREPO_GROUP_COMPONENTS = ['happy', 'happy-cli', 'happy-server'];
 
 function getActiveStackName() {
-  return (process.env.HAPPY_STACKS_STACK ?? process.env.HAPPY_LOCAL_STACK ?? '').trim() || 'main';
+  return (process.env.HAPPY_STACKS_STACK ?? '').trim() || 'main';
 }
 
 function isMainStack() {
@@ -63,14 +63,13 @@ function worktreeRepoKeyForComponent(rootDir, component) {
 }
 
 function componentOverrideKeys(component) {
-  const key = componentDirEnvKey(component);
-  return { key, legacyKey: key.replace(/^HAPPY_STACKS_/, 'HAPPY_LOCAL_') };
+  return componentDirEnvKey(component);
 }
 
 function getDefaultComponentDir(rootDir, component) {
-  const { key, legacyKey } = componentOverrideKeys(component);
+  const key = componentOverrideKeys(component);
   // Clone env so we can suppress the override for this lookup.
-  const env = { ...process.env, [key]: '', [legacyKey]: '' };
+  const env = { ...process.env, [key]: '' };
   return getComponentDir(rootDir, component, env);
 }
 
@@ -352,7 +351,7 @@ async function findStacksReferencingWorktree({ rootDir, worktreeDir }) {
     const keys = [];
 
     for (const [k, v] of parsed.entries()) {
-      if (!k.startsWith('HAPPY_STACKS_COMPONENT_DIR_') && !k.startsWith('HAPPY_LOCAL_COMPONENT_DIR_')) {
+      if (!k.startsWith('HAPPY_STACKS_COMPONENT_DIR_')) {
         continue;
       }
       const raw = String(v ?? '').trim();
@@ -385,14 +384,8 @@ async function ensureWorktreeExclude(worktreeDir, patterns) {
 }
 
 async function detectPackageManager(dir) {
-  // Order matters: pnpm > yarn > npm.
-  if (await pathExists(join(dir, 'pnpm-lock.yaml'))) return { kind: 'pnpm', lockfile: 'pnpm-lock.yaml' };
-  if (await pathExists(join(dir, 'yarn.lock'))) return { kind: 'yarn', lockfile: 'yarn.lock' };
-  if (await pathExists(join(dir, 'package-lock.json'))) return { kind: 'npm', lockfile: 'package-lock.json' };
-  if (await pathExists(join(dir, 'npm-shrinkwrap.json'))) return { kind: 'npm', lockfile: 'npm-shrinkwrap.json' };
-  // Fallback: if package.json exists, assume npm.
-  if (await pathExists(join(dir, 'package.json'))) return { kind: 'npm', lockfile: null };
-  return { kind: null, lockfile: null };
+  if (await pathExists(join(dir, 'package.json'))) return { kind: 'yarn' };
+  return { kind: null };
 }
 
 async function linkNodeModules({ fromDir, toDir }) {
@@ -438,36 +431,12 @@ async function installDependencies({ dir }) {
     }
   };
 
-  if (pm.kind === 'pnpm') {
-    if (jsonMode) {
-      await runForJson('pnpm', ['install', '--frozen-lockfile']);
-    } else {
-      await run('pnpm', ['install', '--frozen-lockfile'], { cwd: dir, env });
-    }
-    return { installed: true, reason: null };
-  }
-  if (pm.kind === 'yarn') {
-    // Works for yarn classic; yarn berry will ignore/translate flags as needed.
-    if (jsonMode) {
-      await runForJson('yarn', ['install', '--frozen-lockfile']);
-    } else {
-      await run('yarn', ['install', '--frozen-lockfile'], { cwd: dir, env });
-    }
-    return { installed: true, reason: null };
-  }
-  // npm
-  if (pm.lockfile && pm.lockfile !== 'package.json') {
-    if (jsonMode) {
-      await runForJson('npm', ['ci']);
-    } else {
-      await run('npm', ['ci'], { cwd: dir, env });
-    }
+  // Yarn-only.
+  // Works for yarn classic; yarn berry will ignore/translate flags as needed.
+  if (jsonMode) {
+    await runForJson('yarn', ['install', '--frozen-lockfile']);
   } else {
-    if (jsonMode) {
-      await runForJson('npm', ['install']);
-    } else {
-      await run('npm', ['install'], { cwd: dir, env });
-    }
+    await run('yarn', ['install', '--frozen-lockfile'], { cwd: dir, env });
   }
   return { installed: true, reason: null };
 }
@@ -479,9 +448,7 @@ function allowNodeModulesSymlinkForComponent(component) {
   // Override if you *really* want to experiment:
   //   HAPPY_STACKS_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK=1
   const allowHappySymlink =
-    (process.env.HAPPY_STACKS_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK ?? process.env.HAPPY_LOCAL_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK ?? '')
-      .toString()
-      .trim() === '1';
+    (process.env.HAPPY_STACKS_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK ?? '').toString().trim() === '1';
   if (c === 'happy' && !allowHappySymlink) return false;
   return true;
 }
@@ -768,8 +735,7 @@ async function cmdMigrate({ rootDir }) {
   // If the persisted config pins any component dir to a legacy location, attempt to rewrite it.
   const envUpdates = [];
 
-  // Keep in sync with scripts/utils/env/env_local.mjs selection logic.
-  const explicitEnv = (process.env.HAPPY_STACKS_ENV_FILE ?? process.env.HAPPY_LOCAL_ENV_FILE ?? '').trim();
+  const explicitEnv = (process.env.HAPPY_STACKS_ENV_FILE ?? '').trim();
   const hasHomeConfig = existsSync(getHomeEnvPath()) || existsSync(getHomeEnvLocalPath());
   const envPath = explicitEnv ? explicitEnv : hasHomeConfig ? resolveUserConfigEnvPath({ cliRootDir: rootDir }) : join(rootDir, 'env.local');
 
@@ -846,11 +812,7 @@ async function cmdUse({ rootDir, args, flags }) {
   }
 
   const worktreesRoot = getWorktreesRoot(rootDir);
-  const envPath = process.env.HAPPY_STACKS_ENV_FILE?.trim()
-    ? process.env.HAPPY_STACKS_ENV_FILE.trim()
-    : process.env.HAPPY_LOCAL_ENV_FILE?.trim()
-      ? process.env.HAPPY_LOCAL_ENV_FILE.trim()
-      : null;
+  const envPath = process.env.HAPPY_STACKS_ENV_FILE?.trim() ? process.env.HAPPY_STACKS_ENV_FILE.trim() : null;
 
   if (spec === 'default' || spec === 'main') {
     // If the active checkout is a monorepo, reset the whole monorepo group together.
@@ -881,7 +843,7 @@ async function cmdUse({ rootDir, args, flags }) {
       updateComponents = HAPPY_MONOREPO_GROUP_COMPONENTS;
       throw new Error(
         `[wt] invalid target for happy monorepo component '${component}':\n` +
-          `- expected a path inside the happy monorepo (contains packages/app|packages/cli|packages/server or legacy expo-app/cli/server)\n` +
+          `- expected a path inside the happy monorepo (contains packages/app|packages/cli|packages/server)\n` +
           `- but got: ${resolvedDir}\n` +
           `Fix: pick a worktree under ${join(worktreesRoot, 'happy')}/ or pass an absolute path to a monorepo checkout.`
       );
@@ -1001,7 +963,7 @@ async function cmdNew({ rootDir, argv }) {
     }
   }
 
-  // Default: base worktrees on a local mirror branch like `slopus/main` (or `leeroybrun/happy-server-light`).
+  // Default: base worktrees on a local mirror branch like `slopus/main` (or `happier-dev/happy-server-light`).
   // This scales to multiple upstream remotes without relying on a generic "upstream-main".
   const mirrorBranch = `${owner}/${defaultBranch}`;
   const base = baseOverride || baseFromWorktree || mirrorBranch;
@@ -1588,7 +1550,7 @@ async function fileExists(path) {
 
 async function pickBestShell({ kv, prefer = null } = {}) {
   const fromFlag = (kv?.get('--shell') ?? '').trim();
-  const fromEnv = (process.env.HAPPY_LOCAL_WT_SHELL ?? '').trim();
+  const fromEnv = (process.env.HAPPY_STACKS_WT_SHELL ?? '').trim();
   const fromShellEnv = (process.env.SHELL ?? '').trim();
   const want = (fromFlag || fromEnv || prefer || fromShellEnv).trim();
   if (want) {
@@ -1613,7 +1575,7 @@ function escapeForShellDoubleQuotes(s) {
 }
 
 async function openTerminalAuto({ dir, shell }) {
-  const termPref = (process.env.HAPPY_LOCAL_WT_TERMINAL ?? '').trim().toLowerCase();
+  const termPref = (process.env.HAPPY_STACKS_WT_TERMINAL ?? '').trim().toLowerCase();
   const order = termPref ? [termPref] : ['ghostty', 'iterm', 'terminal', 'current'];
 
   for (const t of order) {
@@ -1718,13 +1680,12 @@ async function cmdShell({ rootDir, argv }) {
   }
 
   // Explicit terminal selection (best-effort).
-  process.env.HAPPY_LOCAL_WT_TERMINAL = wantTerminal;
+  process.env.HAPPY_STACKS_WT_TERMINAL = wantTerminal;
   const chosen = await openTerminalAuto({ dir, shell });
   if (chosen.kind === 'current') {
     await run(shell, args, { cwd: dir, env: process.env, stdio: 'inherit' });
   }
   return { component, dir, shell, args, terminal: chosen.kind };
-  return { component, dir, shell, args };
 }
 
 async function cmdCode({ rootDir, argv }) {

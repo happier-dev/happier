@@ -5,7 +5,7 @@ import { ensureCliBuilt, ensureHappyCliLocalNpmLinked } from './utils/proc/pm.mj
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 
 /**
- * Link the local Happy CLI wrapper into your PATH.
+ * Link the local Happier CLI wrapper into your PATH.
  *
  * This is intentionally extracted so you can re-run linking without doing a full `happys bootstrap`.
  *

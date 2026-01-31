@@ -298,7 +298,7 @@ Notes:
 Server development has one extra twist: **our fork uses a single GitHub repo with two “main” branches**.
 
 - **Upstream repo**: `slopus/happy-server` (base branch typically `main`)
-- **Fork repo**: `leeroybrun/happy-server-light`
+- **Fork repo**: `happier-dev/happy-server-light`
   - full server fork “main” branch: `happy-server`
   - light server fork “main” branch: `happy-server-light`
 
@@ -352,7 +352,7 @@ happys wt git happy-server-light active -- merge --no-ff slopus/pr/<N>-<slug>
 happys wt push happy-server-light active --remote=origin
 ```
 
-Then open **two PRs** to `leeroybrun/happy-server-light`:
+Then open **two PRs** to `happier-dev/happy-server-light`:
 
 - one targeting base branch `happy-server`
 - one targeting base branch `happy-server-light`

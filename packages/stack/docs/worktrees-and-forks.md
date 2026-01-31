@@ -24,7 +24,7 @@ Examples:
 
 - `components/.worktrees/happy/slopus/pr/session-rename-upstream`
 - `components/.worktrees/happy-cli/slopus/ci/typecheck-gha-upstream` (split-repo mode)
-- `components/.worktrees/happy/leeroybrun/local/my-fork-only-patch`
+- `components/.worktrees/happy/happier-dev/local/my-fork-only-patch`
 
 ## Monorepo note (Happy UI/CLI/server in one repo)
 
@@ -52,7 +52,7 @@ Branches created/managed by `happy-stacks` worktree tooling are named:
 Where:
 
 - `<owner>` is derived from the repo remote you’re basing on
-  - **origin** → usually your fork owner (e.g. `leeroybrun`)
+  - **origin** → usually your fork owner (e.g. `happier-dev`)
   - **upstream** → upstream owner (e.g. `slopus`)
 - `<branch...>` is whatever you choose (`pr/...`, `feat/...`, `local/...`, etc.)
 
@@ -162,7 +162,7 @@ If you do **not** pass `--remote`, `happys wt new` defaults to using the Git rem
 It will also keep a local **mirror branch** named after the remote owner **and that remote’s default branch**:
 
 - if `upstream` points at `slopus/*` and its default branch is `main`, it will create/update `slopus/main` tracking `upstream/main`
-- if `origin` (or `fork`) points at `leeroybrun/*` and its default branch is `happy-server-light`, it will create/update `leeroybrun/happy-server-light` tracking `fork/happy-server-light`
+- if `origin` (or `fork`) points at `happier-dev/*` and its default branch is `happy-server-light`, it will create/update `happier-dev/happy-server-light` tracking `fork/happy-server-light`
 
 New PR worktrees created without `--base` will default to using that mirror branch (example: `slopus/main`) as the base.
 
@@ -179,7 +179,7 @@ Examples:
 # Sync upstream (usually slopus/main)
 happys wt sync happy --remote=upstream
 
-# Sync your fork remote (origin/fork). For happy-server-light this is typically leeroybrun/happy-server-light.
+# Sync your fork remote (origin/fork). For happy-server-light this is typically happier-dev/happy-server-light.
 happys wt sync happy-server-light --remote=origin
 ```
 
@@ -241,7 +241,7 @@ Important: `default` / `main` refers to the **checkout location**, not the Git b
 
 Update a worktree branch from its upstream base.
 
-- **Default base**: the per-repo mirror branch (example: `slopus/main`, or `leeroybrun/happy-server-light` when syncing from your fork remote)
+- **Default base**: the per-repo mirror branch (example: `slopus/main`, or `happier-dev/happy-server-light` when syncing from your fork remote)
 - **Default mode**: `rebase` (recommended for clean PR branches)
 
 ```bash

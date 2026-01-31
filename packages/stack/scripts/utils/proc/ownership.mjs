@@ -63,20 +63,20 @@ export async function isPidOwnedByStack(pid, { stackName, envPath, cliHomeDir } 
 
   // Require at least one stack identifier.
   const hasStack =
-    (sn && (line.includes(`HAPPY_STACKS_STACK=${sn}`) || line.includes(`HAPPY_LOCAL_STACK=${sn}`))) ||
-    (!sn && (line.includes('HAPPY_STACKS_STACK=') || line.includes('HAPPY_LOCAL_STACK=')));
+    (sn && line.includes(`HAPPY_STACKS_STACK=${sn}`)) ||
+    (!sn && line.includes('HAPPY_STACKS_STACK='));
   if (!hasStack) return false;
 
   // Prefer env-file binding (strongest).
   if (ep) {
-    if (line.includes(`HAPPY_STACKS_ENV_FILE=${ep}`) || line.includes(`HAPPY_LOCAL_ENV_FILE=${ep}`)) {
+    if (line.includes(`HAPPY_STACKS_ENV_FILE=${ep}`)) {
       return true;
     }
   }
 
   // Fallback: CLI home dir binding (useful for daemon-related processes).
   if (ch) {
-    if (line.includes(`HAPPY_HOME_DIR=${ch}`) || line.includes(`HAPPY_STACKS_CLI_HOME_DIR=${ch}`) || line.includes(`HAPPY_LOCAL_CLI_HOME_DIR=${ch}`)) {
+    if (line.includes(`HAPPY_HOME_DIR=${ch}`) || line.includes(`HAPPY_STACKS_CLI_HOME_DIR=${ch}`)) {
       return true;
     }
   }
@@ -132,4 +132,3 @@ export async function killProcessGroupOwnedByStack(
   }
   return { killed: true, reason: 'killed_pgid', pgid };
 }
-

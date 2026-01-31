@@ -29,13 +29,13 @@ test('swiftbar: monorepo stacks do not offer per-component worktree switching', 
 
   const componentsDir = join(tmp, 'components');
   const monorepoRoot = join(componentsDir, 'happy');
-  const expoApp = join(monorepoRoot, 'expo-app');
-  const cliPkg = join(monorepoRoot, 'cli');
-  const serverPkg = join(monorepoRoot, 'server');
-  await mkdir(expoApp, { recursive: true });
+  const appPkg = join(monorepoRoot, 'packages', 'app');
+  const cliPkg = join(monorepoRoot, 'packages', 'cli');
+  const serverPkg = join(monorepoRoot, 'packages', 'server');
+  await mkdir(appPkg, { recursive: true });
   await mkdir(cliPkg, { recursive: true });
   await mkdir(serverPkg, { recursive: true });
-  await writeFile(join(expoApp, 'README.md'), 'expo\n', 'utf-8');
+  await writeFile(join(appPkg, 'README.md'), 'app\n', 'utf-8');
   await writeFile(join(cliPkg, 'README.md'), 'cli\n', 'utf-8');
   await writeFile(join(serverPkg, 'README.md'), 'server\n', 'utf-8');
 
@@ -53,7 +53,7 @@ test('swiftbar: monorepo stacks do not offer per-component worktree switching', 
   await writeFile(
     envFile,
     [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${expoApp}`,
+      `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${appPkg}`,
       `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliPkg}`,
       `HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER=${serverPkg}`,
       '',

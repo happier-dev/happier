@@ -93,13 +93,8 @@ export function resolveAutoCopyFromMainEnabled({ env, stackName, isInteractive }
   if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     return false;
   }
-  const raw = (env.HAPPY_STACKS_AUTO_AUTH_SEED ?? env.HAPPY_LOCAL_AUTO_AUTH_SEED ?? '').toString().trim();
+  const raw = (env.HAPPY_STACKS_AUTO_AUTH_SEED ?? '').toString().trim();
   if (raw) return raw !== '0';
-
-  // Legacy toggle (kept for existing setups):
-  // - if set, it only controls enable/disable; source stack remains configurable via HAPPY_STACKS_AUTH_SEED_FROM.
-  const legacy = (env.HAPPY_STACKS_AUTO_COPY_FROM_MAIN ?? env.HAPPY_LOCAL_AUTO_COPY_FROM_MAIN ?? '').toString().trim();
-  if (legacy) return legacy !== '0';
 
   if (stackName === 'main') return false;
 
@@ -108,23 +103,12 @@ export function resolveAutoCopyFromMainEnabled({ env, stackName, isInteractive }
   // - in interactive shells, auto-seed only when the user explicitly configured a non-main seed stack
   //   (this avoids silently spreading main identity for users who haven't opted in yet).
   if (!isInteractive) return true;
-  const seed = (env.HAPPY_STACKS_AUTH_SEED_FROM ?? env.HAPPY_LOCAL_AUTH_SEED_FROM ?? '').toString().trim();
+  const seed = (env.HAPPY_STACKS_AUTH_SEED_FROM ?? '').toString().trim();
   return Boolean(seed && seed !== 'main');
 }
 
 export function resolveAuthSeedFromEnv(env) {
-  // Back-compat for an earlier experimental var name:
-  // - if set to a non-bool-ish stack name, treat it as the seed source
-  // - if set to "1"/"true", ignore (source comes from HAPPY_STACKS_AUTH_SEED_FROM)
-  const legacyAutoFrom = (env.HAPPY_STACKS_AUTO_AUTH_SEED_FROM ?? env.HAPPY_LOCAL_AUTO_AUTH_SEED_FROM ?? '').toString().trim();
-  if (legacyAutoFrom && legacyAutoFrom !== '0' && legacyAutoFrom !== '1' && legacyAutoFrom.toLowerCase() !== 'true') {
-    return legacyAutoFrom;
-  }
-  // Legacy toggle: "on" implies main (historical behavior).
-  const legacy = (env.HAPPY_STACKS_AUTO_COPY_FROM_MAIN ?? env.HAPPY_LOCAL_AUTO_COPY_FROM_MAIN ?? '').toString().trim();
-  if (legacy && legacy !== '0') return 'main';
-  // Otherwise, use the general default seed stack.
-  const seed = (env.HAPPY_STACKS_AUTH_SEED_FROM ?? env.HAPPY_LOCAL_AUTH_SEED_FROM ?? '').toString().trim();
+  const seed = (env.HAPPY_STACKS_AUTH_SEED_FROM ?? '').toString().trim();
   return seed || 'main';
 }
 
@@ -304,8 +288,8 @@ export async function maybeAutoCopyAuthFromMainIfNeeded({
   const reason = !hasAccessKey ? 'missing_credentials' : 'no_accounts';
   const fromStackName = resolveAuthSeedFromEnv(env);
   const linkAuth =
-    (env.HAPPY_STACKS_AUTH_LINK ?? env.HAPPY_LOCAL_AUTH_LINK ?? '').toString().trim() === '1' ||
-    (env.HAPPY_STACKS_AUTH_MODE ?? env.HAPPY_LOCAL_AUTH_MODE ?? '').toString().trim() === 'link';
+    (env.HAPPY_STACKS_AUTH_LINK ?? '').toString().trim() === '1' ||
+    (env.HAPPY_STACKS_AUTH_MODE ?? '').toString().trim() === 'link';
   if (!quiet) {
     console.log(`[local] auth: auto seed from ${fromStackName} for ${stackName} (${reason})`);
   }

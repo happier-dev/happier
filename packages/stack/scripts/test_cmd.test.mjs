@@ -88,7 +88,7 @@ test('happys test --json keeps stdout JSON-only and runs monorepo root when happ
   assert.equal(parsed?.results?.length, 1);
   assert.equal(parsed.results[0].component, 'happy');
 
-  // Monorepo detection: when happy points at expo-app, tests should run from the monorepo root.
+  // Monorepo detection: when happy points at packages/app, tests should run from the monorepo root.
   assert.equal(parsed.results[0].dir, monoRoot);
 
   // Any command output should be written to stderr (to keep stdout JSON-only).

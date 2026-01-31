@@ -32,14 +32,22 @@ test('happys stack new derives monorepo server-light dirs from --happy spec', as
   // Create a monorepo worktree somewhere other than components/happy to simulate a new stack
   // created from a --happy spec when the default checkout isn't a monorepo.
   const monoRoot = join(workspaceDir, 'components', '.worktrees', 'happy', 'slopus', 'tmp', 'leeroy-wip');
-  await mkdir(join(monoRoot, 'expo-app'), { recursive: true });
-  await mkdir(join(monoRoot, 'cli'), { recursive: true });
-  await mkdir(join(monoRoot, 'server', 'prisma', 'sqlite'), { recursive: true });
-  await writeFile(join(monoRoot, 'expo-app', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'server', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'server', 'prisma', 'schema.prisma'), 'datasource db { provider = "postgresql" }\n', 'utf-8');
-  await writeFile(join(monoRoot, 'server', 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
+  await mkdir(join(monoRoot, 'packages', 'app'), { recursive: true });
+  await mkdir(join(monoRoot, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(monoRoot, 'packages', 'server', 'prisma', 'sqlite'), { recursive: true });
+  await writeFile(join(monoRoot, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(
+    join(monoRoot, 'packages', 'server', 'prisma', 'schema.prisma'),
+    'datasource db { provider = "postgresql" }\n',
+    'utf-8'
+  );
+  await writeFile(
+    join(monoRoot, 'packages', 'server', 'prisma', 'sqlite', 'schema.prisma'),
+    'datasource db { provider = "sqlite" }\n',
+    'utf-8'
+  );
 
   const env = {
     ...process.env,
@@ -57,10 +65,10 @@ test('happys stack new derives monorepo server-light dirs from --happy spec', as
 
   const envPath = join(storageDir, stackName, 'env');
   const contents = await readFile(envPath, 'utf-8');
-  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY=${join(monoRoot, 'expo-app')}\n`), contents);
-  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${join(monoRoot, 'cli')}\n`), contents);
-  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER=${join(monoRoot, 'server')}\n`), contents);
-  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT=${join(monoRoot, 'server')}\n`), contents);
+  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY=${join(monoRoot, 'packages', 'app')}\n`), contents);
+  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${join(monoRoot, 'packages', 'cli')}\n`), contents);
+  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER=${join(monoRoot, 'packages', 'server')}\n`), contents);
+  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT=${join(monoRoot, 'packages', 'server')}\n`), contents);
 
   await rm(tmp, { recursive: true, force: true });
 });

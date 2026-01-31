@@ -160,7 +160,7 @@ Next steps:
   limactl shell ${VM_NAME}
 
 Inside the VM:
-  curl -fsSL https://raw.githubusercontent.com/leeroybrun/happy-local/main/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \\
+  curl -fsSL https://raw.githubusercontent.com/happier-dev/happy-local/main/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \\
     && chmod +x /tmp/linux-ubuntu-review-pr.sh \\
     && /tmp/linux-ubuntu-review-pr.sh
 
@@ -171,4 +171,3 @@ Tip:
   Open the printed URLs on your macOS host via http://localhost:<port> or http://*.localhost:<port>.
   For `npx happy-stacks review-pr ...` inside the VM, pass `--vm-ports` so stack ports land in the forwarded ranges.
 EOF
-

@@ -109,7 +109,7 @@ limactl shell happy-pr
 Inside the VM:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leeroybrun/happy-local/main/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh && chmod +x /tmp/linux-ubuntu-review-pr.sh && /tmp/linux-ubuntu-review-pr.sh
+curl -fsSL https://raw.githubusercontent.com/happier-dev/happy-local/main/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh && chmod +x /tmp/linux-ubuntu-review-pr.sh && /tmp/linux-ubuntu-review-pr.sh
 
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm

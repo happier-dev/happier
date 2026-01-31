@@ -2,11 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export function getServerComponentName({ kv } = {}) {
   const fromArgRaw = kv?.get('--server')?.trim() ? kv.get('--server').trim() : '';
-  const fromEnvRaw = process.env.HAPPY_STACKS_SERVER_COMPONENT?.trim()
-    ? process.env.HAPPY_STACKS_SERVER_COMPONENT.trim()
-    : process.env.HAPPY_LOCAL_SERVER_COMPONENT?.trim()
-      ? process.env.HAPPY_LOCAL_SERVER_COMPONENT.trim()
-      : '';
+  const fromEnvRaw = process.env.HAPPY_STACKS_SERVER_COMPONENT?.trim() ? process.env.HAPPY_STACKS_SERVER_COMPONENT.trim() : '';
   const raw = fromArgRaw || fromEnvRaw || 'happy-server-light';
   const v = raw.toLowerCase();
   if (v === 'light' || v === 'server-light' || v === 'happy-server-light') {
@@ -77,7 +73,7 @@ export async function waitForServerReady(url) {
     try {
       const res = await fetch(url, { method: 'GET' });
       const text = await res.text();
-      if (res.ok && text.includes('Welcome to Happy Server!')) {
+      if (res.ok && text.includes('Welcome to Happier Server!')) {
         return;
       }
     } catch {
@@ -111,4 +107,3 @@ export async function waitForHttpOk(url, { timeoutMs = 15_000, intervalMs = 250 
   }
   throw new Error(`Timed out waiting for HTTP response from ${url} after ${timeoutMs}ms`);
 }
-

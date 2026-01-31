@@ -29,20 +29,20 @@ test('createHeadSliceCommits produces a focused diff while keeping full HEAD cod
   try {
     await run('git', ['init', '-q'], { cwd: repo, env });
     await run('git', ['checkout', '-q', '-b', 'main'], { cwd: repo, env });
-    await mkdir(join(repo, 'expo-app'), { recursive: true });
-    await mkdir(join(repo, 'cli'), { recursive: true });
-    await mkdir(join(repo, 'server'), { recursive: true });
-    await writeFile(join(repo, 'expo-app', 'a.txt'), 'base-a\n', 'utf-8');
-    await writeFile(join(repo, 'cli', 'c.txt'), 'base-c\n', 'utf-8');
-    await writeFile(join(repo, 'server', 'b.txt'), 'base-b\n', 'utf-8');
+    await mkdir(join(repo, 'packages', 'app'), { recursive: true });
+    await mkdir(join(repo, 'packages', 'cli'), { recursive: true });
+    await mkdir(join(repo, 'packages', 'server'), { recursive: true });
+    await writeFile(join(repo, 'packages', 'app', 'a.txt'), 'base-a\n', 'utf-8');
+    await writeFile(join(repo, 'packages', 'cli', 'c.txt'), 'base-c\n', 'utf-8');
+    await writeFile(join(repo, 'packages', 'server', 'b.txt'), 'base-b\n', 'utf-8');
     await run('git', ['add', '.'], { cwd: repo, env });
     await run('git', ['commit', '-q', '-m', 'chore: base'], { cwd: repo, env });
 
     // HEAD commit with mixed changes across areas.
-    await writeFile(join(repo, 'expo-app', 'a.txt'), 'head-a\n', 'utf-8');
-    await writeFile(join(repo, 'expo-app', 'new.txt'), 'new\n', 'utf-8');
-    await writeFile(join(repo, 'cli', 'c.txt'), 'head-c\n', 'utf-8');
-    await rm(join(repo, 'server', 'b.txt'));
+    await writeFile(join(repo, 'packages', 'app', 'a.txt'), 'head-a\n', 'utf-8');
+    await writeFile(join(repo, 'packages', 'app', 'new.txt'), 'new\n', 'utf-8');
+    await writeFile(join(repo, 'packages', 'cli', 'c.txt'), 'head-c\n', 'utf-8');
+    await rm(join(repo, 'packages', 'server', 'b.txt'));
     await run('git', ['add', '-A'], { cwd: repo, env });
     await run('git', ['commit', '-q', '-m', 'feat: head'], { cwd: repo, env });
 
@@ -59,18 +59,18 @@ test('createHeadSliceCommits produces a focused diff while keeping full HEAD cod
       baseRef: baseCommit,
       headCommit,
       ops,
-      slicePaths: ['expo-app/a.txt', 'expo-app/new.txt'],
-      label: 'expo-app',
+      slicePaths: ['packages/app/a.txt', 'packages/app/new.txt'],
+      label: 'packages/app',
     });
 
     // Working tree should match full HEAD.
-    const a = await readFile(join(wt, 'expo-app', 'a.txt'), 'utf-8');
-    const c = await readFile(join(wt, 'cli', 'c.txt'), 'utf-8');
+    const a = await readFile(join(wt, 'packages', 'app', 'a.txt'), 'utf-8');
+    const c = await readFile(join(wt, 'packages', 'cli', 'c.txt'), 'utf-8');
     assert.equal(a, 'head-a\n');
     assert.equal(c, 'head-c\n');
-    await assert.rejects(async () => await readFile(join(wt, 'server', 'b.txt'), 'utf-8'));
+    await assert.rejects(async () => await readFile(join(wt, 'packages', 'server', 'b.txt'), 'utf-8'));
 
-    // Diff between slice commits should include only expo-app changes.
+    // Diff between slice commits should include only packages/app changes.
     const diffNames = (
       await runCapture('git', ['diff', '--name-only', `${baseSliceCommit}...${headSliceCommit}`], { cwd: wt, env })
     )
@@ -78,7 +78,7 @@ test('createHeadSliceCommits produces a focused diff while keeping full HEAD cod
       .split('\n')
       .filter(Boolean)
       .sort();
-    assert.deepEqual(diffNames, ['expo-app/a.txt', 'expo-app/new.txt']);
+    assert.deepEqual(diffNames, ['packages/app/a.txt', 'packages/app/new.txt']);
   } finally {
     try {
       await run('git', ['worktree', 'remove', '--force', wt], { cwd: repo, env });

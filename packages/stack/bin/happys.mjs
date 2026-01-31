@@ -39,9 +39,7 @@ function dotenvGetQuick(envPath, key) {
 function resolveCliRootDir() {
   const fromEnv = (
     process.env.HAPPY_STACKS_CLI_ROOT_DIR ??
-    process.env.HAPPY_LOCAL_CLI_ROOT_DIR ??
     process.env.HAPPY_STACKS_DEV_CLI_ROOT_DIR ??
-    process.env.HAPPY_LOCAL_DEV_CLI_ROOT_DIR ??
     ''
   ).trim();
   if (fromEnv) return expandHome(fromEnv);
@@ -50,9 +48,7 @@ function resolveCliRootDir() {
   const canonicalEnv = getCanonicalHomeEnvPathFromEnv(process.env);
   const v =
     dotenvGetQuick(canonicalEnv, 'HAPPY_STACKS_CLI_ROOT_DIR') ||
-    dotenvGetQuick(canonicalEnv, 'HAPPY_LOCAL_CLI_ROOT_DIR') ||
     dotenvGetQuick(canonicalEnv, 'HAPPY_STACKS_DEV_CLI_ROOT_DIR') ||
-    dotenvGetQuick(canonicalEnv, 'HAPPY_LOCAL_DEV_CLI_ROOT_DIR') ||
     '';
   return v ? expandHome(v) : '';
 }
@@ -82,13 +78,13 @@ function maybeReexecToCliRoot(cliRootDir) {
 }
 
 function resolveHomeDir() {
-  const fromEnv = (process.env.HAPPY_STACKS_HOME_DIR ?? process.env.HAPPY_LOCAL_HOME_DIR ?? '').trim();
+  const fromEnv = (process.env.HAPPY_STACKS_HOME_DIR ?? '').trim();
   if (fromEnv) return expandHome(fromEnv);
 
   // Stable pointer file: even if the real home dir is elsewhere, `happys init` writes the pointer here.
   const canonicalEnv = getCanonicalHomeEnvPathFromEnv(process.env);
-  const v = dotenvGetQuick(canonicalEnv, 'HAPPY_STACKS_HOME_DIR') || dotenvGetQuick(canonicalEnv, 'HAPPY_LOCAL_HOME_DIR') || '';
-  return v ? expandHome(v) : join(homedir(), '.happy-stacks');
+  const v = dotenvGetQuick(canonicalEnv, 'HAPPY_STACKS_HOME_DIR') || '';
+  return v ? expandHome(v) : join(homedir(), '.happier-stack');
 }
 
 function stripGlobalOpt(argv, { name, aliases = [] }) {
@@ -184,7 +180,7 @@ function applySandboxDirIfRequested(argv) {
     }
   }
   for (const k of Object.keys(process.env)) {
-    if (k.startsWith('HAPPY_STACKS_') || k.startsWith('HAPPY_LOCAL_')) {
+    if (k.startsWith('HAPPY_STACKS_')) {
       delete process.env[k];
       continue;
     }
@@ -204,19 +200,14 @@ function applySandboxDirIfRequested(argv) {
   // exported HAPPY_STACKS_* in their shell. Otherwise sandbox runs can accidentally read/write
   // "real" machine state (breaking isolation).
   process.env.HAPPY_STACKS_CANONICAL_HOME_DIR = canonicalHomeDir;
-  process.env.HAPPY_LOCAL_CANONICAL_HOME_DIR = canonicalHomeDir;
 
   process.env.HAPPY_STACKS_HOME_DIR = homeDir;
-  process.env.HAPPY_LOCAL_HOME_DIR = homeDir;
 
   process.env.HAPPY_STACKS_WORKSPACE_DIR = workspaceDir;
-  process.env.HAPPY_LOCAL_WORKSPACE_DIR = workspaceDir;
 
   process.env.HAPPY_STACKS_RUNTIME_DIR = runtimeDir;
-  process.env.HAPPY_LOCAL_RUNTIME_DIR = runtimeDir;
 
   process.env.HAPPY_STACKS_STORAGE_DIR = storageDir;
-  process.env.HAPPY_LOCAL_STORAGE_DIR = storageDir;
 
   // Sandbox default: disallow global side effects unless explicitly opted in.
   // This keeps sandbox runs fast, deterministic, and isolated.
@@ -228,9 +219,7 @@ function applySandboxDirIfRequested(argv) {
 
     // Never auto-enable or reset Tailscale Serve in sandbox.
     // (Tailscale is global machine state; sandbox runs must not touch it.)
-    process.env.HAPPY_LOCAL_TAILSCALE_SERVE = '0';
     process.env.HAPPY_STACKS_TAILSCALE_SERVE = '0';
-    process.env.HAPPY_LOCAL_TAILSCALE_RESET_ON_EXIT = '0';
     process.env.HAPPY_STACKS_TAILSCALE_RESET_ON_EXIT = '0';
   }
 

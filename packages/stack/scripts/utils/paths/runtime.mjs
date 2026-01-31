@@ -1,8 +1,19 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { expandHome } from './canonical_home.mjs';
+
+function resolveInvokerPackageName(cliRootDir) {
+  try {
+    const raw = readFileSync(join(cliRootDir, 'package.json'), 'utf-8');
+    const pkg = JSON.parse(raw);
+    const name = String(pkg?.name ?? '').trim();
+    return name || null;
+  } catch {
+    return null;
+  }
+}
 
 export function getRuntimeDir() {
   const fromEnv = (process.env.HAPPY_STACKS_RUNTIME_DIR ?? '').trim();
@@ -11,14 +22,15 @@ export function getRuntimeDir() {
   }
   const homeDir = (process.env.HAPPY_STACKS_HOME_DIR ?? '').trim()
     ? expandHome(process.env.HAPPY_STACKS_HOME_DIR.trim())
-    : join(homedir(), '.happy-stacks');
+    : join(homedir(), '.happier-stack');
   return join(homeDir, 'runtime');
 }
 
 export function resolveInstalledCliRoot(cliRootDir) {
   const runtimeDir = getRuntimeDir();
-  const runtimePkgRoot = join(runtimeDir, 'node_modules', 'happy-stacks');
-  if (existsSync(runtimePkgRoot)) {
+  const pkgName = resolveInvokerPackageName(cliRootDir);
+  const runtimePkgRoot = pkgName ? join(runtimeDir, 'node_modules', ...pkgName.split('/')) : null;
+  if (runtimePkgRoot && existsSync(runtimePkgRoot)) {
     return runtimePkgRoot;
   }
   return cliRootDir;
@@ -27,4 +39,3 @@ export function resolveInstalledCliRoot(cliRootDir) {
 export function resolveInstalledPath(cliRootDir, relativePath) {
   return join(resolveInstalledCliRoot(cliRootDir), relativePath);
 }
-

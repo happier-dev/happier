@@ -21,8 +21,8 @@ export async function ensureHappyMonorepoNestedDepsInstalled({
   }
 
   const candidates = [
-    { subdir: 'cli', label: 'happy-cli (monorepo)' },
-    { subdir: 'server', label: 'happy-server (monorepo)' },
+    { subdir: join('packages', 'cli'), label: 'happy-cli (monorepo)' },
+    { subdir: join('packages', 'server'), label: 'happy-server (monorepo)' },
   ];
 
   const ensured = [];
@@ -35,4 +35,3 @@ export async function ensureHappyMonorepoNestedDepsInstalled({
 
   return { monorepoRoot, ensured };
 }
-

@@ -83,7 +83,7 @@ The main components managed by happy-stacks:
 
 ### Non-negotiables for agents (read this first)
 
-These rules are strict on purpose. They exist so we can iterate quickly, test safely, and produce clean PRs for both `slopus/*` (upstream) and `leeroybrun/*` (our forks).
+These rules are strict on purpose. They exist so we can iterate quickly, test safely, and produce clean PRs for both `slopus/*` (upstream) and `happier-dev/*` (our forks).
 
 #### **Command discipline (CRITICAL: only use `happys ...`)**
 
@@ -274,7 +274,7 @@ Each stack is isolated (ports + CLI home dir). That means **running multiple sta
 - If it should go to `slopus/*`, the branch must be based on `upstream/main` (or the upstream base branch) and contain **only** the upstream-worthy commits.
 - **Upstream-first policy**: start implementation work on an **upstream-based** worktree/branch.
   - After the feature is complete, **validate it against our fork** by doing a **test-merge in a temporary fork branch/worktree**.
-  - If the test-merge is clean: open a PR to the `leeroybrun/*` fork from that temp branch.
+  - If the test-merge is clean: open a PR to the `happier-dev/*` fork from that temp branch.
   - If it conflicts: create a dedicated fork PR branch/worktree (based on the fork’s target branch) and **cherry-pick** the upstream commits, resolving conflicts there.
 
 #### **Commit messages (Conventional Commits)**
@@ -342,7 +342,7 @@ The tooling below exists so you don’t have to manually re-copy changes between
 Each component repo under `components/<component>` should typically have:
 
 - `upstream`: upstream repo (often `slopus/*`)
-- `origin` (or `fork`): our fork (often `leeroybrun/*`)
+- `origin` (or `fork`): our fork (often `happier-dev/*`)
   - Some component checkouts (notably `happy-server` / `happy-server-light`) use the Git remote name `fork` instead of `origin`.
   - `happys wt ...` treats `origin` and `fork` as interchangeable; raw `git ...` commands should use whichever remote name exists in that repo (`git remote -v`).
 
@@ -356,7 +356,7 @@ Branches created/managed by worktree tooling are owner-prefixed:
 
 Examples:
 
-- `leeroybrun/local/my-patch` (fork-only)
+- `happier-dev/local/my-patch` (fork-only)
 - `slopus/pr/123-fix-thing` (upstream PR branch)
 
 ---
@@ -374,7 +374,7 @@ components/.worktrees/<component>/<owner>/<branch...>
 Examples:
 
 - `components/.worktrees/happy/slopus/pr/123-fix-thing`
-- `components/.worktrees/happy-cli/leeroybrun/local/my-patch`
+- `components/.worktrees/happy-cli/happier-dev/local/my-patch`
 
 #### **Active component selection**
 
@@ -394,7 +394,7 @@ Use `happys wt use ...` instead of editing env files by hand. (Legacy in a clone
 
 ---
 
-### One worktree vs two worktrees (slopus vs leeroybrun divergence)
+### One worktree vs two worktrees (slopus vs happier-dev divergence)
 
 We often want the *same* change on both upstream and our fork, but sometimes our forks have diverged enough that we need separate implementations.
 
@@ -408,13 +408,13 @@ Use **one** worktree when:
 In this case, develop in an **upstream-based** worktree (clean history). Once it’s complete:
 
 - **Upstream PR**: open a PR to `slopus/*`.
-- **Fork PR**: do a **test-merge in a temporary fork branch/worktree**; if it’s clean, open a PR to `leeroybrun/*`. If it conflicts, fall back to a fork PR branch with cherry-picks (see workflows below).
+- **Fork PR**: do a **test-merge in a temporary fork branch/worktree**; if it’s clean, open a PR to `happier-dev/*`. If it conflicts, fall back to a fork PR branch with cherry-picks (see workflows below).
 
 #### **Use two worktrees when needed**
 
 Use **two** worktrees when:
 
-- upstream (`slopus/*`) and our fork (`leeroybrun/*`) need materially different behavior, OR
+- upstream (`slopus/*`) and our fork (`happier-dev/*`) need materially different behavior, OR
 - our fork has extra features/patches that require a fork-only variant, OR
 - upstream is moving slowly and we need a fork-only patch now but still want a clean upstream PR later.
 
@@ -647,7 +647,7 @@ Notes:
 
 #### **2) Validate and ship the change to our fork (test-merge → cherry-pick fallback)**
 
-Example: you implemented a change on an upstream-based worktree and now want a clean PR to `leeroybrun/*` without developing on fork `main`.
+Example: you implemented a change on an upstream-based worktree and now want a clean PR to `happier-dev/*` without developing on fork `main`.
 
 ```bash
 # (recommended) ensure our mirror branches are up to date
@@ -754,7 +754,7 @@ happys stack wt pr-upstream -- use happy slopus/pr/my-feature
 
 # Stack B points at fork worktree
 happys stack new pr-fork --interactive
-happys stack wt pr-fork -- use happy leeroybrun/tmp/merge-pr-my-feature
+happys stack wt pr-fork -- use happy happier-dev/tmp/merge-pr-my-feature
 
 # Run independently
 happys stack dev pr-upstream
@@ -785,7 +785,7 @@ happys wt update-all --stash
 - Once the change is complete, **validate it on our fork** using the **test-merge → cherry-pick fallback** workflow:
   - Create a temporary fork integration worktree (`--from=origin`)
   - Test-merge the upstream branch/commit(s)
-  - If clean: push and open a PR to `leeroybrun/*`
+  - If clean: push and open a PR to `happier-dev/*`
   - If conflicts: create a dedicated fork PR worktree/branch and cherry-pick the upstream commits, resolving conflicts there
 
 #### **When upstream merges a change you also carried locally**
@@ -807,7 +807,7 @@ Conceptually they are “two flavors of the same upstream server codebase”:
 
 Both of our forks are branches of a single fork repo:
 
-- **Fork repo**: `leeroybrun/happy-server-light`
+- **Fork repo**: `happier-dev/happy-server-light`
 - **`happy-server` fork “main”**: branch `happy-server`
 - **`happy-server-light` fork “main”**: branch `happy-server-light`
 - **Remote naming**: in these server repos, our fork remote is typically named `fork` (not `origin`).
@@ -821,7 +821,7 @@ So you should expect to open **two fork PRs** (or one PR per target branch) when
   - Then validate/ship to our fork by doing the **test-merge → cherry-pick fallback** flow **twice**:
     - once targeting fork branch `happy-server`
     - once targeting fork branch `happy-server-light`
-  - Result: PR(s) to `leeroybrun/happy-server-light` that land the same commits into both branches.
+  - Result: PR(s) to `happier-dev/happy-server-light` that land the same commits into both branches.
 
 - **If the change must differ between `happy-server` and `happy-server-light`**:
   - Implement the upstream-acceptable portion on an upstream-based worktree and open the upstream PR if applicable.

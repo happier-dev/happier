@@ -313,15 +313,13 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
       `  happys stack new ${stackName} --interactive\n`
     );
   }
-  // IMPORTANT: stack env file should be authoritative. If the user has HAPPY_STACKS_* / HAPPY_LOCAL_*
+  // IMPORTANT: stack env file should be authoritative. If the user has HAPPY_STACKS_*
   // exported in their shell, it would otherwise "win" because utils/env.mjs only sets
   // env vars if they are missing/empty.
   const cleaned = { ...process.env };
   const keepPrefixed = new Set([
     // Stack/env pointers:
-    'HAPPY_LOCAL_ENV_FILE',
     'HAPPY_STACKS_ENV_FILE',
-    'HAPPY_LOCAL_STACK',
     'HAPPY_STACKS_STACK',
 
     // Sandbox detection + policy (must propagate to child processes).
@@ -335,12 +333,6 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     'HAPPY_STACKS_WORKSPACE_DIR',
     'HAPPY_STACKS_RUNTIME_DIR',
     'HAPPY_STACKS_STORAGE_DIR',
-    // Legacy prefix mirrors:
-    'HAPPY_LOCAL_CANONICAL_HOME_DIR',
-    'HAPPY_LOCAL_HOME_DIR',
-    'HAPPY_LOCAL_WORKSPACE_DIR',
-    'HAPPY_LOCAL_RUNTIME_DIR',
-    'HAPPY_LOCAL_STORAGE_DIR',
 
     // Sandbox-safe UX knobs (keep consistent through stack wrappers).
     'HAPPY_STACKS_VERBOSE',
@@ -351,75 +343,37 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     // Guided auth flow coordination across wrappers.
     // These are intentionally passed through even though most HAPPY_STACKS_* vars are scrubbed.
     'HAPPY_STACKS_DAEMON_WAIT_FOR_AUTH',
-    'HAPPY_LOCAL_DAEMON_WAIT_FOR_AUTH',
     'HAPPY_STACKS_AUTH_FLOW',
-    'HAPPY_LOCAL_AUTH_FLOW',
 
     // Safe global defaults that should apply inside stack wrappers unless overridden by the stack env file.
     // This is important for VM/CI/sandbox environments where users want predictable port ranges without
     // pinning every stack env explicitly.
     'HAPPY_STACKS_STACK_PORT_START',
-    'HAPPY_LOCAL_STACK_PORT_START',
 
     'HAPPY_STACKS_BIND_MODE',
-    'HAPPY_LOCAL_BIND_MODE',
     'HAPPY_STACKS_EXPO_HOST',
-    'HAPPY_LOCAL_EXPO_HOST',
 
     // Expo dev-server port strategy (web + dev-client share the same Metro process).
     'HAPPY_STACKS_EXPO_DEV_PORT',
-    'HAPPY_LOCAL_EXPO_DEV_PORT',
     'HAPPY_STACKS_EXPO_DEV_PORT_STRATEGY',
-    'HAPPY_LOCAL_EXPO_DEV_PORT_STRATEGY',
     'HAPPY_STACKS_EXPO_DEV_PORT_BASE',
-    'HAPPY_LOCAL_EXPO_DEV_PORT_BASE',
     'HAPPY_STACKS_EXPO_DEV_PORT_RANGE',
-    'HAPPY_LOCAL_EXPO_DEV_PORT_RANGE',
 
     // Back-compat knobs (older names still accepted by metro_ports.mjs).
     'HAPPY_STACKS_UI_DEV_PORT',
-    'HAPPY_LOCAL_UI_DEV_PORT',
     'HAPPY_STACKS_UI_DEV_PORT_BASE',
-    'HAPPY_LOCAL_UI_DEV_PORT_BASE',
     'HAPPY_STACKS_UI_DEV_PORT_RANGE',
-    'HAPPY_LOCAL_UI_DEV_PORT_RANGE',
     'HAPPY_STACKS_MOBILE_DEV_PORT',
-    'HAPPY_LOCAL_MOBILE_DEV_PORT',
     'HAPPY_STACKS_MOBILE_PORT',
-    'HAPPY_LOCAL_MOBILE_PORT',
   ]);
   for (const k of Object.keys(cleaned)) {
     if (keepPrefixed.has(k)) continue;
-    if (k.startsWith('HAPPY_LOCAL_') || k.startsWith('HAPPY_STACKS_')) {
+    if (k.startsWith('HAPPY_STACKS_')) {
       delete cleaned[k];
     }
   }
   const raw = await readExistingEnv(envPath);
   const stackEnv = parseEnvToObject(raw);
-
-  // Mirror HAPPY_STACKS_* and HAPPY_LOCAL_* prefixes so callers can use either.
-  // (Matches scripts/utils/env.mjs behavior.)
-  const applyPrefixMapping = (obj) => {
-    const keys = new Set(Object.keys(obj));
-    const suffixes = new Set();
-    for (const k of keys) {
-      if (k.startsWith('HAPPY_STACKS_')) suffixes.add(k.slice('HAPPY_STACKS_'.length));
-      if (k.startsWith('HAPPY_LOCAL_')) suffixes.add(k.slice('HAPPY_LOCAL_'.length));
-    }
-    for (const suffix of suffixes) {
-      const stacksKey = `HAPPY_STACKS_${suffix}`;
-      const localKey = `HAPPY_LOCAL_${suffix}`;
-      const stacksVal = (obj[stacksKey] ?? '').toString().trim();
-      const localVal = (obj[localKey] ?? '').toString().trim();
-      if (stacksVal) {
-        obj[stacksKey] = stacksVal;
-        obj[localKey] = stacksVal;
-      } else if (localVal) {
-        obj[localKey] = localVal;
-        obj[stacksKey] = localVal;
-      }
-    }
-  };
 
   const runtimeStatePath = getStackRuntimeStatePath(stackName);
   const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
@@ -428,17 +382,13 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     ...cleaned,
     HAPPY_STACKS_STACK: stackName,
     HAPPY_STACKS_ENV_FILE: envPath,
-    HAPPY_LOCAL_STACK: stackName,
-    HAPPY_LOCAL_ENV_FILE: envPath,
     // Expose runtime state path so scripts can find it if needed.
     HAPPY_STACKS_RUNTIME_STATE_PATH: runtimeStatePath,
-    HAPPY_LOCAL_RUNTIME_STATE_PATH: runtimeStatePath,
     // Stack env is authoritative by default.
     ...stackEnv,
     // One-shot overrides (e.g. --happy=...) win over stack env file.
     ...extraEnv,
   };
-  applyPrefixMapping(env);
 
   // Runtime-only port overlay (ephemeral stacks): only trust it when the owner pid is still alive.
   const ownerPid = Number(runtimeState?.ownerPid);
@@ -448,7 +398,6 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
       const n = Number(value);
       if (!Number.isFinite(n) || n <= 0) return;
       env[`HAPPY_STACKS_${suffix}`] = String(n);
-      env[`HAPPY_LOCAL_${suffix}`] = String(n);
     };
     applyPort('SERVER_PORT', ports.server);
     applyPort('HAPPY_SERVER_BACKEND_PORT', ports.backend);
@@ -460,7 +409,6 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     // Mark ephemeral mode for downstream helpers (e.g. infra should not persist ports).
     if (runtimeState?.ephemeral) {
       env.HAPPY_STACKS_EPHEMERAL_PORTS = '1';
-      env.HAPPY_LOCAL_EPHEMERAL_PORTS = '1';
     }
   }
 
@@ -474,7 +422,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   const copyAuth = !(flags.has('--no-copy-auth') || flags.has('--fresh-auth'));
   const copyAuthFrom =
     (kv.get('--copy-auth-from') ?? '').trim() ||
-    (process.env.HAPPY_STACKS_AUTH_SEED_FROM ?? process.env.HAPPY_LOCAL_AUTH_SEED_FROM ?? '').trim() ||
+    (process.env.HAPPY_STACKS_AUTH_SEED_FROM ?? '').trim() ||
     'main';
   const linkAuth =
     flags.has('--link-auth') ||
@@ -483,8 +431,8 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     (kv.get('--link-auth') ?? '').trim() === '1' ||
     (kv.get('--auth-mode') ?? '').trim() === 'link' ||
     (kv.get('--copy-auth-mode') ?? '').trim() === 'link' ||
-    (process.env.HAPPY_STACKS_AUTH_LINK ?? process.env.HAPPY_LOCAL_AUTH_LINK ?? '').toString().trim() === '1' ||
-    (process.env.HAPPY_STACKS_AUTH_MODE ?? process.env.HAPPY_LOCAL_AUTH_MODE ?? '').toString().trim() === 'link';
+    (process.env.HAPPY_STACKS_AUTH_LINK ?? '').toString().trim() === '1' ||
+    (process.env.HAPPY_STACKS_AUTH_MODE ?? '').toString().trim() === 'link';
   const forcePort = flags.has('--force-port');
 
   // argv here is already "args after 'new'", so the first positional is the stack name.
@@ -826,7 +774,7 @@ async function cmdEdit({ rootDir, argv }) {
     port = null;
   }
 
-  const serverComponent = (config.serverComponent || existingEnv.HAPPY_STACKS_SERVER_COMPONENT || existingEnv.HAPPY_LOCAL_SERVER_COMPONENT || 'happy-server-light').trim();
+  const serverComponent = (config.serverComponent || existingEnv.HAPPY_STACKS_SERVER_COMPONENT || 'happy-server-light').trim();
 
   const next = {
     HAPPY_STACKS_STACK: stackName,
@@ -835,7 +783,7 @@ async function cmdEdit({ rootDir, argv }) {
     HAPPY_STACKS_CLI_HOME_DIR: cliHomeDir,
     HAPPY_STACKS_STACK_REMOTE: config.createRemote?.trim()
       ? config.createRemote.trim()
-      : (existingEnv.HAPPY_STACKS_STACK_REMOTE || existingEnv.HAPPY_LOCAL_STACK_REMOTE || 'upstream'),
+      : (existingEnv.HAPPY_STACKS_STACK_REMOTE || 'upstream'),
     // Always pin defaults; overrides below can replace.
     ...resolveDefaultComponentDirs({ rootDir }),
   };
@@ -1021,12 +969,12 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
 
       const wantsRestart = args.includes('--restart');
       const wantsJson = args.includes('--json');
-      const pinnedServerPort = Boolean((stackEnv.HAPPY_STACKS_SERVER_PORT ?? '').trim() || (stackEnv.HAPPY_LOCAL_SERVER_PORT ?? '').trim());
+      const pinnedServerPort = Boolean((stackEnv.HAPPY_STACKS_SERVER_PORT ?? '').trim());
       const serverComponent =
-        (stackEnv.HAPPY_STACKS_SERVER_COMPONENT ?? stackEnv.HAPPY_LOCAL_SERVER_COMPONENT ?? '').toString().trim() || 'happy-server-light';
+        (stackEnv.HAPPY_STACKS_SERVER_COMPONENT ?? '').toString().trim() || 'happy-server-light';
       const managedInfra =
         serverComponent === 'happy-server'
-          ? ((stackEnv.HAPPY_STACKS_MANAGED_INFRA ?? stackEnv.HAPPY_LOCAL_MANAGED_INFRA ?? '1').toString().trim() !== '0')
+          ? ((stackEnv.HAPPY_STACKS_MANAGED_INFRA ?? '1').toString().trim() !== '0')
           : false;
 
       // If this is an ephemeral-port stack and it's already running, avoid spawning a second copy.
@@ -1072,7 +1020,7 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
           const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
           const noBrowser =
             args.includes('--no-browser') ||
-            (env.HAPPY_STACKS_NO_BROWSER ?? env.HAPPY_LOCAL_NO_BROWSER ?? '').toString().trim() === '1';
+            (env.HAPPY_STACKS_NO_BROWSER ?? '').toString().trim() === '1';
           const openBrowser = isInteractive && !wantsJson && !noBrowser;
 
           const host = resolveLocalhostHost({ stackMode: true, stackName });

@@ -53,7 +53,7 @@ test('swiftbar utils: finds git root by walking up from nested package dir', asy
   const rootDir = process.cwd();
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-swiftbar-utils-'));
   const repoRoot = join(tmp, 'repo');
-  const pkgDir = join(repoRoot, 'expo-app');
+  const pkgDir = join(repoRoot, 'packages', 'app');
   await mkdir(join(repoRoot, '.git'), { recursive: true });
   await mkdir(pkgDir, { recursive: true });
 
@@ -74,8 +74,8 @@ test('swiftbar utils: derives repo key from component dir path', async () => {
   const bashScript = [
     `set -euo pipefail`,
     `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
-    `echo "$(swiftbar_repo_key_from_path "/x/components/happy/expo-app")"`,
-    `echo "$(swiftbar_repo_key_from_path "/x/components/.worktrees/happy/slopus/pr/foo/expo-app")"`,
+    `echo "$(swiftbar_repo_key_from_path "/x/components/happy/packages/app")"`,
+    `echo "$(swiftbar_repo_key_from_path "/x/components/.worktrees/happy/slopus/pr/foo/packages/app")"`,
     `echo "$(swiftbar_repo_key_from_path "/x/other/place")"`,
   ].join('\n');
   const res = await run('bash', ['-lc', bashScript], { cwd: rootDir, env: process.env });

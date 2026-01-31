@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Shared policy for when the stack runner should start the Happy daemon.
+ * Shared policy for when the stack runner should start the Happier daemon.
  *
  * In `setup-pr` / `review-pr` guided login flows we intentionally start server+UI first,
  * then guide authentication, then start daemon post-auth. Starting the daemon before
@@ -49,7 +49,6 @@ export function formatDaemonAuthRequiredError({ stackName, cliHomeDir }) {
   return (
     `[local] daemon auth required: credentials not found for stack "${name}".\n` +
     `[local] expected: ${path}\n` +
-    `[local] fix: run \`happy auth login\` (stack-scoped), or re-run with UI enabled to complete guided login.`
+    `[local] fix: run \`happier auth login\` (stack-scoped), or re-run with UI enabled to complete guided login.`
   );
 }
-

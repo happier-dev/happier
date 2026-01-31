@@ -48,15 +48,15 @@ test('inferComponentFromCwd resolves happy monorepo subpackages under components
   });
 
   const monoRoot = join(rootDir, 'components', 'happy');
-  await mkdir(join(monoRoot, 'expo-app'), { recursive: true });
-  await mkdir(join(monoRoot, 'cli', 'src'), { recursive: true });
-  await mkdir(join(monoRoot, 'server'), { recursive: true });
-  await writeFile(join(monoRoot, 'expo-app', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(monoRoot, 'server', 'package.json'), '{}\n', 'utf-8');
+  await mkdir(join(monoRoot, 'packages', 'app'), { recursive: true });
+  await mkdir(join(monoRoot, 'packages', 'cli', 'src'), { recursive: true });
+  await mkdir(join(monoRoot, 'packages', 'server'), { recursive: true });
+  await writeFile(join(monoRoot, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoRoot, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(monoRoot, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
 
-  const invokedCwd = join(monoRoot, 'cli', 'src');
+  const invokedCwd = join(monoRoot, 'packages', 'cli', 'src');
   const inferred = inferComponentFromCwd({
     rootDir,
     invokedCwd,
@@ -78,15 +78,15 @@ test('inferComponentFromCwd resolves happy monorepo worktree roots under compone
   });
 
   const repoRoot = join(rootDir, 'components', '.worktrees', 'happy', 'slopus', 'pr', '123-fix');
-  await mkdir(join(repoRoot, 'expo-app'), { recursive: true });
-  await mkdir(join(repoRoot, 'cli', 'nested'), { recursive: true });
-  await mkdir(join(repoRoot, 'server'), { recursive: true });
-  await writeFile(join(repoRoot, 'expo-app', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(repoRoot, 'cli', 'package.json'), '{}\n', 'utf-8');
-  await writeFile(join(repoRoot, 'server', 'package.json'), '{}\n', 'utf-8');
+  await mkdir(join(repoRoot, 'packages', 'app'), { recursive: true });
+  await mkdir(join(repoRoot, 'packages', 'cli', 'nested'), { recursive: true });
+  await mkdir(join(repoRoot, 'packages', 'server'), { recursive: true });
+  await writeFile(join(repoRoot, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(repoRoot, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(repoRoot, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(repoRoot, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
 
-  const invokedCwd = join(repoRoot, 'cli', 'nested');
+  const invokedCwd = join(repoRoot, 'packages', 'cli', 'nested');
   const inferred = inferComponentFromCwd({ rootDir, invokedCwd, components: ['happy', 'happy-cli', 'happy-server'] });
   assert.deepEqual(inferred, { component: 'happy-cli', repoDir: repoRoot });
 });

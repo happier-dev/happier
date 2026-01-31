@@ -1,19 +1,19 @@
-# Happy Stacks
+# Happier Stacks
 
-Run [**Happy**](https://happy.engineering/) locally and access it remotely and securely (using Tailscale).
+Run [**Happier**](https://app.happier.dev) locally and access it remotely and securely (using Tailscale).
 
-## What is Happy?
+## What is Happier?
 
-Happy is an UI/CLI stack (server + web UI + CLI + daemon) who let you monitor and interact with Claude Code, Codex and Gemini sessions from your mobile, from a web UI and/or from a desktop app.
+Happier is an UI/CLI stack (server + web UI + CLI + daemon) who let you monitor and interact with Claude Code, Codex and Gemini sessions from your mobile, from a web UI and/or from a desktop app.
 
-## What is Happy Stacks?
+## What is Happier Stacks?
 
-happy-stacks is a guided installer + local orchestration CLI for Happy.
+happy-stacks is a guided installer + local orchestration CLI for Happier.
 
-If you only want to **use Happy** and self-host it on your computer, start with the **Self-host** section below.
-If you want to **develop Happy** (worktrees, multiple stacks, upstream PR workflows), see the **Development** section further down.
+If you only want to **use Happier** and self-host it on your computer, start with the **Self-host** section below.
+If you want to **develop Happier** (worktrees, multiple stacks, upstream PR workflows), see the **Development** section further down.
 
-## Self-host Happy (install + run)
+## Self-host Happier (install + run)
 
 ### Quickstart
 
@@ -21,7 +21,7 @@ If you want to **develop Happy** (worktrees, multiple stacks, upstream PR workfl
 npx happy-stacks setup --profile=selfhost
 ```
 
-Follow the guided instructions to install Happy and launch it.
+Follow the guided instructions to install Happier and launch it.
 
 ### Daily use
 
@@ -39,7 +39,7 @@ Then restart so the daemon picks up the new environment:
 happys start --restart
 ```
 
-### Start Happy
+### Start Happier
 
 Starts the local server, CLI daemon, and serves the pre-built UI.
 
@@ -74,15 +74,15 @@ Make sure Tailscale is [installed and running](https://tailscale.com/kb/1347/ins
 phone, then either:
 
 - Open the URL from `happys tailscale url` on your phone and “Add to Home Screen”, or
-- [Download the Happy mobile app]
-([https://happy.engineering/](https://happy.engineering/)) and [configure it to use 
+- [Download the Happier mobile app]
+([https://app.happier.dev](https://app.happier.dev)) and [configure it to use 
 your local server](docs/remote-access.md).
 
 Details (secure context, phone instructions, automation knobs): `[docs/remote-access.md](docs/remote-access.md)`.
 
 ## Development (worktrees, stacks, contributor workflows)
 
-If you want to **develop Happy** (worktrees, multiple stacks, upstream PR workflows), you can install Happy Stacks for development with:
+If you want to **develop Happier** (worktrees, multiple stacks, upstream PR workflows), you can install Happy Stacks for development with:
 
 ### Setup (guided)
 
@@ -109,7 +109,7 @@ npx happy-stacks setup --profile=dev --workspace-dir=~/Development/happy
 - **Automated setup**: `happys setup` + `happys start` gets the whole stack up and running.
 - **No hosted dependency**: run the full stack on your own computer.
 - **Lower latency**: localhost/LAN is typically much faster than remote hosted servers.
-- **Custom forks**: easily use forks of the Happy UI + CLI (e.g. `leeroybrun/*`) while still contributing upstream to `slopus/*`.
+- **Custom forks**: easily use forks of the Happier UI + CLI (e.g. `happier-dev/*`) while still contributing upstream to `slopus/*`.
 - **Worktrees**: clean upstream PR branches without mixing fork-only patches.
 - **Stacks**: run multiple isolated instances in parallel (ports + dirs + component overrides).
 - **Remote access**: `happys tailscale ...` helps you get an HTTPS URL for mobile/remote devices.
@@ -446,7 +446,7 @@ For contributor/LLM workflow expectations: `[AGENTS.md](AGENTS.md)`.
 ### Developing Happy Stacks itself
 
 ```bash
-git clone https://github.com/leeroybrun/happy-stacks.git
+git clone https://github.com/happier-dev/happy-stacks.git
 cd happy-stacks
 
 node ./bin/happys.mjs setup --profile=dev
