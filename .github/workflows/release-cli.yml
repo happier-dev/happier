@@ -1,0 +1,113 @@
+name: Release CLI (npm publish)
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        type: choice
+        options:
+          - production
+          - preview
+      bump:
+        description: "Version bump on main (cli)"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      npm_tag:
+        description: "npm dist-tag (production: latest, preview: next)"
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - next
+      run_tests:
+        description: "Run packages/cli tests before publishing"
+        required: true
+        default: true
+        type: boolean
+      update_deploy_branch:
+        description: "Also promote main to deploy/<channel>/cli (optional audit trail)"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Bump cli version (main)
+        id: bump_cli
+        run: |
+          set -euo pipefail
+          out="$(node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.bump }}")"
+          echo "version=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Run cli tests
+        if: inputs.run_tests
+        run: yarn --cwd packages/cli test
+
+      - name: Commit version bump (main)
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/cli/package.json
+          git commit -m "chore(release): bump cli to v${{ steps.bump_cli.outputs.version }}"
+
+      - name: Push main
+        run: git push origin HEAD:main
+
+      - name: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is required to publish." >&2
+            exit 1
+          fi
+          cd packages/cli
+          yarn prepublishOnly
+          npm publish --access public --tag "${{ inputs.npm_tag }}"
+
+      - name: Promote main to deploy branch (optional)
+        if: inputs.update_deploy_branch
+        env:
+          DEPLOY_REF: deploy/${{ inputs.channel }}/cli
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote --heads origin "$DEPLOY_REF" | awk '{print $1}')"
+          if [ -n "$remote_sha" ]; then
+            git push origin HEAD:"$DEPLOY_REF" --force-with-lease="refs/heads/$DEPLOY_REF:$remote_sha"
+          else
+            git push origin HEAD:"$DEPLOY_REF"
+          fi
+
