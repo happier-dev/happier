@@ -64,14 +64,14 @@ test('assertServerPrismaProviderMatches rejects happy-server when schema.prisma 
 
 test('detectServerComponentDirMismatch allows unified happy-server-light pointing at happy-server dir', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'hs-validate-root-'));
-  const envKeys = ['HAPPY_STACKS_WORKSPACE_DIR', 'HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER', 'HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT'];
+  const envKeys = ['HAPPIER_STACK_WORKSPACE_DIR', 'HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER', 'HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT'];
   const old = Object.fromEntries(envKeys.map((k) => [k, process.env[k]]));
   try {
-    process.env.HAPPY_STACKS_WORKSPACE_DIR = rootDir;
+    process.env.HAPPIER_STACK_WORKSPACE_DIR = rootDir;
     const unifiedDir = join(rootDir, 'components', 'happy-server');
     await mkdir(unifiedDir, { recursive: true });
-    process.env.HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER = unifiedDir;
-    process.env.HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT = unifiedDir;
+    process.env.HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER = unifiedDir;
+    process.env.HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT = unifiedDir;
 
     const mismatch = detectServerComponentDirMismatch({
       rootDir,

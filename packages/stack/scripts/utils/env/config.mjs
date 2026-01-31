@@ -20,7 +20,7 @@ export function getHomeEnvLocalPath() {
 }
 
 export function resolveUserConfigEnvPath({ cliRootDir }) {
-  const explicit = (process.env.HAPPY_STACKS_ENV_FILE ?? '').trim();
+  const explicit = (process.env.HAPPIER_STACK_ENV_FILE ?? '').trim();
   if (explicit) {
     return explicit;
   }

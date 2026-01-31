@@ -36,9 +36,10 @@ import { bold, cyan, dim, green } from './utils/ui/ansi.mjs';
 
 const DEFAULT_COMPONENTS = ['happy', 'happy-cli', 'happy-server-light', 'happy-server'];
 const HAPPY_MONOREPO_GROUP_COMPONENTS = ['happy', 'happy-cli', 'happy-server'];
+const DEFAULT_REPO_COMPONENT = 'happy';
 
 function getActiveStackName() {
-  return (process.env.HAPPY_STACKS_STACK ?? '').trim() || 'main';
+  return (process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
 }
 
 function isMainStack() {
@@ -55,11 +56,10 @@ function isActiveHappyMonorepo(rootDir, component) {
 }
 
 function worktreeRepoKeyForComponent(rootDir, component) {
-  const c = String(component ?? '').trim();
-  if (isHappyMonorepoGroupComponent(c) && isActiveHappyMonorepo(rootDir, c)) {
-    return 'happy';
-  }
-  return c;
+  // Worktrees are repo-scoped (monorepo-only) and no longer nested by component key.
+  void rootDir;
+  void component;
+  return '';
 }
 
 function componentOverrideKeys(component) {
@@ -144,7 +144,7 @@ async function maybeStash({ dir, enabled, keep, message }) {
   if (clean) {
     return { stashed: false, kept: false };
   }
-  const msg = message || `happy-stacks auto-stash (${new Date().toISOString()})`;
+  const msg = message || `hapsta auto-stash (${new Date().toISOString()})`;
   // Include untracked files (-u). If stash applies cleanly later, we'll pop.
   await git(dir, ['stash', 'push', '-u', '-m', msg]);
   return { stashed: true, kept: Boolean(keep) };
@@ -351,7 +351,7 @@ async function findStacksReferencingWorktree({ rootDir, worktreeDir }) {
     const keys = [];
 
     for (const [k, v] of parsed.entries()) {
-      if (!k.startsWith('HAPPY_STACKS_COMPONENT_DIR_')) {
+      if (!k.startsWith('HAPPIER_STACK_COMPONENT_DIR_')) {
         continue;
       }
       const raw = String(v ?? '').trim();
@@ -446,9 +446,9 @@ function allowNodeModulesSymlinkForComponent(component) {
   if (!c) return true;
   // Expo/Metro commonly breaks with symlinked node_modules. Avoid symlinks for the Happy UI worktree by default.
   // Override if you *really* want to experiment:
-  //   HAPPY_STACKS_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK=1
+  //   HAPPIER_STACK_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK=1
   const allowHappySymlink =
-    (process.env.HAPPY_STACKS_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK ?? '').toString().trim() === '1';
+    (process.env.HAPPIER_STACK_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK ?? '').toString().trim() === '1';
   if (c === 'happy' && !allowHappySymlink) return false;
   return true;
 }
@@ -466,7 +466,7 @@ async function maybeSetupDeps({ repoRoot, baseDir, worktreeDir, depsMode, compon
     if (!allowSymlink) {
       const msg =
         `[wt] refusing to symlink node_modules for ${component} (Expo/Metro is often broken by symlinks).\n` +
-        `[wt] Fix: use --deps=install (recommended). To override: set HAPPY_STACKS_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK=1`;
+        `[wt] Fix: use --deps=install (recommended). To override: set HAPPIER_STACK_WT_ALLOW_HAPPY_NODE_MODULES_SYMLINK=1`;
       if (depsMode === 'link') {
         return { mode: depsMode, linked: false, installed: false, message: msg };
       }
@@ -627,7 +627,7 @@ async function migrateComponentWorktrees({ rootDir, component }) {
   let renamed = 0;
 
   const componentsDir = getComponentsDir(rootDir);
-  // NOTE: getWorkspaceDir() is influenced by HAPPY_STACKS_WORKSPACE_DIR, which for this repo
+  // NOTE: getWorkspaceDir() is influenced by HAPPIER_STACK_WORKSPACE_DIR, which for this repo
   // points at the current workspace. For migration we specifically want to consider the
   // historical home workspace at: <home>/workspace/components
   const legacyHomeWorkspaceComponentsDir = join(getHappyStacksHomeDir(), 'workspace', 'components');
@@ -656,8 +656,8 @@ async function migrateComponentWorktrees({ rootDir, component }) {
 
     // Only migrate worktrees living under either:
     // - current workspace components folder, or
-    // - legacy home workspace components folder (~/.happy-stacks/workspace/components)
-    // This is necessary when users switch HAPPY_STACKS_WORKSPACE_DIR, otherwise git will keep
+    // - legacy home workspace components folder (~/.happier-stack/workspace/components)
+    // This is necessary when users switch HAPPIER_STACK_WORKSPACE_DIR, otherwise git will keep
     // worktrees "stuck" in the old workspace and branches can't be re-used in the new workspace.
     const resolvedWt = resolve(wtPath);
     const okRoot = allowedComponentRoots.some((d) => resolvedWt.startsWith(resolve(d) + '/'));
@@ -735,7 +735,7 @@ async function cmdMigrate({ rootDir }) {
   // If the persisted config pins any component dir to a legacy location, attempt to rewrite it.
   const envUpdates = [];
 
-  const explicitEnv = (process.env.HAPPY_STACKS_ENV_FILE ?? '').trim();
+  const explicitEnv = (process.env.HAPPIER_STACK_ENV_FILE ?? '').trim();
   const hasHomeConfig = existsSync(getHomeEnvPath()) || existsSync(getHomeEnvLocalPath());
   const envPath = explicitEnv ? explicitEnv : hasHomeConfig ? resolveUserConfigEnvPath({ cliRootDir: rootDir }) : join(rootDir, 'env.local');
 
@@ -786,7 +786,7 @@ async function cmdUse({ rootDir, args, flags }) {
   const component = args[0];
   const spec = args[1];
   if (!component || !spec) {
-    throw new Error('[wt] usage: happys wt use <component> <owner/branch|path|default>');
+    throw new Error('[wt] usage: hapsta wt use <owner/branch|path|default|main> [--force]');
   }
 
   let updateComponents = [component];
@@ -803,16 +803,16 @@ async function cmdUse({ rootDir, args, flags }) {
         `\n` +
         `Recommendation:\n` +
         `- Create a new isolated stack and switch that stack instead:\n` +
-        `  happys stack new exp1 --interactive\n` +
-        `  happys stack wt exp1 -- use ${component} ${spec}\n` +
+        `  hapsta stack new exp1 --interactive\n` +
+        `  hapsta stack wt exp1 -- use ${component} ${spec}\n` +
         `\n` +
         `If you really intend to repoint the main stack, re-run with --force:\n` +
-        `  happys wt use ${component} ${spec} --force\n`
+        `  hapsta wt use ${component} ${spec} --force\n`
     );
   }
 
   const worktreesRoot = getWorktreesRoot(rootDir);
-  const envPath = process.env.HAPPY_STACKS_ENV_FILE?.trim() ? process.env.HAPPY_STACKS_ENV_FILE.trim() : null;
+  const envPath = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : null;
 
   if (spec === 'default' || spec === 'main') {
     // If the active checkout is a monorepo, reset the whole monorepo group together.
@@ -845,7 +845,7 @@ async function cmdUse({ rootDir, args, flags }) {
         `[wt] invalid target for happy monorepo component '${component}':\n` +
           `- expected a path inside the happy monorepo (contains packages/app|packages/cli|packages/server)\n` +
           `- but got: ${resolvedDir}\n` +
-          `Fix: pick a worktree under ${join(worktreesRoot, 'happy')}/ or pass an absolute path to a monorepo checkout.`
+          `Fix: pick a worktree under ${worktreesRoot}/ or pass an absolute path to a monorepo checkout.`
       );
     }
   }
@@ -859,13 +859,12 @@ async function cmdUse({ rootDir, args, flags }) {
     const serverDir = resolveComponentSpecToDir({ rootDir, component: c, spec: writeDir }) ?? writeDir;
     const mismatch = detectServerComponentDirMismatch({ rootDir, serverComponentName: c, serverDir });
     if (!mismatch) continue;
-    const expectedRepoKey = worktreeRepoKeyForComponent(rootDir, mismatch.expected);
     throw new Error(
       `[wt] invalid target for ${c}:\n` +
         `- expected a checkout of: ${mismatch.expected}\n` +
         `- but the path points inside: ${mismatch.actual}\n` +
         `- path: ${mismatch.serverDir}\n` +
-        `Fix: pick a worktree under components/.worktrees/${expectedRepoKey}/ (or run: happys wt use ${mismatch.actual} <spec>).`
+        `Fix: pick a worktree under ${worktreesRoot}/ (or run: hapsta wt use ${mismatch.actual} <spec>).`
     );
   }
 
@@ -883,23 +882,11 @@ async function cmdUseInteractive({ rootDir }) {
     // eslint-disable-next-line no-console
     console.log(bold('Switch active worktree'));
 
-    const componentChoice = await promptSelect(rl, {
-      title: `${bold('Component')}\n${dim('Which component should `happys` run from?')}`,
-      options: [
-        ...DEFAULT_COMPONENTS.map((c) => ({ label: cyan(c), value: c })),
-        { label: dim('other (type manually)'), value: '__other__' },
-      ],
-      defaultIndex: 0,
-    });
-    const component =
-      componentChoice === '__other__'
-        ? await prompt(rl, `${dim('Component name')}: `, { defaultValue: '' })
-        : String(componentChoice);
-    if (!component) throw new Error('[wt] component is required');
+    const component = DEFAULT_REPO_COMPONENT;
 
     const specs = await listWorktreeSpecs({ rootDir, component });
 
-    const kindOptions = [{ label: `default (${dim('components/<component>')})`, value: 'default' }];
+    const kindOptions = [{ label: `default (${dim('main checkout')})`, value: 'default' }];
     if (specs.length) {
       kindOptions.push({ label: `pick existing worktree (${green('recommended')})`, value: 'pick' });
     }
@@ -927,7 +914,7 @@ async function cmdNew({ rootDir, argv }) {
   const slug = positionals[2];
   if (!component || !slug) {
     throw new Error(
-      '[wt] usage: happys wt new <component> <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use]'
+      '[wt] usage: hapsta wt new <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use]'
     );
   }
 
@@ -1016,7 +1003,7 @@ async function cmdDuplicate({ rootDir, argv }) {
   const slug = positionals[3];
   if (!component || !fromSpec || !slug) {
     throw new Error(
-      '[wt] usage: happys wt duplicate <component> <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]'
+      '[wt] usage: hapsta wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]'
     );
   }
 
@@ -1051,7 +1038,7 @@ async function cmdPr({ rootDir, argv }) {
   const prInput = positionals[2];
   if (!component || !prInput) {
     throw new Error(
-      '[wt] usage: happys wt pr <component> <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--force] [--json]'
+      '[wt] usage: hapsta wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--force] [--json]'
     );
   }
 
@@ -1101,7 +1088,7 @@ async function cmdPr({ rootDir, argv }) {
       dir: destWorktreeRoot,
       enabled: flags.has('--stash'),
       keep: flags.has('--stash-keep'),
-      message: `[happy-stacks] wt pr ${component} ${pr.number}`,
+      message: `[hapsta] wt pr ${component} ${pr.number}`,
     });
     if (!(await isWorktreeClean(destWorktreeRoot)) && !stash.stashed) {
       throw new Error(`[wt] worktree is not clean (${destWorktreeRoot}). Re-run with --stash to auto-stash changes.`);
@@ -1114,8 +1101,8 @@ async function cmdPr({ rootDir, argv }) {
     const isAncestor = await gitOk(repoRoot, ['merge-base', '--is-ancestor', oldHead, newTip]);
     if (!isAncestor && !force) {
       const hint = fetchTarget
-        ? `[wt] re-run with: happys wt pr ${component} ${pr.number} --update --force`
-        : `[wt] re-run with: happys wt pr ${component} ${pr.number} --remote=${remoteName} --update --force`;
+        ? `[wt] re-run with: hapsta wt pr ${component} ${pr.number} --update --force`
+        : `[wt] re-run with: hapsta wt pr ${component} ${pr.number} --remote=${remoteName} --update --force`;
       throw new Error(
         `[wt] PR update is not a fast-forward (likely force-push) for ${branchName}\n` +
           hint
@@ -1208,7 +1195,7 @@ async function cmdStatus({ rootDir, argv }) {
   const component = positionals[1];
   const spec = positionals[2] ?? '';
   if (!component) {
-    throw new Error('[wt] usage: happys wt status <component> [worktreeSpec|default|path]');
+    throw new Error('[wt] usage: hapsta wt status [worktreeSpec|default|path]');
   }
 
   const dir = resolveComponentWorktreeDir({ rootDir, component, spec });
@@ -1253,7 +1240,7 @@ async function cmdPush({ rootDir, argv }) {
   const component = positionals[1];
   const spec = positionals[2] ?? '';
   if (!component) {
-    throw new Error('[wt] usage: happys wt push <component> [worktreeSpec|default|path] [--remote=origin] [--dry-run]');
+    throw new Error('[wt] usage: hapsta wt push [worktreeSpec|default|path] [--remote=origin] [--dry-run]');
   }
 
   const dir = resolveComponentWorktreeDir({ rootDir, component, spec });
@@ -1283,7 +1270,7 @@ async function cmdUpdate({ rootDir, argv }) {
   const spec = positionals[2] ?? '';
   if (!component) {
     throw new Error(
-      '[wt] usage: happys wt update <component> [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--force]'
+      '[wt] usage: hapsta wt update [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--force]'
     );
   }
 
@@ -1366,7 +1353,7 @@ async function cmdUpdate({ rootDir, argv }) {
     dir,
     enabled: flags.has('--stash'),
     keep: stashKeep,
-    message: `[happy-stacks] wt update ${component}`,
+    message: `[hapsta] wt update ${component}`,
   });
   if (!(await isWorktreeClean(dir)) && !stash.stashed) {
     throw new Error(`[wt] working tree is not clean (${dir}). Re-run with --stash to auto-stash changes.`);
@@ -1484,10 +1471,10 @@ async function cmdGit({ rootDir, argv }) {
   const component = positionals[1];
   const spec = positionals[2] ?? '';
   if (!component) {
-    throw new Error('[wt] usage: happys wt git <component> [worktreeSpec|active|main|default|path] -- <git args...>');
+    throw new Error('[wt] usage: hapsta wt git [worktreeSpec|active|main|default|path] -- <git args...>');
   }
   if (!after.length) {
-    throw new Error('[wt] git requires args after `--` (example: happys wt git happy main -- status)');
+    throw new Error('[wt] git requires args after `--` (example: hapsta wt git main -- status)');
   }
 
   const dir = resolveComponentWorktreeDir({ rootDir, component, spec });
@@ -1515,7 +1502,7 @@ async function cmdSync({ rootDir, argv }) {
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const component = positionals[1];
   if (!component) {
-    throw new Error('[wt] usage: happys wt sync <component> [--remote=<name>]');
+    throw new Error('[wt] usage: hapsta wt sync [--remote=<name>]');
   }
 
   const { kv } = parseArgs(argv);
@@ -1550,7 +1537,7 @@ async function fileExists(path) {
 
 async function pickBestShell({ kv, prefer = null } = {}) {
   const fromFlag = (kv?.get('--shell') ?? '').trim();
-  const fromEnv = (process.env.HAPPY_STACKS_WT_SHELL ?? '').trim();
+  const fromEnv = (process.env.HAPPIER_STACK_WT_SHELL ?? '').trim();
   const fromShellEnv = (process.env.SHELL ?? '').trim();
   const want = (fromFlag || fromEnv || prefer || fromShellEnv).trim();
   if (want) {
@@ -1575,7 +1562,7 @@ function escapeForShellDoubleQuotes(s) {
 }
 
 async function openTerminalAuto({ dir, shell }) {
-  const termPref = (process.env.HAPPY_STACKS_WT_TERMINAL ?? '').trim().toLowerCase();
+  const termPref = (process.env.HAPPIER_STACK_WT_TERMINAL ?? '').trim().toLowerCase();
   const order = termPref ? [termPref] : ['ghostty', 'iterm', 'terminal', 'current'];
 
   for (const t of order) {
@@ -1646,7 +1633,7 @@ async function cmdShell({ rootDir, argv }) {
   const spec = positionals[2] ?? '';
   if (!component) {
     throw new Error(
-      '[wt] usage: happys wt shell <component> [worktreeSpec|active|default|main|path] [--package] [--shell=/bin/zsh] [--terminal=auto|current|ghostty|iterm|terminal] [--new-window] [--json]'
+      '[wt] usage: hapsta wt shell [worktreeSpec|active|default|main|path] [--package] [--shell=/bin/zsh] [--terminal=auto|current|ghostty|iterm|terminal] [--new-window] [--json]'
     );
   }
   const packageDir = resolveComponentWorktreeDir({ rootDir, component, spec });
@@ -1680,7 +1667,7 @@ async function cmdShell({ rootDir, argv }) {
   }
 
   // Explicit terminal selection (best-effort).
-  process.env.HAPPY_STACKS_WT_TERMINAL = wantTerminal;
+  process.env.HAPPIER_STACK_WT_TERMINAL = wantTerminal;
   const chosen = await openTerminalAuto({ dir, shell });
   if (chosen.kind === 'current') {
     await run(shell, args, { cwd: dir, env: process.env, stdio: 'inherit' });
@@ -1695,7 +1682,7 @@ async function cmdCode({ rootDir, argv }) {
   const component = positionals[1];
   const spec = positionals[2] ?? '';
   if (!component) {
-    throw new Error('[wt] usage: happys wt code <component> [worktreeSpec|active|default|main|path] [--package] [--json]');
+    throw new Error('[wt] usage: hapsta wt code [worktreeSpec|active|default|main|path] [--package] [--json]');
   }
   const packageDir = resolveComponentWorktreeDir({ rootDir, component, spec });
   const dir = resolveMonorepoEditorDir({ component, dir: packageDir, preferPackageDir: flags.has('--package') });
@@ -1720,7 +1707,7 @@ async function cmdCursor({ rootDir, argv }) {
   const component = positionals[1];
   const spec = positionals[2] ?? '';
   if (!component) {
-    throw new Error('[wt] usage: happys wt cursor <component> [worktreeSpec|active|default|main|path] [--package] [--json]');
+    throw new Error('[wt] usage: hapsta wt cursor [worktreeSpec|active|default|main|path] [--package] [--json]');
   }
   const packageDir = resolveComponentWorktreeDir({ rootDir, component, spec });
   const dir = resolveMonorepoEditorDir({ component, dir: packageDir, preferPackageDir: flags.has('--package') });
@@ -1886,19 +1873,7 @@ async function cmdNewInteractive({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(dim('Recommended: base worktrees on upstream to keep PR history clean.'));
 
-    const componentChoice = await promptSelect(rl, {
-      title: bold('Component'),
-      options: [
-        ...DEFAULT_COMPONENTS.map((c) => ({ label: cyan(c), value: c })),
-        { label: dim('other (type manually)'), value: '__other__' },
-      ],
-      defaultIndex: 0,
-    });
-    const component =
-      componentChoice === '__other__'
-        ? await prompt(rl, `${dim('Component name')}: `, { defaultValue: '' })
-        : String(componentChoice);
-    if (!component) throw new Error('[wt] component is required');
+    const component = DEFAULT_REPO_COMPONENT;
 
     const slug = await prompt(rl, `${dim('Branch slug')} (example: pr/my-feature): `, { defaultValue: '' });
     if (!slug) {
@@ -1953,7 +1928,7 @@ async function cmdListOne({ rootDir, component, activeOnly = false }) {
   worktrees.sort();
 
   const sub = happyMonorepoSubdirForComponent(component);
-  const mapped = repoKey === 'happy' && isActiveHappyMonorepo(rootDir, component) && sub ? worktrees.map((p) => join(p, sub)) : worktrees;
+  const mapped = isActiveHappyMonorepo(rootDir, component) && sub ? worktrees.map((p) => join(p, sub)) : worktrees;
   return { component, activeDir: active, worktrees: mapped };
 }
 
@@ -1983,12 +1958,12 @@ async function cmdArchive({ rootDir, argv }) {
   const spec = (positionals[2] ?? '').trim();
   if (!component) {
     throw new Error(
-      '[wt] usage: happys wt archive <component> <worktreeSpec|path|active|default|main> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]'
+      '[wt] usage: hapsta wt archive <worktreeSpec|path|active|default|main> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]'
     );
   }
   if (!spec) {
     throw new Error(
-      '[wt] usage: happys wt archive <component> <worktreeSpec|path|active|default|main> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]'
+      '[wt] usage: hapsta wt archive <worktreeSpec|path|active|default|main> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]'
     );
   }
 
@@ -2016,7 +1991,7 @@ async function cmdArchive({ rootDir, argv }) {
   const archiveRoot = join(dirname(worktreesRoot), '.worktrees-archive', date);
   const destDir = join(archiveRoot, rel);
 
-  const expectedBranch = rel.split('/').slice(1).join('/') || null;
+  const expectedBranch = rel || null;
   let head = '';
   let branch = null;
   try {
@@ -2110,7 +2085,7 @@ async function cmdArchive({ rootDir, argv }) {
   const meta = [
     `archivedAt=${new Date().toISOString()}`,
     `component=${component}`,
-    `ref=${rel.split('/').slice(1).join('/')}`,
+    `ref=${rel}`,
     `sourcePath=${sourcePath}`,
     `head=${detached.head || head}`,
     '',
@@ -2163,40 +2138,67 @@ async function main() {
       },
       text: [
         '[wt] usage:',
-        '  happys wt migrate [--json]',
-        '  happys wt sync <component> [--remote=<name>] [--json]',
-        '  happys wt sync-all [--remote=<name>] [--json]',
-        '  happys wt list [component] [--active|--all] [--json]',
-        '  happys wt new <component> <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use] [--force] [--interactive|-i] [--json]',
-        '  happys wt duplicate <component> <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]',
-        '  happys wt pr <component> <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--stash|--stash-keep] [--force] [--json]',
-        '  happys wt use <component> <owner/branch|path|default|main> [--force] [--interactive|-i] [--json]',
-        '  happys wt status <component> [worktreeSpec|default|path] [--json]',
-        '  happys wt update <component> [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
-        '  happys wt update-all [component] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
-        '  happys wt push <component> [worktreeSpec|default|path] [--remote=origin] [--dry-run] [--json]',
-        '  happys wt git <component> [worktreeSpec|active|default|main|path] -- <git args...> [--json]',
-        '  happys wt shell <component> [worktreeSpec|active|default|main|path] [--shell=/bin/zsh] [--json]',
-        '  happys wt code <component> [worktreeSpec|active|default|main|path] [--json]',
-        '  happys wt cursor <component> [worktreeSpec|active|default|main|path] [--json]',
-        '  happys wt archive <component> <worktreeSpec|active|default|main|path> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]',
+        '  hapsta wt sync [--remote=<name>] [--json]',
+        '  hapsta wt sync-all [--remote=<name>] [--json]',
+        '  hapsta wt list [--active|--all] [--json]',
+        '  hapsta wt new <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use] [--force] [--interactive|-i] [--json]',
+        '  hapsta wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]',
+        '  hapsta wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--stash|--stash-keep] [--force] [--json]',
+        '  hapsta wt use <owner/branch|path|default|main> [--force] [--interactive|-i] [--json]',
+        '  hapsta wt status [worktreeSpec|default|path] [--json]',
+        '  hapsta wt update [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
+        '  hapsta wt update-all [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
+        '  hapsta wt push [worktreeSpec|default|path] [--remote=origin] [--dry-run] [--json]',
+        '  hapsta wt git [worktreeSpec|active|default|main|path] -- <git args...> [--json]',
+        '  hapsta wt shell [worktreeSpec|active|default|main|path] [--shell=/bin/zsh] [--json]',
+        '  hapsta wt code [worktreeSpec|active|default|main|path] [--json]',
+        '  hapsta wt cursor [worktreeSpec|active|default|main|path] [--json]',
+        '  hapsta wt archive <worktreeSpec|active|default|main|path> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]',
         '',
         'selectors:',
         '  (omitted) or "active": current active checkout (env override if set; else components/<component>)',
-        '  "default" or "main": components/<component> (monorepo: derived from components/happy)',
-        '  "<owner>/<branch...>": components/.worktrees/<component>/<owner>/<branch...> (monorepo: components/.worktrees/happy/<owner>/<branch...>)',
+        '  "default" or "main": default checkout (typically under <workspace>/happier)',
+        '  "<owner>/<branch...>": <workspace>/.worktrees/<owner>/<branch...>',
         '  "<absolute path>": explicit checkout path',
         '',
-        'monorepo notes:',
-        '- happy, happy-cli, and happy-server can share a single git worktree (slopus/happy).',
-        '- In monorepo mode, `wt use` updates all three component dir overrides together.',
-        '',
-        'components:',
-        `  ${DEFAULT_COMPONENTS.join(' | ')}`,
+        'note:',
+        '- Worktrees are repo-scoped (monorepo-only). Component selection is intentionally removed.',
       ].join('\n'),
     });
     return;
   }
+
+  const commandsNeedingComponent = new Set([
+    'sync',
+    'list',
+    'new',
+    'duplicate',
+    'pr',
+    'use',
+    'status',
+    'update',
+    'update-all',
+    'push',
+    'git',
+    'shell',
+    'code',
+    'cursor',
+    'archive',
+  ]);
+  const legacyComponents = new Set(DEFAULT_COMPONENTS);
+  const effectiveArgv = (() => {
+    if (!commandsNeedingComponent.has(cmd)) return argv;
+    const pos = argv.filter((a) => !a.startsWith('--'));
+    const maybeComponent = (pos[1] ?? '').trim();
+    if (legacyComponents.has(maybeComponent)) return argv;
+    // Insert the default component right after the command; legacy command handlers keep working.
+    const idx = argv.indexOf(cmd);
+    if (idx === -1) return argv;
+    const next = argv.slice();
+    next.splice(idx + 1, 0, DEFAULT_REPO_COMPONENT);
+    return next;
+  })();
+  const effectivePositionals = effectiveArgv.filter((a) => !a.startsWith('--'));
 
   if (cmd === 'migrate') {
     const res = await cmdMigrate({ rootDir });
@@ -2207,45 +2209,45 @@ async function main() {
     if (interactive && isTty()) {
       await cmdUseInteractive({ rootDir });
     } else {
-      const res = await cmdUse({ rootDir, args: positionals.slice(1), flags });
-      printResult({ json, data: res, text: `[wt] ${res.component}: active dir -> ${res.activeDir}` });
+      const res = await cmdUse({ rootDir, args: effectivePositionals.slice(1), flags });
+      printResult({ json, data: res, text: `[wt] active dir -> ${res.activeDir}` });
     }
     return;
   }
   if (cmd === 'new') {
     if (interactive && isTty()) {
-      await cmdNewInteractive({ rootDir, argv: argv.slice(1) });
+      await cmdNewInteractive({ rootDir, argv: effectiveArgv.slice(1) });
     } else {
-      const res = await cmdNew({ rootDir, argv });
+      const res = await cmdNew({ rootDir, argv: effectiveArgv });
       printResult({
         json,
         data: res,
-        text: `[wt] created ${res.component} worktree: ${res.path} (${res.branch} based on ${res.base})`,
+        text: `[wt] created worktree: ${res.path} (${res.branch} based on ${res.base})`,
       });
     }
     return;
   }
   if (cmd === 'duplicate') {
-    const res = await cmdDuplicate({ rootDir, argv });
+    const res = await cmdDuplicate({ rootDir, argv: effectiveArgv });
     printResult({
       json,
       data: res,
-      text: `[wt] duplicated ${res.component} worktree: ${res.path} (${res.branch} based on ${res.base})`,
+      text: `[wt] duplicated worktree: ${res.path} (${res.branch} based on ${res.base})`,
     });
     return;
   }
   if (cmd === 'pr') {
-    const res = await cmdPr({ rootDir, argv });
+    const res = await cmdPr({ rootDir, argv: effectiveArgv });
     printResult({
       json,
       data: res,
-      text: `[wt] created PR worktree for ${res.component}: ${res.path} (${res.branch})`,
+      text: `[wt] created PR worktree: ${res.path} (${res.branch})`,
     });
     return;
   }
   if (cmd === 'sync') {
-    const res = await cmdSync({ rootDir, argv });
-    printResult({ json, data: res, text: `[wt] ${res.component}: synced ${res.mirrorBranch} -> ${res.upstreamRef}` });
+    const res = await cmdSync({ rootDir, argv: effectiveArgv });
+    printResult({ json, data: res, text: `[wt] synced ${res.mirrorBranch} -> ${res.upstreamRef}` });
     return;
   }
   if (cmd === 'sync-all') {
@@ -2258,12 +2260,12 @@ async function main() {
     return;
   }
   if (cmd === 'status') {
-    const res = await cmdStatus({ rootDir, argv });
+    const res = await cmdStatus({ rootDir, argv: effectiveArgv });
     if (json) {
       printResult({ json, data: res });
     } else {
       const lines = [
-        `[wt] ${res.component}: ${res.dir}`,
+        `[wt] ${res.dir}`,
         `- branch: ${res.branch}`,
         `- upstream: ${res.upstream ?? '(none)'}`,
         `- ahead/behind: ${res.ahead ?? '?'} / ${res.behind ?? '?'}`,
@@ -2275,18 +2277,18 @@ async function main() {
     return;
   }
   if (cmd === 'update') {
-    const res = await cmdUpdate({ rootDir, argv });
+    const res = await cmdUpdate({ rootDir, argv: effectiveArgv });
     if (json) {
       printResult({ json, data: res });
     } else if (res.ok) {
-      printResult({ json: false, text: `[wt] ${res.component}: updated (${res.mode}) from ${res.base}` });
+      printResult({ json: false, text: `[wt] updated (${res.mode}) from ${res.base}` });
     } else {
       if (res.message) {
         printResult({ json: false, text: res.message });
         return;
       }
       const text =
-        `[wt] ${res.component}: update had conflicts (${res.mode}) from ${res.base}\n` +
+        `[wt] update had conflicts (${res.mode}) from ${res.base}\n` +
         `worktree: ${res.dir}\n` +
         `conflicts:\n` +
         (res.conflicts.length ? res.conflicts.map((f) => `- ${f}`).join('\n') : '- (unknown)') +
@@ -2299,7 +2301,7 @@ async function main() {
     return;
   }
   if (cmd === 'update-all') {
-    const res = await cmdUpdateAll({ rootDir, argv });
+    const res = await cmdUpdateAll({ rootDir, argv: effectiveArgv });
     if (json) {
       printResult({ json, data: res });
     } else {
@@ -2308,53 +2310,53 @@ async function main() {
     return;
   }
   if (cmd === 'push') {
-    const res = await cmdPush({ rootDir, argv });
+    const res = await cmdPush({ rootDir, argv: effectiveArgv });
     printResult({
       json,
       data: res,
       text: res.dryRun
-        ? `[wt] ${res.component}: would push ${res.branch} -> ${res.remote} (dry-run)`
-        : `[wt] ${res.component}: pushed ${res.branch} -> ${res.remote}`,
+        ? `[wt] would push ${res.branch} -> ${res.remote} (dry-run)`
+        : `[wt] pushed ${res.branch} -> ${res.remote}`,
     });
     return;
   }
   if (cmd === 'git') {
-    const res = await cmdGit({ rootDir, argv });
+    const res = await cmdGit({ rootDir, argv: effectiveArgv });
     if (json) {
       printResult({ json, data: res });
     }
     return;
   }
   if (cmd === 'shell') {
-    const res = await cmdShell({ rootDir, argv });
+    const res = await cmdShell({ rootDir, argv: effectiveArgv });
     if (json) {
       printResult({ json, data: res });
     }
     return;
   }
   if (cmd === 'code') {
-    const res = await cmdCode({ rootDir, argv });
+    const res = await cmdCode({ rootDir, argv: effectiveArgv });
     if (json) {
       printResult({ json, data: res });
     }
     return;
   }
   if (cmd === 'cursor') {
-    const res = await cmdCursor({ rootDir, argv });
+    const res = await cmdCursor({ rootDir, argv: effectiveArgv });
     if (json) {
       printResult({ json, data: res });
     }
     return;
   }
   if (cmd === 'list') {
-    const res = await cmdList({ rootDir, args: positionals.slice(1), flags });
+    const res = await cmdList({ rootDir, args: effectivePositionals.slice(1), flags });
     if (json) {
       printResult({ json, data: res });
     } else {
       const results = Array.isArray(res?.results) ? res.results : [res];
       const lines = [];
       for (const r of results) {
-        lines.push(`[wt] ${r.component} worktrees:`);
+        lines.push('[wt] worktrees:');
         lines.push(`- active: ${r.activeDir}`);
         for (const p of r.worktrees) {
           lines.push(`- ${p}`);
@@ -2366,13 +2368,13 @@ async function main() {
     return;
   }
   if (cmd === 'archive') {
-    const res = await cmdArchive({ rootDir, argv });
+    const res = await cmdArchive({ rootDir, argv: effectiveArgv });
     if (json) {
       printResult({ json, data: res });
     } else if (res.dryRun) {
-      printResult({ json: false, text: `[wt] would archive ${res.component}: ${res.worktreeDir} -> ${res.destDir} (dry-run)` });
+      printResult({ json: false, text: `[wt] would archive ${res.worktreeDir} -> ${res.destDir} (dry-run)` });
     } else {
-      printResult({ json: false, text: `[wt] archived ${res.component}: ${res.destDir}` });
+      printResult({ json: false, text: `[wt] archived: ${res.destDir}` });
     }
     return;
   }

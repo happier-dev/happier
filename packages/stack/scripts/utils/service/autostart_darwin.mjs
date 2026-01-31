@@ -41,12 +41,12 @@ export function buildLaunchdPath({ execPath = process.execPath, basePath = proce
 export function pickLaunchdProgramArgs({ rootDir, execPath = process.execPath } = {}) {
   // Prefer the stable shim under the canonical home dir (used by selfhost installs).
   // This keeps the LaunchAgent pointing at a stable path while allowing runtime updates.
-  const happysShim = join(getCanonicalHomeDir(), 'bin', 'happys');
-  if (existsSync(happysShim)) {
-    return [happysShim, 'start'];
+  const hapstaShim = join(getCanonicalHomeDir(), 'bin', 'hapsta');
+  if (existsSync(hapstaShim)) {
+    return [hapstaShim, 'start'];
   }
   // Fallback: call the Node entry directly (works in repo-only installs).
-  return [execPath, resolveInstalledPath(rootDir, 'bin/happys.mjs'), 'start'];
+  return [execPath, resolveInstalledPath(rootDir, 'bin/hapsta.mjs'), 'start'];
 }
 
 function xmlEscape(s) {
@@ -179,4 +179,3 @@ export async function ensureMacAutostartDisabled({ label }) {
     // ignore
   }
 }
-

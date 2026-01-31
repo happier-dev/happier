@@ -29,7 +29,7 @@ async function main() {
     printResult({
       json,
       data: { flags: ['--json'], commands: ['where'] },
-      text: ['[where] usage:', '  happys where [--json]'].join('\n'),
+      text: ['[where] usage:', '  hapsta where [--json]'].join('\n'),
     });
     return;
   }
@@ -46,11 +46,9 @@ async function main() {
   const stackName = getStackName();
   const stackLabel = getStackLabel(stackName);
   const resolvedMainEnv = resolveStackEnvPath('main');
-  const resolvedActiveEnv = process.env.HAPPY_STACKS_ENV_FILE?.trim()
-    ? { envPath: expandHome(process.env.HAPPY_STACKS_ENV_FILE.trim()) }
-    : process.env.HAPPY_LOCAL_ENV_FILE?.trim()
-      ? { envPath: expandHome(process.env.HAPPY_LOCAL_ENV_FILE.trim()) }
-      : null;
+  const resolvedActiveEnv = process.env.HAPPIER_STACK_ENV_FILE?.trim()
+    ? { envPath: expandHome(process.env.HAPPIER_STACK_ENV_FILE.trim()) }
+    : null;
 
   const { homeEnv, homeLocal } = getHomeEnvPaths();
   const updateCachePath = join(homeDir, 'cache', 'update.json');
@@ -79,7 +77,7 @@ async function main() {
       },
       components: componentDirs,
       update: {
-        enabled: (process.env.HAPPY_STACKS_UPDATE_CHECK ?? '1') !== '0',
+        enabled: (process.env.HAPPIER_STACK_UPDATE_CHECK ?? '1') !== '0',
         cachePath: updateCachePath,
         cacheExists: existsSync(updateCachePath),
       },
@@ -125,4 +123,3 @@ main().catch((err) => {
   console.error('[where] failed:', err);
   process.exit(1);
 });
-

@@ -7,15 +7,15 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 /**
  * Link the local Happier CLI wrapper into your PATH.
  *
- * This is intentionally extracted so you can re-run linking without doing a full `happys bootstrap`.
+ * This is intentionally extracted so you can re-run linking without doing a full `hapsta bootstrap`.
  *
  * What it does:
  * - optionally builds `components/happy-cli` (controlled by env/flags)
- * - installs `happy`/`happys` shims under `<homeDir>/bin` (default: `~/.happy-stacks/bin`) (recommended over `npm link`)
+ * - installs `happy`/`hapsta` shims under `<homeDir>/bin` (default: `~/.happier-stack/bin`) (recommended over `npm link`)
  *
  * Env:
- * - HAPPY_LOCAL_CLI_BUILD=0 to skip building happy-cli
- * - HAPPY_LOCAL_NPM_LINK=0 to skip shim installation
+ * - HAPPIER_STACK_CLI_BUILD=0 to skip building happy-cli
+ * - HAPPIER_STACK_NPM_LINK=0 to skip shim installation
  *
  * Flags:
  * - --no-build: skip building happy-cli
@@ -32,8 +32,7 @@ async function main() {
       data: { flags: ['--no-build', '--no-link'], json: true },
       text: [
         '[cli-link] usage:',
-        '  happys cli:link [--no-build] [--no-link] [--json]',
-        '  (legacy in a cloned repo): pnpm cli:link [-- --no-build] [--json]',
+        '  hapsta cli:link [--no-build] [--no-link] [--json]',
         '  node scripts/cli-link.mjs [--no-build] [--no-link] [--json]',
       ].join('\n'),
     });
@@ -43,8 +42,8 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
   const cliDir = getComponentDir(rootDir, 'happy-cli');
 
-  const buildCli = !flags.has('--no-build') && (process.env.HAPPY_LOCAL_CLI_BUILD ?? '1') !== '0';
-  const npmLinkCli = !flags.has('--no-link') && (process.env.HAPPY_LOCAL_NPM_LINK ?? '1') !== '0';
+  const buildCli = !flags.has('--no-build') && (process.env.HAPPIER_STACK_CLI_BUILD ?? '1') !== '0';
+  const npmLinkCli = !flags.has('--no-link') && (process.env.HAPPIER_STACK_NPM_LINK ?? '1') !== '0';
 
   await ensureCliBuilt(cliDir, { buildCli });
   await ensureHappyCliLocalNpmLinked(rootDir, { npmLinkCli });

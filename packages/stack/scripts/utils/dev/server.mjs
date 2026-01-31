@@ -14,19 +14,19 @@ export function resolveStackUiDevPortStart({ env = process.env, stackName }) {
   return resolveStablePortStart({
     env: {
       ...env,
-      HAPPY_STACKS_UI_DEV_PORT_BASE: (env.HAPPY_STACKS_UI_DEV_PORT_BASE ?? env.HAPPY_LOCAL_UI_DEV_PORT_BASE ?? '8081').toString(),
-      HAPPY_STACKS_UI_DEV_PORT_RANGE: (env.HAPPY_STACKS_UI_DEV_PORT_RANGE ?? env.HAPPY_LOCAL_UI_DEV_PORT_RANGE ?? '1000').toString(),
+      HAPPIER_STACK_UI_DEV_PORT_BASE: (env.HAPPIER_STACK_UI_DEV_PORT_BASE ?? '8081').toString(),
+      HAPPIER_STACK_UI_DEV_PORT_RANGE: (env.HAPPIER_STACK_UI_DEV_PORT_RANGE ?? '1000').toString(),
     },
     stackName,
-    baseKey: 'HAPPY_STACKS_UI_DEV_PORT_BASE',
-    rangeKey: 'HAPPY_STACKS_UI_DEV_PORT_RANGE',
+    baseKey: 'HAPPIER_STACK_UI_DEV_PORT_BASE',
+    rangeKey: 'HAPPIER_STACK_UI_DEV_PORT_RANGE',
     defaultBase: 8081,
     defaultRange: 1000,
   });
 }
 
 export async function pickDevMetroPort({ startPort, reservedPorts = new Set(), host = '127.0.0.1' } = {}) {
-  const forcedPort = (process.env.HAPPY_STACKS_UI_DEV_PORT ?? process.env.HAPPY_LOCAL_UI_DEV_PORT ?? '').toString().trim();
+  const forcedPort = (process.env.HAPPIER_STACK_UI_DEV_PORT ?? '').toString().trim();
   return await pickMetroPort({ startPort, forcedPort, reservedPorts, host });
 }
 
@@ -67,7 +67,7 @@ export async function startDevServer({
   }
 
   if (serverComponentName === 'happy-server') {
-    const managed = (baseEnv.HAPPY_STACKS_MANAGED_INFRA ?? baseEnv.HAPPY_LOCAL_MANAGED_INFRA ?? '1') !== '0';
+    const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
     if (managed) {
       const infra = await ensureHappyServerManagedInfra({
         stackName: autostart.stackName,
@@ -80,7 +80,7 @@ export async function startDevServer({
       Object.assign(serverEnv, infra.env);
     }
 
-    const autoMigrate = (baseEnv.HAPPY_STACKS_PRISMA_MIGRATE ?? baseEnv.HAPPY_LOCAL_PRISMA_MIGRATE ?? '1') !== '0';
+    const autoMigrate = (baseEnv.HAPPIER_STACK_PRISMA_MIGRATE ?? '1') !== '0';
     if (autoMigrate) {
       await applyHappyServerMigrations({ serverDir, env: serverEnv });
     }
@@ -89,7 +89,7 @@ export async function startDevServer({
   // Ensure server deps exist before any Prisma/docker work.
   await ensureDepsInstalled(serverDir, serverComponentName, { quiet, env: serverEnv });
 
-  const prismaPush = (baseEnv.HAPPY_STACKS_PRISMA_PUSH ?? baseEnv.HAPPY_LOCAL_PRISMA_PUSH ?? '1').toString().trim() !== '0';
+  const prismaPush = (baseEnv.HAPPIER_STACK_PRISMA_PUSH ?? '1').toString().trim() !== '0';
   const serverScript = resolveServerDevScript({ serverComponentName, serverDir, prismaPush });
 
   // Restart behavior (stack-safe): only kill when we can prove ownership via runtime state.
@@ -104,7 +104,7 @@ export async function startDevServer({
         if (!free) {
           throw new Error(
             `[local] restart refused: server port ${serverPort} is occupied and the PID is not provably stack-owned.\n` +
-              `[local] Fix: run 'happys stack stop ${autostart.stackName}' then re-run, or re-run without --restart.`
+              `[local] Fix: run 'hapsta stack stop ${autostart.stackName}' then re-run, or re-run without --restart.`
           );
         }
       }

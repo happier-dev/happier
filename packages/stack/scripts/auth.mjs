@@ -78,18 +78,18 @@ function fileHasContent(path) {
 }
 
 function authLoginSuggestion(stackName) {
-  return stackName === 'main' ? 'happys auth login' : `happys stack auth ${stackName} login`;
+  return stackName === 'main' ? 'hapsta auth login' : `hapsta stack auth ${stackName} login`;
 }
 
 function authCopyFromSeedSuggestion(stackName) {
   if (stackName === 'main') return null;
   const from = resolveAuthSeedFromEnv(process.env);
-  return `happys stack auth ${stackName} copy-from ${from}`;
+  return `hapsta stack auth ${stackName} copy-from ${from}`;
 }
 
 function resolveServerComponentForCurrentStack() {
   return (
-    (process.env.HAPPY_STACKS_SERVER_COMPONENT ?? process.env.HAPPY_LOCAL_SERVER_COMPONENT ?? 'happy-server-light').trim() ||
+    (process.env.HAPPIER_STACK_SERVER_COMPONENT ?? 'happy-server-light').trim() ||
     'happy-server-light'
   );
 }
@@ -177,10 +177,10 @@ async function cmdDevKey({ argv, json }) {
       // eslint-disable-next-line no-console
       console.log(sectionTitle('How to set it'));
       // eslint-disable-next-line no-console
-      console.log(
-        bullets([
-          `${dim('save locally:')} ${cmdFmt('happys auth dev-key --set "<base64url-secret-or-backup-format>"')}`,
-          `${dim('or export for this shell:')} export HAPPY_STACKS_DEV_AUTH_SECRET_KEY="<base64url-secret>"`,
+        console.log(
+          bullets([
+          `${dim('save locally:')} ${cmdFmt('hapsta auth dev-key --set "<base64url-secret-or-backup-format>"')}`,
+          `${dim('or export for this shell:')} export HAPPIER_STACK_DEV_AUTH_SECRET_KEY="<base64url-secret>"`,
         ])
       );
       if (out.path) {
@@ -245,7 +245,7 @@ async function runNodeCapture({ cwd, env, args, stdin }) {
 }
 
 function resolveServerComponentFromEnv(env) {
-  const v = (env.HAPPY_STACKS_SERVER_COMPONENT ?? env.HAPPY_LOCAL_SERVER_COMPONENT ?? 'happy-server-light').trim() || 'happy-server-light';
+  const v = (env.HAPPIER_STACK_SERVER_COMPONENT ?? 'happy-server-light').trim() || 'happy-server-light';
   return v === 'happy-server' ? 'happy-server' : 'happy-server-light';
 }
 
@@ -414,7 +414,7 @@ async function cmdCopyFrom({ argv, json }) {
   const fromStackName = (positionals[1] ?? '').trim();
   if (!fromStackName) {
     throw new Error(
-      '[auth] usage: happys stack auth <name> copy-from <sourceStack|legacy> [--force] [--with-infra] [--json]  OR  happys auth copy-from <sourceStack|legacy> --all [--except=main,dev-auth] [--force] [--with-infra] [--json]\n' +
+      '[auth] usage: hapsta stack auth <name> copy-from <sourceStack|legacy> [--force] [--with-infra] [--json]  OR  hapsta auth copy-from <sourceStack|legacy> --all [--except=main,dev-auth] [--force] [--with-infra] [--json]\n' +
         'notes:\n' +
         '  - sourceStack can be a stack name (e.g. main, dev-auth)\n' +
         '  - legacy uses ~/.happy/{cli,server-light} as a source (best-effort)'
@@ -427,7 +427,7 @@ async function cmdCopyFrom({ argv, json }) {
     throw new Error(
       '[auth] legacy auth source is disabled in sandbox mode.\n' +
         'Reason: it reads from ~/.happy (global user state).\n' +
-        'If you really want this, set: HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1'
+        'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
     );
   }
   const force =
@@ -448,8 +448,8 @@ async function cmdCopyFrom({ argv, json }) {
     (kv.get('--link') ?? '').trim() === '1' ||
     (kv.get('--symlink') ?? '').trim() === '1' ||
     (kv.get('--auth-mode') ?? '').trim() === 'link' ||
-    (process.env.HAPPY_STACKS_AUTH_LINK ?? process.env.HAPPY_LOCAL_AUTH_LINK ?? '').toString().trim() === '1' ||
-    (process.env.HAPPY_STACKS_AUTH_MODE ?? process.env.HAPPY_LOCAL_AUTH_MODE ?? '').toString().trim() === 'link';
+    (process.env.HAPPIER_STACK_AUTH_LINK ?? '').toString().trim() === '1' ||
+    (process.env.HAPPIER_STACK_AUTH_MODE ?? '').toString().trim() === 'link';
   const allowMain = flags.has('--allow-main') || flags.has('--main-ok') || (kv.get('--allow-main') ?? '').trim() === '1';
   const exceptRaw = (kv.get('--except') ?? '').trim();
   const except = new Set(exceptRaw.split(',').map((s) => s.trim()).filter(Boolean));
@@ -540,7 +540,7 @@ async function cmdCopyFrom({ argv, json }) {
 
   if (stackName === 'main' && !allowMain) {
     throw new Error(
-      '[auth] copy-from is intended for stack-scoped usage (e.g. happys stack auth <name> copy-from main), or pass --all.\n' +
+      '[auth] copy-from is intended for stack-scoped usage (e.g. hapsta stack auth <name> copy-from main), or pass --all.\n' +
         'If you really intend to seed the main Happy Stacks install, re-run with: --allow-main'
     );
   }
@@ -552,14 +552,14 @@ async function cmdCopyFrom({ argv, json }) {
   const targetServerLightDataDir =
     (process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').trim() || join(targetBaseDir, 'server-light');
   const targetSecretFile =
-    (process.env.HAPPY_STACKS_HANDY_MASTER_SECRET_FILE ?? '').trim() || join(targetBaseDir, 'happy-server', 'handy-master-secret.txt');
+    (process.env.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? '').trim() || join(targetBaseDir, 'happy-server', 'handy-master-secret.txt');
 
   const isLegacySource = isLegacyAuthSourceName(fromStackName);
   if (isLegacySource && isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     throw new Error(
       '[auth] legacy auth source is disabled in sandbox mode.\n' +
         'Reason: it reads from ~/.happy (global user state).\n' +
-        'If you really want this, set: HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1'
+        'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
     );
   }
   const { secret, source } = await resolveHandyMasterSecretFromStack({
@@ -654,7 +654,7 @@ async function cmdCopyFrom({ argv, json }) {
     } catch (e) {
       // For full server stacks, allow `copy-from --with-infra` to bring up Docker infra just-in-time
       // so we can seed DB accounts reliably.
-      const managed = (targetEnv.HAPPY_STACKS_MANAGED_INFRA ?? targetEnv.HAPPY_LOCAL_MANAGED_INFRA ?? '1').toString().trim() !== '0';
+      const managed = (targetEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0';
       if (targetServerComponent === 'happy-server' && withInfra && managed) {
         const { port } = getInternalServerUrlCompat();
         const publicServerUrl = await preferStackLocalhostUrl(`http://localhost:${port}`, { stackName });
@@ -840,12 +840,12 @@ async function cmdStatus({ json }) {
   console.log(daemonLine);
   console.log(serverLine);
   if (!health.ok) {
-    const startHint = stackName === 'main' ? 'happys dev' : `happys stack dev ${stackName}`;
+    const startHint = stackName === 'main' ? 'hapsta dev' : `hapsta stack dev ${stackName}`;
     console.log(`  ↪ this stack does not appear to be running. Start it with: ${startHint}`);
     return;
   }
   if (auth.ok && daemon.status !== 'running') {
-    console.log(`  ↪ daemon is not running for this stack. If you expected it to be running, try: happys doctor`);
+    console.log(`  ↪ daemon is not running for this stack. If you expected it to be running, try: hapsta doctor`);
   }
 }
 
@@ -877,7 +877,7 @@ async function cmdLogin({ argv, json }) {
   const wantPrint = argv.includes('--print');
   const noOpen = flags.has('--no-open') || flags.has('--no-browser') || flags.has('--no-browser-open');
   const contextRaw =
-    (kv.get('--context') ?? process.env.HAPPY_STACKS_AUTH_LOGIN_CONTEXT ?? process.env.HAPPY_LOCAL_AUTH_LOGIN_CONTEXT ?? '')
+    (kv.get('--context') ?? process.env.HAPPIER_STACK_AUTH_LOGIN_CONTEXT ?? '')
       .toString()
       .trim();
   const context = contextRaw || (stackName === 'main' ? 'generic' : 'stack');
@@ -935,7 +935,7 @@ async function cmdLogin({ argv, json }) {
   });
 
   const timeoutMsRaw =
-    (process.env.HAPPY_STACKS_AUTH_LOGIN_TIMEOUT_MS ?? process.env.HAPPY_LOCAL_AUTH_LOGIN_TIMEOUT_MS ?? '600000').toString().trim();
+    (process.env.HAPPIER_STACK_AUTH_LOGIN_TIMEOUT_MS ?? '600000').toString().trim();
   const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 600000;
   const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
 
@@ -964,7 +964,7 @@ async function cmdLogin({ argv, json }) {
 
   const t = hasTimeout
     ? setTimeout(() => {
-        console.warn(`[auth] login timed out after ${timeoutMs}ms (set HAPPY_STACKS_AUTH_LOGIN_TIMEOUT_MS=0 to disable)`);
+        console.warn(`[auth] login timed out after ${timeoutMs}ms (set HAPPIER_STACK_AUTH_LOGIN_TIMEOUT_MS=0 to disable)`);
         killChild('SIGTERM');
       }, timeoutMs)
     : null;
@@ -989,30 +989,30 @@ async function main() {
   if (wantsHelp(argv, { flags }) || cmd === 'help') {
     printResult({
       json,
-      data: { commands: ['status', 'login', 'copy-from', 'dev-key'], stackScoped: 'happys stack auth <name> status|login|copy-from' },
+      data: { commands: ['status', 'login', 'copy-from', 'dev-key'], stackScoped: 'hapsta stack auth <name> status|login|copy-from' },
       text: [
         '',
         banner('auth', { subtitle: 'Login and auth seeding helpers for Happy Stacks.' }),
         '',
         sectionTitle('Usage (global)'),
         bullets([
-          `${dim('status:')} ${cmdFmt('happys auth status')} ${dim('[--json]')}`,
-          `${dim('login:')}  ${cmdFmt('happys auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
-          `${dim('seed:')}   ${cmdFmt('happys auth copy-from <sourceStack|legacy> --all')} ${dim('[--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]')}`,
-          `${dim('dev key:')} ${cmdFmt('happys auth dev-key')} ${dim('[--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]')}`,
+          `${dim('status:')} ${cmdFmt('hapsta auth status')} ${dim('[--json]')}`,
+          `${dim('login:')}  ${cmdFmt('hapsta auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
+          `${dim('seed:')}   ${cmdFmt('hapsta auth copy-from <sourceStack|legacy> --all')} ${dim('[--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]')}`,
+          `${dim('dev key:')} ${cmdFmt('hapsta auth dev-key')} ${dim('[--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]')}`,
         ]),
         '',
         sectionTitle('Usage (stack-scoped)'),
         bullets([
-          `${dim('status:')} ${cmdFmt('happys stack auth <name> status')} ${dim('[--json]')}`,
-          `${dim('login:')}  ${cmdFmt('happys stack auth <name> login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
-          `${dim('seed:')}   ${cmdFmt('happys stack auth <name> copy-from <sourceStack|legacy>')} ${dim('[--force] [--with-infra] [--link] [--json]')}`,
+          `${dim('status:')} ${cmdFmt('hapsta stack auth <name> status')} ${dim('[--json]')}`,
+          `${dim('login:')}  ${cmdFmt('hapsta stack auth <name> login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
+          `${dim('seed:')}   ${cmdFmt('hapsta stack auth <name> copy-from <sourceStack|legacy>')} ${dim('[--force] [--with-infra] [--link] [--json]')}`,
         ]),
         '',
         sectionTitle('Advanced'),
         bullets([
-          `${dim('UX labels only:')} ${cmdFmt('happys auth login --context=selfhost|dev|stack')}`,
-          `${dim('import legacy creds into main:')} ${cmdFmt('happys auth copy-from legacy --allow-main')} ${dim('[--link] [--force]')}`,
+          `${dim('UX labels only:')} ${cmdFmt('hapsta auth login --context=selfhost|dev|stack')}`,
+          `${dim('import legacy creds into main:')} ${cmdFmt('hapsta auth copy-from legacy --allow-main')} ${dim('[--link] [--force]')}`,
         ]),
       ].join('\n'),
     });

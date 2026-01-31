@@ -2,7 +2,7 @@ import { pickLanIpv4 } from '../net/lan_ip.mjs';
 import { normalizeUrlNoTrailingSlash } from '../net/url.mjs';
 
 function resolveLanIp({ env = process.env } = {}) {
-  const raw = (env.HAPPY_STACKS_LAN_IP ?? env.HAPPY_LOCAL_LAN_IP ?? '').toString().trim();
+  const raw = (env.HAPPIER_STACK_LAN_IP ?? '').toString().trim();
   return raw || pickLanIpv4() || '';
 }
 
@@ -58,4 +58,3 @@ export function resolveMobileReachableServerUrl({
   parsed.hostname = lanIp;
   return normalizeUrlNoTrailingSlash(parsed.toString());
 }
-

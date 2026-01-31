@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# <xbar.title>Happy Stacks</xbar.title>
+# <xbar.title>Hapsta</xbar.title>
 # <xbar.version>1.0.0</xbar.version>
-# <xbar.author>Happy Stacks</xbar.author>
+# <xbar.author>Hapsta</xbar.author>
 # <xbar.author.github>happier-dev</xbar.author.github>
-# <xbar.desc>Monitor and control your Happy stacks from the menu bar</xbar.desc>
+# <xbar.desc>Monitor and control your Happier stacks from the menu bar</xbar.desc>
 # <xbar.dependencies>node</xbar.dependencies>
 # <swiftbar.hideAbout>true</swiftbar.hideAbout>
 # <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
@@ -18,10 +18,10 @@
 # ============================================================================
 
 # SwiftBar runs with a minimal environment, so users often won't have
-# HAPPY_STACKS_HOME_DIR / HAPPY_STACKS_WORKSPACE_DIR exported.
-# Treat <canonicalHomeDir>/.env as the canonical pointer file (written by `happys init`).
-# Default: ~/.happy-stacks/.env
-CANONICAL_HOME_DIR="${HAPPY_STACKS_CANONICAL_HOME_DIR:-${HAPPY_LOCAL_CANONICAL_HOME_DIR:-$HOME/.happy-stacks}}"
+# HAPPIER_STACK_HOME_DIR / HAPPIER_STACK_WORKSPACE_DIR exported.
+# Treat <canonicalHomeDir>/.env as the canonical pointer file (written by `hapsta init`).
+# Default: ~/.happier-stack/.env
+CANONICAL_HOME_DIR="${HAPPIER_STACK_CANONICAL_HOME_DIR:-$HOME/.happier-stack}"
 CANONICAL_ENV_FILE="$CANONICAL_HOME_DIR/.env"
 
 _dotenv_get_quick() {
@@ -51,19 +51,12 @@ _expand_home_quick() {
 
 _home_from_canonical=""
 if [[ -f "$CANONICAL_ENV_FILE" ]]; then
-  _home_from_canonical="$(_dotenv_get_quick "$CANONICAL_ENV_FILE" "HAPPY_STACKS_HOME_DIR")"
-  [[ -z "$_home_from_canonical" ]] && _home_from_canonical="$(_dotenv_get_quick "$CANONICAL_ENV_FILE" "HAPPY_LOCAL_HOME_DIR")"
+  _home_from_canonical="$(_dotenv_get_quick "$CANONICAL_ENV_FILE" "HAPPIER_STACK_HOME_DIR")"
 fi
 _home_from_canonical="$(_expand_home_quick "${_home_from_canonical:-}")"
 
-HAPPY_STACKS_HOME_DIR="${HAPPY_STACKS_HOME_DIR:-${_home_from_canonical:-$CANONICAL_HOME_DIR}}"
-HAPPY_LOCAL_DIR="${HAPPY_LOCAL_DIR:-$HAPPY_STACKS_HOME_DIR}"
-HAPPY_LOCAL_PORT="${HAPPY_LOCAL_PORT:-3005}"
-
-# Map common preferences from HAPPY_STACKS_* -> HAPPY_LOCAL_* (SwiftBar scripts are shell-based).
-if [[ -n "${HAPPY_STACKS_WT_TERMINAL:-}" && -z "${HAPPY_LOCAL_WT_TERMINAL:-}" ]]; then HAPPY_LOCAL_WT_TERMINAL="$HAPPY_STACKS_WT_TERMINAL"; fi
-if [[ -n "${HAPPY_STACKS_WT_SHELL:-}" && -z "${HAPPY_LOCAL_WT_SHELL:-}" ]]; then HAPPY_LOCAL_WT_SHELL="$HAPPY_STACKS_WT_SHELL"; fi
-if [[ -n "${HAPPY_STACKS_SWIFTBAR_ICON_PATH:-}" && -z "${HAPPY_LOCAL_SWIFTBAR_ICON_PATH:-}" ]]; then HAPPY_LOCAL_SWIFTBAR_ICON_PATH="$HAPPY_STACKS_SWIFTBAR_ICON_PATH"; fi
+export HAPPIER_STACK_HOME_DIR="${HAPPIER_STACK_HOME_DIR:-${_home_from_canonical:-$CANONICAL_HOME_DIR}}"
+export HAPPIER_STACK_CANONICAL_HOME_DIR="$CANONICAL_HOME_DIR"
 
 # Colors
 GREEN="#34C759"
@@ -76,19 +69,20 @@ BLUE="#007AFF"
 # Load libs
 # ============================================================================
 
-LIB_DIR="$HAPPY_LOCAL_DIR/extras/swiftbar/lib"
+HAPSTA_ROOT_DIR="${HAPPIER_STACK_CLI_ROOT_DIR:-$HAPPIER_STACK_HOME_DIR}"
+LIB_DIR="$HAPSTA_ROOT_DIR/extras/swiftbar/lib"
 if [[ ! -f "$LIB_DIR/utils.sh" ]]; then
-  echo "Happy Stacks"
+  echo "Hapsta"
   echo "---"
   echo "SwiftBar libs missing at: $LIB_DIR"
-  echo "↪ run: happys menubar install"
+  echo "↪ run: hapsta menubar install"
   exit 0
 fi
 
 # shellcheck source=/dev/null
 source "$LIB_DIR/utils.sh"
-HAPPY_LOCAL_DIR="$(resolve_happy_local_dir)"
-LIB_DIR="$HAPPY_LOCAL_DIR/extras/swiftbar/lib"
+HAPSTA_ROOT_DIR="$(resolve_hapsta_root_dir)"
+LIB_DIR="$HAPSTA_ROOT_DIR/extras/swiftbar/lib"
 # shellcheck source=/dev/null
 source "$LIB_DIR/icons.sh"
 # shellcheck source=/dev/null
@@ -102,7 +96,8 @@ source "$LIB_DIR/render.sh"
 # Menu
 # ============================================================================
 
-PNPM_BIN="$(resolve_pnpm_bin)"
+HAPSTA_BIN="$(resolve_hapsta_bin)"
+HAPSTA_TERM="$HAPSTA_ROOT_DIR/extras/swiftbar/hapsta-term.sh"
 MAIN_PORT="$(resolve_main_port)"
 MAIN_SERVER_COMPONENT="$(resolve_main_server_component)"
 TAILSCALE_URL="$(get_tailscale_url)"
@@ -141,12 +136,12 @@ else
   if [[ -n "$ICON_B64" ]]; then
     echo "● | templateImage=$ICON_B64 color=$STATUS_COLOR"
   else
-    echo "Happy"
+    echo "Hapsta"
   fi
 fi
 
 echo "---"
-echo "Happy Stacks | size=14 font=SF Pro Display"
+echo "Hapsta | size=14 font=SF Pro Display"
 echo "---"
 
 # Mode (selfhost vs dev)
@@ -155,11 +150,11 @@ if [[ "$MENUBAR_MODE" == "selfhost" ]]; then
 else
   echo "Mode: Dev | sfimage=hammer"
 fi
-if [[ -n "$PNPM_BIN" ]]; then
+if [[ -n "$HAPSTA_BIN" ]]; then
   if [[ "$MENUBAR_MODE" == "selfhost" ]]; then
-    echo "--Switch to Dev mode | bash=$PNPM_BIN param1=menubar param2=mode param3=dev dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    echo "--Switch to Dev mode | bash=$HAPSTA_BIN param1=menubar param2=mode param3=dev dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   else
-    echo "--Switch to Selfhost mode | bash=$PNPM_BIN param1=menubar param2=mode param3=selfhost dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    echo "--Switch to Selfhost mode | bash=$HAPSTA_BIN param1=menubar param2=mode param3=selfhost dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   fi
 fi
 echo "---"
@@ -177,8 +172,8 @@ render_component_tailscale "" "main" "$TAILSCALE_URL"
 echo "---"
 if [[ "$MENUBAR_MODE" == "selfhost" ]]; then
   echo "Maintenance | sfimage=wrench.and.screwdriver"
-  if [[ -n "$PNPM_BIN" ]]; then
-    UPDATE_JSON="${HAPPY_LOCAL_DIR}/cache/update.json"
+  if [[ -n "$HAPSTA_BIN" ]]; then
+    UPDATE_JSON="${HAPSTA_ROOT_DIR}/cache/update.json"
     update_available=""
     latest=""
     current=""
@@ -192,33 +187,27 @@ if [[ "$MENUBAR_MODE" == "selfhost" ]]; then
     else
       echo "--Updates: up to date | color=$GRAY"
     fi
-    echo "--Check for updates | bash=$PNPM_BIN param1=self param2=check dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--Update happy-stacks runtime | bash=$PNPM_BIN param1=self param2=update dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--Doctor | bash=$PNPM_BIN param1=doctor dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    echo "--Check for updates | bash=$HAPSTA_BIN param1=self param2=check dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Update hapsta runtime | bash=$HAPSTA_BIN param1=self param2=update dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Doctor | bash=$HAPSTA_BIN param1=doctor dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   else
-    echo "--⚠️ happys not found (run: npx happy-stacks setup)" 
+    echo "--⚠️ hapsta not found (run: npx @happier-dev/stack@latest init)" 
   fi
 else
   echo "Stacks | sfimage=server.rack"
   STACKS_PREFIX="--"
 
-  if [[ -n "$PNPM_BIN" ]]; then
-    HAPPYS_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
-    echo "${STACKS_PREFIX}New stack (interactive) | bash=$HAPPYS_TERM param1=stack param2=new param3=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "${STACKS_PREFIX}List stacks | bash=$HAPPYS_TERM param1=stack param2=list dir=$HAPPY_LOCAL_DIR terminal=false"
+  if [[ -n "$HAPSTA_BIN" ]]; then
+    echo "${STACKS_PREFIX}New stack (interactive) | bash=$HAPSTA_TERM param1=stack param2=new param3=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "${STACKS_PREFIX}List stacks | bash=$HAPSTA_TERM param1=stack param2=list dir=$HAPSTA_ROOT_DIR terminal=false"
     print_sep "$STACKS_PREFIX"
   fi
 
   STACKS_DIR="$(resolve_stacks_storage_root)"
-  LEGACY_STACKS_DIR="$HOME/.happy/local/stacks"
-  if swiftbar_is_sandboxed; then
-    LEGACY_STACKS_DIR=""
-  fi
-  if [[ -d "$STACKS_DIR" ]] || [[ -n "$LEGACY_STACKS_DIR" && -d "$LEGACY_STACKS_DIR" ]]; then
+  if [[ -d "$STACKS_DIR" ]]; then
     STACK_NAMES="$(
       {
         ls -1 "$STACKS_DIR" 2>/dev/null || true
-        [[ -n "$LEGACY_STACKS_DIR" ]] && ls -1 "$LEGACY_STACKS_DIR" 2>/dev/null || true
       } | sort -u
     )"
     if [[ -z "$STACK_NAMES" ]]; then
@@ -231,8 +220,7 @@ else
       # Ports may be ephemeral (runtime-only). Do not skip stacks if the env file does not pin a port.
       port="$(resolve_stack_server_port "$s" "$env_file")"
 
-      server_component="$(dotenv_get "$env_file" "HAPPY_STACKS_SERVER_COMPONENT")"
-      [[ -z "$server_component" ]] && server_component="$(dotenv_get "$env_file" "HAPPY_LOCAL_SERVER_COMPONENT")"
+      server_component="$(dotenv_get "$env_file" "HAPPIER_STACK_SERVER_COMPONENT")"
       [[ -n "$server_component" ]] || server_component="happy-server-light"
 
       base_dir="$(resolve_stack_base_dir "$s" "$env_file")"
@@ -264,28 +252,26 @@ else
   render_components_menu "" "main" "main" "$MAIN_ENV_FILE"
 
   echo "Worktrees | sfimage=arrow.triangle.branch"
-  if [[ -z "$PNPM_BIN" ]]; then
-    echo "--⚠️ happys not found (run: npx happy-stacks setup)"
+  if [[ -z "$HAPSTA_BIN" ]]; then
+    echo "--⚠️ hapsta not found (run: npx @happier-dev/stack@latest init)"
   else
-    HAPPYS_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
-    echo "--Use (interactive) | bash=$HAPPYS_TERM param1=wt param2=use param3=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--New (interactive) | bash=$HAPPYS_TERM param1=wt param2=new param3=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--PR worktree (prompt) | bash=$HAPPY_LOCAL_DIR/extras/swiftbar/wt-pr.sh dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--Sync mirrors (all) | bash=$PNPM_BIN param1=wt param2=sync-all dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--Update all (dry-run) | bash=$HAPPYS_TERM param1=wt param2=update-all param3=--dry-run dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--Update all (apply) | bash=$PNPM_BIN param1=wt param2=update-all dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    echo "--Use (interactive) | bash=$HAPSTA_TERM param1=wt param2=use param3=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--New (interactive) | bash=$HAPSTA_TERM param1=wt param2=new param3=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--PR worktree (prompt) | bash=$HAPSTA_ROOT_DIR/extras/swiftbar/wt-pr.sh dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Sync mirrors (all) | bash=$HAPSTA_BIN param1=wt param2=sync-all dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Update all (dry-run) | bash=$HAPSTA_TERM param1=wt param2=update-all param3=--dry-run dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Update all (apply) | bash=$HAPSTA_BIN param1=wt param2=update-all dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   fi
 
   echo "---"
   echo "Setup / Tools"
-  if [[ -z "$PNPM_BIN" ]]; then
-    echo "--⚠️ happys not found (run: npx happy-stacks setup)"
+  if [[ -z "$HAPSTA_BIN" ]]; then
+    echo "--⚠️ hapsta not found (run: npx @happier-dev/stack@latest init)"
   else
-    HAPPYS_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
-    echo "--Setup (guided) | bash=$HAPPYS_TERM param1=setup dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--Bootstrap (clone/install) | bash=$HAPPYS_TERM param1=bootstrap dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--CLI link (install happy wrapper) | bash=$HAPPYS_TERM param1=cli:link dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    echo "--Mobile dev helper | bash=$HAPPYS_TERM param1=mobile dir=$HAPPY_LOCAL_DIR terminal=false"
+    echo "--Setup (guided) | bash=$HAPSTA_TERM param1=setup dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Bootstrap (clone/install) | bash=$HAPSTA_TERM param1=bootstrap dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--CLI link (install happy wrapper) | bash=$HAPSTA_TERM param1=cli:link dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Mobile dev helper | bash=$HAPSTA_TERM param1=mobile dir=$HAPSTA_ROOT_DIR terminal=false"
   fi
 fi
 
@@ -293,18 +279,18 @@ echo "---"
 echo "Refresh | sfimage=arrow.clockwise refresh=true"
 echo "---"
 echo "Refresh interval | sfimage=timer"
-SET_INTERVAL="$HAPPY_LOCAL_DIR/extras/swiftbar/set-interval.sh"
-echo "--10s | bash=$SET_INTERVAL param1=10s dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--30s | bash=$SET_INTERVAL param1=30s dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--1m | bash=$SET_INTERVAL param1=1m dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--5m (recommended) | bash=$SET_INTERVAL param1=5m dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--10m | bash=$SET_INTERVAL param1=10m dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--15m | bash=$SET_INTERVAL param1=15m dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--30m | bash=$SET_INTERVAL param1=30m dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--1h | bash=$SET_INTERVAL param1=1h dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--2h | bash=$SET_INTERVAL param1=2h dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--6h | bash=$SET_INTERVAL param1=6h dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--12h | bash=$SET_INTERVAL param1=12h dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-echo "--1d | bash=$SET_INTERVAL param1=1d dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+SET_INTERVAL="$HAPSTA_ROOT_DIR/extras/swiftbar/set-interval.sh"
+echo "--10s | bash=$SET_INTERVAL param1=10s dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--30s | bash=$SET_INTERVAL param1=30s dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--1m | bash=$SET_INTERVAL param1=1m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--5m (recommended) | bash=$SET_INTERVAL param1=5m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--10m | bash=$SET_INTERVAL param1=10m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--15m | bash=$SET_INTERVAL param1=15m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--30m | bash=$SET_INTERVAL param1=30m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--1h | bash=$SET_INTERVAL param1=1h dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--2h | bash=$SET_INTERVAL param1=2h dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--6h | bash=$SET_INTERVAL param1=6h dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--12h | bash=$SET_INTERVAL param1=12h dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+echo "--1d | bash=$SET_INTERVAL param1=1d dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
 
 exit 0

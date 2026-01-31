@@ -198,7 +198,7 @@ async function ensureHappyCliDistExists({ cliBin }) {
   // Try to recover automatically: missing dist is a common first-run worktree issue.
   // We build in-place using the cliDir that owns this cliBin (../ from bin/).
   const buildCli =
-    (process.env.HAPPY_STACKS_CLI_BUILD ?? process.env.HAPPY_LOCAL_CLI_BUILD ?? '1').toString().trim() !== '0';
+    (process.env.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
   if (!buildCli) {
     return { ok: false, distEntrypoint, built: false, reason: 'build_disabled' };
   }
@@ -245,17 +245,14 @@ function excerptIndicatesInvalidAuth(excerpt) {
 }
 
 function allowDaemonWaitForAuthWithoutTty() {
-  const raw = (process.env.HAPPY_STACKS_DAEMON_WAIT_FOR_AUTH ?? process.env.HAPPY_LOCAL_DAEMON_WAIT_FOR_AUTH ?? '')
-    .toString()
-    .trim()
-    .toLowerCase();
+  const raw = (process.env.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim().toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
 }
 
 function authLoginHint({ stackName, cliIdentity }) {
   const id = (cliIdentity ?? '').toString().trim();
   const suffix = id && id !== 'default' ? ` --identity=${id} --no-open` : '';
-  return stackName === 'main' ? `happys auth login${suffix}` : `happys stack auth ${stackName} login${suffix}`;
+  return stackName === 'main' ? `hapsta auth login${suffix}` : `hapsta stack auth ${stackName} login${suffix}`;
 }
 
 function authCopyFromSeedHint({ stackName, cliIdentity }) {
@@ -264,7 +261,7 @@ function authCopyFromSeedHint({ stackName, cliIdentity }) {
   const id = (cliIdentity ?? '').toString().trim();
   if (id && id !== 'default') return null;
   const seed = resolveAuthSeedFromEnv(process.env);
-  return `happys stack auth ${stackName} copy-from ${seed}`;
+  return `hapsta stack auth ${stackName} copy-from ${seed}`;
 }
 
 async function maybeAutoReseedInvalidAuth({ stackName, quiet = false }) {
@@ -472,11 +469,11 @@ export async function startLocalDaemonWithAuth({
 }) {
   const resolvedStackName =
     (stackName ?? '').toString().trim() ||
-    (env.HAPPY_STACKS_STACK ?? env.HAPPY_LOCAL_STACK ?? '').toString().trim() ||
+    (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
     'main';
   const resolvedCliIdentity =
     (cliIdentity ?? '').toString().trim() ||
-    (env.HAPPY_STACKS_CLI_IDENTITY ?? env.HAPPY_LOCAL_CLI_IDENTITY ?? '').toString().trim() ||
+    (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() ||
     'default';
   const baseEnv = { ...env };
   const daemonEnv = getDaemonEnv({ baseEnv, cliHomeDir, internalServerUrl, publicServerUrl });
@@ -494,7 +491,7 @@ export async function startLocalDaemonWithAuth({
 
   // If this is a migrated/new stack home dir, seed credentials from the user's existing login (best-effort)
   // to avoid requiring an interactive auth flow under launchd.
-  const migrateCreds = (baseEnv.HAPPY_STACKS_MIGRATE_CREDENTIALS ?? baseEnv.HAPPY_LOCAL_MIGRATE_CREDENTIALS ?? '1').trim() !== '0';
+  const migrateCreds = (baseEnv.HAPPIER_STACK_MIGRATE_CREDENTIALS ?? '1').trim() !== '0';
   if (migrateCreds) {
     await seedCredentialsIfMissing({ cliHomeDir });
   }
@@ -675,7 +672,7 @@ export async function startLocalDaemonWithAuth({
       console.error(
         `[local] daemon failed to start (server returned an error).\n` +
           `[local] Try:\n` +
-          `- happys doctor\n` +
+          `- hapsta doctor\n` +
           (copyHint ? `- ${copyHint}\n` : '') +
           `- ${authLoginHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity })}`
       );

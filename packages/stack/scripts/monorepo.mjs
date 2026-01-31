@@ -14,17 +14,17 @@ import { bold, cyan, dim, green, red, yellow } from './utils/ui/ansi.mjs';
 import { clipboardAvailable, copyTextToClipboard } from './utils/ui/clipboard.mjs';
 import { detectInstalledLlmTools } from './utils/llm/tools.mjs';
 import { launchLlmAssistant } from './utils/llm/assist.mjs';
-import { buildHappyStacksRunnerShellSnippet } from './utils/llm/happys_runner.mjs';
+import { buildHapstaRunnerShellSnippet } from './utils/llm/hapsta_runner.mjs';
 
 function usage() {
   return [
     '[monorepo] usage:',
-    '  happys monorepo port --target=/abs/path/to/monorepo [--clone-target] [--target-repo=<git-url>] [--branch=port/<name>] [--base=<ref>] [--onto-current] [--dry-run] [--3way] [--skip-applied] [--continue-on-failure] [--json]',
-    '  happys monorepo port guide [--target=/abs/path/to/monorepo] [--clone-target] [--target-repo=<git-url>] [--json]',
-    '  happys monorepo port preflight --target=/abs/path/to/monorepo [--base=<ref>] [--3way] [--json]',
-    '  happys monorepo port status [--target=/abs/path/to/monorepo] [--json]',
-    '  happys monorepo port continue [--target=/abs/path/to/monorepo] [--json]',
-    '  happys monorepo port llm --target=/abs/path/to/monorepo [--copy] [--launch] [--json]',
+    '  hapsta monorepo port --target=/abs/path/to/monorepo [--clone-target] [--target-repo=<git-url>] [--branch=port/<name>] [--base=<ref>] [--onto-current] [--dry-run] [--3way] [--skip-applied] [--continue-on-failure] [--json]',
+    '  hapsta monorepo port guide [--target=/abs/path/to/monorepo] [--clone-target] [--target-repo=<git-url>] [--json]',
+    '  hapsta monorepo port preflight --target=/abs/path/to/monorepo [--base=<ref>] [--3way] [--json]',
+    '  hapsta monorepo port status [--target=/abs/path/to/monorepo] [--json]',
+    '  hapsta monorepo port continue [--target=/abs/path/to/monorepo] [--json]',
+    '  hapsta monorepo port llm --target=/abs/path/to/monorepo [--copy] [--launch] [--json]',
     '    [--from-happy=/abs/path/to/old-happy --from-happy-base=<ref> --from-happy-ref=<ref>]',
     '    [--from-happy-cli=/abs/path/to/old-happy-cli --from-happy-cli-base=<ref> --from-happy-cli-ref=<ref>]',
     '    [--from-happy-server=/abs/path/to/old-happy-server --from-happy-server-base=<ref> --from-happy-server-ref=<ref>]',
@@ -47,9 +47,9 @@ function usage() {
     '',
     'LLM tip:',
     '- If you want an LLM to help resolve conflicts, run:',
-    '    happys monorepo port llm --target=/abs/path/to/monorepo --launch',
+    '    hapsta monorepo port llm --target=/abs/path/to/monorepo --launch',
     '  or, if you prefer copy/paste:',
-    '    happys monorepo port llm --target=/abs/path/to/monorepo --copy',
+    '    hapsta monorepo port llm --target=/abs/path/to/monorepo --copy',
     '  then paste the copied prompt into your LLM.',
   ].join('\n');
 }
@@ -376,7 +376,7 @@ async function resolveGitPath(repoRoot, relPath) {
 }
 
 function isTestTty() {
-  return String(process.env.HAPPY_STACKS_TEST_TTY ?? '').trim() === '1';
+  return String(process.env.HAPPIER_STACK_TEST_TTY ?? '').trim() === '1';
 }
 
 function shouldShowProgress({ json, silent = false } = {}) {
@@ -1211,7 +1211,7 @@ async function cmdPortStatus({ kv, json }) {
       lines.push(`- ${dim('continue:')}       git -C ${targetRepoRoot} am --continue`);
       lines.push(`- ${dim('skip patch:')}     git -C ${targetRepoRoot} am --skip`);
       lines.push(`- ${dim('abort:')}          git -C ${targetRepoRoot} am --abort`);
-      lines.push(`- ${dim('helper:')}         happys monorepo port continue --target=${targetRepoRoot}`);
+      lines.push(`- ${dim('helper:')}         hapsta monorepo port continue --target=${targetRepoRoot}`);
     }
     return lines.join('\n');
   })();
@@ -1224,7 +1224,7 @@ async function cmdPortStatus({ kv, json }) {
 }
 
 function buildPortLlmPromptText({ targetRepoRoot }) {
-  const hs = buildHappyStacksRunnerShellSnippet();
+  const hs = buildHapstaRunnerShellSnippet();
   return [
     'You are an assistant helping the user port split-repo commits into the slopus/happy monorepo.',
     '',
@@ -1258,7 +1258,7 @@ function buildPortGuideLlmPromptText({ targetRepoRoot, initialCommandArgs }) {
   return [
     'You are an assistant helping the user port split-repo commits into the slopus/happy monorepo.',
     '',
-    buildHappyStacksRunnerShellSnippet(),
+    buildHapstaRunnerShellSnippet(),
     `Target monorepo root: ${targetRepoRoot}`,
     '',
     'Goal:',
@@ -1307,8 +1307,8 @@ async function cmdPortContinue({ kv, flags, json }) {
           `[monorepo] git reports unmerged files (e.g. ${dim('UU')}). This usually means you resolved them in an editor but forgot ${bold('git add')}.`,
           `[monorepo] conflicted files: ${conflictedFiles.join(', ')}`,
           `[monorepo] next: git -C ${targetRepoRoot} add ${conflictedFiles.map((f) => JSON.stringify(f)).join(' ')}`,
-          `[monorepo] then re-run: happys monorepo port continue --target=${targetRepoRoot}`,
-          `[monorepo] tip: you can also run: happys monorepo port continue --target=${targetRepoRoot} --stage`,
+          `[monorepo] then re-run: hapsta monorepo port continue --target=${targetRepoRoot}`,
+          `[monorepo] tip: you can also run: hapsta monorepo port continue --target=${targetRepoRoot} --stage`,
         ].join('\n');
         printResult({
           json,
@@ -1326,7 +1326,7 @@ async function cmdPortContinue({ kv, flags, json }) {
           `[monorepo] files: ${markerHits.join(', ')}`,
           `[monorepo] next: open the file(s), remove ${dim('<<<<<<< / ======= / >>>>>>>')} markers, then run:`,
           `  git -C ${targetRepoRoot} add ${markerHits.map((f) => JSON.stringify(f)).join(' ')}`,
-          `  happys monorepo port continue --target=${targetRepoRoot}`,
+          `  hapsta monorepo port continue --target=${targetRepoRoot}`,
         ].join('\n');
         printResult({
           json,
@@ -1346,7 +1346,7 @@ async function cmdPortContinue({ kv, flags, json }) {
           `[monorepo] files: ${markerHits.join(', ')}`,
           `[monorepo] next: open the file(s), remove ${dim('<<<<<<< / ======= / >>>>>>>')} markers, then run:`,
           `  git -C ${targetRepoRoot} add ${markerHits.map((f) => JSON.stringify(f)).join(' ')}`,
-          `  happys monorepo port continue --target=${targetRepoRoot}`,
+          `  hapsta monorepo port continue --target=${targetRepoRoot}`,
         ].join('\n');
         printResult({
           json,
@@ -1368,7 +1368,7 @@ async function cmdPortContinue({ kv, flags, json }) {
         `${red('[monorepo]')} continue failed (still conflicted).`,
         conflictedFiles.length ? `[monorepo] conflicted files: ${conflictedFiles.join(', ')}` : '',
         stderr ? `[monorepo] git:\n${stderr}` : '',
-        `[monorepo] next: resolve, stage (${bold('git add')}), then re-run: happys monorepo port continue --target=${targetRepoRoot}`,
+        `[monorepo] next: resolve, stage (${bold('git add')}), then re-run: hapsta monorepo port continue --target=${targetRepoRoot}`,
       ]
         .filter(Boolean)
         .join('\n');
@@ -1620,7 +1620,7 @@ async function cmdPortGuide({ kv, flags, json }) {
       // If git am is already in progress, jump directly to the conflict loop.
       const inProgress = await isGitAmInProgress(targetRepoRoot);
       const { flags: attemptFlags, kv: attemptKv } = parseArgs(resumeArgv);
-      const allowAutoLlm = String(process.env.HAPPY_STACKS_DISABLE_LLM_AUTOEXEC ?? '').trim() !== '1';
+      const allowAutoLlm = String(process.env.HAPPIER_STACK_DISABLE_LLM_AUTOEXEC ?? '').trim() !== '1';
       const canAutoLaunchLlm = allowAutoLlm && (await detectInstalledLlmTools({ onlyAutoExec: true })).length > 0;
       const preferredConflictMode = String(plan.preferredConflictMode ?? '').trim() || 'guided';
 
@@ -1686,7 +1686,7 @@ async function cmdPortGuide({ kv, flags, json }) {
             continue;
           }
           if (action === 'quit') {
-            throw new Error('[monorepo] guide stopped (git am still in progress). Run `happys monorepo port status` / `... continue` to proceed.');
+            throw new Error('[monorepo] guide stopped (git am still in progress). Run `hapsta monorepo port status` / `... continue` to proceed.');
           }
           if (action === 'stage-continue') {
             const stageFlags = new Set([...(attemptFlags ?? []), '--stage']);
@@ -1864,7 +1864,7 @@ async function cmdPortGuide({ kv, flags, json }) {
       );
     }
 
-    const allowAutoLlm = String(process.env.HAPPY_STACKS_DISABLE_LLM_AUTOEXEC ?? '').trim() !== '1';
+    const allowAutoLlm = String(process.env.HAPPIER_STACK_DISABLE_LLM_AUTOEXEC ?? '').trim() !== '1';
     const canAutoLaunchLlm = allowAutoLlm && (await detectInstalledLlmTools({ onlyAutoExec: true })).length > 0;
     let preferredConflictMode = 'guided';
     if (!preflight.ok) {
@@ -2065,7 +2065,7 @@ async function cmdPortGuide({ kv, flags, json }) {
             continue;
           }
           if (action === 'quit') {
-            throw new Error('[monorepo] guide stopped (git am still in progress). Run `happys monorepo port status` / `... continue` to proceed.');
+            throw new Error('[monorepo] guide stopped (git am still in progress). Run `hapsta monorepo port status` / `... continue` to proceed.');
           }
 
           if (action === 'stage-continue') {

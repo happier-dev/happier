@@ -8,7 +8,7 @@ import { readTextOrEmpty } from './utils/fs/ops.mjs';
 
 function resolveTargetEnvPath() {
   // If we're already running under a stack wrapper, respect it.
-  const explicit = (process.env.HAPPY_STACKS_ENV_FILE ?? process.env.HAPPY_LOCAL_ENV_FILE ?? '').trim();
+  const explicit = (process.env.HAPPIER_STACK_ENV_FILE ?? '').trim();
   if (explicit) return explicit;
 
   // Self-host default: no stacks knowledge required; persist in the main stack env file.
@@ -22,15 +22,15 @@ async function main() {
 
   const helpText = [
     '[env] usage:',
-    '  happys env set KEY=VALUE [KEY2=VALUE2...]',
-    '  happys env unset KEY [KEY2...]',
-    '  happys env get KEY',
-    '  happys env list',
-    '  happys env path',
+    '  hapsta env set KEY=VALUE [KEY2=VALUE2...]',
+    '  hapsta env unset KEY [KEY2...]',
+    '  hapsta env get KEY',
+    '  hapsta env list',
+    '  hapsta env path',
     '',
     'defaults:',
-    '  - If running under a stack wrapper (HAPPY_STACKS_ENV_FILE is set), edits that stack env file.',
-    '  - Otherwise, edits the main stack env file (~/.happy/stacks/main/env).',
+    '  - If running under a stack wrapper (HAPPIER_STACK_ENV_FILE is set), edits that stack env file.',
+    '  - Otherwise, edits the main stack env file (~/.happier/stacks/main/env).',
     '',
     'notes:',
     '  - Changes take effect on next stack/daemon start (restart to apply).',
@@ -41,7 +41,7 @@ async function main() {
       json,
       data: {
         usage:
-          'happys env set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
+          'hapsta env set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
       },
       text: helpText,
     });
@@ -56,7 +56,7 @@ async function main() {
     printResult({
       json,
       data: {
-        usage: 'happys env set|unset|get|list|path [--json]',
+        usage: 'hapsta env set|unset|get|list|path [--json]',
       },
       text: helpText,
     });
@@ -88,7 +88,7 @@ async function main() {
   if (subcmd === 'get') {
     const key = (positionals[1] ?? '').trim();
     if (!key) {
-      throw new Error('[env] usage: happys env get KEY');
+      throw new Error('[env] usage: hapsta env get KEY');
     }
     const value = Object.prototype.hasOwnProperty.call(parsed, key) ? parsed[key] : null;
     printResult({
@@ -102,7 +102,7 @@ async function main() {
   if (subcmd === 'set') {
     const pairs = positionals.slice(1);
     if (!pairs.length) {
-      throw new Error('[env] usage: happys env set KEY=VALUE [KEY2=VALUE2...]');
+      throw new Error('[env] usage: hapsta env set KEY=VALUE [KEY2=VALUE2...]');
     }
     const updates = pairs.map((p) => {
       const idx = p.indexOf('=');
@@ -129,7 +129,7 @@ async function main() {
   if (subcmd === 'unset' || subcmd === 'remove' || subcmd === 'rm') {
     const keys = positionals.slice(1).map((k) => k.trim()).filter(Boolean);
     if (!keys.length) {
-      throw new Error('[env] usage: happys env unset KEY [KEY2...]');
+      throw new Error('[env] usage: hapsta env unset KEY [KEY2...]');
     }
     await ensureEnvFilePruned({ envPath, removeKeys: keys });
     printResult({
@@ -140,11 +140,10 @@ async function main() {
     return;
   }
 
-  throw new Error(`[env] unknown subcommand: ${subcmd}\n[env] usage: happys env set|unset|get|list|path`);
+  throw new Error(`[env] unknown subcommand: ${subcmd}\n[env] usage: hapsta env set|unset|get|list|path`);
 }
 
 main().catch((err) => {
   console.error('[env] failed:', err);
   process.exit(1);
 });
-

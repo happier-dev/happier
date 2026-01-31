@@ -165,9 +165,9 @@ Inside the VM:
     && /tmp/linux-ubuntu-review-pr.sh
 
 Then:
-  npx --yes happy-stacks@latest setup --profile=dev --bind=loopback
+  npx --yes -p @happier-dev/stack@latest hapsta setup --profile=dev --bind=loopback
 
 Tip:
   Open the printed URLs on your macOS host via http://localhost:<port> or http://*.localhost:<port>.
-  For `npx happy-stacks review-pr ...` inside the VM, pass `--vm-ports` so stack ports land in the forwarded ranges.
+  For `npx --yes -p @happier-dev/stack hapsta review-pr ...` inside the VM, pass `--vm-ports` so stack ports land in the forwarded ranges.
 EOF

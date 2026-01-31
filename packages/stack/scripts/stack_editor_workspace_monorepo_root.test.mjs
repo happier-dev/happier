@@ -16,10 +16,10 @@ test('stack code workspace groups monorepo components to the monorepo root', asy
   const homeDir = join(tmp, 'home');
   const stackName = 'exp-test';
 
-  const prevStorage = process.env.HAPPY_STACKS_STORAGE_DIR;
-  const prevHome = process.env.HAPPY_STACKS_HOME_DIR;
-  process.env.HAPPY_STACKS_STORAGE_DIR = storageDir;
-  process.env.HAPPY_STACKS_HOME_DIR = homeDir;
+  const prevStorage = process.env.HAPPIER_STACK_STORAGE_DIR;
+  const prevHome = process.env.HAPPIER_STACK_HOME_DIR;
+  process.env.HAPPIER_STACK_STORAGE_DIR = storageDir;
+  process.env.HAPPIER_STACK_HOME_DIR = homeDir;
 
   try {
     const monoRoot = join(tmp, 'mono');
@@ -35,10 +35,10 @@ test('stack code workspace groups monorepo components to the monorepo root', asy
     await writeFile(
       envPath,
       [
-        'HAPPY_STACKS_SERVER_COMPONENT=happy-server',
-        `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${join(monoRoot, 'packages', 'app')}`,
-        `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${join(monoRoot, 'packages', 'cli')}`,
-        `HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER=${join(monoRoot, 'packages', 'server')}`,
+        'HAPPIER_STACK_SERVER_COMPONENT=happy-server',
+        `HAPPIER_STACK_COMPONENT_DIR_HAPPY=${join(monoRoot, 'packages', 'app')}`,
+        `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${join(monoRoot, 'packages', 'cli')}`,
+        `HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER=${join(monoRoot, 'packages', 'server')}`,
         '',
       ].join('\n'),
       'utf-8'
@@ -55,10 +55,10 @@ test('stack code workspace groups monorepo components to the monorepo root', asy
     assert.equal(ws.folders.length, 1);
     assert.equal(ws.folders[0].path, monoRoot);
   } finally {
-    if (prevStorage == null) delete process.env.HAPPY_STACKS_STORAGE_DIR;
-    else process.env.HAPPY_STACKS_STORAGE_DIR = prevStorage;
-    if (prevHome == null) delete process.env.HAPPY_STACKS_HOME_DIR;
-    else process.env.HAPPY_STACKS_HOME_DIR = prevHome;
+    if (prevStorage == null) delete process.env.HAPPIER_STACK_STORAGE_DIR;
+    else process.env.HAPPIER_STACK_STORAGE_DIR = prevStorage;
+    if (prevHome == null) delete process.env.HAPPIER_STACK_HOME_DIR;
+    else process.env.HAPPIER_STACK_HOME_DIR = prevHome;
     await rm(tmp, { recursive: true, force: true });
   }
 });

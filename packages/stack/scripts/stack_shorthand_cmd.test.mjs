@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('happys <stack> <cmd> ... rewrites to happys stack <cmd> <stack> ... when stack exists', async () => {
+test('hapsta <stack> <cmd> ... rewrites to hapsta stack <cmd> <stack> ... when stack exists', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-shorthand-'));
@@ -34,12 +34,12 @@ test('happys <stack> <cmd> ... rewrites to happys stack <cmd> <stack> ... when s
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
-  const res = await runNode([join(rootDir, 'bin', 'happys.mjs'), stackName, 'env', 'path', '--json'], {
+  const res = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), stackName, 'env', 'path', '--json'], {
     cwd: rootDir,
     env: baseEnv,
   });
@@ -52,4 +52,3 @@ test('happys <stack> <cmd> ... rewrites to happys stack <cmd> <stack> ... when s
     `expected envPath to end with /${stackName}/env, got: ${out.envPath}`
   );
 });
-

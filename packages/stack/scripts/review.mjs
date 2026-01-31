@@ -46,7 +46,7 @@ function normalizeReviewers(list) {
 function usage() {
   return [
     '[review] usage:',
-    '  happys review [component...] [--reviewers=coderabbit,codex,augment] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
+    '  hapsta review [component...] [--reviewers=coderabbit,codex,augment] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
     '',
     'components:',
     `  ${VALID_COMPONENTS.join(' | ')}`,
@@ -59,13 +59,13 @@ function usage() {
     '',
     'notes:',
     '- If run from inside a component checkout/worktree and no components are provided, defaults to that component.',
-    '- In stack mode (invoked via `happys stack review <stack>`), if no components are provided, defaults to stack-pinned non-default components only.',
+    '- In stack mode (invoked via `hapsta stack review <stack>`), if no components are provided, defaults to stack-pinned non-default components only.',
     '',
     'examples:',
-    '  happys review',
-    '  happys review happy-cli --reviewers=coderabbit,codex',
-    '  happys stack review exp1 --reviewers=codex',
-    '  happys review happy --base-remote=upstream --base-branch=main',
+    '  hapsta review',
+    '  hapsta review happy-cli --reviewers=coderabbit,codex',
+    '  hapsta stack review exp1 --reviewers=codex',
+    '  hapsta review happy --base-remote=upstream --base-branch=main',
   ].join('\n');
 }
 
@@ -74,7 +74,7 @@ function resolveComponentFromCwdOrNull({ rootDir, invokedCwd }) {
 }
 
 function stackRemoteFallbackFromEnv(env) {
-  return String(env.HAPPY_STACKS_STACK_REMOTE ?? env.HAPPY_LOCAL_STACK_REMOTE ?? '').trim();
+  return String(env.HAPPIER_STACK_STACK_REMOTE ?? '').trim();
 }
 
 function sanitizeLabel(raw) {
@@ -320,7 +320,7 @@ async function main() {
   const inferred = positionals.length === 0 ? resolveComponentFromCwdOrNull({ rootDir, invokedCwd }) : null;
   if (inferred) {
     // Make downstream getComponentDir() resolve to the inferred repo dir for this run.
-    process.env[`HAPPY_STACKS_COMPONENT_DIR_${inferred.component.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`] = inferred.repoDir;
+    process.env[`HAPPIER_STACK_COMPONENT_DIR_${inferred.component.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`] = inferred.repoDir;
   }
 
   const inStackMode = isStackMode(process.env);
@@ -375,14 +375,14 @@ async function main() {
     throw new Error('[review] invalid --chunking (expected: auto|head-slice|commit-window)');
   }
 
-  if (augmentModelFlag) process.env.HAPPY_STACKS_AUGMENT_MODEL = augmentModelFlag;
-  if (augmentMaxTurnsFlag) process.env.HAPPY_STACKS_AUGMENT_MAX_TURNS = augmentMaxTurnsFlag;
+  if (augmentModelFlag) process.env.HAPPIER_STACK_AUGMENT_MODEL = augmentModelFlag;
+  if (augmentMaxTurnsFlag) process.env.HAPPIER_STACK_AUGMENT_MAX_TURNS = augmentMaxTurnsFlag;
 
   const deepInstructionsPath = join(rootDir, 'scripts', 'utils', 'review', 'instructions', 'deep.md');
   const coderabbitConfigFiles = depth === 'deep' ? [deepInstructionsPath] : [];
 
   if (reviewers.includes('coderabbit')) {
-    const coderabbitHomeKey = 'HAPPY_STACKS_CODERABBIT_HOME_DIR';
+    const coderabbitHomeKey = 'HAPPIER_STACK_CODERABBIT_HOME_DIR';
     if (!(process.env[coderabbitHomeKey] ?? '').toString().trim()) {
       process.env[coderabbitHomeKey] = join(rootDir, '.project', 'coderabbit-home');
     }
@@ -402,14 +402,14 @@ async function main() {
   }
 
   if (reviewers.includes('codex')) {
-    const codexHomeKey = 'HAPPY_STACKS_CODEX_HOME_DIR';
+    const codexHomeKey = 'HAPPIER_STACK_CODEX_HOME_DIR';
     if (!(process.env[codexHomeKey] ?? '').toString().trim()) {
       process.env[codexHomeKey] = join(rootDir, '.project', 'codex-home');
     }
     await ensureDir(process.env[codexHomeKey]);
 
-    if (!(process.env.HAPPY_STACKS_CODEX_SANDBOX ?? '').toString().trim()) {
-      process.env.HAPPY_STACKS_CODEX_SANDBOX = 'workspace-write';
+    if (!(process.env.HAPPIER_STACK_CODEX_SANDBOX ?? '').toString().trim()) {
+      process.env.HAPPIER_STACK_CODEX_SANDBOX = 'workspace-write';
     }
 
     // Seed Codex auth/config into the isolated CODEX_HOME to avoid sandbox permission issues
@@ -426,7 +426,7 @@ async function main() {
   }
 
   if (reviewers.includes('augment')) {
-    const augmentHomeKey = 'HAPPY_STACKS_AUGMENT_CACHE_DIR';
+    const augmentHomeKey = 'HAPPIER_STACK_AUGMENT_CACHE_DIR';
     if (!(process.env[augmentHomeKey] ?? '').toString().trim()) {
       process.env[augmentHomeKey] = join(rootDir, '.project', 'augment-home');
     }
@@ -460,7 +460,7 @@ async function main() {
         roots.map((r) => `- ${r}`).join('\n') +
         `\n\n` +
         `Fix: ensure all monorepo components (happy/happy-cli/happy-server(-light)) point at the same worktree.\n` +
-        `- Stack mode: use \`happys stack wt <stack> -- use happy <worktree>\` (monorepo-aware)\n` +
+        `- Stack mode: use \`hapsta stack wt <stack> -- use happy <worktree>\` (monorepo-aware)\n` +
         `- One-shot: pass --happy=... --happy-cli=... --happy-server-light=... all pointing into the same monorepo worktree`
     );
   }
@@ -475,7 +475,7 @@ async function main() {
   await ensureDir(reviewsRootDir);
   const runLabelOverride = (kv.get('--run-label') ?? '').toString().trim();
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const stackName = (process.env.HAPPY_STACKS_STACK ?? process.env.HAPPY_LOCAL_STACK ?? '').toString().trim();
+  const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim();
   const defaultLabel = `review-${ts}${stackName ? `-${sanitizeLabel(stackName)}` : ''}`;
   const runLabel = sanitizeLabel(runLabelOverride || defaultLabel) || defaultLabel;
   const runDir = join(reviewsRootDir, runLabel);
@@ -829,9 +829,9 @@ async function main() {
             const usePromptMode = depth === 'deep';
             const fileCount = await countChangedFiles({ cwd: repoDir, env: process.env, base: base.baseRef });
             const autoChunks = usePromptMode && fileCount > maxFiles;
-            const cacheDir = (process.env.HAPPY_STACKS_AUGMENT_CACHE_DIR ?? '').toString().trim();
-            const model = (process.env.HAPPY_STACKS_AUGMENT_MODEL ?? '').toString().trim();
-            const maxTurnsRaw = (process.env.HAPPY_STACKS_AUGMENT_MAX_TURNS ?? '').toString().trim();
+            const cacheDir = (process.env.HAPPIER_STACK_AUGMENT_CACHE_DIR ?? '').toString().trim();
+            const model = (process.env.HAPPIER_STACK_AUGMENT_MODEL ?? '').toString().trim();
+            const maxTurnsRaw = (process.env.HAPPIER_STACK_AUGMENT_MAX_TURNS ?? '').toString().trim();
             const maxTurns = maxTurnsRaw ? Number(maxTurnsRaw) : null;
 
             if (monorepo && effectiveChunking === 'head-slice' && usePromptMode && (wantChunksAugment ?? autoChunks)) {

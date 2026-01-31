@@ -2,10 +2,10 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 
 import { getWorktreesRoot } from '../git/worktrees.mjs';
-import { getComponentsDir, happyMonorepoSubdirForComponent, isHappyMonorepoRoot } from '../paths/paths.mjs';
+import { getComponentsDir, getRepoDir, happyMonorepoSubdirForComponent, isHappyMonorepoRoot } from '../paths/paths.mjs';
 
 export function getInvokedCwd(env = process.env) {
-  return String(env.HAPPY_STACKS_INVOKED_CWD ?? env.HAPPY_LOCAL_INVOKED_CWD ?? env.PWD ?? '').trim();
+  return String(env.HAPPIER_STACK_INVOKED_CWD ?? env.PWD ?? '').trim();
 }
 
 function hasGitMarker(dir) {
@@ -78,13 +78,16 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
   // (packages/happy-*/ or legacy expo-app/cli/server) the user is working in and return that repo root.
   //
   // This enables workflows like:
-  // - running `happys dev` from inside components/happy/cli (should infer happy-cli)
-  // - running from inside components/.worktrees/happy/<owner>/<branch>/server (should infer happy-server)
+  // - running `hapsta dev` from inside components/happy/cli (should infer happy-cli)
+  // - running from inside <workspace>/.worktrees/<owner>/<branch>/packages/cli (should infer happy-cli)
   {
-    const monorepoScopes = [
-      resolve(join(componentsDir, 'happy')),
-      resolve(join(worktreesRoot, 'happy')),
-    ];
+    const monorepoScopes = Array.from(
+      new Set([
+        resolve(getRepoDir(rootDir)),
+        resolve(join(componentsDir, 'happy')), // legacy layout (pre monorepo-only)
+        resolve(worktreesRoot), // repo-scoped worktrees root (monorepo-only)
+      ])
+    );
     for (const scope of monorepoScopes) {
       if (!isPathInside(abs, scope)) continue;
       const repoRoot = findGitRoot(abs, scope);
@@ -113,14 +116,6 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
   for (const component of list) {
     const c = String(component ?? '').trim();
     if (!c) continue;
-
-    const wtBase = resolve(join(worktreesRoot, c));
-    if (isPathInside(abs, wtBase)) {
-      const repoDir = findGitRoot(abs, wtBase);
-      if (repoDir) {
-        return { component: c, repoDir };
-      }
-    }
 
     const primaryBase = resolve(join(componentsDir, c));
     if (isPathInside(abs, primaryBase)) {

@@ -5,21 +5,21 @@ import { resolveDefaultStackReviewComponents } from './targets.mjs';
 test('resolveDefaultStackReviewComponents returns only non-default pinned components', () => {
   const rootDir = '/tmp/hs-root';
   const keys = [
-    'HAPPY_STACKS_WORKSPACE_DIR',
-    'HAPPY_STACKS_COMPONENT_DIR_HAPPY',
-    'HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT',
-    'HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI',
-    'HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER',
+    'HAPPIER_STACK_WORKSPACE_DIR',
+    'HAPPIER_STACK_COMPONENT_DIR_HAPPY',
+    'HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT',
+    'HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI',
+    'HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER',
   ];
   const old = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
   try {
-    process.env.HAPPY_STACKS_WORKSPACE_DIR = '/tmp/hs-root';
+    process.env.HAPPIER_STACK_WORKSPACE_DIR = '/tmp/hs-root';
     // Default checkouts
-    process.env.HAPPY_STACKS_COMPONENT_DIR_HAPPY = '';
-    process.env.HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT = '';
+    process.env.HAPPIER_STACK_COMPONENT_DIR_HAPPY = '';
+    process.env.HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT = '';
     // Pinned overrides
-    process.env.HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI = '/tmp/custom/happy-cli';
-    process.env.HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER = '/tmp/custom/happy-server';
+    process.env.HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI = '/tmp/custom/happy-cli';
+    process.env.HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER = '/tmp/custom/happy-server';
 
     const comps = resolveDefaultStackReviewComponents({
       rootDir,
@@ -33,4 +33,3 @@ test('resolveDefaultStackReviewComponents returns only non-default pinned compon
     }
   }
 });
-

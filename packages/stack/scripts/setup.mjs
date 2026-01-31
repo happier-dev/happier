@@ -32,7 +32,7 @@ import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/lay
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 
 function resolveWorkspaceDirDefault() {
-  const explicit = (process.env.HAPPY_STACKS_WORKSPACE_DIR ?? process.env.HAPPY_LOCAL_WORKSPACE_DIR ?? '').toString().trim();
+  const explicit = (process.env.HAPPIER_STACK_WORKSPACE_DIR ?? '').toString().trim();
   if (explicit) return expandHome(explicit);
   return join(getHappyStacksHomeDir(process.env), 'workspace');
 }
@@ -51,7 +51,7 @@ async function resolveMainServerPort() {
   // - main stack env file (preferred)
   // - default
   const hasEnvOverride =
-    (process.env.HAPPY_STACKS_SERVER_PORT ?? process.env.HAPPY_LOCAL_SERVER_PORT ?? '').toString().trim() !== '';
+    (process.env.HAPPIER_STACK_SERVER_PORT ?? '').toString().trim() !== '';
   if (hasEnvOverride) {
     return resolveServerPortFromEnv({ env: process.env, defaultPort: 3005 });
   }
@@ -84,35 +84,28 @@ async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, t
   const repoSourceForProfile = profile === 'selfhost' ? 'upstream' : null;
   const monoRepo = String(happyRepoUrl ?? '').trim();
   const updates = [
-    { key: 'HAPPY_STACKS_SERVER_COMPONENT', value: serverComponent },
-    { key: 'HAPPY_LOCAL_SERVER_COMPONENT', value: serverComponent },
+    { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: serverComponent },
     // Default for selfhost:
     // - monorepo: upstream (slopus/*)
     // - server-light: fork-only today (handled in bootstrap)
     ...(repoSourceForProfile
       ? [
-          { key: 'HAPPY_STACKS_REPO_SOURCE', value: repoSourceForProfile },
-          { key: 'HAPPY_LOCAL_REPO_SOURCE', value: repoSourceForProfile },
+          { key: 'HAPPIER_STACK_REPO_SOURCE', value: repoSourceForProfile },
         ]
       : []),
     ...(monoRepo
       ? [
           // Override the Happy monorepo clone source (UI + CLI + full server).
           // This is useful for forks that keep the same monorepo layout under a different repo name.
-          { key: 'HAPPY_STACKS_UI_REPO_URL', value: monoRepo },
-          { key: 'HAPPY_LOCAL_UI_REPO_URL', value: monoRepo },
-          { key: 'HAPPY_STACKS_CLI_REPO_URL', value: monoRepo },
-          { key: 'HAPPY_LOCAL_CLI_REPO_URL', value: monoRepo },
-          { key: 'HAPPY_STACKS_SERVER_FULL_REPO_URL', value: monoRepo },
-          { key: 'HAPPY_LOCAL_SERVER_FULL_REPO_URL', value: monoRepo },
+          { key: 'HAPPIER_STACK_UI_REPO_URL', value: monoRepo },
+          { key: 'HAPPIER_STACK_CLI_REPO_URL', value: monoRepo },
+          { key: 'HAPPIER_STACK_SERVER_FULL_REPO_URL', value: monoRepo },
         ]
       : []),
-    { key: 'HAPPY_STACKS_MENUBAR_MODE', value: menubarMode },
-    { key: 'HAPPY_LOCAL_MENUBAR_MODE', value: menubarMode },
+    { key: 'HAPPIER_STACK_MENUBAR_MODE', value: menubarMode },
     ...(tailscaleWanted
       ? [
-          { key: 'HAPPY_STACKS_TAILSCALE_SERVE', value: '1' },
-          { key: 'HAPPY_LOCAL_TAILSCALE_SERVE', value: '1' },
+          { key: 'HAPPIER_STACK_TAILSCALE_SERVE', value: '1' },
         ]
       : []),
   ];
@@ -255,11 +248,11 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
 
   const sources = detectAuthSources();
   const autoSeedEnabled =
-    (process.env.HAPPY_STACKS_AUTO_AUTH_SEED ?? process.env.HAPPY_LOCAL_AUTO_AUTH_SEED ?? '').toString().trim() === '1';
-  const seedFrom = (process.env.HAPPY_STACKS_AUTH_SEED_FROM ?? process.env.HAPPY_LOCAL_AUTH_SEED_FROM ?? '').toString().trim();
+    (process.env.HAPPIER_STACK_AUTO_AUTH_SEED ?? '').toString().trim() === '1';
+  const seedFrom = (process.env.HAPPIER_STACK_AUTH_SEED_FROM ?? '').toString().trim();
   const linkMode =
-    (process.env.HAPPY_STACKS_AUTH_LINK ?? process.env.HAPPY_LOCAL_AUTH_LINK ?? '').toString().trim() === '1' ||
-    (process.env.HAPPY_STACKS_AUTH_MODE ?? process.env.HAPPY_LOCAL_AUTH_MODE ?? '').toString().trim().toLowerCase() === 'link';
+    (process.env.HAPPIER_STACK_AUTH_LINK ?? '').toString().trim() === '1' ||
+    (process.env.HAPPIER_STACK_AUTH_MODE ?? '').toString().trim().toLowerCase() === 'link';
 
   // If we already have dev-auth seeded and configured, don't ask redundant questions.
   // (User can always re-run setup or use stack/auth commands to change this.)
@@ -281,7 +274,7 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
     }
     // If a user wants to change or recreate:
     // eslint-disable-next-line no-console
-    console.log(dim(`Tip: to recreate the seed stack, run: ${yellow('happys stack create-dev-auth-seed')}`));
+    console.log(dim(`Tip: to recreate the seed stack, run: ${yellow('hapsta stack create-dev-auth-seed')}`));
     return;
   }
 
@@ -315,7 +308,7 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
 
     if (!wantLoginNow) {
       // eslint-disable-next-line no-console
-      console.log(dim(`Tip: run ${yellow('happys stack create-dev-auth-seed dev-auth --login')} anytime to sign in.`));
+      console.log(dim(`Tip: run ${yellow('hapsta stack create-dev-auth-seed dev-auth --login')} anytime to sign in.`));
       return;
     }
 
@@ -333,12 +326,9 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
   await ensureEnvLocalUpdated({
     rootDir,
     updates: [
-      { key: 'HAPPY_STACKS_AUTO_AUTH_SEED', value: '1' },
-      { key: 'HAPPY_LOCAL_AUTO_AUTH_SEED', value: '1' },
-      { key: 'HAPPY_STACKS_AUTH_SEED_FROM', value: seedChoice },
-      { key: 'HAPPY_LOCAL_AUTH_SEED_FROM', value: seedChoice },
-      { key: 'HAPPY_STACKS_AUTH_LINK', value: linkChoice === 'link' ? '1' : '0' },
-      { key: 'HAPPY_LOCAL_AUTH_LINK', value: linkChoice === 'link' ? '1' : '0' },
+      { key: 'HAPPIER_STACK_AUTO_AUTH_SEED', value: '1' },
+      { key: 'HAPPIER_STACK_AUTH_SEED_FROM', value: seedChoice },
+      { key: 'HAPPIER_STACK_AUTH_LINK', value: linkChoice === 'link' ? '1' : '0' },
     ],
   });
 
@@ -404,15 +394,15 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
     // eslint-disable-next-line no-console
     console.log(dim(`Stored at: ${sourcesAfter.devKeyPath}`));
     // eslint-disable-next-line no-console
-    console.log(dim(`Tip: to print it later, run: ${yellow('happys auth dev-key --print')}`));
+    console.log(dim(`Tip: to print it later, run: ${yellow('hapsta auth dev-key --print')}`));
   } else {
     // eslint-disable-next-line no-console
-    console.log(dim(`Tip: to store a dev key later, run: ${yellow('happys auth dev-key --set "<key>"')}`));
+    console.log(dim(`Tip: to store a dev key later, run: ${yellow('hapsta auth dev-key --set "<key>"')}`));
   }
 }
 
 async function cmdSetup({ rootDir, argv }) {
-  // Alias: `happys setup pr ...` (maintainer-friendly, idempotent PR setup).
+  // Alias: `hapsta setup pr ...` (maintainer-friendly, idempotent PR setup).
   // This delegates to `setup-pr` so the logic stays centralized.
   const firstPositional = argv.find((a) => !a.startsWith('--')) ?? '';
   if (firstPositional === 'pr') {
@@ -456,19 +446,19 @@ async function cmdSetup({ rootDir, argv }) {
       },
       text: [
         '[setup] usage:',
-        '  happys setup',
-        '  happys setup --profile=selfhost',
-        '  happys setup --profile=dev',
-        '  happys setup --profile=dev --workspace-dir=~/Development/happy',
-        '  happys setup --happy-repo=happier-dev/happier',
-        '  happys setup pr --happy=<pr-url|number> [--happy-server-light=<pr-url|number>]',
-        '  happys setup --auth',
-        '  happys setup --no-auth',
+        '  hapsta setup',
+        '  hapsta setup --profile=selfhost',
+        '  hapsta setup --profile=dev',
+        '  hapsta setup --profile=dev --workspace-dir=~/Development/happy',
+        '  hapsta setup --happy-repo=happier-dev/happier',
+        '  hapsta setup pr --happy=<pr-url|number> [--happy-server-light=<pr-url|number>]',
+        '  hapsta setup --auth',
+        '  hapsta setup --no-auth',
         '',
         'notes:',
         '  - selfhost profile is a guided installer for running Happy locally (optionally with Tailscale + autostart).',
         '  - dev profile prepares a development workspace (bootstrap wizard + optional dev tooling).',
-        '  - `setup pr` is a non-interactive, idempotent helper for maintainers to run PR stacks (delegates to `happys setup-pr`).',
+        '  - `setup pr` is a non-interactive, idempotent helper for maintainers to run PR stacks (delegates to `hapsta setup-pr`).',
       ].join('\n'),
     });
     return;
@@ -594,7 +584,7 @@ async function cmdSetup({ rootDir, argv }) {
   const supportsMenubar = platform === 'darwin';
 
   const serverFromArg = normalizeServerComponent(kv.get('--server'));
-  let serverComponent = serverFromArg || normalizeServerComponent(process.env.HAPPY_STACKS_SERVER_COMPONENT) || 'happy-server-light';
+  let serverComponent = serverFromArg || normalizeServerComponent(process.env.HAPPIER_STACK_SERVER_COMPONENT) || 'happy-server-light';
   if (profile === 'selfhost' && interactive && !serverFromArg) {
     const docker = await detectDockerSupport();
     if (!docker.installed) {
@@ -830,13 +820,13 @@ async function cmdSetup({ rootDir, argv }) {
           `${bold('Command shortcuts')}\n` +
           `${dim(
             `Optional: add ${cyan(join(getCanonicalHomeDir(), 'bin'))} to your shell PATH so you can run ${cyan(
-              'happys'
+              'hapsta'
             )} from any terminal.`
           )}\n` +
-          `${dim(`If you skip this, you can always run commands via ${cyan('npx happy-stacks ...')}.`)}`,
+          `${dim(`If you skip this, you can always run commands via ${cyan('npx --yes -p @happier-dev/stack hapsta ...')}.`)}`,
         options: [
-          { label: `yes (${green('recommended')}, default) — enable ${cyan('happys')} in your terminal`, value: true },
-          { label: `no — keep using ${cyan('npx happy-stacks ...')}`, value: false },
+          { label: `yes (${green('recommended')}, default) — enable ${cyan('hapsta')} in your terminal`, value: true },
+          { label: `no — keep using ${cyan('npx --yes -p @happier-dev/stack hapsta ...')}`, value: false },
         ],
         defaultIndex: 0,
       });
@@ -945,7 +935,7 @@ async function cmdSetup({ rootDir, argv }) {
       ...(profile === 'dev' && workspaceDirWanted ? [`--workspace-dir=${workspaceDirWanted}`] : []),
       ...(installPath ? ['--install-path'] : []),
     ],
-    env: { ...process.env, HAPPY_STACKS_SETUP_CHILD: '1' },
+    env: { ...process.env, HAPPIER_STACK_SETUP_CHILD: '1' },
   });
 
   // 2) Persist profile defaults to stack env (server flavor, repo source, tailscale preference, menubar mode).
@@ -961,12 +951,9 @@ async function cmdSetup({ rootDir, argv }) {
   // Apply repo override to this process too (so the immediately-following install step sees it),
   // even if env.local was already loaded earlier in this process.
   if (happyRepoUrl) {
-    process.env.HAPPY_STACKS_UI_REPO_URL = happyRepoUrl;
-    process.env.HAPPY_LOCAL_UI_REPO_URL = happyRepoUrl;
-    process.env.HAPPY_STACKS_CLI_REPO_URL = happyRepoUrl;
-    process.env.HAPPY_LOCAL_CLI_REPO_URL = happyRepoUrl;
-    process.env.HAPPY_STACKS_SERVER_FULL_REPO_URL = happyRepoUrl;
-    process.env.HAPPY_LOCAL_SERVER_FULL_REPO_URL = happyRepoUrl;
+    process.env.HAPPIER_STACK_UI_REPO_URL = happyRepoUrl;
+    process.env.HAPPIER_STACK_CLI_REPO_URL = happyRepoUrl;
+    process.env.HAPPIER_STACK_SERVER_FULL_REPO_URL = happyRepoUrl;
   }
 
   // 3) Bootstrap components.
@@ -977,7 +964,7 @@ async function cmdSetup({ rootDir, argv }) {
       rootDir,
       rel: 'scripts/install.mjs',
       // Dev setup: use Expo dev server, so exporting a production web bundle is wasted work.
-      // Users can always run `happys build` later if they want `happys start` to serve a prebuilt UI.
+      // Users can always run `hapsta build` later if they want `hapsta start` to serve a prebuilt UI.
       args: ['--interactive', '--clone', '--no-ui-build'],
       interactiveChild: true,
     });
@@ -1029,7 +1016,7 @@ async function cmdSetup({ rootDir, argv }) {
   if (autostartWanted) {
     if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
       // eslint-disable-next-line no-console
-      console.log(dim(`Autostart skipped in sandbox mode. To allow: ${cyan('HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1')}`));
+      console.log(dim(`Autostart skipped in sandbox mode. To allow: ${cyan('HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1')}`));
     } else {
     if (process.platform === 'linux') {
       const ok = await ensureSystemdAvailable();
@@ -1049,7 +1036,7 @@ async function cmdSetup({ rootDir, argv }) {
   if (menubarWanted && process.platform === 'darwin') {
     if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
       // eslint-disable-next-line no-console
-      console.log(dim(`Menu bar install skipped in sandbox mode. To allow: ${cyan('HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1')}`));
+      console.log(dim(`Menu bar install skipped in sandbox mode. To allow: ${cyan('HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1')}`));
     } else {
       await runNodeScript({ rootDir, rel: 'scripts/menubar.mjs', args: ['install'] });
     }
@@ -1060,11 +1047,11 @@ async function cmdSetup({ rootDir, argv }) {
     const tailscaleOk = await commandExists('tailscale');
     if (!tailscaleOk) {
       // eslint-disable-next-line no-console
-      console.log(`${yellow('!')} Tailscale not installed. To enable remote HTTPS later: ${cyan('happys tailscale enable')}`);
+      console.log(`${yellow('!')} Tailscale not installed. To enable remote HTTPS later: ${cyan('hapsta tailscale enable')}`);
       await openUrlInBrowser('https://tailscale.com/download').catch(() => {});
     } else if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
       // eslint-disable-next-line no-console
-      console.log(dim(`Tailscale enable skipped in sandbox mode. To allow: ${cyan('HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1')}`));
+      console.log(dim(`Tailscale enable skipped in sandbox mode. To allow: ${cyan('HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1')}`));
     } else {
     try {
       const internalPort = await resolveMainServerPort();
@@ -1088,6 +1075,18 @@ async function cmdSetup({ rootDir, argv }) {
 
   // 7) Optional: start now (without requiring setup to keep running).
   if (startNow) {
+    // Self-host UX: ensure the prebuilt UI exists so the light server can serve it immediately.
+    // (Without this, `hapsta start` will refuse to serve UI when the build dir is missing.)
+    const serveUiWanted = (process.env.HAPPIER_STACK_SERVE_UI ?? '1').toString().trim() !== '0';
+    if (profile === 'selfhost' && serveUiWanted) {
+      const uiBuildDir = process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
+        ? process.env.HAPPIER_STACK_UI_BUILD_DIR.trim()
+        : join(getDefaultAutostartPaths().baseDir, 'ui');
+      if (!existsSync(uiBuildDir)) {
+        await runNodeScriptMaybeQuiet({ label: 'build-ui', rel: 'scripts/build.mjs', args: ['--no-tauri'] });
+      }
+    }
+
     const port = await resolveMainServerPort();
     const internalServerUrl = `http://127.0.0.1:${port}`;
 
@@ -1121,8 +1120,7 @@ async function cmdSetup({ rootDir, argv }) {
       } else {
         const env = {
           ...process.env,
-          HAPPY_STACKS_SERVER_PORT: String(port),
-          HAPPY_LOCAL_SERVER_PORT: String(port),
+          HAPPIER_STACK_SERVER_PORT: String(port),
         };
         if (interactive) {
           await guidedStackAuthLoginNow({ rootDir, stackName: 'main', env });
@@ -1132,7 +1130,7 @@ async function cmdSetup({ rootDir, argv }) {
 
         if (!existsSync(accessKey)) {
           // eslint-disable-next-line no-console
-          console.log('[setup] auth: not completed yet (missing access.key). You can retry with: happys auth login');
+          console.log('[setup] auth: not completed yet (missing access.key). You can retry with: hapsta auth login');
         } else {
           // eslint-disable-next-line no-console
           console.log('[setup] auth: complete');
@@ -1140,7 +1138,7 @@ async function cmdSetup({ rootDir, argv }) {
       }
     } else {
       // eslint-disable-next-line no-console
-      console.log('[setup] tip: when you are ready, authenticate with: happys auth login');
+      console.log('[setup] tip: when you are ready, authenticate with: hapsta auth login');
     }
 
     await openUrlInBrowser(openTarget).catch(() => {});
@@ -1151,9 +1149,9 @@ async function cmdSetup({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log('[setup] auth: skipped because Happy was not started. When ready:');
     // eslint-disable-next-line no-console
-    console.log('  happys start');
+    console.log('  hapsta start');
     // eslint-disable-next-line no-console
-    console.log('  happys auth login');
+    console.log('  hapsta auth login');
   }
 
   // Final tips (keep short).
@@ -1166,9 +1164,9 @@ async function cmdSetup({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(dim('Happy is ready. If you need help later, run:'));
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('happys doctor')}`);
+    console.log(`  ${yellow('hapsta doctor')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('happys stop --yes')}`);
+    console.log(`  ${yellow('hapsta stop --yes')}`);
   } else {
     // eslint-disable-next-line no-console
     console.log('');
@@ -1177,15 +1175,15 @@ async function cmdSetup({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(dim('Next steps (development):'));
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('happys stack new dev --interactive')} ${dim('# create a dedicated dev stack (recommended)')}`);
+    console.log(`  ${yellow('hapsta stack new dev --interactive')} ${dim('# create a dedicated dev stack (recommended)')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('happys stack dev dev')}              ${dim('# run that stack (server + daemon + Expo web)')}`);
+    console.log(`  ${yellow('hapsta stack dev dev')}              ${dim('# run that stack (server + daemon + Expo web)')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('happys wt new ...')}   ${dim('# create a worktree for a branch/PR')}`);
+    console.log(`  ${yellow('hapsta wt new ...')}   ${dim('# create a worktree for a branch/PR')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('happys stack new ...')} ${dim('# create an isolated runtime stack')}`);
+    console.log(`  ${yellow('hapsta stack new ...')} ${dim('# create an isolated runtime stack')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('happys stack dev <name>')} ${dim('# run a specific stack')}`);
+    console.log(`  ${yellow('hapsta stack dev <name>')} ${dim('# run a specific stack')}`);
   }
 }
 

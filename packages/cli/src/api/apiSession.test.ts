@@ -73,8 +73,8 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     afterEach(() => {
-        delete process.env.HAPPY_STACKS_TOOL_TRACE;
-        delete process.env.HAPPY_STACKS_TOOL_TRACE_FILE;
+        delete process.env.HAPPIER_STACK_TOOL_TRACE;
+        delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
         __resetToolTraceForTests();
     });
 
@@ -414,8 +414,8 @@ describe('ApiSessionClient connection handling', () => {
     it('records outbound ACP tool messages when tool tracing is enabled', () => {
         const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-apiSession-'));
         const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPY_STACKS_TOOL_TRACE = '1';
-        process.env.HAPPY_STACKS_TOOL_TRACE_FILE = filePath;
+        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
 
         const client = new ApiSessionClient('fake-token', mockSession);
         client.sendAgentMessage('codex', {
@@ -442,8 +442,8 @@ describe('ApiSessionClient connection handling', () => {
     it('sets isError on outbound ACP tool-result messages when output looks like an error', () => {
         const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-apiSession-'));
         const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPY_STACKS_TOOL_TRACE = '1';
-        process.env.HAPPY_STACKS_TOOL_TRACE_FILE = filePath;
+        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
 
         const client = new ApiSessionClient('fake-token', mockSession);
         client.sendAgentMessage('gemini', {
@@ -470,8 +470,8 @@ describe('ApiSessionClient connection handling', () => {
     it('does not record outbound ACP non-tool messages when tool tracing is enabled', () => {
         const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-apiSession-'));
         const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPY_STACKS_TOOL_TRACE = '1';
-        process.env.HAPPY_STACKS_TOOL_TRACE_FILE = filePath;
+        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
 
         const client = new ApiSessionClient('fake-token', mockSession);
         client.sendAgentMessage('codex', {
@@ -485,8 +485,8 @@ describe('ApiSessionClient connection handling', () => {
     it('records Claude tool_use/tool_result blocks when tool tracing is enabled', () => {
         const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-claude-'));
         const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPY_STACKS_TOOL_TRACE = '1';
-        process.env.HAPPY_STACKS_TOOL_TRACE_FILE = filePath;
+        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
 
         const client = new ApiSessionClient('fake-token', mockSession);
         client.sendClaudeSessionMessage({
@@ -524,8 +524,8 @@ describe('ApiSessionClient connection handling', () => {
     it('records Claude tool_result blocks sent as user messages when tool tracing is enabled', () => {
         const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-claude-user-tool-result-'));
         const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPY_STACKS_TOOL_TRACE = '1';
-        process.env.HAPPY_STACKS_TOOL_TRACE_FILE = filePath;
+        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
 
         const session = { ...mockSession, id: 'test-session-id-user-tool-result' };
         const client = new ApiSessionClient('fake-token', session);
@@ -559,8 +559,8 @@ describe('ApiSessionClient connection handling', () => {
     it('does not record Claude user text messages when tool tracing is enabled', () => {
         const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-claude-'));
         const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPY_STACKS_TOOL_TRACE = '1';
-        process.env.HAPPY_STACKS_TOOL_TRACE_FILE = filePath;
+        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
 
         const client = new ApiSessionClient('fake-token', mockSession);
         client.sendClaudeSessionMessage({

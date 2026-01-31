@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { runCapture } from './utils/proc/proc.mjs';
-import { getHappysRegistry } from './utils/cli/cli_registry.mjs';
+import { getHapstaRegistry } from './utils/cli/cli_registry.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { getHappyStacksHomeDir, getRootDir } from './utils/paths/paths.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
@@ -24,7 +24,7 @@ function detectShell() {
 
 function parseShellArg({ argv, kv }) {
   const fromKv = (kv.get('--shell') ?? '').trim();
-  const fromEnv = (process.env.HAPPY_STACKS_SHELL ?? '').trim();
+  const fromEnv = (process.env.HAPPIER_STACK_SHELL ?? '').trim();
   const raw = fromKv || fromEnv || detectShell();
   const v = raw.toLowerCase();
   if (v === 'zsh' || v === 'bash' || v === 'fish') return v;
@@ -32,7 +32,7 @@ function parseShellArg({ argv, kv }) {
 }
 
 function visibleTopLevelCommands() {
-  const { commands } = getHappysRegistry();
+  const { commands } = getHapstaRegistry();
   // Hide legacy aliases; include visible primary names and visible aliases.
   const out = [];
   for (const c of commands) {
@@ -114,9 +114,9 @@ function renderZsh(model) {
   const group = (name) => (model.groups?.[name] ?? []).join(' ');
 
   return [
-    '#compdef happys happy-stacks',
+    '#compdef hapsta happier-stack',
     '',
-    '_happys() {',
+    '_hapsta() {',
     '  local -a top',
     `  top=(${top})`,
     '',
@@ -124,7 +124,7 @@ function renderZsh(model) {
     '  cmd="${words[2]:-}"',
     '',
     '  if (( CURRENT == 2 )); then',
-    "    _describe -t commands 'happys command' top",
+    "    _describe -t commands 'hapsta command' top",
     '    return',
     '  fi',
     '',
@@ -141,8 +141,8 @@ function renderZsh(model) {
     '  esac',
     '}',
     '',
-    'compdef _happys happys',
-    'compdef _happys happy-stacks',
+    'compdef _hapsta hapsta',
+    'compdef _hapsta happier-stack',
     '',
   ].join('\n');
 }
@@ -153,7 +153,7 @@ function renderBash(model) {
 
   const group = (name) => quoteList(model.groups?.[name] ?? []);
   return [
-    '_happys_completions() {',
+    '_hapsta_completions() {',
     '  local cur prev cmd',
     '  COMPREPLY=()',
     '  cur="${COMP_WORDS[COMP_CWORD]}"',
@@ -179,7 +179,7 @@ function renderBash(model) {
     '  return 0',
     '}',
     '',
-    'complete -F _happys_completions happys happy-stacks',
+    'complete -F _hapsta_completions hapsta happier-stack',
     '',
   ].join('\n');
 }
@@ -187,7 +187,7 @@ function renderBash(model) {
 function renderFish(model) {
   const lines = [];
   const add = (cmd, sub = null) => {
-    for (const bin of ['happys', 'happy-stacks']) {
+    for (const bin of ['hapsta', 'happier-stack']) {
       if (sub) {
         lines.push(`complete -c ${bin} -n '__fish_seen_subcommand_from ${cmd}' -f -a '${sub.join(' ')}'`);
       } else {
@@ -211,9 +211,9 @@ function renderFish(model) {
 
 function completionPaths({ homeDir, shell }) {
   const dir = join(homeDir, 'completions');
-  if (shell === 'zsh') return { dir, file: join(dir, '_happys') };
-  if (shell === 'bash') return { dir, file: join(dir, 'happys.bash') };
-  return { dir, file: join(dir, 'happys.fish') };
+  if (shell === 'zsh') return { dir, file: join(dir, '_hapsta') };
+  if (shell === 'bash') return { dir, file: join(dir, 'hapsta.bash') };
+  return { dir, file: join(dir, 'hapsta.fish') };
 }
 
 async function ensureShellInstall({ homeDir, shell }) {
@@ -228,18 +228,18 @@ async function ensureShellInstall({ homeDir, shell }) {
   const bashProfile = join(homedir(), '.bash_profile');
 
   const fishDir = join(homedir(), '.config', 'fish', 'conf.d');
-  const fishConf = join(fishDir, 'happy-stacks.fish');
+  const fishConf = join(fishDir, 'hapsta.fish');
 
-  const markerStart = '# >>> happy-stacks completions >>>';
-  const markerEnd = '# <<< happy-stacks completions <<<';
+  const markerStart = '# >>> hapsta completions >>>';
+  const markerEnd = '# <<< hapsta completions <<<';
 
   const completionsDir = join(homeDir, 'completions');
   const shBlock = [
     '',
     markerStart,
-    `export HAPPY_STACKS_COMPLETIONS_DIR="${completionsDir}"`,
-    `if [[ -d "$HAPPY_STACKS_COMPLETIONS_DIR" ]]; then`,
-    `  fpath=("$HAPPY_STACKS_COMPLETIONS_DIR" $fpath)`,
+    `export HAPPIER_STACK_COMPLETIONS_DIR="${completionsDir}"`,
+    `if [[ -d "$HAPPIER_STACK_COMPLETIONS_DIR" ]]; then`,
+    `  fpath=("$HAPPIER_STACK_COMPLETIONS_DIR" $fpath)`,
     `  autoload -Uz compinit && compinit`,
     'fi',
     markerEnd,
@@ -249,8 +249,8 @@ async function ensureShellInstall({ homeDir, shell }) {
   const bashBlock = [
     '',
     markerStart,
-    `if [[ -f "${join(completionsDir, 'happys.bash')}" ]]; then`,
-    `  . "${join(completionsDir, 'happys.bash')}"`,
+    `if [[ -f "${join(completionsDir, 'hapsta.bash')}" ]]; then`,
+    `  . "${join(completionsDir, 'hapsta.bash')}"`,
     'fi',
     markerEnd,
     '',
@@ -275,7 +275,7 @@ async function ensureShellInstall({ homeDir, shell }) {
     const res = await writeIfMissing(fishConf, [
       '',
       markerStart,
-      `set -gx HAPPY_STACKS_COMPLETIONS_DIR "${completionsDir}"`,
+      `set -gx HAPPIER_STACK_COMPLETIONS_DIR "${completionsDir}"`,
       markerEnd,
       '',
     ].join('\n'));
@@ -305,16 +305,16 @@ async function main() {
       json,
       data: { commands: ['print', 'install'], flags: ['--shell=zsh|bash|fish', '--json'] },
       text: [
-        banner('completion', { subtitle: 'Shell completions for happys/happy-stacks.' }),
+        banner('completion', { subtitle: 'Shell completions for hapsta/happier-stack.' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('happys completion')} print [--shell=zsh|bash|fish] [--json]`,
-        `  ${cyan('happys completion')} install [--shell=zsh|bash|fish] [--json]`,
+        `  ${cyan('hapsta completion')} print [--shell=zsh|bash|fish] [--json]`,
+        `  ${cyan('hapsta completion')} install [--shell=zsh|bash|fish] [--json]`,
         '',
         sectionTitle('notes:'),
         bullets([
-          dim('Installs best-effort completions for happys/happy-stacks.'),
-          dim('Re-run after upgrading happys to refresh completions.'),
+          dim('Installs best-effort completions for hapsta/happier-stack.'),
+          dim('Re-run after upgrading hapsta to refresh completions.'),
         ]),
       ].join('\n'),
     });
@@ -357,7 +357,7 @@ async function main() {
         `[completion] installed: ${file}`,
         hook?.path ? (hook.updated ? `[completion] enabled via: ${hook.path}` : `[completion] already enabled in: ${hook.path}`) : null,
         hook?.skipped === 'sandbox'
-          ? `[completion] note: skipped editing shell rc files (sandbox mode). To enable this, re-run with ${cyan('HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1')}`
+          ? `[completion] note: skipped editing shell rc files (sandbox mode). To enable this, re-run with ${cyan('HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1')}`
           : null,
         `[completion] note: restart your terminal (or source your shell config) to pick it up.`,
       ]
@@ -374,4 +374,3 @@ main().catch((err) => {
   console.error('[completion] failed:', err);
   process.exit(1);
 });
-

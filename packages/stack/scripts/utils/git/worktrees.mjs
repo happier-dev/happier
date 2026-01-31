@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   coerceHappyMonorepoRootFromPath,
   getComponentRepoDir,
-  getComponentsDir,
+  getWorkspaceDir,
   happyMonorepoSubdirForComponent,
 } from '../paths/paths.mjs';
 import { pathExists } from '../fs/fs.mjs';
@@ -22,7 +22,7 @@ export function parseGithubOwner(remoteUrl) {
 }
 
 export function getWorktreesRoot(rootDir, env = process.env) {
-  return join(getComponentsDir(rootDir, env), '.worktrees');
+  return join(getWorkspaceDir(rootDir, env), '.worktrees');
 }
 
 export function componentRepoDir(rootDir, component, env = process.env) {
@@ -30,20 +30,19 @@ export function componentRepoDir(rootDir, component, env = process.env) {
 }
 
 function worktreeRepoKeyForComponent({ rootDir, component, env = process.env }) {
-  const c = String(component ?? '').trim();
-  const repoDir = componentRepoDir(rootDir, c, env);
-  const mono = coerceHappyMonorepoRootFromPath(repoDir);
-  // In monorepo mode, all worktrees live under `.worktrees/happy/` regardless of which
-  // package (packages/happy-*/ or legacy expo-app/cli/server) the user is operating on.
-  return mono ? 'happy' : c;
+  // Deprecated: worktrees are repo-scoped and no longer nested by component key.
+  void rootDir;
+  void component;
+  void env;
+  return null;
 }
 
 export function isComponentWorktreePath({ rootDir, component, dir, env = process.env }) {
   const raw = String(dir ?? '').trim();
   if (!raw) return false;
   const abs = resolve(raw);
-  const key = worktreeRepoKeyForComponent({ rootDir, component, env });
-  const root = resolve(join(getWorktreesRoot(rootDir, env), key)) + '/';
+  void component;
+  const root = resolve(getWorktreesRoot(rootDir, env)) + '/';
   return abs.startsWith(root);
 }
 
@@ -52,8 +51,8 @@ export function worktreeSpecFromDir({ rootDir, component, dir, env = process.env
   if (!raw) return null;
   if (!isComponentWorktreePath({ rootDir, component, dir: raw, env })) return null;
   const abs = resolve(raw);
-  const key = worktreeRepoKeyForComponent({ rootDir, component, env });
-  const base = resolve(join(getWorktreesRoot(rootDir, env), key));
+  void component;
+  const base = resolve(getWorktreesRoot(rootDir, env));
 
   // Normalize to the actual worktree root directory (the one containing `.git`) so
   // package subdirectories like `.../cli` don't corrupt the computed spec.
@@ -103,12 +102,11 @@ export async function createWorktreeFromBaseWorktree({
 }) {
   const args = ['wt', 'new', component, slug, `--remote=${remoteName}`, `--base-worktree=${baseWorktreeSpec}`];
   if (depsMode) args.push(`--deps=${depsMode}`);
-  await run(process.execPath, [join(rootDir, 'bin', 'happys.mjs'), ...args], { cwd: rootDir, env });
+  await run(process.execPath, [join(rootDir, 'bin', 'hapsta.mjs'), ...args], { cwd: rootDir, env });
 
   const repoDir = componentRepoDir(rootDir, component, env);
   const owner = await getRemoteOwner({ repoDir, remoteName });
-  const key = worktreeRepoKeyForComponent({ rootDir, component, env });
-  const wtRoot = join(getWorktreesRoot(rootDir, env), key, owner, ...slug.split('/'));
+  const wtRoot = join(getWorktreesRoot(rootDir, env), owner, ...slug.split('/'));
   const monoRoot = coerceHappyMonorepoRootFromPath(wtRoot);
   const sub = monoRoot ? happyMonorepoSubdirForComponent(component, { monorepoRoot: monoRoot }) : null;
   return sub && monoRoot ? join(monoRoot, sub) : wtRoot;
@@ -127,17 +125,16 @@ export function resolveComponentSpecToDir({ rootDir, component, spec, env = proc
     }
     return raw;
   }
-  // Treat as <owner>/<branch...> under components/.worktrees/<repoKey>/...
-  const key = worktreeRepoKeyForComponent({ rootDir, component, env });
-  const wtRoot = join(getWorktreesRoot(rootDir, env), key, ...raw.split('/'));
+  // Treat as <owner>/<branch...> under <workspace>/.worktrees/...
+  const wtRoot = join(getWorktreesRoot(rootDir, env), ...raw.split('/'));
   const monoRoot = coerceHappyMonorepoRootFromPath(wtRoot);
   const sub = monoRoot ? happyMonorepoSubdirForComponent(component, { monorepoRoot: monoRoot }) : null;
   return sub && monoRoot ? join(monoRoot, sub) : wtRoot;
 }
 
 export async function listWorktreeSpecs({ rootDir, component, env = process.env }) {
-  const key = worktreeRepoKeyForComponent({ rootDir, component, env });
-  const dir = join(getWorktreesRoot(rootDir, env), key);
+  void component;
+  const dir = getWorktreesRoot(rootDir, env);
   const specs = [];
   try {
     const walk = async (d, prefixParts) => {
@@ -175,14 +172,13 @@ export async function getRemoteOwner({ repoDir, remoteName = 'upstream' }) {
 
 export async function createWorktree({ rootDir, component, slug, remoteName = 'upstream', env = process.env }) {
   // Create without modifying env.local (unless caller passes --use elsewhere).
-  await run(process.execPath, [join(rootDir, 'bin', 'happys.mjs'), 'wt', 'new', component, slug, `--remote=${remoteName}`], {
+  await run(process.execPath, [join(rootDir, 'bin', 'hapsta.mjs'), 'wt', 'new', component, slug, `--remote=${remoteName}`], {
     cwd: rootDir,
     env,
   });
   const repoDir = componentRepoDir(rootDir, component, env);
   const owner = await getRemoteOwner({ repoDir, remoteName });
-  const key = worktreeRepoKeyForComponent({ rootDir, component, env });
-  const wtRoot = join(getWorktreesRoot(rootDir, env), key, owner, ...slug.split('/'));
+  const wtRoot = join(getWorktreesRoot(rootDir, env), owner, ...slug.split('/'));
   const sub = happyMonorepoSubdirForComponent(component);
   const monoRoot = sub ? coerceHappyMonorepoRootFromPath(wtRoot) : null;
   return sub && monoRoot ? join(monoRoot, sub) : wtRoot;

@@ -39,7 +39,7 @@ export async function ensureExpoIsolationEnv({ env, stateDir, expoHomeDir, tmpDi
 }
 
 export function wantsExpoClearCache({ env }) {
-  const raw = (env.HAPPY_STACKS_EXPO_CLEAR_CACHE ?? env.HAPPY_LOCAL_EXPO_CLEAR_CACHE ?? '').trim();
+  const raw = (env.HAPPIER_STACK_EXPO_CLEAR_CACHE ?? '').trim();
   if (raw) {
     return raw !== '0';
   }
@@ -106,4 +106,3 @@ export async function killPid(pid) {
     // exited
   }
 }
-

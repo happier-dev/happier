@@ -18,7 +18,7 @@ import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/lay
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 
 /**
- * Manage the autostart service installed by `happys bootstrap -- --autostart`.
+ * Manage the autostart service installed by `hapsta bootstrap -- --autostart`.
  *
  * - macOS: launchd LaunchAgents
  * - Linux: systemd user services
@@ -47,16 +47,16 @@ function getAutostartEnv({ rootDir }) {
   // Instead, persist only the env file path; `scripts/utils/env.mjs` will load it on every start.
   //
   // Stack installs:
-  // - `happys stack service <name> ...` runs under a stack env already, so we persist that pointer.
+  // - `hapsta stack service <name> ...` runs under a stack env already, so we persist that pointer.
   //
   // Main installs:
   // - default to the main stack env (outside the repo): ~/.happy/stacks/main/env
 
-  const stacksEnvFile = process.env.HAPPY_STACKS_ENV_FILE?.trim() ? process.env.HAPPY_STACKS_ENV_FILE.trim() : '';
+  const stacksEnvFile = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '';
   const envFile = stacksEnvFile || resolveStackEnvPath('main').envPath;
 
   return {
-    HAPPY_STACKS_ENV_FILE: envFile,
+    HAPPIER_STACK_ENV_FILE: envFile,
   };
 }
 
@@ -65,7 +65,7 @@ export async function installService() {
     throw new Error(
       '[local] service install is disabled in sandbox mode.\n' +
         'Reason: services are global OS state (launchd/systemd) and can affect your real installation.\n' +
-        'If you really want this, set: HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1'
+        'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
     );
   }
   if (process.platform !== 'darwin' && process.platform !== 'linux') {
@@ -76,7 +76,7 @@ export async function installService() {
   const env = getAutostartEnv({ rootDir });
   // Ensure the env file exists so the service never points at a missing path.
   try {
-    const envFile = env.HAPPY_STACKS_ENV_FILE;
+    const envFile = env.HAPPIER_STACK_ENV_FILE;
     await mkdir(dirname(envFile), { recursive: true });
     if (!existsSync(envFile)) {
       await writeFile(envFile, '', { flag: 'a' });
@@ -134,9 +134,9 @@ function systemdEnvLines(env) {
 async function ensureSystemdUserServiceEnabled({ rootDir, label, env }) {
   const unitPath = systemdUnitPath();
   await mkdir(dirname(unitPath), { recursive: true });
-  const happysShim = join(getCanonicalHomeDir(), 'bin', 'happys');
-  const entry = existsSync(happysShim) ? happysShim : join(rootDir, 'bin', 'happys.mjs');
-  const exec = existsSync(happysShim) ? entry : `${process.execPath} ${entry}`;
+  const hapstaShim = join(getCanonicalHomeDir(), 'bin', 'hapsta');
+  const entry = existsSync(hapstaShim) ? hapstaShim : join(rootDir, 'bin', 'hapsta.mjs');
+  const exec = existsSync(hapstaShim) ? entry : `${process.execPath} ${entry}`;
 
   const unit = `[Unit]
 Description=Happier Stack (${label})
@@ -213,7 +213,7 @@ async function launchctlTry(args) {
 async function restartLaunchAgentBestEffort() {
   const { plistPath, label } = getDefaultAutostartPaths();
   if (!existsSync(plistPath)) {
-    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: happys service:install (or happys bootstrap -- --autostart)`);
+    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hapsta service:install (or hapsta bootstrap -- --autostart)`);
   }
   const uid = getUid();
   if (uid == null) {
@@ -226,7 +226,7 @@ async function restartLaunchAgentBestEffort() {
 async function startLaunchAgent({ persistent }) {
   const { plistPath } = getDefaultAutostartPaths();
   if (!existsSync(plistPath)) {
-    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: happys service:install (or happys bootstrap -- --autostart)`);
+    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hapsta service:install (or hapsta bootstrap -- --autostart)`);
   }
 
   const { label } = getDefaultAutostartPaths();
@@ -258,8 +258,8 @@ async function postStartDiagnostics() {
   const rootDir = getRootDir(import.meta.url);
   const internalUrl = getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
 
-  const cliHomeDir = process.env.HAPPY_STACKS_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPY_STACKS_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+  const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
+    ? process.env.HAPPIER_STACK_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
     : join(getDefaultAutostartPaths().baseDir, 'cli');
 
   let port = 3005;
@@ -353,7 +353,7 @@ async function postStartDiagnostics() {
   console.log(banner('service', { subtitle: `Post-start diagnostics (${stackName})` }));
   console.log('');
 
-  const authCmd = stackName === 'main' ? 'happys auth login' : `happys stack auth ${stackName} login`;
+  const authCmd = stackName === 'main' ? 'hapsta auth login' : `hapsta stack auth ${stackName} login`;
 
   if (res.ok && res.kind === 'running') {
     console.log(sectionTitle('Daemon'));
@@ -382,7 +382,7 @@ async function postStartDiagnostics() {
   console.log('');
   console.log(sectionTitle('Logs'));
   if (logPath) {
-    console.log(bullets([kv('latest:', logPath), `${dim('tail:')} ${cmdFmt(`happys service logs`)}`]));
+    console.log(bullets([kv('latest:', logPath), `${dim('tail:')} ${cmdFmt(`hapsta service logs`)}`]));
     const tail = await readLastLines(logPath, 80);
     if (tail) {
       console.log('');
@@ -488,7 +488,7 @@ async function showStatus() {
 
   console.log('');
   console.log(sectionTitle('Tips'));
-  console.log(bullets([`${dim('Show status:')} ${cmdFmt('happys service status')}`, `${dim('View logs:')} ${cmdFmt('happys service logs')}`]));
+  console.log(bullets([`${dim('Show status:')} ${cmdFmt('hapsta service status')}`, `${dim('View logs:')} ${cmdFmt('hapsta service logs')}`]));
 }
 
 async function showLogs(lines = 120) {
@@ -520,17 +520,17 @@ async function main() {
         banner('service', { subtitle: 'Autostart service management (launchd/systemd user).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('happys service')} install|uninstall [--json]`,
-        `  ${cyan('happys service')} status [--json]`,
-        `  ${cyan('happys service')} start|stop|restart [--json]`,
-        `  ${cyan('happys service')} enable|disable [--json]`,
-        `  ${cyan('happys service')} logs [--json]`,
-        `  ${cyan('happys service')} tail`,
+        `  ${cyan('hapsta service')} install|uninstall [--json]`,
+        `  ${cyan('hapsta service')} status [--json]`,
+        `  ${cyan('hapsta service')} start|stop|restart [--json]`,
+        `  ${cyan('hapsta service')} enable|disable [--json]`,
+        `  ${cyan('hapsta service')} logs [--json]`,
+        `  ${cyan('hapsta service')} tail`,
         '',
         sectionTitle('legacy aliases:'),
         bullets([
-          dim('happys service:install|uninstall|status|start|stop|restart|enable|disable'),
-          dim('happys logs | happys logs:tail'),
+          dim('hapsta service:install|uninstall|status|start|stop|restart|enable|disable'),
+          dim('hapsta logs | hapsta logs:tail'),
         ]),
       ].join('\n'),
     });
@@ -641,7 +641,7 @@ async function main() {
       if (process.platform === 'darwin') {
         await showLogs();
       } else {
-        const lines = Number(process.env.HAPPY_STACKS_LOG_LINES ?? 120) || 120;
+        const lines = Number(process.env.HAPPIER_STACK_LOG_LINES ?? 120) || 120;
         await systemdLogs({ lines });
       }
       return;

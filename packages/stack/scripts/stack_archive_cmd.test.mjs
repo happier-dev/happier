@@ -33,7 +33,7 @@ async function runOk(cmd, args, { cwd, env }) {
   return res;
 }
 
-test('happys stack archive moves the stack and archives its referenced worktrees', async () => {
+test('hapsta stack archive moves the stack and archives its referenced worktrees', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-archive-'));
@@ -41,18 +41,17 @@ test('happys stack archive moves the stack and archives its referenced worktrees
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
   const workspaceDir = join(tmp, 'workspace');
-  const componentsDir = join(workspaceDir, 'components');
 
   const baseEnv = {
-    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HAPPY_STACKS_') && !k.startsWith('HAPPY_LOCAL_'))),
+    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HAPPIER_STACK_'))),
     GIT_TERMINAL_PROMPT: '0',
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
-  // Create a minimal git repo and a worktree under components/.worktrees.
-  const repoDir = join(componentsDir, 'happy');
+  // Create a minimal git repo and a worktree under <workspace>/.worktrees.
+  const repoDir = join(workspaceDir, 'happier');
   await mkdir(repoDir, { recursive: true });
   await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
@@ -61,7 +60,7 @@ test('happys stack archive moves the stack and archives its referenced worktrees
   await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
 
-  const worktreeDir = join(componentsDir, '.worktrees', 'happy', 'slopus', 'pr', 'archived-by-stack');
+  const worktreeDir = join(workspaceDir, '.worktrees', 'slopus', 'pr', 'archived-by-stack');
   await mkdir(dirname(worktreeDir), { recursive: true });
   await runOk('git', ['worktree', 'add', '-b', 'slopus/pr/archived-by-stack', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
   await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');
@@ -69,7 +68,7 @@ test('happys stack archive moves the stack and archives its referenced worktrees
   const stackName = 'exp-test';
   const envPath = join(storageDir, stackName, 'env');
   await mkdir(dirname(envPath), { recursive: true });
-  await writeFile(envPath, [`HAPPY_STACKS_STACK=${stackName}`, `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${worktreeDir}`, ''].join('\n'), 'utf-8');
+  await writeFile(envPath, [`HAPPIER_STACK_STACK=${stackName}`, `HAPPIER_STACK_COMPONENT_DIR_HAPPY=${worktreeDir}`, ''].join('\n'), 'utf-8');
 
   const date = '2000-01-04';
   const nodeEnv = { ...baseEnv, PATH: '' };
@@ -85,7 +84,7 @@ test('happys stack archive moves the stack and archives its referenced worktrees
   assert.equal(parsed.archivedStackDir, archivedStackDir, `expected archivedStackDir in JSON output\n${res.stdout}`);
   await stat(join(archivedStackDir, 'env'));
 
-  const archivedWorktreeDir = join(componentsDir, '.worktrees-archive', date, 'happy', 'slopus', 'pr', 'archived-by-stack');
+  const archivedWorktreeDir = join(workspaceDir, '.worktrees-archive', date, 'slopus', 'pr', 'archived-by-stack');
   const gitStat = await stat(join(archivedWorktreeDir, '.git'));
   assert.ok(gitStat.isDirectory(), 'expected archived worktree to be detached (standalone .git dir)');
 });

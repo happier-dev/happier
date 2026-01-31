@@ -10,12 +10,10 @@ set -euo pipefail
 #   ./git-cache-refresh.sh component <context:main|stack> <stackName> <component>
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_HOME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+DEFAULT_ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-HAPPY_LOCAL_DIR="${HAPPY_LOCAL_DIR:-${HAPPY_STACKS_HOME_DIR:-$DEFAULT_HOME_DIR}}"
-HAPPY_STACKS_HOME_DIR="${HAPPY_STACKS_HOME_DIR:-$HAPPY_LOCAL_DIR}"
-
-LIB_DIR="$HAPPY_LOCAL_DIR/extras/swiftbar/lib"
+HAPSTA_ROOT_DIR="${HAPPIER_STACK_CLI_ROOT_DIR:-$DEFAULT_ROOT_DIR}"
+LIB_DIR="$HAPSTA_ROOT_DIR/extras/swiftbar/lib"
 if [[ ! -f "$LIB_DIR/utils.sh" ]]; then
   echo "missing SwiftBar libs at: $LIB_DIR" >&2
   exit 1
@@ -23,8 +21,8 @@ fi
 
 # shellcheck source=/dev/null
 source "$LIB_DIR/utils.sh"
-HAPPY_LOCAL_DIR="$(resolve_happy_local_dir)"
-LIB_DIR="$HAPPY_LOCAL_DIR/extras/swiftbar/lib"
+HAPSTA_ROOT_DIR="$(resolve_hapsta_root_dir)"
+LIB_DIR="$HAPSTA_ROOT_DIR/extras/swiftbar/lib"
 # shellcheck source=/dev/null
 source "$LIB_DIR/git.sh"
 
@@ -66,14 +64,9 @@ case "$cmd" in
   all)
     refresh_stack "main"
     STACKS_DIR="$(resolve_stacks_storage_root)"
-    LEGACY_STACKS_DIR="$HOME/.happy/local/stacks"
-    if swiftbar_is_sandboxed; then
-      LEGACY_STACKS_DIR=""
-    fi
     STACK_NAMES="$(
       {
         ls -1 "$STACKS_DIR" 2>/dev/null || true
-        [[ -n "$LEGACY_STACKS_DIR" ]] && ls -1 "$LEGACY_STACKS_DIR" 2>/dev/null || true
       } | sort -u
     )"
     while IFS= read -r s; do
@@ -127,4 +120,3 @@ case "$cmd" in
     exit 2
     ;;
 esac
-

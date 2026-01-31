@@ -59,7 +59,7 @@ async function copyDir(src, dest) {
 }
 
 async function createPackSandbox({ monorepoRoot, packageRelDir }) {
-  const sandboxRoot = await mkdtemp(join(tmpdir(), 'happys-pack-'));
+  const sandboxRoot = await mkdtemp(join(tmpdir(), 'hapsta-pack-'));
 
   // Minimal monorepo layout needed for the happy-cli prepack step:
   // - root package.json + yarn.lock (for repo root detection)
@@ -112,9 +112,9 @@ async function main() {
       data: { commands: VALID_COMPONENTS, flags: ['--dir=/abs/path', '--json'] },
       text: [
         '[pack] usage:',
-        '  happys pack happy-cli [--json]',
-        '  happys pack happy-server [--json]',
-        '  happys pack --dir=/abs/path/to/packages/cli [--json]',
+        '  hapsta pack happy-cli [--json]',
+        '  hapsta pack happy-server [--json]',
+        '  hapsta pack --dir=/abs/path/to/packages/cli [--json]',
         '',
         'notes:',
         '- packs in a temporary sandbox to avoid dirtying the worktree',
@@ -134,7 +134,7 @@ async function main() {
         : null;
 
   if (!explicitDir && !component) {
-    throw new Error('[pack] missing target (expected: happys pack happy-cli | happys pack happy-server | --dir=...)');
+    throw new Error('[pack] missing target (expected: hapsta pack happy-cli | hapsta pack happy-server | --dir=...)');
   }
   if (component && !VALID_COMPONENTS.includes(component)) {
     throw new Error(`[pack] unknown component: ${component} (expected one of: ${VALID_COMPONENTS.join(', ')})`);

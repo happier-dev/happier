@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('happys stack new pins happy-server-light dir to happy-server when unified schema exists', async () => {
+test('hapsta stack new pins happy-server-light dir to happy-server when unified schema exists', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-server-flavors-'));
@@ -36,10 +36,10 @@ test('happys stack new pins happy-server-light dir to happy-server when unified 
 
   const env = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_WORKSPACE_DIR: workspaceDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_SANDBOX_DIR: sandboxDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_SANDBOX_DIR: sandboxDir,
   };
 
   const res = await runNode([join(rootDir, 'scripts', 'stack.mjs'), 'new', stackName, '--json'], { cwd: rootDir, env });
@@ -47,9 +47,8 @@ test('happys stack new pins happy-server-light dir to happy-server when unified 
 
   const envPath = join(storageDir, stackName, 'env');
   const contents = await readFile(envPath, 'utf-8');
-  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER=${fullDir}\n`), contents);
-  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT=${fullDir}\n`), contents);
+  assert.ok(contents.includes(`HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER=${fullDir}\n`), contents);
+  assert.ok(contents.includes(`HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT=${fullDir}\n`), contents);
 
   await rm(tmp, { recursive: true, force: true });
 });
-

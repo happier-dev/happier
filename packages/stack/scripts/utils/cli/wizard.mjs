@@ -3,7 +3,7 @@ import { listWorktreeSpecs } from '../git/worktrees.mjs';
 import { bold, cyan, dim, green } from '../ui/ansi.mjs';
 
 export function isTty() {
-  if (process.env.HAPPY_STACKS_TEST_TTY === '1') {
+  if (process.env.HAPPIER_STACK_TEST_TTY === '1') {
     return true;
   }
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -79,7 +79,7 @@ export async function promptWorktreeSource({ rl, rootDir, component, stackName, 
       return 'default';
     }
     const picked = await promptSelectFn(rl, {
-      title: `${bold(`Available ${cyan(component)} worktrees`)}\n${dim('Tip: use `happys wt new ... --use` to create more worktrees.')}`,
+      title: `${bold(`Available ${cyan(component)} worktrees`)}\n${dim('Tip: use `hapsta wt new ... --use` to create more worktrees.')}`,
       options: specs.map((s) => ({ label: s, value: s })),
       defaultIndex: 0,
     });

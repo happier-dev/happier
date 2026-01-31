@@ -43,13 +43,13 @@ export function assertServerComponentDirMatches({ rootDir, serverComponentName, 
 
   const hint =
     mismatch.expected === 'happy-server-light'
-      ? `Fix: either switch flavor (\`happys srv use happy-server\`) or switch the active checkout for happy-server-light (\`happys wt use happy-server-light default\` or a worktree under .worktrees/${expectedRepoKey}/).`
-      : `Fix: either switch flavor (\`happys srv use happy-server-light\`) or switch the active checkout for happy-server (\`happys wt use happy-server default\` or a worktree under .worktrees/${expectedRepoKey}/).`;
+      ? `Fix: either switch flavor (\`hapsta srv use happy-server\`) or switch the active checkout for happy-server-light (\`hapsta wt use happy-server-light default\` or a worktree under .worktrees/${expectedRepoKey}/).`
+      : `Fix: either switch flavor (\`hapsta srv use happy-server-light\`) or switch the active checkout for happy-server (\`hapsta wt use happy-server default\` or a worktree under .worktrees/${expectedRepoKey}/).`;
 
   throw new Error(
     `[server] server component dir mismatch:\n` +
       `- selected flavor: ${mismatch.expected}\n` +
-      `- but HAPPY_STACKS_COMPONENT_DIR_* points inside: ${mismatch.actual}\n` +
+      `- but HAPPIER_STACK_COMPONENT_DIR_* points inside: ${mismatch.actual}\n` +
       `- path: ${mismatch.serverDir}\n` +
       `${hint}`
   );

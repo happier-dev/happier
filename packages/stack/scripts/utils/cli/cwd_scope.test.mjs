@@ -16,13 +16,13 @@ async function withTempRoot(t) {
 
 test('inferComponentFromCwd resolves components/<component> repo root', async (t) => {
   const rootDir = await withTempRoot(t);
-  const prevWorkspace = process.env.HAPPY_STACKS_WORKSPACE_DIR;
-  process.env.HAPPY_STACKS_WORKSPACE_DIR = rootDir;
+  const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
+  process.env.HAPPIER_STACK_WORKSPACE_DIR = rootDir;
   t.after(() => {
     if (prevWorkspace == null) {
-      delete process.env.HAPPY_STACKS_WORKSPACE_DIR;
+      delete process.env.HAPPIER_STACK_WORKSPACE_DIR;
     } else {
-      process.env.HAPPY_STACKS_WORKSPACE_DIR = prevWorkspace;
+      process.env.HAPPIER_STACK_WORKSPACE_DIR = prevWorkspace;
     }
   });
 
@@ -37,13 +37,13 @@ test('inferComponentFromCwd resolves components/<component> repo root', async (t
 
 test('inferComponentFromCwd resolves happy monorepo subpackages under components/happy', async (t) => {
   const rootDir = await withTempRoot(t);
-  const prevWorkspace = process.env.HAPPY_STACKS_WORKSPACE_DIR;
-  process.env.HAPPY_STACKS_WORKSPACE_DIR = rootDir;
+  const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
+  process.env.HAPPIER_STACK_WORKSPACE_DIR = rootDir;
   t.after(() => {
     if (prevWorkspace == null) {
-      delete process.env.HAPPY_STACKS_WORKSPACE_DIR;
+      delete process.env.HAPPIER_STACK_WORKSPACE_DIR;
     } else {
-      process.env.HAPPY_STACKS_WORKSPACE_DIR = prevWorkspace;
+      process.env.HAPPIER_STACK_WORKSPACE_DIR = prevWorkspace;
     }
   });
 
@@ -65,19 +65,19 @@ test('inferComponentFromCwd resolves happy monorepo subpackages under components
   assert.deepEqual(inferred, { component: 'happy-cli', repoDir: monoRoot });
 });
 
-test('inferComponentFromCwd resolves happy monorepo worktree roots under components/.worktrees/happy', async (t) => {
+test('inferComponentFromCwd resolves happy monorepo worktree roots under <workspace>/.worktrees', async (t) => {
   const rootDir = await withTempRoot(t);
-  const prevWorkspace = process.env.HAPPY_STACKS_WORKSPACE_DIR;
-  process.env.HAPPY_STACKS_WORKSPACE_DIR = rootDir;
+  const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
+  process.env.HAPPIER_STACK_WORKSPACE_DIR = rootDir;
   t.after(() => {
     if (prevWorkspace == null) {
-      delete process.env.HAPPY_STACKS_WORKSPACE_DIR;
+      delete process.env.HAPPIER_STACK_WORKSPACE_DIR;
     } else {
-      process.env.HAPPY_STACKS_WORKSPACE_DIR = prevWorkspace;
+      process.env.HAPPIER_STACK_WORKSPACE_DIR = prevWorkspace;
     }
   });
 
-  const repoRoot = join(rootDir, 'components', '.worktrees', 'happy', 'slopus', 'pr', '123-fix');
+  const repoRoot = join(rootDir, '.worktrees', 'slopus', 'pr', '123-fix');
   await mkdir(join(repoRoot, 'packages', 'app'), { recursive: true });
   await mkdir(join(repoRoot, 'packages', 'cli', 'nested'), { recursive: true });
   await mkdir(join(repoRoot, 'packages', 'server'), { recursive: true });
@@ -93,13 +93,13 @@ test('inferComponentFromCwd resolves happy monorepo worktree roots under compone
 
 test('inferComponentFromCwd returns null outside known component roots', async (t) => {
   const rootDir = await withTempRoot(t);
-  const prevWorkspace = process.env.HAPPY_STACKS_WORKSPACE_DIR;
-  process.env.HAPPY_STACKS_WORKSPACE_DIR = rootDir;
+  const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
+  process.env.HAPPIER_STACK_WORKSPACE_DIR = rootDir;
   t.after(() => {
     if (prevWorkspace == null) {
-      delete process.env.HAPPY_STACKS_WORKSPACE_DIR;
+      delete process.env.HAPPIER_STACK_WORKSPACE_DIR;
     } else {
-      process.env.HAPPY_STACKS_WORKSPACE_DIR = prevWorkspace;
+      process.env.HAPPIER_STACK_WORKSPACE_DIR = prevWorkspace;
     }
   });
 

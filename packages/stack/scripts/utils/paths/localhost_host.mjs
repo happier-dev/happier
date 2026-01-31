@@ -3,12 +3,12 @@ import { networkInterfaces } from 'node:os';
 import { sanitizeDnsLabel } from '../net/dns.mjs';
 
 function resolveBindMode(env) {
-  const raw = (env.HAPPY_STACKS_BIND_MODE ?? env.HAPPY_LOCAL_BIND_MODE ?? '').toString().trim().toLowerCase();
+  const raw = (env.HAPPIER_STACK_BIND_MODE ?? '').toString().trim().toLowerCase();
   return raw === 'lan' ? 'lan' : raw === 'loopback' ? 'loopback' : '';
 }
 
 function detectLanHost({ env = process.env } = {}) {
-  const override = (env.HAPPY_STACKS_LAN_HOST ?? env.HAPPY_LOCAL_LAN_HOST ?? '').toString().trim();
+  const override = (env.HAPPIER_STACK_LAN_HOST ?? '').toString().trim();
   if (override) return override;
 
   const nets = networkInterfaces();
@@ -55,7 +55,7 @@ export async function preferStackLocalhostHost({ stackName = null, env = process
   //
   // Since this hostname is primarily used for browser-facing URLs and origin isolation, we
   // prefer the stable `happy-<stack>.localhost` form by default and allow opting out via env.
-  const modeRaw = (env.HAPPY_STACKS_LOCALHOST_SUBDOMAINS ?? env.HAPPY_LOCAL_LOCALHOST_SUBDOMAINS ?? '')
+  const modeRaw = (env.HAPPIER_STACK_LOCALHOST_SUBDOMAINS ?? '')
     .toString()
     .trim()
     .toLowerCase();
@@ -100,4 +100,3 @@ export async function preferStackLocalhostUrl(url, { stackName = null, env = pro
   if (!preferredHost || preferredHost === 'localhost') return raw;
   return raw.replace(`://${u.hostname}`, `://${preferredHost}`);
 }
-

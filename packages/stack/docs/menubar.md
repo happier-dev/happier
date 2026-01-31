@@ -1,6 +1,6 @@
 # Menu bar (SwiftBar)
 
-`happy-stacks` ships a macOS menu bar plugin powered by [SwiftBar](https://swiftbar.app/).
+`hapsta` ships a macOS menu bar plugin powered by [SwiftBar](https://swiftbar.app/).
 
 SwiftBar runs a script on an interval and renders its output as native macOS menu items.
 
@@ -41,10 +41,10 @@ SwiftBar runs a script on an interval and renders its output as native macOS men
 
 The menu supports two modes:
 
-- **Selfhost mode** (`selfhost`): lightweight “control panel” for running Happy.
+- **Selfhost mode** (`selfhost`): lightweight “control panel” for running Happier.
   - Shows only the main stack essentials (Server/Daemon/Autostart/Tailscale) plus a small **Maintenance** section.
   - Hides developer-oriented sections like stacks enumeration, components git/worktrees, and worktree tooling.
-- **Dev mode** (`dev`): full happy-stacks control plane (stacks + components + worktrees).
+- **Dev mode** (`dev`): full stack control plane (stacks + components + worktrees).
 
 ### How to switch modes
 
@@ -52,8 +52,8 @@ The menu supports two modes:
 - From a terminal:
 
 ```bash
-happys menubar mode selfhost
-happys menubar mode dev
+hapsta menubar mode selfhost
+hapsta menubar mode dev
 ```
 
 ## Stacks (multiple instances)
@@ -61,7 +61,7 @@ happys menubar mode dev
 If you create additional stacks (see `docs/stacks.md`), the plugin shows:
 
 - **Main stack** (the default, stack name `main`)
-- **Stacks** section listing each stack found under `~/.happy/stacks/<name>/env` (legacy: `~/.happy/local/stacks/<name>/env`)
+- **Stacks** section listing each stack found under `~/.happy/stacks/<name>/env`
 
 Each stack row renders the same “mini control panel” (server/daemon/autostart/logs + a few actions) with stack-specific ports, dirs, and LaunchAgent label.
 
@@ -76,16 +76,16 @@ The menu also includes:
 
 The menu also provides “jump off” actions for the worktree tooling:
 
-- `happys wt use --interactive`
-- `happys wt new --interactive`
-- `happys wt sync-all`
-- `happys wt update-all --dry-run` / `happys wt update-all`
-- `happys wt pr ...` (via an in-menu prompt)
+- `hapsta wt use --interactive`
+- `hapsta wt new --interactive`
+- `hapsta wt sync-all`
+- `hapsta wt update-all --dry-run` / `hapsta wt update-all`
+- `hapsta wt pr ...` (via an in-menu prompt)
 
 For stack-specific worktree selection (which components a stack uses), use:
 
-- `happys stack edit <name> --interactive`
-  - or `happys stack wt <name> -- use --interactive`
+- `hapsta stack edit <name> --interactive`
+  - or `hapsta stack wt <name> -- use --interactive`
 
 ### Monorepo note (worktree switching)
 
@@ -93,11 +93,11 @@ In **monorepo stacks**, `happy`, `happy-cli`, and `happy-server` typically point
 To avoid version skew, the menu does **not** offer per-component “use this worktree” actions for these components.
 Use the stack-level selector instead (it will switch the monorepo checkout and derive the rest):
 
-- `happys stack wt <name> -- use happy --interactive`
+- `hapsta stack wt <name> -- use happy --interactive`
 
 ## Implementation notes
 
-- **Entry script**: `extras/swiftbar/happy-stacks.5s.sh` (installed into SwiftBar as `happy-stacks.<interval>.sh`)
+- **Entry script**: `extras/swiftbar/hapsta.5s.sh` (installed into SwiftBar as `hapsta.<interval>.sh`)
 - **Shared functions**: `extras/swiftbar/lib/*.sh` (sourced by the entry script)
 - **Helper scripts**:
   - `extras/swiftbar/set-interval.sh`
@@ -113,17 +113,14 @@ brew install --cask swiftbar
 
 ### 2) Install the plugin
 
-From the `happy-stacks` repo:
-
 ```bash
-happys menubar install
+hapsta menubar install
 ```
 
 If you want a different default refresh interval at install time:
 
 ```bash
-HAPPY_STACKS_SWIFTBAR_INTERVAL=15m happys menubar install
-# legacy: HAPPY_LOCAL_SWIFTBAR_INTERVAL=15m happys menubar install
+HAPPIER_STACK_SWIFTBAR_INTERVAL=15m hapsta menubar install
 ```
 
 ### 3) Open the active SwiftBar plugin folder
@@ -131,7 +128,7 @@ HAPPY_STACKS_SWIFTBAR_INTERVAL=15m happys menubar install
 SwiftBar can be configured to use a custom plugin directory. To open the *active* one:
 
 ```bash
-happys menubar open
+hapsta menubar open
 ```
 
 ## Uninstall
@@ -139,16 +136,16 @@ happys menubar open
 Remove the installed SwiftBar plugin files (does not delete your stacks/workspace):
 
 ```bash
-happys menubar uninstall
+hapsta menubar uninstall
 ```
 
 ## How refresh works (important)
 
 SwiftBar’s refresh interval is controlled by the **filename** suffix:
 
-- `happy-stacks.30s.sh` → every 30 seconds
-- `happy-stacks.5m.sh` → every 5 minutes
-- `happy-stacks.1h.sh` → every 1 hour
+- `hapsta.30s.sh` → every 30 seconds
+- `hapsta.5m.sh` → every 5 minutes
+- `hapsta.1h.sh` → every 1 hour
 
 The plugin defaults to a slower interval (recommended), and also sets:
 
@@ -161,7 +158,7 @@ You can also change the interval directly from the menu via **Refresh interval**
 Git/worktree inspection is the most expensive part of the menu when you have many stacks.
 By default, the plugin runs in **cached mode**:
 
-- It renders git/worktree info from an on-disk cache under `~/.happy-stacks/cache/swiftbar/git`.
+- It renders git/worktree info from an on-disk cache under `~/.happier-stack/cache/swiftbar/git`.
 - Normal menu refreshes do **not** run git commands (so refresh stays snappy).
 - The cache is refreshed explicitly (via menu actions), and can optionally refresh on TTL expiry.
 
@@ -171,30 +168,30 @@ Controls and settings:
   - “Refresh now (main components)”
   - “Refresh now (all stacks/components)”
   - or “Refresh now (this stack)” from a stack’s Components menu
-- **TTL**: `HAPPY_STACKS_SWIFTBAR_GIT_TTL_SEC` (default `21600` seconds = 6 hours)
-- **Mode**: `HAPPY_STACKS_SWIFTBAR_GIT_MODE=cached|live` (default `cached`)
-- (Optional) **Background auto-refresh**: `HAPPY_STACKS_SWIFTBAR_GIT_AUTO_REFRESH_SCOPE=main|all|off` (default `main`)
+- **TTL**: `HAPPIER_STACK_SWIFTBAR_GIT_TTL_SEC` (default `21600` seconds = 6 hours)
+- **Mode**: `HAPPIER_STACK_SWIFTBAR_GIT_MODE=cached|live` (default `cached`)
+- (Optional) **Background auto-refresh**: `HAPPIER_STACK_SWIFTBAR_GIT_AUTO_REFRESH_SCOPE=main|all|off` (default `main`)
 
 Notes:
 
 - Cached git info can be stale; it’s meant for at-a-glance signal.
-- Actions like worktree switching/build/dev are always live (they use `happys`); only *displayed git status* is cached.
+- Actions like worktree switching/build/dev are always live (they use `hapsta`); only *displayed git status* is cached.
 
 ## Maintenance (selfhost mode)
 
 In **selfhost** mode, the menu includes a **Maintenance** section that can:
 
-- show whether a `happy-stacks` update is available (from cached `~/.happy-stacks/cache/update.json`)
+- show whether a `hapsta` update is available (from cached `~/.happier-stack/cache/update.json`)
 - run:
-  - `happys self check`
-  - `happys self update`
+  - `hapsta self check`
+  - `hapsta self update`
 
 ## Terminal preference for interactive actions
 
 Many menu actions open a terminal (interactive wizards, long-running dev servers, etc).
 The plugin uses helper scripts so these run in your preferred terminal, using the same env var as `wt shell`:
 
-- `HAPPY_STACKS_WT_TERMINAL=auto|ghostty|iterm|terminal|current` (legacy: `HAPPY_LOCAL_WT_TERMINAL`)
+- `HAPPIER_STACK_WT_TERMINAL=auto|ghostty|iterm|terminal|current`
 
 Notes:
 - `auto` tries ghostty → iTerm → Terminal → current.
@@ -215,7 +212,7 @@ SwiftBar is independent from the Happy Stacks LaunchAgent.
 - Check which plugin folder SwiftBar is using:
   - SwiftBar → Preferences → Plugin Folder
 - Open the active folder:
-  - `happys menubar open`
+  - `hapsta menubar open`
 
 ### Daemon shows “auth required” / “no machine”
 
@@ -237,7 +234,7 @@ stack-specific CLI home directory.
 - Or run manually:
 
 ```bash
-happys auth login
+hapsta auth login
 ```
 
 ### “Daemon stale” even though it’s running

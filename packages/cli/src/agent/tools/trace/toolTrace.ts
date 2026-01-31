@@ -38,15 +38,11 @@ function isTruthyEnv(value: string | undefined): boolean {
 
 function resolveToolTraceFilePath(): string {
     const fileFromEnv =
-        process.env.HAPPY_STACKS_TOOL_TRACE_FILE ??
-        process.env.HAPPY_LOCAL_TOOL_TRACE_FILE ??
-        process.env.HAPPY_TOOL_TRACE_FILE;
+        process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
     if (typeof fileFromEnv === 'string' && fileFromEnv.length > 0) return fileFromEnv;
 
     const dirFromEnv =
-        process.env.HAPPY_STACKS_TOOL_TRACE_DIR ??
-        process.env.HAPPY_LOCAL_TOOL_TRACE_DIR ??
-        process.env.HAPPY_TOOL_TRACE_DIR;
+        process.env.HAPPIER_STACK_TOOL_TRACE_DIR;
     const dir =
         typeof dirFromEnv === 'string' && dirFromEnv.length > 0
             ? dirFromEnv
@@ -61,11 +57,7 @@ function resolveToolTraceFilePath(): string {
 }
 
 function isToolTraceEnabled(): boolean {
-    return (
-        isTruthyEnv(process.env.HAPPY_STACKS_TOOL_TRACE) ||
-        isTruthyEnv(process.env.HAPPY_LOCAL_TOOL_TRACE) ||
-        isTruthyEnv(process.env.HAPPY_TOOL_TRACE)
-    );
+    return isTruthyEnv(process.env.HAPPIER_STACK_TOOL_TRACE);
 }
 
 let cachedWriter: ToolTraceWriter | null = null;

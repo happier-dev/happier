@@ -65,9 +65,9 @@ async function ensureYarnReady({ dir, env, quiet = false }) {
   const key = `${resolve(dir)}|${String(e.HOME ?? '')}|${String(e.XDG_CACHE_HOME ?? '')}`;
   if (_yarnReadyKeys.has(key)) return;
 
-  // If stdin isn't a TTY (e.g. `happys tui ...` uses stdio:ignore for child stdin),
+  // If stdin isn't a TTY (e.g. `hapsta tui ...` uses stdio:ignore for child stdin),
   // Corepack prompts can deadlock. Provide a single "yes" to unblock initial downloads.
-  const isTui = (e.HAPPY_STACKS_TUI ?? '').toString().trim() === '1';
+  const isTui = (e.HAPPIER_STACK_TUI ?? '').toString().trim() === '1';
   // Also auto-yes in quiet mode so guided flows don't get stuck on:
   //   "Corepack is about to download ... Do you want to continue? [Y/n]"
   const autoYes = isTui || !process.stdin.isTTY || quiet;
@@ -82,12 +82,12 @@ export async function requireDir(label, dir) {
   }
   throw new Error(
     `[local] missing ${label} at ${dir}\n` +
-      `Run: happys bootstrap (auto-clones missing components), or place the repo under components/`
+      `Run: hapsta bootstrap (auto-clones missing components), or place the repo under components/`
   );
 }
 
 function resolveStackCacheBaseDirFromEnv(env) {
-  const envFile = (env.HAPPY_STACKS_ENV_FILE ?? '').toString().trim();
+  const envFile = (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim();
   if (!envFile) return null;
   try {
     return join(dirname(envFile), 'cache');
@@ -98,14 +98,14 @@ function resolveStackCacheBaseDirFromEnv(env) {
 
 export async function applyStackCacheEnv(baseEnv) {
   const env = { ...(baseEnv && typeof baseEnv === 'object' ? baseEnv : process.env) };
-  const envFile = (env.HAPPY_STACKS_ENV_FILE ?? '').toString().trim();
+  const envFile = (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim();
   const stackCacheBase = resolveStackCacheBaseDirFromEnv(env);
   if (!stackCacheBase) return env;
 
   // Prisma engines currently default to ~/.cache/prisma (via os.homedir()).
   // In stack mode, isolate HOME for package-manager driven commands so Prisma/Yarn/NPM don't
   // depend on global home caches (and so sandboxed runs can succeed).
-  const isolateHomeRaw = (env.HAPPY_STACKS_PM_ISOLATE_HOME ?? '').toString().trim();
+  const isolateHomeRaw = (env.HAPPIER_STACK_PM_ISOLATE_HOME ?? '').toString().trim();
   const isolateHome = isolateHomeRaw ? isolateHomeRaw !== '0' : true;
   if (isolateHome && envFile) {
     const stackHome = join(dirname(envFile), 'home');
@@ -232,10 +232,10 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
   // Default: build only when needed (fast + reliable for worktrees that haven't been built yet).
   //
   // You can force always-build by setting:
-  // - HAPPY_STACKS_CLI_BUILD_MODE=always
+  // - HAPPIER_STACK_CLI_BUILD_MODE=always
   // Or disable via:
-  // - HAPPY_STACKS_CLI_BUILD=0
-  const modeRaw = (process.env.HAPPY_STACKS_CLI_BUILD_MODE ?? 'auto').trim().toLowerCase();
+  // - HAPPIER_STACK_CLI_BUILD=0
+  const modeRaw = (process.env.HAPPIER_STACK_CLI_BUILD_MODE ?? 'auto').trim().toLowerCase();
   const mode = modeRaw === 'always' || modeRaw === 'auto' || modeRaw === 'never' ? modeRaw : 'auto';
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
   const buildStatePath = resolveBuildStatePath({ label: 'happy-cli', dir: cliDir });
@@ -318,26 +318,26 @@ export async function ensureHappyCliLocalNpmLinked(rootDir, { npmLinkCli, quiet 
   const binDir = join(homeDir, 'bin');
   await mkdir(binDir, { recursive: true });
 
-  const happysShim = join(binDir, 'happys');
+  const hapstaShim = join(binDir, 'hapsta');
   const happyShim = join(binDir, 'happy');
 
   const shim = `#!/bin/bash
 set -euo pipefail
-# Prefer the sibling happys shim (works for sandbox installs too).
+# Prefer the sibling hapsta shim (works for sandbox installs too).
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
-HAPPYS="$BIN_DIR/happys"
-if [[ -x "$HAPPYS" ]]; then
-  exec "$HAPPYS" happy "$@"
+HAPSTA="$BIN_DIR/hapsta"
+if [[ -x "$HAPSTA" ]]; then
+  exec "$HAPSTA" happy "$@"
 fi
 
 # Fallback: run happy-stacks from runtime install if present.
-HOME_DIR="\${HAPPY_STACKS_HOME_DIR:-$HOME/.happier-stack}"
-RUNTIME="$HOME_DIR/runtime/node_modules/happy-stacks/bin/happys.mjs"
+HOME_DIR="\${HAPPIER_STACK_HOME_DIR:-$HOME/.happier-stack}"
+RUNTIME="$HOME_DIR/runtime/node_modules/@happier-dev/stack/bin/hapsta.mjs"
 if [[ -f "$RUNTIME" ]]; then
   exec node "$RUNTIME" happy "$@"
 fi
 
-echo "error: cannot find happys shim or runtime install" >&2
+echo "error: cannot find hapsta shim or runtime install" >&2
 exit 1
 `;
 
@@ -356,19 +356,19 @@ exit 1
   await writeIfChanged(happyShim, shim);
   await chmod(happyShim, 0o755).catch(() => {});
 
-  // happys shim: use node + CLI root; if runtime install exists, prefer it.
+  // hapsta shim: use node + CLI root; if runtime install exists, prefer it.
   const cliRoot = resolveInstalledCliRoot(rootDir);
-  const happysShimText = `#!/bin/bash
+  const hapstaShimText = `#!/bin/bash
 set -euo pipefail
-exec node "${resolveInstalledPath(rootDir, 'bin/happys.mjs')}" "$@"
+exec node "${resolveInstalledPath(rootDir, 'bin/hapsta.mjs')}" "$@"
 `;
-  await writeIfChanged(happysShim, happysShimText);
-  await chmod(happysShim, 0o755).catch(() => {});
+  await writeIfChanged(hapstaShim, hapstaShimText);
+  await chmod(hapstaShim, 0o755).catch(() => {});
 
   // If user’s PATH points at a legacy install path, try to make it sane (best-effort).
   const entries = getPathEntries();
-  const legacyBin = join(homedir(), '.happy-stacks', 'bin');
-  const newBin = join(getDefaultAutostartPaths().baseDir, 'bin');
+  const legacyBin = join(homedir(), '.happier-stack', 'bin');
+  const newBin = join(homeDir, 'bin');
   if (entries.some((p) => isPathInside(p, legacyBin)) && !entries.some((p) => isPathInside(p, newBin))) {
     if (!quiet) {
       // eslint-disable-next-line no-console
@@ -376,7 +376,7 @@ exec node "${resolveInstalledPath(rootDir, 'bin/happys.mjs')}" "$@"
     }
   }
 
-  return { ok: true, cliRoot, binDir, happyShim, happysShim };
+  return { ok: true, cliRoot, binDir, happyShim, hapstaShim };
 }
 
 export async function pmExecBin(dirOrOpts, binArg, argsArg, optsArg) {

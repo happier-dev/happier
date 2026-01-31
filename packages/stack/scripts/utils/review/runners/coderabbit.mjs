@@ -69,7 +69,7 @@ export async function runCodeRabbitReview({
   teeFile,
   teeLabel,
 }) {
-  const homeDir = (env?.HAPPY_STACKS_CODERABBIT_HOME_DIR ?? '').toString().trim();
+  const homeDir = (env?.HAPPIER_STACK_CODERABBIT_HOME_DIR ?? '').toString().trim();
   const args = buildCodeRabbitReviewArgs({ repoDir, baseRef, baseCommit, type, configFiles });
   const maxAttempts = 50;
   let last = null;

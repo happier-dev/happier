@@ -63,20 +63,20 @@ async function main() {
       },
       text: [
         '[dev] usage:',
-        '  happys dev [--server=happy-server|happy-server-light] [--restart] [--json]',
-        '  happys dev --watch         # rebuild/restart happy-cli daemon on file changes (TTY default)',
-        '  happys dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
-        '  happys dev --no-browser    # do not open the UI in your browser automatically',
-        '  happys dev --mobile        # also start Expo dev-client Metro for mobile',
-        '  happys dev --expo-tailscale # forward Expo to Tailscale interface for remote access',
-        '  happys dev --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
+        '  hapsta dev [--server=happy-server|happy-server-light] [--restart] [--json]',
+        '  hapsta dev --watch         # rebuild/restart happy-cli daemon on file changes (TTY default)',
+        '  hapsta dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
+        '  hapsta dev --no-browser    # do not open the UI in your browser automatically',
+        '  hapsta dev --mobile        # also start Expo dev-client Metro for mobile',
+        '  hapsta dev --expo-tailscale # forward Expo to Tailscale interface for remote access',
+        '  hapsta dev --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
         '  note: --json prints the resolved config (dry-run) and exits.',
         '',
         'note:',
-        '  If run from inside a component checkout/worktree, that checkout is used for this run (without requiring `happys wt use`).',
+        '  If run from inside a component checkout/worktree, that checkout is used for this run (without requiring `hapsta wt use`).',
         '',
         'env:',
-        '  HAPPY_STACKS_EXPO_TAILSCALE=1   # enable Expo Tailscale forwarding via env var',
+        '  HAPPIER_STACK_EXPO_TAILSCALE=1   # enable Expo Tailscale forwarding via env var',
       ].join('\n'),
     });
     return;
@@ -110,7 +110,7 @@ async function main() {
   const startUi = !flags.has('--no-ui');
   const startDaemon = !flags.has('--no-daemon');
   const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
-  const noBrowser = flags.has('--no-browser') || (process.env.HAPPY_STACKS_NO_BROWSER ?? '').toString().trim() === '1';
+  const noBrowser = flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
 
   const serverDir = getComponentDir(rootDir, serverComponentName);
@@ -138,7 +138,7 @@ async function main() {
   const allowEnableTailscale =
     !stackMode ||
     stackName === 'main' ||
-    (baseEnv.HAPPY_STACKS_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
+    (baseEnv.HAPPIER_STACK_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
   const resolvedUrls = await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale });
   const internalServerUrl = resolvedUrls.internalServerUrl;
   let publicServerUrl = resolvedUrls.publicServerUrl;
@@ -153,8 +153,8 @@ async function main() {
   // LAN rewrite (for dev-client) is centralized in ensureDevExpoServer.
   const uiApiUrl = resolvedUrls.defaultPublicUrl;
   const restart = flags.has('--restart');
-  const cliHomeDir = process.env.HAPPY_STACKS_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPY_STACKS_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+  const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
+    ? process.env.HAPPIER_STACK_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
     : join(autostart.baseDir, 'cli');
 
   if (json) {
@@ -183,7 +183,7 @@ async function main() {
 
   // Ensure happy-cli is install+build ready before starting the daemon.
   // Worktrees often don't have dist/ built yet, which causes MODULE_NOT_FOUND on dist/index.mjs.
-  const buildCli = (baseEnv.HAPPY_STACKS_CLI_BUILD ?? '1').toString().trim() !== '0';
+  const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
   await ensureDevCliReady({ cliDir, buildCli });
 
   // Watch mode (interactive only by default): rebuild happy-cli and restart daemon when code changes.
@@ -276,8 +276,8 @@ async function main() {
 
   let expoResEarly = null;
   const wantsAuthFlow =
-    (baseEnv.HAPPY_STACKS_AUTH_FLOW ?? '').toString().trim() === '1' ||
-    (baseEnv.HAPPY_STACKS_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
+    (baseEnv.HAPPIER_STACK_AUTH_FLOW ?? '').toString().trim() === '1' ||
+    (baseEnv.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
 
   // CRITICAL (review-pr / setup-pr guided login):
   // In background/non-interactive runs, the daemon may block on auth. If we wait to start Expo web
@@ -305,7 +305,7 @@ async function main() {
     rootDir,
     // In dev mode, guided login must target the Expo web UI origin (not the server port).
     // Mark this as an auth-flow so URL resolution fails closed if Expo isn't ready.
-    env: startUi ? { ...baseEnv, HAPPY_STACKS_AUTH_FLOW: '1' } : baseEnv,
+    env: startUi ? { ...baseEnv, HAPPIER_STACK_AUTH_FLOW: '1' } : baseEnv,
     stackName,
     cliHomeDir,
     accountCount,

@@ -23,11 +23,11 @@ import { patchIosXcodeProjectsForSigningAndIdentity, resolveIosAppXcodeProjects 
  * - Ensure the QR/deeplink opens the *dev build* even if the App Store app is installed.
  *
  * Usage:
- *   happys mobile
- *   happys mobile --host=lan
- *   happys mobile --scheme=dev.happier.app.dev
-  *   happys mobile --no-metro
- *   happys mobile --run-ios --device="Your iPhone"
+ *   hapsta mobile
+ *   hapsta mobile --host=lan
+ *   hapsta mobile --scheme=dev.happier.app.dev
+  *   hapsta mobile --no-metro
+ *   hapsta mobile --run-ios --device="Your iPhone"
  */
 
 async function main() {
@@ -57,15 +57,15 @@ async function main() {
       },
       text: [
         '[mobile] usage:',
-        '  happys mobile [--host=lan|localhost|tunnel] [--port=8081] [--scheme=...] [--json]',
-        '  happys mobile --restart   # force-restart Metro for this stack/worktree',
-        '  happys mobile --run-ios [--device=...] [--configuration=Debug|Release]',
-        '  happys mobile --prebuild [--platform=ios|all] [--clean]',
-        '  happys mobile --no-metro   # just build/install (if --run-ios) without starting Metro',
+        '  hapsta mobile [--host=lan|localhost|tunnel] [--port=8081] [--scheme=...] [--json]',
+        '  hapsta mobile --restart   # force-restart Metro for this stack/worktree',
+        '  hapsta mobile --run-ios [--device=...] [--configuration=Debug|Release]',
+        '  hapsta mobile --prebuild [--platform=ios|all] [--clean]',
+        '  hapsta mobile --no-metro   # just build/install (if --run-ios) without starting Metro',
         '',
         'Notes:',
         '- This script is designed to avoid editing upstream `components/happy` config in-place.',
-        '- If you explicitly set HAPPY_STACKS_SERVER_URL (legacy: HAPPY_LOCAL_SERVER_URL), it bakes that URL into the app via EXPO_PUBLIC_HAPPY_SERVER_URL.',
+        '- If you explicitly set HAPPIER_STACK_SERVER_URL, it bakes that URL into the app via EXPO_PUBLIC_HAPPY_SERVER_URL.',
       ].join('\n'),
     });
     return;
@@ -80,7 +80,7 @@ async function main() {
   // - legacy: <happyDir>/expo-app (split-repo era)
   // - current: <happyDir>/packages/app (monorepo packages/)
   //
-  // `happys mobile` should operate on the Expo project root, not the monorepo root.
+  // `hapsta mobile` should operate on the Expo project root, not the monorepo root.
   const packagesAppDir = join(happyDir, 'packages', 'app');
   const legacyExpoAppDir = join(happyDir, 'expo-app');
   const uiDir = existsSync(join(packagesAppDir, 'app.config.js'))
@@ -103,11 +103,11 @@ async function main() {
   // Default to the existing dev bundle identifier, which is also registered as a URL scheme
   // (Info.plist includes `dev.happier.app.dev`), so iOS will open the dev build instead of the App Store app.
   const appEnv = process.env.APP_ENV ?? kv.get('--app-env') ?? 'development';
-  const host = kv.get('--host') ?? process.env.HAPPY_STACKS_MOBILE_HOST ?? process.env.HAPPY_LOCAL_MOBILE_HOST ?? 'lan';
-  const portRaw = kv.get('--port') ?? process.env.HAPPY_STACKS_MOBILE_PORT ?? process.env.HAPPY_LOCAL_MOBILE_PORT ?? '8081';
+  const host = kv.get('--host') ?? process.env.HAPPIER_STACK_MOBILE_HOST ?? 'lan';
+  const portRaw = kv.get('--port') ?? process.env.HAPPIER_STACK_MOBILE_PORT ?? '8081';
   // Default behavior:
-  // - `happys mobile` starts Metro and keeps running.
-  // - `happys mobile --run-ios` / `happys mobile:ios` just builds/installs and exits (unless --metro is provided).
+  // - `hapsta mobile` starts Metro and keeps running.
+  // - `hapsta mobile --run-ios` / `hapsta mobile:ios` just builds/installs and exits (unless --metro is provided).
   const shouldStartMetro =
     flags.has('--metro') ||
     (!flags.has('--no-metro') && !flags.has('--run-ios') && !flags.has('--prebuild'));
@@ -156,7 +156,7 @@ async function main() {
   // This is read by the app via `process.env.EXPO_PUBLIC_HAPPY_SERVER_URL`.
   const serverPort = resolveServerPortFromEnv({ env, defaultPort: 3005 });
   const allowEnableTailscale =
-    !stackMode || stackName === 'main' || (env.HAPPY_STACKS_TAILSCALE_SERVE ?? env.HAPPY_LOCAL_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
+    !stackMode || stackName === 'main' || (env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
   const resolvedUrls = await resolveServerUrls({ env, serverPort, allowEnable: allowEnableTailscale });
   if (resolvedUrls.publicServerUrl && !env.EXPO_PUBLIC_HAPPY_SERVER_URL) {
     env.EXPO_PUBLIC_HAPPY_SERVER_URL = resolvedUrls.publicServerUrl;
@@ -322,14 +322,10 @@ async function main() {
 
   // Unify Expo: one Expo dev server per stack/worktree. If dev mode already started Expo, we reuse it.
   // If Expo is already running without dev-client enabled, we fail closed (no second Expo).
-  env.HAPPY_STACKS_EXPO_HOST = host;
-  env.HAPPY_LOCAL_EXPO_HOST = host;
-  env.HAPPY_STACKS_MOBILE_HOST = host;
-  env.HAPPY_LOCAL_MOBILE_HOST = host;
-  env.HAPPY_STACKS_MOBILE_SCHEME = scheme;
-  env.HAPPY_LOCAL_MOBILE_SCHEME = scheme;
-  env.HAPPY_STACKS_EXPO_DEV_PORT = String(portRaw);
-  env.HAPPY_LOCAL_EXPO_DEV_PORT = String(portRaw);
+  env.HAPPIER_STACK_EXPO_HOST = host;
+  env.HAPPIER_STACK_MOBILE_HOST = host;
+  env.HAPPIER_STACK_MOBILE_SCHEME = scheme;
+  env.HAPPIER_STACK_EXPO_DEV_PORT = String(portRaw);
 
   const children = [];
   await ensureDevExpoServer({

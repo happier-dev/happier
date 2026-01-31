@@ -42,16 +42,16 @@ class TestPermissionHandler extends BasePermissionHandler {
 
 describe('BasePermissionHandler tool trace', () => {
     afterEach(() => {
-        delete process.env.HAPPY_STACKS_TOOL_TRACE;
-        delete process.env.HAPPY_STACKS_TOOL_TRACE_FILE;
+        delete process.env.HAPPIER_STACK_TOOL_TRACE;
+        delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
         __resetToolTraceForTests();
     });
 
     it('records permission-request events when tool tracing is enabled', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-permissions-'));
         const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPY_STACKS_TOOL_TRACE = '1';
-        process.env.HAPPY_STACKS_TOOL_TRACE_FILE = filePath;
+        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
 
         const session = new FakeSession();
         const handler = new TestPermissionHandler(session as any, {
@@ -82,8 +82,8 @@ describe('BasePermissionHandler tool trace', () => {
     it('records permission-response events when a permission is resolved', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-permissions-'));
         const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPY_STACKS_TOOL_TRACE = '1';
-        process.env.HAPPY_STACKS_TOOL_TRACE_FILE = filePath;
+        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
 
         const session = new FakeSession();
         const handler = new TestPermissionHandler(session as any, {

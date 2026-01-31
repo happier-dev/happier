@@ -44,7 +44,8 @@ export async function pickMetroPort({
 }
 
 export function wantsStablePortStrategy({ env = process.env, strategyKey, legacyStrategyKey } = {}) {
-  const raw = (env[strategyKey] ?? env[legacyStrategyKey] ?? 'ephemeral').toString().trim() || 'ephemeral';
+  void legacyStrategyKey;
+  const raw = (env[strategyKey] ?? 'ephemeral').toString().trim() || 'ephemeral';
   return raw === 'stable';
 }
 
@@ -77,33 +78,20 @@ export async function pickExpoDevMetroPort({
   reservedPorts = new Set(),
   host = '127.0.0.1',
 } = {}) {
-  const forcedPort =
-    (env.HAPPY_STACKS_EXPO_DEV_PORT ??
-      env.HAPPY_LOCAL_EXPO_DEV_PORT ??
-      // Back-compat: older knobs.
-      env.HAPPY_STACKS_UI_DEV_PORT ??
-      env.HAPPY_LOCAL_UI_DEV_PORT ??
-      env.HAPPY_STACKS_MOBILE_DEV_PORT ??
-      env.HAPPY_LOCAL_MOBILE_DEV_PORT ??
-      env.HAPPY_STACKS_MOBILE_PORT ??
-      env.HAPPY_LOCAL_MOBILE_PORT ??
-      '')
-      .toString()
-      .trim() || '';
+  const forcedPort = (env.HAPPIER_STACK_EXPO_DEV_PORT ?? '').toString().trim() || '';
 
   const stable =
     stackMode &&
     wantsStablePortStrategy({
       env,
-      strategyKey: 'HAPPY_STACKS_EXPO_DEV_PORT_STRATEGY',
-      legacyStrategyKey: 'HAPPY_LOCAL_EXPO_DEV_PORT_STRATEGY',
+      strategyKey: 'HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY',
     });
   const startPort = stable
     ? resolveStablePortStart({
         env,
         stackName,
-        baseKey: 'HAPPY_STACKS_EXPO_DEV_PORT_BASE',
-        rangeKey: 'HAPPY_STACKS_EXPO_DEV_PORT_RANGE',
+        baseKey: 'HAPPIER_STACK_EXPO_DEV_PORT_BASE',
+        rangeKey: 'HAPPIER_STACK_EXPO_DEV_PORT_RANGE',
         defaultBase: 8081,
         defaultRange: 1000,
       })
@@ -111,4 +99,3 @@ export async function pickExpoDevMetroPort({
 
   return await pickMetroPort({ startPort, forcedPort, reservedPorts, host });
 }
-

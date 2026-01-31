@@ -26,11 +26,11 @@ import { cyan, dim, green } from './utils/ui/ansi.mjs';
  */
 
 function getServeConfig(internalServerUrl) {
-  const upstream = process.env.HAPPY_LOCAL_TAILSCALE_UPSTREAM?.trim()
-    ? process.env.HAPPY_LOCAL_TAILSCALE_UPSTREAM.trim()
+  const upstream = process.env.HAPPIER_STACK_TAILSCALE_UPSTREAM?.trim()
+    ? process.env.HAPPIER_STACK_TAILSCALE_UPSTREAM.trim()
     : internalServerUrl;
-  const servePath = process.env.HAPPY_LOCAL_TAILSCALE_SERVE_PATH?.trim()
-    ? process.env.HAPPY_LOCAL_TAILSCALE_SERVE_PATH.trim()
+  const servePath = process.env.HAPPIER_STACK_TAILSCALE_SERVE_PATH?.trim()
+    ? process.env.HAPPIER_STACK_TAILSCALE_SERVE_PATH.trim()
     : '/';
   return { upstream, servePath };
 }
@@ -89,7 +89,7 @@ function assertTailscaleAllowed(action) {
     throw new Error(
       `[local] tailscale ${action} is disabled in sandbox mode.\n` +
         `Reason: Tailscale Serve is global machine state and sandbox runs must be isolated.\n` +
-        `If you really want this, set: HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1`
+        `If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1`
     );
   }
 }
@@ -104,19 +104,19 @@ function parseTimeoutMs(raw, defaultMs) {
 }
 
 function tailscaleProbeTimeoutMs() {
-  return parseTimeoutMs(process.env.HAPPY_LOCAL_TAILSCALE_CMD_TIMEOUT_MS, 2500);
+  return parseTimeoutMs(process.env.HAPPIER_STACK_TAILSCALE_CMD_TIMEOUT_MS, 2500);
 }
 
 function tailscaleUserEnableTimeoutMs() {
-  return parseTimeoutMs(process.env.HAPPY_LOCAL_TAILSCALE_ENABLE_TIMEOUT_MS, 30000);
+  return parseTimeoutMs(process.env.HAPPIER_STACK_TAILSCALE_ENABLE_TIMEOUT_MS, 30000);
 }
 
 function tailscaleAutoEnableTimeoutMs() {
-  return parseTimeoutMs(process.env.HAPPY_LOCAL_TAILSCALE_ENABLE_TIMEOUT_MS_AUTO, tailscaleProbeTimeoutMs());
+  return parseTimeoutMs(process.env.HAPPIER_STACK_TAILSCALE_ENABLE_TIMEOUT_MS_AUTO, tailscaleProbeTimeoutMs());
 }
 
 function tailscaleUserResetTimeoutMs() {
-  return parseTimeoutMs(process.env.HAPPY_LOCAL_TAILSCALE_RESET_TIMEOUT_MS, 15000);
+  return parseTimeoutMs(process.env.HAPPIER_STACK_TAILSCALE_RESET_TIMEOUT_MS, 15000);
 }
 
 function tailscaleEnv() {
@@ -139,8 +139,8 @@ async function isExecutable(path) {
 
 async function resolveTailscaleCmd() {
   // Allow explicit override (useful for LaunchAgents where aliases don't exist).
-  if (process.env.HAPPY_LOCAL_TAILSCALE_BIN?.trim()) {
-    return process.env.HAPPY_LOCAL_TAILSCALE_BIN.trim();
+  if (process.env.HAPPIER_STACK_TAILSCALE_BIN?.trim()) {
+    return process.env.HAPPIER_STACK_TAILSCALE_BIN.trim();
   }
 
   // Try PATH first (without executing `tailscale`, which can hang in some environments).
@@ -173,7 +173,7 @@ async function resolveTailscaleCmd() {
     `[local] tailscale CLI not found.\n` +
     `- Install Tailscale, or\n` +
     `- Put 'tailscale' on PATH, or\n` +
-    `- Set HAPPY_LOCAL_TAILSCALE_BIN="${appCliPath}"`
+    `- Set HAPPIER_STACK_TAILSCALE_BIN="${appCliPath}"`
   );
 }
 
@@ -241,7 +241,7 @@ export async function maybeEnableTailscaleServe({ internalServerUrl }) {
   if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     return null;
   }
-  const enabled = (process.env.HAPPY_LOCAL_TAILSCALE_SERVE ?? '0') === '1';
+  const enabled = (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
   if (!enabled) {
     return null;
   }
@@ -257,8 +257,8 @@ export async function maybeResetTailscaleServe() {
   if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     return;
   }
-  const enabled = (process.env.HAPPY_LOCAL_TAILSCALE_SERVE ?? '0') === '1';
-  const resetOnExit = (process.env.HAPPY_LOCAL_TAILSCALE_RESET_ON_EXIT ?? '0') === '1';
+  const enabled = (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
+  const resetOnExit = (process.env.HAPPIER_STACK_TAILSCALE_RESET_ON_EXIT ?? '0') === '1';
   if (!enabled || !resetOnExit) {
     return;
   }
@@ -278,11 +278,11 @@ async function sleep(ms) {
  * Resolve the best public server URL to present to users / generate links.
  *
  * Priority:
- * 1) explicit HAPPY_LOCAL_SERVER_URL override (if non-default)
+ * 1) explicit HAPPIER_STACK_SERVER_URL override (if non-default)
  * 2) if enabled, prefer existing https://*.ts.net from tailscale serve status
  * 3) fallback to defaultPublicUrl
  *
- * If HAPPY_LOCAL_TAILSCALE_SERVE=1, this can also try to enable serve and wait briefly for Tailscale to come up.
+ * If HAPPIER_STACK_TAILSCALE_SERVE=1, this can also try to enable serve and wait briefly for Tailscale to come up.
  */
 export async function resolvePublicServerUrl({
   internalServerUrl,
@@ -291,7 +291,7 @@ export async function resolvePublicServerUrl({
   allowEnable = true,
   stackName = 'main',
 }) {
-  const preferTailscalePublicUrl = (process.env.HAPPY_LOCAL_TAILSCALE_PREFER_PUBLIC_URL ?? '1') !== '0';
+  const preferTailscalePublicUrl = (process.env.HAPPIER_STACK_TAILSCALE_PREFER_PUBLIC_URL ?? '1') !== '0';
   const userExplicitlySetPublicUrl =
     !!envPublicUrl && envPublicUrl !== defaultPublicUrl && envPublicUrl !== internalServerUrl;
 
@@ -319,7 +319,7 @@ export async function resolvePublicServerUrl({
     return { publicServerUrl: existing, source: 'tailscale-status' };
   }
 
-  const enableServe = (process.env.HAPPY_LOCAL_TAILSCALE_SERVE ?? '0') === '1';
+  const enableServe = (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
   if (!enableServe || !allowEnable) {
     return { publicServerUrl: envPublicUrl || defaultPublicUrl, source: 'default' };
   }
@@ -334,8 +334,8 @@ export async function resolvePublicServerUrl({
     // ignore and fall back to waiting/polling
   }
 
-  const waitMs = process.env.HAPPY_LOCAL_TAILSCALE_WAIT_MS?.trim()
-    ? Number(process.env.HAPPY_LOCAL_TAILSCALE_WAIT_MS.trim())
+  const waitMs = process.env.HAPPIER_STACK_TAILSCALE_WAIT_MS?.trim()
+    ? Number(process.env.HAPPIER_STACK_TAILSCALE_WAIT_MS.trim())
     : 15000;
   const deadline = Date.now() + (Number.isFinite(waitMs) ? waitMs : 15000);
   while (Date.now() < deadline) {
@@ -366,22 +366,21 @@ async function main() {
         '',
         sectionTitle('Usage'),
         bullets([
-          `${dim('status:')} ${cmdFmt('happys tailscale status')} ${dim('[--json]')}`,
-          `${dim('enable:')} ${cmdFmt('happys tailscale enable')} ${dim('[--json]')}`,
-          `${dim('disable:')} ${cmdFmt('happys tailscale disable')} ${dim('[--json]')}`,
-          `${dim('url:')} ${cmdFmt('happys tailscale url')} ${dim('[--json]')}`,
+          `${dim('status:')} ${cmdFmt('hapsta tailscale status')} ${dim('[--json]')}`,
+          `${dim('enable:')} ${cmdFmt('hapsta tailscale enable')} ${dim('[--json]')}`,
+          `${dim('disable:')} ${cmdFmt('hapsta tailscale disable')} ${dim('[--json]')}`,
+          `${dim('url:')} ${cmdFmt('hapsta tailscale url')} ${dim('[--json]')}`,
         ]),
         '',
         sectionTitle('Notes'),
         bullets([
           `${dim('what it does:')} configures \`tailscale serve\` to proxy your local server (${dim('usually')} ${cyan('http://127.0.0.1:3005')}) over HTTPS`,
-          `${dim('env:')} set ${cyan('HAPPY_LOCAL_TAILSCALE_SERVE=1')} to allow stack runs to auto-enable serve (best-effort)`,
-          `${dim('sandbox:')} enable/disable are blocked unless ${cyan('HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1')}`,
+          `${dim('env:')} set ${cyan('HAPPIER_STACK_TAILSCALE_SERVE=1')} to allow stack runs to auto-enable serve (best-effort)`,
+          `${dim('sandbox:')} enable/disable are blocked unless ${cyan('HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1')}`,
         ]),
         '',
         sectionTitle('Legacy / advanced'),
         bullets([
-          `${dim('cloned repo legacy:')} ${dim('pnpm tailscale:status [--json]')}`,
           `${dim('low-level:')} ${dim('node scripts/tailscale.mjs enable --upstream=<url> --path=/ [--json]')}`,
         ]),
       ].join('\n'),
@@ -391,10 +390,10 @@ async function main() {
 
   const internalServerUrl = getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
   if (flags.has('--upstream') || kv.get('--upstream')) {
-    process.env.HAPPY_LOCAL_TAILSCALE_UPSTREAM = kv.get('--upstream') ?? internalServerUrl;
+    process.env.HAPPIER_STACK_TAILSCALE_UPSTREAM = kv.get('--upstream') ?? internalServerUrl;
   }
   if (flags.has('--path') || kv.get('--path')) {
-    process.env.HAPPY_LOCAL_TAILSCALE_SERVE_PATH = kv.get('--path') ?? '/';
+    process.env.HAPPIER_STACK_TAILSCALE_SERVE_PATH = kv.get('--path') ?? '/';
   }
 
   switch (cmd) {
@@ -421,7 +420,7 @@ async function main() {
         throw new Error(
           '[tailscale] enable is disabled in sandbox mode.\n' +
             'Reason: Tailscale Serve is global machine state.\n' +
-            'If you really want this, set: HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1'
+            'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
         );
       }
       const res = await tailscaleServeEnable({ internalServerUrl });
@@ -448,7 +447,7 @@ async function main() {
         throw new Error(
           '[tailscale] disable/reset is disabled in sandbox mode.\n' +
             'Reason: Tailscale Serve is global machine state.\n' +
-            'If you really want this, set: HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1'
+            'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
         );
       }
       await tailscaleServeReset();

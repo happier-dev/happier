@@ -846,9 +846,8 @@ export class AcpBackend implements AgentBackend {
     const sessionUpdateType = (update as any).sessionUpdate as string | undefined;
 
     const isGeminiAcpDebugEnabled = (() => {
-      const stacks = process.env.HAPPY_STACKS_GEMINI_ACP_DEBUG;
-      const local = process.env.HAPPY_LOCAL_GEMINI_ACP_DEBUG;
-      return stacks === '1' || local === '1' || stacks === 'true' || local === 'true';
+      const flag = process.env.HAPPIER_STACK_GEMINI_ACP_DEBUG;
+      return flag === '1' || flag === 'true';
     })();
 
     const sanitizeForLogs = (value: unknown, depth = 0): unknown => {

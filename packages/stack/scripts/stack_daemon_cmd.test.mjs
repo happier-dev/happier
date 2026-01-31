@@ -39,7 +39,7 @@ import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
-const home = process.env.HAPPY_HOME_DIR || process.env.HAPPY_STACKS_CLI_HOME_DIR || process.env.HAPPY_LOCAL_CLI_HOME_DIR;
+const home = process.env.HAPPY_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) {
   console.error('missing HAPPY_HOME_DIR');
   process.exit(2);
@@ -103,7 +103,7 @@ process.exit(0);
   return cliDir;
 }
 
-test('happys stack daemon <name> restart restarts only the daemon', async () => {
+test('hapsta stack daemon <name> restart restarts only the daemon', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-daemon-'));
@@ -120,25 +120,25 @@ test('happys stack daemon <name> restart restarts only the daemon', async () => 
   const envPath = join(storageDir, stackName, 'env');
   await mkdir(dirname(envPath), { recursive: true });
   await writeFile(
-    envPath,
-    [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
-      `HAPPY_STACKS_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPY_STACKS_SERVER_PORT=4101`,
+      envPath,
+      [
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
+      `HAPPIER_STACK_SERVER_PORT=4101`,
       '',
-    ].join('\n'),
-    'utf-8'
-  );
+      ].join('\n'),
+      'utf-8'
+    );
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
   // Start daemon once.
-  const startRes = await runNode([join(rootDir, 'bin', 'happys.mjs'), 'stack', 'daemon', stackName, 'start', '--json'], {
+  const startRes = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'start', '--json'], {
     cwd: rootDir,
     env: baseEnv,
   });
@@ -149,7 +149,7 @@ test('happys stack daemon <name> restart restarts only the daemon', async () => 
   );
 
   // Restart daemon (should run stop+start+status via our helper).
-  const restartRes = await runNode([join(rootDir, 'bin', 'happys.mjs'), 'stack', 'daemon', stackName, 'restart', '--json'], {
+  const restartRes = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'restart', '--json'], {
     cwd: rootDir,
     env: baseEnv,
   });
@@ -167,11 +167,11 @@ test('happys stack daemon <name> restart restarts only the daemon', async () => 
   assert.ok(logText.includes('status'), `expected stub daemon status to be called\n${logText}`);
 
   // Cleanup: stop the spawned background daemon process (best-effort via our stub).
-  await runNode([join(rootDir, 'bin', 'happys.mjs'), 'stack', 'daemon', stackName, 'stop', '--json'], { cwd: rootDir, env: baseEnv });
+  await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'stop', '--json'], { cwd: rootDir, env: baseEnv });
   await rm(tmp, { recursive: true, force: true });
 });
 
-test('happys stack <name> daemon start works (stack name first)', async () => {
+test('hapsta stack <name> daemon start works (stack name first)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-daemon-name-first-'));  const storageDir = join(tmp, 'storage');
@@ -186,24 +186,24 @@ test('happys stack <name> daemon start works (stack name first)', async () => {
   const envPath = join(storageDir, stackName, 'env');
   await mkdir(dirname(envPath), { recursive: true });
   await writeFile(
-    envPath,
-    [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
-      `HAPPY_STACKS_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPY_STACKS_SERVER_PORT=4101`,
+      envPath,
+      [
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
+      `HAPPIER_STACK_SERVER_PORT=4101`,
       '',
-    ].join('\n'),
-    'utf-8'
-  );
+      ].join('\n'),
+      'utf-8'
+    );
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
-  const startRes = await runNode([join(rootDir, 'bin', 'happys.mjs'), 'stack', stackName, 'daemon', 'start', '--json'], {
+  const startRes = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', stackName, 'daemon', 'start', '--json'], {
     cwd: rootDir,
     env: baseEnv,
   });
@@ -218,11 +218,11 @@ test('happys stack <name> daemon start works (stack name first)', async () => {
   const logText = await (await import('node:fs/promises')).readFile(logPath, 'utf-8').then(String);
   assert.ok(logText.includes('start'), `expected stub daemon start to be called\n${logText}`);
 
-  await runNode([join(rootDir, 'bin', 'happys.mjs'), 'stack', stackName, 'daemon', 'stop', '--json'], { cwd: rootDir, env: baseEnv });
+  await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', stackName, 'daemon', 'stop', '--json'], { cwd: rootDir, env: baseEnv });
   await rm(tmp, { recursive: true, force: true });
 });
 
-test('happys stack daemon <name> start/stop with --identity uses an isolated cli home dir', async () => {
+test('hapsta stack daemon <name> start/stop with --identity uses an isolated cli home dir', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-daemon-identity-'));
@@ -239,25 +239,25 @@ test('happys stack daemon <name> start/stop with --identity uses an isolated cli
   const envPath = join(storageDir, stackName, 'env');
   await mkdir(dirname(envPath), { recursive: true });
   await writeFile(
-    envPath,
-    [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
-      `HAPPY_STACKS_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPY_STACKS_SERVER_PORT=4101`,
+      envPath,
+      [
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
+      `HAPPIER_STACK_SERVER_PORT=4101`,
       '',
-    ].join('\n'),
-    'utf-8'
-  );
+      ].join('\n'),
+      'utf-8'
+    );
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
   const startRes = await runNode(
-    [join(rootDir, 'bin', 'happys.mjs'), 'stack', 'daemon', stackName, 'start', `--identity=${identity}`, '--json'],
+    [join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'start', `--identity=${identity}`, '--json'],
     { cwd: rootDir, env: baseEnv }
   );
   assert.equal(
@@ -271,7 +271,7 @@ test('happys stack daemon <name> start/stop with --identity uses an isolated cli
   assert.ok(logText.includes('start'), `expected stub daemon start to be called in identity home\n${logText}`);
 
   const stopRes = await runNode(
-    [join(rootDir, 'bin', 'happys.mjs'), 'stack', 'daemon', stackName, 'stop', `--identity=${identity}`, '--json'],
+    [join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'stop', `--identity=${identity}`, '--json'],
     { cwd: rootDir, env: baseEnv }
   );
   assert.equal(
@@ -286,7 +286,7 @@ test('happys stack daemon <name> start/stop with --identity uses an isolated cli
   await rm(tmp, { recursive: true, force: true });
 });
 
-test('happys stack auth <name> login --identity=<name> --print prints identity-scoped HAPPY_HOME_DIR', async () => {
+test('hapsta stack auth <name> login --identity=<name> --print prints identity-scoped HAPPY_HOME_DIR', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-auth-identity-'));
@@ -304,26 +304,26 @@ test('happys stack auth <name> login --identity=<name> --print prints identity-s
   const envPath = join(storageDir, stackName, 'env');
   await mkdir(dirname(envPath), { recursive: true });
   await writeFile(
-    envPath,
-    [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
-      `HAPPY_STACKS_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPY_STACKS_SERVER_PORT=4101`,
+      envPath,
+      [
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
+      `HAPPIER_STACK_SERVER_PORT=4101`,
       '',
-    ].join('\n'),
-    'utf-8'
-  );
+      ].join('\n'),
+      'utf-8'
+    );
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
   const res = await runNode(
     [
-      join(rootDir, 'bin', 'happys.mjs'),
+      join(rootDir, 'bin', 'hapsta.mjs'),
       'stack',
       'auth',
       stackName,

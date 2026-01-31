@@ -15,36 +15,35 @@ test('buildLaunchdPath includes node dir and common tool paths', () => {
   assert.ok(p.includes('/bin'), 'includes /bin');
 });
 
-test('pickLaunchdProgramArgs uses stable happys shim when present', async () => {
+test('pickLaunchdProgramArgs uses stable hapsta shim when present', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-home-'));
-  const shim = join(dir, 'bin', 'happys');
+  const shim = join(dir, 'bin', 'hapsta');
   await mkdir(join(dir, 'bin'), { recursive: true });
   await writeFile(shim, '#!/bin/sh\necho ok\n', { encoding: 'utf-8' });
 
   // Temporarily point canonical home at our temp dir via env var used by getCanonicalHomeDirFromEnv().
-  const prev = process.env.HAPPY_STACKS_CANONICAL_HOME_DIR;
-  process.env.HAPPY_STACKS_CANONICAL_HOME_DIR = dir;
+  const prev = process.env.HAPPIER_STACK_CANONICAL_HOME_DIR;
+  process.env.HAPPIER_STACK_CANONICAL_HOME_DIR = dir;
   try {
     const args = pickLaunchdProgramArgs({ rootDir: '/fake/root' });
     assert.deepEqual(args, [shim, 'start']);
   } finally {
-    if (prev == null) delete process.env.HAPPY_STACKS_CANONICAL_HOME_DIR;
-    else process.env.HAPPY_STACKS_CANONICAL_HOME_DIR = prev;
+    if (prev == null) delete process.env.HAPPIER_STACK_CANONICAL_HOME_DIR;
+    else process.env.HAPPIER_STACK_CANONICAL_HOME_DIR = prev;
   }
 });
 
-test('pickLaunchdProgramArgs falls back to node + happys.mjs when shim missing', () => {
-  const prev = process.env.HAPPY_STACKS_CANONICAL_HOME_DIR;
-  process.env.HAPPY_STACKS_CANONICAL_HOME_DIR = '/definitely-not-a-real-path';
+test('pickLaunchdProgramArgs falls back to node + hapsta.mjs when shim missing', () => {
+  const prev = process.env.HAPPIER_STACK_CANONICAL_HOME_DIR;
+  process.env.HAPPIER_STACK_CANONICAL_HOME_DIR = '/definitely-not-a-real-path';
   try {
     const execPath = '/usr/local/bin/node';
     const args = pickLaunchdProgramArgs({ rootDir: '/cli/root', execPath });
     assert.equal(args[0], execPath);
-    assert.ok(String(args[1]).endsWith('/bin/happys.mjs'));
+    assert.ok(String(args[1]).endsWith('/bin/hapsta.mjs'));
     assert.equal(args[2], 'start');
   } finally {
-    if (prev == null) delete process.env.HAPPY_STACKS_CANONICAL_HOME_DIR;
-    else process.env.HAPPY_STACKS_CANONICAL_HOME_DIR = prev;
+    if (prev == null) delete process.env.HAPPIER_STACK_CANONICAL_HOME_DIR;
+    else process.env.HAPPIER_STACK_CANONICAL_HOME_DIR = prev;
   }
 });
-

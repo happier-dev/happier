@@ -38,9 +38,9 @@ describe('recordToolTraceEvent', () => {
     it('writes multiple events to a single file when only DIR is set', () => {
         vi.useFakeTimers();
         const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-dir-'));
-        process.env.HAPPY_STACKS_TOOL_TRACE = '1';
-        process.env.HAPPY_STACKS_TOOL_TRACE_DIR = dir;
-        delete process.env.HAPPY_STACKS_TOOL_TRACE_FILE;
+        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+        process.env.HAPPIER_STACK_TOOL_TRACE_DIR = dir;
+        delete process.env.HAPPIER_STACK_TOOL_TRACE_FILE;
         __resetToolTraceForTests();
 
         vi.setSystemTime(new Date('2026-01-25T10:00:00.000Z'));
@@ -68,8 +68,8 @@ describe('recordToolTraceEvent', () => {
         const raw = readFileSync(join(dir, files[0]), 'utf8');
         expect(raw.trim().split('\n')).toHaveLength(2);
 
-        delete process.env.HAPPY_STACKS_TOOL_TRACE;
-        delete process.env.HAPPY_STACKS_TOOL_TRACE_DIR;
+        delete process.env.HAPPIER_STACK_TOOL_TRACE;
+        delete process.env.HAPPIER_STACK_TOOL_TRACE_DIR;
         __resetToolTraceForTests();
         vi.useRealTimers();
     });

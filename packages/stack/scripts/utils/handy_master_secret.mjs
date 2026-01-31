@@ -47,7 +47,7 @@ export async function resolveHandyMasterSecretFromStack({
       throw new Error(
         '[auth] legacy auth source is disabled in sandbox mode.\n' +
           'Reason: it reads from ~/.happy (global user state).\n' +
-          'If you really want this, set: HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1'
+          'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
       );
     }
     const baseDir = getLegacyHappyBaseDir();
@@ -71,7 +71,7 @@ export async function resolveHandyMasterSecretFromStack({
     return { secret: inline, source: `${sourceEnvPath} (HANDY_MASTER_SECRET)` };
   }
 
-  const secretFile = getEnvValue(env, 'HAPPY_STACKS_HANDY_MASTER_SECRET_FILE');
+  const secretFile = getEnvValue(env, 'HAPPIER_STACK_HANDY_MASTER_SECRET_FILE');
   if (secretFile) {
     const secret = await readTextIfExists(secretFile);
     if (secret) return { secret, source: secretFile };
@@ -91,4 +91,3 @@ export async function resolveHandyMasterSecretFromStack({
 
   return { secret: null, source: null };
 }
-

@@ -51,17 +51,16 @@ test('doctor does not crash in non-json mode (kv helper not shadowed)', async ()
 
   const env = {
     ...process.env,
-    HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT: stubServer,
-    HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI: stubCli,
+    HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT: stubServer,
+    HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI: stubCli,
     // Avoid UI build dir checks (keeps this test hermetic).
-    HAPPY_LOCAL_SERVE_UI: '0',
+    HAPPIER_STACK_SERVE_UI: '0',
     // Avoid any side effects in temp runs.
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
   const res = await runNode([join(rootDir, 'scripts', 'doctor.mjs')], { cwd: rootDir, env });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  assert.match(res.stdout, /happy-stacks doctor/i);
+  assert.match(res.stdout, /doctor/i);
   assert.match(res.stdout, /Details/);
 });
-

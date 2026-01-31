@@ -3,13 +3,13 @@ import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
-export const REVIEW_PR_MARKER_FILENAME = '.happy-stacks-sandbox-marker';
-export const REVIEW_PR_META_FILENAME = '.happy-stacks-review-pr.json';
+export const REVIEW_PR_MARKER_FILENAME = '.happier-stack-sandbox-marker';
+export const REVIEW_PR_META_FILENAME = '.happier-stack-review-pr.json';
 
 export function reviewPrSandboxPrefixBase(baseStackName) {
   const base = String(baseStackName ?? '').trim() || 'pr';
   // Keep prefix stable for listing/reuse; mkdtemp adds a random suffix.
-  return `happy-stacks-review-pr-${base}-`;
+  return `hapsta-review-pr-${base}-`;
 }
 
 export function reviewPrSandboxPrefixPath(baseStackName) {
@@ -103,4 +103,3 @@ export async function writeReviewPrSandboxMeta({ sandboxDir, baseStackName, stac
 
   return { markerPath, metaPath };
 }
-

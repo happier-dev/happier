@@ -38,11 +38,11 @@ async function writeYarnOkPackage({ dir, name, scriptOutput }) {
     ),
     'utf-8'
   );
-  // Ensure deps are considered "already installed" by happy-stacks.
+  // Ensure deps are considered "already installed" by hapsta.
   await writeFile(join(dir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
 }
 
-test('happys test --json keeps stdout JSON-only and runs monorepo root when happy points at packages/app', async () => {
+test('hapsta test --json keeps stdout JSON-only and runs monorepo root when happy points at packages/app', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
@@ -57,15 +57,14 @@ test('happys test --json keeps stdout JSON-only and runs monorepo root when happ
 
   const env = {
     ...process.env,
-    HAPPY_STACKS_COMPONENT_DIR_HAPPY: appDir,
+    HAPPIER_STACK_COMPONENT_DIR_HAPPY: appDir,
     // Prevent env.mjs from auto-discovering and loading a real machine stack env file,
     // which would overwrite our component dir override.
-    HAPPY_STACKS_STACK: 'test-stack',
-    HAPPY_STACKS_ENV_FILE: join(tmp, 'nonexistent-env'),
-    HAPPY_LOCAL_ENV_FILE: join(tmp, 'nonexistent-env'),
+    HAPPIER_STACK_STACK: 'test-stack',
+    HAPPIER_STACK_ENV_FILE: join(tmp, 'nonexistent-env'),
   };
 
-  const res = await runNode([join(rootDir, 'scripts', 'test.mjs'), 'happy', '--json'], { cwd: rootDir, env });
+  const res = await runNode([join(rootDir, 'scripts', 'test_cmd.mjs'), 'happy', '--json'], { cwd: rootDir, env });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
 
   // Stdout must be JSON only.

@@ -13,27 +13,27 @@ The recommended approach is **Tailscale Serve**, which gives you an `https://*.t
 2) Enable Serve:
 
 ```bash
-happys tailscale enable
-happys tailscale url
+hapsta tailscale enable
+hapsta tailscale url
 ```
 
-3) Open the URL from `happys tailscale url` on another device (also signed into Tailscale).
+3) Open the URL from `hapsta tailscale url` on another device (also signed into Tailscale).
 
 Tip: on iOS, you can “Add to Home Screen” from Safari to use it like an app.
 
 ## Automation
 
-If Serve is already configured, `happys start` will automatically prefer the `https://*.ts.net` URL for “public” links unless you explicitly set `HAPPY_STACKS_SERVER_URL` (legacy: `HAPPY_LOCAL_SERVER_URL`).
+If Serve is already configured, `hapsta start` will automatically prefer the `https://*.ts.net` URL for “public” links unless you explicitly set `HAPPIER_STACK_SERVER_URL`.
 
-You can also ask happy-stacks to enable Serve automatically at boot:
+You can also ask hapsta to enable Serve automatically at boot:
 
 ```bash
-HAPPY_STACKS_TAILSCALE_SERVE=1 happys start
+HAPPIER_STACK_TAILSCALE_SERVE=1 hapsta start
 ```
 
 Useful knobs:
-- `HAPPY_STACKS_TAILSCALE_WAIT_MS` (legacy: `HAPPY_LOCAL_TAILSCALE_WAIT_MS`)
-- `HAPPY_STACKS_TAILSCALE_BIN` (legacy: `HAPPY_LOCAL_TAILSCALE_BIN`)
+- `HAPPIER_STACK_TAILSCALE_WAIT_MS`
+- `HAPPIER_STACK_TAILSCALE_BIN`
 
 ## Using the native Happy mobile app (optional)
 

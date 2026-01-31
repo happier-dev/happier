@@ -20,22 +20,20 @@ import { bold, cyan, dim } from './utils/ui/ansi.mjs';
 function usage() {
   return [
     '[review-pr] usage:',
-    '  happys review-pr --happy=<pr-url|number> [--happy-server-light=<pr-url|number>] [--name=<stack>] [--dev|--start] [--mobile|--no-mobile] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--keep-sandbox] [--json] [-- <stack dev/start args...>]',
+    '  hapsta tools review-pr --repo=<pr-url|number> [--name=<stack>] [--dev|--start] [--mobile|--no-mobile] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--keep-sandbox] [--json] [-- <stack dev/start args...>]',
     '',
     'VM port forwarding (optional):',
     '- `--vm-ports`: convenience preset for port-forwarded VMs (stack ports ~13xxx, Expo ports ~18xxx)',
-    '- `--stack-port-start=<n>`: sets HAPPY_STACKS_STACK_PORT_START inside the sandbox',
-    '- `--expo-dev-port-strategy=stable|ephemeral`: sets HAPPY_STACKS_EXPO_DEV_PORT_STRATEGY inside the sandbox',
+    '- `--stack-port-start=<n>`: sets HAPPIER_STACK_STACK_PORT_START inside the sandbox',
+    '- `--expo-dev-port-strategy=stable|ephemeral`: sets HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY inside the sandbox',
     '- `--expo-dev-port-base=<n>` / `--expo-dev-port-range=<n>`: stable Expo port hashing params',
     '- `--expo-dev-port=<n>`: force the Expo dev (Metro) port inside the sandbox',
     '',
     'What it does:',
     '- creates a temporary sandbox dir',
-    '- runs `happys setup-pr ...` inside that sandbox (fully isolated state)',
+    '- runs `hapsta tools setup-pr ...` inside that sandbox (fully isolated state)',
     '- on exit (including Ctrl+C): stops sandbox processes and deletes the sandbox dir',
     '',
-    'legacy note:',
-    '- `--happy-cli` / `--happy-server` are legacy split-repo flags; in monorepo mode, use `--happy` only.',
   ].join('\n');
 }
  
@@ -47,7 +45,7 @@ function waitForExit(child) {
 }
  
 async function tryStopSandbox({ rootDir, sandboxDir }) {
-  const bin = join(rootDir, 'bin', 'happys.mjs');
+  const bin = join(rootDir, 'bin', 'hapsta.mjs');
   const child = spawn(process.execPath, [bin, '--sandbox-dir', sandboxDir, 'stop', '--yes', '--aggressive', '--sweep-owned', '--no-service'], {
     cwd: rootDir,
     env: process.env,
@@ -97,39 +95,37 @@ function resolveSandboxPortEnvOverrides(argv) {
 
   // Convenience preset for VM review flows (pairs with Lima port-forward ranges in docs).
   if (argvHasFlag(argv, ['--vm-ports'])) {
-    overrides.HAPPY_STACKS_STACK_PORT_START = '13005';
-    overrides.HAPPY_LOCAL_STACK_PORT_START = '13005';
+    overrides.HAPPIER_STACK_STACK_PORT_START = '13005';
 
     // Keep Expo dev ports stable per stack so forwarded ports remain predictable.
-    overrides.HAPPY_STACKS_EXPO_DEV_PORT_STRATEGY = 'stable';
-    overrides.HAPPY_STACKS_EXPO_DEV_PORT_BASE = '18081';
-    overrides.HAPPY_STACKS_EXPO_DEV_PORT_RANGE = '1000';
+    overrides.HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY = 'stable';
+    overrides.HAPPIER_STACK_EXPO_DEV_PORT_BASE = '18081';
+    overrides.HAPPIER_STACK_EXPO_DEV_PORT_RANGE = '1000';
   }
 
   const stackPortStart = (kvValue(argv, ['--stack-port-start']) ?? '').trim();
   if (stackPortStart) {
-    overrides.HAPPY_STACKS_STACK_PORT_START = stackPortStart;
-    overrides.HAPPY_LOCAL_STACK_PORT_START = stackPortStart;
+    overrides.HAPPIER_STACK_STACK_PORT_START = stackPortStart;
   }
 
   const expoStrategy = (kvValue(argv, ['--expo-dev-port-strategy']) ?? '').trim().toLowerCase();
   if (expoStrategy === 'stable' || expoStrategy === 'ephemeral') {
-    overrides.HAPPY_STACKS_EXPO_DEV_PORT_STRATEGY = expoStrategy;
+    overrides.HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY = expoStrategy;
   }
 
   const expoBase = (kvValue(argv, ['--expo-dev-port-base']) ?? '').trim();
   if (expoBase) {
-    overrides.HAPPY_STACKS_EXPO_DEV_PORT_BASE = expoBase;
+    overrides.HAPPIER_STACK_EXPO_DEV_PORT_BASE = expoBase;
   }
 
   const expoRange = (kvValue(argv, ['--expo-dev-port-range']) ?? '').trim();
   if (expoRange) {
-    overrides.HAPPY_STACKS_EXPO_DEV_PORT_RANGE = expoRange;
+    overrides.HAPPIER_STACK_EXPO_DEV_PORT_RANGE = expoRange;
   }
 
   const expoForced = (kvValue(argv, ['--expo-dev-port']) ?? '').trim();
   if (expoForced) {
-    overrides.HAPPY_STACKS_EXPO_DEV_PORT = expoForced;
+    overrides.HAPPIER_STACK_EXPO_DEV_PORT = expoForced;
   }
 
   return Object.keys(overrides).length ? overrides : null;
@@ -152,15 +148,25 @@ async function main() {
 
   // Determine a stable base stack name from PR inputs (used for sandbox discovery),
   // and a per-run unique stack name by default (prevents browser storage collisions across deleted sandboxes).
-  const prHappy = (kvValue(argv, ['--happy']) ?? '').trim();
-  const prCli = (kvValue(argv, ['--happy-cli']) ?? '').trim();
-  const prServer = (kvValue(argv, ['--happy-server']) ?? '').trim();
-  const prServerLight = (kvValue(argv, ['--happy-server-light']) ?? '').trim();
+  const prRepo = (kvValue(argv, ['--repo', '--pr']) ?? '').trim();
+  const legacyHappy = (kvValue(argv, ['--happy']) ?? '').trim();
+  if (legacyHappy) {
+    throw new Error('[review-pr] use --repo=<pr-url|number> (the old --happy flag has been removed)');
+  }
+  if (!prRepo) {
+    throw new Error('[review-pr] missing PR input. Provide --repo=<pr-url|number>.');
+  }
+  for (const legacy of ['--happy-cli', '--happy-server', '--happy-server-light']) {
+    const v = (kvValue(argv, [legacy]) ?? '').trim();
+    if (v) {
+      throw new Error(`[review-pr] legacy split-repo flag is not supported anymore: ${legacy}\nFix: use --repo=<pr-url|number>`);
+    }
+  }
   const explicitName = (kvValue(argv, ['--name']) ?? '').trim();
 
   const baseStackName = explicitName
     ? sanitizeStackName(explicitName, { fallback: 'pr', maxLen: 64 })
-    : inferPrStackBaseName({ happy: prHappy, happyCli: prCli, server: prServer, serverLight: prServerLight, fallback: 'pr' });
+    : inferPrStackBaseName({ happy: prRepo, happyCli: '', server: '', serverLight: '', fallback: 'pr' });
 
   const shouldAutoSuffix = !explicitName;
   const uniqueSuffix = randomToken(4); // short, URL-safe-ish
@@ -176,23 +182,23 @@ async function main() {
     const intro = [
       '',
       '',
-      bold(`✨ ${cyan('Happy Stacks')} review-pr ✨`),
+      bold(`✨ ${cyan('Hapsta')} review-pr ✨`),
       '',
-      'It will help you review a PR for Happy in a completely isolated environment.',
-      dim('Uses `happy-server-light` (no Redis, no Postgres, no Docker).'),
+      'It will help you review a PR for Happier in a completely isolated environment.',
+      dim('Uses the light server flavor by default (no Redis, no Postgres, no Docker).'),
       dim('Desktop browser + optional mobile review (Expo dev-client).'),
       '',
       bold('What will happen:'),
-      `- ${cyan('sandbox')}: temporary isolated Happy install`,
-      `- ${cyan('components')}: clone/install (inside the sandbox only)`,
-      `- ${cyan('start')}: start the Happy stack in sandbox (server, daemon, web, mobile)`,
-      `- ${cyan('login')}: guide you through Happy login for this sandbox`,
-      `- ${cyan('browser')}: open the Happy web app`,
+      `- ${cyan('sandbox')}: temporary isolated Happier install`,
+      `- ${cyan('repos')}: clone/install (inside the sandbox only)`,
+      `- ${cyan('start')}: start the Happier stack in sandbox (server, daemon, web, mobile)`,
+      `- ${cyan('login')}: guide you through Happier login for this sandbox`,
+      `- ${cyan('browser')}: open the Happier web app`,
       `- ${cyan('mobile')}: start Expo dev-client (optional)`,
       `- ${cyan('cleanup')}: stop processes + delete sandbox on exit`,
       '',
       dim('Everything is deleted automatically when you exit.'),
-      dim('Your main Happy installation remains untouched.'),
+      dim('Your main Happier installation remains untouched.'),
       '',
       dim('Tips:'),
       dim('- Add `-v` / `-vv` / `-vvv` to show the full logs'),
@@ -256,7 +262,7 @@ async function main() {
       : newStackName;
  
   // Safety marker to ensure we only delete what we created.
-  const markerPath = join(sandboxDir, '.happy-stacks-sandbox-marker');
+  const markerPath = join(sandboxDir, '.happier-stack-sandbox-marker');
   // Always ensure the marker exists for safety; write meta only for new sandboxes.
   try {
     if (!existsSync(markerPath)) {
@@ -273,7 +279,7 @@ async function main() {
     }
   }
  
-  const bin = join(rootDir, 'bin', 'happys.mjs');
+  const bin = join(rootDir, 'bin', 'hapsta.mjs');
  
   let child = null;
   let gotSignal = null;
@@ -394,7 +400,7 @@ async function main() {
           // eslint-disable-next-line no-console
           console.warn(`[review-pr] tip: inspect stack wiring with:`);
           // eslint-disable-next-line no-console
-          console.warn(`  npx happy-stacks --sandbox-dir "${sandboxDir}" stack info ${effectiveStackName}`);
+          console.warn(`  npx --yes -p @happier-dev/stack hapsta --sandbox-dir "${sandboxDir}" stack info ${effectiveStackName}`);
         }
       } else {
         await rm(markerPath, { force: false });

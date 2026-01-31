@@ -39,7 +39,7 @@ test('detectPackageManagerCmd prefers yarn when run from a Happy monorepo packag
   await writeFile(join(root, 'package.json'), '{ "name": "monorepo", "private": true }\n', 'utf-8');
   await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
 
-  // Ensure we don't accidentally depend on `pnpm` being present.
+  // Ensure we don't accidentally depend on a specific package-manager binary being present.
   await withEnv({ PATH: '/usr/bin:/bin' }, async () => {
     const pm = await detectPackageManagerCmd(join(root, 'packages', 'server'));
     assert.equal(pm.name, 'yarn');

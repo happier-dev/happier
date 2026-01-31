@@ -6,7 +6,7 @@ export function expandHome(p) {
 }
 
 export function getCanonicalHomeDirFromEnv(env = process.env) {
-  const fromEnv = (env.HAPPY_STACKS_CANONICAL_HOME_DIR ?? '').trim();
+  const fromEnv = (env.HAPPIER_STACK_CANONICAL_HOME_DIR ?? '').trim();
   return fromEnv ? expandHome(fromEnv) : join(homedir(), '.happier-stack');
 }
 

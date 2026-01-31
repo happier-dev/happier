@@ -1,6 +1,6 @@
-## Edison in `happy-local` (Happy Stacks)
+## Edison in Hapsta
 
-This doc explains **what Edison is**, **how it works**, and **how we use it in Happy Stacks** to reliably manage feature work across multiple Happy components (`happy`, `happy-cli`, `happy-server-light`, `happy-server`) while enforcing **stacks + worktrees** discipline.
+This doc explains **what Edison is**, **how it works**, and **how we use it in Hapsta** to reliably manage feature work across multiple Happier services/packages while enforcing **stacks + worktrees** discipline.
 
 This is intended to be handed to **any human or LLM** and be sufficient to work correctly in this repo.
 
@@ -10,15 +10,15 @@ This is intended to be handed to **any human or LLM** and be sufficient to work 
 
 **Edison is a task + QA + evidence + validation workflow layer** that standardizes how work is planned, executed, and verified, with generated role prompts (agents/validators/orchestrator) and trusted evidence capture.
 
-In `happy-local`, Edison is **integrated** but **not responsible for isolation**; isolation is provided by **Happy Stacks** (component worktrees + stacks).
+Edison is **integrated** but **not responsible for isolation**; isolation is provided by **Hapsta** (worktrees + stacks).
 
 ---
 
 ## Big picture: what provides isolation here
 
-In `happy-local`:
+In this repo:
 
-- **Isolation is provided by Happy Stacks**
+- **Isolation is provided by Hapsta**
   - **Component worktrees** live under `components/.worktrees/<component>/<owner>/<branch...>`
   - **Stacks** live under `~/.happy/stacks/<stack>/...` and each stack has its own ports/db/cli-home/etc.
 - **Edison worktrees are disabled**
@@ -47,61 +47,61 @@ Think of sessions in this repo as:
   - gate completing tasks (`task done` requires a session)
   - optionally move tasks/QA into session-scoped directories under `.project/sessions/...`
 - **Sessions do not**:
-  - create/manage git worktrees (Happy Stacks handles worktrees)
+- create/manage git worktrees (Hapsta handles worktrees)
   - persist “current session” via `.project/.session-id` (Edison only writes that inside a git worktree)
     - Outside worktrees, prefer passing `--session <id>` or setting `AGENTS_SESSION=<id>` for your shell.
 
 ### Commands that require a session vs not
 
 - **Requires a session**:
-  - `happys edison -- task claim <task-id> --session <session-id>`
-  - `happys edison -- task done <task-id> --session <session-id>`
+  - `hapsta edison -- task claim <task-id> --session <session-id>`
+  - `hapsta edison -- task done <task-id> --session <session-id>`
 - **Does NOT require a session**:
-  - Evidence capture: `happys edison --stack=<stack> -- evidence capture <task-id>`
-  - Validation: `happys edison --stack=<stack> -- qa validate <task-id> --execute`
+  - Evidence capture: `hapsta edison --stack=<stack> -- evidence capture <task-id>`
+  - Validation: `hapsta edison --stack=<stack> -- qa validate <task-id> --execute`
 
 ### Recommended flow (implementation)
 
 Use sessions for ownership, and Happy Stacks for isolation:
 
 - Create a session (no worktree will be created in this repo):
-  - `happys edison -- session create --id <session-id>`
-- Claim **component** tasks into that session:
-  - `happys edison -- task claim <task-id> --session <session-id>`
+  - `hapsta edison -- session create --id <session-id>`
+- Claim tasks into that session:
+  - `hapsta edison -- task claim <task-id> --session <session-id>`
 - Implement only in the stack’s pinned component worktrees.
 - Mark done when finished:
-  - `happys edison -- task done <task-id> --session <session-id>`
+  - `hapsta edison -- task done <task-id> --session <session-id>`
 
 ### Recommended flow (validation-only)
 
 If you’re only validating existing tasks, you generally **do not need to create a session**:
 
-- `happys edison --stack=<stack> -- evidence capture <task-id>`
-- `happys edison --stack=<stack> -- qa validate <task-id> --execute`
+- `hapsta edison --stack=<stack> -- evidence capture <task-id>`
+- `hapsta edison --stack=<stack> -- qa validate <task-id> --execute`
 
 Note: a **parent task is not a session**. Parent tasks are planning umbrellas; sessions are for “who is working on what right now” and guarded claim/done transitions.
 
 ---
 
-## The one correct entrypoint: `happys edison`
+## The one correct entrypoint: `hapsta edison`
 
-**Do not run `edison ...` directly** in `happy-local`.
+**Do not run `edison ...` directly** in this repo.
 
 Use:
 
-- `happys edison -- <edison args...>`
-- `happys edison --stack=<stack> -- <edison args...>` (recommended)
+- `hapsta edison -- <edison args...>`
+- `hapsta edison --stack=<stack> -- <edison args...>` (recommended)
 
 Why this wrapper is mandatory:
 
-- **Stack-scoped execution**: exports `HAPPY_STACKS_STACK` + loads the stack env file
+- **Stack-scoped execution**: exports `HAPPIER_STACK_STACK` + loads the stack env file
 - **Multi-repo evidence fingerprinting**: evidence is keyed off the actual component repos the stack points at
-- **Fail-closed guardrails**: happy-stacks guards require the right stack + task metadata
+- **Fail-closed guardrails**: hapsta guards require the right stack + task metadata
 - **Convenience**: **stack auto-inference** from task/QA frontmatter when a task/QA id is present
 
 Reference:
 
-- `.edison/guidelines/agents/HAPPY_STACKS_EDISON_WRAPPER.md`
+- `.edison/guidelines/agents/HAPPIER_STACK_EDISON_WRAPPER.md`
 
 ---
 
@@ -153,13 +153,13 @@ This is enforced by happy-stacks guards:
 
 Use:
 
-- `happys edison -- read START_PLAN_FEATURE --type start`
+- `hapsta edison -- read START_PLAN_FEATURE --type start`
 
 ### 2) Create a parent task
 
 Create the task, then fill mandatory frontmatter:
 
-- `happys edison -- task new --id <id> --slug <slug>`
+- `hapsta edison -- task new --id <id> --slug <slug>`
 
 Edit the created task file to set:
 
@@ -170,7 +170,7 @@ Edit the created task file to set:
 
 Use:
 
-- `happys edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes`
+- `hapsta edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes`
 
 This will (idempotently):
 
@@ -187,18 +187,18 @@ This will (idempotently):
 
 - Work only inside `components/.worktrees/...`
 - Run validation/evidence **stack-scoped**
-- Use `happys` commands (not raw `pnpm/yarn/expo/docker`)
+- Use `hapsta` commands (not raw `yarn/expo/docker`)
 
 ### Evidence capture (trusted runner)
 
 Evidence must be captured via Edison (snapshot-based, fingerprinted):
 
-- `happys edison --stack=<stack> -- evidence capture <task-id>`
+- `hapsta edison --stack=<stack> -- evidence capture <task-id>`
 
 For reviewing evidence, prefer the CLI (it is staleness-aware):
 
-- `happys edison --stack=<stack> -- evidence status <task-id> --preset <preset>`
-- `happys edison --stack=<stack> -- evidence show <task-id> --command <ci-command>`
+- `hapsta edison --stack=<stack> -- evidence status <task-id> --preset <preset>`
+- `hapsta edison --stack=<stack> -- evidence show <task-id> --command <ci-command>`
 
 Evidence commands are configured in:
 
@@ -206,10 +206,10 @@ Evidence commands are configured in:
 
 They call stack-scoped commands like:
 
-- `happys stack typecheck <stack> [components...]`
-- `happys stack lint <stack> [components...]`
-- `happys stack build <stack>`
-- `happys stack test <stack> [components...]`
+- `hapsta stack typecheck <stack> [components...]`
+- `hapsta stack lint <stack> [components...]`
+- `hapsta stack build <stack>`
+- `hapsta stack test <stack> [components...]`
 
 ### Validation presets (project policy)
 
@@ -231,16 +231,16 @@ Presets:
 
 - CodeRabbit runs as **command evidence** (`command-coderabbit.txt`), not as an Edison validator.
 - It is **mandatory for execute-mode task validation**:
-  - `happys edison --stack=<stack> -- qa validate <task-id> --execute --preset standard-validate`
+  - `hapsta edison --stack=<stack> -- qa validate <task-id> --execute --preset standard-validate`
 - It **does not run automatically**. When preflight reports it missing, capture it explicitly:
 
 ```bash
-happys edison --stack=<stack> -- evidence capture <task-id> --preset standard-validate --only coderabbit
+hapsta edison --stack=<stack> -- evidence capture <task-id> --preset standard-validate --only coderabbit
 ```
 
 Note: `qa run` (single-validator execution) also enforces validation-only evidence in happy-local:
 
-- `happys edison --stack=<stack> -- qa run <validator> <task-id>`
+- `hapsta edison --stack=<stack> -- qa run <validator> <task-id>`
 - If required evidence (including CodeRabbit for the `*-validate` presets) is missing, the wrapper will refuse and tell you exactly which `evidence capture` command to run.
 
 Track drift review is intentionally fast:
@@ -285,23 +285,23 @@ Important behavior:
 
 Start with:
 
-- `happys edison -- read START_VALIDATE_TASK --type start`
+- `hapsta edison -- read START_VALIDATE_TASK --type start`
 
 Common commands:
 
 - **Show task / QA**:
-  - `happys edison -- task show <task-id>`
-  - `happys edison -- qa show <qa-id>`
+  - `hapsta edison -- task show <task-id>`
+  - `hapsta edison -- qa show <qa-id>`
 - **Evidence status**:
-  - `happys edison --stack=<stack> -- evidence status <task-id>`
+  - `hapsta edison --stack=<stack> -- evidence status <task-id>`
 - **Run validators**:
-  - `happys edison --stack=<stack> -- qa validate <task-id> --execute --preset fast|standard`
+  - `hapsta edison --stack=<stack> -- qa validate <task-id> --execute --preset fast|standard`
 
 ---
 
 ## How stack auto-inference works (wrapper convenience)
 
-If you run `happys edison -- ... <task-id-or-qa-id> ...` without `--stack`,
+If you run `hapsta edison -- ... <task-id-or-qa-id> ...` without `--stack`,
 the wrapper will try to infer `stack:` from frontmatter by searching:
 
 - `.project/tasks/**`
@@ -315,18 +315,18 @@ If inference fails, prefer explicit `--stack=<stack>`.
 ## Operational commands you’ll use a lot (Happy Stacks)
 
 - **Pick worktrees**:
-  - `happys wt new ...`
-  - `happys wt pr ... --use`
-  - `happys stack wt <stack> -- use <component> <owner/branch>`
+  - `hapsta wt new ...`
+  - `hapsta wt pr ... --use`
+  - `hapsta stack wt <stack> -- use <component> <owner/branch>`
 - **Health / diagnosis**:
-  - `happys stack doctor <stack>`
+  - `hapsta stack doctor <stack>`
 - **Auth repair (non-interactive)**:
-  - `happys stack auth <stack> copy-from <seed>`
+  - `hapsta stack auth <stack> copy-from <seed>`
 
 - **Dev UI login key (agents should only consume, not create)**:
-  - `happys auth dev-key --print`
+  - `hapsta auth dev-key --print`
 - **Stop stacks (safe)**:
-  - `happys stop --except-stacks=main --yes`
+  - `hapsta stop --except-stacks=main --yes`
 
 See `AGENTS.md` for the full, canonical Happy Stacks discipline.
 
@@ -359,23 +359,23 @@ These are used by Edison when creating new task/QA markdown files:
 ## Common failure modes (and what to do)
 
 - **“Do not run `edison ...` directly”**
-  - Fix: use `happys edison -- ...` (or `--stack=<stack>`)
+  - Fix: use `hapsta edison -- ...` (or `--stack=<stack>`)
 - **Auth missing / machine not registered**
-  - Fix: `happys stack auth <stack> copy-from <seed>` (recommended seed: `dev-auth`)
+  - Fix: `hapsta stack auth <stack> copy-from <seed>` (recommended seed: `dev-auth`)
 - **Stack port collisions / foreign component paths**
-  - Fix: `happys stack audit --fix-workspace --fix-paths --fix-ports`
+  - Fix: `hapsta stack audit --fix-workspace --fix-paths --fix-ports`
 - **Browser validator can’t reach server**
   - Fix: run stack doctor, ensure you’re in the correct stack context, and re-run validation:
-    - `happys stack doctor <stack>`
-    - `happys edison --stack=<stack> -- qa validate <task-id> --execute`
+    - `hapsta stack doctor <stack>`
+    - `hapsta edison --stack=<stack> -- qa validate <task-id> --execute`
 
 ---
 
 ## Appendix: quick “start here” for an LLM
 
 1. Read repo discipline: `AGENTS.md`
-2. Start prompt: `happys edison -- read START_HAPPY_STACKS_NEW_SESSION --type start`
-3. Plan feature: `happys edison -- read START_PLAN_FEATURE --type start`
-4. Scaffold: `happys edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes`
+2. Start prompt: `hapsta edison -- read START_HAPSTA_NEW_SESSION --type start`
+3. Plan feature: `hapsta edison -- read START_PLAN_FEATURE --type start`
+4. Scaffold: `hapsta edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes`
 5. Implement only in component worktrees + validate via stack-scoped evidence:
-   - `happys edison --stack=<stack> -- evidence capture <task-id>`
+   - `hapsta edison --stack=<stack> -- evidence capture <task-id>`

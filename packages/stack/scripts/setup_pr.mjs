@@ -23,34 +23,28 @@ import { resolveMobileQrPayload } from './utils/mobile/dev_client_links.mjs';
 import { renderQrAscii } from './utils/ui/qr.mjs';
 import { inferPrStackBaseName } from './utils/stack/pr_stack_name.mjs';
 import { bold, cyan, dim, green } from './utils/ui/ansi.mjs';
-import { coerceHappyMonorepoRootFromPath, getComponentDir } from './utils/paths/paths.mjs';
 
 function pickReviewerMobileSchemeEnv(env) {
-  // For review-pr flows, reviewers typically have the standard Happy dev build on their phone,
+  // For review-pr flows, reviewers typically have the standard Happier dev build on their phone,
   // so default to the canonical `happier://` scheme unless the user explicitly configured one.
   // If the user explicitly set a review-specific override, honor it.
-  const reviewOverride = (env.HAPPY_STACKS_REVIEW_MOBILE_SCHEME ?? env.HAPPY_LOCAL_REVIEW_MOBILE_SCHEME ?? '').toString().trim();
+  const reviewOverride = (env.HAPPIER_STACK_REVIEW_MOBILE_SCHEME ?? '').toString().trim();
   if (reviewOverride) {
-    return { ...env, HAPPY_STACKS_MOBILE_SCHEME: reviewOverride, HAPPY_LOCAL_MOBILE_SCHEME: reviewOverride };
+    return { ...env, HAPPIER_STACK_MOBILE_SCHEME: reviewOverride };
   }
 
-  // In sandbox review flows, prefer the standard Happy dev build scheme even if the user's global
-  // dev-client scheme is configured for Happy Stacks.
+  // In sandbox review flows, keep things predictable and avoid relying on any global per-machine overrides.
   if (isSandboxed()) {
-    return { ...env, HAPPY_STACKS_MOBILE_SCHEME: 'happy', HAPPY_LOCAL_MOBILE_SCHEME: 'happy' };
+    return { ...env, HAPPIER_STACK_MOBILE_SCHEME: 'happier' };
   }
 
   // Non-sandbox: keep existing behavior unless nothing is configured at all.
   const explicit =
-    (env.HAPPY_STACKS_MOBILE_SCHEME ??
-      env.HAPPY_LOCAL_MOBILE_SCHEME ??
-      env.HAPPY_STACKS_DEV_CLIENT_SCHEME ??
-      env.HAPPY_LOCAL_DEV_CLIENT_SCHEME ??
-      '')
+    (env.HAPPIER_STACK_MOBILE_SCHEME ?? env.HAPPIER_STACK_DEV_CLIENT_SCHEME ?? '')
       .toString()
       .trim();
   if (explicit) return env;
-  return { ...env, HAPPY_STACKS_MOBILE_SCHEME: 'happy', HAPPY_LOCAL_MOBILE_SCHEME: 'happy' };
+  return { ...env, HAPPIER_STACK_MOBILE_SCHEME: 'happier' };
 }
 
 async function printReviewerStackSummary({ rootDir, stackName, env, wantsMobile }) {
@@ -185,9 +179,9 @@ function detectBestAuthSource() {
 }
 
 function detectLinkDefault() {
-  const rawLink = (process.env.HAPPY_STACKS_AUTH_LINK ?? process.env.HAPPY_LOCAL_AUTH_LINK ?? '').toString().trim();
+  const rawLink = (process.env.HAPPIER_STACK_AUTH_LINK ?? '').toString().trim();
   if (rawLink) return rawLink !== '0';
-  const rawMode = (process.env.HAPPY_STACKS_AUTH_MODE ?? process.env.HAPPY_LOCAL_AUTH_MODE ?? '').toString().trim().toLowerCase();
+  const rawMode = (process.env.HAPPIER_STACK_AUTH_MODE ?? '').toString().trim().toLowerCase();
   if (rawMode) return rawMode === 'link';
   // Default for setup-pr: prefer reuse/symlink to avoid stale creds and reduce re-login friction.
   return true;
@@ -215,17 +209,16 @@ async function main() {
       json,
       data: {
         usage:
-          'happys setup-pr --happy=<pr-url|number> [--happy-server-light=<pr-url|number>] [--name=<stack>] [--dev|--start] [--mobile] [--deps=none|link|install|link-or-install] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--json] [-- <stack dev/start args...>]',
+          'hapsta tools setup-pr --repo=<pr-url|number> [--name=<stack>] [--server-flavor=light|full] [--dev|--start] [--mobile] [--deps=none|link|install|link-or-install] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--json] [-- <stack dev/start args...>]',
       },
       text: [
         '[setup-pr] usage:',
-        '  happys setup-pr --happy=<pr-url|number> [--dev]',
-        '  happys setup pr --happy=<pr-url|number> [--dev]   # alias',
+        '  hapsta tools setup-pr --repo=<pr-url|number> [--dev]',
         '',
         'What it does (idempotent):',
-        '- ensures happy-stacks home exists (init)',
-        '- bootstraps/clones missing components (upstream by default)',
-        '- creates or reuses a PR stack and checks out PR worktrees',
+        '- ensures hapsta home exists (init)',
+        '- bootstraps/clones missing repos (upstream by default)',
+        '- creates or reuses a PR stack and checks out the PR worktree',
         '- optionally seeds auth (best available source: dev-auth → main)',
         '- starts the stack (dev by default)',
         '',
@@ -234,13 +227,9 @@ async function main() {
         '- if the PR was force-pushed, add --force',
         '',
         'example:',
-        '  happys setup-pr \\',
-        '    --happy=https://github.com/slopus/happy/pull/123 \\',
+        '  hapsta tools setup-pr \\',
+        '    --repo=https://github.com/happier-dev/happier/pull/123 \\',
         '    --dev',
-        '',
-        'legacy note:',
-        '  In the pre-monorepo split-repo era, happy-cli/happy-server had separate PRs.',
-        '  In monorepo mode, use --happy only (it covers UI + CLI + server).',
       ].join('\n'),
     });
     return;
@@ -248,24 +237,19 @@ async function main() {
 
   await assertCliPrereqs({ git: true, yarn: true });
 
-  const prHappy = (kv.get('--happy') ?? '').trim();
-  const prCli = (kv.get('--happy-cli') ?? '').trim();
-  const prServer = (kv.get('--happy-server') ?? '').trim();
-  const prServerLight = (kv.get('--happy-server-light') ?? '').trim();
-  if (!prHappy && !prCli && !prServer && !prServerLight) {
-    throw new Error('[setup-pr] missing PR inputs. Provide at least one of: --happy, --happy-cli, --happy-server, --happy-server-light');
+  const prRepo = (kv.get('--repo') ?? kv.get('--pr') ?? '').trim();
+  const legacyHappy = (kv.get('--happy') ?? '').trim();
+  if (legacyHappy) {
+    throw new Error('[setup-pr] use --repo=<pr-url|number> (the old --happy flag has been removed)');
   }
-  if (prServer && prServerLight) {
-    throw new Error('[setup-pr] cannot specify both --happy-server and --happy-server-light');
+  if (!prRepo) {
+    throw new Error('[setup-pr] missing PR input. Provide --repo=<pr-url|number>.');
   }
-
-  const happyMonorepoActive = Boolean(coerceHappyMonorepoRootFromPath(getComponentDir(rootDir, 'happy', process.env)));
-  if (happyMonorepoActive && (prCli || prServer)) {
-    throw new Error(
-      '[setup-pr] this workspace uses the slopus/happy monorepo.\n' +
-        'Fix: use --happy=<pr> only (it covers UI + CLI + server).\n' +
-        'Note: --happy-cli/--happy-server are legacy flags for the pre-monorepo split repos.'
-    );
+  for (const legacy of ['--happy-cli', '--happy-server', '--happy-server-light']) {
+    const v = (kv.get(legacy) ?? '').trim();
+    if (v) {
+      throw new Error(`[setup-pr] legacy split-repo flag is not supported anymore: ${legacy}\nFix: use --repo=<pr-url|number>`);
+    }
   }
 
   const wantsDev = flags.has('--dev') || (!flags.has('--start') && !flags.has('--prod'));
@@ -284,11 +268,18 @@ async function main() {
   const stackNameRaw = (kv.get('--name') ?? '').trim();
   const stackName = stackNameRaw
     ? sanitizeStackName(stackNameRaw)
-    : inferPrStackBaseName({ happy: prHappy, happyCli: prCli, server: prServer, serverLight: prServerLight, fallback: 'pr' });
+    : inferPrStackBaseName({ happy: prRepo, happyCli: '', server: '', serverLight: '', fallback: 'pr' });
 
   // Determine server flavor for bootstrap and stack creation.
-  const serverComponent = (kv.get('--server') ?? '').trim() || (prServer ? 'happy-server' : 'happy-server-light');
-  const bootstrapServer = prServer || serverComponent === 'happy-server' ? 'both' : 'happy-server-light';
+  const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
+  const serverFromArg = (kv.get('--server') ?? '').trim();
+  const serverComponent =
+    serverFlavorFromArg === 'full'
+      ? 'happy-server'
+      : serverFlavorFromArg === 'light'
+        ? 'happy-server-light'
+        : serverFromArg || 'happy-server-light';
+  const bootstrapServer = serverComponent === 'happy-server' ? 'both' : 'happy-server-light';
 
   // Auth defaults (avoid prompts; setup-pr should be low-friction).
   // Note: these may be updated below (sandbox prompt), so keep them mutable.
@@ -326,7 +317,7 @@ async function main() {
     throw new Error(
       '[setup-pr] auth seeding is disabled in sandbox mode.\n' +
         'Reason: it reuses global machine state (other stacks) and breaks sandbox isolation.\n' +
-        'Use guided login instead, or set: HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1'
+        'Use guided login instead, or set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
     );
   }
 
@@ -368,8 +359,7 @@ async function main() {
         ...process.env,
         // Hint to the dev runner that it should start the Expo web UI early (before daemon auth),
         // so guided login can open the correct UI origin (not the server port).
-        HAPPY_STACKS_AUTH_FLOW: '1',
-        HAPPY_LOCAL_AUTH_FLOW: '1',
+        HAPPIER_STACK_AUTH_FLOW: '1',
       }
     : process.env;
   if (wantsMobile) {
@@ -380,12 +370,12 @@ async function main() {
   // 1) Ensure happy-stacks home is initialized (idempotent).
   // 2) Bootstrap component repos and deps (idempotent; clones only if missing).
   if (quietUi) {
-    const baseLogDir = join(process.env.HAPPY_STACKS_HOME_DIR ?? join(homedir(), '.happy-stacks'), 'logs', 'setup-pr');
+    const baseLogDir = join(process.env.HAPPIER_STACK_HOME_DIR ?? join(homedir(), '.happier-stack'), 'logs', 'setup-pr');
     const initLog = join(baseLogDir, `init.${Date.now()}.log`);
     const installLog = join(baseLogDir, `install.${Date.now()}.log`);
     try {
       await runCommandLogged({
-        label: `init happy-stacks home${isSandboxed() ? ' (sandbox)' : ''}`,
+        label: `init hapsta home${isSandboxed() ? ' (sandbox)' : ''}`,
         cmd: process.execPath,
         args: [join(rootDir, 'scripts', 'init.mjs'), '--no-bootstrap'],
         cwd: rootDir,
@@ -405,10 +395,6 @@ async function main() {
           ...(wantsDev ? ['--no-ui-build'] : []),
           // Sandbox dev: avoid wasting time installing base deps we won't run directly.
           ...(isSandboxed() && wantsDev ? ['--no-ui-deps'] : []),
-          // If the caller provided a happy-cli PR, the PR stack is guaranteed (fail-closed) to pin
-          // HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI to that worktree before starting dev, so building the
-          // base checkout is wasted work.
-          ...(isSandboxed() && wantsDev && prCli ? ['--no-cli-deps', '--no-cli-build'] : []),
         ],
         cwd: rootDir,
         env: process.env,
@@ -442,7 +428,6 @@ async function main() {
         `--server=${bootstrapServer}`,
         ...(wantsDev ? ['--no-ui-build'] : []),
         ...(isSandboxed() && wantsDev ? ['--no-ui-deps'] : []),
-        ...(isSandboxed() && wantsDev && prCli ? ['--no-cli-deps', '--no-cli-build'] : []),
       ],
     });
   }
@@ -459,10 +444,7 @@ async function main() {
   const stackArgs = [
     'pr',
     stackName,
-    ...(prHappy ? [`--happy=${prHappy}`] : []),
-    ...(prCli ? [`--happy-cli=${prCli}`] : []),
-    ...(prServer ? [`--happy-server=${prServer}`] : []),
-    ...(prServerLight ? [`--happy-server-light=${prServerLight}`] : []),
+    `--repo=${prRepo}`,
     `--server=${serverComponent}`,
     '--reuse',
     ...(depsMode ? [`--deps=${depsMode}`] : []),
@@ -480,14 +462,14 @@ async function main() {
     stackArgs.push('--', ...forwardedEffective);
   }
   if (quietUi) {
-    const baseLogDir = join(process.env.HAPPY_STACKS_HOME_DIR ?? join(homedir(), '.happy-stacks'), 'logs', 'setup-pr');
+    const baseLogDir = join(process.env.HAPPIER_STACK_HOME_DIR ?? join(homedir(), '.happier-stack'), 'logs', 'setup-pr');
     const stackLog = join(baseLogDir, `stack-pr.${Date.now()}.log`);
     await runCommandLogged({
       label: `start PR stack${isSandboxed() ? ' (sandbox)' : ''}`,
       cmd: process.execPath,
       args: [join(rootDir, 'scripts', 'stack.mjs'), ...stackArgs],
       cwd: rootDir,
-        env: stackStartEnv,
+      env: stackStartEnv,
       logPath: stackLog,
       quiet: true,
       showSteps: true,
@@ -577,7 +559,7 @@ async function main() {
         await guidedStackAuthLoginNow({
           rootDir,
           stackName,
-          env: { ...stackStartEnv, HAPPY_STACKS_AUTH_SKIP_BUNDLE_CHECK: '1', HAPPY_LOCAL_AUTH_SKIP_BUNDLE_CHECK: '1' },
+          env: { ...stackStartEnv, HAPPIER_STACK_AUTH_SKIP_BUNDLE_CHECK: '1' },
           webappUrl,
         });
       } finally {
@@ -610,12 +592,12 @@ async function main() {
         const mergedEnv = { ...process.env, ...stackEnv };
 
         const cliHomeDir =
-          (mergedEnv.HAPPY_STACKS_CLI_HOME_DIR ?? mergedEnv.HAPPY_LOCAL_CLI_HOME_DIR ?? '').toString().trim() ||
+          (mergedEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim() ||
           join(baseDir, 'cli');
         const cliDir =
-          (mergedEnv.HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI ?? mergedEnv.HAPPY_LOCAL_COMPONENT_DIR_HAPPY_CLI ?? '').toString().trim();
+          (mergedEnv.HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI ?? '').toString().trim();
         if (!cliDir) {
-          throw new Error('[setup-pr] post-auth daemon start failed: HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI is not set');
+          throw new Error('[setup-pr] post-auth daemon start failed: HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI is not set');
         }
         const cliBin = join(cliDir, 'bin', 'happy.mjs');
 

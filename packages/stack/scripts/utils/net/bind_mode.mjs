@@ -18,26 +18,22 @@ export function resolveBindModeFromArgs({ flags, kv }) {
  * - loopback: prefer localhost-only origins/advertising (best for port-forwarded / isolated environments)
  * - lan: prefer LAN origins/advertising (best for phones on the same network)
  *
- * This currently controls Expo's `--host` via HAPPY_STACKS_EXPO_HOST.
+ * This currently controls Expo's `--host` via HAPPIER_STACK_EXPO_HOST.
  * Other services may optionally honor HOST=127.0.0.1 when loopback is selected.
  */
 export function applyBindModeToEnv(env, mode) {
   const m = normalizeBindMode(mode);
   if (!m) return env;
 
-  env.HAPPY_STACKS_BIND_MODE = m;
-  env.HAPPY_LOCAL_BIND_MODE = m;
+  env.HAPPIER_STACK_BIND_MODE = m;
 
   if (m === 'loopback') {
-    env.HAPPY_STACKS_EXPO_HOST = 'localhost';
-    env.HAPPY_LOCAL_EXPO_HOST = 'localhost';
+    env.HAPPIER_STACK_EXPO_HOST = 'localhost';
     // Best-effort: some servers honor HOST.
     env.HOST = '127.0.0.1';
   } else if (m === 'lan') {
-    env.HAPPY_STACKS_EXPO_HOST = 'lan';
-    env.HAPPY_LOCAL_EXPO_HOST = 'lan';
+    env.HAPPIER_STACK_EXPO_HOST = 'lan';
   }
 
   return env;
 }
-

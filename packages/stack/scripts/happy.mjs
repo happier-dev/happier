@@ -19,7 +19,7 @@ async function main() {
       data: { passthrough: true },
       text: [
         '[happy] usage:',
-        '  happys happy <happy-cli args...>',
+        '  hapsta happy <happy-cli args...>',
         '',
         'notes:',
         '  - This runs the `happy-cli` component from your configured workspace/components.',
@@ -32,7 +32,7 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
 
   const stackName =
-    (process.env.HAPPY_STACKS_STACK ?? process.env.HAPPY_LOCAL_STACK ?? '').toString().trim() || getStackName();
+    (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName();
   const serverPort = resolveServerPortFromEnv({ env: process.env, defaultPort: 3005 });
 
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
@@ -44,7 +44,7 @@ async function main() {
   const entrypoint = join(cliDir, 'dist', 'index.mjs');
   if (!existsSync(entrypoint)) {
     console.error(`[happy] missing happy-cli build at: ${entrypoint}`);
-    console.error('Run: happys bootstrap');
+    console.error('Run: hapsta bootstrap');
     process.exit(1);
   }
 

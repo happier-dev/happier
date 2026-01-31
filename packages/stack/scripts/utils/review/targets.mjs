@@ -2,8 +2,8 @@ import { getComponentsDir, getComponentDir } from '../paths/paths.mjs';
 import { join } from 'node:path';
 
 export function isStackMode(env = process.env) {
-  const stack = String(env.HAPPY_STACKS_STACK ?? '').trim();
-  const envFile = String(env.HAPPY_STACKS_ENV_FILE ?? '').trim();
+  const stack = String(env.HAPPIER_STACK_STACK ?? '').trim();
+  const envFile = String(env.HAPPIER_STACK_ENV_FILE ?? '').trim();
   return Boolean(stack && envFile);
 }
 

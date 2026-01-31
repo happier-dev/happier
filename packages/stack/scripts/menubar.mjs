@@ -42,15 +42,15 @@ function openSwiftbarPluginsDir() {
 }
 
 function sandboxPluginBasename() {
-  const sandboxDir = (process.env.HAPPY_STACKS_SANDBOX_DIR ?? '').trim();
+  const sandboxDir = (process.env.HAPPIER_STACK_SANDBOX_DIR ?? '').trim();
   if (!sandboxDir) return '';
   const hash = createHash('sha256').update(sandboxDir).digest('hex').slice(0, 10);
-  return `happy-stacks.sandbox-${hash}`;
+  return `hapsta.sandbox-${hash}`;
 }
 
 function removeSwiftbarPlugins({ patterns }) {
   const pats = (patterns ?? []).filter(Boolean);
-  const args = pats.length ? pats.map((p) => `"${p}"`).join(' ') : '"happy-stacks.*.sh" "happy-local.*.sh"';
+  const args = pats.length ? pats.map((p) => `"${p}"`).join(' ') : '"hapsta.*.sh" "happier-stack.*.sh"';
   const s =
     `DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)"; ` +
     `if [[ -z "$DIR" ]]; then DIR="$HOME/Library/Application Support/SwiftBar/Plugins"; fi; ` +
@@ -78,16 +78,16 @@ async function main() {
         banner('menubar', { subtitle: 'SwiftBar menu bar plugin (macOS).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('happys menubar')} install [--json]`,
-        `  ${cyan('happys menubar')} uninstall [--json]`,
-        `  ${cyan('happys menubar')} open [--json]`,
-        `  ${cyan('happys menubar')} mode <selfhost|dev> [--json]`,
-        `  ${cyan('happys menubar')} status [--json]`,
+        `  ${cyan('hapsta menubar')} install [--json]`,
+        `  ${cyan('hapsta menubar')} uninstall [--json]`,
+        `  ${cyan('hapsta menubar')} open [--json]`,
+        `  ${cyan('hapsta menubar')} mode <selfhost|dev> [--json]`,
+        `  ${cyan('hapsta menubar')} status [--json]`,
         '',
         sectionTitle('notes:'),
         `- ${dim('Installs the SwiftBar plugin into the active SwiftBar plugin folder')}`,
         `- ${dim('Keeps plugin source under <homeDir>/extras/swiftbar for stability')}`,
-        `- ${dim('Sandbox mode: install/uninstall are disabled by default (set HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1 to override)')}`,
+        `- ${dim('Sandbox mode: install/uninstall are disabled by default (set HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1 to override)')}`,
       ].join('\n'),
     });
     return;
@@ -111,14 +111,14 @@ async function main() {
     }
     const patterns = isSandboxed()
       ? [`${sandboxPluginBasename()}.*.sh`]
-      : ['happy-stacks.*.sh', 'happy-local.*.sh'];
+      : ['hapsta.*.sh', 'happier-stack.*.sh'];
     const dir = removeSwiftbarPlugins({ patterns });
     printResult({ json, data: { ok: true, pluginsDir: dir }, text: dir ? `[menubar] removed plugins from ${dir}` : '[menubar] no plugins dir found' });
     return;
   }
 
   if (cmd === 'status') {
-    const mode = (process.env.HAPPY_STACKS_MENUBAR_MODE ?? process.env.HAPPY_LOCAL_MENUBAR_MODE ?? 'dev').trim() || 'dev';
+    const mode = (process.env.HAPPIER_STACK_MENUBAR_MODE ?? 'dev').trim() || 'dev';
     const swift = await detectSwiftbarPluginInstalled();
     printResult({
       json,
@@ -138,13 +138,12 @@ async function main() {
     const raw = positionals[1] ?? '';
     const mode = normalizeProfile(raw);
     if (!mode) {
-      throw new Error('[menubar] usage: happys menubar mode <selfhost|dev> [--json]');
+      throw new Error('[menubar] usage: hapsta menubar mode <selfhost|dev> [--json]');
     }
     await ensureEnvLocalUpdated({
       rootDir: cliRootDir,
       updates: [
-        { key: 'HAPPY_STACKS_MENUBAR_MODE', value: mode },
-        { key: 'HAPPY_LOCAL_MENUBAR_MODE', value: mode },
+        { key: 'HAPPIER_STACK_MENUBAR_MODE', value: mode },
       ],
     });
     printResult({ json, data: { ok: true, mode }, text: `[menubar] mode set: ${mode}` });
@@ -156,18 +155,18 @@ async function main() {
       throw new Error(
         '[menubar] install is disabled in sandbox mode.\n' +
           'Reason: SwiftBar plugin installation writes to a global user folder.\n' +
-          'If you really want this, set: HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1'
+          'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
       );
     }
     const { destDir } = await ensureSwiftbarAssets({ cliRootDir });
     const installer = join(destDir, 'install.sh');
     const env = {
       ...process.env,
-      HAPPY_STACKS_HOME_DIR: getHappyStacksHomeDir(),
+      HAPPIER_STACK_HOME_DIR: getHappyStacksHomeDir(),
       ...(isSandboxed()
         ? {
-            HAPPY_STACKS_SWIFTBAR_PLUGIN_BASENAME: sandboxPluginBasename(),
-            HAPPY_STACKS_SWIFTBAR_PLUGIN_WRAPPER: '1',
+            HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME: sandboxPluginBasename(),
+            HAPPIER_STACK_SWIFTBAR_PLUGIN_WRAPPER: '1',
           }
         : {}),
     };

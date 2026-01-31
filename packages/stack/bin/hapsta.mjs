@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { commandHelpArgs, renderHappysRootHelp, resolveHappysCommand } from '../scripts/utils/cli/cli_registry.mjs';
+import { commandHelpArgs, renderHapstaRootHelp, resolveHapstaCommand } from '../scripts/utils/cli/cli_registry.mjs';
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/paths/canonical_home.mjs';
 import { resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
 
@@ -38,30 +38,30 @@ function dotenvGetQuick(envPath, key) {
 
 function resolveCliRootDir() {
   const fromEnv = (
-    process.env.HAPPY_STACKS_CLI_ROOT_DIR ??
-    process.env.HAPPY_STACKS_DEV_CLI_ROOT_DIR ??
+    process.env.HAPPIER_STACK_CLI_ROOT_DIR ??
+    process.env.HAPPIER_STACK_DEV_CLI_ROOT_DIR ??
     ''
   ).trim();
   if (fromEnv) return expandHome(fromEnv);
 
-  // Stable pointer file: even if the real home dir is elsewhere, `happys init` writes the pointer here.
+  // Stable pointer file: even if the real home dir is elsewhere, `hapsta init` writes the pointer here.
   const canonicalEnv = getCanonicalHomeEnvPathFromEnv(process.env);
   const v =
-    dotenvGetQuick(canonicalEnv, 'HAPPY_STACKS_CLI_ROOT_DIR') ||
-    dotenvGetQuick(canonicalEnv, 'HAPPY_STACKS_DEV_CLI_ROOT_DIR') ||
+    dotenvGetQuick(canonicalEnv, 'HAPPIER_STACK_CLI_ROOT_DIR') ||
+    dotenvGetQuick(canonicalEnv, 'HAPPIER_STACK_DEV_CLI_ROOT_DIR') ||
     '';
   return v ? expandHome(v) : '';
 }
 
 function maybeReexecToCliRoot(cliRootDir) {
-  if ((process.env.HAPPY_STACKS_CLI_REEXEC ?? process.env.HAPPY_STACKS_DEV_REEXEC ?? '') === '1') return;
-  if ((process.env.HAPPY_STACKS_CLI_ROOT_DISABLE ?? process.env.HAPPY_STACKS_DEV_CLI_DISABLE ?? '') === '1') return;
+  if ((process.env.HAPPIER_STACK_CLI_REEXEC ?? process.env.HAPPIER_STACK_DEV_REEXEC ?? '') === '1') return;
+  if ((process.env.HAPPIER_STACK_CLI_ROOT_DISABLE ?? process.env.HAPPIER_STACK_DEV_CLI_DISABLE ?? '') === '1') return;
 
   const cliRoot = resolveCliRootDir();
   if (!cliRoot) return;
   if (cliRoot === cliRootDir) return;
 
-  const cliBin = join(cliRoot, 'bin', 'happys.mjs');
+  const cliBin = join(cliRoot, 'bin', 'hapsta.mjs');
   if (!existsSync(cliBin)) return;
 
   const argv = process.argv.slice(2);
@@ -70,20 +70,20 @@ function maybeReexecToCliRoot(cliRootDir) {
     cwd: cliRoot,
     env: {
       ...process.env,
-      HAPPY_STACKS_CLI_REEXEC: '1',
-      HAPPY_STACKS_CLI_ROOT_DIR: cliRoot,
+      HAPPIER_STACK_CLI_REEXEC: '1',
+      HAPPIER_STACK_CLI_ROOT_DIR: cliRoot,
     },
   });
   process.exit(res.status ?? 1);
 }
 
 function resolveHomeDir() {
-  const fromEnv = (process.env.HAPPY_STACKS_HOME_DIR ?? '').trim();
+  const fromEnv = (process.env.HAPPIER_STACK_HOME_DIR ?? '').trim();
   if (fromEnv) return expandHome(fromEnv);
 
-  // Stable pointer file: even if the real home dir is elsewhere, `happys init` writes the pointer here.
+  // Stable pointer file: even if the real home dir is elsewhere, `hapsta init` writes the pointer here.
   const canonicalEnv = getCanonicalHomeEnvPathFromEnv(process.env);
-  const v = dotenvGetQuick(canonicalEnv, 'HAPPY_STACKS_HOME_DIR') || '';
+  const v = dotenvGetQuick(canonicalEnv, 'HAPPIER_STACK_HOME_DIR') || '';
   return v ? expandHome(v) : join(homedir(), '.happier-stack');
 }
 
@@ -112,8 +112,8 @@ function applyVerbosityIfRequested(argv) {
   // - supports -v/-vv/-vvv anywhere before/after the command
   // - supports --verbose and --verbose=N
   //
-  // We set HAPPY_STACKS_VERBOSE (0-3) and strip these args so downstream scripts don't need to support them.
-  let level = Number.isFinite(Number(process.env.HAPPY_STACKS_VERBOSE)) ? Number(process.env.HAPPY_STACKS_VERBOSE) : null;
+  // We set HAPPIER_STACK_VERBOSE (0-3) and strip these args so downstream scripts don't need to support them.
+  let level = Number.isFinite(Number(process.env.HAPPIER_STACK_VERBOSE)) ? Number(process.env.HAPPIER_STACK_VERBOSE) : null;
   let next = [];
   for (const a of argv) {
     if (a === '-v' || a === '-vv' || a === '-vvv') {
@@ -138,19 +138,19 @@ function applyVerbosityIfRequested(argv) {
     next.push(a);
   }
   if (level != null) {
-    process.env.HAPPY_STACKS_VERBOSE = String(Math.max(0, Math.min(3, Math.floor(level))));
+    process.env.HAPPIER_STACK_VERBOSE = String(Math.max(0, Math.min(3, Math.floor(level))));
   }
   return next;
 }
 
 function applySandboxDirIfRequested(argv) {
-  const explicit = (process.env.HAPPY_STACKS_SANDBOX_DIR ?? '').trim();
+  const explicit = (process.env.HAPPIER_STACK_SANDBOX_DIR ?? '').trim();
   const { value, argv: nextArgv } = stripGlobalOpt(argv, { name: '--sandbox-dir', aliases: ['--sandbox'] });
   const raw = value || explicit;
   if (!raw) return { argv: nextArgv, enabled: false };
 
   const sandboxDir = expandHome(raw);
-  const allowGlobalRaw = (process.env.HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL ?? '').trim().toLowerCase();
+  const allowGlobalRaw = (process.env.HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL ?? '').trim().toLowerCase();
   const allowGlobal = allowGlobalRaw === '1' || allowGlobalRaw === 'true' || allowGlobalRaw === 'yes' || allowGlobalRaw === 'y';
   // Keep all state under one folder that can be deleted to reset completely.
   const canonicalHomeDir = join(sandboxDir, 'canonical');
@@ -166,13 +166,13 @@ function applySandboxDirIfRequested(argv) {
   // and stack env files inside the sandbox.
   const preserved = new Map();
   const keepKeys = [
-    'HAPPY_STACKS_VERBOSE',
-    'HAPPY_STACKS_INVOKED_CWD',
-    'HAPPY_STACKS_SANDBOX_DIR',
-    'HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL',
-    'HAPPY_STACKS_UPDATE_CHECK',
-    'HAPPY_STACKS_UPDATE_CHECK_INTERVAL_MS',
-    'HAPPY_STACKS_UPDATE_NOTIFY_INTERVAL_MS',
+    'HAPPIER_STACK_VERBOSE',
+    'HAPPIER_STACK_INVOKED_CWD',
+    'HAPPIER_STACK_SANDBOX_DIR',
+    'HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL',
+    'HAPPIER_STACK_UPDATE_CHECK',
+    'HAPPIER_STACK_UPDATE_CHECK_INTERVAL_MS',
+    'HAPPIER_STACK_UPDATE_NOTIFY_INTERVAL_MS',
   ];
   for (const k of keepKeys) {
     if (process.env[k] != null && String(process.env[k]).trim() !== '') {
@@ -180,7 +180,7 @@ function applySandboxDirIfRequested(argv) {
     }
   }
   for (const k of Object.keys(process.env)) {
-    if (k.startsWith('HAPPY_STACKS_')) {
+    if (k.startsWith('HAPPIER_STACK_')) {
       delete process.env[k];
       continue;
     }
@@ -193,34 +193,34 @@ function applySandboxDirIfRequested(argv) {
     process.env[k] = v;
   }
 
-  process.env.HAPPY_STACKS_SANDBOX_DIR = sandboxDir;
-  process.env.HAPPY_STACKS_CLI_ROOT_DISABLE = '1'; // never re-exec into a user's "real" install when sandboxing
+  process.env.HAPPIER_STACK_SANDBOX_DIR = sandboxDir;
+  process.env.HAPPIER_STACK_CLI_ROOT_DISABLE = '1'; // never re-exec into a user's "real" install when sandboxing
 
   // In sandbox mode, we MUST force all state directories into the sandbox, even if the user
-  // exported HAPPY_STACKS_* in their shell. Otherwise sandbox runs can accidentally read/write
+  // exported HAPPIER_STACK_* in their shell. Otherwise sandbox runs can accidentally read/write
   // "real" machine state (breaking isolation).
-  process.env.HAPPY_STACKS_CANONICAL_HOME_DIR = canonicalHomeDir;
+  process.env.HAPPIER_STACK_CANONICAL_HOME_DIR = canonicalHomeDir;
 
-  process.env.HAPPY_STACKS_HOME_DIR = homeDir;
+  process.env.HAPPIER_STACK_HOME_DIR = homeDir;
 
-  process.env.HAPPY_STACKS_WORKSPACE_DIR = workspaceDir;
+  process.env.HAPPIER_STACK_WORKSPACE_DIR = workspaceDir;
 
-  process.env.HAPPY_STACKS_RUNTIME_DIR = runtimeDir;
+  process.env.HAPPIER_STACK_RUNTIME_DIR = runtimeDir;
 
-  process.env.HAPPY_STACKS_STORAGE_DIR = storageDir;
+  process.env.HAPPIER_STACK_STORAGE_DIR = storageDir;
 
   // Sandbox default: disallow global side effects unless explicitly opted in.
   // This keeps sandbox runs fast, deterministic, and isolated.
   if (!allowGlobal) {
     // Network-y UX (background update checks) are not useful in a temporary sandbox.
-    process.env.HAPPY_STACKS_UPDATE_CHECK = '0';
-    process.env.HAPPY_STACKS_UPDATE_CHECK_INTERVAL_MS = '0';
-    process.env.HAPPY_STACKS_UPDATE_NOTIFY_INTERVAL_MS = '0';
+    process.env.HAPPIER_STACK_UPDATE_CHECK = '0';
+    process.env.HAPPIER_STACK_UPDATE_CHECK_INTERVAL_MS = '0';
+    process.env.HAPPIER_STACK_UPDATE_NOTIFY_INTERVAL_MS = '0';
 
     // Never auto-enable or reset Tailscale Serve in sandbox.
     // (Tailscale is global machine state; sandbox runs must not touch it.)
-    process.env.HAPPY_STACKS_TAILSCALE_SERVE = '0';
-    process.env.HAPPY_STACKS_TAILSCALE_RESET_ON_EXIT = '0';
+    process.env.HAPPIER_STACK_TAILSCALE_SERVE = '0';
+    process.env.HAPPIER_STACK_TAILSCALE_RESET_ON_EXIT = '0';
   }
 
   return { argv: nextArgv, enabled: true };
@@ -231,20 +231,20 @@ function maybeAutoUpdateNotice(cliRootDir, cmd) {
   // - never run network calls in-process
   // - optionally print a notice (TTY only) if cache says an update is available
   // - periodically kick off a background check that refreshes the cache
-  const enabled = (process.env.HAPPY_STACKS_UPDATE_CHECK ?? '1') !== '0';
+  const enabled = (process.env.HAPPIER_STACK_UPDATE_CHECK ?? '1') !== '0';
   if (!enabled) return;
   // Never do background checks for non-interactive invocations (CI, LaunchAgents, scripts).
   if (!process.stdout.isTTY) return;
-  if (process.env.HAPPY_STACKS_UPDATE_CHECK_SPAWNED === '1') return;
+  if (process.env.HAPPIER_STACK_UPDATE_CHECK_SPAWNED === '1') return;
   if (cmd === 'self' || cmd === 'help' || cmd === '--help' || cmd === '-h') return;
 
   const homeDir = resolveHomeDir();
   const cacheDir = join(homeDir, 'cache');
   const cachePath = join(cacheDir, 'update.json');
 
-  const intervalMsRaw = (process.env.HAPPY_STACKS_UPDATE_CHECK_INTERVAL_MS ?? '').trim();
+  const intervalMsRaw = (process.env.HAPPIER_STACK_UPDATE_CHECK_INTERVAL_MS ?? '').trim();
   const intervalMs = intervalMsRaw ? Number(intervalMsRaw) : 24 * 60 * 60 * 1000;
-  const notifyIntervalMsRaw = (process.env.HAPPY_STACKS_UPDATE_NOTIFY_INTERVAL_MS ?? '').trim();
+  const notifyIntervalMsRaw = (process.env.HAPPIER_STACK_UPDATE_NOTIFY_INTERVAL_MS ?? '').trim();
   const notifyIntervalMs = notifyIntervalMsRaw ? Number(notifyIntervalMsRaw) : 24 * 60 * 60 * 1000;
 
   let cached = null;
@@ -272,7 +272,7 @@ function maybeAutoUpdateNotice(cliRootDir, cmd) {
   if (shouldNotify) {
     const from = current ? current : 'current';
     // Keep it short; no network calls here.
-    console.error(`[happys] update available: ${from} -> ${latest} (run: happys self update)`);
+    console.error(`[hapsta] update available: ${from} -> ${latest} (run: hapsta self update)`);
     try {
       mkdirSync(cacheDir, { recursive: true });
       writeFileSync(
@@ -299,7 +299,7 @@ function maybeAutoUpdateNotice(cliRootDir, cmd) {
     const child = spawn(process.execPath, [join(cliRootDir, 'scripts', 'self.mjs'), 'check', '--quiet'], {
       stdio: 'ignore',
       cwd: cliRootDir,
-      env: { ...process.env, HAPPY_STACKS_UPDATE_CHECK_SPAWNED: '1' },
+      env: { ...process.env, HAPPIER_STACK_UPDATE_CHECK_SPAWNED: '1' },
       detached: true,
     });
     child.unref();
@@ -309,13 +309,13 @@ function maybeAutoUpdateNotice(cliRootDir, cmd) {
 }
 
 function usage() {
-  return renderHappysRootHelp();
+  return renderHapstaRootHelp();
 }
 
 function runNodeScript(cliRootDir, scriptRelPath, args) {
   const scriptPath = join(cliRootDir, scriptRelPath);
   if (!existsSync(scriptPath)) {
-    console.error(`[happys] missing script: ${scriptPath}`);
+    console.error(`[hapsta] missing script: ${scriptPath}`);
     process.exit(1);
   }
   const res = spawnSync(process.execPath, [scriptPath, ...args], {
@@ -335,13 +335,13 @@ function main() {
 
   // Preserve the original working directory across re-exec to the CLI root so commands can infer
   // component/worktree context even when the actual scripts run with cwd=cliRootDir.
-  if (!(process.env.HAPPY_STACKS_INVOKED_CWD ?? '').trim()) {
-    process.env.HAPPY_STACKS_INVOKED_CWD = process.cwd();
+  if (!(process.env.HAPPIER_STACK_INVOKED_CWD ?? '').trim()) {
+    process.env.HAPPIER_STACK_INVOKED_CWD = process.cwd();
   }
 
   maybeReexecToCliRoot(cliRootDir);
 
-  // If the user passed only flags (common via `npx happy-stacks --help`),
+  // If the user passed only flags (common via `npx --yes -p @happier-dev/stack hapsta --help`),
   // treat it as root help rather than `help --help` (which would look like
   // "unknown command: --help").
   const cmd = argv.find((a) => !a.startsWith('--')) ?? 'help';
@@ -356,9 +356,9 @@ function main() {
       console.log(usage());
       return;
     }
-    const targetCmd = resolveHappysCommand(target);
+    const targetCmd = resolveHapstaCommand(target);
     if (!targetCmd || targetCmd.kind !== 'node') {
-      console.error(`[happys] unknown command: ${target}`);
+      console.error(`[hapsta] unknown command: ${target}`);
       console.error('');
       console.log(usage());
       process.exit(1);
@@ -367,11 +367,11 @@ function main() {
     return runNodeScript(cliRootDir, targetCmd.scriptRelPath, helpArgs);
   }
 
-  let resolved = resolveHappysCommand(cmd);
+  let resolved = resolveHapstaCommand(cmd);
   if (!resolved) {
     // Stack shorthand:
     // If the first token is not a known command, but it *is* an existing stack name,
-    // treat `happys <stack> <command> ...` as `happys stack <command> <stack> ...`.
+    // treat `hapsta <stack> <command> ...` as `hapsta stack <command> <stack> ...`.
     const stackName = cmd;
     const { envPath } = resolveStackEnvPath(stackName, process.env);
     const stackExists = existsSync(envPath);
@@ -379,22 +379,22 @@ function main() {
       const cmdIdx = rest.findIndex((a) => !a.startsWith('-'));
       if (cmdIdx < 0) {
         if (rest.includes('--help') || rest.includes('-h')) {
-          const stackCmd = resolveHappysCommand('stack');
+          const stackCmd = resolveHapstaCommand('stack');
           if (!stackCmd || stackCmd.kind !== 'node') {
-            console.error('[happys] internal error: missing stack command');
+            console.error('[hapsta] internal error: missing stack command');
             process.exit(1);
           }
           return runNodeScript(cliRootDir, stackCmd.scriptRelPath, ['--help']);
         }
-        console.error(`[happys] missing command after stack name: ${stackName}`);
+        console.error(`[hapsta] missing command after stack name: ${stackName}`);
         console.error('');
         console.error('Try one of:');
-        console.error(`  happys ${stackName} env list`);
-        console.error(`  happys ${stackName} dev`);
-        console.error(`  happys ${stackName} start`);
+        console.error(`  hapsta ${stackName} env list`);
+        console.error(`  hapsta ${stackName} dev`);
+        console.error(`  hapsta ${stackName} start`);
         console.error('');
         console.error('Equivalent long form:');
-        console.error(`  happys stack <command> ${stackName} ...`);
+        console.error(`  hapsta stack <command> ${stackName} ...`);
         process.exit(1);
       }
 
@@ -403,15 +403,15 @@ function main() {
       const post = rest.slice(cmdIdx + 1);
       const stackArgs = [stackSubcmd, stackName, ...preFlags, ...post];
 
-      resolved = resolveHappysCommand('stack');
+      resolved = resolveHapstaCommand('stack');
       if (!resolved || resolved.kind !== 'node') {
-        console.error('[happys] internal error: missing stack command');
+        console.error('[hapsta] internal error: missing stack command');
         process.exit(1);
       }
       return runNodeScript(cliRootDir, resolved.scriptRelPath, stackArgs);
     }
 
-    console.error(`[happys] unknown command: ${cmd}`);
+    console.error(`[hapsta] unknown command: ${cmd}`);
     console.error('');
     console.error(usage());
     process.exit(1);

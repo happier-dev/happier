@@ -1,6 +1,6 @@
 ## Forking + branding while staying upstream-compatible
 
-This doc describes a **recommended Happy Stacks workflow** for maintaining:
+This doc describes a **recommended Hapsta workflow** for maintaining:
 
 - an **upstream-compatible** branch/worktree (no branding changes; safe to upstream later)
 - a **branded fork** branch/worktree (custom app name/bundle id/icons/Firebase/EAS, etc)
@@ -25,10 +25,10 @@ Everything else should stay identical to the upstream-compatible branch so merge
 
 ---
 
-## Golden rules (Happy Stacks)
+## Golden rules (Hapsta)
 
 - **Do not develop in `components/<component>`** (default checkouts). Use worktrees under `components/.worktrees/...`.
-- **Use `happys` entrypoints** (not raw `yarn`, `pnpm`, `expo`, etc) when you’re running stack/dev/build/test commands.
+- **Use `hapsta` entrypoints** (not raw `yarn`, `expo`, etc) when you’re running stack/dev/build/test commands.
 - **Do not commit generated native directories** for Expo apps:
   - `packages/app/ios/`
   - `packages/app/android/`
@@ -50,7 +50,7 @@ Example (Happy monorepo component):
 Pin your branded stack to the branded worktree (recommended):
 
 ```bash
-happys stack wt happier -- use happy happier-dev/happier
+hapsta stack wt happier -- use happy happier-dev/happier
 ```
 
 Keep your stable/main stack on defaults, and use `happier` (or another stack) for branded testing/building.
@@ -112,7 +112,7 @@ Keep it upstream-friendly:
 In the branded worktree:
 
 ```bash
-happys wt git happy happier-dev/happier -- merge happier-dev/dev
+hapsta wt git happy happier-dev/happier -- merge happier-dev/dev
 ```
 
 Resolve conflicts (if any), then continue.
@@ -140,7 +140,7 @@ If a file must remain fork-only and conflicts often, consider:
 Local:
 
 ```bash
-happys stack mobile happier --prebuild --platform=ios --clean --no-metro
+hapsta stack mobile happier --prebuild --platform=ios --clean --no-metro
 ```
 
 This regenerates `packages/app/ios` and installs pods. Treat this as build output.
@@ -150,8 +150,8 @@ This regenerates `packages/app/ios` and installs pods. Treat this as build outpu
 Use the EAS wrapper (stack-scoped):
 
 ```bash
-happys stack eas happier whoami
-happys stack eas happier build --platform ios --profile production --no-wait
+hapsta stack eas happier whoami
+hapsta stack eas happier build --platform ios --profile production --no-wait
 ```
 
 For cloud builds, ensure your EAS project has the correct environment variables configured on expo.dev (or in `eas.json` profile `env`).

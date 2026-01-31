@@ -20,7 +20,7 @@ export async function detectSwiftbarPluginInstalled({ pluginsDir, patterns = nul
   const dir = pluginsDir ?? (await resolveSwiftbarPluginsDir());
   if (!dir) return { pluginsDir: null, installed: false };
 
-  const pats = Array.isArray(patterns) && patterns.length ? patterns : ['happy-stacks.*.sh', 'happy-local.*.sh'];
+  const pats = Array.isArray(patterns) && patterns.length ? patterns : ['hapsta.*.sh', 'happier-stack.*.sh'];
   const expr = pats.map((p) => `ls -1 "${dir}"/${p} 2>/dev/null | head -n 1 || true`).join('; ');
   try {
     const hit = (await runCapture('bash', ['-lc', expr])).trim();
@@ -39,7 +39,7 @@ export async function removeSwiftbarPlugins({ patterns = null } = {}) {
     return { ok: true, removed: false, pluginsDir: null };
   }
 
-  const pats = Array.isArray(patterns) && patterns.length ? patterns : ['happy-stacks.*.sh', 'happy-local.*.sh'];
+  const pats = Array.isArray(patterns) && patterns.length ? patterns : ['hapsta.*.sh', 'happier-stack.*.sh'];
   const rmExpr = pats.map((p) => `rm -f "${dir}"/${p} 2>/dev/null || true`).join('; ');
   try {
     await runCapture('bash', ['-lc', rmExpr]);
@@ -48,4 +48,3 @@ export async function removeSwiftbarPlugins({ patterns = null } = {}) {
     return { ok: false, removed: false, pluginsDir: dir };
   }
 }
-

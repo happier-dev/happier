@@ -49,13 +49,13 @@ async function resolveExpoWebappUrlForAuth({ rootDir, stackName, timeoutMs }) {
     try {
       const { envPath } = resolveStackEnvPath(stackName);
       const stackEnv = await readEnvObjectFromFile(envPath);
-      const raw = (stackEnv.HAPPY_STACKS_COMPONENT_DIR_HAPPY ?? stackEnv.HAPPY_LOCAL_COMPONENT_DIR_HAPPY ?? '').trim();
+      const raw = (stackEnv.HAPPIER_STACK_COMPONENT_DIR_HAPPY ?? '').trim();
       if (!raw) return '';
 
       const expanded = expandHome(raw);
       if (expanded.startsWith('/')) return resolve(expanded);
 
-      const wsRaw = (stackEnv.HAPPY_STACKS_WORKSPACE_DIR ?? stackEnv.HAPPY_LOCAL_WORKSPACE_DIR ?? '').trim();
+      const wsRaw = (stackEnv.HAPPIER_STACK_WORKSPACE_DIR ?? '').trim();
       const wsExpanded = wsRaw ? expandHome(wsRaw) : '';
       const workspaceDir = wsExpanded ? (wsExpanded.startsWith('/') ? wsExpanded : resolve(getWorkspaceDir(rootDir), wsExpanded)) : getWorkspaceDir(rootDir);
       return resolve(workspaceDir, expanded);
@@ -226,7 +226,7 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
         try {
           const { envPath } = resolveStackEnvPath(stackName);
           const stackEnv = await readEnvObjectFromFile(envPath);
-          const uiDir = (stackEnv.HAPPY_STACKS_COMPONENT_DIR_HAPPY ?? stackEnv.HAPPY_LOCAL_COMPONENT_DIR_HAPPY ?? '').trim();
+          const uiDir = (stackEnv.HAPPIER_STACK_COMPONENT_DIR_HAPPY ?? '').trim();
           const symlinked = uiDir ? await detectSymlinkedNodeModules({ worktreeDir: uiDir }) : false;
           if (symlinked) {
             hint =
@@ -272,13 +272,13 @@ export async function resolveStackWebappUrlForAuth({ rootDir, stackName, env = p
   }
 
   const authFlow =
-    (env.HAPPY_STACKS_AUTH_FLOW ?? env.HAPPY_LOCAL_AUTH_FLOW ?? '').toString().trim() === '1' ||
-    (env.HAPPY_STACKS_DAEMON_WAIT_FOR_AUTH ?? env.HAPPY_LOCAL_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
+    (env.HAPPIER_STACK_AUTH_FLOW ?? '').toString().trim() === '1' ||
+    (env.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim() === '1';
 
   // Prefer the Expo web UI URL when running in dev mode.
   // This is crucial for guided login: the browser needs the UI origin, not the server port.
   const timeoutMsRaw =
-    (env.HAPPY_STACKS_AUTH_UI_READY_TIMEOUT_MS ?? env.HAPPY_LOCAL_AUTH_UI_READY_TIMEOUT_MS ?? '180000').toString().trim();
+    (env.HAPPIER_STACK_AUTH_UI_READY_TIMEOUT_MS ?? '180000').toString().trim();
   const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
   const expoUrl = await resolveExpoWebappUrlForAuth({
     rootDir,
@@ -322,7 +322,7 @@ export async function guidedStackAuthLoginNow({ rootDir, stackName, env = proces
     throw new Error('[auth] cannot start guided login: web UI URL is empty');
   }
 
-  const skipBundleCheck = (env.HAPPY_STACKS_AUTH_SKIP_BUNDLE_CHECK ?? env.HAPPY_LOCAL_AUTH_SKIP_BUNDLE_CHECK ?? '').toString().trim() === '1';
+  const skipBundleCheck = (env.HAPPIER_STACK_AUTH_SKIP_BUNDLE_CHECK ?? '').toString().trim() === '1';
   // Surface common "blank page" issues (Metro resolver errors) even in quiet mode.
   if (!skipBundleCheck) {
     await assertExpoWebappBundlesOrThrow({ rootDir, stackName, webappUrl: resolved });
@@ -350,4 +350,3 @@ export async function stackAuthCopyFrom({ rootDir, stackName, fromStackName, env
     { cwd: rootDir, env }
   );
 }
-

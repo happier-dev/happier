@@ -22,7 +22,7 @@ export async function listPidsWithEnvNeedle(needle) {
   if (!n) return [];
   if (process.platform === 'win32') return [];
   try {
-    // Include environment variables (eww) so we can match on HAPPY_STACKS_ENV_FILE=/.../env safely.
+    // Include environment variables (eww) so we can match on HAPPIER_STACK_ENV_FILE=/.../env safely.
     const out = await runCapture('ps', ['eww', '-ax', '-o', 'pid=,command=']);
     const pids = [];
     for (const line of out.split('\n')) {
@@ -63,20 +63,20 @@ export async function isPidOwnedByStack(pid, { stackName, envPath, cliHomeDir } 
 
   // Require at least one stack identifier.
   const hasStack =
-    (sn && line.includes(`HAPPY_STACKS_STACK=${sn}`)) ||
-    (!sn && line.includes('HAPPY_STACKS_STACK='));
+    (sn && line.includes(`HAPPIER_STACK_STACK=${sn}`)) ||
+    (!sn && line.includes('HAPPIER_STACK_STACK='));
   if (!hasStack) return false;
 
   // Prefer env-file binding (strongest).
   if (ep) {
-    if (line.includes(`HAPPY_STACKS_ENV_FILE=${ep}`)) {
+    if (line.includes(`HAPPIER_STACK_ENV_FILE=${ep}`)) {
       return true;
     }
   }
 
   // Fallback: CLI home dir binding (useful for daemon-related processes).
   if (ch) {
-    if (line.includes(`HAPPY_HOME_DIR=${ch}`) || line.includes(`HAPPY_STACKS_CLI_HOME_DIR=${ch}`)) {
+    if (line.includes(`HAPPY_HOME_DIR=${ch}`) || line.includes(`HAPPIER_STACK_CLI_HOME_DIR=${ch}`)) {
       return true;
     }
   }

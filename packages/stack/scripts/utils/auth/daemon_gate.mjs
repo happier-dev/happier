@@ -20,7 +20,7 @@ export function hasStackCredentials({ cliHomeDir }) {
 }
 
 export function isAuthFlowEnabled(env) {
-  const v = (env?.HAPPY_STACKS_AUTH_FLOW ?? env?.HAPPY_LOCAL_AUTH_FLOW ?? '').toString().trim();
+  const v = (env?.HAPPIER_STACK_AUTH_FLOW ?? '').toString().trim();
   return v === '1' || v.toLowerCase() === 'true';
 }
 

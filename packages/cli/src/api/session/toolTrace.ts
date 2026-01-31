@@ -2,11 +2,7 @@ import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import type { RawJSONLines } from '@/backends/claude/types';
 
 export function isToolTraceEnabled(): boolean {
-    return (
-        ['1', 'true', 'yes', 'on'].includes((process.env.HAPPY_STACKS_TOOL_TRACE ?? '').toLowerCase()) ||
-        ['1', 'true', 'yes', 'on'].includes((process.env.HAPPY_LOCAL_TOOL_TRACE ?? '').toLowerCase()) ||
-        ['1', 'true', 'yes', 'on'].includes((process.env.HAPPY_TOOL_TRACE ?? '').toLowerCase())
-    );
+    return ['1', 'true', 'yes', 'on'].includes((process.env.HAPPIER_STACK_TOOL_TRACE ?? '').toLowerCase());
 }
 
 export function recordClaudeToolTraceEvents(opts: { sessionId: string; body: RawJSONLines }): void {
