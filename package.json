@@ -2,18 +2,18 @@
     "name": "monorepo",
     "private": true,
     "scripts": {
-        "build:packages": "yarn workspace @happy/agents build && yarn workspace @happy/protocol build",
+        "build:packages": "yarn workspace @happier-dev/agents build && yarn workspace @happier-dev/protocol build",
         "ci:act": "bash scripts/ci/run-act-tests.sh",
-        "test": "yarn --cwd packages/happy-app test && yarn --cwd packages/happy-cli test && yarn --cwd packages/happy-server test",
-        "typecheck": "yarn --cwd packages/happy-app typecheck && yarn --cwd packages/happy-cli typecheck && yarn --cwd packages/happy-server typecheck"
+        "test": "yarn --cwd packages/app test && yarn --cwd packages/cli test && yarn --cwd packages/server test",
+        "typecheck": "yarn --cwd packages/app typecheck && yarn --cwd packages/cli typecheck && yarn --cwd packages/server typecheck"
     },
     "workspaces": {
         "packages": [
-            "packages/happy-app",
-            "packages/happy-cli",
-            "packages/happy-server",
-            "packages/happy-agents",
-            "packages/happy-protocol"
+            "packages/app",
+            "packages/cli",
+            "packages/server",
+            "packages/agents",
+            "packages/protocol"
         ],
         "nohoist": [
             "**/zod",

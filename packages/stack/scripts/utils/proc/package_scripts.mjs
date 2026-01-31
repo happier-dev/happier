@@ -11,8 +11,8 @@ export async function detectPackageManagerCmd(dir) {
   }
 
   // When running against the Happy monorepo, stacks/worktrees often point at a package directory
-  // (e.g. packages/happy-server) instead of the monorepo root. Prefer Yarn in that case so
-  // workspace-only deps like `@happy/agents` resolve locally instead of being fetched from npm.
+  // (e.g. packages/server) instead of the monorepo root. Prefer Yarn in that case so
+  // workspace-only deps like `@happier-dev/agents` resolve locally instead of being fetched from npm.
   const happyMonorepoRoot = coerceHappyMonorepoRootFromPath(dir);
   if (happyMonorepoRoot && (await pathExists(join(happyMonorepoRoot, 'yarn.lock')))) {
     return { name: 'yarn', cmd: 'yarn', argsForScript: (script) => ['-s', script] };

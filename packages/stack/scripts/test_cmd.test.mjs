@@ -42,7 +42,7 @@ async function writeYarnOkPackage({ dir, name, scriptOutput }) {
   await writeFile(join(dir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
 }
 
-test('happys test --json keeps stdout JSON-only and runs monorepo root when happy points at packages/happy-app', async () => {
+test('happys test --json keeps stdout JSON-only and runs monorepo root when happy points at packages/app', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 

@@ -8,9 +8,9 @@ import { analyzeTarList, findMonorepoRoot, resolvePackDirForComponent } from './
 test('analyzeTarList detects bundled workspace deps in tar listing', () => {
   const { hasAgents, hasProtocol } = analyzeTarList([
     'package/dist/index.mjs',
-    'package/node_modules/@happy/agents/package.json',
-    'package/node_modules/@happy/agents/dist/index.js',
-    'package/node_modules/@happy/protocol/package.json',
+    'package/node_modules/@happier-dev/agents/package.json',
+    'package/node_modules/@happier-dev/agents/dist/index.js',
+    'package/node_modules/@happier-dev/protocol/package.json',
   ]);
   assert.equal(hasAgents, true);
   assert.equal(hasProtocol, true);
@@ -31,7 +31,7 @@ test('findMonorepoRoot finds nearest package.json + yarn.lock', async () => {
   }
 });
 
-test('resolvePackDirForComponent maps monorepo root to packages/happy-cli', async () => {
+test('resolvePackDirForComponent maps monorepo root to packages/cli', async () => {
   const root = await mkdtemp(join(tmpdir(), 'pack-test-'));
   try {
     await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'monorepo' }));

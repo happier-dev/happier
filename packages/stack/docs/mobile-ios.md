@@ -227,7 +227,7 @@ happys stack wt happier -- use happy leeroybrun/happier
 
 ### 2) Set the app identity in the stack env (local + build-time config)
 
-These are evaluated by `packages/happy-app/app.config.js` when building:
+These are evaluated by `packages/app/app.config.js` when building:
 
 ```bash
 happys stack env happier set \

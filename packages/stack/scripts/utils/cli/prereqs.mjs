@@ -4,7 +4,7 @@ function formatMissingTool({ name, why, install }) {
   return [`- ${name}: ${why}`, ...(install?.length ? install.map((l) => `  ${l}`) : [])].join('\n');
 }
 
-export async function assertCliPrereqs({ git = false, pnpm = false, codex = false, coderabbit = false, augment = false } = {}) {
+export async function assertCliPrereqs({ git = false, yarn = false, codex = false, coderabbit = false, augment = false } = {}) {
   const missing = [];
 
   if (git) {
@@ -22,16 +22,15 @@ export async function assertCliPrereqs({ git = false, pnpm = false, codex = fals
     }
   }
 
-  if (pnpm) {
-    const hasPnpm = await commandExists('pnpm');
+  if (yarn) {
     const hasYarn = await commandExists('yarn');
-    if (!hasPnpm && !hasYarn) {
+    if (!hasYarn) {
       missing.push({
-        name: 'yarn/pnpm',
-        why: 'required to install dependencies for Happy Stacks components (varies per component)',
+        name: 'yarn',
+        why: 'required to install dependencies',
         install: [
           'Enable Corepack (recommended): `corepack enable`',
-          'Or install pnpm: `corepack prepare pnpm@latest --activate`',
+          'Or install Yarn: `npm install -g yarn`',
         ],
       });
     }

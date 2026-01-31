@@ -63,8 +63,8 @@ async function createPackSandbox({ monorepoRoot, packageRelDir }) {
 
   // Minimal monorepo layout needed for the happy-cli prepack step:
   // - root package.json + yarn.lock (for repo root detection)
-  // - packages/happy-cli (the package being packed)
-  // - packages/happy-agents + packages/happy-protocol (bundled deps source)
+  // - packages/cli (the package being packed)
+  // - packages/agents + packages/protocol (bundled deps source)
   const filesToCopy = [
     'package.json',
     'yarn.lock',
@@ -79,8 +79,8 @@ async function createPackSandbox({ monorepoRoot, packageRelDir }) {
 
   const dirsToCopy = [
     packageRelDir,
-    'packages/happy-agents',
-    'packages/happy-protocol',
+    'packages/agents',
+    'packages/protocol',
   ];
   for (const d of dirsToCopy) {
     const src = join(monorepoRoot, d);
@@ -96,8 +96,8 @@ async function createPackSandbox({ monorepoRoot, packageRelDir }) {
 }
 
 export function analyzeTarList(paths) {
-  const hasAgents = paths.some((p) => p.startsWith('package/node_modules/@happy/agents/'));
-  const hasProtocol = paths.some((p) => p.startsWith('package/node_modules/@happy/protocol/'));
+  const hasAgents = paths.some((p) => p.startsWith('package/node_modules/@happier-dev/agents/'));
+  const hasProtocol = paths.some((p) => p.startsWith('package/node_modules/@happier-dev/protocol/'));
   return { hasAgents, hasProtocol };
 }
 
@@ -114,7 +114,7 @@ async function main() {
         '[pack] usage:',
         '  happys pack happy-cli [--json]',
         '  happys pack happy-server [--json]',
-        '  happys pack --dir=/abs/path/to/packages/happy-cli [--json]',
+        '  happys pack --dir=/abs/path/to/packages/cli [--json]',
         '',
         'notes:',
         '- packs in a temporary sandbox to avoid dirtying the worktree',
@@ -202,8 +202,8 @@ async function main() {
       `[pack] dir: ${packDir}`,
       `[pack] tarball: ${basename(tarballPath)} (generated in a temp sandbox)`,
       `[pack] bundledDependencies:`,
-      `- @happy/agents:   ${hasAgents ? '✅ present' : '❌ missing'}`,
-      `- @happy/protocol: ${hasProtocol ? '✅ present' : '❌ missing'}`,
+      `- @happier-dev/agents:   ${hasAgents ? '✅ present' : '❌ missing'}`,
+      `- @happier-dev/protocol: ${hasProtocol ? '✅ present' : '❌ missing'}`,
     ];
     if (!ok) {
       lines.push('', '[pack] NOTE: missing bundled deps in tarball; publish would likely break for npm consumers.');

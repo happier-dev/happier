@@ -1,86 +1,177 @@
-<div align="center"><img src="/.github/logotype-dark.png" width="400" title="Happy Coder" alt="Happy Coder"/></div>
-
-<h1 align="center">
-  Mobile and Web Client for Claude Code & Codex
-</h1>
-
-<h4 align="center">
-Use Claude Code or Codex from anywhere with end-to-end encryption.
-</h4>
-
 <div align="center">
+  <img src="/.github/header.png" title="Happier Dev" alt="Happier Dev"/>
+
+  ### Open-source mobile, web, and desktop companion for AI coding agents  
+  **Secure • Collaborative • Self-hostable**
   
-[📱 **iOS App**](https://apps.apple.com/us/app/happy-claude-code-client/id6748571505) • [🤖 **Android App**](https://play.google.com/store/apps/details?id=com.ex3ndr.happy) • [🌐 **Web App**](https://app.happy.engineering) • [🎥 **See a Demo**](https://youtu.be/GCS0OG9QMSE) • [📚 **Documentation**](https://happy.engineering/docs/) • [💬 **Discord**](https://discord.gg/fX9WBAhyfD)
-
+  Run Claude Code, Codex, Gemini, OpenCode (and more) on your computer<br />and continue seamlessly from your phone, browser, or desktop app.
+  
+  **End-to-end encrypted. Zero-knowledge. Built by developers, for developers.**
 </div>
 
-<img width="5178" height="2364" alt="github" src="/.github/header.png" />
+## What is Happier?
+
+**Happier** is an open-source, end-to-end encrypted companion app for AI coding agents.
+
+It lets you run AI coding sessions **locally on your computer**, then **continue and control them remotely** — from your phone, web UI, or desktop app — without losing context.
+
+Typical use cases include:
+- checking long-running refactors while away from your desk,
+- approving permissions or responding to agent questions from your phone,
+- resuming sessions after restarts,
+- collaborating with teammates in the same AI session.
+
+Whether you’re stepping away for a coffee or switching devices mid-task, Happier keeps your AI coding sessions alive and accessible.
 
 
-<h3 align="center">
-Step 1: Download App
-</h3>
+## Why “Happier”?
 
-<div align="center">
-<a href="https://apps.apple.com/us/app/happy-claude-code-client/id6748571505"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/store/apps/details?id=com.ex3ndr.happy"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
-</div>
+Happier started as a **fork of [Happy](https://github.com/slopus/happy)**.
 
-<h3 align="center">
-Step 2: Install CLI on your computer
-</h3>
+We were using Happy daily for work and genuinely loved the concept.  
+Over time, though, we needed:
+
+- faster iteration,
+- stronger reliability,
+- better session lifecycle handling,
+- and features that weren’t available yet.
+
+So we started building them for ourselves.
+
+After weeks of refining, fixing, and extending the foundation, we decided to share Happier so others could try it, use it, and help shape what comes next.
+
+> Happier is not about replacing Happy.  
+> We originally started as contributors to Happy, submitting fixes, improvements, and new features upstream. Over time, we realized that our own needs required faster iteration and a more collaborative model than we could comfortably explore within the main project.
+> 
+> Happier is about exploring a faster-moving, more collaborative direction — in the open — while remaining deeply grateful for the foundation Happy provided. 
+
+
+## Key Features
+
+- **Collaborative sessions**  
+  Share a live session with teammates or friends (private or public links).
+
+- **Broad provider support**  
+  Works with **Claude Code, Codex, Gemini, OpenCode**, and more (configurable).
+
+- **Persistent sessions**  
+  Resume sessions even after restarts; archive them and return later as if they never ended.
+
+- **Seamless switching**  
+  Move between terminal, web UI, and mobile while keeping full context.
+
+- **Subscriptions or API keys**  
+  Use existing provider subscriptions where supported, or configure API keys directly.
+
+- **Infinite history**  
+  Scroll back through older messages in long-running sessions.
+
+- **Pending message queue**  
+  Edit, reorder, or remove queued messages before the agent processes them.
+
+- **tmux support**  
+  Resume remote-started sessions locally (Claude).
+
+
+## Security & Privacy
+
+Happier is designed with privacy as a foundation, not an afterthought.
+
+- **End-to-end encryption**  
+  Built using modern cryptography (TweetNaCl).
+
+- **Zero-knowledge architecture**  
+  Your code is encrypted on your devices before it ever hits the wire.  
+  Servers cannot read your data. Encryption keys never leave your devices.
+
+- **Built in Switzerland**  
+  Developed in Switzerland, with a strong focus on data protection and developer transparency.
+
+
+## How It Works
+
+### Step 1: Download App
+
+<a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/store/apps/details?id=com.leeroybrun.happier"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
+
+### Step 2: Install the CLI on your computer
 
 ```bash
-npm install -g happy-coder
+npm install -g @happier-dev/cli
 ```
 
-<h3 align="center">
-Step 3: Start using `happy` instead of `claude` or `codex`
-</h3>
+### Step 3: Start using `happier` instead of `claude`, `codex` or `opencode`
 
 ```bash
 
 # Instead of: claude
-# Use: happy
+# Use: happier
 
-happy
+happier
 
 # Instead of: codex
-# Use: happy codex
+# Use: happier codex
 
-happy codex
+happier codex
+
+# Instead of: opencode
+# Use: happier opencode
+
+happier opencode
 
 ```
 
-<div align="center"><img src="/.github/mascot.png" width="200" title="Happy Coder" alt="Happy Coder"/></div>
+### Step 4: Be a Happier developer
 
-## How does it work?
+Code solo, or invite a friend to jump into the session with you.
+Happier acts as a secure bridge between your local development environment and your other devices.
 
-On your computer, run `happy` instead of `claude` or `happy codex` instead of `codex` to start your AI through our wrapper. When you want to control your coding agent from your phone, it restarts the session in remote mode. To switch back to your computer, just press any key on your keyboard.
+## Community-Driven
 
-## 🔥 Why Happy Coder?
+**Happier** is completely open-source. We built this because we wanted a more powerful, more social way to interact with AI agents - and we want to build it in the open, shaped by the people who actually use it.
 
-- 📱 **Mobile access to Claude Code and Codex** - Check what your AI is building while away from your desk
-- 🔔 **Push notifications** - Get alerted when Claude Code and Codex needs permission or encounters errors  
-- ⚡ **Switch devices instantly** - Take control from phone or desktop with one keypress
-- 🔐 **End-to-end encrypted** - Your code never leaves your devices unencrypted
-- 🛠️ **Open source** - Audit the code yourself. No telemetry, no tracking
+This project exists because we needed it ourselves - and we want it to evolve through real feedback. We aim to keep the community welcoming, and contributor-friendly, whether you’re signaling an issue or proposing a larger idea.
 
-## 📦 Project Components
+We aim to keep the community:
+* welcoming,
+* newbie-friendly,
+* and contributor-friendly,
 
-- **[Happy App](https://github.com/slopus/happy/tree/main/packages/happy-app)** - Web UI + mobile client (Expo)
-- **[Happy CLI](https://github.com/slopus/happy/tree/main/packages/happy-cli)** - Command-line interface for Claude Code and Codex
-- **[Happy Server](https://github.com/slopus/happy/tree/main/packages/happy-server)** - Backend server for encrypted sync
+whether you’re reporting a small bug or proposing a larger idea.
 
-## 🏠 Who We Are
+What that means in practice:
+* **Open development** and transparent discussions
+* **Fast feedback loops** on issues and pull requests
+* A focus on **solving real developer pain**, not chasing hype
 
-We're engineers scattered across Bay Area coffee shops and hacker houses, constantly checking how our AI coding agents are progressing on our pet projects during lunch breaks. Happy Coder was born from the frustration of not being able to peek at our AI coding tools building our side hustles while we're away from our keyboards. We believe the best tools come from scratching your own itch and sharing with the community.
+If something feels broken, missing, or awkward — we want to hear about it.
+Happier grows through shared experience and collaboration.
 
-## 📚 Documentation & Contributing
+## Project Structure
+* packages/app/ – mobile, web, and desktop clients
+* packages/cli/ – Happier CLI wrapper for AI coding agents
+* packages/server/ – encrypted relay / self-hosted backend
 
-- **[Documentation Website](https://happy.engineering/docs/)** - Learn how to use Happy Coder effectively
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development setup including iOS, Android, and macOS desktop variant builds
-- **[Edit docs at github.com/slopus/slopus.github.io](https://github.com/slopus/slopus.github.io)** - Help improve our documentation and guides
+## Contributing
+
+Contributions are welcome.
+
+Whether it’s:
+- a bug fix,
+- a small UX improvement,
+- or a larger architectural idea,
+
+please feel free to open an issue or pull request.
+We try to keep discussions constructive, respectful, and focused on real usage.
+
+See CONTRIBUTING.md for development setup and guidelines.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License — see LICENSE￼ for details.
+
+⸻
+
+Not affiliated with or endorsed by Anthropic, OpenAI, or Google.
+
+Code faster. Code together. Be Happier.

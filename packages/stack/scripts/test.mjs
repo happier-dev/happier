@@ -53,7 +53,7 @@ async function resolveTestDirForComponent({ component, dir }) {
   if (component !== 'happy') return dir;
   const isLegacyExpoApp = dir.endsWith(`${sep}expo-app`) || dir.endsWith('/expo-app');
   const isPackagesHappyApp =
-    dir.endsWith(`${sep}packages${sep}happy-app`) || dir.endsWith('/packages/happy-app');
+    dir.endsWith(`${sep}packages${sep}happy-app`) || dir.endsWith('/packages/app');
   if (!isLegacyExpoApp && !isPackagesHappyApp) return dir;
 
   const parent = isPackagesHappyApp ? dirname(dirname(dir)) : dirname(dir);

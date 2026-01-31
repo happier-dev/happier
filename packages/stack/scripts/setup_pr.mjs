@@ -27,7 +27,7 @@ import { coerceHappyMonorepoRootFromPath, getComponentDir } from './utils/paths/
 
 function pickReviewerMobileSchemeEnv(env) {
   // For review-pr flows, reviewers typically have the standard Happy dev build on their phone,
-  // so default to the canonical `happy://` scheme unless the user explicitly configured one.
+  // so default to the canonical `happier://` scheme unless the user explicitly configured one.
   // If the user explicitly set a review-specific override, honor it.
   const reviewOverride = (env.HAPPY_STACKS_REVIEW_MOBILE_SCHEME ?? env.HAPPY_LOCAL_REVIEW_MOBILE_SCHEME ?? '').toString().trim();
   if (reviewOverride) {
@@ -246,7 +246,7 @@ async function main() {
     return;
   }
 
-  await assertCliPrereqs({ git: true, pnpm: true });
+  await assertCliPrereqs({ git: true, yarn: true });
 
   const prHappy = (kv.get('--happy') ?? '').trim();
   const prCli = (kv.get('--happy-cli') ?? '').trim();

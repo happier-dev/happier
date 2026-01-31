@@ -4,22 +4,18 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 
 import { expandHome } from './canonical_home.mjs';
-import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs';
 
-const PRIMARY_APP_SLUG = 'happy-stacks';
-const LEGACY_APP_SLUG = 'happy-local';
-const PRIMARY_LABEL_BASE = 'com.happy.stacks';
-const LEGACY_LABEL_BASE = 'com.happy.local';
-const PRIMARY_STORAGE_ROOT = join(homedir(), '.happy', 'stacks');
-const LEGACY_STORAGE_ROOT = join(homedir(), '.happy', 'local');
-const PRIMARY_HOME_DIR = join(homedir(), '.happy-stacks');
+const PRIMARY_APP_SLUG = 'happier-stack';
+const PRIMARY_LABEL_BASE = 'dev.happier.stack';
+const PRIMARY_STORAGE_ROOT = join(homedir(), '.happier', 'stacks');
+const PRIMARY_HOME_DIR = join(homedir(), '.happier-stack');
 
 // Upstream monorepo layouts (slopus/happy):
 //
 // Newer (packages/):
-// - packages/happy-app     (Happy mobile app)
-// - packages/happy-cli     (CLI + daemon)
-// - packages/happy-server  (server)
+// - packages/app     (Happy mobile app)
+// - packages/cli     (CLI + daemon)
+// - packages/server  (server)
 //
 // Legacy (split dirs):
 // - expo-app/ (Happy UI)
@@ -34,31 +30,16 @@ const HAPPY_MONOREPO_LAYOUTS = {
     id: 'packages',
     // Minimum files that identify this layout.
     markers: [
-      ['packages', 'happy-app', 'package.json'],
-      ['packages', 'happy-cli', 'package.json'],
-      ['packages', 'happy-server', 'package.json'],
+      ['packages', 'app', 'package.json'],
+      ['packages', 'cli', 'package.json'],
+      ['packages', 'server', 'package.json'],
     ],
     subdirByComponent: {
-      happy: 'packages/happy-app',
-      'happy-cli': 'packages/happy-cli',
-      'happy-server': 'packages/happy-server',
+      happy: 'packages/app',
+      'happy-cli': 'packages/cli',
+      'happy-server': 'packages/server',
       // Server flavors share a single server package in the monorepo.
-      'happy-server-light': 'packages/happy-server',
-    },
-  },
-  legacy: {
-    id: 'legacy',
-    markers: [
-      ['expo-app', 'package.json'],
-      ['cli', 'package.json'],
-      ['server', 'package.json'],
-    ],
-    subdirByComponent: {
-      happy: 'expo-app',
-      'happy-cli': 'cli',
-      'happy-server': 'server',
-      // Server flavors share a single server package in the monorepo.
-      'happy-server-light': 'server',
+      'happy-server-light': 'packages/server',
     },
   },
 };
@@ -69,7 +50,6 @@ function detectHappyMonorepoLayout(monorepoRoot) {
   try {
     const hasAll = (markers) => markers.every((m) => existsSync(join(root, ...m)));
     if (hasAll(HAPPY_MONOREPO_LAYOUTS.packages.markers)) return HAPPY_MONOREPO_LAYOUTS.packages.id;
-    if (hasAll(HAPPY_MONOREPO_LAYOUTS.legacy.markers)) return HAPPY_MONOREPO_LAYOUTS.legacy.id;
     return '';
   } catch {
     return '';
@@ -136,11 +116,8 @@ export function happyMonorepoSubdirForComponent(name, { monorepoRoot = '' } = {}
   if (layout === HAPPY_MONOREPO_LAYOUTS.packages.id) {
     return HAPPY_MONOREPO_LAYOUTS.packages.subdirByComponent[n] ?? null;
   }
-  if (layout === HAPPY_MONOREPO_LAYOUTS.legacy.id) {
-    return HAPPY_MONOREPO_LAYOUTS.legacy.subdirByComponent[n] ?? null;
-  }
-  // Best-effort fallback: preserve previous behavior when layout is unknown.
-  return HAPPY_MONOREPO_LAYOUTS.legacy.subdirByComponent[n] ?? null;
+  // Best-effort fallback: keep a stable mapping even when layout can't be detected.
+  return HAPPY_MONOREPO_LAYOUTS.packages.subdirByComponent[n] ?? null;
 }
 
 export function isHappyMonorepoRoot(dir) {
@@ -179,8 +156,7 @@ export function getComponentRepoDir(rootDir, name, env = process.env) {
 
 export function getComponentDir(rootDir, name, env = process.env) {
   const stacksKey = componentDirEnvKey(name);
-  const legacyKey = stacksKey.replace(/^HAPPY_STACKS_/, 'HAPPY_LOCAL_');
-  const fromEnv = normalizePathForEnv(rootDir, env[stacksKey] ?? env[legacyKey], env);
+  const fromEnv = normalizePathForEnv(rootDir, env[stacksKey], env);
   const n = String(name ?? '').trim();
 
   // If the component is part of the happy monorepo, allow pointing the env var at either:
@@ -242,12 +218,7 @@ export function getComponentDir(rootDir, name, env = process.env) {
 }
 
 export function getStackName(env = process.env) {
-  const raw = env.HAPPY_STACKS_STACK?.trim()
-    ? env.HAPPY_STACKS_STACK.trim()
-    : env.HAPPY_LOCAL_STACK?.trim()
-      ? env.HAPPY_LOCAL_STACK.trim()
-      : '';
-  return raw || 'main';
+  return env.HAPPY_STACKS_STACK?.trim() ? env.HAPPY_STACKS_STACK.trim() : 'main';
 }
 
 export function getStackLabel(stackName = null, env = process.env) {
@@ -255,61 +226,23 @@ export function getStackLabel(stackName = null, env = process.env) {
   return name === 'main' ? PRIMARY_LABEL_BASE : `${PRIMARY_LABEL_BASE}.${name}`;
 }
 
-export function getLegacyStackLabel(stackName = null, env = process.env) {
-  const name = (stackName ?? '').toString().trim() || getStackName(env);
-  return name === 'main' ? LEGACY_LABEL_BASE : `${LEGACY_LABEL_BASE}.${name}`;
-}
-
 export function getStacksStorageRoot(env = process.env) {
-  const fromEnv = (env.HAPPY_STACKS_STORAGE_DIR ?? env.HAPPY_LOCAL_STORAGE_DIR ?? '').trim();
+  const fromEnv = (env.HAPPY_STACKS_STORAGE_DIR ?? '').trim();
   if (fromEnv) {
     return expandHome(fromEnv);
   }
   return PRIMARY_STORAGE_ROOT;
 }
 
-export function getLegacyStorageRoot() {
-  return LEGACY_STORAGE_ROOT;
-}
-
 export function resolveStackBaseDir(stackName = null, env = process.env) {
   const name = (stackName ?? '').toString().trim() || getStackName(env);
-  const preferredRoot = getStacksStorageRoot(env);
-  const newBase = join(preferredRoot, name);
-  const legacyBase = name === 'main' ? LEGACY_STORAGE_ROOT : join(LEGACY_STORAGE_ROOT, 'stacks', name);
-  const allowLegacy = !isSandboxed() || sandboxAllowsGlobalSideEffects();
-
-  // Prefer the new layout by default.
-  //
-  // For non-main stacks, keep legacy layout if the legacy env exists and the new env does not.
-  // This avoids breaking existing stacks until `happys stack migrate` is run.
-  if (allowLegacy && name !== 'main') {
-    const newEnv = join(preferredRoot, name, 'env');
-    const legacyEnv = join(LEGACY_STORAGE_ROOT, 'stacks', name, 'env');
-    if (!existsSync(newEnv) && existsSync(legacyEnv)) {
-      return { baseDir: legacyBase, isLegacy: true };
-    }
-  }
-
-  return { baseDir: newBase, isLegacy: false };
+  return { baseDir: join(getStacksStorageRoot(env), name), isLegacy: false };
 }
 
 export function resolveStackEnvPath(stackName = null, env = process.env) {
   const name = (stackName ?? '').toString().trim() || getStackName(env);
-  const { baseDir: activeBase, isLegacy } = resolveStackBaseDir(name, env);
-  // New layout: ~/.happy/stacks/<name>/env
-  const newEnv = join(getStacksStorageRoot(env), name, 'env');
-  // Legacy layout: ~/.happy/local/stacks/<name>/env
-  const legacyEnv = join(LEGACY_STORAGE_ROOT, 'stacks', name, 'env');
-  const allowLegacy = !isSandboxed() || sandboxAllowsGlobalSideEffects();
-
-  if (existsSync(newEnv)) {
-    return { envPath: newEnv, isLegacy: false, baseDir: join(getStacksStorageRoot(env), name) };
-  }
-  if (allowLegacy && existsSync(legacyEnv)) {
-    return { envPath: legacyEnv, isLegacy: true, baseDir: join(LEGACY_STORAGE_ROOT, 'stacks', name) };
-  }
-  return { envPath: newEnv, isLegacy, baseDir: activeBase };
+  const { baseDir } = resolveStackBaseDir(name, env);
+  return { envPath: join(baseDir, 'env'), isLegacy: false, baseDir };
 }
 
 export function getDefaultAutostartPaths(env = process.env) {
@@ -317,29 +250,13 @@ export function getDefaultAutostartPaths(env = process.env) {
   const { baseDir, isLegacy } = resolveStackBaseDir(stackName, env);
   const logsDir = join(baseDir, 'logs');
 
-  const primaryLabel = getStackLabel(stackName, env);
-  const legacyLabel = getLegacyStackLabel(stackName, env);
-  const primaryPlistPath = join(homedir(), 'Library', 'LaunchAgents', `${primaryLabel}.plist`);
-  const legacyPlistPath = join(homedir(), 'Library', 'LaunchAgents', `${legacyLabel}.plist`);
-
-  const primaryStdoutPath = join(logsDir, `${PRIMARY_APP_SLUG}.out.log`);
-  const primaryStderrPath = join(logsDir, `${PRIMARY_APP_SLUG}.err.log`);
-  const legacyStdoutPath = join(logsDir, `${LEGACY_APP_SLUG}.out.log`);
-  const legacyStderrPath = join(logsDir, `${LEGACY_APP_SLUG}.err.log`);
-
-  // Best-effort: prefer primary, but fall back to legacy if that's what's installed.
-  const hasPrimaryPlist = existsSync(primaryPlistPath);
-  const hasLegacyPlist = existsSync(legacyPlistPath);
-  const hasPrimaryLogs = existsSync(primaryStdoutPath) || existsSync(primaryStderrPath);
-  const hasLegacyLogs = existsSync(legacyStdoutPath) || existsSync(legacyStderrPath);
-
-  const activeLabel = hasPrimaryPlist ? primaryLabel : hasLegacyPlist ? legacyLabel : primaryLabel;
-  const activePlistPath = hasPrimaryPlist ? primaryPlistPath : hasLegacyPlist ? legacyPlistPath : primaryPlistPath;
-  const stdoutPath = hasPrimaryLogs ? primaryStdoutPath : hasLegacyLogs ? legacyStdoutPath : primaryStdoutPath;
-  const stderrPath = hasPrimaryLogs ? primaryStderrPath : hasLegacyLogs ? legacyStderrPath : primaryStderrPath;
+  const label = getStackLabel(stackName, env);
+  const plistPath = join(homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
+  const stdoutPath = join(logsDir, `${PRIMARY_APP_SLUG}.out.log`);
+  const stderrPath = join(logsDir, `${PRIMARY_APP_SLUG}.err.log`);
 
   // Linux (systemd --user) uses the same label convention as LaunchAgents.
-  const systemdUnitName = `${activeLabel}.service`;
+  const systemdUnitName = `${label}.service`;
   const systemdUnitPath = join(homedir(), '.config', 'systemd', 'user', systemdUnitName);
 
   return {
@@ -348,22 +265,11 @@ export function getDefaultAutostartPaths(env = process.env) {
     stackName,
     isLegacy,
 
-    // Active (best-effort) for commands like status/logs/start/stop.
-    label: activeLabel,
-    plistPath: activePlistPath,
+    label,
+    plistPath,
     systemdUnitName,
     systemdUnitPath,
     stdoutPath,
     stderrPath,
-
-    // Primary/legacy info (for display + migration).
-    primaryLabel,
-    legacyLabel,
-    primaryPlistPath,
-    legacyPlistPath,
-    primaryStdoutPath,
-    primaryStderrPath,
-    legacyStdoutPath,
-    legacyStderrPath,
   };
 }

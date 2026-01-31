@@ -1,6 +1,6 @@
 # Backend Architecture
 
-This document describes the Happy backend structure as implemented in `packages/happy-server`. It focuses on how the server is wired, how data flows through the system, and which subsystems handle which responsibilities.
+This document describes the Happy backend structure as implemented in `packages/server`. It focuses on how the server is wired, how data flows through the system, and which subsystems handle which responsibilities.
 
 ## System overview
 
@@ -47,7 +47,7 @@ graph TB
 - Metrics: Prometheus-style `/metrics` server + per-request HTTP metrics.
 
 ## Process lifecycle
-Entry point: `packages/happy-server/sources/main.ts`.
+Entry point: `packages/server/sources/main.ts`.
 
 ```mermaid
 flowchart TD
@@ -390,10 +390,10 @@ graph TB
 - WebSocket event counters and connection gauges are in `metrics2.ts`.
 
 ## Key implementation references
-- Entrypoint: `packages/happy-server/sources/main.ts`
-- API server: `packages/happy-server/sources/app/api/api.ts`
-- Socket server: `packages/happy-server/sources/app/api/socket.ts`
-- Event routing: `packages/happy-server/sources/app/events/eventRouter.ts`
-- Presence: `packages/happy-server/sources/app/presence`
-- Storage: `packages/happy-server/sources/storage`
-- Prisma schema: `packages/happy-server/prisma/schema.prisma`
+- Entrypoint: `packages/server/sources/main.ts`
+- API server: `packages/server/sources/app/api/api.ts`
+- Socket server: `packages/server/sources/app/api/socket.ts`
+- Event routing: `packages/server/sources/app/events/eventRouter.ts`
+- Presence: `packages/server/sources/app/presence`
+- Storage: `packages/server/sources/storage`
+- Prisma schema: `packages/server/prisma/schema.prisma`

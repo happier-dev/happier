@@ -106,5 +106,5 @@ Auth flows:
 - `POST /logs-combined-from-cli-and-mobile-for-simple-ai-debugging` (only if enabled)
 
 ## Implementation references
-- API routes: `packages/happy-server/sources/app/api/routes`
-- Auth module: `packages/happy-server/sources/app/auth/auth.ts`
+- API routes: `packages/server/sources/app/api/routes`
+- Auth module: `packages/server/sources/app/auth/auth.ts`

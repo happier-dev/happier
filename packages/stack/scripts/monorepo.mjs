@@ -31,9 +31,9 @@ function usage() {
     '',
     'what it does:',
     '- Best-effort ports commits from split repos into the slopus/happy monorepo layout by applying patches into:',
-    '  - old happy (UI)        -> packages/happy-app/ (or legacy: expo-app/)',
-    '  - old happy-cli (CLI)   -> packages/happy-cli/ (or legacy: cli/)',
-    '  - old happy-server      -> packages/happy-server/ (or legacy: server/)',
+    '  - old happy (UI)        -> packages/app/ (or legacy: expo-app/)',
+    '  - old happy-cli (CLI)   -> packages/cli/ (or legacy: cli/)',
+    '  - old happy-server      -> packages/server/ (or legacy: server/)',
     '',
     'notes:',
     '- This preserves commit messages/authors (via `git format-patch` + `git am`).',
@@ -190,7 +190,7 @@ async function resolveTargetRepoRootFromArgs({ kv }) {
   if (!isHappyMonorepoRoot(repoRoot)) {
     throw new Error(
       `[monorepo] target does not look like a slopus/happy monorepo root ` +
-        `(missing packages/happy-app|packages/happy-cli|packages/happy-server or legacy expo-app/cli/server): ${repoRoot}`
+        `(missing packages/app|packages/cli|packages/server or legacy expo-app/cli/server): ${repoRoot}`
     );
   }
   return repoRoot;
@@ -271,7 +271,7 @@ async function resolveOrCloneTargetRepoRoot({ targetInput, targetArg, flags, kv,
     if (!isHappyMonorepoRoot(repoRoot)) {
       throw new Error(
         `[monorepo] target does not look like a slopus/happy monorepo root ` +
-          `(missing packages/happy-app|packages/happy-cli|packages/happy-server or legacy expo-app/cli/server): ${repoRoot}`
+          `(missing packages/app|packages/cli|packages/server or legacy expo-app/cli/server): ${repoRoot}`
       );
     }
     return repoRoot;
@@ -611,9 +611,9 @@ async function readGitAmStatus(targetRepoRoot) {
           continue;
         }
         const candidates = [
-          `packages/happy-app/${f}`,
-          `packages/happy-cli/${f}`,
-          `packages/happy-server/${f}`,
+          `packages/app/${f}`,
+          `packages/cli/${f}`,
+          `packages/server/${f}`,
           `expo-app/${f}`,
           `cli/${f}`,
           `server/${f}`,
@@ -1247,7 +1247,7 @@ function buildPortLlmPromptText({ targetRepoRoot }) {
     '- Prefer minimal conflict resolutions that preserve intent.',
     '- Conflicts are resolved one patch at a time (git am stops at the first conflict).',
     '- Do not “pre-resolve” hypothetical future conflicts; re-check status after each continue.',
-    '- Keep changes scoped to packages/happy-app/, packages/happy-cli/, packages/happy-server/ (or legacy expo-app/, cli/, server/).',
+    '- Keep changes scoped to packages/app/, packages/cli/, packages/server/ (or legacy expo-app/, cli/, server/).',
     '- After each continue, re-check status until port completes.',
   ].join('\n');
 }
@@ -1538,9 +1538,9 @@ async function cmdPortGuide({ kv, flags, json }) {
         bold(`✨ ${cyan('Happy Stacks')} monorepo port ✨`),
         '',
         'This wizard ports commits from split repos into the Happy monorepo layout:',
-        `- ${cyan('happy')} → packages/happy-app/ (or legacy expo-app/)`,
-        `- ${cyan('happy-cli')} → packages/happy-cli/ (or legacy cli/)`,
-        `- ${cyan('happy-server')} → packages/happy-server/ (or legacy server/)`,
+        `- ${cyan('happy')} → packages/app/ (or legacy expo-app/)`,
+        `- ${cyan('happy-cli')} → packages/cli/ (or legacy cli/)`,
+        `- ${cyan('happy-server')} → packages/server/ (or legacy server/)`,
         '',
         bold('Notes:'),
         `- Uses ${cyan('git format-patch')} + ${cyan('git am')} (preserves author + messages)`,

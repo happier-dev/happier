@@ -148,7 +148,7 @@ async function main() {
     return;
   }
  
-  await assertCliPrereqs({ git: true, pnpm: true });
+  await assertCliPrereqs({ git: true, yarn: true });
 
   // Determine a stable base stack name from PR inputs (used for sandbox discovery),
   // and a per-run unique stack name by default (prevents browser storage collisions across deleted sandboxes).

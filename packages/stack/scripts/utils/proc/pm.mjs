@@ -61,7 +61,7 @@ async function getComponentPm(dir, env = process.env) {
   })();
 
   // If this is a happy monorepo worktree and we're running from inside a package directory
-  // (e.g. packages/happy-server), prefer the monorepo root yarn.lock to avoid accidentally
+  // (e.g. packages/server), prefer the monorepo root yarn.lock to avoid accidentally
   // using pnpm (which will try to fetch workspace-only packages from npm).
   const hasYarnLock =
     (await pathExists(yarnLock)) ||
