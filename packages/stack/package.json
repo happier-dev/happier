@@ -1,0 +1,63 @@
+{
+  "name": "@happier-dev/stack",
+  "type": "module",
+  "version": "0.6.14",
+  "packageManager": "pnpm@10.18.3",
+  "bin": {
+    "happier-stack": "./bin/happys.mjs"
+  },
+  "files": [
+    "bin/",
+    "docs/",
+    "extras/",
+    "scripts/"
+  ],
+  "scripts": {
+    "setup": "node ./scripts/setup.mjs",
+    "init": "node ./scripts/init.mjs",
+    "uninstall": "node ./scripts/uninstall.mjs",
+    "where": "node ./scripts/where.mjs",
+    "self": "node ./scripts/self.mjs",
+    "bootstrap": "node ./scripts/install.mjs",
+    "build": "node ./scripts/build.mjs",
+    "start": "node ./scripts/run.mjs",
+    "dev": "node ./scripts/dev.mjs",
+    "release": "node ./scripts/release.mjs",
+    "happy": "node ./scripts/happy.mjs",
+    "wt": "node ./scripts/worktrees.mjs",
+    "srv": "node ./scripts/server_flavor.mjs",
+    "server-flavor": "node ./scripts/server_flavor.mjs",
+    "stack": "node ./scripts/stack.mjs",
+    "mobile": "node ./scripts/mobile.mjs",
+    "mobile:prebuild": "node ./scripts/mobile.mjs --prebuild --clean --no-metro",
+    "mobile:ios": "node ./scripts/mobile.mjs --run-ios --no-metro",
+    "mobile:ios:release": "node ./scripts/mobile.mjs --run-ios --no-metro --configuration=Release",
+    "mobile:install": "node ./scripts/mobile.mjs --run-ios --no-metro --configuration=Release",
+    "mobile:devices": "xcrun xcdevice list",
+    "cli:link": "node ./scripts/cli-link.mjs",
+    "auth": "node ./scripts/auth.mjs",
+    "service:status": "node ./scripts/service.mjs status",
+    "service:start": "node ./scripts/service.mjs start",
+    "service:stop": "node ./scripts/service.mjs stop",
+    "service:restart": "node ./scripts/service.mjs restart",
+    "service:enable": "node ./scripts/service.mjs enable",
+    "service:disable": "node ./scripts/service.mjs disable",
+    "service:install": "node ./scripts/service.mjs install",
+    "service:uninstall": "node ./scripts/service.mjs uninstall",
+    "tailscale:status": "node ./scripts/tailscale.mjs status",
+    "tailscale:url": "node ./scripts/tailscale.mjs url",
+    "tailscale:enable": "node ./scripts/tailscale.mjs enable",
+    "tailscale:disable": "node ./scripts/tailscale.mjs disable",
+    "stack:doctor": "node ./scripts/doctor.mjs",
+    "stack:fix": "node ./scripts/doctor.mjs --fix",
+    "logs": "node ./scripts/service.mjs logs",
+    "logs:tail": "node ./scripts/service.mjs tail",
+    "menubar:install": "node ./scripts/menubar.mjs install",
+    "menubar:uninstall": "node ./scripts/menubar.mjs uninstall",
+    "menubar:open": "bash -lc 'DIR=\"$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)\"; if [[ -z \"$DIR\" ]]; then DIR=\"$HOME/Library/Application Support/SwiftBar/Plugins\"; fi; open \"$DIR\"'"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

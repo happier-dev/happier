@@ -1,0 +1,37 @@
+---
+description: "Edison Framework Development Rules"
+globs: ["**/*"]
+alwaysApply: true
+---
+
+# Edison Framework Rules
+
+## Critical Principles (Config-Driven)
+
+These rules are **project-configurable** via Edison YAML. Do not assume every project uses the same enforcement level.
+
+- **TDD**: write failing test FIRST (RED), then implement (GREEN), then refactor.
+
+- **No internal mocks**: test real behavior; only mock at true system boundaries.
+
+- **Configuration-first**: avoid hardcoded behavior; load config from YAML/environment.
+
+- **Quality basics**: DRY, SOLID, KISS; avoid speculative/YAGNI code.
+- **Root cause**: fix underlying issues; avoid “dirty fixes”.
+
+## Development Practices
+
+- When updating code, ALL related tests should be updated (unit, integration, e2e)
+- When a test fails, analyze and fix the ROOT CAUSE - never simplify/skip tests
+- Before implementing, search for existing patterns to reuse/extend
+- Maintain strict coherence and unity across the codebase
+
+## Testing Guidelines
+
+- Prefer real behavior tests over mocked behavior.
+- Use temporary directories for filesystem tests (auto-cleaned).
+- Use isolated databases for integration tests (template DBs, containers, or per-test schemas).
+- Use real HTTP clients against local test servers for API tests.
+- Only mock at system boundaries (third-party services you do not control).
+
+<!-- Pack/project extensions go here -->

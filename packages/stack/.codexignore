@@ -1,0 +1,10 @@
+# Codex ignore rules (gitignore syntax)
+#
+# Keep real env files out of context, but allow template files.
+
+.env*
+env.local
+
+!.env.example
+!.env.*.example
+

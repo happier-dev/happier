@@ -1,0 +1,95 @@
+{
+  "additional_args": [
+    "--json"
+  ],
+  "command": "codex",
+  "env": {},
+  "name": "codex",
+  "roles": {
+    "agent-api-builder": {
+      "prompt_path": "../systemprompts/clink/project/agent-api-builder.txt",
+      "role_args": []
+    },
+    "agent-code-reviewer": {
+      "prompt_path": "../systemprompts/clink/project/agent-code-reviewer.txt",
+      "role_args": []
+    },
+    "agent-component-builder": {
+      "prompt_path": "../systemprompts/clink/project/agent-component-builder.txt",
+      "role_args": []
+    },
+    "agent-database-architect": {
+      "prompt_path": "../systemprompts/clink/project/agent-database-architect.txt",
+      "role_args": []
+    },
+    "agent-e2e-tests-engineer": {
+      "prompt_path": "../systemprompts/clink/project/agent-e2e-tests-engineer.txt",
+      "role_args": []
+    },
+    "agent-feature-implementer": {
+      "prompt_path": "../systemprompts/clink/project/agent-feature-implementer.txt",
+      "role_args": []
+    },
+    "agent-test-engineer": {
+      "prompt_path": "../systemprompts/clink/project/agent-test-engineer.txt",
+      "role_args": []
+    },
+    "codereviewer": {
+      "prompt_path": "../systemprompts/clink/project/codereviewer.txt",
+      "role_args": []
+    },
+    "default": {
+      "prompt_path": "../systemprompts/clink/project/default.txt",
+      "role_args": []
+    },
+    "planner": {
+      "prompt_path": "../systemprompts/clink/project/planner.txt",
+      "role_args": []
+    },
+    "validator-browser-e2e": {
+      "prompt_path": "../systemprompts/clink/project/validator-browser-e2e.txt",
+      "role_args": [
+        "-c",
+        "mcp_servers.playwright.command=\"npx\"",
+        "-c",
+        "mcp_servers.playwright.args=[\"-y\", \"@playwright/mcp@latest\", \"--isolated\"]"
+      ]
+    },
+    "validator-coderabbit": {
+      "prompt_path": "../systemprompts/clink/project/validator-coderabbit.txt",
+      "role_args": []
+    },
+    "validator-database": {
+      "prompt_path": "../systemprompts/clink/project/validator-database.txt",
+      "role_args": []
+    },
+    "validator-expo": {
+      "prompt_path": "../systemprompts/clink/project/validator-expo.txt",
+      "role_args": []
+    },
+    "validator-global": {
+      "prompt_path": "../systemprompts/clink/project/validator-global.txt",
+      "role_args": []
+    },
+    "validator-performance": {
+      "prompt_path": "../systemprompts/clink/project/validator-performance.txt",
+      "role_args": []
+    },
+    "validator-react": {
+      "prompt_path": "../systemprompts/clink/project/validator-react.txt",
+      "role_args": []
+    },
+    "validator-security": {
+      "prompt_path": "../systemprompts/clink/project/validator-security.txt",
+      "role_args": []
+    },
+    "validator-track-drift-review": {
+      "prompt_path": "../systemprompts/clink/project/validator-track-drift-review.txt",
+      "role_args": []
+    },
+    "validator-typescript": {
+      "prompt_path": "../systemprompts/clink/project/validator-typescript.txt",
+      "role_args": []
+    }
+  }
+}
