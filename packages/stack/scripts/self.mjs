@@ -148,7 +148,7 @@ async function cmdStatus({ rootDir, argv }) {
         checkedAt ? kv('checked:', dim(new Date(checkedAt).toISOString())) : null,
       ].filter(Boolean)),
       updateAvailable ? `\n${yellow('!')} update available: ${cyan(runtimeVersion || invokerVersion || 'current')} → ${cyan(latest)}` : null,
-      updateAvailable ? `${dim('Run:')} ${cmd('happys self update')}` : null,
+      updateAvailable ? `${dim('Run:')} ${cmd('hapsta self update')}` : null,
       '',
     ]
       .filter(Boolean)
@@ -261,7 +261,7 @@ async function cmdCheck({ rootDir, argv }) {
     data: { ok: true, current: current || null, latest, updateAvailable },
     text: latest
       ? updateAvailable
-        ? `${yellow('!')} update available: ${cyan(current)} → ${cyan(latest)}\n${dim('Run:')} ${cmd('happys self update')}`
+        ? `${yellow('!')} update available: ${cyan(current)} → ${cyan(latest)}\n${dim('Run:')} ${cmd('hapsta self update')}`
         : `${green('✓')} up to date ${dim('(')}${cyan(current)}${dim(')')}`
       : `${yellow('!')} unable to check latest version`,
   });
@@ -283,9 +283,9 @@ async function main() {
         banner('self', { subtitle: 'Runtime install + self-update.' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('happys self')} status [--no-check] [--json]`,
-        `  ${cyan('happys self')} update [--to=<version>] [--json]`,
-        `  ${cyan('happys self')} check [--quiet] [--json]`,
+        `  ${cyan('hapsta self')} status [--no-check] [--json]`,
+        `  ${cyan('hapsta self')} update [--to=<version>] [--json]`,
+        `  ${cyan('hapsta self')} check [--quiet] [--json]`,
       ].join('\n'),
     });
     return;

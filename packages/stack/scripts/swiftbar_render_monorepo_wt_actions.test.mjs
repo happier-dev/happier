@@ -53,9 +53,9 @@ test('swiftbar: monorepo stacks do not offer per-component worktree switching', 
   await writeFile(
     envFile,
     [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${appPkg}`,
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliPkg}`,
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER=${serverPkg}`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY=${appPkg}`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${cliPkg}`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER=${serverPkg}`,
       '',
     ].join('\n'),
     'utf-8'
@@ -63,9 +63,11 @@ test('swiftbar: monorepo stacks do not offer per-component worktree switching', 
 
   const bashScript = [
     `set -euo pipefail`,
-    `export HAPPY_STACKS_SWIFTBAR_GIT_MODE=live`,
-    `export HAPPY_LOCAL_DIR="${rootDir}"`,
-    `PNPM_BIN="/bin/echo"`,
+    `export HAPPIER_STACK_SWIFTBAR_GIT_MODE=live`,
+    `export HAPPIER_STACK_CLI_ROOT_DIR="${rootDir}"`,
+    `export HAPSTA_BIN="/bin/echo"`,
+    `export HAPSTA_TERM="/bin/echo"`,
+    `export HAPSTA_ROOT_DIR="${rootDir}"`,
     `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
     `source "${rootDir}/extras/swiftbar/lib/icons.sh"`,
     `source "${rootDir}/extras/swiftbar/lib/git.sh"`,

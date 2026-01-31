@@ -113,7 +113,6 @@ export function watchHappyCliAndRestartDaemon({
     join(cliDir, 'tsconfig.build.json'),
     join(cliDir, 'pkgroll.config.mjs'),
     join(cliDir, 'yarn.lock'),
-    join(cliDir, 'pnpm-lock.yaml'),
   ].filter((p) => existsSync(p));
 
   return watchDebounced({

@@ -33,14 +33,14 @@ async function main() {
       data: { components: DEFAULT_COMPONENTS, flags: ['--json'] },
       text: [
         '[typecheck] usage:',
-        '  happys typecheck [component...] [--json]',
+        '  hapsta typecheck [component...] [--json]',
         '',
         'components:',
         `  ${DEFAULT_COMPONENTS.join(' | ')}`,
         '',
         'examples:',
-        '  happys typecheck',
-        '  happys typecheck happy happy-cli',
+        '  hapsta typecheck',
+        '  hapsta typecheck happy happy-cli',
         '',
         'note:',
         '  If run from inside a component checkout/worktree and no components are provided, defaults to that component.',
@@ -62,8 +62,7 @@ async function main() {
       : null;
   if (inferred) {
     const stacksKey = componentDirEnvKey(inferred.component);
-    const legacyKey = stacksKey.replace(/^HAPPY_STACKS_/, 'HAPPY_LOCAL_');
-    if (!(process.env[stacksKey] ?? '').toString().trim() && !(process.env[legacyKey] ?? '').toString().trim()) {
+    if (!(process.env[stacksKey] ?? '').toString().trim()) {
       process.env[stacksKey] = inferred.repoDir;
     }
   }
@@ -141,4 +140,3 @@ main().catch((err) => {
   console.error('[typecheck] failed:', err);
   process.exit(1);
 });
-

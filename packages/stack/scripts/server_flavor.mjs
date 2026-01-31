@@ -26,7 +26,7 @@ async function cmdUse({ rootDir, argv }) {
   const flavorRaw = positionals[1] ?? '';
   const flavor = normalizeFlavor(flavorRaw);
   if (!flavor) {
-    throw new Error('[server-flavor] usage: happys srv use <happy-server-light|happy-server> [--json]');
+    throw new Error('[server-flavor] usage: hapsta srv use <happy-server-light|happy-server> [--json]');
   }
   if (!['happy-server-light', 'happy-server'].includes(flavor)) {
     throw new Error(`[server-flavor] unknown flavor: ${flavor}`);
@@ -36,8 +36,7 @@ async function cmdUse({ rootDir, argv }) {
   await ensureEnvFileUpdated({
     envPath,
     updates: [
-      { key: 'HAPPY_STACKS_SERVER_COMPONENT', value: flavor },
-      { key: 'HAPPY_LOCAL_SERVER_COMPONENT', value: flavor }, // legacy alias
+      { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: flavor },
     ],
   });
 
@@ -45,7 +44,7 @@ async function cmdUse({ rootDir, argv }) {
   printResult({
     json,
     data: { ok: true, flavor },
-    text: `[server-flavor] set HAPPY_STACKS_SERVER_COMPONENT=${flavor} (saved to ${envPath})`,
+    text: `[server-flavor] set HAPPIER_STACK_SERVER_COMPONENT=${flavor} (saved to ${envPath})`,
   });
 }
 
@@ -63,14 +62,13 @@ async function cmdUseInteractive({ rootDir, argv }) {
     await ensureEnvFileUpdated({
       envPath,
       updates: [
-        { key: 'HAPPY_STACKS_SERVER_COMPONENT', value: flavor },
-        { key: 'HAPPY_LOCAL_SERVER_COMPONENT', value: flavor }, // legacy alias
+        { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: flavor },
       ],
     });
     printResult({
       json,
       data: { ok: true, flavor },
-      text: `[server-flavor] set HAPPY_STACKS_SERVER_COMPONENT=${flavor} (saved to ${envPath})`,
+      text: `[server-flavor] set HAPPIER_STACK_SERVER_COMPONENT=${flavor} (saved to ${envPath})`,
     });
   });
 }
@@ -78,7 +76,7 @@ async function cmdUseInteractive({ rootDir, argv }) {
 async function cmdStatus({ argv }) {
   const { flags } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
-  const flavor = process.env.HAPPY_STACKS_SERVER_COMPONENT?.trim() || process.env.HAPPY_LOCAL_SERVER_COMPONENT?.trim() || 'happy-server-light';
+  const flavor = process.env.HAPPIER_STACK_SERVER_COMPONENT?.trim() || 'happy-server-light';
   printResult({ json, data: { flavor }, text: `[server-flavor] current: ${flavor}` });
 }
 
@@ -96,12 +94,12 @@ async function main() {
       data: { commands: ['status', 'use'] },
       text: [
         '[server-flavor] usage:',
-        '  happys srv status [--json]',
-        '  happys srv use <happy-server-light|happy-server> [--json]',
-        '  happys srv use --interactive [--json]',
+        '  hapsta srv status [--json]',
+        '  hapsta srv use <happy-server-light|happy-server> [--json]',
+        '  hapsta srv use --interactive [--json]',
         '',
         'notes:',
-        '  - `pnpm srv -- ...` still works inside a cloned repo (legacy).',
+        '  - This sets the default server flavor for future stack runs.',
       ].join('\n'),
     });
     return;

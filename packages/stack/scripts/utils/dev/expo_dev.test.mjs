@@ -5,10 +5,10 @@ import { buildExpoStartArgs, resolveExpoDevHost } from './expo_dev.mjs';
 
 test('resolveExpoDevHost defaults to lan and normalizes values', () => {
   assert.equal(resolveExpoDevHost({ env: {} }), 'lan');
-  assert.equal(resolveExpoDevHost({ env: { HAPPY_STACKS_EXPO_HOST: 'LAN' } }), 'lan');
-  assert.equal(resolveExpoDevHost({ env: { HAPPY_STACKS_EXPO_HOST: 'localhost' } }), 'localhost');
-  assert.equal(resolveExpoDevHost({ env: { HAPPY_STACKS_EXPO_HOST: 'tunnel' } }), 'tunnel');
-  assert.equal(resolveExpoDevHost({ env: { HAPPY_STACKS_EXPO_HOST: 'nope' } }), 'lan');
+  assert.equal(resolveExpoDevHost({ env: { HAPPIER_STACK_EXPO_HOST: 'LAN' } }), 'lan');
+  assert.equal(resolveExpoDevHost({ env: { HAPPIER_STACK_EXPO_HOST: 'localhost' } }), 'localhost');
+  assert.equal(resolveExpoDevHost({ env: { HAPPIER_STACK_EXPO_HOST: 'tunnel' } }), 'tunnel');
+  assert.equal(resolveExpoDevHost({ env: { HAPPIER_STACK_EXPO_HOST: 'nope' } }), 'lan');
 });
 
 test('buildExpoStartArgs builds dev-client args (preferred when mobile enabled)', () => {
@@ -73,4 +73,3 @@ test('buildExpoStartArgs throws on invalid requests', () => {
     /neither web nor dev-client requested/i
   );
 });
-

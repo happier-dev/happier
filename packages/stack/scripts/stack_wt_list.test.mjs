@@ -29,7 +29,7 @@ async function touchWorktree(dir) {
   await writeFile(join(dir, '.git'), 'gitdir: /dev/null\n', 'utf-8');
 }
 
-test('happys stack wt <stack> -- list defaults to active-only (no exhaustive enumeration)', async () => {
+test('hapsta stack wt <stack> -- list defaults to active-only (no exhaustive enumeration)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-wt-list-'));
@@ -37,19 +37,26 @@ test('happys stack wt <stack> -- list defaults to active-only (no exhaustive enu
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
   const workspaceDir = join(tmp, 'workspace');
-  const componentsDir = join(workspaceDir, 'components');
   const stackName = 'exp-test';
 
-  // Create isolated worktrees on disk (inside our temp workspace).
-  const wtRoot = join(componentsDir, '.worktrees');
-  const happyActive = join(wtRoot, 'happy', 'slopus', 'pr', 'active-branch');
-  const happyOther = join(wtRoot, 'happy', 'slopus', 'pr', 'other-branch');
-  const cliActive = join(wtRoot, 'happy-cli', 'slopus', 'pr', 'cli-active');
-  const cliOther = join(wtRoot, 'happy-cli', 'slopus', 'pr', 'cli-other');
-  await touchWorktree(happyActive);
-  await touchWorktree(happyOther);
-  await touchWorktree(cliActive);
-  await touchWorktree(cliOther);
+  // Create isolated monorepo worktrees on disk (repo-scoped, inside our temp workspace).
+  const wtRoot = join(workspaceDir, '.worktrees');
+  const monoActive = join(wtRoot, 'slopus', 'pr', 'active-branch');
+  const monoOther = join(wtRoot, 'slopus', 'pr', 'other-branch');
+  await touchWorktree(monoActive);
+  await touchWorktree(monoOther);
+  await mkdir(join(monoActive, 'packages', 'app'), { recursive: true });
+  await mkdir(join(monoActive, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(monoActive, 'packages', 'server'), { recursive: true });
+  await writeFile(join(monoActive, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoActive, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoActive, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
+  await mkdir(join(monoOther, 'packages', 'app'), { recursive: true });
+  await mkdir(join(monoOther, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(monoOther, 'packages', 'server'), { recursive: true });
+  await writeFile(join(monoOther, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoOther, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoOther, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
 
   // Stack env selects the active worktrees.
   const envPath = join(storageDir, stackName, 'env');
@@ -57,9 +64,10 @@ test('happys stack wt <stack> -- list defaults to active-only (no exhaustive enu
   await writeFile(
     envPath,
     [
-      `HAPPY_STACKS_STACK=${stackName}`,
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${happyActive}`,
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliActive}`,
+      `HAPPIER_STACK_STACK=${stackName}`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY=${monoActive}`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${monoActive}`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER=${monoActive}`,
       '',
     ].join('\n'),
     'utf-8'
@@ -67,24 +75,25 @@ test('happys stack wt <stack> -- list defaults to active-only (no exhaustive enu
 
   const baseEnv = {
     ...process.env,
-    // Prevent loading the user's real ~/.happy-stacks/.env via canonical discovery.
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_WORKSPACE_DIR: workspaceDir,
+    // Prevent loading the user's real ~/.happier-stack/.env via canonical discovery.
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
   const res = await runNode([join(rootDir, 'scripts', 'stack.mjs'), 'wt', stackName, '--', 'list'], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
-  assert.ok(res.stdout.includes(`- active: ${happyActive}`), `expected happy active in output\n${res.stdout}`);
-  assert.ok(res.stdout.includes(`- active: ${cliActive}`), `expected happy-cli active in output\n${res.stdout}`);
+  assert.ok(
+    res.stdout.includes(`- active: ${join(monoActive, 'packages', 'app')}`),
+    `expected happy active in output\n${res.stdout}`
+  );
 
   // Should NOT enumerate other worktrees unless --all was passed.
-  assert.ok(!res.stdout.includes(`- ${happyOther}`), `expected happy other to be omitted\n${res.stdout}`);
-  assert.ok(!res.stdout.includes(`- ${cliOther}`), `expected happy-cli other to be omitted\n${res.stdout}`);
+  assert.ok(!res.stdout.includes(`- ${join(monoOther, 'packages', 'app')}`), `expected other to be omitted\n${res.stdout}`);
 });
 
-test('happys stack wt <stack> -- list --all shows all worktrees (opt-in)', async () => {
+test('hapsta stack wt <stack> -- list --all shows all worktrees (opt-in)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-wt-list-'));
@@ -92,28 +101,45 @@ test('happys stack wt <stack> -- list --all shows all worktrees (opt-in)', async
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
   const workspaceDir = join(tmp, 'workspace');
-  const componentsDir = join(workspaceDir, 'components');
   const stackName = 'exp-test';
 
-  const wtRoot = join(componentsDir, '.worktrees');
-  const happyActive = join(wtRoot, 'happy', 'slopus', 'pr', 'active-branch');
-  const happyOther = join(wtRoot, 'happy', 'slopus', 'pr', 'other-branch');
-  await touchWorktree(happyActive);
-  await touchWorktree(happyOther);
+  const wtRoot = join(workspaceDir, '.worktrees');
+  const monoActive = join(wtRoot, 'slopus', 'pr', 'active-branch');
+  const monoOther = join(wtRoot, 'slopus', 'pr', 'other-branch');
+  await touchWorktree(monoActive);
+  await touchWorktree(monoOther);
+  await mkdir(join(monoActive, 'packages', 'app'), { recursive: true });
+  await mkdir(join(monoActive, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(monoActive, 'packages', 'server'), { recursive: true });
+  await writeFile(join(monoActive, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoActive, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoActive, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
+  await mkdir(join(monoOther, 'packages', 'app'), { recursive: true });
+  await mkdir(join(monoOther, 'packages', 'cli'), { recursive: true });
+  await mkdir(join(monoOther, 'packages', 'server'), { recursive: true });
+  await writeFile(join(monoOther, 'packages', 'app', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoOther, 'packages', 'cli', 'package.json'), '{}\n', 'utf-8');
+  await writeFile(join(monoOther, 'packages', 'server', 'package.json'), '{}\n', 'utf-8');
 
   const envPath = join(storageDir, stackName, 'env');
   await mkdir(dirname(envPath), { recursive: true });
   await writeFile(
     envPath,
-    [`HAPPY_STACKS_STACK=${stackName}`, `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${happyActive}`, ''].join('\n'),
+    [
+      `HAPPIER_STACK_STACK=${stackName}`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY=${monoActive}`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${monoActive}`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER=${monoActive}`,
+      '',
+    ].join('\n'),
     'utf-8'
   );
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
   const res = await runNode([join(rootDir, 'scripts', 'stack.mjs'), 'wt', stackName, '--', 'list', '--all'], {
@@ -122,7 +148,12 @@ test('happys stack wt <stack> -- list --all shows all worktrees (opt-in)', async
   });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
-  assert.ok(res.stdout.includes(`- active: ${happyActive}`), `expected happy active in output\n${res.stdout}`);
-  assert.ok(res.stdout.includes(`- ${happyOther}`), `expected happy other to be listed with --all\n${res.stdout}`);
+  assert.ok(
+    res.stdout.includes(`- active: ${join(monoActive, 'packages', 'app')}`),
+    `expected happy active in output\n${res.stdout}`
+  );
+  assert.ok(
+    res.stdout.includes(`- ${join(monoOther, 'packages', 'app')}`),
+    `expected happy other to be listed with --all\n${res.stdout}`
+  );
 });
-

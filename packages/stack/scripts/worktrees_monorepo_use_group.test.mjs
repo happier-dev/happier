@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('happys wt use switches all monorepo group components when target is a monorepo worktree', async () => {
+test('hapsta wt use switches all monorepo group components when target is a monorepo worktree', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-use-mono-'));
@@ -28,7 +28,7 @@ test('happys wt use switches all monorepo group components when target is a mono
   const sandboxDir = join(tmp, 'sandbox');
   const envFile = join(tmp, 'env');
 
-  const monoRoot = join(workspaceDir, 'components', '.worktrees', 'happy', 'slopus', 'tmp', 'mono-wt');
+  const monoRoot = join(workspaceDir, '.worktrees', 'slopus', 'tmp', 'mono-wt');
   await mkdir(join(monoRoot, 'packages', 'app'), { recursive: true });
   await mkdir(join(monoRoot, 'packages', 'cli'), { recursive: true });
   await mkdir(join(monoRoot, 'packages', 'server'), { recursive: true });
@@ -41,15 +41,15 @@ test('happys wt use switches all monorepo group components when target is a mono
 
   const env = {
     ...process.env,
-    HAPPY_STACKS_STACK: 'exp',
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_WORKSPACE_DIR: workspaceDir,
-    HAPPY_STACKS_SANDBOX_DIR: sandboxDir,
-    HAPPY_STACKS_ENV_FILE: envFile,
+    HAPPIER_STACK_STACK: 'exp',
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_SANDBOX_DIR: sandboxDir,
+    HAPPIER_STACK_ENV_FILE: envFile,
   };
 
   const res = await runNode(
-    [join(rootDir, 'scripts', 'worktrees.mjs'), 'use', 'happy', 'slopus/tmp/mono-wt', '--force', '--json'],
+    [join(rootDir, 'scripts', 'worktrees.mjs'), 'use', 'slopus/tmp/mono-wt', '--force', '--json'],
     { cwd: rootDir, env }
   );
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
@@ -58,9 +58,9 @@ test('happys wt use switches all monorepo group components when target is a mono
   assert.deepEqual(parsed.updatedComponents, ['happy', 'happy-cli', 'happy-server']);
 
   const contents = await readFile(envFile, 'utf-8');
-  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY=${monoRoot}\n`), contents);
-  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${monoRoot}\n`), contents);
-  assert.ok(contents.includes(`HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER=${monoRoot}\n`), contents);
+  assert.ok(contents.includes(`HAPPIER_STACK_COMPONENT_DIR_HAPPY=${monoRoot}\n`), contents);
+  assert.ok(contents.includes(`HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${monoRoot}\n`), contents);
+  assert.ok(contents.includes(`HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER=${monoRoot}\n`), contents);
 
   await rm(tmp, { recursive: true, force: true });
 });

@@ -106,12 +106,12 @@ Tool tracing captures real provider payloads as JSONL so we can curate fixtures 
 
 Stack-scoped env vars:
 
-- `HAPPY_STACKS_TOOL_TRACE=1`
+- `HAPPIER_STACK_TOOL_TRACE=1`
 
 Optional overrides:
 
-- `HAPPY_STACKS_TOOL_TRACE_DIR=/path/to/dir` (defaults to `$HAPPY_HOME_DIR/tool-traces`)
-- `HAPPY_STACKS_TOOL_TRACE_FILE=/path/to/file.jsonl` (forces a single file)
+- `HAPPIER_STACK_TOOL_TRACE_DIR=/path/to/dir` (defaults to `$HAPPY_HOME_DIR/tool-traces`)
+- `HAPPIER_STACK_TOOL_TRACE_FILE=/path/to/file.jsonl` (forces a single file)
 
 Implementation:
 

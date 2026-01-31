@@ -23,7 +23,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('happys env path defaults to main stack env file when no explicit env file is set', async () => {
+test('hapsta env path defaults to main stack env file when no explicit env file is set', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
@@ -35,9 +35,9 @@ test('happys env path defaults to main stack env file when no explicit env file 
 
   const baseEnv = {
     ...process.env,
-    // Prevent loading the user's real ~/.happy-stacks/.env via canonical discovery.
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
+    // Prevent loading the user's real ~/.happier-stack/.env via canonical discovery.
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
   };
 
   const res = await runNode([join(rootDir, 'scripts', 'env.mjs'), 'path', '--json'], {
@@ -54,7 +54,7 @@ test('happys env path defaults to main stack env file when no explicit env file 
   );
 });
 
-test('happys env edits the explicit stack env file when HAPPY_STACKS_ENV_FILE is set', async () => {
+test('hapsta env edits the explicit stack env file when HAPPIER_STACK_ENV_FILE is set', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
@@ -68,9 +68,9 @@ test('happys env edits the explicit stack env file when HAPPY_STACKS_ENV_FILE is
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_ENV_FILE: envPath,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_ENV_FILE: envPath,
   };
 
   const res = await runNode([join(rootDir, 'scripts', 'env.mjs'), 'set', 'FOO=bar'], { cwd: rootDir, env: baseEnv });
@@ -80,7 +80,7 @@ test('happys env edits the explicit stack env file when HAPPY_STACKS_ENV_FILE is
   assert.ok(raw.includes('FOO=bar'), `expected FOO in explicit env file\n${raw}`);
 });
 
-test('happys env (no subcommand) prints usage and exits 0', async () => {
+test('hapsta env (no subcommand) prints usage and exits 0', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
@@ -92,8 +92,8 @@ test('happys env (no subcommand) prints usage and exits 0', async () => {
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
   };
 
   const res = await runNode([join(rootDir, 'scripts', 'env.mjs')], { cwd: rootDir, env: baseEnv });
@@ -101,7 +101,7 @@ test('happys env (no subcommand) prints usage and exits 0', async () => {
   assert.ok(res.stdout.includes('[env] usage:'), `expected usage output\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 });
 
-test('happys env list prints keys in text mode', async () => {
+test('hapsta env list prints keys in text mode', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
@@ -116,13 +116,12 @@ test('happys env list prints keys in text mode', async () => {
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_ENV_FILE: envPath,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_ENV_FILE: envPath,
   };
 
   const res = await runNode([join(rootDir, 'scripts', 'env.mjs'), 'list'], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.ok(res.stdout.includes('FOO=bar'), `expected list output to include FOO=bar\nstdout:\n${res.stdout}`);
 });
-

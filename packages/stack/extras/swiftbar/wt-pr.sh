@@ -18,21 +18,18 @@ COMPONENT="${1:-}"
 STACK_NAME="${2:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_HOME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-HAPPY_LOCAL_DIR="${HAPPY_LOCAL_DIR:-${HAPPY_STACKS_HOME_DIR:-$DEFAULT_HOME_DIR}}"
-HAPPY_STACKS_HOME_DIR="${HAPPY_STACKS_HOME_DIR:-$HAPPY_LOCAL_DIR}"
-
-HAPPYS="$HAPPY_LOCAL_DIR/extras/swiftbar/happys.sh"
-if [[ ! -x "$HAPPYS" ]]; then
-  if [[ -n "${HAPPY_STACKS_SANDBOX_DIR:-}" ]]; then
-    echo "missing happys wrapper in sandbox: $HAPPYS" >&2
+HAPSTA="$SCRIPT_DIR/hapsta.sh"
+if [[ ! -x "$HAPSTA" ]]; then
+  if [[ -n "${HAPPIER_STACK_SANDBOX_DIR:-}" ]]; then
+    echo "missing hapsta wrapper in sandbox: $HAPSTA" >&2
     exit 1
   fi
-  HAPPYS="$(command -v happys 2>/dev/null || true)"
+  HAPSTA="$(command -v hapsta 2>/dev/null || true)"
+  [[ -z "$HAPSTA" ]] && HAPSTA="$(command -v happier-stack 2>/dev/null || true)"
 fi
-if [[ -z "$HAPPYS" ]]; then
-  echo "happys not found (run: happys init)" >&2
+if [[ -z "$HAPSTA" ]]; then
+  echo "hapsta not found (run: npx @happier-dev/stack@latest init)" >&2
   exit 1
 fi
 
@@ -49,7 +46,7 @@ if [[ -z "$COMPONENT" ]]; then
   COMPONENT="$(osascript <<'APPLESCRIPT'
 tell application "System Events"
   activate
-  set theChoice to choose from list {"happy", "happy-cli", "happy-server-light", "happy-server"} with title "Happy Stacks — Component" with prompt "Choose component:" default items {"happy"}
+  set theChoice to choose from list {"happy", "happy-cli", "happy-server-light", "happy-server"} with title "Hapsta — Component" with prompt "Choose component:" default items {"happy"}
   if theChoice is false then
     return ""
   end if
@@ -67,7 +64,7 @@ fi
 PR_INPUT="$(osascript <<'APPLESCRIPT'
 tell application "System Events"
   activate
-  set theDialogText to text returned of (display dialog "PR URL or number:" default answer "" with title "Happy Stacks — PR worktree")
+  set theDialogText to text returned of (display dialog "PR URL or number:" default answer "" with title "Hapsta — PR worktree")
   return theDialogText
 end tell
 APPLESCRIPT
@@ -82,7 +79,7 @@ fi
 REMOTE_CHOICE="$(osascript <<'APPLESCRIPT'
 tell application "System Events"
   activate
-  set theChoice to button returned of (display dialog "Remote to fetch PR from:" with title "Happy Stacks — PR remote" buttons {"upstream", "origin"} default button "upstream")
+  set theChoice to button returned of (display dialog "Remote to fetch PR from:" with title "Hapsta — PR remote" buttons {"upstream", "origin"} default button "upstream")
   return theChoice
 end tell
 APPLESCRIPT
@@ -94,9 +91,9 @@ if [[ -z "$REMOTE_CHOICE" ]]; then
 fi
 
 if [[ -n "$STACK_NAME" && "$STACK_NAME" != "main" ]]; then
-  "$HAPPYS" stack wt "$STACK_NAME" -- pr "$COMPONENT" "$PR_INPUT" --remote="$REMOTE_CHOICE" --use
+  "$HAPSTA" stack wt "$STACK_NAME" -- pr "$COMPONENT" "$PR_INPUT" --remote="$REMOTE_CHOICE" --use
 else
-  "$HAPPYS" wt pr "$COMPONENT" "$PR_INPUT" --remote="$REMOTE_CHOICE" --use
+  "$HAPSTA" wt pr "$COMPONENT" "$PR_INPUT" --remote="$REMOTE_CHOICE" --use
 fi
 
 echo "ok"

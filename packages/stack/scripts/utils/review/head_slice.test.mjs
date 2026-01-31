@@ -9,7 +9,7 @@ import { createHeadSliceCommits, getChangedOps } from './head_slice.mjs';
 function gitEnv() {
   const clean = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('HAPPY_STACKS_') || k.startsWith('HAPPY_LOCAL_')) continue;
+    if (k.startsWith('HAPPIER_STACK_')) continue;
     clean[k] = v;
   }
   return {

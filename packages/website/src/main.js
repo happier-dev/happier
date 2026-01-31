@@ -184,7 +184,7 @@ if (revealElements.length > 0) {
   }
 }
 
-// Feature tabs (Dokploy-style “table”)
+// Feature tabs
 function initFeatureTabs() {
   const buttons = Array.from(document.querySelectorAll('.feature-tab[data-feature-tab]'));
   if (buttons.length === 0) return;

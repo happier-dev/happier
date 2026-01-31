@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('happys wt cursor opens the monorepo root (not a subpackage dir) in monorepo worktrees', async () => {
+test('hapsta wt cursor opens the monorepo root (not a subpackage dir) in monorepo worktrees', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-cursor-mono-'));
@@ -27,7 +27,7 @@ test('happys wt cursor opens the monorepo root (not a subpackage dir) in monorep
   const homeDir = join(tmp, 'home');
   const sandboxDir = join(tmp, 'sandbox');
 
-  const monoRoot = join(workspaceDir, 'components', '.worktrees', 'happy', 'slopus', 'tmp', 'mono-wt');
+  const monoRoot = join(workspaceDir, '.worktrees', 'slopus', 'tmp', 'mono-wt');
   await mkdir(join(monoRoot, 'packages', 'app'), { recursive: true });
   await mkdir(join(monoRoot, 'packages', 'cli'), { recursive: true });
   await mkdir(join(monoRoot, 'packages', 'server'), { recursive: true });
@@ -38,26 +38,18 @@ test('happys wt cursor opens the monorepo root (not a subpackage dir) in monorep
 
   const env = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_WORKSPACE_DIR: workspaceDir,
-    HAPPY_STACKS_SANDBOX_DIR: sandboxDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_SANDBOX_DIR: sandboxDir,
   };
 
-  const resHappy = await runNode(
-    [join(rootDir, 'scripts', 'worktrees.mjs'), 'cursor', 'happy', 'slopus/tmp/mono-wt', '--json'],
-    { cwd: rootDir, env }
-  );
-  assert.equal(resHappy.code, 0, `expected exit 0, got ${resHappy.code}\nstdout:\n${resHappy.stdout}\nstderr:\n${resHappy.stderr}`);
-  const parsedHappy = JSON.parse(resHappy.stdout);
-  assert.equal(parsedHappy.dir, monoRoot);
-
-  const resCli = await runNode(
-    [join(rootDir, 'scripts', 'worktrees.mjs'), 'cursor', 'happy-cli', 'slopus/tmp/mono-wt', '--json'],
-    { cwd: rootDir, env }
-  );
-  assert.equal(resCli.code, 0, `expected exit 0, got ${resCli.code}\nstdout:\n${resCli.stdout}\nstderr:\n${resCli.stderr}`);
-  const parsedCli = JSON.parse(resCli.stdout);
-  assert.equal(parsedCli.dir, monoRoot);
+  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'cursor', 'slopus/tmp/mono-wt', '--json'], {
+    cwd: rootDir,
+    env,
+  });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  const parsed = JSON.parse(res.stdout);
+  assert.equal(parsed.dir, monoRoot);
 
   await rm(tmp, { recursive: true, force: true });
 });

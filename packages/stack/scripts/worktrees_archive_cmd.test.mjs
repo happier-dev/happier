@@ -33,7 +33,7 @@ async function runOk(cmd, args, { cwd, env }) {
   return res;
 }
 
-test('happys wt archive detaches and moves a git worktree (preserving uncommitted changes)', async () => {
+test('hapsta wt archive detaches and moves a git worktree (preserving uncommitted changes)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-archive-'));
@@ -41,17 +41,16 @@ test('happys wt archive detaches and moves a git worktree (preserving uncommitte
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
   const workspaceDir = join(tmp, 'workspace');
-  const componentsDir = join(workspaceDir, 'components');
 
   const baseEnv = {
-    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HAPPY_STACKS_') && !k.startsWith('HAPPY_LOCAL_'))),
+    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HAPPIER_STACK_'))),
     GIT_TERMINAL_PROMPT: '0',
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
-  const repoDir = join(componentsDir, 'happy');
+  const repoDir = join(workspaceDir, 'happier');
   await mkdir(repoDir, { recursive: true });
   await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
@@ -60,7 +59,7 @@ test('happys wt archive detaches and moves a git worktree (preserving uncommitte
   await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
 
-  const worktreeDir = join(componentsDir, '.worktrees', 'happy', 'slopus', 'pr', 'test-archive');
+  const worktreeDir = join(workspaceDir, '.worktrees', 'slopus', 'pr', 'test-archive');
   await mkdir(dirname(worktreeDir), { recursive: true });
   await runOk('git', ['worktree', 'add', '-b', 'slopus/pr/test-archive', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
 
@@ -77,7 +76,7 @@ test('happys wt archive detaches and moves a git worktree (preserving uncommitte
   const date = '2000-01-02';
   // Simulate a minimal PATH environment like launchd/SwiftBar shells.
   const nodeEnv = { ...baseEnv, PATH: '' };
-  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'happy', 'slopus/pr/test-archive', `--date=${date}`, '--json'], {
+  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'slopus/pr/test-archive', `--date=${date}`, '--json'], {
     cwd: rootDir,
     env: nodeEnv,
   });
@@ -85,7 +84,7 @@ test('happys wt archive detaches and moves a git worktree (preserving uncommitte
   const parsed = JSON.parse(res.stdout);
   assert.equal(parsed.ok, true, `expected ok=true JSON output\n${res.stdout}`);
 
-  const archivedDir = join(componentsDir, '.worktrees-archive', date, 'happy', 'slopus', 'pr', 'test-archive');
+  const archivedDir = join(workspaceDir, '.worktrees-archive', date, 'slopus', 'pr', 'test-archive');
   assert.equal(parsed.destDir, archivedDir, `expected destDir in JSON output to match archive path\n${res.stdout}`);
   const legacyGitFile = await stat(join(archivedDir, '.git.worktree')).catch(() => null);
   assert.equal(legacyGitFile, null, 'expected .git.worktree to be removed (avoid untracked noise)');
@@ -108,7 +107,7 @@ test('happys wt archive detaches and moves a git worktree (preserving uncommitte
   assert.notEqual(branchExists.code, 0, 'expected source repo branch deleted');
 });
 
-test('happys wt archive refuses to break stacks unless --detach-stacks is provided', async () => {
+test('hapsta wt archive refuses to break stacks unless --detach-stacks is provided', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-archive-stacks-'));
@@ -116,17 +115,16 @@ test('happys wt archive refuses to break stacks unless --detach-stacks is provid
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
   const workspaceDir = join(tmp, 'workspace');
-  const componentsDir = join(workspaceDir, 'components');
 
   const baseEnv = {
     ...process.env,
     GIT_TERMINAL_PROMPT: '0',
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
-  const repoDir = join(componentsDir, 'happy');
+  const repoDir = join(workspaceDir, 'happier');
   await mkdir(repoDir, { recursive: true });
   await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
@@ -135,7 +133,7 @@ test('happys wt archive refuses to break stacks unless --detach-stacks is provid
   await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
 
-  const worktreeDir = join(componentsDir, '.worktrees', 'happy', 'slopus', 'pr', 'linked-to-stack');
+  const worktreeDir = join(workspaceDir, '.worktrees', 'slopus', 'pr', 'linked-to-stack');
   await mkdir(dirname(worktreeDir), { recursive: true });
   await runOk('git', ['worktree', 'add', '-b', 'slopus/pr/linked-to-stack', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
   await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');
@@ -143,13 +141,13 @@ test('happys wt archive refuses to break stacks unless --detach-stacks is provid
   const stackName = 'exp-test';
   const envPath = join(storageDir, stackName, 'env');
   await mkdir(dirname(envPath), { recursive: true });
-  await writeFile(envPath, [`HAPPY_STACKS_STACK=${stackName}`, `HAPPY_STACKS_COMPONENT_DIR_HAPPY=${worktreeDir}`, ''].join('\n'), 'utf-8');
+  await writeFile(envPath, [`HAPPIER_STACK_STACK=${stackName}`, `HAPPIER_STACK_COMPONENT_DIR_HAPPY=${worktreeDir}`, ''].join('\n'), 'utf-8');
 
   const date = '2000-01-03';
   const nodeEnv = { ...baseEnv, PATH: '' };
 
   const denied = await runNode(
-    [join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'happy', 'slopus/pr/linked-to-stack', `--date=${date}`],
+    [join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'slopus/pr/linked-to-stack', `--date=${date}`],
     { cwd: rootDir, env: nodeEnv }
   );
   assert.notEqual(denied.code, 0, `expected archive to refuse without --detach-stacks\nstdout:\n${denied.stdout}\nstderr:\n${denied.stderr}`);
@@ -158,7 +156,6 @@ test('happys wt archive refuses to break stacks unless --detach-stacks is provid
     [
       join(rootDir, 'scripts', 'worktrees.mjs'),
       'archive',
-      'happy',
       'slopus/pr/linked-to-stack',
       `--date=${date}`,
       '--detach-stacks',
@@ -169,14 +166,14 @@ test('happys wt archive refuses to break stacks unless --detach-stacks is provid
   assert.equal(ok.code, 0, `expected archive to succeed with --detach-stacks\nstdout:\n${ok.stdout}\nstderr:\n${ok.stderr}`);
 
   const nextEnv = await readFile(envPath, 'utf-8');
-  assert.ok(!nextEnv.includes('HAPPY_STACKS_COMPONENT_DIR_HAPPY='), `expected stack env to detach from worktree\n${nextEnv}`);
+  assert.ok(!nextEnv.includes('HAPPIER_STACK_COMPONENT_DIR_HAPPY='), `expected stack env to detach from worktree\n${nextEnv}`);
 
-  const archivedDir = join(componentsDir, '.worktrees-archive', date, 'happy', 'slopus', 'pr', 'linked-to-stack');
+  const archivedDir = join(workspaceDir, '.worktrees-archive', date, 'slopus', 'pr', 'linked-to-stack');
   const gitStat = await stat(join(archivedDir, '.git'));
   assert.ok(gitStat.isDirectory(), 'expected archived .git to be a directory (detached repo)');
 });
 
-test('happys wt archive can archive a broken git worktree (missing .git/worktrees entry)', async () => {
+test('hapsta wt archive can archive a broken git worktree (missing .git/worktrees entry)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-archive-broken-'));
@@ -184,17 +181,16 @@ test('happys wt archive can archive a broken git worktree (missing .git/worktree
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
   const workspaceDir = join(tmp, 'workspace');
-  const componentsDir = join(workspaceDir, 'components');
 
   const baseEnv = {
-    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HAPPY_STACKS_') && !k.startsWith('HAPPY_LOCAL_'))),
+    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HAPPIER_STACK_'))),
     GIT_TERMINAL_PROMPT: '0',
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
-  const repoDir = join(componentsDir, 'happy');
+  const repoDir = join(workspaceDir, 'happier');
   await mkdir(repoDir, { recursive: true });
   await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
@@ -203,7 +199,7 @@ test('happys wt archive can archive a broken git worktree (missing .git/worktree
   await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
 
-  const worktreeDir = join(componentsDir, '.worktrees', 'happy', 'slopus', 'pr', 'broken-worktree');
+  const worktreeDir = join(workspaceDir, '.worktrees', 'slopus', 'pr', 'broken-worktree');
   await mkdir(dirname(worktreeDir), { recursive: true });
   await runOk('git', ['worktree', 'add', '-b', 'slopus/pr/broken-worktree', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
 
@@ -226,7 +222,7 @@ test('happys wt archive can archive a broken git worktree (missing .git/worktree
 
   const date = '2000-01-05';
   const nodeEnv = { ...baseEnv, PATH: '' };
-  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'happy', 'slopus/pr/broken-worktree', `--date=${date}`, '--json'], {
+  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'slopus/pr/broken-worktree', `--date=${date}`, '--json'], {
     cwd: rootDir,
     env: nodeEnv,
   });
@@ -235,7 +231,7 @@ test('happys wt archive can archive a broken git worktree (missing .git/worktree
   assert.equal(parsed.ok, true, `expected ok=true JSON output\n${res.stdout}`);
   assert.equal(parsed.branch, 'slopus/pr/broken-worktree', 'expected branch name to be preserved');
 
-  const archivedDir = join(componentsDir, '.worktrees-archive', date, 'happy', 'slopus', 'pr', 'broken-worktree');
+  const archivedDir = join(workspaceDir, '.worktrees-archive', date, 'slopus', 'pr', 'broken-worktree');
   const gitStat = await stat(join(archivedDir, '.git'));
   assert.ok(gitStat.isDirectory(), 'expected archived .git to be a directory (detached repo)');
 

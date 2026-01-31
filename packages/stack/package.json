@@ -2,10 +2,10 @@
   "name": "@happier-dev/stack",
   "type": "module",
   "version": "0.6.14",
-  "packageManager": "pnpm@10.18.3",
+  "packageManager": "yarn@1.22.22",
   "bin": {
-    "hapsta": "./bin/happys.mjs",
-    "happier-stack": "./bin/happys.mjs"
+    "hapsta": "./bin/hapsta.mjs",
+    "happier-stack": "./bin/hapsta.mjs"
   },
   "files": [
     "bin/",

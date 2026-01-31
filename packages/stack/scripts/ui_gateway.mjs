@@ -142,7 +142,7 @@ async function main() {
   const backendUrl = (kv.get('--backend-url') ?? '').trim();
   const minioPortRaw = (kv.get('--minio-port') ?? '').trim();
   const bucket = (kv.get('--bucket') ?? '').trim();
-  const serveUi = !flags.has('--no-ui') && (process.env.HAPPY_LOCAL_SERVE_UI ?? '1') !== '0';
+  const serveUi = !flags.has('--no-ui') && (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
   const uiDir = serveUi ? (kv.get('--ui-dir') ?? '').trim() : '';
 
   const port = portRaw ? Number(portRaw) : NaN;

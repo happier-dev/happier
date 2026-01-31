@@ -16,12 +16,12 @@ test('interactive stack new in monorepo mode does not prompt for happy-server-li
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-interactive-new-mono-'));
 
-  const prevWorkspace = process.env.HAPPY_STACKS_WORKSPACE_DIR;
+  const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
   try {
     const workspaceDir = join(tmp, 'workspace');
-    process.env.HAPPY_STACKS_WORKSPACE_DIR = workspaceDir;
+    process.env.HAPPIER_STACK_WORKSPACE_DIR = workspaceDir;
 
-    const monoRoot = join(workspaceDir, 'components', '.worktrees', 'happy', 'slopus', 'tmp', 'mono-wt');
+    const monoRoot = join(workspaceDir, '.worktrees', 'slopus', 'tmp', 'mono-wt');
     await mkdir(join(monoRoot, 'packages', 'app'), { recursive: true });
     await mkdir(join(monoRoot, 'packages', 'cli'), { recursive: true });
     await mkdir(join(monoRoot, 'packages', 'server'), { recursive: true });
@@ -43,8 +43,11 @@ test('interactive stack new in monorepo mode does not prompt for happy-server-li
       },
       deps: {
         prompt: async (_rl, question, { defaultValue } = {}) => {
-          if (question.includes('Derive happy-cli + happy-server')) return 'y';
           return defaultValue ?? '';
+        },
+        promptSelect: async (_rl, { title, options, defaultIndex = 0 } = {}) => {
+          if (String(title ?? '').includes('Monorepo mode detected')) return true;
+          return options?.[defaultIndex]?.value;
         },
         promptWorktreeSource: async ({ component }) => {
           prompted.push(component);
@@ -61,9 +64,9 @@ test('interactive stack new in monorepo mode does not prompt for happy-server-li
     assert.equal(out.components['happy-server-light'], null);
   } finally {
     if (prevWorkspace == null) {
-      delete process.env.HAPPY_STACKS_WORKSPACE_DIR;
+      delete process.env.HAPPIER_STACK_WORKSPACE_DIR;
     } else {
-      process.env.HAPPY_STACKS_WORKSPACE_DIR = prevWorkspace;
+      process.env.HAPPIER_STACK_WORKSPACE_DIR = prevWorkspace;
     }
     await rm(tmp, { recursive: true, force: true });
   }

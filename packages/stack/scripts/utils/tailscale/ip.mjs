@@ -35,14 +35,14 @@ function tailscaleEnv() {
  * Resolve the tailscale CLI path.
  *
  * Priority:
- * 1. HAPPY_STACKS_TAILSCALE_BIN env override
+ * 1. HAPPIER_STACK_TAILSCALE_BIN env override
  * 2. PATH lookup
  * 3. macOS app bundle paths
  */
 export async function resolveTailscaleCmd() {
   // Explicit override
-  if (process.env.HAPPY_STACKS_TAILSCALE_BIN?.trim()) {
-    return process.env.HAPPY_STACKS_TAILSCALE_BIN.trim();
+  if (process.env.HAPPIER_STACK_TAILSCALE_BIN?.trim()) {
+    return process.env.HAPPIER_STACK_TAILSCALE_BIN.trim();
   }
 
   // Try PATH first

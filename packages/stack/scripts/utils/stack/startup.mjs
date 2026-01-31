@@ -93,7 +93,7 @@ export function resolveAutoCopyFromMainEnabled({ env, stackName, isInteractive }
   if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     return false;
   }
-  const raw = (env.HAPPY_STACKS_AUTO_AUTH_SEED ?? '').toString().trim();
+  const raw = (env.HAPPIER_STACK_AUTO_AUTH_SEED ?? '').toString().trim();
   if (raw) return raw !== '0';
 
   if (stackName === 'main') return false;
@@ -103,12 +103,12 @@ export function resolveAutoCopyFromMainEnabled({ env, stackName, isInteractive }
   // - in interactive shells, auto-seed only when the user explicitly configured a non-main seed stack
   //   (this avoids silently spreading main identity for users who haven't opted in yet).
   if (!isInteractive) return true;
-  const seed = (env.HAPPY_STACKS_AUTH_SEED_FROM ?? '').toString().trim();
+  const seed = (env.HAPPIER_STACK_AUTH_SEED_FROM ?? '').toString().trim();
   return Boolean(seed && seed !== 'main');
 }
 
 export function resolveAuthSeedFromEnv(env) {
-  const seed = (env.HAPPY_STACKS_AUTH_SEED_FROM ?? '').toString().trim();
+  const seed = (env.HAPPIER_STACK_AUTH_SEED_FROM ?? '').toString().trim();
   return seed || 'main';
 }
 
@@ -288,8 +288,8 @@ export async function maybeAutoCopyAuthFromMainIfNeeded({
   const reason = !hasAccessKey ? 'missing_credentials' : 'no_accounts';
   const fromStackName = resolveAuthSeedFromEnv(env);
   const linkAuth =
-    (env.HAPPY_STACKS_AUTH_LINK ?? '').toString().trim() === '1' ||
-    (env.HAPPY_STACKS_AUTH_MODE ?? '').toString().trim() === 'link';
+    (env.HAPPIER_STACK_AUTH_LINK ?? '').toString().trim() === '1' ||
+    (env.HAPPIER_STACK_AUTH_MODE ?? '').toString().trim() === 'link';
   if (!quiet) {
     console.log(`[local] auth: auto seed from ${fromStackName} for ${stackName} (${reason})`);
   }

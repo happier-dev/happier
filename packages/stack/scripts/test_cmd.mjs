@@ -83,15 +83,15 @@ async function main() {
       data: { components: VALID_COMPONENTS, flags: ['--json'] },
       text: [
         '[test] usage:',
-        '  happys test [component...] [--json]',
+        '  hapsta test [component...] [--json]',
         '',
         'components:',
         `  ${VALID_COMPONENTS.join(' | ')}`,
         '',
         'examples:',
-        '  happys test',
-        '  happys test stacks',
-        '  happys test happy happy-cli',
+        '  hapsta test',
+        '  hapsta test stacks',
+        '  hapsta test happy happy-cli',
         '',
         'note:',
         '  If run from inside a component checkout/worktree and no components are provided, defaults to that component.',
@@ -113,8 +113,7 @@ async function main() {
       : null;
   if (inferred) {
     const stacksKey = componentDirEnvKey(inferred.component);
-    const legacyKey = stacksKey.replace(/^HAPPY_STACKS_/, 'HAPPY_LOCAL_');
-    if (!(process.env[stacksKey] ?? '').toString().trim() && !(process.env[legacyKey] ?? '').toString().trim()) {
+    if (!(process.env[stacksKey] ?? '').toString().trim()) {
       process.env[stacksKey] = inferred.repoDir;
     }
   }
@@ -134,7 +133,7 @@ async function main() {
     if (component === 'stacks') {
       try {
         // eslint-disable-next-line no-console
-        console.log('[test] stacks: running node --test (happy-stacks unit tests)');
+        console.log('[test] stacks: running node --test (hapsta unit tests)');
         // Note: do not rely on shell glob expansion here.
         // Node 20 does not expand globs for `--test`, and bash/sh won't expand globs inside quotes.
         // Enumerate files ourselves so this works reliably in CI.

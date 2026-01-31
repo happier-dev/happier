@@ -104,14 +104,14 @@ function isTuiHelp(argv) {
 }
 
 function inferStackNameFromForwardedArgs(args) {
-  // Primary: stack-scoped usage: `happys tui stack <subcmd> <name> ...`
+  // Primary: stack-scoped usage: `hapsta tui stack <subcmd> <name> ...`
   const i = args.indexOf('stack');
   if (i >= 0) {
     const name = args[i + 2];
     if (name && !name.startsWith('-')) return name;
   }
   // Fallback: use current environment stack (or main).
-  return (process.env.HAPPY_STACKS_STACK ?? process.env.HAPPY_LOCAL_STACK ?? '').trim() || 'main';
+  return (process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
 }
 
 const readEnvObject = readEnvObjectFromFile;
@@ -121,7 +121,7 @@ async function preflightCorepackYarnForStack({ envPath }) {
   // In stack mode we isolate HOME/XDG caches per stack, which can cause Corepack to prompt
   // the first time a stack runs Yarn.
   //
-  // In `happys tui`, the child runs under a pseudo-TTY (via `script`) and the TUI consumes
+  // In `hapsta tui`, the child runs under a pseudo-TTY (via `script`) and the TUI consumes
   // all keyboard input, so Corepack's interactive prompt deadlocks.
   //
   // Fix: pre-download Yarn in a *non-tty* subprocess using the stack's isolated HOME/XDG,
@@ -186,8 +186,8 @@ async function preflightCorepackYarnForStack({ envPath }) {
   });
 }
 
-function getEnvVal(env, key, legacyKey) {
-  return getEnvValueAny(env, [key, legacyKey]) || '';
+function getEnvVal(env, key) {
+  return getEnvValueAny(env, [key]) || '';
 }
 
 function nextLineBreakIndex(s) {
@@ -229,7 +229,7 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const runtime = await readStackRuntimeStateFile(runtimePath);
 
   const serverComponent =
-    getEnvValueAny(env, ['HAPPY_STACKS_SERVER_COMPONENT', 'HAPPY_LOCAL_SERVER_COMPONENT']) || 'happy-server-light';
+    getEnvValueAny(env, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happy-server-light';
 
   const ports = runtime?.ports && typeof runtime.ports === 'object' ? runtime.ports : {};
   const expo = runtime?.expo && typeof runtime.expo === 'object' ? runtime.expo : {};
@@ -238,18 +238,14 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const processes = runtime?.processes && typeof runtime.processes === 'object' ? runtime.processes : {};
 
   const components = [
-    { key: 'happy', envKey: 'HAPPY_STACKS_COMPONENT_DIR_HAPPY', legacyKey: 'HAPPY_LOCAL_COMPONENT_DIR_HAPPY' },
-    { key: 'happy-cli', envKey: 'HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI', legacyKey: 'HAPPY_LOCAL_COMPONENT_DIR_HAPPY_CLI' },
+    { key: 'happy', envKey: 'HAPPIER_STACK_COMPONENT_DIR_HAPPY' },
+    { key: 'happy-cli', envKey: 'HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI' },
     {
       key: serverComponent === 'happy-server' ? 'happy-server' : 'happy-server-light',
       envKey:
         serverComponent === 'happy-server'
-          ? 'HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER'
-          : 'HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT',
-      legacyKey:
-        serverComponent === 'happy-server'
-          ? 'HAPPY_LOCAL_COMPONENT_DIR_HAPPY_SERVER'
-          : 'HAPPY_LOCAL_COMPONENT_DIR_HAPPY_SERVER_LIGHT',
+          ? 'HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER'
+          : 'HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT',
     },
   ];
 
@@ -287,7 +283,7 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   lines.push('');
   lines.push('components:');
   for (const c of components) {
-    const dir = getEnvVal(env, c.envKey, c.legacyKey);
+    const dir = getEnvVal(env, c.envKey);
     lines.push(`  ${padRight(c.key, 16)} ${formatComponentRef({ rootDir, component: c.key, dir })}`);
   }
 
@@ -323,15 +319,15 @@ async function main() {
   if (isTuiHelp(argv)) {
     printResult({
       json: false,
-      data: { usage: 'happys tui <happys args...>', json: false },
+      data: { usage: 'hapsta tui <hapsta args...>', json: false },
       text: [
         '[tui] usage:',
-        '  happys tui <happys args...>',
+        '  hapsta tui <hapsta args...>',
         '',
         'examples:',
-        '  happys tui stack dev resume-upstream',
-        '  happys tui stack start resume-upstream',
-        '  happys tui stack auth dev-auth login',
+        '  hapsta tui stack dev resume-upstream',
+        '  hapsta tui stack start resume-upstream',
+        '  hapsta tui stack auth dev-auth login',
         '',
         'layouts:',
         '  single  : one pane (focused)',
@@ -361,7 +357,7 @@ async function main() {
   }
 
   const rootDir = getRootDir(import.meta.url);
-  const happysBin = join(rootDir, 'bin', 'happys.mjs');
+  const happysBin = join(rootDir, 'bin', 'hapsta.mjs');
   const forwarded = argv;
 
   const stackName = inferStackNameFromForwardedArgs(forwarded);
@@ -421,8 +417,7 @@ async function main() {
   // Mark the child env so dependency installers can auto-approve safe prompts (Corepack yarn downloads).
   const childEnv = {
     ...process.env,
-    HAPPY_STACKS_TUI: '1',
-    HAPPY_LOCAL_TUI: '1',
+    HAPPIER_STACK_TUI: '1',
     // Avoid Corepack mutating package.json automatically.
     COREPACK_ENABLE_AUTO_PIN: '0',
   };
@@ -571,7 +566,7 @@ async function main() {
 
     const focusPane = panes[focused];
     const focusLabel = focusPane ? `${focusPane.id} (${focusPane.title})` : String(focused);
-    const header = `happys tui | ${forwarded.join(' ')} | layout=${layout} | focus=${focusLabel}`;
+    const header = `hapsta tui | ${forwarded.join(' ')} | layout=${layout} | focus=${focusLabel}`;
     process.stdout.write(padRight(header, cols) + '\n');
 
     const bodyY = 1;
@@ -708,7 +703,7 @@ async function main() {
               const minLogW = 24;
               const minQrW = 22;
               const maxQrW = Math.max(0, Math.min(80, colW - minLogW));
-              const fixedQrWRaw = (process.env.HAPPY_STACKS_TUI_QR_WIDTH ?? process.env.HAPPY_LOCAL_TUI_QR_WIDTH ?? '').toString().trim();
+              const fixedQrWRaw = (process.env.HAPPIER_STACK_TUI_QR_WIDTH ?? '').toString().trim();
               const fixedQrW = fixedQrWRaw ? Number(fixedQrWRaw) : 44;
               const qrW = clamp(Number.isFinite(fixedQrW) && fixedQrW > 0 ? fixedQrW : maxLineLen + 2, minQrW, maxQrW);
               const canSplit = qrW >= minQrW && colW - qrW >= minLogW;

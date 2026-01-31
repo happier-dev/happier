@@ -102,7 +102,7 @@ async function main() {
     printResult({
       json,
       data: { commands: ['act'], flags: ['--json'] },
-      text: ['[ci] usage:', '  happys ci act [job...] [--json]'].join('\n'),
+      text: ['[ci] usage:', '  hapsta ci act [job...] [--json]'].join('\n'),
     });
     return;
   }

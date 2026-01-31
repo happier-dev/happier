@@ -13,7 +13,7 @@ function normalizeHostMode(raw) {
 export function resolveMobileHostMode(env = process.env) {
   // Prefer explicit host vars (so TUI/setup-pr match the same knobs Expo uses).
   const raw =
-    getEnvValueAny(env, ['HAPPY_STACKS_MOBILE_HOST', 'HAPPY_LOCAL_MOBILE_HOST']) ||
+    getEnvValueAny(env, ['HAPPIER_STACK_MOBILE_HOST']) ||
     resolveMobileExpoConfig({ env }).host ||
     'lan';
   return normalizeHostMode(raw);
@@ -57,4 +57,3 @@ export function resolveMobileQrPayload({ env = process.env, port }) {
   const payload = deepLink || metroUrl;
   return { scheme, metroUrl, deepLink, payload };
 }
-

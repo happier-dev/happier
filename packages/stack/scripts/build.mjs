@@ -29,8 +29,7 @@ async function main() {
       data: { flags: ['--tauri', '--no-tauri', '--no-ui'], json: true },
       text: [
         '[build] usage:',
-        '  happys build [--tauri] [--json]',
-        '  (legacy in a cloned repo): pnpm build [-- --tauri] [--json]',
+        '  hapsta build [--tauri] [--json]',
         '  node scripts/build.mjs [--tauri|--no-tauri] [--no-ui] [--json]',
         '',
         'note:',
@@ -41,7 +40,7 @@ async function main() {
   }
   const rootDir = getRootDir(import.meta.url);
 
-  // If invoked from inside the Happy UI checkout/worktree, prefer that directory without requiring `happys wt use ...`.
+  // If invoked from inside the Happy UI checkout/worktree, prefer that directory without requiring `hapsta wt use ...`.
   const inferred = inferComponentFromCwd({
     rootDir,
     invokedCwd: getInvokedCwd(process.env),
@@ -49,8 +48,7 @@ async function main() {
   });
   if (inferred?.component === 'happy') {
     const stacksKey = componentDirEnvKey('happy');
-    const legacyKey = stacksKey.replace(/^HAPPY_STACKS_/, 'HAPPY_LOCAL_');
-    if (!(process.env[stacksKey] ?? '').toString().trim() && !(process.env[legacyKey] ?? '').toString().trim()) {
+    if (!(process.env[stacksKey] ?? '').toString().trim()) {
       process.env[stacksKey] = inferred.repoDir;
     }
   }
@@ -66,8 +64,8 @@ async function main() {
   // For Tauri builds we embed an explicit API base URL (tauri:// origins cannot use window.location.origin).
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
 
-  const outDir = process.env.HAPPY_LOCAL_UI_BUILD_DIR?.trim()
-    ? process.env.HAPPY_LOCAL_UI_BUILD_DIR.trim()
+  const outDir = process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
+    ? process.env.HAPPIER_STACK_UI_BUILD_DIR.trim()
     : join(getDefaultAutostartPaths().baseDir, 'ui');
 
   // UI is served at root; /ui redirects to /.
@@ -76,7 +74,7 @@ async function main() {
     // Ensure the output dir exists so server-light doesn't crash if used, but do not run Expo export.
     await rm(outDir, { recursive: true, force: true });
     await mkdir(outDir, { recursive: true });
-    await writeFile(join(outDir, '.happy-stacks-build-skipped'), 'no-ui\n', 'utf-8');
+    await writeFile(join(outDir, '.hapsta-build-skipped'), 'no-ui\n', 'utf-8');
     if (json) {
       printResult({ json, data: { ok: true, outDir, skippedUi: true, tauriBuilt: false } });
     } else {
@@ -130,9 +128,9 @@ async function main() {
   //
   // Default: do NOT build Tauri (it's slow and requires extra toolchain).
   // Enable explicitly with:
-  // - `happys build -- --tauri`, or
-  // - `HAPPY_LOCAL_BUILD_TAURI=1`
-  const envBuildTauri = (process.env.HAPPY_LOCAL_BUILD_TAURI ?? '').trim();
+  // - `hapsta build -- --tauri`, or
+  // - `HAPPIER_STACK_BUILD_TAURI=1`
+  const envBuildTauri = (process.env.HAPPIER_STACK_BUILD_TAURI ?? '').trim();
   const buildTauriFromEnv = envBuildTauri !== '' ? envBuildTauri !== '0' : false;
   const buildTauri = !flags.has('--no-tauri') && (flags.has('--tauri') || buildTauriFromEnv);
   if (!buildTauri) {
@@ -140,23 +138,23 @@ async function main() {
   }
 
   // Default to debug builds for local development so devtools are available.
-  const tauriDebug = (process.env.HAPPY_LOCAL_TAURI_DEBUG ?? '1') === '1';
+  const tauriDebug = (process.env.HAPPIER_STACK_TAURI_DEBUG ?? '1') === '1';
 
   // Choose the API endpoint the Tauri app should use.
   //
   // Priority:
-  // 1) HAPPY_LOCAL_TAURI_SERVER_URL (explicit override)
+  // 1) HAPPIER_STACK_TAURI_SERVER_URL (explicit override)
   // 2) If available, a Tailscale Serve https://*.ts.net URL (portable across machines on the same tailnet)
   // 3) Fallback to internal loopback (same-machine)
-  const tauriServerUrlOverride = process.env.HAPPY_LOCAL_TAURI_SERVER_URL?.trim()
-    ? process.env.HAPPY_LOCAL_TAURI_SERVER_URL.trim()
+  const tauriServerUrlOverride = process.env.HAPPIER_STACK_TAURI_SERVER_URL?.trim()
+    ? process.env.HAPPIER_STACK_TAURI_SERVER_URL.trim()
     : '';
-  const preferTailscale = (process.env.HAPPY_LOCAL_TAURI_PREFER_TAILSCALE ?? '1') !== '0';
+  const preferTailscale = (process.env.HAPPIER_STACK_TAURI_PREFER_TAILSCALE ?? '1') !== '0';
   const tailscaleUrl = preferTailscale ? await tailscaleServeHttpsUrl() : null;
   const tauriServerUrl = tauriServerUrlOverride || tailscaleUrl || internalServerUrl;
 
-  const tauriDistDir = process.env.HAPPY_LOCAL_TAURI_UI_DIR?.trim()
-    ? process.env.HAPPY_LOCAL_TAURI_UI_DIR.trim()
+  const tauriDistDir = process.env.HAPPIER_STACK_TAURI_UI_DIR?.trim()
+    ? process.env.HAPPIER_STACK_TAURI_UI_DIR.trim()
     : join(uiDir, 'dist');
 
   await rm(tauriDistDir, { recursive: true, force: true });
@@ -214,12 +212,12 @@ async function main() {
 
   // Build a separate "local" app so it doesn't reuse previous storage (server URL, auth, etc).
   // This avoids needing any changes in the Happy source code to override a previously saved server.
-  tauriConfig.identifier = process.env.HAPPY_LOCAL_TAURI_IDENTIFIER?.trim()
-    ? process.env.HAPPY_LOCAL_TAURI_IDENTIFIER.trim()
-    : 'com.happy.stacks';
-  tauriConfig.productName = process.env.HAPPY_LOCAL_TAURI_PRODUCT_NAME?.trim()
-    ? process.env.HAPPY_LOCAL_TAURI_PRODUCT_NAME.trim()
-    : 'Happy Stacks';
+  tauriConfig.identifier = process.env.HAPPIER_STACK_TAURI_IDENTIFIER?.trim()
+    ? process.env.HAPPIER_STACK_TAURI_IDENTIFIER.trim()
+    : 'com.happier.stack';
+  tauriConfig.productName = process.env.HAPPIER_STACK_TAURI_PRODUCT_NAME?.trim()
+    ? process.env.HAPPIER_STACK_TAURI_PRODUCT_NAME.trim()
+    : 'Hapsta';
   if (tauriConfig.app?.windows?.length) {
     tauriConfig.app.windows = tauriConfig.app.windows.map((w) => ({
       ...w,
@@ -236,7 +234,7 @@ async function main() {
     }
   }
 
-  const generatedConfigPath = join(getDefaultAutostartPaths().baseDir, 'tauri.conf.happy-stacks.json');
+  const generatedConfigPath = join(getDefaultAutostartPaths().baseDir, 'tauri.conf.happier-stack.json');
   await mkdir(dirname(generatedConfigPath), { recursive: true });
   await writeFile(generatedConfigPath, JSON.stringify(tauriConfig, null, 2), 'utf-8');
 

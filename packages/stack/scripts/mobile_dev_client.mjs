@@ -24,7 +24,7 @@ async function main() {
         banner('mobile-dev-client', { subtitle: 'Install the shared iOS dev-client app (one-time).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('happys mobile-dev-client')} --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]`,
+        `  ${cyan('hapsta mobile-dev-client')} --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]`,
         '',
         sectionTitle('notes:'),
         `- Installs a dedicated ${cyan('Happy Stacks Dev')} Expo dev-client app on your iPhone.`,
@@ -39,7 +39,7 @@ async function main() {
     printResult({
       json,
       data: { ok: false, error: 'missing_install_flag' },
-      text: `${yellow('!')} missing ${cyan('--install')}. Run: ${cmd('happys mobile-dev-client --help')}`,
+      text: `${yellow('!')} missing ${cyan('--install')}. Run: ${cmd('hapsta mobile-dev-client --help')}`,
     });
     process.exit(1);
   }

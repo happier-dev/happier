@@ -18,7 +18,7 @@ import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 
 function resolveWorkspaceDir({ rootDir, homeDir }) {
   // Uninstall should never default to deleting the repo root (getWorkspaceDir() can fall back to cliRootDir).
-  const fromEnv = (process.env.HAPPY_STACKS_WORKSPACE_DIR ?? '').trim();
+  const fromEnv = (process.env.HAPPIER_STACK_WORKSPACE_DIR ?? '').trim();
   if (fromEnv) {
     return expandHome(fromEnv);
   }
@@ -36,11 +36,11 @@ async function main() {
       data: { flags: ['--remove-workspace', '--remove-stacks', '--yes', '--global'], json: true },
       text: [
         '[uninstall] usage:',
-        '  happys uninstall [--json]   # dry-run',
-        '  happys uninstall --yes [--json]',
-        '  happys uninstall --remove-workspace --yes',
-        '  happys uninstall --remove-stacks --yes',
-        '  happys uninstall --global --yes   # also remove global OS integrations (services/SwiftBar) even in sandbox mode',
+        '  hapsta uninstall [--json]   # dry-run',
+        '  hapsta uninstall --yes [--json]',
+        '  hapsta uninstall --remove-workspace --yes',
+        '  hapsta uninstall --remove-stacks --yes',
+        '  hapsta uninstall --global --yes   # also remove global OS integrations (services/SwiftBar) even in sandbox mode',
         '',
         'notes:',
         '  - default removes: runtime, shims, cache, SwiftBar assets + plugin files, and LaunchAgent services',
@@ -155,7 +155,7 @@ async function main() {
     },
     text: [
       dryRun ? `${yellow('!')} dry run (no changes made)` : `${green('✓')} complete`,
-      dryRun ? `${dim('Re-run with')} ${cmd('happys uninstall --yes')} ${dim('to apply removals.')}` : null,
+      dryRun ? `${dim('Re-run with')} ${cmd('hapsta uninstall --yes')} ${dim('to apply removals.')}` : null,
       '',
       sectionTitle('Plan'),
       bullets([

@@ -21,7 +21,7 @@ import { createStepPrinter } from './utils/cli/progress.mjs';
  * Install/setup the local stack:
  * - ensure components exist (optionally clone if missing)
  * - install dependencies where needed
- * - build happy-cli (optional) and install `happy`/`happys` shims under `<homeDir>/bin`
+ * - build happy-cli (optional) and install `happy`/`hapsta` shims under `<homeDir>/bin`
  * - build the web UI bundle (so `run` can serve it)
  * - optional macOS autostart (LaunchAgent)
  */
@@ -81,7 +81,7 @@ function resolveRepoSource({ flags }) {
   if (flags.has('--upstream')) {
     return 'upstream';
   }
-  const fromEnv = (process.env.HAPPY_STACKS_REPO_SOURCE ?? process.env.HAPPY_LOCAL_REPO_SOURCE ?? '').trim().toLowerCase();
+  const fromEnv = (process.env.HAPPIER_STACK_REPO_SOURCE ?? '').trim().toLowerCase();
   if (fromEnv === 'fork' || fromEnv === 'forks') {
     return 'forks';
   }
@@ -95,12 +95,10 @@ function resolveRepoSource({ flags }) {
 function getRepoUrls({ repoSource }) {
   const defaults = repoSource === 'upstream' ? DEFAULT_UPSTREAM_REPOS : DEFAULT_FORK_REPOS;
   const ui =
-    process.env.HAPPY_STACKS_UI_REPO_URL?.trim() ||
-    process.env.HAPPY_LOCAL_UI_REPO_URL?.trim() ||
+    process.env.HAPPIER_STACK_UI_REPO_URL?.trim() ||
     defaults.ui;
   const cli =
-    process.env.HAPPY_STACKS_CLI_REPO_URL?.trim() ||
-    process.env.HAPPY_LOCAL_CLI_REPO_URL?.trim() ||
+    process.env.HAPPIER_STACK_CLI_REPO_URL?.trim() ||
     defaults.cli ||
     ui;
 
@@ -109,17 +107,13 @@ function getRepoUrls({ repoSource }) {
   //   unless the user explicitly overrides via env.
   const serverLightDefault = repoSource === 'upstream' ? DEFAULT_FORK_REPOS.serverLight : defaults.serverLight;
   return {
-    // Backwards compatible: HAPPY_LOCAL_SERVER_REPO_URL historically referred to the server-light component.
     serverLight:
-      process.env.HAPPY_STACKS_SERVER_LIGHT_REPO_URL?.trim() ||
-      process.env.HAPPY_LOCAL_SERVER_LIGHT_REPO_URL?.trim() ||
-      process.env.HAPPY_STACKS_SERVER_REPO_URL?.trim() ||
-      process.env.HAPPY_LOCAL_SERVER_REPO_URL?.trim() ||
+      process.env.HAPPIER_STACK_SERVER_LIGHT_REPO_URL?.trim() ||
+      process.env.HAPPIER_STACK_SERVER_REPO_URL?.trim() ||
       serverLightDefault,
     // Default to the UI repo when using a monorepo (override to keep split repos).
     serverFull:
-      process.env.HAPPY_STACKS_SERVER_FULL_REPO_URL?.trim() ||
-      process.env.HAPPY_LOCAL_SERVER_FULL_REPO_URL?.trim() ||
+      process.env.HAPPIER_STACK_SERVER_FULL_REPO_URL?.trim() ||
       defaults.serverFull ||
       ui,
     cli,
@@ -182,7 +176,7 @@ async function ensureComponentPresent({ dir, label, repoUrl, allowClone, quiet =
   if (!repoUrl) {
     throw new Error(
       `[local] missing ${label} at ${dir} and no repo URL configured.\n` +
-        `Set HAPPY_LOCAL_${label}_REPO_URL, or run: happys bootstrap -- --forks / --upstream`
+        `Set HAPPIER_STACK_${label}_REPO_URL, or run: hapsta bootstrap -- --forks / --upstream`
     );
   }
   await mkdir(dirname(dir), { recursive: true });
@@ -241,7 +235,7 @@ async function interactiveWizard({ rootDir, defaults }) {
         )
       );
       // eslint-disable-next-line no-console
-      console.log(dim(`Tip: to use forks, re-run: ${cyan('happys bootstrap --interactive --forks')}`));
+      console.log(dim(`Tip: to use forks, re-run: ${cyan('hapsta bootstrap --interactive --forks')}`));
     }
 
     let forkOwner = defaults.forkOwner;
@@ -338,9 +332,9 @@ async function main() {
       },
       text: [
         '[bootstrap] usage:',
-        '  happys bootstrap [--forks|--upstream] [--server=happy-server|happy-server-light|both] [--json]',
-        '  happys bootstrap --interactive',
-        '  happys bootstrap --no-clone',
+        '  hapsta bootstrap [--forks|--upstream] [--server=happy-server|happy-server-light|both] [--json]',
+        '  hapsta bootstrap --interactive',
+        '  hapsta bootstrap --no-clone',
       ].join('\n'),
     });
     return;
@@ -415,8 +409,8 @@ async function main() {
     forkOwner: 'happier-dev',
     upstreamOwner: 'slopus',
     serverComponentName: getServerComponentName({ kv }),
-    allowClone: !flags.has('--no-clone') && ((process.env.HAPPY_LOCAL_CLONE_MISSING ?? '1') !== '0' || flags.has('--clone')),
-    enableAutostart: (!sandboxed || allowGlobal) && (flags.has('--autostart') || (process.env.HAPPY_LOCAL_AUTOSTART ?? '0') === '1'),
+    allowClone: !flags.has('--no-clone') && ((process.env.HAPPIER_STACK_CLONE_MISSING ?? '1') !== '0' || flags.has('--clone')),
+    enableAutostart: (!sandboxed || allowGlobal) && (flags.has('--autostart') || (process.env.HAPPIER_STACK_AUTOSTART ?? '0') === '1'),
     buildTauri: flags.has('--tauri') && !flags.has('--no-tauri'),
   };
 
@@ -432,19 +426,12 @@ async function main() {
     await ensureEnvLocalUpdated({
       rootDir,
       updates: [
-        { key: 'HAPPY_STACKS_REPO_SOURCE', value: repoSource },
-        { key: 'HAPPY_LOCAL_REPO_SOURCE', value: repoSource },
-        { key: 'HAPPY_STACKS_UI_REPO_URL', value: chosen.ui },
-        { key: 'HAPPY_LOCAL_UI_REPO_URL', value: chosen.ui },
-        { key: 'HAPPY_STACKS_CLI_REPO_URL', value: chosen.cli },
-        { key: 'HAPPY_LOCAL_CLI_REPO_URL', value: chosen.cli },
-        // Backwards compatible: SERVER_REPO_URL historically meant server-light.
-        { key: 'HAPPY_STACKS_SERVER_REPO_URL', value: chosen.serverLight },
-        { key: 'HAPPY_LOCAL_SERVER_REPO_URL', value: chosen.serverLight },
-        { key: 'HAPPY_STACKS_SERVER_LIGHT_REPO_URL', value: chosen.serverLight },
-        { key: 'HAPPY_LOCAL_SERVER_LIGHT_REPO_URL', value: chosen.serverLight },
-        { key: 'HAPPY_STACKS_SERVER_FULL_REPO_URL', value: chosen.serverFull },
-        { key: 'HAPPY_LOCAL_SERVER_FULL_REPO_URL', value: chosen.serverFull },
+        { key: 'HAPPIER_STACK_REPO_SOURCE', value: repoSource },
+        { key: 'HAPPIER_STACK_UI_REPO_URL', value: chosen.ui },
+        { key: 'HAPPIER_STACK_CLI_REPO_URL', value: chosen.cli },
+        { key: 'HAPPIER_STACK_SERVER_REPO_URL', value: chosen.serverLight },
+        { key: 'HAPPIER_STACK_SERVER_LIGHT_REPO_URL', value: chosen.serverLight },
+        { key: 'HAPPIER_STACK_SERVER_FULL_REPO_URL', value: chosen.serverFull },
       ],
     });
   }
@@ -452,11 +439,11 @@ async function main() {
   const repos = getRepoUrls({ repoSource });
 
   // Default: clone missing components (fresh checkouts "just work").
-  // Disable with --no-clone or HAPPY_LOCAL_CLONE_MISSING=0.
-  const cloneMissingDefault = (process.env.HAPPY_LOCAL_CLONE_MISSING ?? '1') !== '0';
+  // Disable with --no-clone or HAPPIER_STACK_CLONE_MISSING=0.
+  const cloneMissingDefault = (process.env.HAPPIER_STACK_CLONE_MISSING ?? '1') !== '0';
   const allowClone =
     wizard?.allowClone ?? (!flags.has('--no-clone') && (flags.has('--clone') || cloneMissingDefault));
-  const enableAutostartRaw = wizard?.enableAutostart ?? (flags.has('--autostart') || (process.env.HAPPY_LOCAL_AUTOSTART ?? '0') === '1');
+  const enableAutostartRaw = wizard?.enableAutostart ?? (flags.has('--autostart') || (process.env.HAPPIER_STACK_AUTOSTART ?? '0') === '1');
   const enableAutostart = sandboxed && !allowGlobal ? false : enableAutostartRaw;
   const disableAutostart = flags.has('--no-autostart');
 
@@ -540,8 +527,8 @@ async function main() {
   const uiDirFinal = uiDir;
 
   // Install deps
-  const skipUiDeps = flags.has('--no-ui-deps') || (process.env.HAPPY_STACKS_INSTALL_NO_UI_DEPS ?? '').trim() === '1';
-  const skipCliDeps = flags.has('--no-cli-deps') || (process.env.HAPPY_STACKS_INSTALL_NO_CLI_DEPS ?? '').trim() === '1';
+  const skipUiDeps = flags.has('--no-ui-deps') || (process.env.HAPPIER_STACK_INSTALL_NO_UI_DEPS ?? '').trim() === '1';
+  const skipCliDeps = flags.has('--no-cli-deps') || (process.env.HAPPIER_STACK_INSTALL_NO_CLI_DEPS ?? '').trim() === '1';
   if (serverComponentName === 'both' || serverComponentName === 'happy-server-light') {
     await ensureDepsInstalledMaybeVerbose(getComponentDir(rootDir, 'happy-server-light'), 'happy-server-light');
   }
@@ -556,16 +543,16 @@ async function main() {
   }
 
   // CLI build + link
-  const skipCliBuild = flags.has('--no-cli-build') || (process.env.HAPPY_STACKS_INSTALL_NO_CLI_BUILD ?? '').trim() === '1';
+  const skipCliBuild = flags.has('--no-cli-build') || (process.env.HAPPIER_STACK_INSTALL_NO_CLI_BUILD ?? '').trim() === '1';
   if (!skipCliBuild) {
-    const buildCli = (process.env.HAPPY_LOCAL_CLI_BUILD ?? '1') !== '0';
-    const npmLinkCli = (process.env.HAPPY_LOCAL_NPM_LINK ?? '1') !== '0';
+    const buildCli = (process.env.HAPPIER_STACK_CLI_BUILD ?? '1') !== '0';
+    const npmLinkCli = (process.env.HAPPIER_STACK_NPM_LINK ?? '1') !== '0';
     await ensureCliBuiltMaybeVerbose(cliDirFinal, { buildCli });
     await ensureHappyCliLocalNpmLinked(rootDir, { npmLinkCli, quiet: quietUi });
   }
 
   // Build UI (so run works without expo dev server)
-  const skipUiBuild = flags.has('--no-ui-build') || (process.env.HAPPY_STACKS_INSTALL_NO_UI_BUILD ?? '').trim() === '1';
+  const skipUiBuild = flags.has('--no-ui-build') || (process.env.HAPPIER_STACK_INSTALL_NO_UI_BUILD ?? '').trim() === '1';
   const buildArgs = [join(rootDir, 'scripts', 'build.mjs')];
   // Tauri builds are opt-in (slow + requires additional toolchain).
   const buildTauri = wizard?.buildTauri ?? (flags.has('--tauri') && !flags.has('--no-tauri'));
@@ -603,7 +590,7 @@ async function main() {
 
   // Optional git remote + mirror branch configuration
   if (wizard?.configureGit) {
-    // Ensure upstream remotes exist so `happys wt sync-all` works consistently.
+    // Ensure upstream remotes exist so `hapsta wt sync-all` works consistently.
     const upstreamRepos = getRepoUrls({ repoSource: 'upstream' });
     await ensureUpstreamRemote({ repoDir: uiRepoDir, upstreamUrl: upstreamRepos.ui });
     if (cliRepoDir !== uiRepoDir) {

@@ -15,7 +15,7 @@ test('hasStackCredentials detects access.key', async () => {
 
 test('daemonStartGate blocks daemon start in auth flow when missing credentials', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-gate-'));
-  const gate = daemonStartGate({ env: { HAPPY_STACKS_AUTH_FLOW: '1' }, cliHomeDir: dir });
+  const gate = daemonStartGate({ env: { HAPPIER_STACK_AUTH_FLOW: '1' }, cliHomeDir: dir });
   assert.equal(gate.ok, false);
   assert.equal(gate.reason, 'auth_flow_missing_credentials');
 });
@@ -34,4 +34,3 @@ test('daemonStartGate allows daemon start when credentials exist', async () => {
   assert.equal(gate.ok, true);
   assert.equal(gate.reason, 'credentials_present');
 });
-

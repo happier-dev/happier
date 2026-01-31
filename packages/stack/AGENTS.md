@@ -85,105 +85,105 @@ The main components managed by happy-stacks:
 
 These rules are strict on purpose. They exist so we can iterate quickly, test safely, and produce clean PRs for both `slopus/*` (upstream) and `happier-dev/*` (our forks).
 
-#### **Command discipline (CRITICAL: only use `happys ...`)**
+#### **Command discipline (CRITICAL: only use `hapsta ...`)**
 
-**If you are an LLM agent:** you must treat `happys` as the *only* supported entrypoint for running anything. Happy Stacks relies on stack-scoped env, isolation, and managed infra; bypassing it causes “half-stacks”, cross-stack interference, and hard-to-debug auth/machine issues.
+**If you are an LLM agent:** you must treat `hapsta` as the *only* supported entrypoint for running anything. Hapsta relies on stack-scoped env, isolation, and managed infra; bypassing it causes “half-stacks”, cross-stack interference, and hard-to-debug auth/machine issues.
 
 - **Allowed (use these)**
-  - `happys start` / `happys dev`
-  - `happys typecheck [component...]` (stack-aware typechecks)
-  - `happys stack new <name>` (creates stack env + isolated dirs; copies auth from `main` by default)
-  - `happys stack start <name>` / `happys stack dev <name>` / `happys stack doctor <name>`
-  - `happys stack typecheck <name> [component...]` (typecheck under a stack env file)
-  - `happys srv use ...` / `happys stack srv <name> -- use ...`
-  - `happys wt ...` / `happys stack wt <name> -- ...`
-  - `happys tailscale ...` / `happys stack tailscale:... <name>`
-  - `happys service ...` / `happys stack service <name> ...`
+  - `hapsta start` / `hapsta dev`
+  - `hapsta typecheck [component...]` (stack-aware typechecks)
+  - `hapsta stack new <name>` (creates stack env + isolated dirs; copies auth from `main` by default)
+  - `hapsta stack start <name>` / `hapsta stack dev <name>` / `hapsta stack doctor <name>`
+  - `hapsta stack typecheck <name> [component...]` (typecheck under a stack env file)
+  - `hapsta srv use ...` / `hapsta stack srv <name> -- use ...`
+  - `hapsta wt ...` / `hapsta stack wt <name> -- ...`
+  - `hapsta tailscale ...` / `hapsta stack tailscale:... <name>`
+  - `hapsta service ...` / `hapsta stack service <name> ...`
 
 - **Forbidden (do NOT run these directly)**
-  - **Expo/UI**: `expo ...`, `pnpm dev`, `yarn dev`, `npm run dev` inside `components/happy`
+  - **Expo/UI**: `expo ...`, `yarn dev`, `npm run dev` inside `components/happy`
   - **Servers**: `yarn dev/start` inside `components/happy-server*`, running Fastify/Vite/Next/etc directly
   - **Infra**: `docker compose ...` or `docker ...` to start Postgres/Redis/Minio manually for stacks
-  - **Worktrees**: raw `git worktree ...` (use `happys wt ...`)
-  - **“One-off” partial actions**: starting only the daemon, only the server, or only the UI without `happys` wrappers
+  - **Worktrees**: raw `git worktree ...` (use `hapsta wt ...`)
+  - **“One-off” partial actions**: starting only the daemon, only the server, or only the UI without `hapsta` wrappers
 
-If you’re tempted to run a low-level command, stop and route it through `happys` (or add a `happys` subcommand if missing).
+If you’re tempted to run a low-level command, stop and route it through `hapsta` (or add a `hapsta` subcommand if missing).
 
 ---
 
 ### Code validation (typecheck + lint + build + test)
 
-**When you change code, you must validate using `happys` commands (not raw `yarn`, `pnpm`, `expo`, or `tsc`).**
+**When you change code, you must validate using `hapsta` commands (not raw `yarn`, `expo`, or `tsc`).**
 
 - **Typecheck (active checkouts)**:
-  - `happys typecheck`
-  - `happys typecheck happy`
-  - `happys typecheck happy happy-cli`
+  - `hapsta typecheck`
+  - `hapsta typecheck happy`
+  - `hapsta typecheck happy happy-cli`
 
 - **Typecheck (stack-scoped)**:
-  - `happys stack typecheck <stack> [component...]`
+  - `hapsta stack typecheck <stack> [component...]`
 
 - **Lint (active checkouts)**:
-  - `happys lint`
-  - `happys lint happy`
+  - `hapsta lint`
+  - `hapsta lint happy`
 
 - **Lint (stack-scoped)**:
-  - `happys stack lint <stack> [component...]`
+  - `hapsta stack lint <stack> [component...]`
 
 - **Build the web UI bundle** (what server-light serves):
-  - `happys build`
-  - (stack-scoped) `happys stack build <stack>`
+  - `hapsta build`
+  - (stack-scoped) `hapsta stack build <stack>`
 
 - **Tests (active checkouts)**:
-  - `happys test`
-  - `happys test happy`
+  - `hapsta test`
+  - `hapsta test happy`
 
 - **Tests (stack-scoped)**:
-  - `happys stack test <stack> [component...]`
+  - `hapsta stack test <stack> [component...]`
 
 #### **Edison evidence capture (recommended)**
 
 When working with Edison tasks/QA, capture trusted evidence via:
 
-- `happys edison --stack=<stack> -- evidence capture <task-id>`
-- Or omit `--stack` and let `happys edison` infer it from task/QA frontmatter:
-  - `happys edison -- evidence capture <task-id>`
+- `hapsta edison --stack=<stack> -- evidence capture <task-id>`
+- Or omit `--stack` and let `hapsta edison` infer it from task/QA frontmatter:
+  - `hapsta edison -- evidence capture <task-id>`
   - (Works for both global tasks under `.project/tasks/**` and session tasks under `.project/sessions/**`.)
 
-Quick “slash command” reads (Happy-local Edison):
+Quick “slash command” reads (Edison):
 
-- Plan a feature + create the right task graph: `happys edison -- read START_PLAN_FEATURE --type start`
-- Validate a task correctly (stack-scoped): `happys edison -- read START_VALIDATE_TASK --type start`
-- Start a new happy-local session (no Edison worktrees): `happys edison -- read START_HAPPY_STACKS_NEW_SESSION --type start`
+- Plan a feature + create the right task graph: `hapsta edison -- read START_PLAN_FEATURE --type start`
+- Validate a task correctly (stack-scoped): `hapsta edison -- read START_VALIDATE_TASK --type start`
+- Start a new Hapsta session: `hapsta edison -- read START_HAPSTA_NEW_SESSION --type start`
 
 Notes:
-- `happys typecheck` runs against the **active checkout** for each component (it respects any `HAPPY_STACKS_COMPONENT_DIR_*` overrides set via `happys wt use ...` or `happys stack wt ...`).
-- It does **not** currently typecheck *every* worktree automatically; to typecheck a specific worktree, switch it active first (via `happys wt use ...` / `happys stack wt ...`) then run `happys typecheck <component>`.
+- `hapsta typecheck` runs against the **active checkout** for each component (it respects any `HAPPIER_STACK_COMPONENT_DIR_*` overrides set via `hapsta wt use ...` or `hapsta stack wt ...`).
+- It does **not** currently typecheck *every* worktree automatically; to typecheck a specific worktree, switch it active first (via `hapsta wt use ...` / `hapsta stack wt ...`) then run `hapsta typecheck <component>`.
 
 #### **Worktree targeting (stack + one-shot)**
 
 If you want to validate a specific worktree **without** changing the stack’s env permanently, you can pass one-shot component overrides:
 
-- `happys stack typecheck <stack> --happy=<owner/branch|/abs/path> [component...]`
-- `happys stack build <stack> --happy=<owner/branch|/abs/path>`
+- `hapsta stack typecheck <stack> --happy=<owner/branch|/abs/path> [component...]`
+- `hapsta stack build <stack> --happy=<owner/branch|/abs/path>`
 
 Examples:
 
-- `happys stack typecheck exp1 --happy=slopus/pr/my-branch happy`
-- `happys stack build exp1 --happy=/absolute/path/to/checkout`
+- `hapsta stack typecheck exp1 --happy=slopus/pr/my-branch happy`
+- `hapsta stack build exp1 --happy=/absolute/path/to/checkout`
 
 ---
 
 ### Main stack safety (do not repoint by accident)
 
-The default stack (`main`) is meant to stay stable. By default, **`happys wt use` refuses to repoint main’s component directories to a worktree/path** and will instruct you to use a new stack instead.
+The default stack (`main`) is meant to stay stable. By default, **`hapsta wt use` refuses to repoint main’s component directories to a worktree/path** and will instruct you to use a new stack instead.
 
 - **Recommended**: create a new stack and switch that stack’s components:
-  - `happys stack new exp1 --interactive`
-  - `happys stack wt exp1 -- use happy slopus/pr/my-branch`
+  - `hapsta stack new exp1 --interactive`
+  - `hapsta stack wt exp1 -- use happy slopus/pr/my-branch`
 
 - **Override** (only if you really mean it): pass `--force`:
-  - `happys wt use happy slopus/pr/my-branch --force`
+  - `hapsta wt use happy slopus/pr/my-branch --force`
 
 ---
 
@@ -200,7 +200,7 @@ These are intentional safety properties of Happy Stacks. If you change code unde
 #### **Ephemeral ports (non-main stacks)**
 
 - **Ephemeral stacks pick ports at start time**: non-main stacks do not pin ports in their env files; ports are chosen on stack start and recorded in `stack.runtime.json`.
-- **Restart reuses ports (or fails closed)**: `happys stack dev/start <stack> --restart` must reuse the previous runtime ports when available.
+- **Restart reuses ports (or fails closed)**: `hapsta stack dev/start <stack> --restart` must reuse the previous runtime ports when available.
   - If any reused port is unexpectedly occupied, the command must **error** (fail-closed) rather than killing unknown listeners or silently reallocating ports (which would break component communication).
   - To allocate new ports intentionally, stop the stack and re-run without `--restart`.
 
@@ -228,12 +228,12 @@ Each stack is isolated (ports + CLI home dir). That means **running multiple sta
 
 - **Do NOT “fix” issues by killing all daemons**. That will break other stacks.
 - **Diagnose per stack**:
-  - `happys stack doctor <stack>`
-  - `happys stack auth <stack> status`
+  - `hapsta stack doctor <stack>`
+  - `hapsta stack auth <stack> status`
 - **Start/stop per stack**:
-  - `happys stack dev <stack>` (dev, includes UI by default)
-  - `happys stack start <stack>` (prod-like)
-  - If you need to start a stack without a daemon (rare): `happys stack dev <stack> -- --no-daemon`
+  - `hapsta stack dev <stack>` (dev, includes UI by default)
+  - `hapsta stack start <stack>` (prod-like)
+  - If you need to start a stack without a daemon (rare): `hapsta stack dev <stack> -- --no-daemon`
 
 #### **Env templates (safe for agents)**
 
@@ -246,28 +246,28 @@ Each stack is isolated (ports + CLI home dir). That means **running multiple sta
 - **Do not develop directly inside `components/<component>`** (the default checkouts under this repo).
   - Treat `components/<component>` as **read-only** “launcher defaults”.
   - **Never create feature branches or commits** on those default checkouts, especially not on `main`.
-- **All changes must happen inside `components/.worktrees/<component>/...`** created/managed by `happys wt ...`.
-- **Do not use raw `git worktree`**. Use `happys wt` tooling so the repo stays consistent.
+- **All changes must happen inside `components/.worktrees/<component>/...`** created/managed by `hapsta wt ...`.
+- **Do not use raw `git worktree`**. Use `hapsta wt` tooling so the repo stays consistent.
 
 #### **You must test changes inside isolated stacks**
 
 - When testing a feature/PR, use an isolated stack (or a dedicated “exp” stack).
-- Point the stack at your worktrees using `happys stack wt <stack> -- use ...`.
+- Point the stack at your worktrees using `hapsta stack wt <stack> -- use ...`.
 - Avoid editing `env.local` by hand; prefer stack-scoped env via the stack env file.
 
 #### **Auth + secrets (stacks)**
 
 - **Auth seeding (stacks)**: non-main stacks can be auto-seeded from a **configured seed stack** (recommended: `dev-auth`) so they typically **do not require re-login**.
-  - Configure via `HAPPY_STACKS_AUTH_SEED_FROM=<seed>` and `HAPPY_STACKS_AUTO_AUTH_SEED=1`.
-  - **Agents should not create seed stacks or dev keys**; they should only consume existing seeds (e.g. `copy-from dev-auth`) and use `happys auth dev-key --print` for UI login when needed.
+  - Configure via `HAPPIER_STACK_AUTH_SEED_FROM=<seed>` and `HAPPIER_STACK_AUTO_AUTH_SEED=1`.
+  - **Agents should not create seed stacks or dev keys**; they should only consume existing seeds (e.g. `copy-from dev-auth`) and use `hapsta auth dev-key --print` for UI login when needed.
 - **Opt out**: pass **`--no-copy-auth`** (or `--fresh-auth`) to force a fresh login / new machine identity.
 - **If you already have a stack and it’s missing auth** (common when it was created with `--no-copy-auth`, created before this behavior existed, or its `cli/` dir was cleaned):
-  - Copy from your seed stack (no re-login, non-interactive): `happys stack auth <name> copy-from <seed>` (recommended: `dev-auth`)
+  - Copy from your seed stack (no re-login, non-interactive): `hapsta stack auth <name> copy-from <seed>` (recommended: `dev-auth`)
   - Note: this copies **CLI credentials + master secret** and will also **seed the target DB** by copying **Account rows** from the seed stack into the target stack DB. This avoids FK errors like Prisma `P2003` without copying large DB files.
-  - If you don't know the seed stack, fall back to: `happys stack auth <name> copy-from main`
+  - If you don't know the seed stack, fall back to: `hapsta stack auth <name> copy-from main`
 - **If auth is required**:
-  - main: `happys auth login`
-  - stack: `happys stack auth <name> login`
+  - main: `hapsta auth login`
+  - stack: `hapsta stack auth <name> login`
 
 #### **Upstream PRs must remain clean**
 
@@ -344,7 +344,7 @@ Each component repo under `components/<component>` should typically have:
 - `upstream`: upstream repo (often `slopus/*`)
 - `origin` (or `fork`): our fork (often `happier-dev/*`)
   - Some component checkouts (notably `happy-server` / `happy-server-light`) use the Git remote name `fork` instead of `origin`.
-  - `happys wt ...` treats `origin` and `fork` as interchangeable; raw `git ...` commands should use whichever remote name exists in that repo (`git remote -v`).
+  - `hapsta wt ...` treats `origin` and `fork` as interchangeable; raw `git ...` commands should use whichever remote name exists in that repo (`git remote -v`).
 
 #### **Branch naming**
 
@@ -379,18 +379,14 @@ Examples:
 #### **Active component selection**
 
 Happy-stacks runs components from `components/<component>` by default.
-You can override per component via env vars (prefer `HAPPY_STACKS_*`):
+You can override per component via env vars:
 
-- `HAPPY_STACKS_COMPONENT_DIR_HAPPY`
-- `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI`
-- `HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT`
-- `HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER`
+- `HAPPIER_STACK_COMPONENT_DIR_HAPPY`
+- `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI`
+- `HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT`
+- `HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER`
 
-Legacy aliases still work:
-
-- `HAPPY_LOCAL_COMPONENT_DIR_*`
-
-Use `happys wt use ...` instead of editing env files by hand. (Legacy in a cloned repo: `pnpm wt use ...`.)
+Use `hapsta wt use ...` instead of editing env files by hand.
 
 ---
 
@@ -447,19 +443,7 @@ New canonical storage root:
 Stack env file:
 
 ```
-~/.happy/stacks/<name>/env
-```
-
-Legacy stack env files are still supported:
-
-```
-~/.happy/local/stacks/<name>/env
-```
-
-To migrate legacy stack env files:
-
-```bash
-happys stack migrate
+~/.happier/stacks/<name>/env
 ```
 
 ---
@@ -468,9 +452,9 @@ happys stack migrate
 
 Scripts load environment in this order:
 
-1. `~/.happy-stacks/.env` (lowest precedence; created by `happys init`)
-2. `~/.happy-stacks/env.local`
-3. stack env file (highest precedence) via `HAPPY_STACKS_ENV_FILE` (legacy: `HAPPY_LOCAL_ENV_FILE`)
+1. `~/.happier-stack/.env` (lowest precedence; created by `hapsta init`)
+2. `~/.happier-stack/env.local`
+3. stack env file (highest precedence) via `HAPPIER_STACK_ENV_FILE`
 
 Backwards compatible fallback for cloned-repo usage (when home config doesn’t exist yet):
 
@@ -480,12 +464,9 @@ Backwards compatible fallback for cloned-repo usage (when home config doesn’t 
 
 For a complete mental model of the different paths (CLI root vs home vs runtime vs workspace vs stack storage) and the exact env precedence, see: `[docs/paths-and-env.md](docs/paths-and-env.md)`.
 
-#### **Prefix migration**
+#### **Env prefix**
 
-Canonical prefix: `HAPPY_STACKS_*`
-Legacy prefix: `HAPPY_LOCAL_*`
-
-The loader maps both ways so either prefix works, but new configuration should use `HAPPY_STACKS_*`.
+Canonical prefix: `HAPPIER_STACK_*`
 
 ---
 
@@ -496,14 +477,14 @@ The loader maps both ways so either prefix works, but new configuration should u
 No repo clone required:
 
 ```bash
-npx happy-stacks init
-export PATH="$HOME/.happy-stacks/bin:$PATH"
+npx --yes -p @happier-dev/stack hapsta init
+export PATH="$HOME/.happier-stack/bin:$PATH"
 ```
 
 Optional (automate PATH changes):
 
 ```bash
-npx happy-stacks init --install-path
+npx --yes -p @happier-dev/stack hapsta init --install-path
 ```
 
 #### **Bootstrap / setup**
@@ -511,15 +492,15 @@ npx happy-stacks init --install-path
 Clone missing components, install deps, build/link wrappers, optional autostart:
 
 ```bash
-happys bootstrap
-happys bootstrap --interactive
+hapsta bootstrap
+hapsta bootstrap --interactive
 ```
 
 Pick upstream clone source explicitly:
 
 ```bash
-happys bootstrap --forks
-happys bootstrap --upstream
+hapsta bootstrap --forks
+hapsta bootstrap --upstream
 ```
 
 #### **Run**
@@ -527,59 +508,59 @@ happys bootstrap --upstream
 Production-like (serves built UI via server-light):
 
 ```bash
-happys start
+hapsta start
 ```
 
 Dev mode (Expo web dev server for UI):
 
 ```bash
-happys dev
+hapsta dev
 ```
 
 Notes (dev reliability):
 
-- `happys dev` will **install deps as needed** and will **auto-build `happy-cli`** if its `dist/` output is missing or out of date.
-- In interactive TTY runs, `happys dev` enables a lightweight watcher for `happy-cli` changes and will **rebuild + restart the daemon** as needed.
-  - Disable: `happys dev --no-watch`
-  - Force-enable: `happys dev --watch`
-  - Build mode control: `HAPPY_STACKS_CLI_BUILD_MODE=auto|always|never` (legacy prefix also supported: `HAPPY_LOCAL_CLI_BUILD_MODE`)
+- `hapsta dev` will **install deps as needed** and will **auto-build `happy-cli`** if its `dist/` output is missing or out of date.
+- In interactive TTY runs, `hapsta dev` enables a lightweight watcher for `happy-cli` changes and will **rebuild + restart the daemon** as needed.
+  - Disable: `hapsta dev --no-watch`
+  - Force-enable: `hapsta dev --watch`
+  - Build mode control: `HAPPIER_STACK_CLI_BUILD_MODE=auto|always|never`
 
 #### **Server flavor**
 
 We support `happy-server-light` and `happy-server` (not simultaneously for one run).
 
 ```bash
-happys srv status
-happys srv use happy-server-light
-happys srv use happy-server
-happys srv use --interactive
+hapsta srv status
+hapsta srv use happy-server-light
+hapsta srv use happy-server
+hapsta srv use --interactive
 ```
 
-Note: in a cloned repo, `pnpm srv -- ...` still works (legacy).
+Note: prefer `hapsta srv ...` over running server scripts directly.
 
 #### **Worktrees**
 
 Key commands:
 
 ```bash
-happys wt migrate
-happys wt use --interactive
-happys wt new --interactive
-happys wt list happy
-happys wt status happy
-happys wt sync-all
-happys wt update-all --dry-run
-happys wt update-all --stash
-happys wt git happy active -- status
-happys wt shell happy slopus/pr/123-fix-thing
-happys wt code happy slopus/pr/123-fix-thing
-happys wt cursor happy slopus/pr/123-fix-thing
+hapsta wt migrate
+hapsta wt use --interactive
+hapsta wt new --interactive
+hapsta wt list happy
+hapsta wt status happy
+hapsta wt sync-all
+hapsta wt update-all --dry-run
+hapsta wt update-all --stash
+hapsta wt git happy active -- status
+hapsta wt shell happy slopus/pr/123-fix-thing
+hapsta wt code happy slopus/pr/123-fix-thing
+hapsta wt cursor happy slopus/pr/123-fix-thing
 ```
 
 Create a worktree for an upstream PR:
 
 ```bash
-happys wt pr happy https://github.com/slopus/happy/pull/123 --use
+hapsta wt pr happy https://github.com/slopus/happy/pull/123 --use
 ```
 
 Update a PR worktree when new commits are pushed:
@@ -589,9 +570,9 @@ Update a PR worktree when new commits are pushed:
 - use `--stash` to auto-stash local modifications before updating
 
 ```bash
-happys wt pr happy 123 --update
-happys wt pr happy 123 --update --stash
-happys wt pr happy 123 --update --force
+hapsta wt pr happy 123 --update
+hapsta wt pr happy 123 --update --stash
+hapsta wt pr happy 123 --update --force
 ```
 
 #### **Stacks**
@@ -599,24 +580,24 @@ happys wt pr happy 123 --update --force
 Create and run additional isolated stacks:
 
 ```bash
-happys stack new exp1 --interactive
-happys stack dev exp1
-happys stack start exp1
-happys stack edit exp1 --interactive
-happys stack list
+hapsta stack new exp1 --interactive
+hapsta stack dev exp1
+hapsta stack start exp1
+hapsta stack edit exp1 --interactive
+hapsta stack list
 ```
 
 Run worktree tooling scoped to a stack env file:
 
 ```bash
-happys stack wt exp1 -- use --interactive
-happys stack wt exp1 -- status happy
+hapsta stack wt exp1 -- use --interactive
+hapsta stack wt exp1 -- status happy
 ```
 
 Switch server flavor for a stack:
 
 ```bash
-happys stack srv exp1 -- use --interactive
+hapsta stack srv exp1 -- use --interactive
 ```
 
 ---
@@ -631,14 +612,14 @@ Example: you want to propose a change to upstream `slopus/happy`.
 
 ```bash
 # Create a new worktree branch based on upstream.
-happys wt new happy pr/my-feature --from=upstream --use
+hapsta wt new happy pr/my-feature --from=upstream --use
 
 # (optional) open a shell/editor in that worktree
-happys wt shell happy active
-happys wt cursor happy active
+hapsta wt shell happy active
+hapsta wt cursor happy active
 
 # When done, push to upstream remote (or push to your fork and open PR to upstream)
-happys wt push happy active --remote=upstream
+hapsta wt push happy active --remote=upstream
 ```
 
 Notes:
@@ -651,17 +632,17 @@ Example: you implemented a change on an upstream-based worktree and now want a c
 
 ```bash
 # (recommended) ensure our mirror branches are up to date
-happys wt sync-all
+hapsta wt sync-all
 
 # Create a temporary fork integration worktree based on our fork target branch
-happys wt new happy tmp/merge-pr-my-feature --from=origin --use
+hapsta wt new happy tmp/merge-pr-my-feature --from=origin --use
 
 # Attempt a test-merge of the upstream branch into this fork branch
 # (run git merge/cherry-pick inside the worktree; exact refs vary by repo setup)
-happys wt git happy active -- merge --no-ff <upstream-branch-or-commit>
+hapsta wt git happy active -- merge --no-ff <upstream-branch-or-commit>
 
 # If the merge is clean: push and open a PR to our fork
-happys wt push happy active --remote=origin
+hapsta wt push happy active --remote=origin
 ```
 
 If the test-merge conflicts:
@@ -682,34 +663,34 @@ Example: you want to review/test a PR locally without mixing it into other work.
 
 ```bash
 # Create from PR URL (recommended)
-happys wt pr happy https://github.com/slopus/happy/pull/123 --use
+hapsta wt pr happy https://github.com/slopus/happy/pull/123 --use
 
 # Update later when new commits land on the PR:
-happys wt pr happy 123 --update
+hapsta wt pr happy 123 --update
 
 # If the worktree is dirty:
-happys wt pr happy 123 --update --stash
+hapsta wt pr happy 123 --update --stash
 
 # If the PR was force-pushed and FF-only fails:
-happys wt pr happy 123 --update --force
+hapsta wt pr happy 123 --update --force
 ```
 
 #### **4) Switch what the launcher runs (“activate” a worktree)**
 
-Example: you have multiple worktrees and want `happys dev/start/build` to use one of them.
+Example: you have multiple worktrees and want `hapsta dev/start/build` to use one of them.
 
 ```bash
-happys wt use happy slopus/pr/123-fix-thing
-happys wt use happy-cli default
-happys wt use happy-server-light default
+hapsta wt use happy slopus/pr/123-fix-thing
+hapsta wt use happy-cli default
+hapsta wt use happy-server-light default
 ```
 
 Reset back to defaults:
 
 ```bash
-happys wt use happy default
-happys wt use happy-cli default
-happys wt use happy-server-light default
+hapsta wt use happy default
+hapsta wt use happy-cli default
+hapsta wt use happy-server-light default
 ```
 
 #### **5) Create a new stack (isolated env + ports + dirs)**
@@ -717,15 +698,15 @@ happys wt use happy-server-light default
 Interactive (recommended):
 
 ```bash
-happys stack new exp1 --interactive
-happys stack dev exp1
+hapsta stack new exp1 --interactive
+hapsta stack dev exp1
 ```
 
 Non-interactive:
 
 ```bash
-happys stack new exp2 --port=3010 --server=happy-server-light
-happys stack start exp2
+hapsta stack new exp2 --port=3010 --server=happy-server-light
+hapsta stack start exp2
 ```
 
 #### **6) Test a PR inside a stack (recommended for parallel work)**
@@ -734,13 +715,13 @@ Example: keep your “main” stack stable, test PRs in `exp1`.
 
 ```bash
 # Create/update PR worktree
-happys wt pr happy 123 --use
+hapsta wt pr happy 123 --use
 
 # Point exp1 at that worktree (stack-scoped; does NOT touch env.local)
-happys stack wt exp1 -- use happy slopus/pr/123-fix-thing
+hapsta stack wt exp1 -- use happy slopus/pr/123-fix-thing
 
 # Run the stack
-happys stack dev exp1
+hapsta stack dev exp1
 ```
 
 #### **6b) Test upstream vs fork variants side-by-side (two stacks)**
@@ -749,29 +730,29 @@ Example: compare behavior between an upstream-based worktree and a fork integrat
 
 ```bash
 # Stack A points at upstream worktree
-happys stack new pr-upstream --interactive
-happys stack wt pr-upstream -- use happy slopus/pr/my-feature
+hapsta stack new pr-upstream --interactive
+hapsta stack wt pr-upstream -- use happy slopus/pr/my-feature
 
 # Stack B points at fork worktree
-happys stack new pr-fork --interactive
-happys stack wt pr-fork -- use happy happier-dev/tmp/merge-pr-my-feature
+hapsta stack new pr-fork --interactive
+hapsta stack wt pr-fork -- use happy happier-dev/tmp/merge-pr-my-feature
 
 # Run independently
-happys stack dev pr-upstream
-happys stack dev pr-fork
+hapsta stack dev pr-upstream
+hapsta stack dev pr-fork
 ```
 
 #### **7) Update everything (sync mirror branches + update active worktrees)**
 
 ```bash
 # Ensure slopus/main (mirror) is up to date across components
-happys wt sync-all
+hapsta wt sync-all
 
 # Preview updates across components
-happys wt update-all --dry-run
+hapsta wt update-all --dry-run
 
 # Apply updates (auto-stash if needed)
-happys wt update-all --stash
+hapsta wt update-all --stash
 ```
 
 ---
@@ -835,25 +816,25 @@ So you should expect to open **two fork PRs** (or one PR per target branch) when
 ### Autostart (macOS LaunchAgent)
 
 - Each stack can have its own LaunchAgent.
-- New label base: `com.happy.stacks` (legacy: `com.happy.local`).
+- Label base: `dev.happier.stack`.
 - The service persists only the stack env file path, so you can edit stack settings without reinstalling.
 
 Commands:
 
 ```bash
-happys service install
-happys service status
-happys service tail
-happys stack service exp1 install
-happys stack service exp1 status
+hapsta service install
+hapsta service status
+hapsta service tail
+hapsta stack service exp1 install
+hapsta stack service exp1 status
 ```
 
 ---
 
 ### SwiftBar menu bar plugin (optional)
 
-- Installer: `happys menubar install`
-- It supports stacks and worktrees, and uses the same terminal/shell preferences as `happys wt shell`.
+- Installer: `hapsta menubar install`
+- It supports stacks and worktrees, and uses the same terminal/shell preferences as `hapsta wt shell`.
 
 ---
 
@@ -863,24 +844,24 @@ happys stack service exp1 status
   - Treat them as read-only launcher defaults.
   - Create a worktree for **every** change, no matter how small.
 - **Always pick a target upstream** (usually `slopus`) and keep PR branches clean.
-- **Use `happys wt` / `happys stack` commands instead of raw `git worktree` / manual env edits** whenever possible.
+- **Use `hapsta wt` / `hapsta stack` commands instead of raw `git worktree` / manual env edits** whenever possible.
 - **Respect env precedence**: stack env file overrides everything; don’t “hardcode” paths in scripts.
 - **Avoid breaking changes** to env vars/paths; preserve legacy behavior when possible
 
 ---
 
-### Keeping happy-stacks up to date
+### Keeping Hapsta up to date
 
-Happy-stacks can run from a persistent runtime install under `~/.happy-stacks/runtime` (recommended for SwiftBar/services).
+Hapsta can run from a persistent runtime install under `~/.happier-stack/runtime` (recommended for SwiftBar/services).
 
 ```bash
-happys self status
-happys self update
+hapsta self status
+hapsta self update
 ```
 
 ### Debug + uninstall
 
 ```bash
-happys where
-happys uninstall --yes
+hapsta where
+hapsta uninstall --yes
 ```

@@ -14,19 +14,18 @@ async function loadEnvFile(path, { override = false, overridePrefix = null } = {
     const allowTransientComponentDirOverrides =
       !overridePrefix &&
       override &&
-      ((process.env.HAPPY_STACKS_TRANSIENT_COMPONENT_OVERRIDES ?? '').trim() === '1' ||
-        (process.env.HAPPY_LOCAL_TRANSIENT_COMPONENT_OVERRIDES ?? '').trim() === '1');
+      (process.env.HAPPIER_STACK_TRANSIENT_COMPONENT_OVERRIDES ?? '').trim() === '1';
     for (const [k, v] of parsed.entries()) {
-      const allowOverride = override && (!overridePrefix || k.startsWith(overridePrefix));
-      // Special-case: allow one-shot CLI overrides (e.g. `happys stack typecheck <stack> --happy-cli=...`)
-      // to win over stack env files for component directories.
-      //
-      // This keeps stack env files authoritative by default (we also scrub HAPPY_STACKS_* from the parent
-      // environment in `withStackEnv()`), but lets the stack wrappers inject a temporary override when explicitly requested.
-      if (
-        allowTransientComponentDirOverrides &&
-        (k.startsWith('HAPPY_STACKS_COMPONENT_DIR_') || k.startsWith('HAPPY_LOCAL_COMPONENT_DIR_')) &&
-        (process.env[k] ?? '').trim()
+    const allowOverride = override && (!overridePrefix || k.startsWith(overridePrefix));
+    // Special-case: allow one-shot CLI overrides (e.g. `hapsta stack typecheck <stack> --happy-cli=...`)
+    // to win over stack env files for component directories.
+    //
+    // This keeps stack env files authoritative by default (we also scrub HAPPIER_STACK_* from the parent
+    // environment in `withStackEnv()`), but lets the stack wrappers inject a temporary override when explicitly requested.
+    if (
+      allowTransientComponentDirOverrides &&
+      k.startsWith('HAPPIER_STACK_COMPONENT_DIR_') &&
+      (process.env[k] ?? '').trim()
       ) {
         continue;
       }
@@ -56,7 +55,7 @@ async function loadEnvFileIgnoringPrefixes(path, { ignorePrefixes = [] } = {}) {
   }
 }
 
-// Load happy-stacks env (optional). This is intentionally lightweight and does not require extra deps.
+// Load stack env (optional). This is intentionally lightweight and does not require extra deps.
 // This file lives under scripts/utils/env, so repo root is three directories up.
 const __envDir = dirname(fileURLToPath(import.meta.url));
 const __utilsDir = dirname(__envDir);
@@ -64,33 +63,33 @@ const __scriptsDir = dirname(__utilsDir);
 const __cliRootDir = dirname(__scriptsDir);
 
 function resolveHomeDir() {
-  const fromEnv = (process.env.HAPPY_STACKS_HOME_DIR ?? '').trim();
+  const fromEnv = (process.env.HAPPIER_STACK_HOME_DIR ?? '').trim();
   if (fromEnv) {
     return expandHome(fromEnv);
   }
   return join(homedir(), '.happier-stack');
 }
 
-// If HAPPY_STACKS_HOME_DIR isn't set, try the canonical pointer file at <canonicalHomeDir>/.env first.
+// If HAPPIER_STACK_HOME_DIR isn't set, try the canonical pointer file at <canonicalHomeDir>/.env first.
 //
 // This allows installs where the "real" home/workspace/runtime are elsewhere, while still
 // giving us a stable discovery location for launchd/SwiftBar/minimal shells.
 const canonicalEnvPath = getCanonicalHomeEnvPathFromEnv(process.env);
-if (!(process.env.HAPPY_STACKS_HOME_DIR ?? '').trim() && existsSync(canonicalEnvPath)) {
+if (!(process.env.HAPPIER_STACK_HOME_DIR ?? '').trim() && existsSync(canonicalEnvPath)) {
   await loadEnvFile(canonicalEnvPath, { override: false });
-  await loadEnvFile(canonicalEnvPath, { override: true, overridePrefix: 'HAPPY_STACKS_' });
+  await loadEnvFile(canonicalEnvPath, { override: true, overridePrefix: 'HAPPIER_STACK_' });
 }
 
 const __homeDir = resolveHomeDir();
-process.env.HAPPY_STACKS_HOME_DIR = process.env.HAPPY_STACKS_HOME_DIR ?? __homeDir;
+process.env.HAPPIER_STACK_HOME_DIR = process.env.HAPPIER_STACK_HOME_DIR ?? __homeDir;
 
 // Prefer canonical home config:
-//   ~/.happy-stacks/.env
-//   ~/.happy-stacks/env.local
+//   ~/.happier-stack/.env
+//   ~/.happier-stack/env.local
 //
 // Additionally: when running from a cloned repo, load <repo>/.env as a *fallback* even if home config exists.
 // This helps keep repo-local dev settings (e.g. custom Codex binaries) working without requiring users to
-// duplicate them into ~/.happy-stacks/env.local.
+// duplicate them into ~/.happier-stack/env.local.
 const homeEnv = join(__homeDir, '.env');
 const homeLocal = join(__homeDir, 'env.local');
 // In sandbox mode, never load repo env.local (it can contain "real" machine paths/URLs).
@@ -101,10 +100,10 @@ const repoEnv = join(__cliRootDir, '.env');
 // 1) Load defaults first (lowest precedence)
 if (hasHomeConfig) {
   await loadEnvFile(homeEnv, { override: false });
-  await loadEnvFile(homeLocal, { override: true, overridePrefix: 'HAPPY_STACKS_' });
+  await loadEnvFile(homeLocal, { override: true, overridePrefix: 'HAPPIER_STACK_' });
 } else {
   await loadEnvFile(join(__cliRootDir, '.env'), { override: false });
-  await loadEnvFile(join(__cliRootDir, 'env.local'), { override: true, overridePrefix: 'HAPPY_STACKS_' });
+  await loadEnvFile(join(__cliRootDir, 'env.local'), { override: true, overridePrefix: 'HAPPIER_STACK_' });
 }
 
 // Repo-local fallback (dev convenience):
@@ -113,9 +112,9 @@ if (hasHomeConfig) {
 // overrides and could unexpectedly fight with stack/home configuration when present.
 if (hasHomeConfig) {
   // IMPORTANT:
-  // When home config exists, do not let repo-local .env set HAPPY_STACKS_* / HAPPY_LOCAL_* keys.
+  // When home config exists, do not let repo-local .env set HAPPIER_STACK_* keys.
   // Otherwise a cloned repo's .env can accidentally leak global URLs/ports into every stack.
-  await loadEnvFileIgnoringPrefixes(repoEnv, { ignorePrefixes: ['HAPPY_STACKS_', 'HAPPY_LOCAL_'] });
+  await loadEnvFileIgnoringPrefixes(repoEnv, { ignorePrefixes: ['HAPPIER_STACK_'] });
 } else {
   await loadEnvFile(repoEnv, { override: false });
 }
@@ -123,12 +122,12 @@ if (hasHomeConfig) {
 // If no explicit env file is set, and we're on the default "main" stack, prefer the stack-scoped env file
 // if it exists: ~/.happy/stacks/main/env
 (() => {
-  const stacksEnv = (process.env.HAPPY_STACKS_ENV_FILE ?? '').trim();
+  const stacksEnv = (process.env.HAPPIER_STACK_ENV_FILE ?? '').trim();
   if (stacksEnv) {
     return;
   }
-  const stackName = (process.env.HAPPY_STACKS_STACK ?? '').trim() || 'main';
-  const stacksStorageRootRaw = (process.env.HAPPY_STACKS_STORAGE_DIR ?? '').trim();
+  const stackName = (process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
+  const stacksStorageRootRaw = (process.env.HAPPIER_STACK_STORAGE_DIR ?? '').trim();
   const stacksStorageRoot = stacksStorageRootRaw ? expandHome(stacksStorageRootRaw) : join(homedir(), '.happier', 'stacks');
 
   const candidates = [
@@ -137,7 +136,7 @@ if (hasHomeConfig) {
   const envPath = candidates.find((p) => existsSync(p));
   if (!envPath) return;
 
-  process.env.HAPPY_STACKS_ENV_FILE = envPath;
+  process.env.HAPPIER_STACK_ENV_FILE = envPath;
 })();
 // 3) Load explicit env file overlay (stack env, or any caller-provided env file) last (highest precedence).
 //
@@ -145,7 +144,7 @@ if (hasHomeConfig) {
 // Stack env files intentionally include some non-prefixed keys (e.g. DATABASE_URL, HAPPY_SERVER_LIGHT_DATA_DIR)
 // that must apply for true per-stack isolation. Do not filter by prefix here.
 {
-  const stacksEnv = process.env.HAPPY_STACKS_ENV_FILE?.trim() ? process.env.HAPPY_STACKS_ENV_FILE.trim() : '';
+  const stacksEnv = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '';
   const unique = Array.from(new Set([stacksEnv].filter(Boolean)));
   for (const p of unique) {
     // eslint-disable-next-line no-await-in-loop
@@ -153,21 +152,22 @@ if (hasHomeConfig) {
   }
 }
 
-// Happy Stacks legacy compatibility is intentionally not supported here.
-// If a user still has HAPPY_LOCAL_* exported from an older install, ignore it.
+// Legacy Happy env prefixes are intentionally not supported here.
+// If a user still has older prefixes exported from previous installs, scrub them to avoid accidental leakage.
+const __legacyPrefixes = ['LOCAL_', 'STACKS_'].map((s) => `HAPPY_${s}`);
 for (const k of Object.keys(process.env)) {
-  if (k.startsWith('HAPPY_LOCAL_')) {
+  if (__legacyPrefixes.some((p) => k.startsWith(p))) {
     delete process.env[k];
   }
 }
 
-// Corepack strictness can prevent running Yarn in subfolders when the repo root is pinned to pnpm.
-// We intentionally keep component repos upstream-compatible (often Yarn), so relax strictness for child processes.
+// Corepack strictness can prevent running Yarn in subfolders when the repo root is pinned to a different manager.
+// We intentionally keep child processes Yarn-friendly, so relax strictness for child processes.
 process.env.COREPACK_ENABLE_STRICT = process.env.COREPACK_ENABLE_STRICT ?? '0';
 process.env.NPM_CONFIG_PACKAGE_MANAGER_STRICT = process.env.NPM_CONFIG_PACKAGE_MANAGER_STRICT ?? 'false';
 
 // LaunchAgents often run with a very minimal PATH which won't include NVM's bin dir, so child
-// processes like `yarn` / `pnpm` can look "missing" even though Node is running from NVM.
+// processes like `yarn` can look "missing" even though Node is running from NVM.
 // Ensure the directory containing this Node binary is on PATH.
 (() => {
   const delimiter = process.platform === 'win32' ? ';' : ':';

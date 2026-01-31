@@ -18,8 +18,8 @@ is_git_repo() {
 }
 
 git_cache_dir() {
-  local canonical="${HAPPY_STACKS_CANONICAL_HOME_DIR:-${HAPPY_LOCAL_CANONICAL_HOME_DIR:-$HOME/.happy-stacks}}"
-  local home="${HAPPY_STACKS_HOME_DIR:-${HAPPY_LOCAL_DIR:-$canonical}}"
+  local home
+  home="$(resolve_home_dir)"
   local dir="${home}/cache/swiftbar/git"
   mkdir -p "$dir" 2>/dev/null || true
   echo "$dir"
@@ -27,18 +27,18 @@ git_cache_dir() {
 
 git_cache_ttl_sec() {
   # Default: 6 hours.
-  local v="${HAPPY_STACKS_SWIFTBAR_GIT_TTL_SEC:-${HAPPY_LOCAL_SWIFTBAR_GIT_TTL_SEC:-21600}}"
+  local v="${HAPPIER_STACK_SWIFTBAR_GIT_TTL_SEC:-21600}"
   [[ "$v" =~ ^[0-9]+$ ]] || v=21600
   echo "$v"
 }
 
 git_cache_refresh_on_stale() {
-  [[ "${HAPPY_STACKS_SWIFTBAR_GIT_REFRESH_ON_STALE:-${HAPPY_LOCAL_SWIFTBAR_GIT_REFRESH_ON_STALE:-0}}" == "1" ]]
+  [[ "${HAPPIER_STACK_SWIFTBAR_GIT_REFRESH_ON_STALE:-0}" == "1" ]]
 }
 
 git_cache_auto_refresh_scope() {
   # off | main | all
-  local s="${HAPPY_STACKS_SWIFTBAR_GIT_AUTO_REFRESH_SCOPE:-${HAPPY_LOCAL_SWIFTBAR_GIT_AUTO_REFRESH_SCOPE:-main}}"
+  local s="${HAPPIER_STACK_SWIFTBAR_GIT_AUTO_REFRESH_SCOPE:-main}"
   s="$(echo "$s" | tr '[:upper:]' '[:lower:]')"
   case "$s" in
     off|none|0) echo "off" ;;
@@ -129,7 +129,7 @@ git_cache_maybe_refresh_async() {
 
 git_cache_mode() {
   # cached (default) | live
-  local m="${HAPPY_STACKS_SWIFTBAR_GIT_MODE:-${HAPPY_LOCAL_SWIFTBAR_GIT_MODE:-cached}}"
+  local m="${HAPPIER_STACK_SWIFTBAR_GIT_MODE:-cached}"
   m="$(echo "$m" | tr '[:upper:]' '[:lower:]')"
   [[ "$m" == "live" ]] && echo "live" || echo "cached"
 }
@@ -552,15 +552,13 @@ resolve_component_dir_from_env_file() {
   local env_file="$1"
   local component="$2"
   local stacks_key=""
-  local local_key=""
   case "$component" in
-    happy) stacks_key="HAPPY_STACKS_COMPONENT_DIR_HAPPY" ;;
-    happy-cli) stacks_key="HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI" ;;
-    happy-server-light) stacks_key="HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT" ;;
-    happy-server) stacks_key="HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER" ;;
+    happy) stacks_key="HAPPIER_STACK_COMPONENT_DIR_HAPPY" ;;
+    happy-cli) stacks_key="HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI" ;;
+    happy-server-light) stacks_key="HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT" ;;
+    happy-server) stacks_key="HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER" ;;
     *) stacks_key="" ;;
   esac
-  local_key="${stacks_key/HAPPY_STACKS_/HAPPY_LOCAL_}"
 
   local fallback
   fallback="$(resolve_components_dir)/$component"
@@ -571,7 +569,6 @@ resolve_component_dir_from_env_file() {
 
   local raw
   raw="$(dotenv_get "$env_file" "$stacks_key")"
-  [[ -z "$raw" ]] && raw="$(dotenv_get "$env_file" "$local_key")"
   if [[ -z "$raw" ]]; then
     echo "$fallback"
     return
@@ -590,40 +587,35 @@ resolve_component_dir_from_env_file() {
 resolve_component_dir_from_env() {
   # Resolve active component directory based on env + env.local + .env.
   # Usage: resolve_component_dir_from_env <component>
-  # Output: absolute path (best-effort). Falls back to $HAPPY_LOCAL_DIR/components/<component>.
+  # Output: absolute path (best-effort). Falls back to <workspace>/components/<component>.
   local component="$1"
   local stacks_key=""
-  local local_key=""
   case "$component" in
-    happy) stacks_key="HAPPY_STACKS_COMPONENT_DIR_HAPPY" ;;
-    happy-cli) stacks_key="HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI" ;;
-    happy-server-light) stacks_key="HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER_LIGHT" ;;
-    happy-server) stacks_key="HAPPY_STACKS_COMPONENT_DIR_HAPPY_SERVER" ;;
+    happy) stacks_key="HAPPIER_STACK_COMPONENT_DIR_HAPPY" ;;
+    happy-cli) stacks_key="HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI" ;;
+    happy-server-light) stacks_key="HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER_LIGHT" ;;
+    happy-server) stacks_key="HAPPIER_STACK_COMPONENT_DIR_HAPPY_SERVER" ;;
     *) stacks_key="" ;;
   esac
-  local_key="${stacks_key/HAPPY_STACKS_/HAPPY_LOCAL_}"
 
   local raw=""
   if [[ -n "$stacks_key" && -n "${!stacks_key:-}" ]]; then
     raw="${!stacks_key}"
-  fi
-  if [[ -z "$raw" && -n "$local_key" && -n "${!local_key:-}" ]]; then
-    raw="${!local_key}"
   fi
 
   local env_file
   env_file="$(resolve_main_env_file)"
   if [[ -z "$raw" && -n "$env_file" && -n "$stacks_key" ]]; then
     raw="$(dotenv_get "$env_file" "$stacks_key")"
-    [[ -z "$raw" ]] && raw="$(dotenv_get "$env_file" "$local_key")"
+  fi
+
+  local home
+  home="$(resolve_home_dir)"
+  if [[ -z "$raw" && -n "$stacks_key" ]]; then
+    raw="$(dotenv_get "$home/env.local" "$stacks_key")"
   fi
   if [[ -z "$raw" && -n "$stacks_key" ]]; then
-    raw="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "$stacks_key")"
-    [[ -z "$raw" ]] && raw="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "$local_key")"
-  fi
-  if [[ -z "$raw" && -n "$stacks_key" ]]; then
-    raw="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "$stacks_key")"
-    [[ -z "$raw" ]] && raw="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "$local_key")"
+    raw="$(dotenv_get "$home/.env" "$stacks_key")"
   fi
 
   local fallback

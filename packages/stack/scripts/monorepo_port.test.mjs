@@ -18,7 +18,7 @@ async function withTempRoot(t) {
 function gitEnv() {
   const clean = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('HAPPY_STACKS_') || k.startsWith('HAPPY_LOCAL_')) continue;
+    if (k.startsWith('HAPPIER_STACK_')) continue;
     clean[k] = v;
   }
   return {
@@ -321,7 +321,7 @@ test('monorepo port guide auto-clones target when --target does not exist', asyn
     ],
     {
       cwd: process.cwd(),
-      env: { ...env, HAPPY_STACKS_TEST_TTY: '1', HAPPY_STACKS_DISABLE_LLM_AUTOEXEC: '1' },
+      env: { ...env, HAPPIER_STACK_TEST_TTY: '1', HAPPIER_STACK_DISABLE_LLM_AUTOEXEC: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     }
   );
@@ -943,7 +943,7 @@ test('monorepo port guide can wait for conflict resolution and finish the port',
     [scriptPath, 'port', 'guide'],
     {
       cwd: process.cwd(),
-      env: { ...gitEnv(), HAPPY_STACKS_TEST_TTY: '1', HAPPY_STACKS_DISABLE_LLM_AUTOEXEC: '1' },
+      env: { ...gitEnv(), HAPPIER_STACK_TEST_TTY: '1', HAPPIER_STACK_DISABLE_LLM_AUTOEXEC: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     }
   );
@@ -1020,7 +1020,7 @@ test('monorepo port guide can wait for conflict resolution and finish the port',
   assert.equal(content, 'value=source\n');
 });
 
-test('monorepo port works via bin/happys.mjs entrypoint (CLI registry end-to-end)', async (t) => {
+test('monorepo port works via bin/hapsta.mjs entrypoint (CLI registry end-to-end)', async (t) => {
   const root = await withTempRoot(t);
   const target = join(root, 'target-mono');
   const sourceCli = join(root, 'source-cli');
@@ -1052,15 +1052,15 @@ test('monorepo port works via bin/happys.mjs entrypoint (CLI registry end-to-end
   await run('git', ['add', '.'], { cwd: sourceCli, env: gitEnv() });
   await run('git', ['commit', '-q', '-m', 'feat: update hello'], { cwd: sourceCli, env: gitEnv() });
 
-  const env = { ...gitEnv(), HAPPY_STACKS_HOME_DIR: join(root, 'home') };
+  const env = { ...gitEnv(), HAPPIER_STACK_HOME_DIR: join(root, 'home') };
   const out = await runCapture(
     process.execPath,
     [
-      join(process.cwd(), 'bin', 'happys.mjs'),
+      join(process.cwd(), 'bin', 'hapsta.mjs'),
       'monorepo',
       'port',
       `--target=${target}`,
-      `--branch=port/test-happys`,
+      `--branch=port/test-hapsta`,
       '--base=main',
       `--from-happy-cli=${sourceCli}`,
       `--from-happy-cli-base=${base}`,
@@ -1210,7 +1210,7 @@ test('monorepo port guide quit leaves a plan; port continue resumes and complete
     [scriptPath, 'port', 'guide'],
     {
       cwd: process.cwd(),
-      env: { ...gitEnv(), HAPPY_STACKS_TEST_TTY: '1', HAPPY_STACKS_DISABLE_LLM_AUTOEXEC: '1' },
+      env: { ...gitEnv(), HAPPIER_STACK_TEST_TTY: '1', HAPPIER_STACK_DISABLE_LLM_AUTOEXEC: '1' },
       stdio: ['pipe', 'pipe', 'pipe'],
     }
   );

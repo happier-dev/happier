@@ -63,15 +63,14 @@ async function main() {
       },
       text: [
         '[start] usage:',
-        '  happys start [--server=happy-server|happy-server-light] [--restart] [--json]',
-        '  happys start --mobile        # also start Expo dev-client Metro for mobile',
-        '  happys start --expo-tailscale # forward Expo to Tailscale interface for remote access',
-        '  happys start --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
-        '  (legacy in a cloned repo): pnpm start [-- --server=happy-server|happy-server-light] [--json]',
+        '  hapsta start [--server=happy-server|happy-server-light] [--restart] [--json]',
+        '  hapsta start --mobile        # also start Expo dev-client Metro for mobile',
+        '  hapsta start --expo-tailscale # forward Expo to Tailscale interface for remote access',
+        '  hapsta start --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
         '  note: --json prints the resolved config (dry-run) and exits.',
         '',
         'note:',
-        '  If run from inside a component checkout/worktree, that checkout is used for this run (without requiring `happys wt use`).',
+        '  If run from inside a component checkout/worktree, that checkout is used for this run (without requiring `hapsta wt use`).',
       ].join('\n'),
     });
     return;
@@ -92,9 +91,8 @@ async function main() {
   });
   if (inferred) {
     const stacksKey = componentDirEnvKey(inferred.component);
-    const legacyKey = stacksKey.replace(/^HAPPY_STACKS_/, 'HAPPY_LOCAL_');
     // Stack env should win. Only infer from CWD when the component dir isn't already configured.
-    if (!(process.env[stacksKey] ?? '').toString().trim() && !(process.env[legacyKey] ?? '').toString().trim()) {
+    if (!(process.env[stacksKey] ?? '').toString().trim()) {
       process.env[stacksKey] = inferred.repoDir;
     }
   }
@@ -113,19 +111,19 @@ async function main() {
     throw new Error(`[local] --server=both is not supported for run (pick one: happy-server-light or happy-server)`);
   }
 
-  const startDaemon = !flags.has('--no-daemon') && (process.env.HAPPY_LOCAL_DAEMON ?? '1') !== '0';
-  const serveUiWanted = !flags.has('--no-ui') && (process.env.HAPPY_LOCAL_SERVE_UI ?? '1') !== '0';
+  const startDaemon = !flags.has('--no-daemon') && (process.env.HAPPIER_STACK_DAEMON ?? '1') !== '0';
+  const serveUiWanted = !flags.has('--no-ui') && (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
   const serveUi = serveUiWanted;
   const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
-  const noBrowser = flags.has('--no-browser') || (process.env.HAPPY_STACKS_NO_BROWSER ?? process.env.HAPPY_LOCAL_NO_BROWSER ?? '').toString().trim() === '1';
-  const uiPrefix = process.env.HAPPY_LOCAL_UI_PREFIX?.trim() ? process.env.HAPPY_LOCAL_UI_PREFIX.trim() : '/';
+  const noBrowser = flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
+  const uiPrefix = process.env.HAPPIER_STACK_UI_PREFIX?.trim() ? process.env.HAPPIER_STACK_UI_PREFIX.trim() : '/';
   const autostart = getDefaultAutostartPaths();
-  const uiBuildDir = process.env.HAPPY_LOCAL_UI_BUILD_DIR?.trim()
-    ? process.env.HAPPY_LOCAL_UI_BUILD_DIR.trim()
+  const uiBuildDir = process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
+    ? process.env.HAPPIER_STACK_UI_BUILD_DIR.trim()
     : join(autostart.baseDir, 'ui');
 
-  const enableTailscaleServe = (process.env.HAPPY_LOCAL_TAILSCALE_SERVE ?? '0') === '1';
+  const enableTailscaleServe = (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
 
   const serverDir = getComponentDir(rootDir, serverComponentName);
   const cliDir = getComponentDir(rootDir, 'happy-cli');
@@ -143,8 +141,8 @@ async function main() {
 
   const cliBin = join(cliDir, 'bin', 'happy.mjs');
 
-  const cliHomeDir = process.env.HAPPY_LOCAL_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPY_LOCAL_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+  const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
+    ? process.env.HAPPIER_STACK_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
     : join(autostart.baseDir, 'cli');
   const restart = flags.has('--restart');
 
@@ -176,7 +174,7 @@ async function main() {
     if (serverComponentName === 'happy-server-light') {
       throw new Error(
         `[local] UI build directory not found at ${uiBuildDir}. ` +
-          `Run: ${cmd('happys build')} (legacy in a cloned repo: pnpm build)`
+          `Run: ${cmd('hapsta build')}`
       );
     }
     // For happy-server, UI serving is optional.
@@ -190,7 +188,7 @@ async function main() {
   const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
 
   // Ensure happy-cli is install+build ready before starting the daemon.
-  const buildCli = (baseEnv.HAPPY_STACKS_CLI_BUILD ?? baseEnv.HAPPY_LOCAL_CLI_BUILD ?? '1').toString().trim() !== '0';
+  const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
   await ensureCliBuilt(cliDir, { buildCli });
 
   // Ensure server deps exist before any Prisma/docker work.
@@ -206,7 +204,7 @@ async function main() {
   const allowEnableTailscale =
     !stackMode ||
     stackName === 'main' ||
-    (baseEnv.HAPPY_STACKS_TAILSCALE_SERVE ?? baseEnv.HAPPY_LOCAL_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
+    (baseEnv.HAPPIER_STACK_TAILSCALE_SERVE ?? '0').toString().trim() === '1';
   const resolvedUrls = await resolveServerUrls({ env: baseEnv, serverPort, allowEnable: allowEnableTailscale });
   if (stackMode && stackName !== 'main' && !resolvedUrls.envPublicUrl) {
     const src = String(resolvedUrls.publicServerUrlSource ?? '');
@@ -282,9 +280,9 @@ async function main() {
   }
   let effectiveInternalServerUrl = internalServerUrl;
   if (serverComponentName === 'happy-server') {
-    const managed = (baseEnv.HAPPY_STACKS_MANAGED_INFRA ?? baseEnv.HAPPY_LOCAL_MANAGED_INFRA ?? '1') !== '0';
+    const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
     if (managed) {
-      const envPath = baseEnv.HAPPY_STACKS_ENV_FILE ?? baseEnv.HAPPY_LOCAL_ENV_FILE ?? '';
+      const envPath = baseEnv.HAPPIER_STACK_ENV_FILE ?? '';
       const infra = await ensureHappyServerManagedInfra({
         stackName: autostart.stackName,
         baseDir: autostart.baseDir,
@@ -295,7 +293,7 @@ async function main() {
       });
 
       // Backend runs on a separate port; gateway owns the public port.
-      const backendPortRaw = (baseEnv.HAPPY_STACKS_HAPPY_SERVER_BACKEND_PORT ?? baseEnv.HAPPY_LOCAL_HAPPY_SERVER_BACKEND_PORT ?? '').trim();
+      const backendPortRaw = (baseEnv.HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT ?? '').trim();
       const backendPort = backendPortRaw ? Number(backendPortRaw) : serverPort + 10;
       const backendUrl = `http://127.0.0.1:${backendPort}`;
       if (!stackMode) {
@@ -303,7 +301,7 @@ async function main() {
       }
 
       const backendEnv = { ...serverEnv, ...infra.env, PORT: String(backendPort) };
-      const autoMigrate = (baseEnv.HAPPY_STACKS_PRISMA_MIGRATE ?? baseEnv.HAPPY_LOCAL_PRISMA_MIGRATE ?? '1') !== '0';
+      const autoMigrate = (baseEnv.HAPPIER_STACK_PRISMA_MIGRATE ?? '1') !== '0';
       if (autoMigrate) {
         await applyHappyServerMigrations({ serverDir, env: backendEnv });
       }
@@ -352,7 +350,7 @@ async function main() {
   }
 
   // Default server start (happy-server-light, or happy-server without managed infra).
-  if (!(serverComponentName === 'happy-server' && (baseEnv.HAPPY_STACKS_MANAGED_INFRA ?? baseEnv.HAPPY_LOCAL_MANAGED_INFRA ?? '1') !== '0')) {
+  if (!(serverComponentName === 'happy-server' && (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0')) {
     if (!serverAlreadyRunning || restart) {
       const server = await pmSpawnScript({ label: 'server', dir: serverDir, script: serverStartScript, env: serverEnv });
       children.push(server);

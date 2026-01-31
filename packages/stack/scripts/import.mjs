@@ -18,30 +18,26 @@ import { readEnvObjectFromFile } from './utils/env/read.mjs';
 import { clipboardAvailable, copyTextToClipboard } from './utils/ui/clipboard.mjs';
 import { detectInstalledLlmTools } from './utils/llm/tools.mjs';
 import { launchLlmAssistant } from './utils/llm/assist.mjs';
-import { buildHappyStacksRunnerShellSnippet } from './utils/llm/happys_runner.mjs';
+import { buildHapstaRunnerShellSnippet } from './utils/llm/hapsta_runner.mjs';
 
 function usage() {
   return [
     '[import] usage:',
-    '  happys import',
-    '  happys import inspect [--happy=<path|url>] [--happy-cli=<path|url>] [--happy-server=<path|url>] [--happy-server-light=<path|url>] [--yes] [--json]',
-    '  happys import apply --stack=<name> [--server=happy-server|happy-server-light] [--happy=<path|url>] [--happy-ref=<ref>] [--happy-cli=<path|url>] [--happy-cli-ref=<ref>] [--happy-server=<path|url>] [--happy-server-ref=<ref>] [--happy-server-light=<path|url>] [--happy-server-light-ref=<ref>] [--yes] [--json]',
-    '  happys import migrate [--stack=<name>]',
-    '  happys import llm [--mode=import|migrate] [--stack=<name>] [--copy] [--launch]',
-    '  happys import [--json]',
+    '  hapsta import',
+    '  hapsta import inspect [--happy=<path|url>] [--happy-cli=<path|url>] [--happy-server=<path|url>] [--happy-server-light=<path|url>] [--yes] [--json]',
+    '  hapsta import apply --stack=<name> [--server=happy-server|happy-server-light] [--happy=<path|url>] [--happy-ref=<ref>] [--happy-cli=<path|url>] [--happy-cli-ref=<ref>] [--happy-server=<path|url>] [--happy-server-ref=<ref>] [--happy-server-light=<path|url>] [--happy-server-light-ref=<ref>] [--yes] [--json]',
+    '  hapsta import migrate [--stack=<name>]',
+    '  hapsta import llm [--mode=import|migrate] [--stack=<name>] [--copy] [--launch]',
+    '  hapsta import [--json]',
     '',
     'What it does:',
     '- imports legacy split repos (happy / happy-cli / happy-server) into Happy Stacks by pinning stack component paths',
-    '- optionally ports commits into the slopus/happy monorepo layout via `happys monorepo port`',
+    '- optionally ports commits into the slopus/happy monorepo layout via `hapsta monorepo port`',
     '',
     'Notes:',
     '- This is for users who still have split repos/branches/PRs (pre-monorepo).',
     '- Migration uses `git format-patch` + `git am` and may require conflict resolution.',
   ].join('\n');
-}
-
-function legacyEnvKey(key) {
-  return key.replace(/^HAPPY_STACKS_/, 'HAPPY_LOCAL_');
 }
 
 async function gitRoot(dir) {
@@ -258,7 +254,7 @@ async function ensureWorktreeForRef({ rootDir, componentLabel, repoRoot, ref }) 
   // A normal clone has a branch checked out in its "main worktree" already.
   // `git worktree add <dir> <branch>` fails if `<branch>` is currently checked out anywhere.
   //
-  // To make `happys import apply` robust for typical contributor setups,
+  // To make `hapsta import apply` robust for typical contributor setups,
   // create a dedicated, uniquely named branch under the source repo when the ref is a local branch.
   const isLocalBranch = await gitOk(repoRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${r}`]);
   if (isLocalBranch) {
@@ -424,7 +420,6 @@ async function pinStackComponentDirs({ stackName, pins }) {
     if (!path) continue;
     const key = componentDirEnvKey(component);
     updates.push({ key, value: path });
-    updates.push({ key: legacyEnvKey(key), value: path });
   }
   await ensureEnvFileUpdated({ envPath, updates });
   return envPath;
@@ -500,13 +495,12 @@ function summarizePins(pins) {
 
 function readPinnedComponentDirFromEnvObject(envObj, component) {
   const key = componentDirEnvKey(component);
-  const legacyKey = legacyEnvKey(key);
-  const raw = (envObj?.[key] ?? envObj?.[legacyKey] ?? '').toString().trim();
+  const raw = (envObj?.[key] ?? '').toString().trim();
   return raw || '';
 }
 
 function buildLlmPromptForImport() {
-  const hs = buildHappyStacksRunnerShellSnippet();
+  const hs = buildHapstaRunnerShellSnippet();
   return [
     'You are an assistant helping the user migrate legacy Happy split repos into Happy Stacks.',
     '',
@@ -541,7 +535,7 @@ function buildLlmPromptForImport() {
 }
 
 function buildLlmPromptForMigrate({ stackName }) {
-  const hs = buildHappyStacksRunnerShellSnippet();
+  const hs = buildHapstaRunnerShellSnippet();
   return [
     'You are an assistant helping the user migrate an existing Happy Stacks stack to the monorepo.',
     '',
@@ -574,7 +568,7 @@ function buildMonorepoMigrationPrompt({ targetMonorepoRoot, branch, sources }) {
   return [
     'You are an assistant helping the user migrate split-repo commits into the Happy monorepo layout.',
     '',
-    buildHappyStacksRunnerShellSnippet(),
+    buildHapstaRunnerShellSnippet(),
     `Target monorepo worktree: ${targetMonorepoRoot}`,
     `Port branch: ${branch}`,
     '',
@@ -752,7 +746,7 @@ async function cmdApply({ rootDir, argv }) {
   // eslint-disable-next-line no-console
   console.log(sectionTitle('Next'));
   // eslint-disable-next-line no-console
-  console.log(bullets([cmdFmt(`happys stack dev ${ensured}`), cmdFmt(`happys import migrate --stack=${ensured}`)]));
+  console.log(bullets([cmdFmt(`hapsta stack dev ${ensured}`), cmdFmt(`hapsta import migrate --stack=${ensured}`)]));
 }
 
 async function cmdMigrateStack({ rootDir, argv }) {
@@ -802,7 +796,7 @@ async function cmdMigrateStack({ rootDir, argv }) {
     if (!hasAnyPins) {
       throw new Error(
         `[import] stack ${stackName} does not have any pinned component dirs.\n` +
-          `[import] Fix: run ${cmdFmt('happys import')} to create an imported stack first, then re-run migrate.`
+          `[import] Fix: run ${cmdFmt('hapsta import')} to create an imported stack first, then re-run migrate.`
       );
     }
 
@@ -852,7 +846,7 @@ async function cmdMigrateStack({ rootDir, argv }) {
     if (pins.happy) sources.happy = pins.happy;
     if (pins['happy-cli']) sources['happy-cli'] = pins['happy-cli'];
     if (pins['happy-server']) sources['happy-server'] = pins['happy-server'];
-    // Port flow is owned by `happys monorepo port guide` (preflight + auto-apply + conflicts + optional LLM).
+    // Port flow is owned by `hapsta monorepo port guide` (preflight + auto-apply + conflicts + optional LLM).
     // eslint-disable-next-line no-console
     console.log('');
     // eslint-disable-next-line no-console
@@ -907,7 +901,7 @@ async function cmdMigrateStack({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(sectionTitle('Next'));
     // eslint-disable-next-line no-console
-    console.log(bullets([`Run: ${cmdFmt(`happys stack dev ${finalStackName}`)}`]));
+    console.log(bullets([`Run: ${cmdFmt(`hapsta stack dev ${finalStackName}`)}`]));
   });
 }
 
@@ -967,7 +961,7 @@ async function main() {
       `${bold('components')}: the main codebases (UI = ${cyan('happy')}, CLI/daemon = ${cyan('happy-cli')}, server = ${cyan('happy-server')})`,
       `${bold('stack')}: an isolated runtime (ports + data + env) under ${dim('~/.happy/stacks/<name>')}`,
       `${bold('import')}: pin a stack to your existing repo checkouts (so you can run your work as-is)`,
-      `${bold('migrate')}: port your split-repo commits into the monorepo layout via ${cyan('happys monorepo port')}`,
+      `${bold('migrate')}: port your split-repo commits into the monorepo layout via ${cyan('hapsta monorepo port')}`,
     ])
   );
 
@@ -1156,7 +1150,7 @@ async function main() {
       // eslint-disable-next-line no-console
       console.log('');
       // eslint-disable-next-line no-console
-      console.log(dim(`Tip: run it with ${cmdFmt(`happys stack dev ${ensuredStack}`)} (or ${cmdFmt(`happys stack start ${ensuredStack}`)}).`));
+      console.log(dim(`Tip: run it with ${cmdFmt(`hapsta stack dev ${ensuredStack}`)} (or ${cmdFmt(`hapsta stack start ${ensuredStack}`)}).`));
 
       // Optional migration
       // eslint-disable-next-line no-console
@@ -1180,7 +1174,7 @@ async function main() {
           // eslint-disable-next-line no-console
           console.log(
             `${yellow('!')} No monorepo checkout detected in your Happy Stacks workspace yet.\n` +
-              dim(`Fix: run ${cmdFmt('happys setup --profile=dev')} (or ${cmdFmt('happys bootstrap')}) first, then re-run import.`)
+              dim(`Fix: run ${cmdFmt('hapsta setup --profile=dev')} (or ${cmdFmt('hapsta bootstrap')}) first, then re-run import.`)
           );
           const raw = await prompt(rl, `Monorepo target path (slopus/happy root): `, { defaultValue: '' });
           monorepoRepoRoot = raw.trim() ? await gitRoot(raw.trim()) : '';
@@ -1225,7 +1219,7 @@ async function main() {
 
           let migrationCompleted = false;
           try {
-            // This delegates all port logic to `happys monorepo port guide` (preflight + auto-apply + conflicts + optional LLM).
+            // This delegates all port logic to `hapsta monorepo port guide` (preflight + auto-apply + conflicts + optional LLM).
             // eslint-disable-next-line no-console
             console.log('');
             // eslint-disable-next-line no-console
@@ -1295,8 +1289,8 @@ async function main() {
             // eslint-disable-next-line no-console
             console.log(
               bullets([
-                `Run: ${cmdFmt(`happys stack dev ${finalStackName}`)}`,
-                `If you need to import more branches later, re-run: ${cmdFmt('happys import')}`,
+                `Run: ${cmdFmt(`hapsta stack dev ${finalStackName}`)}`,
+                `If you need to import more branches later, re-run: ${cmdFmt('hapsta import')}`,
               ])
             );
           }

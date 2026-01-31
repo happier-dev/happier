@@ -1,4 +1,4 @@
-# Happier Stacks
+# Hapsta (Happier Stack)
 
 Run [**Happier**](https://app.happier.dev) locally and access it remotely and securely (using Tailscale).
 
@@ -6,9 +6,9 @@ Run [**Happier**](https://app.happier.dev) locally and access it remotely and se
 
 Happier is an UI/CLI stack (server + web UI + CLI + daemon) who let you monitor and interact with Claude Code, Codex and Gemini sessions from your mobile, from a web UI and/or from a desktop app.
 
-## What is Happier Stacks?
+## What is Hapsta?
 
-happy-stacks is a guided installer + local orchestration CLI for Happier.
+Hapsta is a guided installer + local orchestration CLI for Happier.
 
 If you only want to **use Happier** and self-host it on your computer, start with the **Self-host** section below.
 If you want to **develop Happier** (worktrees, multiple stacks, upstream PR workflows), see the **Development** section further down.
@@ -18,7 +18,7 @@ If you want to **develop Happier** (worktrees, multiple stacks, upstream PR work
 ### Quickstart
 
 ```bash
-npx happy-stacks setup --profile=selfhost
+npx --yes -p @happier-dev/stack hapsta setup --profile=selfhost
 ```
 
 Follow the guided instructions to install Happier and launch it.
@@ -30,13 +30,13 @@ Follow the guided instructions to install Happier and launch it.
 If you want the daemon to have access to provider API keys (for example OpenAI), you can set them so they are automatically loaded when the daemon starts:
 
 ```bash
-happys env set OPENAI_API_KEY=sk-...
+hapsta env set OPENAI_API_KEY=sk-...
 ```
 
 Then restart so the daemon picks up the new environment:
 
 ```bash
-happys start --restart
+hapsta start --restart
 ```
 
 ### Start Happier
@@ -44,7 +44,7 @@ happys start --restart
 Starts the local server, CLI daemon, and serves the pre-built UI.
 
 ```bash
-happys start
+hapsta start
 ```
 
 ### Authentication
@@ -52,20 +52,20 @@ happys start
 On a **fresh machine**, the daemon needs to authenticate once before it can register a “machine”.
 
 ```bash
-happys auth login
+hapsta auth login
 ```
 
 If you want a quick diagnosis:
 
 ```bash
-happys auth status
+hapsta auth status
 ```
 
 ### Enable Tailscale Serve (recommended for mobile/remote)
 
 ```bash
-happys tailscale enable
-happys tailscale url
+hapsta tailscale enable
+hapsta tailscale url
 ```
 
 ### Mobile access
@@ -73,7 +73,7 @@ happys tailscale url
 Make sure Tailscale is [installed and running](https://tailscale.com/kb/1347/installation) on your 
 phone, then either:
 
-- Open the URL from `happys tailscale url` on your phone and “Add to Home Screen”, or
+- Open the URL from `hapsta tailscale url` on your phone and “Add to Home Screen”, or
 - [Download the Happier mobile app]
 ([https://app.happier.dev](https://app.happier.dev)) and [configure it to use 
 your local server](docs/remote-access.md).
@@ -82,12 +82,12 @@ Details (secure context, phone instructions, automation knobs): `[docs/remote-ac
 
 ## Development (worktrees, stacks, contributor workflows)
 
-If you want to **develop Happier** (worktrees, multiple stacks, upstream PR workflows), you can install Happy Stacks for development with:
+If you want to **develop Happier** (worktrees, multiple stacks, upstream PR workflows), you can install Hapsta for development with:
 
 ### Setup (guided)
 
 ```bash
-npx happy-stacks setup --profile=dev
+npx --yes -p @happier-dev/stack hapsta setup --profile=dev
 ```
 
 During setup, you’ll be guided through:
@@ -101,20 +101,20 @@ During setup, you’ll be guided through:
 You can also set it non-interactively:
 
 ```bash
-npx happy-stacks setup --profile=dev --workspace-dir=~/Development/happy
+npx --yes -p @happier-dev/stack hapsta setup --profile=dev --workspace-dir=~/Development/happy
 ```
 
 ### Why this exists
 
-- **Automated setup**: `happys setup` + `happys start` gets the whole stack up and running.
+- **Automated setup**: `hapsta setup` + `hapsta start` gets the whole stack up and running.
 - **No hosted dependency**: run the full stack on your own computer.
 - **Lower latency**: localhost/LAN is typically much faster than remote hosted servers.
 - **Custom forks**: easily use forks of the Happier UI + CLI (e.g. `happier-dev/*`) while still contributing upstream to `slopus/*`.
 - **Worktrees**: clean upstream PR branches without mixing fork-only patches.
 - **Stacks**: run multiple isolated instances in parallel (ports + dirs + component overrides).
-- **Remote access**: `happys tailscale ...` helps you get an HTTPS URL for mobile/remote devices.
+- **Remote access**: `hapsta tailscale ...` helps you get an HTTPS URL for mobile/remote devices.
 
-### How Happy Stacks wires “local” URLs
+### How Hapsta wires “local” URLs
 
 There are two “URLs” to understand:
 
@@ -155,7 +155,7 @@ More details + automation: `[docs/remote-access.md](docs/remote-access.md)`.
 - **Scripts**: `scripts/*.mjs` (bootstrap/dev/start/build/stacks/worktrees/service/tailscale/mobile)
 - **Components**: `components/*` (each is its own Git repo)
 - **Worktrees**: `components/.worktrees/<component>/<owner>/<branch...>`
-- **CWD-scoped commands**: if you run `happys test/typecheck/lint` from inside a component checkout/worktree and omit components, it runs just that component; `happys build/dev/start` also prefer the checkout you’re currently inside.
+- **CWD-scoped commands**: if you run `hapsta test/typecheck/lint` from inside a component checkout/worktree and omit components, it runs just that component; `hapsta build/dev/start` also prefer the checkout you’re currently inside.
 
 Components:
 
@@ -169,8 +169,8 @@ Components:
 #### Remote access (Tailscale Serve)
 
 ```bash
-happys tailscale enable
-happys tailscale url
+hapsta tailscale enable
+hapsta tailscale url
 ```
 
 Details: `[docs/remote-access.md](docs/remote-access.md)`.
@@ -180,15 +180,15 @@ Details: `[docs/remote-access.md](docs/remote-access.md)`.
 Create a clean upstream PR worktree:
 
 ```bash
-happys wt new happy pr/my-feature --from=upstream --use
-happys wt push happy active --remote=upstream
+hapsta wt new happy pr/my-feature --from=upstream --use
+hapsta wt push happy active --remote=upstream
 ```
 
 Test an upstream PR locally:
 
 ```bash
-happys wt pr happy https://github.com/slopus/happy/pull/123 --use
-happys wt pr happy 123 --update --stash
+hapsta wt pr happy https://github.com/slopus/happy/pull/123 --use
+hapsta wt pr happy 123 --update --stash
 ```
 
 ##### Developer quickstart: create a PR stack (isolated ports/dirs; idempotent updates)
@@ -197,7 +197,7 @@ This creates (or reuses) a named stack, checks out PR worktrees for the selected
 Re-run with `--reuse` to update the existing worktrees when the PR changes.
 
 ```bash
-happys stack pr pr123 \
+hapsta stack pr pr123 \
   --happy=https://github.com/slopus/happy/pull/123 \
   --happy-cli=https://github.com/slopus/happy-cli/pull/456 \
   --seed-auth --copy-auth-from=dev-auth --link-auth \
@@ -207,14 +207,14 @@ happys stack pr pr123 \
 Optional: enable Expo dev-client for mobile reviewers (reuses the same Expo dev server; no second Metro process):
 
 ```bash
-happys stack pr pr123 --happy=123 --happy-cli=456 --dev --mobile
+hapsta stack pr pr123 --happy=123 --happy-cli=456 --dev --mobile
 ```
 
 Optional: run it in a self-contained sandbox folder (delete it to uninstall completely):
 
 ```bash
-SANDBOX="$(mktemp -d /tmp/happy-stacks-sandbox.XXXXXX)"
-happys --sandbox-dir "$SANDBOX" stack pr pr123 --happy=123 --happy-cli=456 --dev
+SANDBOX="$(mktemp -d /tmp/hapsta-sandbox.XXXXXX)"
+hapsta --sandbox-dir "$SANDBOX" stack pr pr123 --happy=123 --happy-cli=456 --dev
 rm -rf "$SANDBOX"
 ```
 
@@ -224,8 +224,8 @@ Update when the PR changes:
 - If the PR was force-pushed, add `--force`.
 
 ```bash
-happys stack pr pr123 --happy=123 --happy-cli=456 --reuse
-happys stack pr pr123 --happy=123 --happy-cli=456 --reuse --force
+hapsta stack pr pr123 --happy=123 --happy-cli=456 --reuse
+hapsta stack pr pr123 --happy=123 --happy-cli=456 --reuse --force
 ```
 
 ##### Maintainer quickstart: one-shot “install + run PR stack” (idempotent)
@@ -233,7 +233,7 @@ happys stack pr pr123 --happy=123 --happy-cli=456 --reuse --force
 This is the maintainer-friendly entrypoint. It is safe to re-run and will keep the PR stack wiring intact.
 
 ```bash
-npx happy-stacks setup-pr \
+npx --yes -p @happier-dev/stack hapsta setup-pr \
   --happy=https://github.com/slopus/happy/pull/123 \
   --happy-cli=https://github.com/slopus/happy-cli/pull/456
 ```
@@ -241,25 +241,25 @@ npx happy-stacks setup-pr \
 Optional: enable Expo dev-client for mobile reviewers (works with both default `--dev` and `--start`):
 
 ```bash
-npx happy-stacks setup-pr --happy=123 --happy-cli=456 --mobile
+npx --yes -p @happier-dev/stack hapsta setup-pr --happy=123 --happy-cli=456 --mobile
 ```
 
 Optional: run it in a self-contained sandbox folder (auto-cleaned):
 
 ```bash
-npx happy-stacks review-pr --happy=123 --happy-cli=456
+npx --yes -p @happier-dev/stack hapsta review-pr --happy=123 --happy-cli=456
 ```
 
 Short form (PR numbers):
 
 ```bash
-npx happy-stacks setup-pr --happy=123 --happy-cli=456
+npx --yes -p @happier-dev/stack hapsta setup-pr --happy=123 --happy-cli=456
 ```
 
 Override stack name (optional):
 
 ```bash
-npx happy-stacks setup-pr --name=pr123 --happy=123 --happy-cli=456
+npx --yes -p @happier-dev/stack hapsta setup-pr --name=pr123 --happy=123 --happy-cli=456
 ```
 
 Update when the PR changes:
@@ -268,8 +268,8 @@ Update when the PR changes:
 - If the PR was force-pushed, add `--force`.
 
 ```bash
-npx happy-stacks setup-pr --happy=123 --happy-cli=456
-npx happy-stacks setup-pr --happy=123 --happy-cli=456 --force
+npx --yes -p @happier-dev/stack hapsta setup-pr --happy=123 --happy-cli=456
+npx --yes -p @happier-dev/stack hapsta setup-pr --happy=123 --happy-cli=456 --force
 ```
 
 Details: `[docs/worktrees-and-forks.md](docs/worktrees-and-forks.md)`.
@@ -278,19 +278,19 @@ Details: `[docs/worktrees-and-forks.md](docs/worktrees-and-forks.md)`.
 
 - Use `happy-server-light` for a light local stack (no Redis, no Postgres, no Docker), and UI serving via server-light.
 - Use `happy-server` when you need a more production-like server (Postgres + Redis + S3-compatible storage) or want to develop server changes for upstream.
-  - Happy Stacks can **manage the required infra automatically per stack** (via Docker Compose) and runs a **UI gateway** so you still get a single `https://...ts.net` URL that serves the UI + proxies API/websockets/files.
+  - Hapsta can **manage the required infra automatically per stack** (via Docker Compose) and runs a **UI gateway** so you still get a single `https://...ts.net` URL that serves the UI + proxies API/websockets/files.
 
 Switch globally:
 
 ```bash
-happys srv status
-happys srv use --interactive
+hapsta srv status
+hapsta srv use --interactive
 ```
 
 Switch per-stack:
 
 ```bash
-happys stack srv exp1 -- use --interactive
+hapsta stack srv exp1 -- use --interactive
 ```
 
 Details: `[docs/server-flavors.md](docs/server-flavors.md)`.
@@ -298,16 +298,16 @@ Details: `[docs/server-flavors.md](docs/server-flavors.md)`.
 #### Stacks (multiple isolated instances)
 
 ```bash
-happys stack new exp1 --interactive
-happys stack dev exp1
+hapsta stack new exp1 --interactive
+hapsta stack dev exp1
 ```
 
 Point a stack at a PR worktree:
 
 ```bash
-happys wt pr happy 123 --use
-happys stack wt exp1 -- use happy slopus/pr/123-fix-thing
-happys stack dev exp1
+hapsta wt pr happy 123 --use
+hapsta stack wt exp1 -- use happy slopus/pr/123-fix-thing
+hapsta stack dev exp1
 ```
 
 Details: `[docs/stacks.md](docs/stacks.md)`.
@@ -323,8 +323,8 @@ This avoids browser auth/session collisions between stacks (separate origin per 
 #### Menu bar (SwiftBar)
 
 ```bash
-happys menubar install
-happys menubar open
+hapsta menubar install
+hapsta menubar open
 ```
 
 Details: `[docs/menubar.md](docs/menubar.md)`.
@@ -332,24 +332,24 @@ Details: `[docs/menubar.md](docs/menubar.md)`.
 #### Mobile iOS dev (optional)
 
 ```bash
-# Install the shared "Happy Stacks Dev" dev-client app on your iPhone:
-happys mobile-dev-client --install
+# Install the shared Hapsta dev-client app on your iPhone:
+hapsta mobile-dev-client --install
 
 # Install an isolated per-stack app (Release config, unique bundle id + scheme):
-happys stack mobile:install <stack> --name="Happy (<stack>)"
+hapsta stack mobile:install <stack> --name="Happier (<stack>)"
 ```
 
 Details: `[docs/mobile-ios.md](docs/mobile-ios.md)`.
 
 #### Reviewing PRs in an isolated sandbox
 
-- **Unique hostname per run (default)**: `happys review-pr` generates a unique stack name by default, which results in a unique `happy-<stack>.localhost` hostname. This prevents browser storage collisions when the sandbox is deleted between runs.
-- **Reuse an existing sandbox**: if a previous run preserved a sandbox (e.g. `--keep-sandbox` or a failure in verbose mode), re-running `happys review-pr` offers an interactive choice to reuse it (keeping the same hostname + on-disk auth), or create a fresh sandbox.
+- **Unique hostname per run (default)**: `hapsta review-pr` generates a unique stack name by default, which results in a unique `happy-<stack>.localhost` hostname. This prevents browser storage collisions when the sandbox is deleted between runs.
+- **Reuse an existing sandbox**: if a previous run preserved a sandbox (e.g. `--keep-sandbox` or a failure in verbose mode), re-running `hapsta review-pr` offers an interactive choice to reuse it (keeping the same hostname + on-disk auth), or create a fresh sandbox.
 
 #### Tauri desktop app (optional)
 
 ```bash
-happys build --tauri
+hapsta build --tauri
 ```
 
 Details: `[docs/tauri.md](docs/tauri.md)`.
@@ -357,32 +357,32 @@ Details: `[docs/tauri.md](docs/tauri.md)`.
 ### Commands (high-signal)
 
 - **Setup**:
-  - `happys setup` (guided; selfhost or dev)
-  - (advanced) `happys init` (plumbing: shims/runtime/pointer env)
-  - (advanced) `happys bootstrap --interactive` (component installer wizard)
+  - `hapsta setup` (guided; selfhost or dev)
+  - (advanced) `hapsta init` (plumbing: shims/runtime/pointer env)
+  - (advanced) `hapsta bootstrap --interactive` (component installer wizard)
 - **Run**:
-  - `happys start` (production-like; serves built UI via server-light)
-  - `happys dev` (dev; Expo dev server for UI, optional dev-client via `--mobile`)
+  - `hapsta start` (production-like; serves built UI via server-light)
+  - `hapsta dev` (dev; Expo dev server for UI, optional dev-client via `--mobile`)
 - **Server flavor**:
-  - `happys srv status`
-  - `happys srv use --interactive`
+  - `hapsta srv status`
+  - `hapsta srv use --interactive`
 - **Worktrees**:
-  - `happys wt use --interactive`
-  - `happys wt pr <component> <pr-url|number> --use [--update] [--stash] [--force]`
-  - `happys wt sync-all`
-  - `happys wt update-all --dry-run` / `happys wt update-all --stash`
+  - `hapsta wt use --interactive`
+  - `hapsta wt pr <component> <pr-url|number> --use [--update] [--stash] [--force]`
+  - `hapsta wt sync-all`
+  - `hapsta wt update-all --dry-run` / `hapsta wt update-all --stash`
 - **Stacks**:
-  - `happys stack new --interactive`
-  - `happys stack dev <name>` / `happys stack start <name>`
-  - `happys stack edit <name> --interactive`
-  - `happys stack wt <name> -- use --interactive`
-  - `happys stack happy <name> -- <happy-cli args...>`
-  - `happys stack review <name> [component...] [--reviewers=coderabbit,codex] [--base-ref=<ref>]`
-  - `happys stack migrate`
+  - `hapsta stack new --interactive`
+  - `hapsta stack dev <name>` / `hapsta stack start <name>`
+  - `hapsta stack edit <name> --interactive`
+  - `hapsta stack wt <name> -- use --interactive`
+  - `hapsta stack happy <name> -- <happy-cli args...>`
+  - `hapsta stack review <name> [component...] [--reviewers=coderabbit,codex] [--base-ref=<ref>]`
+  - `hapsta stack migrate`
 - **Reviews (local diff review)**:
-  - `happys review [component...] [--reviewers=coderabbit,codex] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>]`
+  - `hapsta review [component...] [--reviewers=coderabbit,codex] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>]`
 - **Menu bar (SwiftBar)**:
-  - `happys menubar install`
+  - `hapsta menubar install`
 
 ### Docs (deep dives)
 
@@ -399,21 +399,21 @@ Details: `[docs/tauri.md](docs/tauri.md)`.
 
 Where config lives by default:
 
-- `~/.happy-stacks/.env`: stable “pointer” file (home/workspace/runtime)
-- `~/.happy-stacks/env.local`: optional global overrides
-- `~/.happy/stacks/main/env`: main stack config (port, server flavor, component overrides)
+- `~/.happier-stack/.env`: stable “pointer” file (home/workspace/runtime)
+- `~/.happier-stack/env.local`: optional global overrides
+- `~/.happier/stacks/main/env`: main stack config (port, server flavor, component overrides)
 
 Notes:
 
-- Canonical env prefix is `HAPPY_STACKS_*` (legacy `HAPPY_LOCAL_*` still works).
-- Canonical stack storage is `~/.happy/stacks` (legacy `~/.happy/local` is still supported).
+- Canonical env prefix is `HAPPIER_STACK_*` (no legacy aliases).
+- Canonical stack storage is `~/.happier/stacks`.
 - To edit per-stack environment variables (including provider keys like `OPENAI_API_KEY`), use:
 
   ```bash
-  happys stack env <stack> set KEY=VALUE
-  happys stack env <stack> unset KEY
-  happys stack env <stack> get KEY
-  happys stack env <stack> list
+  hapsta stack env <stack> set KEY=VALUE
+  hapsta stack env <stack> unset KEY
+  hapsta stack env <stack> get KEY
+  hapsta stack env <stack> list
   ```
 
 - **Repo env templates**:
@@ -426,43 +426,43 @@ If you want to test the full setup flow (including PR stacks) without impacting 
 To fully uninstall the test run, stop the sandbox stacks and delete the sandbox folder.
 
 ```bash
-SANDBOX="$(mktemp -d /tmp/happy-stacks-sandbox.XXXXXX)"
+SANDBOX="$(mktemp -d /tmp/hapsta-sandbox.XXXXXX)"
 
 # Run a PR stack (fully isolated install)
-npx happy-stacks --sandbox-dir "$SANDBOX" setup-pr --happy=123 --happy-cli=456
+npx --yes -p @happier-dev/stack hapsta --sandbox-dir "$SANDBOX" setup-pr --happy=123 --happy-cli=456
 
 # Tear down + uninstall
-npx happy-stacks --sandbox-dir "$SANDBOX" stop --yes --no-service
+npx --yes -p @happier-dev/stack hapsta --sandbox-dir "$SANDBOX" stop --yes --no-service
 rm -rf "$SANDBOX"
 ```
 
 Notes:
 
 - Sandbox mode disables global OS side effects (**PATH edits**, **SwiftBar plugin install**, **LaunchAgents/systemd services**, **Tailscale Serve enable/disable**) by default.
-- To explicitly allow those for testing, set `HAPPY_STACKS_SANDBOX_ALLOW_GLOBAL=1` (still recommended to clean up after).
+- To explicitly allow those for testing, set `HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1` (still recommended to clean up after).
 
 For contributor/LLM workflow expectations: `[AGENTS.md](AGENTS.md)`.
 
-### Developing Happy Stacks itself
+### Developing Hapsta itself
 
 ```bash
-git clone https://github.com/happier-dev/happy-stacks.git
-cd happy-stacks
+git clone https://github.com/leeroybrun/happier-dev.git
+cd happier-dev
 
-node ./bin/happys.mjs setup --profile=dev
+node ./packages/stack/bin/hapsta.mjs setup --profile=dev
 ```
 
 Notes:
 
-- In a cloned repo, `pnpm <script>` still works, but `happys <command>` is the recommended UX (same underlying scripts).
-- To make the installed `~/.happy-stacks/bin/happys` shim (LaunchAgents / SwiftBar) run your local checkout without publishing to npm, set:
+- For local dev, prefer running stack commands via the `hapsta` entrypoint (it applies stack-scoped env and safety gates).
+- To make the installed `~/.happier-stack/bin/hapsta` shim (LaunchAgents / SwiftBar) run your local checkout without publishing to npm, set:
 
 ```bash
-echo 'HAPPY_STACKS_CLI_ROOT_DIR=/path/to/your/happy-stacks-checkout' >> ~/.happy-stacks/.env
+echo 'HAPPIER_STACK_CLI_ROOT_DIR=/path/to/your/happier-dev-checkout' >> ~/.happier-stack/.env
 ```
 
 Or (recommended) persist it via init:
 
 ```bash
-happys init --cli-root-dir=/path/to/your/happy-stacks-checkout
+hapsta init --cli-root-dir=/path/to/your/happier-dev-checkout
 ```

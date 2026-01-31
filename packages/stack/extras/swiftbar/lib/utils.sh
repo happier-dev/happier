@@ -92,7 +92,7 @@ swiftbar_find_git_root_upwards() {
 swiftbar_repo_key_from_path() {
   # Usage: swiftbar_repo_key_from_path <path>
   #
-  # Heuristic for happy-stacks layouts:
+  # Heuristic for hapsta layouts:
   # - Worktrees: */components/.worktrees/<repoKey>/...
   # - Defaults:  */components/<repoKey>/...
   #
@@ -114,11 +114,11 @@ swiftbar_repo_key_from_path() {
 }
 
 swiftbar_is_sandboxed() {
-  [[ -n "${HAPPY_STACKS_SANDBOX_DIR:-}" ]]
+  [[ -n "${HAPPIER_STACK_SANDBOX_DIR:-}" ]]
 }
 
 swiftbar_profile_enabled() {
-  [[ "${HAPPY_STACKS_SWIFTBAR_PROFILE:-}" == "1" || "${HAPPY_LOCAL_SWIFTBAR_PROFILE:-}" == "1" ]]
+  [[ "${HAPPIER_STACK_SWIFTBAR_PROFILE:-}" == "1" ]]
 }
 
 swiftbar_now_ms() {
@@ -137,8 +137,8 @@ swiftbar_now_ms() {
 
 swiftbar_profile_log_file() {
   # Keep logs in the home install by default (stable across repos/worktrees).
-  local canonical="${HAPPY_STACKS_CANONICAL_HOME_DIR:-${HAPPY_LOCAL_CANONICAL_HOME_DIR:-$HOME/.happy-stacks}}"
-  local home="${HAPPY_STACKS_HOME_DIR:-${HAPPY_LOCAL_DIR:-$canonical}}"
+  local home
+  home="$(resolve_home_dir)"
   echo "${home}/cache/swiftbar/profile.log"
 }
 
@@ -210,7 +210,7 @@ swiftbar_hash() {
 swiftbar_run_cache_dir() {
   # Per-process (per-refresh) cache. Avoid persisting across SwiftBar refreshes.
   local base="${TMPDIR:-/tmp}"
-  local dir="${base%/}/happy-stacks-swiftbar-cache-${UID:-0}-$$"
+  local dir="${base%/}/hapsta-swiftbar-cache-${UID:-0}-$$"
   mkdir -p "$dir" 2>/dev/null || true
   echo "$dir"
 }
@@ -295,46 +295,60 @@ expand_home_path() {
   echo "$p"
 }
 
-resolve_happy_local_dir() {
-  local canonical="${HAPPY_STACKS_CANONICAL_HOME_DIR:-${HAPPY_LOCAL_CANONICAL_HOME_DIR:-$HOME/.happy-stacks}}"
-  local home="${HAPPY_STACKS_HOME_DIR:-${HAPPY_LOCAL_DIR:-$canonical}}"
+resolve_canonical_home_dir() {
+  local canonical="${HAPPIER_STACK_CANONICAL_HOME_DIR:-$HOME/.happier-stack}"
+  echo "$(expand_home_path "$canonical")"
+}
 
-  # If user provided a valid directory, keep it.
-  if [[ -n "${HAPPY_LOCAL_DIR:-}" ]] && [[ -f "$HAPPY_LOCAL_DIR/extras/swiftbar/lib/utils.sh" ]]; then
-    echo "$HAPPY_LOCAL_DIR"
+resolve_home_dir() {
+  local from_env="${HAPPIER_STACK_HOME_DIR:-}"
+  if [[ -n "$from_env" ]]; then
+    echo "$(expand_home_path "$from_env")"
     return
   fi
 
-  # Canonical install location.
-  if [[ -f "$home/extras/swiftbar/lib/utils.sh" ]]; then
-    echo "$home"
-    return
+  local canonical
+  canonical="$(resolve_canonical_home_dir)"
+  local env_file="${canonical}/.env"
+  if [[ -f "$env_file" ]]; then
+    local p
+    p="$(dotenv_get "$env_file" "HAPPIER_STACK_HOME_DIR")"
+    if [[ -n "$p" ]]; then
+      echo "$(expand_home_path "$p")"
+      return
+    fi
   fi
 
-  # Fall back to home even if missing so the menu can show actionable errors.
-  echo "$home"
+  echo "$canonical"
+}
+
+resolve_hapsta_root_dir() {
+  # Prefer the repo root if explicitly provided (dev); otherwise use the home install root.
+  local cli_root="${HAPPIER_STACK_CLI_ROOT_DIR:-}"
+  if [[ -n "$cli_root" ]] && [[ -f "$cli_root/extras/swiftbar/lib/utils.sh" ]]; then
+    echo "$cli_root"
+    return
+  fi
+  resolve_home_dir
 }
 
 resolve_stacks_storage_root() {
   # Priority:
   # 1) explicit env var
   # 2) home env.local
-  # 3) home .env (canonical pointer file, written by `happys init`)
-  # 4) default to ~/.happy/stacks
-  if [[ -n "${HAPPY_STACKS_STORAGE_DIR:-}" ]]; then
-    echo "$(expand_home_path "$HAPPY_STACKS_STORAGE_DIR")"
-    return
-  fi
-  if [[ -n "${HAPPY_LOCAL_STORAGE_DIR:-}" ]]; then
-    echo "$(expand_home_path "$HAPPY_LOCAL_STORAGE_DIR")"
+  # 3) home .env (canonical pointer file, written by `hapsta init`)
+  # 4) default to ~/.happier/stacks
+  if [[ -n "${HAPPIER_STACK_STORAGE_DIR:-}" ]]; then
+    echo "$(expand_home_path "$HAPPIER_STACK_STORAGE_DIR")"
     return
   fi
 
+  local root
+  root="$(resolve_hapsta_root_dir)"
+
   local p
-  p="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "HAPPY_STACKS_STORAGE_DIR")"
-  [[ -z "$p" ]] && p="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "HAPPY_LOCAL_STORAGE_DIR")"
-  [[ -z "$p" ]] && p="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "HAPPY_STACKS_STORAGE_DIR")"
-  [[ -z "$p" ]] && p="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "HAPPY_LOCAL_STORAGE_DIR")"
+  p="$(dotenv_get "$root/env.local" "HAPPIER_STACK_STORAGE_DIR")"
+  [[ -z "$p" ]] && p="$(dotenv_get "$root/.env" "HAPPIER_STACK_STORAGE_DIR")"
   if [[ -n "$p" ]]; then
     echo "$(expand_home_path "$p")"
     return
@@ -342,11 +356,11 @@ resolve_stacks_storage_root() {
 
   # In sandbox mode, avoid falling back to the user's real ~/.happy/stacks.
   if swiftbar_is_sandboxed; then
-    echo "${HAPPY_STACKS_STORAGE_DIR:-${HAPPY_STACKS_SANDBOX_DIR%/}/storage}"
+    echo "${HAPPIER_STACK_STORAGE_DIR:-${HAPPIER_STACK_SANDBOX_DIR%/}/storage}"
     return
   fi
 
-  echo "$HOME/.happy/stacks"
+  echo "$HOME/.happier/stacks"
 }
 
 resolve_stack_env_file() {
@@ -358,25 +372,6 @@ resolve_stack_env_file() {
   if [[ -f "$primary" ]]; then
     echo "$primary"
     return
-  fi
-
-  if ! swiftbar_is_sandboxed; then
-    local legacy="$HOME/.happy/local/stacks/${stack_name}/env"
-    if [[ -f "$legacy" ]]; then
-      echo "$legacy"
-      return
-    fi
-  fi
-
-  # Very old single-stack location (best-effort).
-  if ! swiftbar_is_sandboxed; then
-    if [[ "$stack_name" == "main" ]]; then
-      local legacy_single="$HOME/.happy/local/env"
-      if [[ -f "$legacy_single" ]]; then
-        echo "$legacy_single"
-        return
-      fi
-    fi
   fi
 
   echo "$primary"
@@ -406,8 +401,7 @@ resolve_stack_cli_home_dir() {
   fi
   local cli_home=""
   if [[ -n "$env_file" ]] && [[ -f "$env_file" ]]; then
-    cli_home="$(dotenv_get "$env_file" "HAPPY_STACKS_CLI_HOME_DIR")"
-    [[ -z "$cli_home" ]] && cli_home="$(dotenv_get "$env_file" "HAPPY_LOCAL_CLI_HOME_DIR")"
+    cli_home="$(dotenv_get "$env_file" "HAPPIER_STACK_CLI_HOME_DIR")"
   fi
   if [[ -n "$cli_home" ]]; then
     echo "$(expand_home_path "$cli_home")"
@@ -420,11 +414,9 @@ resolve_stack_cli_home_dir() {
 
 resolve_stack_label() {
   local stack_name="${1:-main}"
-  local primary="com.happy.stacks"
-  local legacy="com.happy.local"
+  local primary="com.happier.stack"
   if [[ "$stack_name" != "main" ]]; then
-    primary="com.happy.stacks.${stack_name}"
-    legacy="com.happy.local.${stack_name}"
+    primary="com.happier.stack.${stack_name}"
   fi
   if swiftbar_is_sandboxed; then
     # Never inspect global LaunchAgents in sandbox mode.
@@ -432,38 +424,28 @@ resolve_stack_label() {
     return
   fi
   local primary_plist="$HOME/Library/LaunchAgents/${primary}.plist"
-  local legacy_plist="$HOME/Library/LaunchAgents/${legacy}.plist"
   if [[ -f "$primary_plist" ]]; then
     echo "$primary"
-    return
-  fi
-  if [[ -f "$legacy_plist" ]]; then
-    echo "$legacy"
     return
   fi
   echo "$primary"
 }
 
-resolve_pnpm_bin() {
-  # Back-compat: historically this was "pnpm", but the plugin now runs `happys` via wrapper scripts.
-  local wrapper="$HAPPY_LOCAL_DIR/extras/swiftbar/happys.sh"
+resolve_hapsta_bin() {
+  local root
+  root="$(resolve_hapsta_root_dir)"
+
+  local wrapper="$root/extras/swiftbar/hapsta.sh"
   if [[ -x "$wrapper" ]]; then
     echo "$wrapper"
     return
   fi
 
-  # Older installs.
-  wrapper="$HAPPY_LOCAL_DIR/extras/swiftbar/pnpm.sh"
-  if [[ -x "$wrapper" ]]; then
-    echo "$wrapper"
-    return
-  fi
-
-  local global_happys
   if ! swiftbar_is_sandboxed; then
-    global_happys="$(command -v happys 2>/dev/null || true)"
-    if [[ -n "$global_happys" ]]; then
-      echo "$global_happys"
+    local global
+    global="$(command -v hapsta 2>/dev/null || true)"
+    if [[ -n "$global" ]]; then
+      echo "$global"
       return
     fi
   fi
@@ -473,27 +455,18 @@ resolve_pnpm_bin() {
 
 resolve_node_bin() {
   # Prefer explicit env vars first.
-  if [[ -n "${HAPPY_STACKS_NODE:-}" ]] && [[ -x "${HAPPY_STACKS_NODE:-}" ]]; then
-    echo "$HAPPY_STACKS_NODE"
-    return
-  fi
-  if [[ -n "${HAPPY_LOCAL_NODE:-}" ]] && [[ -x "${HAPPY_LOCAL_NODE:-}" ]]; then
-    echo "$HAPPY_LOCAL_NODE"
+  if [[ -n "${HAPPIER_STACK_NODE:-}" ]] && [[ -x "${HAPPIER_STACK_NODE:-}" ]]; then
+    echo "$HAPPIER_STACK_NODE"
     return
   fi
 
-  # Fall back to reading the canonical pointer env (written by `happys init`).
-  local canonical="${HAPPY_STACKS_CANONICAL_HOME_DIR:-${HAPPY_LOCAL_CANONICAL_HOME_DIR:-$HOME/.happy-stacks}}"
-  local home="${HAPPY_STACKS_HOME_DIR:-${HAPPY_LOCAL_DIR:-$canonical}}"
+  # Fall back to reading the canonical pointer env (written by `hapsta init`).
+  local home
+  home="$(resolve_home_dir)"
   local env_file="$home/.env"
   if [[ -f "$env_file" ]]; then
     local v
-    v="$(dotenv_get "$env_file" "HAPPY_STACKS_NODE")"
-    if [[ -n "$v" ]] && [[ -x "$v" ]]; then
-      echo "$v"
-      return
-    fi
-    v="$(dotenv_get "$env_file" "HAPPY_LOCAL_NODE")"
+    v="$(dotenv_get "$env_file" "HAPPIER_STACK_NODE")"
     if [[ -n "$v" ]] && [[ -x "$v" ]]; then
       echo "$v"
       return
@@ -504,18 +477,20 @@ resolve_node_bin() {
 }
 
 resolve_workspace_dir() {
-  if [[ -n "${HAPPY_STACKS_WORKSPACE_DIR:-}" ]]; then
-    echo "$HAPPY_STACKS_WORKSPACE_DIR"
+  if [[ -n "${HAPPIER_STACK_WORKSPACE_DIR:-}" ]]; then
+    echo "$HAPPIER_STACK_WORKSPACE_DIR"
     return
   fi
+  local root
+  root="$(resolve_hapsta_root_dir)"
   local p
-  p="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "HAPPY_STACKS_WORKSPACE_DIR")"
-  [[ -z "$p" ]] && p="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "HAPPY_STACKS_WORKSPACE_DIR")"
+  p="$(dotenv_get "$root/.env" "HAPPIER_STACK_WORKSPACE_DIR")"
+  [[ -z "$p" ]] && p="$(dotenv_get "$root/env.local" "HAPPIER_STACK_WORKSPACE_DIR")"
   if [[ -n "$p" ]]; then
     echo "$p"
     return
   fi
-  echo "$HAPPY_LOCAL_DIR/workspace"
+  echo "$(resolve_home_dir)/workspace"
 }
 
 resolve_components_dir() {
@@ -523,7 +498,7 @@ resolve_components_dir() {
 }
 
 resolve_main_env_file() {
-  local explicit="${HAPPY_STACKS_ENV_FILE:-${HAPPY_LOCAL_ENV_FILE:-}}"
+  local explicit="${HAPPIER_STACK_ENV_FILE:-}"
   if [[ -n "$explicit" ]] && [[ -f "$explicit" ]]; then
     echo "$explicit"
     return
@@ -536,20 +511,6 @@ resolve_main_env_file() {
     echo "$main"
     return
   fi
-  if ! swiftbar_is_sandboxed; then
-    # Legacy stacks location (pre-migration).
-    local legacy="$HOME/.happy/local/stacks/main/env"
-    if [[ -f "$legacy" ]]; then
-      echo "$legacy"
-      return
-    fi
-    # Very old single-stack location (best-effort).
-    local legacy_single="$HOME/.happy/local/env"
-    if [[ -f "$legacy_single" ]]; then
-      echo "$legacy_single"
-      return
-    fi
-  fi
   echo ""
 }
 
@@ -560,13 +521,9 @@ resolve_main_port() {
   # 3) home env.local
   # 4) home .env
   # 5) runtime state (ephemeral stacks)
-  # 6) fallback to HAPPY_LOCAL_PORT / 3005
-  if [[ -n "${HAPPY_LOCAL_SERVER_PORT:-}" ]]; then
-    echo "$HAPPY_LOCAL_SERVER_PORT"
-    return
-  fi
-  if [[ -n "${HAPPY_STACKS_SERVER_PORT:-}" ]]; then
-    echo "$HAPPY_STACKS_SERVER_PORT"
+  # 6) fallback to 3005
+  if [[ -n "${HAPPIER_STACK_SERVER_PORT:-}" ]]; then
+    echo "$HAPPIER_STACK_SERVER_PORT"
     return
   fi
 
@@ -574,23 +531,22 @@ resolve_main_port() {
   local env_file
   env_file="$(resolve_main_env_file)"
   if [[ -n "$env_file" ]]; then
-    p="$(dotenv_get "$env_file" "HAPPY_LOCAL_SERVER_PORT")"
-    [[ -z "$p" ]] && p="$(dotenv_get "$env_file" "HAPPY_STACKS_SERVER_PORT")"
+    p="$(dotenv_get "$env_file" "HAPPIER_STACK_SERVER_PORT")"
   fi
   if [[ -n "$p" ]]; then
     echo "$p"
     return
   fi
 
-  p="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "HAPPY_LOCAL_SERVER_PORT")"
-  [[ -z "$p" ]] && p="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "HAPPY_STACKS_SERVER_PORT")"
+  local root
+  root="$(resolve_hapsta_root_dir)"
+  p="$(dotenv_get "$root/env.local" "HAPPIER_STACK_SERVER_PORT")"
   if [[ -n "$p" ]]; then
     echo "$p"
     return
   fi
 
-  p="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "HAPPY_LOCAL_SERVER_PORT")"
-  [[ -z "$p" ]] && p="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "HAPPY_STACKS_SERVER_PORT")"
+  p="$(dotenv_get "$root/.env" "HAPPIER_STACK_SERVER_PORT")"
   if [[ -n "$p" ]]; then
     echo "$p"
     return
@@ -606,7 +562,7 @@ resolve_main_port() {
     return
   fi
 
-  echo "${HAPPY_LOCAL_PORT:-3005}"
+  echo "3005"
 }
 
 resolve_runtime_server_port_from_state_file() {
@@ -673,8 +629,7 @@ resolve_stack_server_port() {
 
   local p=""
   if [[ -n "$env_file" && -f "$env_file" ]]; then
-    p="$(dotenv_get "$env_file" "HAPPY_STACKS_SERVER_PORT")"
-    [[ -z "$p" ]] && p="$(dotenv_get "$env_file" "HAPPY_LOCAL_SERVER_PORT")"
+    p="$(dotenv_get "$env_file" "HAPPIER_STACK_SERVER_PORT")"
   fi
   if [[ -n "$p" ]]; then
     echo "$p"
@@ -689,12 +644,8 @@ resolve_stack_server_port() {
 }
 
 resolve_main_server_component() {
-  if [[ -n "${HAPPY_LOCAL_SERVER_COMPONENT:-}" ]]; then
-    echo "$HAPPY_LOCAL_SERVER_COMPONENT"
-    return
-  fi
-  if [[ -n "${HAPPY_STACKS_SERVER_COMPONENT:-}" ]]; then
-    echo "$HAPPY_STACKS_SERVER_COMPONENT"
+  if [[ -n "${HAPPIER_STACK_SERVER_COMPONENT:-}" ]]; then
+    echo "$HAPPIER_STACK_SERVER_COMPONENT"
     return
   fi
 
@@ -702,23 +653,22 @@ resolve_main_server_component() {
   local env_file
   env_file="$(resolve_main_env_file)"
   if [[ -n "$env_file" ]]; then
-    c="$(dotenv_get "$env_file" "HAPPY_LOCAL_SERVER_COMPONENT")"
-    [[ -z "$c" ]] && c="$(dotenv_get "$env_file" "HAPPY_STACKS_SERVER_COMPONENT")"
+    c="$(dotenv_get "$env_file" "HAPPIER_STACK_SERVER_COMPONENT")"
   fi
   if [[ -n "$c" ]]; then
     echo "$c"
     return
   fi
 
-  c="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "HAPPY_LOCAL_SERVER_COMPONENT")"
-  [[ -z "$c" ]] && c="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "HAPPY_STACKS_SERVER_COMPONENT")"
+  local root
+  root="$(resolve_hapsta_root_dir)"
+  c="$(dotenv_get "$root/env.local" "HAPPIER_STACK_SERVER_COMPONENT")"
   if [[ -n "$c" ]]; then
     echo "$c"
     return
   fi
 
-  c="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "HAPPY_LOCAL_SERVER_COMPONENT")"
-  [[ -z "$c" ]] && c="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "HAPPY_STACKS_SERVER_COMPONENT")"
+  c="$(dotenv_get "$root/.env" "HAPPIER_STACK_SERVER_COMPONENT")"
   if [[ -n "$c" ]]; then
     echo "$c"
     return
@@ -729,27 +679,21 @@ resolve_main_server_component() {
 
 resolve_menubar_mode() {
   # selfhost | dev (default: dev)
-  local raw=""
-  if [[ -n "${HAPPY_LOCAL_MENUBAR_MODE:-}" ]]; then
-    raw="$HAPPY_LOCAL_MENUBAR_MODE"
-  elif [[ -n "${HAPPY_STACKS_MENUBAR_MODE:-}" ]]; then
-    raw="$HAPPY_STACKS_MENUBAR_MODE"
-  fi
+  local raw="${HAPPIER_STACK_MENUBAR_MODE:-}"
 
   local env_file
   env_file="$(resolve_main_env_file)"
   if [[ -z "$raw" && -n "$env_file" ]]; then
-    raw="$(dotenv_get "$env_file" "HAPPY_LOCAL_MENUBAR_MODE")"
-    [[ -z "$raw" ]] && raw="$(dotenv_get "$env_file" "HAPPY_STACKS_MENUBAR_MODE")"
+    raw="$(dotenv_get "$env_file" "HAPPIER_STACK_MENUBAR_MODE")"
   fi
 
   if [[ -z "$raw" ]]; then
-    raw="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "HAPPY_LOCAL_MENUBAR_MODE")"
-    [[ -z "$raw" ]] && raw="$(dotenv_get "$HAPPY_LOCAL_DIR/env.local" "HAPPY_STACKS_MENUBAR_MODE")"
+    local root
+    root="$(resolve_hapsta_root_dir)"
+    raw="$(dotenv_get "$root/env.local" "HAPPIER_STACK_MENUBAR_MODE")"
   fi
   if [[ -z "$raw" ]]; then
-    raw="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "HAPPY_LOCAL_MENUBAR_MODE")"
-    [[ -z "$raw" ]] && raw="$(dotenv_get "$HAPPY_LOCAL_DIR/.env" "HAPPY_STACKS_MENUBAR_MODE")"
+    raw="$(dotenv_get "$root/.env" "HAPPIER_STACK_MENUBAR_MODE")"
   fi
 
   raw="$(echo "${raw:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"

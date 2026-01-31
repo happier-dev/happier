@@ -9,11 +9,11 @@ import { normalizeUrlNoTrailingSlash } from '../net/url.mjs';
 function stackEnvExplicitlySetsPublicUrl({ env, stackName }) {
   try {
     const envPath =
-      (env.HAPPY_STACKS_ENV_FILE ?? env.HAPPY_LOCAL_ENV_FILE ?? '').toString().trim() ||
+      (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim() ||
       resolveStackEnvPath(stackName).envPath;
     if (!envPath || !existsSync(envPath)) return false;
     const raw = readFileSync(envPath, 'utf-8');
-    return /^(HAPPY_STACKS_SERVER_URL|HAPPY_LOCAL_SERVER_URL)=/m.test(raw);
+    return /^HAPPIER_STACK_SERVER_URL=/m.test(raw);
   } catch {
     return false;
   }
@@ -22,7 +22,7 @@ function stackEnvExplicitlySetsPublicUrl({ env, stackName }) {
 function stackEnvExplicitlySetsWebappUrl({ env, stackName }) {
   try {
     const envPath =
-      (env.HAPPY_STACKS_ENV_FILE ?? env.HAPPY_LOCAL_ENV_FILE ?? '').toString().trim() ||
+      (env.HAPPIER_STACK_ENV_FILE ?? '').toString().trim() ||
       resolveStackEnvPath(stackName).envPath;
     if (!envPath || !existsSync(envPath)) return false;
     const raw = readFileSync(envPath, 'utf-8');
@@ -35,12 +35,11 @@ function stackEnvExplicitlySetsWebappUrl({ env, stackName }) {
 export function getPublicServerUrlEnvOverride({ env = process.env, serverPort, stackName = null } = {}) {
   const name =
     (stackName ?? '').toString().trim() ||
-    (env.HAPPY_STACKS_STACK ?? env.HAPPY_LOCAL_STACK ?? '').toString().trim() ||
+    (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
     getStackName(env);
   const defaultPublicUrl = `http://localhost:${serverPort}`;
 
-  let envPublicUrl =
-    (env.HAPPY_STACKS_SERVER_URL ?? env.HAPPY_LOCAL_SERVER_URL ?? '').toString().trim() || '';
+  let envPublicUrl = (env.HAPPIER_STACK_SERVER_URL ?? '').toString().trim() || '';
   envPublicUrl = normalizeUrlNoTrailingSlash(envPublicUrl);
 
   // Safety: for non-main stacks, ignore a global SERVER_URL unless it was explicitly set in the stack env file.
@@ -54,7 +53,7 @@ export function getPublicServerUrlEnvOverride({ env = process.env, serverPort, s
 export function getWebappUrlEnvOverride({ env = process.env, stackName = null } = {}) {
   const name =
     (stackName ?? '').toString().trim() ||
-    (env.HAPPY_STACKS_STACK ?? env.HAPPY_LOCAL_STACK ?? '').toString().trim() ||
+    (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
     getStackName(env);
 
   let envWebappUrl = (env.HAPPY_WEBAPP_URL ?? '').toString().trim() || '';
@@ -70,7 +69,7 @@ export function getWebappUrlEnvOverride({ env = process.env, stackName = null } 
 export async function resolveServerUrls({ env = process.env, serverPort, allowEnable = true } = {}) {
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
   const stackName =
-    (env.HAPPY_STACKS_STACK ?? env.HAPPY_LOCAL_STACK ?? '').toString().trim() ||
+    (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
     getStackName(env);
   const { defaultPublicUrl, envPublicUrl } = getPublicServerUrlEnvOverride({ env, serverPort });
   const resolved = await resolvePublicServerUrl({
@@ -98,4 +97,3 @@ export function getInternalServerUrl({ env = process.env, defaultPort = 3005 } =
 }
 
 export { resolveServerPortFromEnv };
-

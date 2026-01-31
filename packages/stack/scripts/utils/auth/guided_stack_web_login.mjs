@@ -49,7 +49,7 @@ export async function guidedStackWebSignupThenLogin({ webappUrl, stackName }) {
   // eslint-disable-next-line no-console
   console.log(dim(`Tip: if the page is blank, wait for the first build to finish, then retry.`));
   // eslint-disable-next-line no-console
-  console.log(dim(`Tip: you can always re-run later with: ${yellow(`happys stack auth ${stackName || 'main'} login`)}`));
+  console.log(dim(`Tip: you can always re-run later with: ${yellow(`hapsta stack auth ${stackName || 'main'} login`)}`));
   await withRl(async (rl) => {
     await prompt(rl, '', { defaultValue: '' });
   });

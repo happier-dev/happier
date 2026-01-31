@@ -33,9 +33,9 @@ async function writeHappyMonorepoStub({ rootDir, worktreeRoot }) {
 
 test('worktreeSpecFromDir normalizes monorepo package dirs to the worktree spec', async (t) => {
   const rootDir = await withTempRoot(t);
-  const env = { HAPPY_STACKS_WORKSPACE_DIR: rootDir };
+  const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
 
-  const wtRoot = join(rootDir, 'components', '.worktrees', 'happy', 'slopus', 'pr', '123-fix-monorepo');
+  const wtRoot = join(rootDir, '.worktrees', 'slopus', 'pr', '123-fix-monorepo');
   await mkdir(wtRoot, { recursive: true });
   await writeHappyMonorepoStub({ rootDir, worktreeRoot: wtRoot });
 

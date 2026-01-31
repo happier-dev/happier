@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 export function getServerComponentName({ kv } = {}) {
   const fromArgRaw = kv?.get('--server')?.trim() ? kv.get('--server').trim() : '';
-  const fromEnvRaw = process.env.HAPPY_STACKS_SERVER_COMPONENT?.trim() ? process.env.HAPPY_STACKS_SERVER_COMPONENT.trim() : '';
+  const fromEnvRaw = process.env.HAPPIER_STACK_SERVER_COMPONENT?.trim() ? process.env.HAPPIER_STACK_SERVER_COMPONENT.trim() : '';
   const raw = fromArgRaw || fromEnvRaw || 'happy-server-light';
   const v = raw.toLowerCase();
   if (v === 'light' || v === 'server-light' || v === 'happy-server-light') {

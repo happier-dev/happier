@@ -6,16 +6,16 @@ This doc explains the **recommended, safe, step-by-step** flow to port commits f
 - old `happy-cli`  → `cli/`
 - old `happy-server` → `server/`
 
-The tooling used here is `happys monorepo port` (from this repo / Happy Stacks). It ports commits by generating patches (`git format-patch`) and applying them with `git am` into the target monorepo branch.
+The tooling used here is `hapsta monorepo port`. It ports commits by generating patches (`git format-patch`) and applying them with `git am` into the target monorepo branch.
 
 ## Quick start (if you don’t already use Happy Stacks)
 
-If you’re an external collaborator and you **don’t** have `happys` installed yet, this is the fastest “migration environment” setup:
+If you’re an external collaborator and you **don’t** have `hapsta` installed yet, this is the fastest “migration environment” setup:
 
 ```bash
-npx happy-stacks init --install-path
-happys bootstrap --interactive
-happys stack new monorepo-merge --interactive
+npx --yes -p @happier-dev/stack hapsta init --install-path
+hapsta bootstrap --interactive
+hapsta stack new monorepo-merge --interactive
 ```
 
 ### “No install” option (npx-only, port command only)
@@ -23,13 +23,13 @@ happys stack new monorepo-merge --interactive
 If you *only* want to run the port helper (and you already have local clones of the source repos + target monorepo), you can run it directly via `npx` without installing anything globally:
 
 ```bash
-npx --yes happy-stacks monorepo port --help
+npx --yes -p @happier-dev/stack hapsta monorepo port --help
 ```
 
 Example:
 
 ```bash
-npx --yes happy-stacks monorepo port \
+npx --yes -p @happier-dev/stack hapsta monorepo port \
   --target=/abs/path/to/slopus-happy-monorepo \
   --branch=your-port-branch \
   --base=origin/main \
@@ -47,9 +47,9 @@ Notes:
 Happy Stacks also provides small helpers that make conflict resolution less error-prone:
 
 ```bash
-happys monorepo port guide
-happys monorepo port status --target=/abs/path/to/monorepo
-happys monorepo port continue --target=/abs/path/to/monorepo
+hapsta monorepo port guide
+hapsta monorepo port status --target=/abs/path/to/monorepo
+hapsta monorepo port continue --target=/abs/path/to/monorepo
 ```
 
 - `port guide` is interactive (TTY required) and helps you build the initial port command safely.
@@ -66,10 +66,10 @@ If you want to use an LLM to drive the port and resolve conflicts:
 
 ```bash
 # Launch an LLM CLI in a new terminal (best-effort)
-happys monorepo port llm --target=/abs/path/to/monorepo --launch
+hapsta monorepo port llm --target=/abs/path/to/monorepo --launch
 
 # Or: print + copy a prompt for copy/paste
-happys monorepo port llm --target=/abs/path/to/monorepo --copy
+hapsta monorepo port llm --target=/abs/path/to/monorepo --copy
 ```
 
 Notes:
@@ -80,11 +80,11 @@ How to bring “the changes you want to port” into this environment:
 
 - **If you already have local checkouts** of your legacy repos (recommended for forks/branches that aren’t PRs yet):
   - keep them wherever they are
-  - you’ll pass their absolute paths to `happys monorepo port` via `--from-happy=...`, `--from-happy-cli=...`, etc.
+  - you’ll pass their absolute paths to `hapsta monorepo port` via `--from-happy=...`, `--from-happy-cli=...`, etc.
 
 - **If your changes exist as GitHub PRs**, you can let Happy Stacks create a clean worktree from the PR directly:
-  - `happys wt pr happy-cli <pr-url-or-number> --use`
-  - `happys wt pr happy <pr-url-or-number> --use`
+  - `hapsta wt pr happy-cli <pr-url-or-number> --use`
+  - `hapsta wt pr happy <pr-url-or-number> --use`
   - (repeat for whichever repos your changes live in)
 
 Once you have:
@@ -108,7 +108,7 @@ Once you have:
 Pick a new stack name (example: `monorepo-merge`):
 
 ```bash
-happys stack new monorepo-merge --interactive
+hapsta stack new monorepo-merge --interactive
 ```
 
 ### 2) Create a clean monorepo worktree from upstream
@@ -116,37 +116,37 @@ happys stack new monorepo-merge --interactive
 Create a worktree based on `upstream/main` for the **monorepo** (`slopus/happy`):
 
 ```bash
-happys wt new happy tmp/monorepo-port --from=upstream
+hapsta wt new happy tmp/monorepo-port --from=upstream
 ```
 
 Point your stack at that worktree (this keeps `main` stable):
 
 ```bash
-happys stack wt monorepo-merge -- use happy /absolute/path/to/components/.worktrees/happy/slopus/tmp/monorepo-port
+hapsta stack wt monorepo-merge -- use happy /absolute/path/to/components/.worktrees/happy/slopus/tmp/monorepo-port
 ```
 
 Notes:
 - In monorepo mode, `happy`, `happy-cli`, and `happy-server` are **one git repo**; the stack overrides should point at the same monorepo root.
-- `happys ... wt use happy <monorepo-root>` automatically updates all three component dir overrides together (prevents UI/CLI/server version skew).
+- `hapsta ... wt use happy <monorepo-root>` automatically updates all three component dir overrides together (prevents UI/CLI/server version skew).
 - If you pass a monorepo root, Happy Stacks normalizes component dirs to:
   - `happy` → `.../expo-app`
   - `happy-cli` → `.../cli`
   - `happy-server` → `.../server`
  - Editor helpers open the **monorepo root** by default:
-   - `happys wt cursor happy slopus/tmp/monorepo-port` (use `--package` to open just `expo-app/`, `cli/`, or `server/`).
+   - `hapsta wt cursor happy slopus/tmp/monorepo-port` (use `--package` to open just `expo-app/`, `cli/`, or `server/`).
 
 ### 3) Create a target branch
 
 In the monorepo worktree, create your migration branch from `upstream/main`:
 
 ```bash
-happys wt git happy slopus/tmp/monorepo-port -- checkout -b <your-branch-name> upstream/main
+hapsta wt git happy slopus/tmp/monorepo-port -- checkout -b <your-branch-name> upstream/main
 ```
 
 Example:
 
 ```bash
-happys wt git happy slopus/tmp/monorepo-port -- checkout -b leeroy-wip upstream/main
+hapsta wt git happy slopus/tmp/monorepo-port -- checkout -b leeroy-wip upstream/main
 ```
 
 ### 4) Port the UI commits (old `happy` → `expo-app/`)
@@ -158,7 +158,7 @@ Run the port in **interactive mode**:
 - **do not** use `--continue-on-failure` (you want it to stop at the first conflict)
 
 ```bash
-happys monorepo port \
+hapsta monorepo port \
   --target=/abs/path/to/monorepo-root \
   --onto-current \
   --3way \
@@ -203,14 +203,14 @@ If you want to fully abort the current patch application:
 git am --abort
 ```
 
-Then rerun the `happys monorepo port ... --onto-current ...` command.
+Then rerun the `hapsta monorepo port ... --onto-current ...` command.
 
 ### 6) Port the CLI commits (old `happy-cli` → `cli/`)
 
 After the UI port completes, port CLI commits onto the same branch:
 
 ```bash
-happys monorepo port \
+hapsta monorepo port \
   --target=/abs/path/to/monorepo-root \
   --onto-current \
   --3way \
@@ -250,7 +250,7 @@ git push upstream HEAD:<branch-name>
 
 ### “target repo is not clean”
 
-`happys monorepo port` refuses to run when the target has local changes.
+`hapsta monorepo port` refuses to run when the target has local changes.
 
 Fix: commit, stash, or reset your target worktree, then re-run.
 
@@ -266,7 +266,7 @@ git am --continue   # after resolving conflicts
 git am --abort
 ```
 
-Then re-run `happys monorepo port ...`.
+Then re-run `hapsta monorepo port ...`.
 
 ### “patch does not apply” / i18n churn / renamed files
 
@@ -299,7 +299,7 @@ Use `git am --show-current-patch=diff` to understand intent, then implement the 
 If you want a full report of what would apply vs fail (without stopping at the first conflict), you can run:
 
 ```bash
-happys monorepo port ... --continue-on-failure --json
+hapsta monorepo port ... --continue-on-failure --json
 ```
 
 This is **not** the recommended way to produce a final clean branch, but it can be useful to:

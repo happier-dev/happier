@@ -79,7 +79,7 @@ test('ensureDepsInstalled sets stack-scoped cache env vars for yarn installs', a
   const stackDir = join(root, 'stacks', 'exp1');
   const envPath = join(stackDir, 'env');
   await mkdir(dirname(envPath), { recursive: true });
-  await writeFile(envPath, 'HAPPY_STACKS_STACK=exp1\n', 'utf-8');
+  await writeFile(envPath, 'HAPPIER_STACK_STACK=exp1\n', 'utf-8');
 
   const componentDir = join(root, 'component');
   await mkdir(componentDir, { recursive: true });
@@ -97,8 +97,7 @@ test('ensureDepsInstalled sets stack-scoped cache env vars for yarn installs', a
     {
       PATH: `${binDir}:${oldPath ?? ''}`,
       OUTPUT_PATH: outputPath,
-      HAPPY_STACKS_ENV_FILE: envPath,
-      HAPPY_LOCAL_ENV_FILE: envPath,
+      HAPPIER_STACK_ENV_FILE: envPath,
       XDG_CACHE_HOME: null,
       YARN_CACHE_FOLDER: null,
       npm_config_cache: null,
@@ -137,11 +136,10 @@ test('ensureDepsInstalled prefers yarn when component is inside the Happy monore
 
   await withEnv(
     {
-      // Avoid leaking `pnpm` into PATH so the test fails loudly when a pnpm fallback is attempted.
+      // Avoid leaking other package managers into PATH so the test fails loudly when a non-yarn fallback is attempted.
       PATH: `${binDir}:/usr/bin:/bin`,
       OUTPUT_PATH: outputPath,
-      HAPPY_STACKS_ENV_FILE: null,
-      HAPPY_LOCAL_ENV_FILE: null,
+      HAPPIER_STACK_ENV_FILE: null,
     },
     async () => {
       await ensureDepsInstalled(componentDir, 'happy-server', { quiet: true });
@@ -160,7 +158,7 @@ test('pmExecBin sets stack-scoped cache env vars for yarn runs', async (t) => {
   const stackDir = join(root, 'stacks', 'exp1');
   const envPath = join(stackDir, 'env');
   await mkdir(dirname(envPath), { recursive: true });
-  await writeFile(envPath, 'HAPPY_STACKS_STACK=exp1\n', 'utf-8');
+  await writeFile(envPath, 'HAPPIER_STACK_STACK=exp1\n', 'utf-8');
 
   const componentDir = join(root, 'component');
   await mkdir(componentDir, { recursive: true });
@@ -178,8 +176,7 @@ test('pmExecBin sets stack-scoped cache env vars for yarn runs', async (t) => {
     {
       PATH: `${binDir}:${oldPath ?? ''}`,
       OUTPUT_PATH: outputPath,
-      HAPPY_STACKS_ENV_FILE: envPath,
-      HAPPY_LOCAL_ENV_FILE: envPath,
+      HAPPIER_STACK_ENV_FILE: envPath,
       XDG_CACHE_HOME: null,
       YARN_CACHE_FOLDER: null,
       npm_config_cache: null,

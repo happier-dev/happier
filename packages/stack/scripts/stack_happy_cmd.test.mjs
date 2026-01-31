@@ -26,8 +26,8 @@ async function writeStubHappyCli({ root, message }) {
     [
       `console.log(JSON.stringify({`,
       `  message: ${JSON.stringify(message)},`,
-      `  stack: process.env.HAPPY_STACKS_STACK || process.env.HAPPY_LOCAL_STACK || null,`,
-      `  envFile: process.env.HAPPY_STACKS_ENV_FILE || process.env.HAPPY_LOCAL_ENV_FILE || null,`,
+      `  stack: process.env.HAPPIER_STACK_STACK || null,`,
+      `  envFile: process.env.HAPPIER_STACK_ENV_FILE || null,`,
       `  homeDir: process.env.HAPPY_HOME_DIR || null,`,
       `  serverUrl: process.env.HAPPY_SERVER_URL || null,`,
       `  webappUrl: process.env.HAPPY_WEBAPP_URL || null,`,
@@ -53,7 +53,7 @@ async function writeFailingStubHappyCli({ root, errorMessage }) {
   return cliDir;
 }
 
-test('happys stack happy <name> runs happy-cli under that stack env', async () => {
+test('hapsta stack happy <name> runs happy-cli under that stack env', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-'));
@@ -71,9 +71,9 @@ test('happys stack happy <name> runs happy-cli under that stack env', async () =
   await writeFile(
     envPath,
     [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
-      `HAPPY_STACKS_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPY_STACKS_SERVER_PORT=3999`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
+      `HAPPIER_STACK_SERVER_PORT=3999`,
       '',
     ].join('\n'),
     'utf-8'
@@ -81,12 +81,12 @@ test('happys stack happy <name> runs happy-cli under that stack env', async () =
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
-  const res = await runNode([join(rootDir, 'bin', 'happys.mjs'), 'stack', 'happy', stackName], { cwd: rootDir, env: baseEnv });
+  const res = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'happy', stackName], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
   const out = JSON.parse(res.stdout.trim());
@@ -97,7 +97,7 @@ test('happys stack happy <name> runs happy-cli under that stack env', async () =
   assert.equal(out.serverUrl, 'http://127.0.0.1:3999');
 });
 
-test('happys stack happy <name> --identity=<name> uses identity-scoped HAPPY_HOME_DIR', async () => {
+test('hapsta stack happy <name> --identity=<name> uses identity-scoped HAPPY_HOME_DIR', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-identity-'));
@@ -116,9 +116,9 @@ test('happys stack happy <name> --identity=<name> uses identity-scoped HAPPY_HOM
   await writeFile(
     envPath,
     [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
-      `HAPPY_STACKS_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPY_STACKS_SERVER_PORT=3999`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
+      `HAPPIER_STACK_SERVER_PORT=3999`,
       '',
     ].join('\n'),
     'utf-8'
@@ -126,13 +126,13 @@ test('happys stack happy <name> --identity=<name> uses identity-scoped HAPPY_HOM
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
   const res = await runNode(
-    [join(rootDir, 'bin', 'happys.mjs'), 'stack', 'happy', stackName, `--identity=${identity}`],
+    [join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'happy', stackName, `--identity=${identity}`],
     { cwd: rootDir, env: baseEnv }
   );
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
@@ -144,7 +144,7 @@ test('happys stack happy <name> --identity=<name> uses identity-scoped HAPPY_HOM
   assert.equal(out.serverUrl, 'http://127.0.0.1:3999');
 });
 
-test('happys <stack> happy ... shorthand runs happy-cli under that stack env', async () => {
+test('hapsta <stack> happy ... shorthand runs happy-cli under that stack env', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-'));
@@ -162,9 +162,9 @@ test('happys <stack> happy ... shorthand runs happy-cli under that stack env', a
   await writeFile(
     envPath,
     [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
-      `HAPPY_STACKS_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPY_STACKS_SERVER_PORT=4101`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
+      `HAPPIER_STACK_SERVER_PORT=4101`,
       '',
     ].join('\n'),
     'utf-8'
@@ -172,12 +172,12 @@ test('happys <stack> happy ... shorthand runs happy-cli under that stack env', a
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
-  const res = await runNode([join(rootDir, 'bin', 'happys.mjs'), stackName, 'happy'], { cwd: rootDir, env: baseEnv });
+  const res = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), stackName, 'happy'], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
   const out = JSON.parse(res.stdout.trim());
@@ -186,7 +186,7 @@ test('happys <stack> happy ... shorthand runs happy-cli under that stack env', a
   assert.equal(out.serverUrl, 'http://127.0.0.1:4101');
 });
 
-test('happys stack happy <name> does not print wrapper stack traces on happy-cli failure', async () => {
+test('hapsta stack happy <name> does not print wrapper stack traces on happy-cli failure', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-fail-'));
@@ -202,18 +202,18 @@ test('happys stack happy <name> does not print wrapper stack traces on happy-cli
   await writeFile(
     envPath,
     [
-      `HAPPY_STACKS_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
-      `HAPPY_STACKS_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPY_STACKS_SERVER_PORT=3999`,
+      `HAPPIER_STACK_COMPONENT_DIR_HAPPY_CLI=${cliDir}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
+      `HAPPIER_STACK_SERVER_PORT=3999`,
       '',
     ].join('\n'),
     'utf-8'
   );  const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
-    HAPPY_STACKS_CLI_ROOT_DISABLE: '1',
-  };  const res = await runNode([join(rootDir, 'bin', 'happys.mjs'), 'stack', 'happy', stackName, 'attach', 'abc'], {
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+  };  const res = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'happy', stackName, 'attach', 'abc'], {
     cwd: rootDir,
     env: baseEnv,
   });

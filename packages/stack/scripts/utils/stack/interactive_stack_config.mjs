@@ -148,7 +148,7 @@ export async function interactiveEdit({ rootDir, rl, stackName, existingEnv, def
 
   const out = { ...defaults, stackName };
 
-  const currentServer = existingEnv.HAPPY_STACKS_SERVER_COMPONENT ?? '';
+  const currentServer = existingEnv.HAPPIER_STACK_SERVER_COMPONENT ?? '';
   out.serverComponent = await promptSelectFn(rl, {
     title: `${bold('Server flavor')}\n${dim('Pick the backend this stack should run. You can switch again later.')}`,
     options: [
@@ -158,7 +158,7 @@ export async function interactiveEdit({ rootDir, rl, stackName, existingEnv, def
     defaultIndex: (currentServer || 'happy-server-light') === 'happy-server' ? 1 : 0,
   });
 
-  const currentPort = existingEnv.HAPPY_STACKS_SERVER_PORT ?? '';
+  const currentPort = existingEnv.HAPPIER_STACK_SERVER_PORT ?? '';
   // eslint-disable-next-line no-console
   console.log('');
   // eslint-disable-next-line no-console
@@ -167,7 +167,7 @@ export async function interactiveEdit({ rootDir, rl, stackName, existingEnv, def
   const wantTrimmed = wantPort.trim().toLowerCase();
   out.port = wantTrimmed === 'ephemeral' ? null : wantPort ? Number(wantPort) : currentPort ? Number(currentPort) : null;
 
-  const currentRemote = existingEnv.HAPPY_STACKS_STACK_REMOTE ?? '';
+  const currentRemote = existingEnv.HAPPIER_STACK_STACK_REMOTE ?? '';
   // eslint-disable-next-line no-console
   console.log('');
   // eslint-disable-next-line no-console

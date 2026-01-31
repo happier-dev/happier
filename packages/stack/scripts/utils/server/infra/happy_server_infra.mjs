@@ -124,7 +124,7 @@ function buildComposeYaml({
 }
 
 async function ensureDockerCompose() {
-  const waitMsRaw = (process.env.HAPPY_STACKS_DOCKER_WAIT_MS ?? process.env.HAPPY_LOCAL_DOCKER_WAIT_MS ?? '').trim();
+  const waitMsRaw = (process.env.HAPPIER_STACK_DOCKER_WAIT_MS ?? '').trim();
   const waitMs = waitMsRaw ? Number(waitMsRaw) : process.stdout.isTTY ? 0 : 60_000;
   const deadline = waitMs > 0 ? Date.now() + waitMs : Date.now();
 
@@ -139,7 +139,7 @@ async function ensureDockerCompose() {
     );
   }
 
-  const autostartRaw = (process.env.HAPPY_STACKS_DOCKER_AUTOSTART ?? process.env.HAPPY_LOCAL_DOCKER_AUTOSTART ?? '').trim();
+  const autostartRaw = (process.env.HAPPIER_STACK_DOCKER_AUTOSTART ?? '').trim();
   const autostart = autostartRaw ? autostartRaw !== '0' : !process.stdout.isTTY;
 
   // Ensure the Docker daemon is ready (launchd/SwiftBar often runs before Docker Desktop starts).
@@ -156,8 +156,8 @@ async function ensureDockerCompose() {
         const msg = e?.message ? String(e.message) : String(e);
         throw new Error(
           `[infra] docker is installed but the daemon is not ready.\n` +
-            `Fix: start Docker Desktop, or disable managed infra (HAPPY_STACKS_MANAGED_INFRA=0).\n` +
-            `You can also increase wait time with HAPPY_STACKS_DOCKER_WAIT_MS, or disable auto-start with HAPPY_STACKS_DOCKER_AUTOSTART=0.\n` +
+            `Fix: start Docker Desktop, or disable managed infra (HAPPIER_STACK_MANAGED_INFRA=0).\n` +
+            `You can also increase wait time with HAPPIER_STACK_DOCKER_WAIT_MS, or disable auto-start with HAPPIER_STACK_DOCKER_AUTOSTART=0.\n` +
             `Details: ${msg}`
         );
       }
@@ -170,7 +170,7 @@ async function ensureDockerCompose() {
 async function maybeStartDockerDaemon() {
   // Best-effort. This may be a no-op depending on platform/permissions.
   if (process.platform === 'darwin') {
-    const app = (process.env.HAPPY_STACKS_DOCKER_APP ?? process.env.HAPPY_LOCAL_DOCKER_APP ?? '/Applications/Docker.app').trim();
+    const app = (process.env.HAPPIER_STACK_DOCKER_APP ?? '/Applications/Docker.app').trim();
     // `open` exits quickly; Docker Desktop will start in the background.
     await runCapture('open', ['-gj', '-a', app], { timeoutMs: 5_000 }).catch(() => {});
     return;
@@ -293,33 +293,33 @@ export async function ensureHappyServerManagedInfra({
   if (Number.isFinite(serverPort) && serverPort > 0) reservedPorts.add(serverPort);
 
   const pgPort =
-    coercePort(existingEnv.HAPPY_STACKS_PG_PORT ?? env.HAPPY_STACKS_PG_PORT) ??
+    coercePort(existingEnv.HAPPIER_STACK_PG_PORT ?? env.HAPPIER_STACK_PG_PORT) ??
     (await pickNextFreeTcpPort(serverPort + 1000, { reservedPorts }));
   reservedPorts.add(pgPort);
   const redisPort =
-    coercePort(existingEnv.HAPPY_STACKS_REDIS_PORT ?? env.HAPPY_STACKS_REDIS_PORT) ??
+    coercePort(existingEnv.HAPPIER_STACK_REDIS_PORT ?? env.HAPPIER_STACK_REDIS_PORT) ??
     (await pickNextFreeTcpPort(pgPort + 1, { reservedPorts }));
   reservedPorts.add(redisPort);
   const minioPort =
-    coercePort(existingEnv.HAPPY_STACKS_MINIO_PORT ?? env.HAPPY_STACKS_MINIO_PORT) ??
+    coercePort(existingEnv.HAPPIER_STACK_MINIO_PORT ?? env.HAPPIER_STACK_MINIO_PORT) ??
     (await pickNextFreeTcpPort(redisPort + 1, { reservedPorts }));
   reservedPorts.add(minioPort);
   const minioConsolePort =
-    coercePort(existingEnv.HAPPY_STACKS_MINIO_CONSOLE_PORT ?? env.HAPPY_STACKS_MINIO_CONSOLE_PORT) ??
+    coercePort(existingEnv.HAPPIER_STACK_MINIO_CONSOLE_PORT ?? env.HAPPIER_STACK_MINIO_CONSOLE_PORT) ??
     (await pickNextFreeTcpPort(minioPort + 1, { reservedPorts }));
   reservedPorts.add(minioConsolePort);
 
-  const pgUser = (existingEnv.HAPPY_STACKS_PG_USER ?? env.HAPPY_STACKS_PG_USER ?? 'handy').trim() || 'handy';
-  const pgPassword = (existingEnv.HAPPY_STACKS_PG_PASSWORD ?? env.HAPPY_STACKS_PG_PASSWORD ?? '').trim() || randomToken(24);
-  const pgDb = (existingEnv.HAPPY_STACKS_PG_DATABASE ?? env.HAPPY_STACKS_PG_DATABASE ?? 'handy').trim() || 'handy';
+  const pgUser = (existingEnv.HAPPIER_STACK_PG_USER ?? env.HAPPIER_STACK_PG_USER ?? 'handy').trim() || 'handy';
+  const pgPassword = (existingEnv.HAPPIER_STACK_PG_PASSWORD ?? env.HAPPIER_STACK_PG_PASSWORD ?? '').trim() || randomToken(24);
+  const pgDb = (existingEnv.HAPPIER_STACK_PG_DATABASE ?? env.HAPPIER_STACK_PG_DATABASE ?? 'handy').trim() || 'handy';
 
   const s3Bucket =
     (existingEnv.S3_BUCKET ?? env.S3_BUCKET ?? '').trim() || sanitizeDnsLabel(`happy-${stackName}`, { fallback: 'happy' });
   const s3AccessKey = (existingEnv.S3_ACCESS_KEY ?? env.S3_ACCESS_KEY ?? '').trim() || randomToken(12);
   const s3SecretKey = (existingEnv.S3_SECRET_KEY ?? env.S3_SECRET_KEY ?? '').trim() || randomToken(24);
 
-  const secretFile = (existingEnv.HAPPY_STACKS_HANDY_MASTER_SECRET_FILE ?? env.HAPPY_STACKS_HANDY_MASTER_SECRET_FILE ?? '').trim()
-    ? (existingEnv.HAPPY_STACKS_HANDY_MASTER_SECRET_FILE ?? env.HAPPY_STACKS_HANDY_MASTER_SECRET_FILE).trim()
+  const secretFile = (existingEnv.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? env.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? '').trim()
+    ? (existingEnv.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? env.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE).trim()
     : join(baseDir, 'happy-server', 'handy-master-secret.txt');
   const handyMasterSecret = (existingEnv.HANDY_MASTER_SECRET ?? env.HANDY_MASTER_SECRET ?? '').trim()
     ? (existingEnv.HANDY_MASTER_SECRET ?? env.HANDY_MASTER_SECRET).trim()
@@ -337,25 +337,25 @@ export async function ensureHappyServerManagedInfra({
 
   if (envPath) {
     // Ephemeral stacks should not pin ports in env files. In stack runtime, callers set
-    // HAPPY_STACKS_EPHEMERAL_PORTS=1 (via stack.runtime.json overlay) while the stack owner is alive.
+    // HAPPIER_STACK_EPHEMERAL_PORTS=1 (via stack.runtime.json overlay) while the stack owner is alive.
     //
     // For offline tooling (e.g. auth seeding) we still want to preserve the invariant:
     // - non-main stacks are ephemeral-by-default unless the user explicitly pinned ports already.
-    const runtimeEphemeral = (env.HAPPY_STACKS_EPHEMERAL_PORTS ?? env.HAPPY_LOCAL_EPHEMERAL_PORTS ?? '').toString().trim() === '1';
+    const runtimeEphemeral = (env.HAPPIER_STACK_EPHEMERAL_PORTS ?? '').toString().trim() === '1';
     const alreadyPinnedPorts =
-      Boolean((existingEnv.HAPPY_STACKS_PG_PORT ?? '').trim()) ||
-      Boolean((existingEnv.HAPPY_STACKS_REDIS_PORT ?? '').trim()) ||
-      Boolean((existingEnv.HAPPY_STACKS_MINIO_PORT ?? '').trim()) ||
-      Boolean((existingEnv.HAPPY_STACKS_MINIO_CONSOLE_PORT ?? '').trim());
+      Boolean((existingEnv.HAPPIER_STACK_PG_PORT ?? '').trim()) ||
+      Boolean((existingEnv.HAPPIER_STACK_REDIS_PORT ?? '').trim()) ||
+      Boolean((existingEnv.HAPPIER_STACK_MINIO_PORT ?? '').trim()) ||
+      Boolean((existingEnv.HAPPIER_STACK_MINIO_CONSOLE_PORT ?? '').trim());
     const ephemeralPorts = runtimeEphemeral || (stackName !== 'main' && !alreadyPinnedPorts);
     await ensureEnvFileUpdated({
       envPath,
       updates: [
         // Stable credentials/files: persist these so restarts keep the same DB/user and S3 creds.
-        { key: 'HAPPY_STACKS_PG_USER', value: pgUser },
-        { key: 'HAPPY_STACKS_PG_PASSWORD', value: pgPassword },
-        { key: 'HAPPY_STACKS_PG_DATABASE', value: pgDb },
-        { key: 'HAPPY_STACKS_HANDY_MASTER_SECRET_FILE', value: secretFile },
+        { key: 'HAPPIER_STACK_PG_USER', value: pgUser },
+        { key: 'HAPPIER_STACK_PG_PASSWORD', value: pgPassword },
+        { key: 'HAPPIER_STACK_PG_DATABASE', value: pgDb },
+        { key: 'HAPPIER_STACK_HANDY_MASTER_SECRET_FILE', value: secretFile },
         { key: 'S3_ACCESS_KEY', value: s3AccessKey },
         { key: 'S3_SECRET_KEY', value: s3SecretKey },
         { key: 'S3_BUCKET', value: s3Bucket },
@@ -363,10 +363,10 @@ export async function ensureHappyServerManagedInfra({
         ...(ephemeralPorts
           ? []
           : [
-              { key: 'HAPPY_STACKS_PG_PORT', value: String(pgPort) },
-              { key: 'HAPPY_STACKS_REDIS_PORT', value: String(redisPort) },
-              { key: 'HAPPY_STACKS_MINIO_PORT', value: String(minioPort) },
-              { key: 'HAPPY_STACKS_MINIO_CONSOLE_PORT', value: String(minioConsolePort) },
+              { key: 'HAPPIER_STACK_PG_PORT', value: String(pgPort) },
+              { key: 'HAPPIER_STACK_REDIS_PORT', value: String(redisPort) },
+              { key: 'HAPPIER_STACK_MINIO_PORT', value: String(minioPort) },
+              { key: 'HAPPIER_STACK_MINIO_CONSOLE_PORT', value: String(minioConsolePort) },
               // Vars consumed by happy-server:
               { key: 'DATABASE_URL', value: databaseUrl },
               { key: 'REDIS_URL', value: redisUrl },
@@ -442,4 +442,3 @@ export async function applyHappyServerMigrations({ serverDir, env, quiet = false
   // Non-interactive + idempotent. Safe for dev; also safe for managed stacks on start.
   await pmExecBin({ dir: serverDir, bin: 'prisma', args: ['migrate', 'deploy'], env, quiet });
 }
-

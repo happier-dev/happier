@@ -111,11 +111,11 @@ export function formatDevAuthKeyBackup(secretKeyBase64Url) {
 }
 
 export async function readDevAuthKey({ env = process.env } = {}) {
-  if ((env.HAPPY_STACKS_DEV_AUTH_SECRET_KEY ?? '').toString().trim()) {
-    const bytes = normalizeDevAuthKeyInputToBytes(env.HAPPY_STACKS_DEV_AUTH_SECRET_KEY);
+  if ((env.HAPPIER_STACK_DEV_AUTH_SECRET_KEY ?? '').toString().trim()) {
+    const bytes = normalizeDevAuthKeyInputToBytes(env.HAPPIER_STACK_DEV_AUTH_SECRET_KEY);
     if (!bytes) return { ok: false, error: 'invalid_env_key', source: 'env', secretKeyBase64Url: null, backup: null };
     const base64url = bytesToBase64Url(bytes);
-    return { ok: true, source: 'env:HAPPY_STACKS_DEV_AUTH_SECRET_KEY', secretKeyBase64Url: base64url, backup: formatDevAuthKeyBackup(base64url) };
+    return { ok: true, source: 'env:HAPPIER_STACK_DEV_AUTH_SECRET_KEY', secretKeyBase64Url: base64url, backup: formatDevAuthKeyBackup(base64url) };
   }
 
   const path = getDevAuthKeyPath(env);

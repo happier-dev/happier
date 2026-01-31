@@ -32,12 +32,11 @@ function normalizeExpoHost(raw) {
  *
  * Can be enabled via:
  * - --expo-tailscale flag (passed as expoTailscale option)
- * - HAPPY_STACKS_EXPO_TAILSCALE=1 env var
- * - HAPPY_LOCAL_EXPO_TAILSCALE=1 env var (legacy)
+ * - HAPPIER_STACK_EXPO_TAILSCALE=1 env var
  */
 export function resolveExpoTailscaleEnabled({ env = process.env, expoTailscale = false } = {}) {
   if (expoTailscale) return true;
-  const envVal = (env.HAPPY_STACKS_EXPO_TAILSCALE ?? env.HAPPY_LOCAL_EXPO_TAILSCALE ?? '').toString().trim();
+  const envVal = (env.HAPPIER_STACK_EXPO_TAILSCALE ?? '').toString().trim();
   return envVal === '1' || envVal.toLowerCase() === 'true';
 }
 
@@ -163,7 +162,7 @@ export async function startExpoTailscaleForwarder({ metroPort, baseEnv, stackNam
 
 export function resolveExpoDevHost({ env = process.env } = {}) {
   // Always prefer LAN by default so phones can reach Metro.
-  const raw = (env.HAPPY_STACKS_EXPO_HOST ?? env.HAPPY_LOCAL_EXPO_HOST ?? '').toString();
+  const raw = (env.HAPPIER_STACK_EXPO_HOST ?? '').toString();
   return normalizeExpoHost(raw || 'lan');
 }
 
@@ -234,7 +233,7 @@ export async function ensureDevExpoServer({
   // Expo app config: this is what both web + native app use to reach the Happy server.
   // When dev-client is enabled, `localhost` / `*.localhost` are not reachable from the phone,
   // so rewrite to LAN IP here (centralized) to avoid relying on call sites.
-  const serverPortFromEnvRaw = (env.HAPPY_STACKS_SERVER_PORT ?? env.HAPPY_LOCAL_SERVER_PORT ?? '').toString().trim();
+  const serverPortFromEnvRaw = (env.HAPPIER_STACK_SERVER_PORT ?? '').toString().trim();
   const serverPortFromEnv = serverPortFromEnvRaw ? Number(serverPortFromEnvRaw) : null;
   const effectiveApiServerUrl = wantDevClient
     ? resolveMobileReachableServerUrl({
@@ -253,8 +252,7 @@ export async function ensureDevExpoServer({
   // env var is explicitly set. Happy Stacks sets it automatically for stack-mode dev-client.
   if (wantDevClient) {
     const explicitScope = (
-      env.HAPPY_STACKS_STORAGE_SCOPE ??
-      env.HAPPY_LOCAL_STORAGE_SCOPE ??
+      env.HAPPIER_STACK_STORAGE_SCOPE ??
       env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE ??
       ''
     )
@@ -435,4 +433,3 @@ export async function ensureDevExpoServer({
     tailscale: tailscaleResult ?? null,
   };
 }
-

@@ -9,7 +9,6 @@ function run(cmd, args) {
 function usageAndExit() {
   // Keep this very short; this is an internal dev script.
   console.error("Usage: npm run release -- <patch|minor|major>");
-  console.error("   or: pnpm run release -- <patch|minor|major>");
   console.error("");
   console.error("Options:");
   console.error("  --no-git    Skip git commit/tag (allows dirty working tree).");
@@ -52,4 +51,3 @@ if (!noGit) {
 }
 
 run("npm", ["publish", ...(dryRun ? ["--dry-run"] : [])]);
-

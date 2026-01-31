@@ -9,7 +9,7 @@ import { run, runCaptureResult } from './utils/proc/proc.mjs';
 
 /**
  * Thin wrapper around EAS CLI that:
- * - runs under Happy Stacks env (stack wrapper sets HAPPY_STACKS_ENV_FILE)
+ * - runs under stack env (stack wrapper sets HAPPIER_STACK_ENV_FILE)
  * - ensures the Happy monorepo deps are installed (so app.config.js can be evaluated)
  * - runs EAS from packages/app (the mobile app)
  *
@@ -117,24 +117,24 @@ async function main() {
 
   const helpText = [
     '[eas] usage:',
-    '  happys eas <subcommand> [--json] [-- <args...>]',
-    '  happys eas build [--platform=ios|android|all] [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas args...>]',
-    '  happys eas ios [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas build args...>]',
-    '  happys eas android [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas build args...>]',
-    '  happys eas env:sync [--environment=production|preview|development] [--dry-run] [--hide-values] [--visibility=plaintext|sensitive|secret] [--scope=project|account] [--json]',
+    '  hapsta eas <subcommand> [--json] [-- <args...>]',
+    '  hapsta eas build [--platform=ios|android|all] [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas args...>]',
+    '  hapsta eas ios [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas build args...>]',
+    '  hapsta eas android [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas build args...>]',
+    '  hapsta eas env:sync [--environment=production|preview|development] [--dry-run] [--hide-values] [--visibility=plaintext|sensitive|secret] [--scope=project|account] [--json]',
     '',
     'examples:',
-    '  happys stack eas happier build --platform ios --profile production',
-    '  happys stack eas happier build --platform ios --profile production --local',
-    '  happys stack eas happier ios --profile production',
-    '  happys stack eas happier whoami',
-    '  happys stack eas happier login',
-    '  happys stack eas happier project:init',
-    '  happys stack eas happier project:info -- --json',
-    '  happys stack eas happier env:sync --environment production',
+    '  hapsta stack eas happier build --platform ios --profile production',
+    '  hapsta stack eas happier build --platform ios --profile production --local',
+    '  hapsta stack eas happier ios --profile production',
+    '  hapsta stack eas happier whoami',
+    '  hapsta stack eas happier login',
+    '  hapsta stack eas happier project:init',
+    '  hapsta stack eas happier project:info -- --json',
+    '  hapsta stack eas happier env:sync --environment production',
     '',
     'notes:',
-    '- `happys stack eas <name> ...` automatically loads that stack env.',
+    '- `hapsta stack eas <name> ...` automatically loads that stack env.',
     '- For cloud builds, consider setting EXPO_EAS_PROJECT_ID / EXPO_UPDATES_URL in EAS project env too.',
   ].join('\n');
 
@@ -143,7 +143,7 @@ async function main() {
       json,
       data: {
         usage:
-          'happys eas <subcommand> [--json] [-- <args...>]',
+          'hapsta eas <subcommand> [--json] [-- <args...>]',
       },
       text: helpText,
     });
@@ -154,7 +154,7 @@ async function main() {
   const subcmd = (positionals[0] ?? '').trim() || 'help';
 
   if (subcmd === 'help') {
-    printResult({ json, data: { usage: 'happys eas build|help' }, text: helpText });
+    printResult({ json, data: { usage: 'hapsta eas build|help' }, text: helpText });
     return;
   }
 
@@ -330,4 +330,3 @@ main().catch((err) => {
   console.error('[eas] failed:', err?.message ?? err);
   process.exit(1);
 });
-

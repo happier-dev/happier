@@ -61,7 +61,7 @@ export function getRootDir(importMetaUrl) {
 }
 
 export function getHappyStacksHomeDir(env = process.env) {
-  const fromEnv = (env.HAPPY_STACKS_HOME_DIR ?? env.HAPPY_LOCAL_HOME_DIR ?? '').trim();
+  const fromEnv = (env.HAPPIER_STACK_HOME_DIR ?? '').trim();
   if (fromEnv) {
     return expandHome(fromEnv);
   }
@@ -69,18 +69,12 @@ export function getHappyStacksHomeDir(env = process.env) {
 }
 
 export function getWorkspaceDir(cliRootDir = null, env = process.env) {
-  const fromEnv = (env.HAPPY_STACKS_WORKSPACE_DIR ?? '').trim();
+  const fromEnv = (env.HAPPIER_STACK_WORKSPACE_DIR ?? '').trim();
   if (fromEnv) {
     return expandHome(fromEnv);
   }
   const homeDir = getHappyStacksHomeDir();
-  const defaultWorkspace = join(homeDir, 'workspace');
-  // Prefer the default home workspace if present.
-  if (existsSync(defaultWorkspace)) {
-    return defaultWorkspace;
-  }
-  // Back-compat: for cloned-repo usage before init, keep components inside the repo.
-  return cliRootDir ? cliRootDir : defaultWorkspace;
+  return join(homeDir, 'workspace');
 }
 
 export function getComponentsDir(rootDir, env = process.env) {
@@ -88,8 +82,23 @@ export function getComponentsDir(rootDir, env = process.env) {
   return join(workspaceDir, 'components');
 }
 
+export function getRepoDir(rootDir, env = process.env) {
+  const fromEnv = normalizePathForEnv(rootDir, env.HAPPIER_STACK_REPO_DIR, env);
+  const workspaceDir = getWorkspaceDir(rootDir, env);
+  const fallback = join(workspaceDir, 'happier');
+
+  // Prefer explicitly configured repo dir (if set).
+  const candidate = fromEnv || fallback;
+  if (!candidate) return fallback;
+
+  // Accept any nested path inside the monorepo (e.g. packages/app) and normalize to a package dir
+  // for monorepo-aware components below.
+  const root = coerceHappyMonorepoRootFromPath(candidate);
+  return root || candidate;
+}
+
 export function componentDirEnvKey(name) {
-  return `HAPPY_STACKS_COMPONENT_DIR_${name.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
+  return `HAPPIER_STACK_COMPONENT_DIR_${name.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`;
 }
 
 function normalizePathForEnv(rootDir, raw, env = process.env) {
@@ -159,6 +168,17 @@ export function getComponentDir(rootDir, name, env = process.env) {
   const fromEnv = normalizePathForEnv(rootDir, env[stacksKey], env);
   const n = String(name ?? '').trim();
 
+  // Monorepo-first default:
+  // If a repo dir is configured, derive monorepo component dirs from it instead of relying on
+  // workspace/components/<component> (legacy multi-repo layout).
+  if (isHappyMonorepoComponentName(n)) {
+    const repoRoot = getRepoDir(rootDir, env);
+    if (repoRoot && existsSync(repoRoot) && isHappyMonorepoRoot(repoRoot)) {
+      const pkg = resolveHappyMonorepoPackageDir({ monorepoRoot: repoRoot, component: n });
+      if (pkg) return pkg;
+    }
+  }
+
   // If the component is part of the happy monorepo, allow pointing the env var at either:
   // - the monorepo root, OR
   // - the package directory (packages/happy-* or legacy expo-app/cli/server), OR
@@ -218,7 +238,7 @@ export function getComponentDir(rootDir, name, env = process.env) {
 }
 
 export function getStackName(env = process.env) {
-  return env.HAPPY_STACKS_STACK?.trim() ? env.HAPPY_STACKS_STACK.trim() : 'main';
+  return env.HAPPIER_STACK_STACK?.trim() ? env.HAPPIER_STACK_STACK.trim() : 'main';
 }
 
 export function getStackLabel(stackName = null, env = process.env) {
@@ -227,7 +247,7 @@ export function getStackLabel(stackName = null, env = process.env) {
 }
 
 export function getStacksStorageRoot(env = process.env) {
-  const fromEnv = (env.HAPPY_STACKS_STORAGE_DIR ?? '').trim();
+  const fromEnv = (env.HAPPIER_STACK_STORAGE_DIR ?? '').trim();
   if (fromEnv) {
     return expandHome(fromEnv);
   }

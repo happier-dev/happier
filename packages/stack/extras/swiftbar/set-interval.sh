@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Runs non-interactively from SwiftBar:
 # - figures out SwiftBar's active plugin directory
-# - renames (or installs) happy-stacks.<interval>.sh
+# - renames (or installs) hapsta.<interval>.sh
 # - restarts SwiftBar so the new schedule takes effect
 
 INTERVAL="${1:-}"
@@ -26,17 +26,15 @@ if [[ -z "$PLUGIN_DIR" ]]; then
 fi
 mkdir -p "$PLUGIN_DIR"
 
-PLUGIN_BASENAME="${HAPPY_STACKS_SWIFTBAR_PLUGIN_BASENAME:-${HAPPY_LOCAL_SWIFTBAR_PLUGIN_BASENAME:-happy-stacks}}"
+PLUGIN_BASENAME="${HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME:-hapsta}"
 TARGET="$PLUGIN_DIR/${PLUGIN_BASENAME}.${INTERVAL}.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_HOME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+DEFAULT_ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-CANONICAL_HOME_DIR="${HAPPY_STACKS_CANONICAL_HOME_DIR:-${HAPPY_LOCAL_CANONICAL_HOME_DIR:-$DEFAULT_HOME_DIR}}"
-HAPPY_LOCAL_DIR="${HAPPY_LOCAL_DIR:-${HAPPY_STACKS_HOME_DIR:-$CANONICAL_HOME_DIR}}"
-HAPPY_STACKS_HOME_DIR="${HAPPY_STACKS_HOME_DIR:-$HAPPY_LOCAL_DIR}"
-SOURCE="${HAPPY_LOCAL_DIR}/extras/swiftbar/happy-stacks.5s.sh"
+HAPSTA_ROOT_DIR="${HAPPIER_STACK_CLI_ROOT_DIR:-$DEFAULT_ROOT_DIR}"
+SOURCE="${HAPSTA_ROOT_DIR}/extras/swiftbar/hapsta.5s.sh"
 
-# If a happy-stacks plugin already exists, rename it into place; otherwise copy from repo source.
+# If a plugin already exists, rename it into place; otherwise copy from repo source.
 EXISTING="$(ls "$PLUGIN_DIR"/"${PLUGIN_BASENAME}".*.sh 2>/dev/null | head -1 || true)"
 if [[ -n "$EXISTING" ]]; then
   if [[ "$EXISTING" != "$TARGET" ]]; then

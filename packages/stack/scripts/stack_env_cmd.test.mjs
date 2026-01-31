@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('happys stack env set/unset writes to stack env file', async () => {
+test('hapsta stack env set/unset writes to stack env file', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-env-'));
@@ -33,9 +33,9 @@ test('happys stack env set/unset writes to stack env file', async () => {
 
   const baseEnv = {
     ...process.env,
-    // Prevent loading the user's real ~/.happy-stacks/.env via canonical discovery.
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
+    // Prevent loading the user's real ~/.happier-stack/.env via canonical discovery.
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
   };
 
   const setRes = await runNode(
@@ -61,7 +61,7 @@ test('happys stack env set/unset writes to stack env file', async () => {
   assert.ok(!afterUnset.includes('FOO=bar'), `expected env file to remove FOO\n${afterUnset}`);
 });
 
-test('happys stack env <name> defaults to list', async () => {
+test('hapsta stack env <name> defaults to list', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-env-'));
@@ -76,12 +76,11 @@ test('happys stack env <name> defaults to list', async () => {
 
   const baseEnv = {
     ...process.env,
-    HAPPY_STACKS_HOME_DIR: homeDir,
-    HAPPY_STACKS_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
   };
 
   const res = await runNode([join(rootDir, 'scripts', 'stack.mjs'), 'env', stackName], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.ok(res.stdout.includes('FOO=bar'), `expected stdout to include FOO=bar\nstdout:\n${res.stdout}`);
 });
-

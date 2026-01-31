@@ -77,7 +77,7 @@ async function main() {
         '',
         sectionTitle('Usage'),
         bullets([
-          `${dim('recommended:')} ${cmd('happys doctor')} ${dim('[--fix] [--json]')}`,
+          `${dim('recommended:')} ${cmd('hapsta doctor')} ${dim('[--fix] [--json]')}`,
           `${dim('direct:')} ${cmd('node scripts/doctor.mjs')} ${dim('[--fix] [--server=happy-server|happy-server-light] [--json]')}`,
         ]),
         '',
@@ -95,7 +95,7 @@ async function main() {
   const runtimeDir = getRuntimeDir();
   const workspaceDir = getWorkspaceDir(rootDir);
   const updateCachePath = join(homeDir, 'cache', 'update.json');
-  const runtimePkgJson = join(runtimeDir, 'node_modules', 'happy-stacks', 'package.json');
+  const runtimePkgJson = join(runtimeDir, 'node_modules', '@happier-dev', 'stack', 'package.json');
   const runtimeVersion = await readPackageJsonVersion(runtimePkgJson);
   const updateCache = await readJsonIfExists(updateCachePath, { defaultValue: null });
 
@@ -108,13 +108,13 @@ async function main() {
   const internalServerUrl = resolvedUrls.internalServerUrl;
   const publicServerUrl = resolvedUrls.publicServerUrl;
 
-  const cliHomeDir = process.env.HAPPY_LOCAL_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPY_LOCAL_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+  const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
+    ? process.env.HAPPIER_STACK_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
     : join(autostart.baseDir, 'cli');
 
-  const serveUi = (process.env.HAPPY_LOCAL_SERVE_UI ?? '1') !== '0';
-  const uiBuildDir = process.env.HAPPY_LOCAL_UI_BUILD_DIR?.trim()
-    ? process.env.HAPPY_LOCAL_UI_BUILD_DIR.trim()
+  const serveUi = (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
+  const uiBuildDir = process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
+    ? process.env.HAPPIER_STACK_UI_BUILD_DIR.trim()
     : join(autostart.baseDir, 'ui');
 
   const serverComponentName = getServerComponentName({ kv: argsKv });
@@ -146,7 +146,7 @@ async function main() {
       homeEnv: join(homeDir, '.env'),
       homeLocal: join(homeDir, 'env.local'),
       mainStackEnv: resolveStackEnvPath('main').envPath,
-      activeEnv: process.env.HAPPY_STACKS_ENV_FILE?.trim() || process.env.HAPPY_LOCAL_ENV_FILE?.trim() || null,
+      activeEnv: process.env.HAPPIER_STACK_ENV_FILE?.trim() || null,
     },
     internalServerUrl,
     publicServerUrl,
@@ -157,7 +157,7 @@ async function main() {
   };
   if (!json) {
     console.log('');
-    console.log(banner('happy-stacks doctor', { subtitle: 'Diagnose common local setup failure modes.' }));
+    console.log(banner('hapsta doctor', { subtitle: 'Diagnose common local setup failure modes.' }));
     console.log('');
     console.log(sectionTitle('Details'));
     console.log(bullets([
@@ -195,7 +195,9 @@ async function main() {
       if (stackMode) {
         if (!json) {
           console.log(`${yellow('!')} fix skipped: refusing to kill unknown port listeners in stack mode.`);
-          console.log(`${dim('Tip:')} use stack-safe controls instead: ${cmd(`happys stack stop ${(process.env.HAPPY_STACKS_STACK ?? process.env.HAPPY_LOCAL_STACK ?? 'main').toString()} --aggressive`)}`);
+          console.log(
+            `${dim('Tip:')} use stack-safe controls instead: ${cmd(`hapsta stack stop ${(process.env.HAPPIER_STACK_STACK ?? 'main').toString()} --aggressive`)}`
+          );
         }
       } else {
         if (!json) console.log(`${yellow('!')} attempting fix: freeing tcp:${serverPort}`);
@@ -211,11 +213,11 @@ async function main() {
       if (!json) console.log(`${green('✓')} ui build dir present`);
     } else {
       report.checks.uiBuildDir = { ok: false, missing: uiBuildDir };
-      if (!json) console.log(`${red('x')} ui build dir missing (${uiBuildDir}) → run: ${cmd('happys build')}`);
+      if (!json) console.log(`${red('x')} ui build dir missing (${uiBuildDir}) → run: ${cmd('hapsta build')}`);
     }
   } else {
-    report.checks.uiServing = { ok: false, reason: 'disabled (HAPPY_LOCAL_SERVE_UI=0)' };
-    if (!json) console.log(`${dim('ℹ')} ui serving disabled (HAPPY_LOCAL_SERVE_UI=0)`);
+    report.checks.uiServing = { ok: false, reason: 'disabled (HAPPIER_STACK_SERVE_UI=0)' };
+    if (!json) console.log(`${dim('ℹ')} ui serving disabled (HAPPIER_STACK_SERVE_UI=0)`);
   }
 
   // Daemon status
@@ -236,10 +238,10 @@ async function main() {
     if (!json) {
       console.log(`${red('x')} daemon: not running / status failed`);
       if (!hasAccessKey) {
-        const stackName = (process.env.HAPPY_STACKS_STACK ?? '').trim() || 'main';
+        const stackName = (process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
         console.log(`  ${dim('↪ likely cause:')} missing credentials at ${accessKeyPath}`);
         console.log(`  ${dim('↪ fix:')} authenticate for this stack:`);
-        console.log(`    ${cmd(stackName === 'main' ? 'happys auth login' : `happys stack auth ${stackName} login`)}`);
+        console.log(`    ${cmd(stackName === 'main' ? 'hapsta auth login' : `hapsta stack auth ${stackName} login`)}`);
       }
     }
   }
@@ -287,29 +289,29 @@ async function main() {
     }
   } catch {
     report.checks.happyOnPath = { ok: false };
-    if (!json) console.log(`${dim('ℹ')} happy on PATH: not found (run: ${cmd('happys init --install-path')})`);
+    if (!json) console.log(`${dim('ℹ')} happy on PATH: not found (run: ${cmd('hapsta init --install-path')})`);
   }
 
-  // happys on PATH
+  // hapsta on PATH
   try {
-    const happysPath = await resolveCommandPath('happys');
+    const happysPath = await resolveCommandPath('hapsta');
     if (happysPath) {
       report.checks.happysOnPath = { ok: true, path: happysPath };
-      if (!json) console.log(`${green('✓')} happys on PATH: ${happysPath}`);
+      if (!json) console.log(`${green('✓')} hapsta on PATH: ${happysPath}`);
     }
   } catch {
     report.checks.happysOnPath = { ok: false };
-    if (!json) console.log(`${dim('ℹ')} happys on PATH: not found (run: ${cmd('happys init --install-path')})`);
+    if (!json) console.log(`${dim('ℹ')} hapsta on PATH: not found (run: ${cmd('hapsta init --install-path')})`);
   }
 
   if (!json) {
     if (!runtimeVersion) {
       console.log('');
       console.log(sectionTitle('Tips'));
-      console.log(`- ${cmd('happys self update')} ${dim('(install a stable runtime; recommended for SwiftBar/services)')}`);
+      console.log(`- ${cmd('hapsta self update')} ${dim('(install a stable runtime; recommended for SwiftBar/services)')}`);
     }
     if (!report.checks.happysOnPath?.ok) {
-      console.log(`- Add shims to PATH: ${cmd(`export PATH="${join(getHappyStacksHomeDir(), 'bin')}:$PATH"`)} ${dim(`(or: ${cmd('happys init --install-path')})`)}`);
+      console.log(`- Add shims to PATH: ${cmd(`export PATH="${join(getHappyStacksHomeDir(), 'bin')}:$PATH"`)} ${dim(`(or: ${cmd('hapsta init --install-path')})`)}`);
     }
     console.log('');
   }

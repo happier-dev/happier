@@ -5,6 +5,12 @@
 # - icons.sh
 # - system.sh
 
+# This file is sourced/executed under strict bash modes in some contexts.
+# Ensure these env vars are always defined to avoid `set -u` crashes in tests.
+HAPSTA_BIN="${HAPSTA_BIN:-}"
+HAPSTA_TERM="${HAPSTA_TERM:-$HAPSTA_BIN}"
+HAPSTA_ROOT_DIR="${HAPSTA_ROOT_DIR:-}"
+
 level_from_server_daemon() {
   local server_status="$1"
   local daemon_status="$2"
@@ -104,8 +110,7 @@ render_component_server() {
   fi
 
   # Start/stop shortcuts (so you can control from the Server submenu too).
-  if [[ -n "$PNPM_BIN" ]]; then
-    local PNPM_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
+  if [[ -n "$HAPSTA_BIN" ]]; then
     local plist=""
     local svc_installed="0"
     if ! swiftbar_is_sandboxed; then
@@ -119,50 +124,49 @@ render_component_server() {
     if [[ "$stack_name" == "main" ]]; then
       if [[ "$svc_installed" == "1" ]]; then
         if [[ "$server_status" == "running" ]]; then
-          print_item "$p2" "Stop stack (service) | bash=$PNPM_BIN param1=service:stop dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Stop stack (service) | bash=$HAPSTA_BIN param1=service:stop dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         else
-          print_item "$p2" "Start stack (service) | bash=$PNPM_BIN param1=service:start dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Start stack (service) | bash=$HAPSTA_BIN param1=service:start dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         fi
-        print_item "$p2" "Restart stack (service) | bash=$PNPM_BIN param1=service:restart dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Restart stack (service) | bash=$HAPSTA_BIN param1=service:restart dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       else
         if [[ "$server_status" == "running" ]]; then
-          print_item "$p2" "Stop stack | bash=$PNPM_BIN param1=stack param2=stop param3=main dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Stop stack | bash=$HAPSTA_BIN param1=stack param2=stop param3=main dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         else
-          print_item "$p2" "Start stack (foreground) | bash=$PNPM_TERM param1=start dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Start stack (foreground) | bash=$HAPSTA_TERM param1=start dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         fi
       fi
     else
       if [[ "$svc_installed" == "1" ]]; then
         if [[ "$server_status" == "running" ]]; then
-          print_item "$p2" "Stop stack (service) | bash=$PNPM_BIN param1=stack param2=service:stop param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Stop stack (service) | bash=$HAPSTA_BIN param1=stack param2=service:stop param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         else
-          print_item "$p2" "Start stack (service) | bash=$PNPM_BIN param1=stack param2=service:start param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Start stack (service) | bash=$HAPSTA_BIN param1=stack param2=service:start param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         fi
-        print_item "$p2" "Restart stack (service) | bash=$PNPM_BIN param1=stack param2=service:restart param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Restart stack (service) | bash=$HAPSTA_BIN param1=stack param2=service:restart param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       else
         if [[ "$server_status" == "running" ]]; then
-          print_item "$p2" "Stop stack | bash=$PNPM_BIN param1=stack param2=stop param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Stop stack | bash=$HAPSTA_BIN param1=stack param2=stop param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         else
-          print_item "$p2" "Start stack (foreground) | bash=$PNPM_TERM param1=stack param2=start param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Start stack (foreground) | bash=$HAPSTA_TERM param1=stack param2=start param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         fi
       fi
     fi
   fi
 
   # Flavor switching (status-aware: only show switching to the other option).
-  local helper="$HAPPY_LOCAL_DIR/extras/swiftbar/set-server-flavor.sh"
-  if [[ -n "$PNPM_BIN" ]]; then
-    local PNPM_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
+  local helper="$HAPSTA_ROOT_DIR/extras/swiftbar/set-server-flavor.sh"
+  if [[ -n "$HAPSTA_BIN" ]]; then
     print_sep "$p2"
     if [[ "$server_component" == "happy-server" ]]; then
-      print_item "$p2" "Switch to happy-server-light (restart if service installed) | bash=$helper param1=$stack_name param2=happy-server-light dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Switch to happy-server-light (restart if service installed) | bash=$helper param1=$stack_name param2=happy-server-light dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     else
-      print_item "$p2" "Switch to happy-server (restart if service installed) | bash=$helper param1=$stack_name param2=happy-server dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Switch to happy-server (restart if service installed) | bash=$helper param1=$stack_name param2=happy-server dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
     if [[ "$stack_name" == "main" ]]; then
-      print_item "$p2" "Show flavor status | bash=$PNPM_TERM param1=srv param2=-- param3=status dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Show flavor status | bash=$HAPSTA_TERM param1=srv param2=-- param3=status dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     else
-      print_item "$p2" "Show flavor status | bash=$PNPM_TERM param1=stack param2=srv param3=$stack_name param4=-- param5=status dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Show flavor status | bash=$HAPSTA_TERM param1=stack param2=srv param3=$stack_name param4=-- param5=status dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
   fi
 }
@@ -204,39 +208,33 @@ render_component_daemon() {
   # State file may not exist yet (e.g. daemon is waiting for auth).
   print_item "$p2" "State file: $(shorten_path "$state_file" 52)"
 
-  if [[ -n "$PNPM_BIN" ]]; then
-    local PNPM_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
+  if [[ -n "$HAPSTA_BIN" ]]; then
     print_sep "$p2"
     if [[ "$daemon_status" == "auth_required" ]]; then
       # Provide a direct "fix" action for the common first-run problem under launchd.
-      local auth_helper="$HAPPY_LOCAL_DIR/extras/swiftbar/auth-login.sh"
-      local server_url="http://127.0.0.1:$(resolve_main_port)"
-      local webapp_url="http://localhost:$(resolve_main_port)"
+      local auth_helper="$HAPSTA_ROOT_DIR/extras/swiftbar/auth-login.sh"
       if [[ "$stack_name" == "main" ]]; then
-        print_item "$p2" "Auth login (opens browser) | bash=$auth_helper param1=main dir=$HAPPY_LOCAL_DIR terminal=false refresh=false"
+        print_item "$p2" "Auth login (opens browser) | bash=$auth_helper param1=main dir=$HAPSTA_ROOT_DIR terminal=false refresh=false"
       else
         # For stacks, best-effort use the stack's configured port if available (fallback to main port).
         local env_file
         env_file="$(resolve_stack_env_file "$stack_name")"
         local port
-        port="$(dotenv_get "$env_file" "HAPPY_STACKS_SERVER_PORT")"
-        [[ -z "$port" ]] && port="$(dotenv_get "$env_file" "HAPPY_LOCAL_SERVER_PORT")"
+        port="$(dotenv_get "$env_file" "HAPPIER_STACK_SERVER_PORT")"
         [[ -z "$port" ]] && port="$(resolve_main_port)"
-        server_url="http://127.0.0.1:${port}"
-        webapp_url="http://localhost:${port}"
-        print_item "$p2" "Auth login (opens browser) | bash=$auth_helper param1=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=false"
+        print_item "$p2" "Auth login (opens browser) | bash=$auth_helper param1=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=false"
       fi
       print_sep "$p2"
     fi
 
-    print_item "$p2" "Restart daemon | bash=$PNPM_BIN param1=stack param2=daemon param3=$stack_name param4=restart dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    print_item "$p2" "Show daemon status (CLI) | bash=$PNPM_TERM param1=stack param2=daemon param3=$stack_name param4=status dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Restart daemon | bash=$HAPSTA_BIN param1=stack param2=daemon param3=$stack_name param4=restart dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    print_item "$p2" "Show daemon status (CLI) | bash=$HAPSTA_TERM param1=stack param2=daemon param3=$stack_name param4=status dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
 
     if ! swiftbar_is_sandboxed; then
       if [[ "$stack_name" == "main" ]]; then
-        print_item "$p2" "Restart stack (service) | bash=$PNPM_BIN param1=service:restart dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Restart stack (service) | bash=$HAPSTA_BIN param1=service:restart dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       else
-        print_item "$p2" "Restart stack (service) | bash=$PNPM_BIN param1=stack param2=service:restart param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Restart stack (service) | bash=$HAPSTA_BIN param1=stack param2=service:restart param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       fi
     fi
   fi
@@ -280,43 +278,41 @@ render_component_autostart() {
       print_item "$p2" "PID: ${autostart_pid}"
     fi
   fi
-  local stdout_file="happy-stacks.out.log"
-  local stderr_file="happy-stacks.err.log"
-  if [[ -f "${logs_dir}/happy-local.out.log" && ! -f "${logs_dir}/happy-stacks.out.log" ]]; then stdout_file="happy-local.out.log"; fi
-  if [[ -f "${logs_dir}/happy-local.err.log" && ! -f "${logs_dir}/happy-stacks.err.log" ]]; then stderr_file="happy-local.err.log"; fi
+  local stdout_file="hapsta.out.log"
+  local stderr_file="hapsta.err.log"
   print_item "$p2" "Open logs (stdout) | bash=/usr/bin/open param1=-a param2=Console param3='${logs_dir}/${stdout_file}' terminal=false"
   print_item "$p2" "Open logs (stderr) | bash=/usr/bin/open param1=-a param2=Console param3='${logs_dir}/${stderr_file}' terminal=false"
 
-  if [[ -z "$PNPM_BIN" ]]; then
+  if [[ -z "$HAPSTA_BIN" ]]; then
     return
   fi
   print_sep "$p2"
   if [[ "$stack_name" == "main" ]]; then
     if [[ "$launchagent_status" == "not_installed" ]]; then
-      print_item "$p2" "Install Autostart | bash=$PNPM_BIN param1=service:install dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Install Autostart | bash=$HAPSTA_BIN param1=service:install dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       return
     fi
     # Status-aware: show only the relevant toggle (enable vs disable).
     if [[ "$launchagent_status" == "loaded" ]]; then
-      print_item "$p2" "Disable Autostart | bash=$PNPM_BIN param1=service:disable dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Disable Autostart | bash=$HAPSTA_BIN param1=service:disable dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     else
-      print_item "$p2" "Enable Autostart | bash=$PNPM_BIN param1=service:enable dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Enable Autostart | bash=$HAPSTA_BIN param1=service:enable dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
-    print_item "$p2" "Uninstall Autostart | bash=$PNPM_BIN param1=service:uninstall dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Uninstall Autostart | bash=$HAPSTA_BIN param1=service:uninstall dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     return
   fi
 
   if [[ "$launchagent_status" == "not_installed" ]]; then
-    print_item "$p2" "Install Autostart | bash=$PNPM_BIN param1=stack param2=service:install param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Install Autostart | bash=$HAPSTA_BIN param1=stack param2=service:install param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     return
   fi
   # Status-aware: show only the relevant toggle (enable vs disable).
   if [[ "$launchagent_status" == "loaded" ]]; then
-    print_item "$p2" "Disable Autostart | bash=$PNPM_BIN param1=stack param2=service:disable param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Disable Autostart | bash=$HAPSTA_BIN param1=stack param2=service:disable param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   else
-    print_item "$p2" "Enable Autostart | bash=$PNPM_BIN param1=stack param2=service:enable param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Enable Autostart | bash=$HAPSTA_BIN param1=stack param2=service:enable param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   fi
-  print_item "$p2" "Uninstall Autostart | bash=$PNPM_BIN param1=stack param2=service:uninstall param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+  print_item "$p2" "Uninstall Autostart | bash=$HAPSTA_BIN param1=stack param2=service:uninstall param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
 }
 
 render_component_tailscale() {
@@ -347,31 +343,29 @@ render_component_tailscale() {
     return
   fi
 
-  if [[ -z "$PNPM_BIN" ]]; then
+  if [[ -z "$HAPSTA_BIN" ]]; then
     return
   fi
   print_sep "$p2"
 
   if [[ "$stack_name" == "main" ]]; then
-    local PNPM_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
-    print_item "$p2" "Tailscale status | bash=$PNPM_TERM param1=tailscale:status dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Tailscale status | bash=$HAPSTA_TERM param1=tailscale:status dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     if [[ -n "$tailscale_url" ]]; then
-      print_item "$p2" "Disable Tailscale Serve | bash=$PNPM_BIN param1=tailscale:disable dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Disable Tailscale Serve | bash=$HAPSTA_BIN param1=tailscale:disable dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     else
-      print_item "$p2" "Enable Tailscale Serve | bash=$PNPM_TERM param1=tailscale:enable dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Enable Tailscale Serve | bash=$HAPSTA_TERM param1=tailscale:enable dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
-    print_item "$p2" "Print URL | bash=$PNPM_TERM param1=tailscale:url dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Print URL | bash=$HAPSTA_TERM param1=tailscale:url dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     return
   fi
 
-  local PNPM_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
-  print_item "$p2" "Tailscale status | bash=$PNPM_TERM param1=stack param2=tailscale:status param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+  print_item "$p2" "Tailscale status | bash=$HAPSTA_TERM param1=stack param2=tailscale:status param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   if [[ -n "$tailscale_url" ]]; then
-    print_item "$p2" "Disable Tailscale Serve | bash=$PNPM_BIN param1=stack param2=tailscale:disable param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Disable Tailscale Serve | bash=$HAPSTA_BIN param1=stack param2=tailscale:disable param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   else
-    print_item "$p2" "Enable Tailscale Serve | bash=$PNPM_TERM param1=stack param2=tailscale:enable param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Enable Tailscale Serve | bash=$HAPSTA_TERM param1=stack param2=tailscale:enable param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   fi
-  print_item "$p2" "Print URL | bash=$PNPM_TERM param1=stack param2=tailscale:url param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+  print_item "$p2" "Print URL | bash=$HAPSTA_TERM param1=stack param2=tailscale:url param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
 }
 
 render_component_repo() {
@@ -477,22 +471,21 @@ render_component_repo() {
   if [[ "$detail" != "ok" ]]; then
     if [[ "$git_mode" == "cached" ]]; then
       print_item "$p2" "Status: git cache missing (or not a git repo)"
-      local refresh="$HAPPY_LOCAL_DIR/extras/swiftbar/git-cache-refresh.sh"
+      local refresh="$HAPSTA_ROOT_DIR/extras/swiftbar/git-cache-refresh.sh"
       if [[ -x "$refresh" ]]; then
         print_sep "$p2"
         if [[ "$context" == "stack" && -n "$stack_name" ]]; then
-          print_item "$p2" "Refresh Git cache (this stack) | bash=$refresh param1=stack param2=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Refresh Git cache (this stack) | bash=$refresh param1=stack param2=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         else
-          print_item "$p2" "Refresh Git cache (main) | bash=$refresh param1=main dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+          print_item "$p2" "Refresh Git cache (main) | bash=$refresh param1=main dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
         fi
       fi
     else
       print_item "$p2" "Status: not a git repo / missing"
     fi
-    if [[ -n "$PNPM_BIN" ]]; then
+    if [[ -n "$HAPSTA_BIN" ]]; then
       print_sep "$p2"
-      local PNPM_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
-      print_item "$p2" "Bootstrap (clone missing components) | bash=$PNPM_TERM param1=bootstrap dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Bootstrap (clone missing repos) | bash=$HAPSTA_TERM param1=bootstrap dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
     return
   fi
@@ -508,12 +501,12 @@ render_component_repo() {
         print_item "$p2" "Git cache: fresh (${age}s old) | color=$GRAY"
       fi
     fi
-    local refresh="$HAPPY_LOCAL_DIR/extras/swiftbar/git-cache-refresh.sh"
+    local refresh="$HAPSTA_ROOT_DIR/extras/swiftbar/git-cache-refresh.sh"
     if [[ -x "$refresh" ]]; then
       print_sep "$p2"
-      print_item "$p2" "Refresh Git cache (this component) | bash=$refresh param1=component param2=$context param3=$stack_name param4=$component dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Refresh Git cache (this component) | bash=$refresh param1=component param2=$context param3=$stack_name param4=$component dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       if [[ "$context" == "stack" && -n "$stack_name" ]]; then
-        print_item "$p2" "Refresh Git cache (this stack) | bash=$refresh param1=stack param2=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Refresh Git cache (this stack) | bash=$refresh param1=stack param2=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       fi
     fi
   fi
@@ -573,51 +566,50 @@ render_component_repo() {
     print_item "$p2" "Open folder | bash=/usr/bin/open param1='$active_dir' terminal=false"
   fi
 
-  if [[ -n "$PNPM_BIN" ]]; then
-    local PNPM_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
+  if [[ -n "${HAPSTA_BIN:-}" ]]; then
     # Run via stack wrappers when in a stack context so env-file stays authoritative.
     if [[ "$context" == "stack" && -n "$stack_name" ]]; then
-      print_item "$p2" "Status (active) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=status param6=$component dir=$HAPPY_LOCAL_DIR terminal=false"
-      print_item "$p2" "Sync mirror (upstream/main) | bash=$PNPM_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=sync param6=$component dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-      print_item "$p2" "Update (dry-run) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=update param6=$component param7=active param8=--dry-run dir=$HAPPY_LOCAL_DIR terminal=false"
-      print_item "$p2" "Update (apply) | bash=$PNPM_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=update param6=$component param7=active dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-      print_item "$p2" "Update (apply + stash) | bash=$PNPM_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=update param6=$component param7=active param8=--stash dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Status (active) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=status param6=$component dir=$HAPSTA_ROOT_DIR terminal=false"
+      print_item "$p2" "Sync mirror (upstream/main) | bash=$HAPSTA_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=sync param6=$component dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+      print_item "$p2" "Update (dry-run) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=update param6=$component param7=active param8=--dry-run dir=$HAPSTA_ROOT_DIR terminal=false"
+      print_item "$p2" "Update (apply) | bash=$HAPSTA_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=update param6=$component param7=active dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+      print_item "$p2" "Update (apply + stash) | bash=$HAPSTA_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=update param6=$component param7=active param8=--stash dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     else
-      print_item "$p2" "Status (active) | bash=$PNPM_TERM param1=wt param2=status param3=$component dir=$HAPPY_LOCAL_DIR terminal=false"
-      print_item "$p2" "Sync mirror (upstream/main) | bash=$PNPM_BIN param1=wt param2=sync param3=$component dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-      print_item "$p2" "Update (dry-run) | bash=$PNPM_TERM param1=wt param2=update param3=$component param4=active param5=--dry-run dir=$HAPPY_LOCAL_DIR terminal=false"
-      print_item "$p2" "Update (apply) | bash=$PNPM_BIN param1=wt param2=update param3=$component param4=active dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-      print_item "$p2" "Update (apply + stash) | bash=$PNPM_BIN param1=wt param2=update param3=$component param4=active param5=--stash dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Status (active) | bash=$HAPSTA_TERM param1=wt param2=status param3=$component dir=$HAPSTA_ROOT_DIR terminal=false"
+      print_item "$p2" "Sync mirror (upstream/main) | bash=$HAPSTA_BIN param1=wt param2=sync param3=$component dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+      print_item "$p2" "Update (dry-run) | bash=$HAPSTA_TERM param1=wt param2=update param3=$component param4=active param5=--dry-run dir=$HAPSTA_ROOT_DIR terminal=false"
+      print_item "$p2" "Update (apply) | bash=$HAPSTA_BIN param1=wt param2=update param3=$component param4=active dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+      print_item "$p2" "Update (apply + stash) | bash=$HAPSTA_BIN param1=wt param2=update param3=$component param4=active param5=--stash dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
 
     print_sep "$p2"
     if [[ "$context" == "stack" && -n "$stack_name" ]]; then
       if [[ "$mono_repo" == "1" && "$component" != "happy-server-light" ]]; then
         # Monorepo stacks: avoid per-component worktree switching (it can create version skew/confusion).
-        # Prefer selecting a single monorepo worktree (repoKey) and letting happys derive the rest.
-        print_item "$p2" "Select monorepo worktree (interactive) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=$repo_key param7=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        # Prefer selecting a single monorepo worktree (repoKey) and letting hapsta derive the rest.
+        print_item "$p2" "Select monorepo worktree (interactive) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=$repo_key param7=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       else
-        print_item "$p2" "Switch stack worktree (interactive) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=$component param7=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Switch stack worktree (interactive) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=$component param7=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       fi
-      print_item "$p2" "New worktree (interactive) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=new param6=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "New worktree (interactive) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=new param6=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       if [[ "$mono_repo" == "1" && "$component" != "happy-server-light" ]]; then
-        print_item "$p2" "List worktrees (terminal) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=list param6=$repo_key dir=$HAPPY_LOCAL_DIR terminal=false"
+        print_item "$p2" "List worktrees (terminal) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=list param6=$repo_key dir=$HAPSTA_ROOT_DIR terminal=false"
       else
-        print_item "$p2" "List worktrees (terminal) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=list param6=$component dir=$HAPPY_LOCAL_DIR terminal=false"
+        print_item "$p2" "List worktrees (terminal) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=list param6=$component dir=$HAPSTA_ROOT_DIR terminal=false"
       fi
     else
-      print_item "$p2" "Use worktree (interactive) | bash=$PNPM_TERM param1=wt param2=use param3=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-      print_item "$p2" "New worktree (interactive) | bash=$PNPM_TERM param1=wt param2=new param3=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-      print_item "$p2" "List worktrees (terminal) | bash=$PNPM_TERM param1=wt param2=list param3=$component dir=$HAPPY_LOCAL_DIR terminal=false"
+      print_item "$p2" "Use worktree (interactive) | bash=$HAPSTA_TERM param1=wt param2=use param3=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+      print_item "$p2" "New worktree (interactive) | bash=$HAPSTA_TERM param1=wt param2=new param3=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+      print_item "$p2" "List worktrees (terminal) | bash=$HAPSTA_TERM param1=wt param2=list param3=$component dir=$HAPSTA_ROOT_DIR terminal=false"
     fi
 
     # PR worktree (prompt)
-    local pr_helper="$HAPPY_LOCAL_DIR/extras/swiftbar/wt-pr.sh"
+    local pr_helper="$HAPSTA_ROOT_DIR/extras/swiftbar/wt-pr.sh"
     if [[ -x "$pr_helper" ]]; then
       if [[ "$context" == "stack" && -n "$stack_name" ]]; then
-        print_item "$p2" "PR worktree (prompt) | bash=$pr_helper param1=$component param2=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "PR worktree (prompt) | bash=$pr_helper param1=$component param2=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       else
-        print_item "$p2" "PR worktree (prompt) | bash=$pr_helper param1=$component dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "PR worktree (prompt) | bash=$pr_helper param1=$component dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       fi
     fi
 
@@ -627,13 +619,13 @@ render_component_repo() {
       if [[ "$mono_repo" == "1" && "$component" != "happy-server-light" ]]; then
         open_component="$repo_key"
       fi
-      print_item "$p2" "Shell (active, new window) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=shell param6=$open_component param7=active param8=--new-window dir=$HAPPY_LOCAL_DIR terminal=false"
-      print_item "$p2" "Open in VS Code (active) | bash=$PNPM_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=code param6=$open_component param7=active dir=$HAPPY_LOCAL_DIR terminal=false"
-      print_item "$p2" "Open in Cursor (active) | bash=$PNPM_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=cursor param6=$open_component param7=active dir=$HAPPY_LOCAL_DIR terminal=false"
+      print_item "$p2" "Shell (active, new window) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=shell param6=$open_component param7=active param8=--new-window dir=$HAPSTA_ROOT_DIR terminal=false"
+      print_item "$p2" "Open in VS Code (active) | bash=$HAPSTA_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=code param6=$open_component param7=active dir=$HAPSTA_ROOT_DIR terminal=false"
+      print_item "$p2" "Open in Cursor (active) | bash=$HAPSTA_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=cursor param6=$open_component param7=active dir=$HAPSTA_ROOT_DIR terminal=false"
     else
-      print_item "$p2" "Shell (active, new window) | bash=$PNPM_TERM param1=wt param2=shell param3=$component param4=active param5=--new-window dir=$HAPPY_LOCAL_DIR terminal=false"
-      print_item "$p2" "Open in VS Code (active) | bash=$PNPM_BIN param1=wt param2=code param3=$component param4=active dir=$HAPPY_LOCAL_DIR terminal=false"
-      print_item "$p2" "Open in Cursor (active) | bash=$PNPM_BIN param1=wt param2=cursor param3=$component param4=active dir=$HAPPY_LOCAL_DIR terminal=false"
+      print_item "$p2" "Shell (active, new window) | bash=$HAPSTA_TERM param1=wt param2=shell param3=$component param4=active param5=--new-window dir=$HAPSTA_ROOT_DIR terminal=false"
+      print_item "$p2" "Open in VS Code (active) | bash=$HAPSTA_BIN param1=wt param2=code param3=$component param4=active dir=$HAPSTA_ROOT_DIR terminal=false"
+      print_item "$p2" "Open in Cursor (active) | bash=$HAPSTA_BIN param1=wt param2=cursor param3=$component param4=active dir=$HAPSTA_ROOT_DIR terminal=false"
     fi
 
     # Worktrees listing (inline in SwiftBar, plus stack-aware switch).
@@ -649,7 +641,7 @@ render_component_repo() {
     if [[ -z "$tsv" ]]; then
       print_item "$p3" "No worktrees found | color=$GRAY"
     else
-      # Map worktree paths back to happy-stacks specs (default or components/.worktrees/...).
+      # Map worktree paths back to hapsta specs (default or components/.worktrees/...).
       # In monorepos, multiple "components" share one repoKey; worktrees live under that repoKey.
       local repo_key
       repo_key="$(swiftbar_repo_key_from_path "$active_dir" 2>/dev/null || true)"
@@ -704,16 +696,16 @@ render_component_repo() {
               wt_component="$repo_key"
             fi
             if [[ "$mono_repo" != "1" || "$component" == "happy-server-light" ]]; then
-              print_item "${p3}--" "Use in stack | bash=$PNPM_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=$wt_component param7=$spec dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+              print_item "${p3}--" "Use in stack | bash=$HAPSTA_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=$wt_component param7=$spec dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
             fi
-            print_item "${p3}--" "Shell (new window) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=shell param6=$wt_component param7=$spec param8=--new-window dir=$HAPPY_LOCAL_DIR terminal=false"
-            print_item "${p3}--" "Open in VS Code | bash=$PNPM_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=code param6=$wt_component param7=$spec dir=$HAPPY_LOCAL_DIR terminal=false"
-            print_item "${p3}--" "Open in Cursor | bash=$PNPM_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=cursor param6=$wt_component param7=$spec dir=$HAPPY_LOCAL_DIR terminal=false"
+            print_item "${p3}--" "Shell (new window) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=shell param6=$wt_component param7=$spec param8=--new-window dir=$HAPSTA_ROOT_DIR terminal=false"
+            print_item "${p3}--" "Open in VS Code | bash=$HAPSTA_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=code param6=$wt_component param7=$spec dir=$HAPSTA_ROOT_DIR terminal=false"
+            print_item "${p3}--" "Open in Cursor | bash=$HAPSTA_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=cursor param6=$wt_component param7=$spec dir=$HAPSTA_ROOT_DIR terminal=false"
           else
-            print_item "${p3}--" "Use (main) | bash=$PNPM_BIN param1=wt param2=use param3=$component param4=$spec dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-            print_item "${p3}--" "Shell (new window) | bash=$PNPM_TERM param1=wt param2=shell param3=$component param4=$spec param5=--new-window dir=$HAPPY_LOCAL_DIR terminal=false"
-            print_item "${p3}--" "Open in VS Code | bash=$PNPM_BIN param1=wt param2=code param3=$component param4=$spec dir=$HAPPY_LOCAL_DIR terminal=false"
-            print_item "${p3}--" "Open in Cursor | bash=$PNPM_BIN param1=wt param2=cursor param3=$component param4=$spec dir=$HAPPY_LOCAL_DIR terminal=false"
+            print_item "${p3}--" "Use (main) | bash=$HAPSTA_BIN param1=wt param2=use param3=$component param4=$spec dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+            print_item "${p3}--" "Shell (new window) | bash=$HAPSTA_TERM param1=wt param2=shell param3=$component param4=$spec param5=--new-window dir=$HAPSTA_ROOT_DIR terminal=false"
+            print_item "${p3}--" "Open in VS Code | bash=$HAPSTA_BIN param1=wt param2=code param3=$component param4=$spec dir=$HAPSTA_ROOT_DIR terminal=false"
+            print_item "${p3}--" "Open in Cursor | bash=$HAPSTA_BIN param1=wt param2=cursor param3=$component param4=$spec dir=$HAPSTA_ROOT_DIR terminal=false"
           fi
         else
           print_item "${p3}--" "Open folder | bash=/usr/bin/open param1='$wt_path' terminal=false"
@@ -740,7 +732,7 @@ render_components_menu() {
   if [[ "$(git_cache_mode)" == "cached" ]]; then
     local scope
     scope="$(git_cache_auto_refresh_scope)"
-    local refresh="$HAPPY_LOCAL_DIR/extras/swiftbar/git-cache-refresh.sh"
+    local refresh="$HAPSTA_ROOT_DIR/extras/swiftbar/git-cache-refresh.sh"
     if [[ -x "$refresh" ]]; then
       if [[ "$scope" == "all" ]]; then
         git_cache_maybe_refresh_async "all" "$refresh" all
@@ -751,7 +743,7 @@ render_components_menu() {
   fi
 
   # Git cache controls (to keep the menu refresh fast while retaining rich inline worktrees UI).
-  local refresh="$HAPPY_LOCAL_DIR/extras/swiftbar/git-cache-refresh.sh"
+  local refresh="$HAPSTA_ROOT_DIR/extras/swiftbar/git-cache-refresh.sh"
   if [[ -f "$refresh" ]]; then
     local mode ttl
     mode="$(git_cache_mode)"
@@ -759,19 +751,19 @@ render_components_menu() {
     print_item "$p2" "Git cache | sfimage=arrow.triangle.2.circlepath"
     local p3="${p2}--"
     print_item "$p3" "Mode: ${mode} (default: cached)"
-    print_item "$p3" "TTL: ${ttl}s (set HAPPY_STACKS_SWIFTBAR_GIT_TTL_SEC)"
+    print_item "$p3" "TTL: ${ttl}s (set HAPPIER_STACK_SWIFTBAR_GIT_TTL_SEC)"
     print_sep "$p3"
     if [[ "$context" == "main" ]]; then
-      print_item "$p3" "Refresh now (main components) | bash=$refresh param1=main dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-      print_item "$p3" "Refresh now (all stacks/components) | bash=$refresh param1=all dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p3" "Refresh now (main components) | bash=$refresh param1=main dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+      print_item "$p3" "Refresh now (all stacks/components) | bash=$refresh param1=all dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     else
-      print_item "$p3" "Refresh now (this stack) | bash=$refresh param1=stack param2=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p3" "Refresh now (this stack) | bash=$refresh param1=stack param2=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
     print_sep "$p2"
   fi
 
   # Always render the known components using the resolved component dirs (env file → env.local/.env → fallback),
-  # instead of assuming they live under `~/.happy-stacks/workspace/components`.
+  # instead of assuming they live under a fixed workspace path.
   local shared_repo_root=""
   if [[ -n "$env_file" && -f "$env_file" ]]; then
     local dir_h dir_c dir_s
@@ -901,8 +893,7 @@ render_stack_info() {
   print_item "$p2" "Server component: ${server_component}"
   local pinned_port=""
   if [[ -n "$env_file" && -f "$env_file" ]]; then
-    pinned_port="$(dotenv_get "$env_file" "HAPPY_STACKS_SERVER_PORT")"
-    [[ -z "$pinned_port" ]] && pinned_port="$(dotenv_get "$env_file" "HAPPY_LOCAL_SERVER_PORT")"
+    pinned_port="$(dotenv_get "$env_file" "HAPPIER_STACK_SERVER_PORT")"
   fi
   local port_display="$port"
   if [[ -z "$port_display" ]]; then
@@ -944,7 +935,7 @@ render_stack_info() {
   fi
 
   print_sep "$p2"
-  print_item "$p2" "Open repo | bash=/usr/bin/open param1='$HAPPY_LOCAL_DIR' terminal=false"
+  print_item "$p2" "Open repo | bash=/usr/bin/open param1='$HAPSTA_ROOT_DIR' terminal=false"
   print_item "$p2" "Open data dir | bash=/usr/bin/open param1='$base_dir' terminal=false"
   print_item "$p2" "Open logs dir | bash=/usr/bin/open param1='${base_dir}/logs' terminal=false"
   print_item "$p2" "Open CLI home | bash=/usr/bin/open param1='$cli_home_dir' terminal=false"
@@ -954,13 +945,15 @@ render_stack_info() {
     if [[ -n "$main_env" ]]; then
       print_item "$p2" "Edit main env | bash=/usr/bin/open param1=-a param2=TextEdit param3='$main_env' terminal=false"
     else
-      print_item "$p2" "Edit env.local | bash=/usr/bin/open param1=-a param2=TextEdit param3='$HAPPY_LOCAL_DIR/env.local' terminal=false"
+      local home
+      home="$(resolve_home_dir)"
+      print_item "$p2" "Edit env.local | bash=/usr/bin/open param1=-a param2=TextEdit param3='${home}/env.local' terminal=false"
     fi
   else
     print_item "$p2" "Open stack env | bash=/usr/bin/open param1='$env_file' terminal=false"
   fi
 
-  if [[ -z "$PNPM_BIN" ]]; then
+  if [[ -z "$HAPSTA_BIN" ]]; then
     return
   fi
   print_sep "$p2"
@@ -974,58 +967,56 @@ render_stack_info() {
   menu_mode="$(resolve_menubar_mode)"
 
   if [[ "$stack_name" == "main" ]]; then
-    local PNPM_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
     if [[ "$svc_installed" == "1" ]]; then
       # Status-aware: only show start/stop based on whether the stack is running.
       if [[ "${MAIN_LEVEL:-}" == "red" ]]; then
-        print_item "$p2" "Start (service) | bash=$PNPM_BIN param1=service:start dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Start (service) | bash=$HAPSTA_BIN param1=service:start dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       else
-        print_item "$p2" "Stop (service) | bash=$PNPM_BIN param1=service:stop dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Stop (service) | bash=$HAPSTA_BIN param1=service:stop dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       fi
-      print_item "$p2" "Restart (service) | bash=$PNPM_BIN param1=service:restart dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Restart (service) | bash=$HAPSTA_BIN param1=service:restart dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     else
       if [[ "${MAIN_LEVEL:-}" == "red" ]]; then
-        print_item "$p2" "Start (foreground) | bash=$PNPM_TERM param1=start dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Start (foreground) | bash=$HAPSTA_TERM param1=start dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       else
-        print_item "$p2" "Stop stack | bash=$PNPM_BIN param1=stack param2=stop param3=main dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+        print_item "$p2" "Stop stack | bash=$HAPSTA_BIN param1=stack param2=stop param3=main dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
       fi
     fi
     if [[ "$menu_mode" != "selfhost" ]]; then
-      print_item "$p2" "Dev mode | bash=$PNPM_TERM param1=dev dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Dev mode | bash=$HAPSTA_TERM param1=dev dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
-    print_item "$p2" "Build UI | bash=$PNPM_TERM param1=build dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    print_item "$p2" "Doctor | bash=$PNPM_TERM param1=stack:doctor dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Build UI | bash=$HAPSTA_TERM param1=build dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    print_item "$p2" "Doctor | bash=$HAPSTA_TERM param1=stack:doctor dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     return
   fi
 
-  local PNPM_TERM="$HAPPY_LOCAL_DIR/extras/swiftbar/happys-term.sh"
   if [[ "$svc_installed" == "1" ]]; then
     # Status-aware: only show start/stop based on whether the stack is running.
     if [[ "$STACK_LEVEL" == "red" ]]; then
-      print_item "$p2" "Start (service) | bash=$PNPM_BIN param1=stack param2=service:start param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Start (service) | bash=$HAPSTA_BIN param1=stack param2=service:start param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     else
-      print_item "$p2" "Stop (service) | bash=$PNPM_BIN param1=stack param2=service:stop param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Stop (service) | bash=$HAPSTA_BIN param1=stack param2=service:stop param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
-    print_item "$p2" "Restart (service) | bash=$PNPM_BIN param1=stack param2=service:restart param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Restart (service) | bash=$HAPSTA_BIN param1=stack param2=service:restart param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   else
     if [[ "$STACK_LEVEL" == "red" ]]; then
-      print_item "$p2" "Start (foreground) | bash=$PNPM_TERM param1=stack param2=start param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Start (foreground) | bash=$HAPSTA_TERM param1=stack param2=start param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     else
-      print_item "$p2" "Stop stack | bash=$PNPM_BIN param1=stack param2=stop param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+      print_item "$p2" "Stop stack | bash=$HAPSTA_BIN param1=stack param2=stop param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
     fi
   fi
   if [[ "$menu_mode" != "selfhost" ]]; then
-    print_item "$p2" "Dev mode | bash=$PNPM_TERM param1=stack param2=dev param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Dev mode | bash=$HAPSTA_TERM param1=stack param2=dev param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   fi
-  print_item "$p2" "Build UI | bash=$PNPM_TERM param1=stack param2=build param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-  print_item "$p2" "Doctor | bash=$PNPM_TERM param1=stack param2=doctor param3=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+  print_item "$p2" "Build UI | bash=$HAPSTA_TERM param1=stack param2=build param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+  print_item "$p2" "Doctor | bash=$HAPSTA_TERM param1=stack param2=doctor param3=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   if [[ "$menu_mode" != "selfhost" ]]; then
-    print_item "$p2" "Edit stack (interactive) | bash=$PNPM_TERM param1=stack param2=edit param3=$stack_name param4=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
-    print_item "$p2" "Select worktrees (interactive) | bash=$PNPM_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=--interactive dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "Edit stack (interactive) | bash=$HAPSTA_TERM param1=stack param2=edit param3=$stack_name param4=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    print_item "$p2" "Select worktrees (interactive) | bash=$HAPSTA_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   fi
 
-  local pr_helper="$HAPPY_LOCAL_DIR/extras/swiftbar/wt-pr.sh"
+  local pr_helper="$HAPSTA_ROOT_DIR/extras/swiftbar/wt-pr.sh"
   if [[ "$menu_mode" != "selfhost" && -x "$pr_helper" ]]; then
-    print_item "$p2" "PR worktree into this stack (prompt) | bash=$pr_helper param1=_prompt_ param2=$stack_name dir=$HAPPY_LOCAL_DIR terminal=false refresh=true"
+    print_item "$p2" "PR worktree into this stack (prompt) | bash=$pr_helper param1=_prompt_ param2=$stack_name dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
   fi
 }
