@@ -1,6 +1,6 @@
 # Agents catalog (CLI + app + `@happier-dev/agents`)
 
-This doc explains how the **Agents catalog** works end-to-end in Happy, and how to add a new agent/provider.
+This doc explains how the **Agents catalog** works end-to-end in Happier, and how to add a new agent/provider.
 
 The goal is that both surfaces:
 - stay **catalog-driven** (no screen-level `if (agentId === ...)`),
@@ -263,7 +263,7 @@ Patterns we use:
 - Don’t import native assets from code that must run in Node tests (keep assets in `registryUi.ts` and lazy-load).
 # Agent Catalog - CLI
 
-This doc explains how the **Agent Catalog** works in Happy, and how to add a new agent/backend without guessing.
+This doc explains how the **Agent Catalog** works in Happier, and how to add a new agent/backend without guessing.
 
 ---
 
@@ -364,7 +364,7 @@ Type: `packages/cli/src/backends/types.ts` (`AgentCatalogEntry`)
   - Consumed by `packages/cli/src/capabilities/snapshots/cliSnapshot.ts`.
 
 - `getCloudConnectTarget(): Promise<CloudConnectTarget>`
-  - Enables `happy connect <agentId>` for this agent.
+  - Enables `happier connect <agentId>` for this agent.
   - The preferred source-of-truth for connect availability + vendor mapping is `@happier-dev/agents` (and this hook returns the implementation object).
 
 - `getDaemonSpawnHooks(): Promise<DaemonSpawnHooks>`
@@ -496,5 +496,3 @@ yarn --cwd cli test
 - Don’t “auto-discover” backends by scanning the filesystem. We want deterministic bundling and explicit reviewable changes.
 - Don’t do side-effect self-registration (“import this file and it registers itself”). It makes ordering brittle and behavior hard to audit.
 - Don’t leave long-lived “stubs” (re-export shims) as an architectural layer. Prefer canonical entrypoints and direct imports.
-
-

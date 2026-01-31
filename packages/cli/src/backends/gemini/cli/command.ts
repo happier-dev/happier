@@ -115,7 +115,7 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
         console.log('No Google Cloud Project configured.');
         console.log('');
         console.log('If you see "Authentication required" error, you may need to set a project:');
-        console.log('  happy gemini project set <your-project-id>');
+        console.log('  happier gemini project set <your-project-id>');
         console.log('');
         console.log('This is required for Google Workspace accounts.');
         console.log('Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca');
@@ -168,9 +168,9 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
 
     const { credentials } = await authAndSetupMachineIfNeeded();
 
-    logger.debug('Ensuring Happy background service is running & matches our version...');
+    logger.debug('Ensuring Happier background service is running & matches our version...');
     if (!(await isDaemonRunningCurrentlyInstalledHappyVersion())) {
-      logger.debug('Starting Happy background service...');
+      logger.debug('Starting Happier background service...');
       const daemonProcess = spawnHappyCLI(['daemon', 'start-sync'], {
         detached: true,
         stdio: 'ignore',

@@ -113,7 +113,7 @@ export async function stopDaemonHttp(): Promise<void> {
  * Not just a boolean.
  * 
  * We can destructure the response on the caller for richer output.
- * For instance when running `happy daemon status` we can show more information.
+ * For instance when running `happier daemon status` we can show more information.
  */
 export async function checkIfDaemonRunningAndCleanupStaleState(): Promise<boolean> {
   const state = await readDaemonState();
@@ -163,8 +163,8 @@ export async function isDaemonRunningCurrentlyInstalledHappyVersion(): Promise<b
     return currentCliVersion === state.startedWithCliVersion;
     
     // PREVIOUS IMPLEMENTATION - Keeping this commented in case we need it
-    // Kirill does not understand how the upgrade of npm packages happen and whether 
-    // we will get a new path or not when happy-coder is upgraded globally.
+    // Kirill does not understand how the upgrade of npm packages happen and whether
+    // we will get a new path or not when the CLI package is upgraded globally.
     // If reading package.json doesn't work correctly after npm upgrades, 
     // we can revert to spawning a process (but should add timeout and cleanup!)
     /*

@@ -1,6 +1,6 @@
 # Deployment
 
-This document describes how to deploy the Happy backend (`packages/server`) and the infrastructure it expects.
+This document describes how to deploy the Happier backend (`packages/server`) and the infrastructure it expects.
 
 ## Runtime overview
 - **App server:** Node.js running `tsx ./sources/main.ts` (Fastify + Socket.IO).

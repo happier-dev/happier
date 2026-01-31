@@ -1,12 +1,12 @@
 # CLI Architecture
 
-This document describes the Happy CLI (`packages/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
+This document describes the Happier CLI (`packages/cli`) and its daemon. The CLI is both an interactive tool and a background session manager that keeps machine state in sync with the server.
 
 ## System overview
 
 ```mermaid
 graph TB
-    subgraph "Happy CLI"
+    subgraph "Happier CLI"
         Entry[src/index.ts]
         API[API Client]
         Daemon[Daemon Process]
@@ -49,7 +49,7 @@ graph TB
 
 ```mermaid
 flowchart TD
-    Start([happy ...]) --> Parse[Parse subcommand]
+    Start([happier ...]) --> Parse[Parse subcommand]
 
     Parse --> Doctor{doctor?}
     Parse --> Auth{auth?}

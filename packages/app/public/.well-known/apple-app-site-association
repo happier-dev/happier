@@ -3,7 +3,7 @@
     "details": [
       {
         "appIDs": [
-          "L86V3EF623.com.leeroybrun.happier"
+          "L86V3EF623.dev.happier.app"
         ],
         "components": [
           {
@@ -16,7 +16,7 @@
   },
   "activitycontinuation": {
     "apps": [
-      "L86V3EF623.com.leeroybrun.happier"
+      "L86V3EF623.dev.happier.app"
     ]
   }
 }

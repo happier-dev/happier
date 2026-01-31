@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Happier (dev)",
-  "identifier": "com.leeroybrun.happier.dev",
+  "identifier": "dev.happier.app.dev",
   "app": {
     "windows": [
       {

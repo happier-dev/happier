@@ -86,7 +86,7 @@ export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
     process.exit(1);
   }
 
-  console.log(chalk.green('✓ Started Happy in tmux'));
+  console.log(chalk.green('✓ Started Happier in tmux'));
   console.log(`  Target: ${tmuxTarget}`);
   if (insideTmux) {
     console.log(`  Attach: tmux select-window -t ${tmuxTarget}`);

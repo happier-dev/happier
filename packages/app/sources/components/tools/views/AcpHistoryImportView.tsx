@@ -80,9 +80,9 @@ export const AcpHistoryImportView = React.memo<ToolViewProps>(({ tool, sessionId
         <Text style={styles.subtitle}>
           {provider}{remoteSessionId ? ` • ${remoteSessionId}` : ''}
         </Text>
-        <Text style={styles.body}>
-        {note ?? 'This session history differs from what is already in Happy. Importing may create duplicates.'}
-      </Text>
+	        <Text style={styles.body}>
+	        {note ?? 'This session history differs from what is already in Happier. Importing may create duplicates.'}
+	      </Text>
 
         {isPending && !canApprovePermissions ? (
           <Text style={[styles.body, { color: theme.colors.textSecondary }]}>

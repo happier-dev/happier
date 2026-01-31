@@ -5,7 +5,7 @@ import { handleAuthCommand } from '@/commands/auth';
 import type { CommandContext } from '@/cli/commandRegistry';
 
 export async function handleLogoutCliCommand(_context: CommandContext): Promise<void> {
-  console.log(chalk.yellow('Note: "happy logout" is deprecated. Use "happy auth logout" instead.\n'));
+  console.log(chalk.yellow('Note: "happier logout" is deprecated. Use "happier auth logout" instead.\n'));
   try {
     await handleAuthCommand(['logout']);
   } catch (error) {
@@ -16,4 +16,3 @@ export async function handleLogoutCliCommand(_context: CommandContext): Promise<
     process.exit(1);
   }
 }
-

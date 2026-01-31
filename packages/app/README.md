@@ -10,7 +10,7 @@ Use Claude Code or Codex from anywhere with end-to-end encryption.
 
 <div align="center">
   
-[📱 **iOS App**](https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388) • [🤖 **Android App**](https://play.google.com/store/apps/details?id=com.leeroybrun.happier) • [🌐 **Web App**](https://app.happier.dev) • [🎥 **See a Demo**](https://youtu.be/GCS0OG9QMSE) • [📚 **Documentation**](https://happy.engineering/docs/) • [💬 **Discord**](https://discord.gg/fX9WBAhyfD)
+[📱 **iOS App**](https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388) • [🤖 **Android App**](https://play.google.com/store/apps/details?id=dev.happier.app) • [🌐 **Web App**](https://app.happier.dev) • [🎥 **See a Demo**](https://youtu.be/GCS0OG9QMSE) • [💬 **Discord**](https://discord.gg/fX9WBAhyfD)
 
 </div>
 
@@ -22,7 +22,7 @@ Step 1: Download App
 </h3>
 
 <div align="center">
-<a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/store/apps/details?id=com.leeroybrun.happier"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
+<a href="https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388"><img width="135" height="39" alt="appstore" src="https://github.com/user-attachments/assets/45e31a11-cf6b-40a2-a083-6dc8d1f01291" /></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="https://play.google.com/store/apps/details?id=dev.happier.app"><img width="135" height="39" alt="googleplay" src="https://github.com/user-attachments/assets/acbba639-858f-4c74-85c7-92a4096efbf5" /></a>
 </div>
 
 <h3 align="center">
@@ -65,8 +65,8 @@ On your computer, run `happier` instead of `claude` or `happier codex` instead o
 
 ## 📦 Project Components
 
-- **[happy-cli](https://github.com/slopus/happy-cli)** - Command-line interface for Claude Code and Codex
-- **[happy-server](https://github.com/slopus/happy-server)** - Backend server for encrypted sync
+- **@happier-dev/cli** - Command-line interface for Claude Code and Codex
+- **@happier-dev/server** - Backend server for encrypted sync
 - **@happier-dev/app** - This mobile client (you are here)
 
 ## 🏠 Who We Are
@@ -75,9 +75,8 @@ We're engineers scattered across Bay Area coffee shops and hacker houses, consta
 
 ## 📚 Documentation & Contributing
 
-- **[Documentation Website](https://happy.engineering/docs/)** - Learn how to use Happier effectively
+- **[GitHub](https://github.com/happier-dev/happier)** - Source, docs, and issue tracker
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** - Development setup including iOS, Android, and macOS desktop variant builds
-- **[Edit docs at github.com/slopus/slopus.github.io](https://github.com/slopus/slopus.github.io)** - Help improve our documentation and guides
 
 ## License
 

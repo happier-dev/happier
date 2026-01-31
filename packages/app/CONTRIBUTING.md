@@ -6,9 +6,9 @@ The Happier app supports three build variants across **iOS, Android, and macOS d
 
 | Variant | Bundle ID | App Name | Use Case |
 |---------|-----------|----------|----------|
-| **Development** | `com.leeroybrun.happier.dev` | Happier (dev) | Local development with hot reload |
-| **Preview** | `com.leeroybrun.happier.preview` | Happier (preview) | Beta testing & OTA updates before production |
-| **Production** | `com.leeroybrun.happier` | Happier | Public App Store release |
+| **Development** | `dev.happier.app.dev` | Happier (dev) | Local development with hot reload |
+| **Preview** | `dev.happier.app.preview` | Happier (preview) | Beta testing & OTA updates before production |
+| **Production** | `dev.happier.app` | Happier | Public App Store release |
 
 **Why Preview?**
 - **Development**: Fast iteration, dev server, instant reload
@@ -289,9 +289,9 @@ The `app.config.js` file reads the `APP_ENV` environment variable:
 ```javascript
 const variant = process.env.APP_ENV || 'development';
 const bundleId = {
-  development: "com.leeroybrun.happier.dev",
-  preview: "com.leeroybrun.happier.preview",
-  production: "com.leeroybrun.happier"
+  development: "dev.happier.app.dev",
+  preview: "dev.happier.app.preview",
+  production: "dev.happier.app"
 }[variant];
 ```
 

@@ -2,8 +2,8 @@
  * Gemini CLI Entry Point
  * 
  * This module provides the main entry point for running the Gemini agent
- * through Happy CLI. It manages the agent lifecycle, session state, and
- * communication with the Happy server and mobile app.
+ * through Happier CLI. It manages the agent lifecycle, session state, and
+ * communication with the Happier server and app.
  */
 
 import { render } from 'ink';
@@ -102,17 +102,17 @@ export async function runGemini(opts: {
   const settings = await readSettings();
   const machineId = settings?.machineId;
   if (!machineId) {
-    console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/slopus/happy-cli/issues`);
-    process.exit(1);
-  }
-  logger.debug(`Using machineId: ${machineId}`);
-  await api.getOrCreateMachine({
-    machineId,
-    metadata: initialMachineMetadata
-  });
+	    console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues`);
+	    process.exit(1);
+	  }
+	  logger.debug(`Using machineId: ${machineId}`);
+	  await api.getOrCreateMachine({
+	    machineId,
+	    metadata: initialMachineMetadata
+	  });
 
   //
-  // Fetch Gemini cloud token (from 'happy connect gemini')
+	  // Fetch Gemini cloud token (from 'happier connect gemini')
   //
   let cloudToken: string | undefined = undefined;
   let currentUserEmail: string | undefined = undefined;
@@ -120,7 +120,7 @@ export async function runGemini(opts: {
     const vendorToken = await api.getVendorToken('gemini');
     if (vendorToken?.oauth?.access_token) {
       cloudToken = vendorToken.oauth.access_token;
-      logger.debug('[Gemini] Using OAuth token from Happy cloud');
+	      logger.debug('[Gemini] Using OAuth token from Happier cloud');
       
       // Extract email from id_token for per-account project matching
       if (vendorToken.oauth.id_token) {
@@ -165,7 +165,7 @@ export async function runGemini(opts: {
   let session: ApiSessionClient;
   let reconnectionHandle: { cancel: () => void } | null = null;
   // Permission handler declared here so it can be updated in onSessionSwap callback
-  // (assigned later after Happy server setup)
+  // (assigned later after Happier server setup)
   let permissionHandler: GeminiPermissionHandler;
 
   // Session swap synchronization to prevent race conditions during message processing
@@ -551,7 +551,7 @@ export async function runGemini(opts: {
   }
 
   //
-  // Start Happy MCP server and create Gemini backend
+  // Start Happier MCP server and create Gemini backend
   //
 
   const happyServer = await startHappyServer(session);
@@ -682,13 +682,13 @@ export async function runGemini(opts: {
             }
           }
           
-          // Check for authentication error and provide helpful message
-          if (errorMessage.includes('Authentication required')) {
-            errorMessage = `Authentication required.\n` +
-              `For Google Workspace accounts, run: happy gemini project set <project-id>\n` +
-              `Or use a different Google account: happy connect gemini\n` +
-              `Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca`;
-          }
+	          // Check for authentication error and provide helpful message
+	          if (errorMessage.includes('Authentication required')) {
+	            errorMessage = `Authentication required.\n` +
+	              `For Google Workspace accounts, run: happier gemini project set <project-id>\n` +
+	              `Or use a different Google account: happier connect gemini\n` +
+	              `Guide: https://goo.gle/gemini-cli-auth-docs#workspace-gca`;
+	          }
           
           messageBuffer.addMessage(`Error: ${errorMessage}`, 'status');
           

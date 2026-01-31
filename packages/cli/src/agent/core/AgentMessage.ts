@@ -3,7 +3,7 @@
  *
  * This module defines the message types that flow between:
  * - Agent backends (Gemini, Codex, Claude, etc.)
- * - Happy CLI
+ * - Happier CLI
  * - Mobile app (via Happy server)
  *
  * These types are backend-agnostic and work with any agent that

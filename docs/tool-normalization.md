@@ -1,6 +1,6 @@
 # Tool Normalization & Rendering (End-to-End)
 
-This document describes the **final, current** tool pipeline in Happy:
+This document describes the **final, current** tool pipeline in Happier:
 
 - how tool calls/results are captured from providers
 - how the CLI normalizes tool payloads into canonical shapes (V2)
@@ -146,7 +146,7 @@ The drift regression suite is fixture-driven:
 - `packages/cli/src/agent/tools/normalization/index.test.ts`
 - `packages/cli/src/agent/tools/trace/toolTraceFixturesAllowlist.test.ts`
 
-Run via Happy Stacks:
+Run via `happys`:
 
 ```bash
 happys stack test <stack> happy-cli

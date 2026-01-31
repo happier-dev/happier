@@ -6,10 +6,10 @@
       "summary": "This release rebrands the project to Happier and updates the app/CLI identity end-to-end so installs, links, and defaults match the new name.",
       "changes": [
         "Updated the app name to Happier across the UI and metadata.",
-        "Updated the bundle identifiers and URL scheme to `com.leeroybrun.happier` / `happier://`.",
+        "Updated the bundle identifiers and URL scheme to `dev.happier.app` / `happier://`.",
         "Updated the default app/web URLs to `app.happier.dev` and `api.happier.dev`."
       ],
-      "rawMarkdown": "## Version 7 - 2026-01-31\n\n\nThis release rebrands the project to Happier and updates the app/CLI identity end-to-end so installs, links, and defaults match the new name.\n\n- Updated the app name to Happier across the UI and metadata.\n- Updated the bundle identifiers and URL scheme to `com.leeroybrun.happier` / `happier://`.\n- Updated the default app/web URLs to `app.happier.dev` and `api.happier.dev`."
+      "rawMarkdown": "## Version 7 - 2026-01-31\n\n\nThis release rebrands the project to Happier and updates the app/CLI identity end-to-end so installs, links, and defaults match the new name.\n\n- Updated the app name to Happier across the UI and metadata.\n- Updated the bundle identifiers and URL scheme to `dev.happier.app` / `happier://`.\n- Updated the default app/web URLs to `app.happier.dev` and `api.happier.dev`."
     },
     {
       "version": 6,
@@ -27,11 +27,11 @@
       "summary": "This release expands AI agent support and refines the voice experience, while improving markdown rendering for a better chat experience.",
       "changes": [
         "We are working on adding Gemini support using ACP and hopefully fixing codex stability issues using the same approach soon! Stay tuned.",
-        "Removed model configurations from agents. We were not able to keep up with the models so for now we are removing the configuration from the mobile app. You can still configure it through your CLIs, happy will simply use defaults.",
+        "Removed model configurations from agents. We were not able to keep up with the models so for now we are removing the configuration from the mobile app. You can still configure it through your CLIs, happier will simply use defaults.",
         "Elevenlabs ... is epxensive. Voice conversations will soon require a subscription after 3 free trials - we'll soon allow connecting your own ElevenLabs agent if you want to manage your own spendings.",
         "Improved markdown table rendering in chat - no more ASCII pipes `|--|`, actual formatted tables (layout still needs work, but much better!)"
       ],
-      "rawMarkdown": "## Version 5 - 2025-12-22\n\n\nThis release expands AI agent support and refines the voice experience, while improving markdown rendering for a better chat experience.\n\n- We are working on adding Gemini support using ACP and hopefully fixing codex stability issues using the same approach soon! Stay tuned.\n- Removed model configurations from agents. We were not able to keep up with the models so for now we are removing the configuration from the mobile app. You can still configure it through your CLIs, happy will simply use defaults.\n- Elevenlabs ... is epxensive. Voice conversations will soon require a subscription after 3 free trials - we'll soon allow connecting your own ElevenLabs agent if you want to manage your own spendings.\n- Improved markdown table rendering in chat - no more ASCII pipes `|--|`, actual formatted tables (layout still needs work, but much better!)"
+      "rawMarkdown": "## Version 5 - 2025-12-22\n\n\nThis release expands AI agent support and refines the voice experience, while improving markdown rendering for a better chat experience.\n\n- We are working on adding Gemini support using ACP and hopefully fixing codex stability issues using the same approach soon! Stay tuned.\n- Removed model configurations from agents. We were not able to keep up with the models so for now we are removing the configuration from the mobile app. You can still configure it through your CLIs, happier will simply use defaults.\n- Elevenlabs ... is epxensive. Voice conversations will soon require a subscription after 3 free trials - we'll soon allow connecting your own ElevenLabs agent if you want to manage your own spendings.\n- Improved markdown table rendering in chat - no more ASCII pipes `|--|`, actual formatted tables (layout still needs work, but much better!)"
     },
     {
       "version": 4,
@@ -48,7 +48,7 @@
     {
       "version": 3,
       "date": "2025-08-29",
-      "summary": "This update introduces seamless GitHub integration, bringing your developer identity directly into Happy while maintaining our commitment to privacy and security.",
+      "summary": "This update introduces seamless GitHub integration, bringing your developer identity directly into Happier while maintaining our commitment to privacy and security.",
       "changes": [
         "Added GitHub account connection through secure OAuth authentication flow",
         "Integrated profile synchronization displaying your GitHub avatar, name, and bio",
@@ -57,7 +57,7 @@
         "Added one-tap GitHub disconnect functionality with confirmation protection",
         "Improved account management with clear connection status indicators"
       ],
-      "rawMarkdown": "## Version 3 - 2025-08-29\n\n\nThis update introduces seamless GitHub integration, bringing your developer identity directly into Happy while maintaining our commitment to privacy and security.\n\n- Added GitHub account connection through secure OAuth authentication flow\n- Integrated profile synchronization displaying your GitHub avatar, name, and bio\n- Implemented encrypted token storage on our backend for additional security protection\n- Enhanced settings interface with personalized profile display when connected\n- Added one-tap GitHub disconnect functionality with confirmation protection\n- Improved account management with clear connection status indicators"
+      "rawMarkdown": "## Version 3 - 2025-08-29\n\n\nThis update introduces seamless GitHub integration, bringing your developer identity directly into Happier while maintaining our commitment to privacy and security.\n\n- Added GitHub account connection through secure OAuth authentication flow\n- Integrated profile synchronization displaying your GitHub avatar, name, and bio\n- Implemented encrypted token storage on our backend for additional security protection\n- Enhanced settings interface with personalized profile display when connected\n- Added one-tap GitHub disconnect functionality with confirmation protection\n- Improved account management with clear connection status indicators"
     },
     {
       "version": 2,
@@ -75,7 +75,7 @@
     {
       "version": 1,
       "date": "2025-05-12",
-      "summary": "Welcome to Happy - your secure, encrypted mobile companion for Claude Code. This inaugural release establishes the foundation for private, powerful AI interactions on the go.",
+      "summary": "Welcome to Happier - your secure, encrypted mobile companion for Claude Code. This inaugural release establishes the foundation for private, powerful AI interactions on the go.",
       "changes": [
         "Implemented end-to-end encrypted session management ensuring complete privacy",
         "Integrated intelligent voice assistant with natural conversation capabilities",
@@ -83,7 +83,7 @@
         "Built seamless real-time synchronization across all your devices",
         "Established native support for iOS, Android, and responsive web interfaces"
       ],
-      "rawMarkdown": "## Version 1 - 2025-05-12\n\n\nWelcome to Happy - your secure, encrypted mobile companion for Claude Code. This inaugural release establishes the foundation for private, powerful AI interactions on the go.\n\n- Implemented end-to-end encrypted session management ensuring complete privacy\n- Integrated intelligent voice assistant with natural conversation capabilities\n- Added experimental file manager with syntax highlighting and tree navigation\n- Built seamless real-time synchronization across all your devices\n- Established native support for iOS, Android, and responsive web interfaces"
+      "rawMarkdown": "## Version 1 - 2025-05-12\n\n\nWelcome to Happier - your secure, encrypted mobile companion for Claude Code. This inaugural release establishes the foundation for private, powerful AI interactions on the go.\n\n- Implemented end-to-end encrypted session management ensuring complete privacy\n- Integrated intelligent voice assistant with natural conversation capabilities\n- Added experimental file manager with syntax highlighting and tree navigation\n- Built seamless real-time synchronization across all your devices\n- Established native support for iOS, Android, and responsive web interfaces"
     }
   ],
   "latestVersion": 7

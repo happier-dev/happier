@@ -69,11 +69,11 @@ export default function TypographyScreen() {
                 <View style={styles.section}>
                     <Text style={styles.sectionTitle}>Bricolage Grotesque (Logo)</Text>
                     
-                    <TextSample 
-                        title="Bold (700) - Logo Only" 
-                        style={{ fontSize: 28, ...Typography.logo() }}
-                        text="Happy"
-                    />
+	                    <TextSample 
+	                        title="Bold (700) - Logo Only" 
+	                        style={{ fontSize: 28, ...Typography.logo() }}
+	                        text="Happier"
+	                    />
                     <Text style={styles.note}>
                         Note: This font should only be used for the app logo and branding
                     </Text>

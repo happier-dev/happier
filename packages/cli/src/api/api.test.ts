@@ -96,7 +96,7 @@ describe('Api server error handling', () => {
 
             expect(result).toBeNull();
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happy server unreachable')
+                expect.stringContaining('⚠️  Happier server unreachable')
             );
 
             consoleSpy.mockRestore();
@@ -117,7 +117,7 @@ describe('Api server error handling', () => {
 
             expect(result).toBeNull();
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happy server unreachable')
+                expect.stringContaining('⚠️  Happier server unreachable')
             );
 
             consoleSpy.mockRestore();
@@ -138,7 +138,7 @@ describe('Api server error handling', () => {
 
             expect(result).toBeNull();
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happy server unreachable')
+                expect.stringContaining('⚠️  Happier server unreachable')
             );
 
             consoleSpy.mockRestore();
@@ -163,7 +163,7 @@ describe('Api server error handling', () => {
             expect(result).toBeNull();
             // New unified format via connectionState.fail()
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happy server unreachable')
+                expect.stringContaining('⚠️  Happier server unreachable')
             );
             expect(consoleSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Session creation failed: 404')
@@ -191,7 +191,7 @@ describe('Api server error handling', () => {
 
                 expect(result).toBeNull();
                 expect(consoleSpy).toHaveBeenCalledWith(
-                    expect.stringContaining('⚠️  Happy server unreachable')
+                    expect.stringContaining('⚠️  Happier server unreachable')
                 );
             } finally {
                 consoleSpy.mockRestore();
@@ -217,7 +217,7 @@ describe('Api server error handling', () => {
 
                 expect(result).toBeNull();
                 expect(consoleSpy).toHaveBeenCalledWith(
-                    expect.stringContaining('⚠️  Happy server unreachable')
+                    expect.stringContaining('⚠️  Happier server unreachable')
                 );
             } finally {
                 consoleSpy.mockRestore();
@@ -239,7 +239,7 @@ describe('Api server error handling', () => {
 
                 // Should not show the offline mode message
                 expect(consoleSpy).not.toHaveBeenCalledWith(
-                    expect.stringContaining('⚠️  Happy server unreachable')
+                    expect.stringContaining('⚠️  Happier server unreachable')
                 );
             } finally {
                 consoleSpy.mockRestore();
@@ -278,7 +278,7 @@ describe('Api server error handling', () => {
             });
 
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happy server unreachable')
+                expect.stringContaining('⚠️  Happier server unreachable')
             );
 
             consoleSpy.mockRestore();
@@ -311,7 +311,7 @@ describe('Api server error handling', () => {
 
             // New unified format via connectionState.fail()
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happy server unreachable')
+                expect.stringContaining('⚠️  Happier server unreachable')
             );
             expect(consoleSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Machine registration failed: 404')

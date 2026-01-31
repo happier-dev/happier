@@ -68,7 +68,7 @@ if (!fs.existsSync(config.homeDir)) {
 }
 
 // Visual feedback
-console.log(`${config.color}${config.label}\x1b[0m Happy CLI (data: ${config.homeDir})`);
+console.log(`${config.color}${config.label}\x1b[0m Happier CLI (data: ${config.homeDir})`);
 
 // Set environment and execute command
 const env = {
@@ -78,7 +78,7 @@ const env = {
   HAPPY_VARIANT: variant, // For internal validation
 };
 
-const binPath = path.join(__dirname, '..', 'bin', 'happy.mjs');
+const binPath = path.join(__dirname, '..', 'bin', 'happier.mjs');
 const proc = spawn('node', [binPath, command, ...args], {
   env,
   stdio: 'inherit',

@@ -60,12 +60,12 @@ export type AgentCatalogEntry = Readonly<{
    */
   getCapabilities?: () => Promise<ReadonlyArray<Capability>>;
   getCliDetect?: () => Promise<CliDetectSpec>;
-  /**
-   * Optional cloud connect target for this agent.
-   *
-   * When present, `happy connect <agent>` will be available.
-   */
-  getCloudConnectTarget?: () => Promise<CloudConnectTarget>;
+	  /**
+	   * Optional cloud connect target for this agent.
+	   *
+	   * When present, `happier connect <agent>` will be available.
+	   */
+	  getCloudConnectTarget?: () => Promise<CloudConnectTarget>;
   /**
    * Optional daemon spawn hooks for this agent.
    *

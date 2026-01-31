@@ -1,9 +1,9 @@
-# Repository Conventions (Happy monorepo)
+# Repository Conventions (Happier monorepo)
 
 This file provides cross-cutting guidance for Claude Code (claude.ai/code) when working in this monorepo.
 
 Package-specific guidance lives in:
-- `cli/CLAUDE.md` (Happy CLI)
+- `cli/CLAUDE.md` (Happier CLI)
 - `expo-app/CLAUDE.md` (Expo app)
 - `server/CLAUDE.md` (Server)
 

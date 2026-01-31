@@ -1,6 +1,6 @@
-# Happy Docs
+# Happier Docs
 
-This folder documents how Happy works internally, with a focus on protocol, backend architecture, deployment, and the CLI tool. Start here.
+This folder documents how Happier works internally, with a focus on protocol, backend architecture, deployment, and the CLI tool. Start here.
 
 ## Index
 - protocol.md: Wire protocol (WebSocket), payload formats, sequencing, and concurrency rules.

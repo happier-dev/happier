@@ -1,10 +1,10 @@
-# Happy Server
+# Happier Server
 
 Minimal backend for open-source end-to-end encrypted Claude Code clients.
 
-## What is Happy?
+## What is Happier?
 
-Happy Server is the synchronization backbone for secure Claude Code clients. It enables multiple devices to share encrypted conversations while maintaining complete privacy - the server never sees your messages, only encrypted blobs it cannot read.
+Happier Server is the synchronization backbone for secure Claude Code clients. It enables multiple devices to share encrypted conversations while maintaining complete privacy - the server never sees your messages, only encrypted blobs it cannot read.
 
 ## Features
 
@@ -21,11 +21,11 @@ Happy Server is the synchronization backbone for secure Claude Code clients. It 
 
 ## How It Works
 
-Your Claude Code clients generate encryption keys locally and use Happy Server as a secure relay. Messages are end-to-end encrypted before leaving your device. The server's job is simple: store encrypted blobs and sync them between your devices in real-time.
+Your Claude Code clients generate encryption keys locally and use Happier Server as a secure relay. Messages are end-to-end encrypted before leaving your device. The server's job is simple: store encrypted blobs and sync them between your devices in real-time.
 
 ### Session Sharing
 
-Happy Server supports secure collaboration through two sharing methods:
+Happier Server supports secure collaboration through two sharing methods:
 
 **Direct Sharing**: Share sessions with specific users by username, with three access levels:
 - **View**: Read-only access to messages
@@ -41,13 +41,13 @@ All sharing maintains end-to-end encryption - encrypted data keys are distribute
 
 ## Hosting
 
-**You don't need to self-host!** Our free cloud Happy Server at `happy-api.slopus.com` is just as secure as running your own. Since all data is end-to-end encrypted before it reaches our servers, we literally cannot read your messages even if we wanted to. The encryption happens on your device, and only you have the keys.
+**You don't need to self-host!** Our hosted Happier Server at `api.happier.dev` is just as secure as running your own. Since all data is end-to-end encrypted before it reaches our servers, we literally cannot read your messages even if we wanted to. The encryption happens on your device, and only you have the keys.
 
-That said, Happy Server is open source and self-hostable if you prefer running your own infrastructure. The security model is identical whether you use our servers or your own.
+That said, Happier Server is open source and self-hostable if you prefer running your own infrastructure. The security model is identical whether you use our servers or your own.
 
 ## Server flavors
 
-Happy Server supports two flavors that share the same API + internal logic. The only difference is which infrastructure backends are used for storage.
+Happier Server supports two flavors that share the same API + internal logic. The only difference is which infrastructure backends are used for storage.
 
 - **full** (default, recommended for production): Postgres + Redis + S3/Minio-compatible public file storage.
 - **light** (recommended for self-hosting/testing): SQLite + local public file storage served by the server under `GET /files/*`.

@@ -62,13 +62,13 @@ Your code. Your privacy. Your Claude Code companion.
 ## URLs
 
 ### Privacy Policy
-https://github.com/slopus/happy-coder/blob/main/PRIVACY.md
+https://github.com/happier-dev/happier/blob/main/packages/app/PRIVACY.md
 
 ### Support / Contact
-https://github.com/slopus/happy-coder/issues
+https://github.com/happier-dev/happier/issues
 
 ### Website / Marketing
-https://github.com/slopus/happy-coder
+https://app.happier.dev
 
 ## Additional Google Play Requirements
 

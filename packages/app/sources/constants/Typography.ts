@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 
 /**
- * Typography system for Happy Coder app
+ * Typography system for Happier app
  * 
  * Default typography: Inter
  * Monospace typography: IBM Plex Mono  

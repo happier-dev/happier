@@ -147,7 +147,7 @@ export async function runCodex(opts: {
     const settings = await readSettings();
     let machineId = settings?.machineId;
     if (!machineId) {
-        console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/slopus/happy-cli/issues`);
+        console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues`);
         process.exit(1);
     }
     logger.debug(`Using machineId: ${machineId}`);
@@ -409,7 +409,7 @@ export async function runCodex(opts: {
             // Stop caffeinate
             stopCaffeinate();
 
-            // Stop Happy MCP server
+            // Stop Happier MCP server
             happyServer?.stop();
 
             logger.debug('[Codex] Session termination complete, exiting');
@@ -462,7 +462,7 @@ export async function runCodex(opts: {
     // Start Context 
     //
 
-    // Start Happy MCP server (HTTP) and prepare STDIO bridge config for Codex
+    // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
     happyServer = await startHappyServer(session);
     const directory = process.cwd();
     const bridgeScript = join(projectPath(), 'bin', 'happy-mcp.mjs');
@@ -507,12 +507,12 @@ export async function runCodex(opts: {
             return { mode: 'mcp-server' as const, command: found };
         }
 
-        throw new Error(
-            `Codex resume MCP server is not installed.\n` +
-            `Install it from the Happy app (Machine details → Codex resume), or set HAPPY_CODEX_RESUME_MCP_SERVER_BIN.\n` +
-            `Expected: ${defaultNew}`,
-        );
-    })();
+	        throw new Error(
+	            `Codex resume MCP server is not installed.\n` +
+	            `Install it from the Happier app (Machine details → Codex resume), or set HAPPY_CODEX_RESUME_MCP_SERVER_BIN.\n` +
+	            `Expected: ${defaultNew}`,
+	        );
+	    })();
 
     client = useCodexAcp ? null : new CodexMcpClient({ mode: codexMcpServer.mode, command: codexMcpServer.command });
 
@@ -1051,7 +1051,7 @@ export async function runCodex(opts: {
             await codexAcpRuntime?.reset();
             codexAcpRuntime = null;
         }
-        // Stop Happy MCP server
+        // Stop Happier MCP server
         logger.debug('[codex]: happyServer.stop');
         happyServer?.stop();
 
