@@ -1,0 +1,93 @@
+name: Promote Server (deploy branch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (deploy branch)"
+        required: true
+        type: choice
+        options:
+          - preview
+          - production
+      bump:
+        description: "Version bump on main (server)"
+        required: true
+        type: choice
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      run_tests:
+        description: "Run packages/server tests before promoting"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-server-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Bump server version (main)
+        id: bump_server
+        run: |
+          set -euo pipefail
+          out="$(node scripts/release/bump-version.mjs --component server --bump "${{ inputs.bump }}")"
+          if [ "$out" = "SKIP" ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+          echo "version=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Run server tests
+        if: inputs.run_tests
+        run: yarn --cwd packages/server test
+
+      - name: Commit version bump (main)
+        if: steps.bump_server.outputs.skipped != 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/server/package.json
+          git commit -m "chore(release): bump server to v${{ steps.bump_server.outputs.version }}"
+
+      - name: Push main
+        if: steps.bump_server.outputs.skipped != 'true'
+        run: git push origin HEAD:main
+
+      - name: Promote main to deploy branch
+        env:
+          DEPLOY_REF: deploy/${{ inputs.environment }}/server
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote --heads origin "$DEPLOY_REF" | awk '{print $1}')"
+          if [ -n "$remote_sha" ]; then
+            git push origin HEAD:"$DEPLOY_REF" --force-with-lease="refs/heads/$DEPLOY_REF:$remote_sha"
+          else
+            git push origin HEAD:"$DEPLOY_REF"
+          fi
+

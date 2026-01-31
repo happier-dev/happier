@@ -1,0 +1,161 @@
+name: Promote UI (deploy branch + optional Expo)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (deploy branch)"
+        required: true
+        type: choice
+        options:
+          - preview
+          - production
+      bump:
+        description: "Version bump on main (app)"
+        required: true
+        type: choice
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      deploy_web:
+        description: "Promote deploy/<env>/ui (Dokploy web deploy on push)"
+        required: true
+        default: true
+        type: boolean
+      expo_action:
+        description: "Expo action (requires EXPO_TOKEN secret)"
+        required: true
+        type: choice
+        options:
+          - none
+          - ota
+          - native
+          - native_submit
+      expo_platform:
+        description: "Native build platform"
+        required: true
+        type: choice
+        options:
+          - ios
+          - android
+          - all
+      run_tests:
+        description: "Run packages/app tests before promoting"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: promote-ui-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Bump app version (main)
+        id: bump_app
+        run: |
+          set -euo pipefail
+          out="$(node scripts/release/bump-version.mjs --component app --bump "${{ inputs.bump }}")"
+          if [ "$out" = "SKIP" ]; then
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "skipped=false" >> "$GITHUB_OUTPUT"
+          echo "version=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Run app tests
+        if: inputs.run_tests
+        run: yarn --cwd packages/app test
+
+      - name: Commit version bump (main)
+        if: steps.bump_app.outputs.skipped != 'true'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add packages/app/package.json packages/app/app.config.js
+          if [ -d packages/app/src-tauri ]; then
+            git add packages/app/src-tauri || true
+          fi
+          git commit -m "chore(release): bump app to v${{ steps.bump_app.outputs.version }}"
+
+      - name: Expo OTA update
+        if: inputs.expo_action == 'ota'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APP_ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is required for Expo actions." >&2
+            exit 1
+          fi
+          if [ "${{ inputs.environment }}" = "production" ]; then
+            yarn --cwd packages/app ota:production
+          else
+            yarn --cwd packages/app ota
+          fi
+
+      - name: Expo native build
+        if: inputs.expo_action == 'native' || inputs.expo_action == 'native_submit'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APP_ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is required for Expo actions." >&2
+            exit 1
+          fi
+          npx --yes eas-cli@latest build --platform "${{ inputs.expo_platform }}" --profile "${{ inputs.environment }}" --non-interactive
+
+      - name: Expo submit
+        if: inputs.expo_action == 'native_submit'
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is required for Expo actions." >&2
+            exit 1
+          fi
+          npx --yes eas-cli@latest submit --platform "${{ inputs.expo_platform }}" --latest --non-interactive
+
+      - name: Push main
+        if: steps.bump_app.outputs.skipped != 'true'
+        run: git push origin HEAD:main
+
+      - name: Promote main to deploy branch (web)
+        if: inputs.deploy_web
+        env:
+          DEPLOY_REF: deploy/${{ inputs.environment }}/ui
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote --heads origin "$DEPLOY_REF" | awk '{print $1}')"
+          if [ -n "$remote_sha" ]; then
+            git push origin HEAD:"$DEPLOY_REF" --force-with-lease="refs/heads/$DEPLOY_REF:$remote_sha"
+          else
+            git push origin HEAD:"$DEPLOY_REF"
+          fi
+
