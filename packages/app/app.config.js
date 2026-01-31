@@ -3,6 +3,8 @@ const variant = process.env.APP_ENV || 'development';
 // Allow opt-in overrides for local dev tooling without changing upstream defaults.
 const nameOverride = (process.env.EXPO_APP_NAME || '').trim();
 const bundleIdOverride = (process.env.EXPO_APP_BUNDLE_ID || '').trim();
+const ownerOverride = (process.env.EXPO_APP_OWNER || '').trim();
+const slugOverride = (process.env.EXPO_APP_SLUG || '').trim();
 
 const namesByVariant = {
     development: "Happier (dev)",
@@ -10,15 +12,31 @@ const namesByVariant = {
     production: "Happier"
 };
 const bundleIdsByVariant = {
-    development: "com.leeroybrun.happier.dev",
-    preview: "com.leeroybrun.happier.preview",
-    production: "com.leeroybrun.happier"
+    development: "dev.happier.app.dev",
+    preview: "dev.happier.app.preview",
+    production: "dev.happier.app"
 };
 
 // If APP_ENV is unknown, fall back to development-safe defaults to avoid generating
 // an invalid Expo config with undefined name/bundle id.
 const name = nameOverride || namesByVariant[variant] || namesByVariant.development;
 const bundleId = bundleIdOverride || bundleIdsByVariant[variant] || bundleIdsByVariant.development;
+const owner = ownerOverride || "happier-dev";
+const slug = slugOverride || "happier";
+
+// IMPORTANT:
+// Expo Updates uses a project-scoped UUID (EAS project id). Since you're migrating to a new Expo org,
+// you should create/link a new EAS project and set this value (via env or by hard-coding it here).
+const easProjectId =
+    (process.env.EXPO_PUBLIC_EAS_PROJECT_ID || process.env.EAS_PROJECT_ID || '').trim();
+const updatesConfig = easProjectId
+    ? {
+        url: `https://u.expo.dev/${easProjectId}`,
+        requestHeaders: {
+            "expo-channel-name": "production"
+        }
+    }
+    : undefined;
 // NOTE:
 // The URL scheme is used for deep linking *and* by the Expo development client launcher flow.
 // Keep the default stable for upstream users, but allow opt-in overrides for local dev variants
@@ -28,7 +46,7 @@ const scheme = (process.env.EXPO_APP_SCHEME || '').trim() || "happier";
 export default {
     expo: {
         name,
-        slug: "happier",
+        slug,
         version: "1.6.2",
         runtimeVersion: "18",
         orientation: "default",
@@ -164,12 +182,7 @@ export default {
                 }
             ]
         ],
-        updates: {
-            url: "https://u.expo.dev/4558dd3d-cd5a-47cd-bad9-e591a241cc06",
-            requestHeaders: {
-                "expo-channel-name": "production"
-            }
-        },
+        ...(updatesConfig ? { updates: updatesConfig } : {}),
         experiments: {
             typedRoutes: true
         },
@@ -177,9 +190,7 @@ export default {
             router: {
                 root: "./sources/app"
             },
-            eas: {
-                projectId: "4558dd3d-cd5a-47cd-bad9-e591a241cc06"
-            },
+            ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
             app: {
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
@@ -187,6 +198,6 @@ export default {
                 revenueCatStripeKey: process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE
             }
         },
-        owner: "bulkacorp"
+        owner
     }
 };

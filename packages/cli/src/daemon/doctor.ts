@@ -82,7 +82,7 @@ export async function findHappyProcessByPid(pid: number): Promise<HappyProcessIn
 }
 
 /**
- * Find all runaway Happy CLI processes that should be killed
+ * Find all runaway Happier CLI processes that should be killed
  */
 export async function findRunawayHappyProcesses(): Promise<Array<{ pid: number, command: string }>> {
   const allProcesses = await findAllHappyProcesses();
@@ -103,7 +103,7 @@ export async function findRunawayHappyProcesses(): Promise<Array<{ pid: number, 
 }
 
 /**
- * Kill all runaway Happy CLI processes
+ * Kill all runaway Happier CLI processes
  */
 export async function killRunawayHappyProcesses(): Promise<{ killed: number, errors: Array<{ pid: number, error: string }> }> {
   const runawayProcesses = await findRunawayHappyProcesses();

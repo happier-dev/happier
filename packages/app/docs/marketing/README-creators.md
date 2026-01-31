@@ -66,8 +66,8 @@ Happier is an open-source mobile app that lets developers control AI coding agen
 
 ## Resources
 
-- GitHub: https://github.com/slopus/happy
-- Website: https://happy.engineering
+- GitHub: https://github.com/happier-dev/happier
+- Website: https://app.happier.dev
 - iOS App: https://apps.apple.com/us/app/happier-claude-codex-opencode/id6758537388
-- Android App: https://play.google.com/store/apps/details?id=com.leeroybrun.happier
+- Android App: https://play.google.com/store/apps/details?id=dev.happier.app
 - Web App: https://app.happier.dev/

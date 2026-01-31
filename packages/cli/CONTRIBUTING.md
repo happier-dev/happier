@@ -10,7 +10,7 @@
 ## Getting Started
 
 ```bash
-git clone https://github.com/slopus/happy-cli.git
+git clone https://github.com/happier-dev/happier.git
 cd happy-cli
 yarn install
 yarn build
@@ -210,7 +210,7 @@ sudo yarn link:dev
 1. **Use stable for production work** - Your tested, reliable version
 2. **Use dev for testing changes** - Test new features without breaking your workflow
 3. **Run both simultaneously** - Compare behavior side-by-side
-4. **Different accounts** - Use different Happy accounts for dev/stable if needed
+4. **Different accounts** - Use different Happier accounts for dev/stable if needed
 5. **Check logs** - Logs are separated: `~/.happy/logs/` vs `~/.happy-dev/logs/`
 
 ## Example Workflow
@@ -254,7 +254,7 @@ Cross-platform via Node.js - works identically on Windows, macOS, and Linux!
 
 ## Testing Profile Sync Between GUI and CLI
 
-Profile synchronization ensures AI backend configurations created in the Happy mobile/web GUI work seamlessly with the CLI daemon.
+Profile synchronization ensures AI backend configurations created in the Happier mobile/web GUI work seamlessly with the CLI daemon.
 
 ### Profile Schema Validation
 
@@ -268,7 +268,7 @@ The profile schema is defined in both repositories:
 
 1. **Create profile in GUI:**
    ```
-   - Open Happy mobile/web app
+   - Open Happier mobile/web app
    - Settings → AI Backend Profiles
    - Create new profile with custom environment variables
    - Note the profile ID

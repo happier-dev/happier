@@ -3,7 +3,7 @@
  * 
  * This module defines the core abstraction for different agent backends
  * (Claude, Codex, Gemini, OpenCode, etc.) that can be controlled through
- * the Happy CLI and mobile app.
+ * the Happier CLI and app.
  * 
  * The AgentBackend interface provides a unified way to:
  * - Start and manage agent sessions
@@ -101,7 +101,7 @@ export type AgentMessageHandler = (msg: AgentMessage) => void;
  * Universal interface for agent backends.
  * 
  * All agent implementations (Claude, Codex, Gemini, etc.) should implement
- * this interface to be usable through the Happy CLI and mobile app.
+ * this interface to be usable through the Happier CLI and app.
  */
 export interface AgentBackend {
   /**
@@ -126,7 +126,7 @@ export interface AgentBackend {
    * Load an existing agent session and capture the replayed history.
    *
    * ACP agents that implement session/load may replay the full conversation via session/update.
-   * This hook allows Happy CLI to capture that replay and import it into the Happy transcript.
+   * This hook allows Happier CLI to capture that replay and import it into the Happier transcript.
    */
   loadSessionWithReplayCapture?(sessionId: SessionId): Promise<StartSessionResult & { replay: unknown[] }>;
   

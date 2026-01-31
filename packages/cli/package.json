@@ -5,9 +5,9 @@
   "author": "Kirill Dubovitskiy",
   "license": "MIT",
   "type": "module",
-  "homepage": "https://github.com/slopus/happy-cli",
-  "bugs": "https://github.com/slopus/happy-cli/issues",
-  "repository": "slopus/happy-cli",
+  "homepage": "https://github.com/happier-dev/happier",
+  "bugs": "https://github.com/happier-dev/happier/issues",
+  "repository": "happier-dev/happier",
   "bin": {
     "happier": "./bin/happier.mjs",
     "happier-mcp": "./bin/happier-mcp.mjs",
@@ -57,7 +57,7 @@
     "package.json"
   ],
   "scripts": {
-    "why do we need to build before running tests / dev?": "We need the binary to be built so we run daemon commands which directly run the binary - we don't want them to go out of sync or have custom spawn logic depending how we started happy",
+    "why do we need to build before running tests / dev?": "We need the binary to be built so we run daemon commands which directly run the binary - we don't want them to go out of sync or have custom spawn logic depending how we started happier",
     "typecheck": "tsc --noEmit",
     "build": "shx rm -rf dist && npx tsc --noEmit && pkgroll",
     "test": "$npm_execpath run build && vitest run",

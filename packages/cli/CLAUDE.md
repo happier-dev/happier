@@ -1,12 +1,12 @@
-# Happy CLI Codebase Overview
+# Happier CLI Codebase Overview
 
 ## Project Overview
 
-Happy CLI (`handy-cli`) is a command-line tool that wraps Claude Code to enable remote control and session sharing. It's part of a three-component system:
+Happier CLI (`@happier-dev/cli`) is a command-line tool that wraps Claude Code to enable remote control and session sharing. It's part of a three-component system:
 
-1. **handy-cli** (this project) - CLI wrapper for Claude Code
-2. **handy** - React Native mobile client
-3. **handy-server** - Node.js server with Prisma (hosted at https://api.happy-servers.com/)
+1. **@happier-dev/cli** (this project) - CLI wrapper for Claude Code
+2. **@happier-dev/app** - React Native mobile client
+3. **@happier-dev/server** - Node.js server with Prisma (hosted at https://api.happier.dev)
 
 ## Code Style Preferences
 

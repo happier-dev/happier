@@ -33,7 +33,7 @@ export function stripHappyInternalSettingsFlag(
     i++; // Consume the value (if any), like upstream's behavior.
 
     const displayedValue = typeof settingsValue === 'string' ? settingsValue : '<missing>';
-    warn(chalk.yellow(`⚠️  Warning: --settings is used internally by Happy for session tracking.`));
+    warn(chalk.yellow(`⚠️  Warning: --settings is used internally by Happier for session tracking.`));
     warn(chalk.yellow(`   Your settings file "${displayedValue}" will be ignored.`));
     warn(chalk.yellow(`   To configure Claude, edit ~/.claude/settings.json instead.`));
   }
@@ -43,7 +43,7 @@ export function stripHappyInternalSettingsFlag(
 export async function handleClaudeCliCommand(context: CommandContext): Promise<void> {
   const args = [...context.args];
 
-  // Support `happy claude ...` while keeping `happy ...` as the default Claude flow.
+  // Support `happier claude ...` while keeping `happier ...` as the default Claude flow.
   if (args.length > 0 && args[0] === 'claude') {
     args.shift();
   }

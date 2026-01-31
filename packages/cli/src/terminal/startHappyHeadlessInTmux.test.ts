@@ -59,7 +59,7 @@ describe('startHappyHeadlessInTmux', () => {
     await startHappyHeadlessInTmux([]);
 
     const lines = (console.log as any).mock.calls.map((c: any[]) => String(c[0] ?? ''));
-    expect(lines.some((l: string) => l.includes('Started Happy in tmux'))).toBe(true);
+    expect(lines.some((l: string) => l.includes('Started Happier in tmux'))).toBe(true);
     expect(lines.some((l: string) => l.includes('tmux select-window -t') && l.includes('picked:happy-123-claude'))).toBe(true);
     expect(lines.some((l: string) => l.includes('tmux attach -t'))).toBe(false);
   });

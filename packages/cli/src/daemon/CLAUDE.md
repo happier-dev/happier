@@ -1,12 +1,12 @@
-# Happy CLI Daemon: Control Flow and Lifecycle
+# Happier CLI Daemon: Control Flow and Lifecycle
 
-The daemon is a persistent background process that manages Happy sessions, enables remote control from the mobile app, and handles auto-updates when the CLI version changes.
+The daemon is a persistent background process that manages Happier sessions, enables remote control from the mobile app, and handles auto-updates when the CLI version changes.
 
 ## 1. Daemon Lifecycle
 
 ### Starting the Daemon
 
-Command: `happy daemon start`
+Command: `happier daemon start`
 
 Control Flow:
 1. `src/index.ts` receives `daemon start` command
@@ -40,7 +40,7 @@ Control Flow:
 
 ### Version Mismatch Auto-Update
 
-The daemon detects when `npm upgrade happy-coder` occurs:
+The daemon detects when the installed CLI version changes (e.g. after upgrading `@happier-dev/cli`):
 1. Heartbeat reads package.json from disk
 2. Compares `JSON.parse(package.json).version` with compiled `configuration.currentCliVersion`
 3. If mismatch detected:
@@ -52,7 +52,7 @@ The daemon detects when `npm upgrade happy-coder` occurs:
 
 ### Stopping the Daemon
 
-Command: `happy daemon stop`
+Command: `happier daemon stop`
 
 Control Flow:
 1. `stopDaemon()` in `controlClient.ts` reads daemon.state.json
@@ -74,10 +74,10 @@ Initiated by mobile app via backend RPC:
 2. `ApiMachineClient` invokes `spawnSession()` handler
 3. `spawnSession()`:
    - Creates directory if needed
-   - Spawns detached Happy process with `--happy-starting-mode remote --started-by daemon`
+   - Spawns detached Happier process with `--happy-starting-mode remote --started-by daemon`
    - Adds to `pidToTrackedSession` map
    - Sets up 10-second awaiter for session webhook
-4. New Happy process:
+4. New Happier process:
    - Creates session with backend, receives `happySessionId`
    - Calls `notifyDaemonSessionStarted()` to POST to daemon's `/session-started`
 5. Daemon updates tracking with `happySessionId`, resolves awaiter
@@ -85,10 +85,10 @@ Initiated by mobile app via backend RPC:
 
 ### Terminal-Spawned Sessions
 
-User runs `happy` directly:
+User runs `happier` directly:
 1. CLI auto-starts daemon if configured
-2. Happy process calls `notifyDaemonSessionStarted()` 
-3. Daemon receives webhook, creates `TrackedSession` with `startedBy: 'happy directly...'`
+2. Happier process calls `notifyDaemonSessionStarted()` 
+3. Daemon receives webhook, creates `TrackedSession` with `startedBy: 'happier directly...'`
 4. Session tracked for health monitoring
 
 ### Session Termination
@@ -111,14 +111,14 @@ Local HTTP server (127.0.0.1 only) provides:
 
 ### Doctor Command
 
-`happy doctor` uses `ps aux | grep` to find all Happy processes:
-- Production: matches `happy.mjs`, `happy-coder`, `dist/index.mjs`
+`happier doctor` uses `ps aux | grep` to find all Happier processes:
+- Production: matches `happier.mjs`, `@happier-dev/cli`, `dist/index.mjs` (and legacy `happy.mjs` / `happy-coder`)
 - Development: matches `tsx.*src/index.ts`
 - Categorizes by command args: daemon, daemon-spawned, user-session, doctor
 
 ### Clean Runaway Processes
 
-`happy doctor clean`:
+`happier doctor clean`:
 1. `findRunawayHappyProcesses()` filters for likely orphans
 2. `killRunawayHappyProcesses()`:
    - Sends SIGTERM
@@ -449,7 +449,5 @@ Authorization: Bearer <token>
    - Clients only receive updates for fields that changed
 
 5. **RPC Pattern**: Machine-scoped RPC methods prefixed with machineId (like sessions)
-
-
 
 

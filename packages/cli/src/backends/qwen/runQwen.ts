@@ -1,7 +1,7 @@
 /**
  * Qwen Code CLI Entry Point
  *
- * Runs the Qwen Code agent through Happy CLI using ACP.
+ * Runs the Qwen Code agent through Happier CLI using ACP.
  */
 
 import { render } from 'ink';
@@ -62,7 +62,7 @@ export async function runQwen(opts: {
   const settings = await readSettings();
   const machineId = settings?.machineId;
   if (!machineId) {
-    console.error(`[START] No machine ID found in settings. Please report this issue on https://github.com/slopus/happy-cli/issues`);
+    console.error(`[START] No machine ID found in settings. Please report this issue on https://github.com/happier-dev/happier/issues`);
     process.exit(1);
   }
   await api.getOrCreateMachine({ machineId, metadata: initialMachineMetadata });
@@ -130,7 +130,7 @@ export async function runQwen(opts: {
     sendTerminalFallbackMessageIfNeeded({ session, terminal });
   }
 
-  // Start Happy MCP server for `change_title` tool exposure (bridged to ACP via happy-mcp.mjs).
+  // Start Happier MCP server for `change_title` tool exposure (bridged to ACP via happier-mcp.mjs).
   const happyServer = await startHappyServer(session);
 
   const bridgeCommand = join(projectPath(), 'bin', 'happy-mcp.mjs');
@@ -347,4 +347,3 @@ export async function runQwen(opts: {
     inkInstance?.unmount();
   }
 }
-

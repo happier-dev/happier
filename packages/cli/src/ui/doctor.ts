@@ -202,7 +202,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             console.log(chalk.gray(JSON.stringify(state, null, 2)));
         }
 
-        // All Happy processes
+        // All Happier processes
         const allProcesses = await findAllHappyProcesses();
         if (allProcesses.length > 0) {
             console.log(chalk.bold('\n🔍 All Happier CLI Processes'));
@@ -296,8 +296,8 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
 
         // Support and bug reports
         console.log(chalk.bold('\n🐛 Support & Bug Reports'));
-        console.log(`Report issues: ${chalk.blue('https://github.com/slopus/happy-cli/issues')}`);
-        console.log(`Documentation: ${chalk.blue('https://happy.engineering/')}`);
+        console.log(`Report issues: ${chalk.blue('https://github.com/happier-dev/happier/issues')}`);
+        console.log(`Documentation: ${chalk.blue('https://app.happier.dev')}`);
     }
 
     console.log(chalk.green('\n✅ Doctor diagnosis complete!\n'));

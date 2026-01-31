@@ -61,7 +61,7 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
     if (!status.installed || !status.binPath) {
       return {
         ok: false,
-        errorMessage: 'Codex ACP is enabled, but codex-acp is not installed. Install it from the Happy app (Machine details → Codex ACP) or disable the experiment.',
+        errorMessage: 'Codex ACP is enabled, but codex-acp is not installed. Install it from the Happier app (Machine details → Codex ACP) or disable the experiment.',
       };
     }
 

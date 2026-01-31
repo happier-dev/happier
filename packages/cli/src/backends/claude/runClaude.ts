@@ -96,7 +96,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     const sessionTag = randomUUID();
 
     // Log environment info at startup
-    logger.debugLargeJson('[START] Happy process started', getEnvironmentInfo());
+    logger.debugLargeJson('[START] Happier process started', getEnvironmentInfo());
     logger.debug(`[START] Options: startedBy=${options.startedBy}, startingMode=${options.startingMode}`);
 
     // Validate daemon spawn requirements - fail fast on invalid config
@@ -114,7 +114,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     const settings = await readSettings();
     let machineId = settings?.machineId
     if (!machineId) {
-        console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/slopus/happy-cli/issues`);
+        console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues`);
         process.exit(1);
     }
     logger.debug(`Using machineId: ${machineId}`);
@@ -243,9 +243,9 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         }
     });
 
-    // Start Happy MCP server
+    // Start Happier MCP server
     const happyServer = await startHappyServer(session);
-    logger.debug(`[START] Happy MCP server started at ${happyServer.url}`);
+    logger.debug(`[START] Happier MCP server started at ${happyServer.url}`);
 
     // Variable to track current session instance (updated via onSessionReady callback)
     // Used by hook server to notify Session when Claude changes session ID
@@ -463,7 +463,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             // Stop caffeinate
             stopCaffeinate();
 
-            // Stop Happy MCP server
+            // Stop Happier MCP server
             happyServer.stop();
 
             // Stop Hook server and cleanup settings file
@@ -547,9 +547,9 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     stopCaffeinate();
     logger.debug('Stopped sleep prevention');
 
-    // Stop Happy MCP server
+    // Stop Happier MCP server
     happyServer.stop();
-    logger.debug('Stopped Happy MCP server');
+    logger.debug('Stopped Happier MCP server');
 
     // Stop Hook server and cleanup settings file
     hookServer.stop();

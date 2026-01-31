@@ -1,12 +1,12 @@
 /**
- * Installation script for Happy daemon using macOS LaunchDaemons
+ * Installation script for Happier daemon using macOS LaunchDaemons
  * 
  * NOTE: This installation method is currently NOT USED in favor of auto-starting 
- * the daemon when the user runs the happy command. 
+ * the daemon when the user runs the happier command.
  * 
  * Why we're not using this approach:
  * 1. Installing a LaunchDaemon requires sudo permissions, which users might not be comfortable with
- * 2. We assume users will run happy frequently (every time they open their laptop)
+ * 2. We assume users will run happier frequently (every time they open their laptop)
  * 3. The auto-start approach provides the same functionality without requiring elevated permissions
  * 
  * This code is kept for potential future use if we decide to offer system-level installation as an option.
@@ -18,7 +18,7 @@ import { logger } from '@/ui/logger';
 import { trimIdent } from '@/utils/trimIdent';
 import os from 'os';
 
-const PLIST_LABEL = 'com.happy-cli.daemon';
+const PLIST_LABEL = 'com.happier-cli.daemon';
 const PLIST_FILE = `/Library/LaunchDaemons/${PLIST_LABEL}.plist`;
 
 // NOTE: Local installation like --local does not make too much sense I feel like
@@ -31,7 +31,7 @@ export async function install(): Promise<void> {
             execSync(`launchctl unload ${PLIST_FILE}`, { stdio: 'inherit' });
         }
 
-        // Get the path to the happy CLI executable
+        // Get the path to the happier CLI executable
         const happyPath = process.argv[0]; // Node.js executable
         const scriptPath = process.argv[1]; // Script path
 

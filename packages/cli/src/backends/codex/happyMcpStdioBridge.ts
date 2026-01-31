@@ -1,5 +1,5 @@
 /**
- * Happy MCP STDIO Bridge
+ * Happier MCP STDIO Bridge
  *
  * Minimal STDIO MCP server exposing a single tool `change_title`.
  * On invocation it forwards the tool call to an existing Happy HTTP MCP server
@@ -59,7 +59,7 @@ async function main() {
 
   // Create STDIO MCP server
   const server = new McpServer({
-    name: 'Happy MCP Bridge',
+    name: 'Happier MCP Bridge',
     version: '1.0.0',
   });
 
@@ -103,4 +103,3 @@ main().catch((err) => {
     process.exit(1);
   }
 });
-

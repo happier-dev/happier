@@ -76,12 +76,12 @@ export async function startDaemon(): Promise<void> {
 
   // If this daemon is started detached (no TTY) and credentials are missing, we cannot safely
   // run the interactive auth selector UI. In that case, fail fast and let the parent/orchestrator
-  // run `happy auth login` in an interactive terminal.
+  // run `happier auth login` in an interactive terminal.
   if (!isInteractive) {
     const credentials = await readCredentials();
     if (!credentials) {
       logger.debug('[AUTH] No credentials found');
-      logger.debug('[DAEMON RUN] Non-interactive mode: refusing to start auth UI. Run: happy auth login');
+      logger.debug('[DAEMON RUN] Non-interactive mode: refusing to start auth UI. Run: happier auth login');
       process.exit(1);
     }
   }
@@ -661,7 +661,7 @@ export async function startDaemon(): Promise<void> {
 	            return {
 	              type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_NO_PID,
-	              errorMessage: 'Failed to spawn Happy process - no PID returned'
+	              errorMessage: 'Failed to spawn Happier process - no PID returned'
 	            };
 	          }
 

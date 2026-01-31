@@ -37,7 +37,7 @@ export type AgentCore = Readonly<{
     /**
      * Optional cloud-connect config for this agent.
      *
-     * When present, the CLI/app may offer a `happy connect <agentId>` flow.
+     * When present, the CLI/app may offer a `happier connect <agentId>` flow.
      */
     cloudConnect?: Readonly<{ vendorKey: CloudVendorKey; status: CloudConnectTargetStatus }> | null;
     resume: Readonly<{

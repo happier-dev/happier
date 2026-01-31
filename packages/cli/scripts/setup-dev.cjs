@@ -26,7 +26,7 @@ console.log('🔧 Setting up happy-cli development environment...\n');
 });
 
 // Create .envrc for direnv users (optional)
-const envrcContent = `# Happy CLI environment (for direnv users)
+const envrcContent = `# Happier CLI environment (for direnv users)
 # Automatically sets HAPPY_HOME_DIR based on directory
 #
 # To use: cd to happy-cli-dev directory, run: direnv allow

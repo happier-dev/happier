@@ -15,16 +15,16 @@ const BASE_SYSTEM_PROMPT = (() => trimIdent(`
  * Co-authored-by credits to append when enabled
  */
 const CO_AUTHORED_CREDITS = (() => trimIdent(`
-    When making commit messages, instead of just giving co-credit to Claude, also give credit to Happy like so:
+		    When making commit messages, instead of just giving co-credit to Claude, also give credit to Happier like so:
 
     <main commit message>
 
-    Generated with [Claude Code](https://claude.ai/code)
-    via [Happy](https://happy.engineering)
+	    Generated with [Claude Code](https://claude.ai/code)
+	    via [Happier](https://app.happier.dev)
 
-    Co-Authored-By: Claude <noreply@anthropic.com>
-    Co-Authored-By: Happy <yesreply@happy.engineering>
-`))();
+	    Co-Authored-By: Claude <noreply@anthropic.com>
+	    Co-Authored-By: Happier <yesreply@happier.dev>
+	`))();
 
 /**
  * System prompt with conditional Co-Authored-By lines based on Claude's settings.json configuration.
