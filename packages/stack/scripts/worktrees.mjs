@@ -881,7 +881,7 @@ async function cmdUse({ rootDir, args, flags }) {
       updateComponents = HAPPY_MONOREPO_GROUP_COMPONENTS;
       throw new Error(
         `[wt] invalid target for happy monorepo component '${component}':\n` +
-          `- expected a path inside the happy monorepo (contains packages/happy-app|packages/happy-cli|packages/happy-server or legacy expo-app/cli/server)\n` +
+          `- expected a path inside the happy monorepo (contains packages/app|packages/cli|packages/server or legacy expo-app/cli/server)\n` +
           `- but got: ${resolvedDir}\n` +
           `Fix: pick a worktree under ${join(worktreesRoot, 'happy')}/ or pass an absolute path to a monorepo checkout.`
       );

@@ -29,9 +29,9 @@ import { createStepPrinter } from './utils/cli/progress.mjs';
 const DEFAULT_FORK_REPOS = {
   serverLight: 'https://github.com/leeroybrun/happy-server-light.git',
   // Monorepo fork (slopus/happy):
-  // - packages/happy-app (mobile app)
-  // - packages/happy-cli (happy-cli)
-  // - packages/happy-server (happy-server)
+  // - packages/app (mobile app)
+  // - packages/cli (happy-cli)
+  // - packages/server (happy-server)
   // (legacy checkouts used expo-app/cli/server)
   serverFull: 'https://github.com/leeroybrun/happy.git',
   cli: 'https://github.com/leeroybrun/happy.git',
@@ -44,9 +44,9 @@ const DEFAULT_UPSTREAM_REPOS = {
   serverLight: 'https://github.com/leeroybrun/happy-server-light.git',
   serverFull: 'https://github.com/slopus/happy.git',
   // slopus/happy is now a monorepo that contains:
-  // - packages/happy-app (mobile app)
-  // - packages/happy-cli (happy-cli)
-  // - packages/happy-server (happy-server)
+  // - packages/app (mobile app)
+  // - packages/cli (happy-cli)
+  // - packages/server (happy-server)
   // (legacy checkouts used expo-app/cli/server)
   cli: 'https://github.com/slopus/happy.git',
   ui: 'https://github.com/slopus/happy.git',

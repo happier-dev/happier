@@ -11,7 +11,7 @@ import { run, runCaptureResult } from './utils/proc/proc.mjs';
  * Thin wrapper around EAS CLI that:
  * - runs under Happy Stacks env (stack wrapper sets HAPPY_STACKS_ENV_FILE)
  * - ensures the Happy monorepo deps are installed (so app.config.js can be evaluated)
- * - runs EAS from packages/happy-app (the mobile app)
+ * - runs EAS from packages/app (the mobile app)
  *
  * Notes:
  * - We intentionally use `npx --yes eas-cli@latest` to avoid interactive "Ok to proceed? (y)" prompts.

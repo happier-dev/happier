@@ -1,0 +1,12 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Happier (preview)",
+  "identifier": "com.leeroybrun.happier.preview",
+  "app": {
+    "windows": [
+      {
+        "title": "Happier (preview)"
+      }
+    ]
+  }
+}

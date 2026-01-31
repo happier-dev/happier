@@ -822,7 +822,7 @@ async function cmdMigrateStack({ rootDir, argv }) {
       if (!r || !isHappyMonorepoRoot(r)) {
         throw new Error(
           '[import] target is not a slopus/happy monorepo root ' +
-            '(missing packages/happy-app|packages/happy-cli|packages/happy-server or legacy expo-app/cli/server).'
+            '(missing packages/app|packages/cli|packages/server or legacy expo-app/cli/server).'
         );
       }
       monorepoRepoRoot = r;
@@ -1187,7 +1187,7 @@ async function main() {
           if (!monorepoRepoRoot || !isHappyMonorepoRoot(monorepoRepoRoot)) {
             throw new Error(
               '[import] target is not a slopus/happy monorepo root ' +
-                '(missing packages/happy-app|packages/happy-cli|packages/happy-server or legacy expo-app/cli/server).'
+                '(missing packages/app|packages/cli|packages/server or legacy expo-app/cli/server).'
             );
           }
         }

@@ -15,7 +15,6 @@ import {
   getComponentDir,
   getComponentsDir,
   getHappyStacksHomeDir,
-  getLegacyStorageRoot,
   getRootDir,
   getStacksStorageRoot,
   happyMonorepoSubdirForComponent,
@@ -84,15 +83,11 @@ function stackNameFromArg(positionals, idx) {
 }
 
 function getDefaultPortStart(stackName = null) {
-  const raw = process.env.HAPPY_STACKS_STACK_PORT_START?.trim()
-    ? process.env.HAPPY_STACKS_STACK_PORT_START.trim()
-    : process.env.HAPPY_LOCAL_STACK_PORT_START?.trim()
-      ? process.env.HAPPY_LOCAL_STACK_PORT_START.trim()
-      : '';
+  const raw = process.env.HAPPY_STACKS_STACK_PORT_START?.trim() ? process.env.HAPPY_STACKS_STACK_PORT_START.trim() : '';
   // Default port strategy:
   // - main historically lives at 3005
   // - non-main stacks should avoid 3005 to reduce accidental collisions/confusion
-  const target = (stackName ?? '').toString().trim() || (process.env.HAPPY_STACKS_STACK ?? process.env.HAPPY_LOCAL_STACK ?? '').trim() || 'main';
+  const target = (stackName ?? '').toString().trim() || (process.env.HAPPY_STACKS_STACK ?? '').trim() || 'main';
   const fallback = target === 'main' ? 3005 : 3009;
   const n = raw ? Number(raw) : fallback;
   return Number.isFinite(n) ? n : fallback;
@@ -126,10 +121,7 @@ async function collectReservedStackPorts({ excludeStackName = null } = {}) {
   const reserved = new Set();
 
   const roots = [
-    // New layout: ~/.happy/stacks/<name>/env (or overridden via HAPPY_STACKS_STORAGE_DIR)
     getStacksStorageRoot(),
-    // Legacy layout: ~/.happy/local/stacks/<name>/env
-    join(getLegacyStorageRoot(), 'stacks'),
   ];
 
   for (const root of roots) {
@@ -1611,76 +1603,6 @@ async function cmdAuth({ rootDir, stackName, args }) {
     fn: async ({ env }) => {
       await run(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), ...forwarded], { cwd: rootDir, env });
     },
-  });
-}
-
-async function cmdMigrate({ argv }) {
-  const { flags } = parseArgs(argv);
-  const json = wantsJson(argv, { flags });
-
-  const legacyDir = join(getLegacyStorageRoot(), 'stacks');
-  const newRoot = getStacksStorageRoot();
-
-  const migrated = [];
-  const skipped = [];
-  const missing = [];
-
-  let entries = [];
-  try {
-    entries = await readdir(legacyDir, { withFileTypes: true });
-  } catch {
-    entries = [];
-  }
-
-  if (!entries.length) {
-    printResult({
-      json,
-      data: { ok: true, migrated, skipped, missing, legacyDir, newRoot },
-      text: `[stack] no legacy stacks found at ${legacyDir}`,
-    });
-    return;
-  }
-
-  for (const e of entries) {
-    if (!e.isDirectory()) continue;
-    const name = e.name;
-    const legacyEnv = join(legacyDir, name, 'env');
-    const targetEnv = join(newRoot, name, 'env');
-
-    const raw = await readExistingEnv(legacyEnv);
-    if (!raw.trim()) {
-      missing.push({ name, legacyEnv });
-      continue;
-    }
-
-    const existingTarget = await readExistingEnv(targetEnv);
-    if (existingTarget.trim()) {
-      skipped.push({ name, targetEnv });
-      continue;
-    }
-
-    await ensureDir(join(newRoot, name));
-    await writeFile(targetEnv, raw, 'utf-8');
-    migrated.push({ name, targetEnv });
-  }
-
-  printResult({
-    json,
-    data: { ok: true, migrated, skipped, missing, legacyDir, newRoot },
-    text: [
-      `[stack] migrate complete`,
-      `[stack] legacy: ${legacyDir}`,
-      `[stack] new: ${newRoot}`,
-      migrated.length ? `[stack] migrated: ${migrated.length}` : `[stack] migrated: none`,
-      skipped.length ? `[stack] skipped (already exists): ${skipped.length}` : null,
-      missing.length ? `[stack] skipped (missing env): ${missing.length}` : null,
-      '',
-      `Next steps:`,
-      `- Re-run stacks normally (they'll prefer ${newRoot})`,
-      `- If you use autostart: re-install to get the new label/paths: happys service install`,
-    ]
-      .filter(Boolean)
-      .join('\n'),
   });
 }
 
@@ -3693,7 +3615,6 @@ async function main() {
           'new',
           'edit',
           'list',
-          'migrate',
           'audit',
           'archive',
           'duplicate',
@@ -3731,7 +3652,6 @@ async function main() {
         '  happys stack new <name> [--port=NNN] [--server=happy-server|happy-server-light] [--happy=default|<owner/...>|<path>] [--interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
         '  happys stack edit <name> --interactive [--json]',
         '  happys stack list [--json]',
-        '  happys stack migrate [--json]   # copy legacy env files from ~/.happy/local/stacks/* -> ~/.happy/stacks/*',
         '  happys stack audit [--fix] [--fix-main] [--fix-ports] [--fix-workspace] [--fix-paths] [--unpin-ports] [--unpin-ports-except=stack1,stack2] [--json]',
         '  happys stack archive <name> [--dry-run] [--date=YYYY-MM-DD] [--json]',
         '  happys stack duplicate <from> <to> [--duplicate-worktrees] [--deps=none|link|install|link-or-install] [--json]',
@@ -3777,43 +3697,12 @@ async function main() {
     return;
   }
   if (cmd === 'list') {
-    let names = [];
-    try {
-      const stacksDir = getStacksStorageRoot();
-      const legacyStacksDir = join(getLegacyStorageRoot(), 'stacks');
-      const allowLegacy = !isSandboxed() || sandboxAllowsGlobalSideEffects();
-      const namesSet = new Set();
-      const entries = await readdir(stacksDir, { withFileTypes: true });
-      for (const e of entries) {
-        if (!e.isDirectory()) continue;
-        if (e.name === 'main') continue;
-        namesSet.add(e.name);
-      }
-      try {
-        if (allowLegacy) {
-          const legacyEntries = await readdir(legacyStacksDir, { withFileTypes: true });
-          for (const e of legacyEntries) {
-            if (!e.isDirectory()) continue;
-            namesSet.add(e.name);
-          }
-        }
-      } catch {
-        // ignore
-      }
-      names = Array.from(namesSet).sort();
-    } catch {
-      names = [];
-    }
+    const names = (await listAllStackNames()).filter((n) => n !== 'main');
     if (json) {
       printResult({ json, data: { stacks: names } });
     } else {
       await cmdListStacks();
     }
-    return;
-  }
-
-  if (cmd === 'migrate') {
-    await cmdMigrate({ argv });
     return;
   }
   if (cmd === 'audit') {

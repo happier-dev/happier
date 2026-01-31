@@ -4,12 +4,12 @@ on:
   push:
     branches: [ main ]
     paths:
-      - 'packages/happy-cli/**'
+      - 'packages/cli/**'
       - '.github/workflows/cli-smoke-test.yml'
   pull_request:
     branches: [ main ]
     paths:
-      - 'packages/happy-cli/**'
+      - 'packages/cli/**'
       - '.github/workflows/cli-smoke-test.yml'
   workflow_dispatch:
 
@@ -35,40 +35,40 @@ jobs:
       run: yarn install --immutable
 
     - name: Build package
-      run: yarn workspace happy-coder build
+      run: yarn workspace @happier-dev/cli build
 
     - name: Pack package
-      run: yarn workspace happy-coder pack
+      run: yarn workspace @happier-dev/cli pack
 
     - name: Install packed package globally
       run: |
-        PACKAGE_FILE=$(ls packages/happy-cli/*.tgz)
+        PACKAGE_FILE=$(ls packages/cli/*.tgz)
         npm install -g "./$PACKAGE_FILE"
 
     - name: Test binary execution
       run: |
         # Test that the binary starts successfully
-        echo "Testing happy --help..."
-        timeout 30s happy --help || {
-          echo "Error: happy --help failed or timed out"
+        echo "Testing happier --help..."
+        timeout 30s happier --help || {
+          echo "Error: happier --help failed or timed out"
           exit 1
         }
 
-        echo "Testing happy --version..."
-        timeout 10s happy --version || {
-          echo "Error: happy --version failed or timed out"
+        echo "Testing happier --version..."
+        timeout 10s happier --version || {
+          echo "Error: happier --version failed or timed out"
           exit 1
         }
 
-        echo "Testing happy doctor..."
-        timeout 30s happy doctor || {
-          echo "Error: happy doctor failed or timed out"
+        echo "Testing happier doctor..."
+        timeout 30s happier doctor || {
+          echo "Error: happier doctor failed or timed out"
           exit 1
         }
 
-        echo "Testing happy daemon status..."
-        timeout 10s happy daemon status || {
-          echo "Error: happy daemon status failed or timed out"
+        echo "Testing happier daemon status..."
+        timeout 10s happier daemon status || {
+          echo "Error: happier daemon status failed or timed out"
           exit 1
         }
 
@@ -95,15 +95,15 @@ jobs:
       run: yarn install --immutable
 
     - name: Build package
-      run: yarn workspace happy-coder build
+      run: yarn workspace @happier-dev/cli build
 
     - name: Pack package
-      run: yarn workspace happy-coder pack
+      run: yarn workspace @happier-dev/cli pack
 
     - name: Install packed package globally
       shell: cmd
       run: |
-        for %%f in (packages\happy-cli\*.tgz) do npm install -g "%%f"
+        for %%f in (packages\cli\*.tgz) do npm install -g "%%f"
 
     - name: Debug npm global installation structure
       shell: cmd
@@ -118,20 +118,20 @@ jobs:
           echo Found node_modules directory
           dir "%NPM_PREFIX%\node_modules" 2>nul
           echo.
-          echo Checking for happy-coder package:
-          if exist "%NPM_PREFIX%\node_modules\happy-coder" (
-            echo Found happy-coder package
-            dir "%NPM_PREFIX%\node_modules\happy-coder" 2>nul
+          echo Checking for @happier-dev/cli package:
+          if exist "%NPM_PREFIX%\node_modules\@happier-dev\cli" (
+            echo Found @happier-dev/cli package
+            dir "%NPM_PREFIX%\node_modules\@happier-dev\cli" 2>nul
             echo.
             echo Checking for dist directory:
-            if exist "%NPM_PREFIX%\node_modules\happy-coder\dist" (
+            if exist "%NPM_PREFIX%\node_modules\@happier-dev\cli\dist" (
               echo Found dist directory
-              dir "%NPM_PREFIX%\node_modules\happy-coder\dist" 2>nul
+              dir "%NPM_PREFIX%\node_modules\@happier-dev\cli\dist" 2>nul
             ) else (
               echo No dist directory found
             )
           ) else (
-            echo No happy-coder package found
+            echo No @happier-dev/cli package found
           )
         ) else (
           echo No node_modules directory found
@@ -148,67 +148,67 @@ jobs:
         echo NPM_PREFIX: %NPM_PREFIX%
         echo Current PATH: %PATH%
 
-        rem Debug: Check if happy exists in various locations
-        echo Checking for happy binary...
-        where happy 2>nul && echo Found happy in PATH || echo happy not found in PATH
-        if exist "%NPM_PREFIX%\happy.cmd" echo Found happy.cmd in NPM_PREFIX
-        if exist "%NPM_PREFIX%\node_modules\.bin\happy.cmd" echo Found happy.cmd in .bin directory
-        dir "%NPM_PREFIX%\*happy*" 2>nul || echo No happy files found in NPM_PREFIX
+        rem Debug: Check if happier exists in various locations
+        echo Checking for happier binary...
+        where happier 2>nul && echo Found happier in PATH || echo happier not found in PATH
+        if exist "%NPM_PREFIX%\happier.cmd" echo Found happier.cmd in NPM_PREFIX
+        if exist "%NPM_PREFIX%\node_modules\.bin\happier.cmd" echo Found happier.cmd in .bin directory
+        dir "%NPM_PREFIX%\*happier*" 2>nul || echo No happier files found in NPM_PREFIX
 
         rem Debug: Check the actual contents and encoding of the installed file
-        if exist "%NPM_PREFIX%\happy.cmd" (
+        if exist "%NPM_PREFIX%\happier.cmd" (
           echo File size and type:
-          dir "%NPM_PREFIX%\happy.cmd"
+          dir "%NPM_PREFIX%\happier.cmd"
           echo.
           echo First few lines of the file:
-          type "%NPM_PREFIX%\happy.cmd" | head -5
+          type "%NPM_PREFIX%\happier.cmd" | head -5
           echo.
           echo Hex dump of first 50 bytes to check line endings:
-          powershell -Command "Get-Content '%NPM_PREFIX%\happy.cmd' -Encoding Byte -TotalCount 50 | ForEach-Object { '{0:X2}' -f $_ } | Join-String -Separator ' '"
+          powershell -Command "Get-Content '%NPM_PREFIX%\happier.cmd' -Encoding Byte -TotalCount 50 | ForEach-Object { '{0:X2}' -f $_ } | Join-String -Separator ' '"
           echo.
           echo Testing with direct path...
-          "%NPM_PREFIX%\happy.cmd" --help
+          "%NPM_PREFIX%\happier.cmd" --help
         ) else (
-          echo Testing happy --help...
-          happy --help
+          echo Testing happier --help...
+          happier --help
         )
         if errorlevel 1 (
-          echo Error: happy --help failed
+          echo Error: happier --help failed
           exit /b 1
         )
 
         rem Test version
-        if exist "%NPM_PREFIX%\happy.cmd" (
-          "%NPM_PREFIX%\happy.cmd" --version
+        if exist "%NPM_PREFIX%\happier.cmd" (
+          "%NPM_PREFIX%\happier.cmd" --version
         ) else (
-          happy --version
+          happier --version
         )
         if errorlevel 1 (
-          echo Error: happy --version failed
+          echo Error: happier --version failed
           exit /b 1
         )
 
         rem Test doctor
-        echo Testing happy doctor...
-        if exist "%NPM_PREFIX%\happy.cmd" (
-          "%NPM_PREFIX%\happy.cmd" doctor
+        echo Testing happier doctor...
+        if exist "%NPM_PREFIX%\happier.cmd" (
+          "%NPM_PREFIX%\happier.cmd" doctor
         ) else (
-          happy doctor
+          happier doctor
         )
         if errorlevel 1 (
-          echo Error: happy doctor failed
+          echo Error: happier doctor failed
           exit /b 1
         )
 
         rem Test daemon status
-        echo Testing happy daemon status...
-        if exist "%NPM_PREFIX%\happy.cmd" (
-          "%NPM_PREFIX%\happy.cmd" daemon status
+        echo Testing happier daemon status...
+        if exist "%NPM_PREFIX%\happier.cmd" (
+          "%NPM_PREFIX%\happier.cmd" daemon status
         ) else (
-          happy daemon status
+          happier daemon status
         )
         if errorlevel 1 (
-          echo Error: happy daemon status failed
+          echo Error: happier daemon status failed
           exit /b 1
         )
 

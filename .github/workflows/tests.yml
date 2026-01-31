@@ -44,8 +44,8 @@ jobs:
         run: |
           set -euo pipefail
           yarn --cwd packages/agents -s build
-          mkdir -p packages/protocol/node_modules/@happy
-          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happy/agents"
+          mkdir -p packages/protocol/node_modules/@happier-dev
+          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happier-dev/agents"
           yarn --cwd packages/protocol -s build
 
       - name: Run tests
@@ -83,17 +83,17 @@ jobs:
         working-directory: server
         run: yarn install --frozen-lockfile
 
-      - name: Build @happy/agents (local workspace link)
+      - name: Build @happier-dev/agents (local workspace link)
         working-directory: server
         run: ./node_modules/.bin/tsc -p ../packages/agents/tsconfig.json
 
-      - name: Link @happy/agents for protocol build (CI only)
+      - name: Link @happier-dev/agents for protocol build (CI only)
         run: |
           set -euo pipefail
-          mkdir -p packages/protocol/node_modules/@happy
-          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happy/agents"
+          mkdir -p packages/protocol/node_modules/@happier-dev
+          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happier-dev/agents"
 
-      - name: Build @happy/protocol (local workspace link)
+      - name: Build @happier-dev/protocol (local workspace link)
         working-directory: server
         run: ./node_modules/.bin/tsc -p ../packages/protocol/tsconfig.json
 
@@ -167,17 +167,17 @@ jobs:
           npm_config_production: "false"
         run: yarn install --frozen-lockfile
 
-      - name: Build @happy/agents (local workspace link)
+      - name: Build @happier-dev/agents (local workspace link)
         working-directory: cli
         run: ./node_modules/.bin/tsc -p ../packages/agents/tsconfig.json
 
-      - name: Link @happy/agents for protocol build (CI only)
+      - name: Link @happier-dev/agents for protocol build (CI only)
         run: |
           set -euo pipefail
-          mkdir -p packages/protocol/node_modules/@happy
-          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happy/agents"
+          mkdir -p packages/protocol/node_modules/@happier-dev
+          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happier-dev/agents"
 
-      - name: Build @happy/protocol (local workspace link)
+      - name: Build @happier-dev/protocol (local workspace link)
         working-directory: cli
         run: ./node_modules/.bin/tsc -p ../packages/protocol/tsconfig.json
 
@@ -276,17 +276,17 @@ jobs:
           npm_config_production: "false"
         run: yarn install --frozen-lockfile
 
-      - name: Build @happy/agents (local workspace link)
+      - name: Build @happier-dev/agents (local workspace link)
         working-directory: cli
         run: ./node_modules/.bin/tsc -p ../packages/agents/tsconfig.json
 
-      - name: Link @happy/agents for protocol build (CI only)
+      - name: Link @happier-dev/agents for protocol build (CI only)
         run: |
           set -euo pipefail
-          mkdir -p packages/protocol/node_modules/@happy
-          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happy/agents"
+          mkdir -p packages/protocol/node_modules/@happier-dev
+          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happier-dev/agents"
 
-      - name: Build @happy/protocol (local workspace link)
+      - name: Build @happier-dev/protocol (local workspace link)
         working-directory: cli
         run: ./node_modules/.bin/tsc -p ../packages/protocol/tsconfig.json
 

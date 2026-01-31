@@ -1,4 +1,4 @@
-# Agents catalog (CLI + app + `@happy/agents`)
+# Agents catalog (CLI + app + `@happier-dev/agents`)
 
 This doc explains how the **Agents catalog** works end-to-end in Happy, and how to add a new agent/provider.
 
@@ -13,13 +13,13 @@ The goal is that both surfaces:
 ## Key concepts (shared language)
 
 - **AgentId**: canonical id for an agent across packages (CLI + app + server).
-  - Source of truth: `@happy/agents` (`packages/happy-agents/src/manifest.ts`).
+  - Source of truth: `@happier-dev/agents` (`packages/agents/src/manifest.ts`).
 - **detectKey**: CLI executable name used for detection UX and `command -v <detectKey>`-style probes.
-  - Source of truth: `@happy/agents` (`AGENTS_CORE[agentId].detectKey`).
+  - Source of truth: `@happier-dev/agents` (`AGENTS_CORE[agentId].detectKey`).
 - **cliSubcommand**: the primary CLI subcommand for this agent (usually the same as `AgentId`).
-  - Source of truth: `@happy/agents` (`AGENTS_CORE[agentId].cliSubcommand`).
+  - Source of truth: `@happier-dev/agents` (`AGENTS_CORE[agentId].cliSubcommand`).
 - **flavorAliases**: extra strings we accept for parsing/migration (e.g. `codex-acp`).
-  - Source of truth: `@happy/agents` (`AGENTS_CORE[agentId].flavorAliases`).
+  - Source of truth: `@happier-dev/agents` (`AGENTS_CORE[agentId].flavorAliases`).
 - **Capabilities**: machine/runtime checks produced by the daemon (implemented by CLI) and consumed by the app.
   - Convention (CLI): `cli.<agentId>`, `tool.<name>`, `dep.<name>`.
 - **Checklists**: higher-level groupings of capabilities that the app can render as guided setup steps.
@@ -29,10 +29,10 @@ The goal is that both surfaces:
 
 ## What lives where (sources of truth)
 
-### 1) Shared manifest: `@happy/agents`
+### 1) Shared manifest: `@happier-dev/agents`
 
 Where:
-- `packages/happy-agents/src/manifest.ts`
+- `packages/agents/src/manifest.ts`
 
 What belongs here:
 - canonical ids/types (`AgentId`, `AGENT_IDS`)
@@ -45,48 +45,48 @@ What does **not** belong here:
 - app navigation/routes
 - CLI implementation details (argv/env/paths)
 
-### 2) Cross-boundary contracts: `@happy/protocol`
+### 2) Cross-boundary contracts: `@happier-dev/protocol`
 
 Where:
-- `packages/happy-protocol/src/*`
+- `packages/protocol/src/*`
 
 What belongs here:
 - daemon RPC request/result shapes the app must interpret deterministically
 - stable error codes (spawn/resume failures, capability errors, etc.)
 
 Example:
-- `packages/happy-protocol/src/spawnSession.ts` defines `SpawnSessionErrorCode` + `SpawnSessionResult`.
+- `packages/protocol/src/spawnSession.ts` defines `SpawnSessionErrorCode` + `SpawnSessionResult`.
 
-### 3) CLI agent catalog: `packages/happy-cli/src/backends/catalog.ts`
+### 3) CLI agent catalog: `packages/cli/src/backends/catalog.ts`
 
 This is the CLI’s explicit assembly of backends into a deterministic map:
 - `export const AGENTS: Record<CatalogAgentId, AgentCatalogEntry> = { ... }`
 - helper resolvers such as `resolveCatalogAgentId(...)`
 
 Backend folders live under:
-- `packages/happy-cli/src/backends/<agentId>/**`
+- `packages/cli/src/backends/<agentId>/**`
 
-### 4) App agents catalog: `packages/happy-app/sources/agents/catalog.ts`
+### 4) App agents catalog: `packages/app/sources/agents/catalog.ts`
 
 This is the app’s single public surface for screens:
-- screens import only from `packages/happy-app/sources/agents/catalog.ts`
+- screens import only from `packages/app/sources/agents/catalog.ts`
 - it composes:
   - **core registry** (`registryCore.ts`) for identity + app config
   - **UI registry** (`registryUi.ts`) for assets/visuals (lazy loaded for Node-safe tests)
   - **behavior registry** (`registryUiBehavior.ts`) for provider-specific hooks
 
 Provider code lives under:
-- `packages/happy-app/sources/agents/providers/<agentId>/**`
+- `packages/app/sources/agents/providers/<agentId>/**`
 
 ---
 
 ## App registries (mental model)
 
-There are three layers inside `packages/happy-app/sources/agents/`:
+There are three layers inside `packages/app/sources/agents/`:
 
 1) **Core registry** (`registryCore.ts`)
    - identity + app-facing config (translations, settings gating, permissions, connected service UX, resume config, etc.)
-   - consumes canonical ids from `@happy/agents`
+   - consumes canonical ids from `@happier-dev/agents`
 
 2) **UI registry** (`registryUi.ts`)
    - app-only visuals (icons, tints, avatar overlay sizing, glyphs)
@@ -123,7 +123,7 @@ Checklist ids are treated as stable API between daemon and app:
 
 Some agents are resumable only when ACP `loadSession` is supported on the machine.
 
-In `@happy/agents`, this is represented as:
+In `@happier-dev/agents`, this is represented as:
 - `AGENTS_CORE[agentId].resume.runtimeGate === 'acpLoadSession'`
 
 In the app, default behavior (see `registryUiBehavior.ts`) will:
@@ -143,10 +143,10 @@ Prefer:
 
 If you need variants, use `flavorAliases` (and keep canonical ids stable).
 
-### Step 1 — add/extend the canonical manifest (`@happy/agents`)
+### Step 1 — add/extend the canonical manifest (`@happier-dev/agents`)
 
 Edit:
-- `packages/happy-agents/src/manifest.ts`
+- `packages/agents/src/manifest.ts`
 
 Add/update:
 - `id`, `cliSubcommand`, `detectKey`
@@ -159,7 +159,7 @@ Add/update:
 ### Step 2 — add the CLI backend folder
 
 Create:
-- `packages/happy-cli/src/backends/myagent/`
+- `packages/cli/src/backends/myagent/`
 
 Common files (as needed):
 - `cli/command.ts` (subcommand handler)
@@ -172,12 +172,12 @@ Common files (as needed):
 ### Step 3 — export one catalog entry and wire it into the CLI catalog
 
 Create:
-- `packages/happy-cli/src/backends/myagent/index.ts`
+- `packages/cli/src/backends/myagent/index.ts`
 
 Pattern:
 
 ```ts
-import { AGENTS_CORE } from '@happy/agents';
+import { AGENTS_CORE } from '@happier-dev/agents';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
@@ -191,7 +191,7 @@ export const agent = {
 ```
 
 Then edit:
-- `packages/happy-cli/src/backends/catalog.ts`
+- `packages/cli/src/backends/catalog.ts`
 
 Add:
 
@@ -207,19 +207,19 @@ export const AGENTS = {
 ### Step 4 — add the app provider folder + registries
 
 Create provider modules:
-- `packages/happy-app/sources/agents/providers/<agentId>/core.ts`
-- `packages/happy-app/sources/agents/providers/<agentId>/ui.ts`
-- `packages/happy-app/sources/agents/providers/<agentId>/uiBehavior.ts` (optional; only if you need overrides)
+- `packages/app/sources/agents/providers/<agentId>/core.ts`
+- `packages/app/sources/agents/providers/<agentId>/ui.ts`
+- `packages/app/sources/agents/providers/<agentId>/uiBehavior.ts` (optional; only if you need overrides)
 
 Wire them into registries:
-- add `*_CORE` to `packages/happy-app/sources/agents/registryCore.ts`
-- add `*_UI` to `packages/happy-app/sources/agents/registryUi.ts`
-- add `*_UI_BEHAVIOR_OVERRIDE` to `packages/happy-app/sources/agents/registryUiBehavior.ts` (only if you have overrides)
+- add `*_CORE` to `packages/app/sources/agents/registryCore.ts`
+- add `*_UI` to `packages/app/sources/agents/registryUi.ts`
+- add `*_UI_BEHAVIOR_OVERRIDE` to `packages/app/sources/agents/registryUiBehavior.ts` (only if you have overrides)
 
-### Step 5 — update `@happy/protocol` only when the boundary truly changes
+### Step 5 — update `@happier-dev/protocol` only when the boundary truly changes
 
 If you need new daemon/app fields, add them to:
-- `packages/happy-protocol/src/*`
+- `packages/protocol/src/*`
 
 Then update both sides (CLI implementation + app consumer) to match the new stable contract.
 
@@ -235,8 +235,8 @@ yarn test
 Scoped:
 
 ```bash
-yarn --cwd packages/happy-cli typecheck
-yarn --cwd packages/happy-app typecheck
+yarn --cwd packages/cli typecheck
+yarn --cwd packages/app typecheck
 ```
 
 If you’re running this repo via happy-stacks, prefer:
@@ -247,7 +247,7 @@ If you’re running this repo via happy-stacks, prefer:
 
 ## Node-safe imports (tests)
 
-Some tests import `packages/happy-app/sources/agents/catalog.ts` in a Node environment. Avoid importing native/icon modules from code that executes during those imports.
+Some tests import `packages/app/sources/agents/catalog.ts` in a Node environment. Avoid importing native/icon modules from code that executes during those imports.
 
 Patterns we use:
 - `catalog.ts` lazy-loads `registryUi.ts` via `require('./registryUi')` to avoid loading image files in Node.
@@ -270,25 +270,25 @@ This doc explains how the **Agent Catalog** works in Happy, and how to add a new
 ## Terms (what each thing means)
 
 - **AgentId**: the canonical id for an agent, shared across CLI + Expo (+ server).
-  - Source of truth: `@happy/agents` (`packages/happy-agents`).
+  - Source of truth: `@happier-dev/agents` (`packages/agents`).
 - **Agent Catalog (CLI)**: the declarative mapping of `AgentId -> integration hooks` used to drive:
   - CLI command routing
   - capability detection/checklists
   - daemon spawn wiring
   - optional ACP backend factories
-  - Source: `packages/happy-cli/src/backends/catalog.ts`
+  - Source: `packages/cli/src/backends/catalog.ts`
 - **Backend folder**: provider/agent-specific code and wiring.
-  - Source: `packages/happy-cli/src/backends/<agentId>/**`
+  - Source: `packages/cli/src/backends/<agentId>/**`
 - **Protocol**: shared cross-boundary contracts between UI and CLI daemon.
-  - Source: `@happy/protocol` (`packages/protocol`).
+  - Source: `@happier-dev/protocol` (`packages/protocol`).
 
 ---
 
 ## Sources of truth
 
-### 1) Shared core manifest: `@happy/agents`
+### 1) Shared core manifest: `@happier-dev/agents`
 
-Where: `packages/happy-agents/src/manifest.ts`
+Where: `packages/agents/src/manifest.ts`
 
 What belongs here:
 - canonical ids (`AgentId`)
@@ -301,7 +301,7 @@ What does **not** belong here:
 - UI routes
 - CLI implementation details (argv, env, paths)
 
-### 2) Cross-boundary contracts: `@happy/protocol`
+### 2) Cross-boundary contracts: `@happier-dev/protocol`
 
 Where: `packages/protocol/src/*`
 
@@ -312,7 +312,7 @@ What belongs here:
 Example:
 - `packages/protocol/src/spawnSession.ts` defines `SpawnSessionErrorCode` + `SpawnSessionResult`.
 
-### 3) CLI agent catalog: `packages/happy-cli/src/backends/catalog.ts`
+### 3) CLI agent catalog: `packages/cli/src/backends/catalog.ts`
 
 Where the CLI assembles all backends into a single map:
 - `export const AGENTS: Record<CatalogAgentId, AgentCatalogEntry> = { ... }`
@@ -324,11 +324,11 @@ Where the CLI assembles all backends into a single map:
 
 Each backend folder exports one canonical entry object from its `index.ts`:
 
-- `packages/happy-cli/src/backends/<agentId>/index.ts` exports:
+- `packages/cli/src/backends/<agentId>/index.ts` exports:
   - `export const agent = { ... } satisfies AgentCatalogEntry;`
 
 The global catalog imports those entries and assembles them:
-- `packages/happy-cli/src/backends/catalog.ts`
+- `packages/cli/src/backends/catalog.ts`
 
 This keeps backend-specific wiring co-located, while preserving a deterministic, explicit catalog (no self-registration side effects).
 
@@ -336,19 +336,19 @@ This keeps backend-specific wiring co-located, while preserving a deterministic,
 
 ## AgentCatalogEntry hooks (CLI)
 
-Type: `packages/happy-cli/src/backends/types.ts` (`AgentCatalogEntry`)
+Type: `packages/cli/src/backends/types.ts` (`AgentCatalogEntry`)
 
 ### Required
 
 - `id: AgentId`
 - `cliSubcommand: AgentId`
-- `vendorResumeSupport: VendorResumeSupportLevel` (from `@happy/agents`)
+- `vendorResumeSupport: VendorResumeSupportLevel` (from `@happier-dev/agents`)
 
 ### Optional hooks (what they do)
 
 - `getCliCommandHandler(): Promise<CommandHandler>`
   - Provides the `happy <agentId> ...` CLI subcommand handler.
-  - Used by `packages/happy-cli/src/cli/commandRegistry.ts`.
+  - Used by `packages/cli/src/cli/commandRegistry.ts`.
 
 - `getCliCapabilityOverride(): Promise<Capability>`
   - Defines the `cli.<agentId>` capability descriptor, if the generic one is not sufficient.
@@ -361,11 +361,11 @@ Type: `packages/happy-cli/src/backends/types.ts` (`AgentCatalogEntry`)
 
 - `getCliDetect(): Promise<CliDetectSpec>`
   - Provides version/login-status probe argv patterns used by the CLI snapshot.
-  - Consumed by `packages/happy-cli/src/capabilities/snapshots/cliSnapshot.ts`.
+  - Consumed by `packages/cli/src/capabilities/snapshots/cliSnapshot.ts`.
 
 - `getCloudConnectTarget(): Promise<CloudConnectTarget>`
   - Enables `happy connect <agentId>` for this agent.
-  - The preferred source-of-truth for connect availability + vendor mapping is `@happy/agents` (and this hook returns the implementation object).
+  - The preferred source-of-truth for connect availability + vendor mapping is `@happier-dev/agents` (and this hook returns the implementation object).
 
 - `getDaemonSpawnHooks(): Promise<DaemonSpawnHooks>`
   - Allows per-agent spawn customizations in the daemon, while keeping the wiring co-located with the backend.
@@ -386,7 +386,7 @@ Type: `packages/happy-cli/src/backends/types.ts` (`AgentCatalogEntry`)
 
 ### Capability id conventions (CLI)
 
-Defined in `packages/happy-cli/src/capabilities/types.ts`:
+Defined in `packages/cli/src/capabilities/types.ts`:
 - `cli.<agentId>`: base “agent detected + login status + (optional) ACP capability surface” probe
 - `tool.${string}`: tool capability (e.g. `tool.tmux`)
 - `dep.${string}`: dependency capability (e.g. `dep.codex-acp`)
@@ -402,7 +402,7 @@ Checklist ids are strings; we treat these as stable API between daemon and UI:
 
 Some agents don’t have “vendor resume” universally enabled, but can be resumable depending on whether ACP `loadSession` is supported on the machine.
 
-In `@happy/agents`, this is represented as:
+In `@happier-dev/agents`, this is represented as:
 - `resume.runtimeGate === 'acpLoadSession'`
 
 In the CLI, this is implemented by making `resume.<agentId>` checklists include an agent probe request that sets `includeAcpCapabilities: true`.
@@ -421,10 +421,10 @@ Decide a new canonical id (example): `myagent`.
 We strongly prefer:
 - `AgentId === CLI subcommand === detectKey`
 
-### Step 1 — Add the agent to `@happy/agents`
+### Step 1 — Add the agent to `@happier-dev/agents`
 
 Edit:
-- `packages/happy-agents/src/manifest.ts`
+- `packages/agents/src/manifest.ts`
 
 Add:
 - `AgentId` entry
@@ -436,7 +436,7 @@ Add:
 ### Step 2 — Create a backend folder in the CLI
 
 Create folder:
-- `packages/happy-cli/src/backends/myagent/`
+- `packages/cli/src/backends/myagent/`
 
 Add whatever you need (examples):
 - `cli/command.ts` (subcommand handler)
@@ -449,11 +449,11 @@ Add whatever you need (examples):
 ### Step 3 — Export the catalog entry from `index.ts`
 
 Create:
-- `packages/happy-cli/src/backends/myagent/index.ts`
+- `packages/cli/src/backends/myagent/index.ts`
 
 Pattern:
 ```ts
-import { AGENTS_CORE } from '@happy/agents';
+import { AGENTS_CORE } from '@happier-dev/agents';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
@@ -469,7 +469,7 @@ export const agent = {
 ### Step 4 — Add it to the catalog assembly
 
 Edit:
-- `packages/happy-cli/src/backends/catalog.ts`
+- `packages/cli/src/backends/catalog.ts`
 
 Add:
 ```ts

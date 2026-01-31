@@ -2,18 +2,13 @@ import { readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { getLegacyStorageRoot, getStacksStorageRoot } from '../paths/paths.mjs';
-import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs';
+import { getStacksStorageRoot } from '../paths/paths.mjs';
 import { resolveStackEnvPath } from '../paths/paths.mjs';
 
 export async function listAllStackNames() {
   const names = new Set(['main']);
-  const allowLegacy = !isSandboxed() || sandboxAllowsGlobalSideEffects();
   const roots = [
-    // New layout: ~/.happy/stacks/<name>/env
     getStacksStorageRoot(),
-    // Legacy layout: ~/.happy/local/stacks/<name>/env
-    ...(allowLegacy ? [join(getLegacyStorageRoot(), 'stacks')] : []),
   ];
 
   for (const root of roots) {

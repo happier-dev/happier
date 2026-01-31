@@ -11,5 +11,5 @@ This folder documents how Happy works internally, with a focus on protocol, back
 - cli-architecture.md: CLI and daemon architecture and how they interact with the server.
 
 ## Conventions
-- Paths and field names reflect the current implementation in `packages/happy-server`.
+- Paths and field names reflect the current implementation in `packages/server`.
 - Examples are illustrative; the canonical source is the code.

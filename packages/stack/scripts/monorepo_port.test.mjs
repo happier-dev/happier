@@ -204,7 +204,7 @@ test('monorepo port accepts monorepo sources without double-prefixing paths', as
   await run('git', ['add', '.'], { cwd: target, env: gitEnv() });
   await run('git', ['commit', '-q', '-m', 'chore: init monorepo'], { cwd: target, env: gitEnv() });
 
-  // Source monorepo repo with one change commit in packages/happy-app/
+  // Source monorepo repo with one change commit in packages/app/
   await mkdir(source, { recursive: true });
   await run('git', ['init', '-q'], { cwd: source, env: gitEnv() });
   await run('git', ['checkout', '-q', '-b', 'main'], { cwd: source, env: gitEnv() });
@@ -253,7 +253,7 @@ test('monorepo port can clone the target monorepo into a new directory', async (
     dir: seedMono,
     env,
     layout: 'packages',
-    seed: { 'packages/happy-cli/hello.txt': 'v1\n' },
+    seed: { 'packages/cli/hello.txt': 'v1\n' },
   });
 
   // Source CLI repo with one change commit (v1 -> v2)
@@ -303,7 +303,7 @@ test('monorepo port guide auto-clones target when --target does not exist', asyn
     dir: seedMono,
     env,
     layout: 'packages',
-    seed: { 'packages/happy-cli/hello.txt': 'v1\n' },
+    seed: { 'packages/cli/hello.txt': 'v1\n' },
   });
 
   // Source CLI repo with one change commit (v1 -> v2)

@@ -16,6 +16,13 @@ import { readPackageJsonVersion } from './utils/fs/package_json.mjs';
 import { banner, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 
+function packageJsonPathForNodeModules({ rootDir, packageName }) {
+  const name = String(packageName ?? '').trim();
+  if (!name) return null;
+  const parts = name.split('/').filter(Boolean);
+  return join(rootDir, 'node_modules', ...parts, 'package.json');
+}
+
 function cachePaths() {
   const home = getHappyStacksHomeDir();
   return {
@@ -40,7 +47,11 @@ async function writeJsonSafe(path, obj) {
 
 async function getRuntimeInstalledVersion() {
   const runtimeDir = getRuntimeDir();
-  const pkgJson = join(runtimeDir, 'node_modules', 'happy-stacks', 'package.json');
+  const invoker = await readJsonIfExists(join(getRootDir(import.meta.url), 'package.json'), { defaultValue: null });
+  const pkgName = String(invoker?.name ?? '').trim();
+  if (!pkgName) return null;
+  const pkgJson = packageJsonPathForNodeModules({ rootDir: runtimeDir, packageName: pkgName });
+  if (!pkgJson) return null;
   return await readPackageJsonVersion(pkgJson);
 }
 
@@ -48,11 +59,13 @@ async function getInvokerVersion({ rootDir }) {
   return await readPackageJsonVersion(join(rootDir, 'package.json'));
 }
 
-async function fetchLatestVersion() {
+async function fetchLatestVersion({ packageName }) {
   // Prefer npm (available on most systems with Node).
-  // Keep it simple: `npm view happy-stacks version` prints a single version.
+  // Keep it simple: `npm view <pkg> version` prints a single version.
   try {
-    const out = (await runCapture('npm', ['view', 'happy-stacks', 'version'])).trim();
+    const pkg = String(packageName ?? '').trim();
+    if (!pkg) return null;
+    const out = (await runCapture('npm', ['view', pkg, 'version'])).trim();
     return out || null;
   } catch {
     return null;
@@ -82,6 +95,8 @@ async function cmdStatus({ rootDir, argv }) {
   const doCheck = !flags.has('--no-check');
 
   const { updateJson, cacheDir } = cachePaths();
+  const invoker = await readJsonIfExists(join(rootDir, 'package.json'), { defaultValue: null });
+  const packageName = String(invoker?.name ?? '').trim();
   const invokerVersion = await getInvokerVersion({ rootDir });
   const runtimeDir = getRuntimeDir();
   const runtimeVersion = await getRuntimeInstalledVersion();
@@ -94,7 +109,7 @@ async function cmdStatus({ rootDir, argv }) {
 
   if (doCheck) {
     try {
-      latest = await fetchLatestVersion();
+      latest = await fetchLatestVersion({ packageName });
       checkedAt = Date.now();
       const current = runtimeVersion || invokerVersion;
       updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
@@ -147,7 +162,10 @@ async function cmdUpdate({ rootDir, argv }) {
 
   const runtimeDir = getRuntimeDir();
   const to = (kv.get('--to') ?? '').trim();
-  const spec = to ? `happy-stacks@${to}` : 'happy-stacks@latest';
+  const invoker = await readJsonIfExists(join(rootDir, 'package.json'), { defaultValue: null });
+  const pkgName = String(invoker?.name ?? '').trim();
+  if (!pkgName) throw new Error('[self] unable to resolve package name (missing package.json name)');
+  const spec = to ? `${pkgName}@${to}` : `${pkgName}@latest`;
 
   // Ensure runtime dir exists.
   await mkdir(runtimeDir, { recursive: true });
@@ -161,7 +179,7 @@ async function cmdUpdate({ rootDir, argv }) {
       try {
         const raw = await readFile(join(rootDir, 'package.json'), 'utf-8');
         const pkg = JSON.parse(raw);
-        if (pkg?.name === 'happy-stacks') {
+        if (pkg?.name === pkgName) {
           await run('npm', ['install', '--no-audit', '--no-fund', '--silent', '--prefix', runtimeDir, rootDir], { cwd: rootDir });
         } else {
           throw err;
@@ -176,7 +194,7 @@ async function cmdUpdate({ rootDir, argv }) {
 
   // Refresh cache best-effort.
   try {
-    const latest = await fetchLatestVersion();
+    const latest = await fetchLatestVersion({ packageName: pkgName });
     const runtimeVersion = await getRuntimeInstalledVersion();
     const invokerVersion = await getInvokerVersion({ rootDir });
     const current = runtimeVersion || invokerVersion;
@@ -213,10 +231,12 @@ async function cmdCheck({ rootDir, argv }) {
   const runtimeVersion = await getRuntimeInstalledVersion();
   const invokerVersion = await getInvokerVersion({ rootDir });
   const current = runtimeVersion || invokerVersion;
+  const invoker = await readJsonIfExists(join(rootDir, 'package.json'), { defaultValue: null });
+  const packageName = String(invoker?.name ?? '').trim();
 
   let latest = null;
   try {
-    latest = await fetchLatestVersion();
+    latest = await fetchLatestVersion({ packageName });
   } catch {
     latest = null;
   }
