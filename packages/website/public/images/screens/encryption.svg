@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="none" role="img" aria-label="Happier encryption mock screenshot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#07070B"/>
+      <stop offset="1" stop-color="#0B0B12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10B981"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <filter id="shadow" x="-40" y="-40" width="1680" height="980" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" rx="36" fill="url(#bg)"/>
+
+  <g opacity="0.9">
+    <rect x="70" y="70" width="1460" height="760" rx="22" fill="#0E0F16" stroke="rgba(255,255,255,0.10)"/>
+    <circle cx="110" cy="110" r="8" fill="#FF5F57"/>
+    <circle cx="135" cy="110" r="8" fill="#FFBD2E"/>
+    <circle cx="160" cy="110" r="8" fill="#28C840"/>
+    <text x="220" y="116" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="16" fill="rgba(255,255,255,0.6)">Happier • Encryption</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="90" y="150" width="1420" height="650" rx="18" fill="#0B0C12" stroke="rgba(255,255,255,0.10)"/>
+  </g>
+
+  <!-- Central lock card -->
+  <g>
+    <rect x="360" y="210" width="880" height="530" rx="26" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.10)"/>
+    <rect x="392" y="244" width="816" height="70" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="426" y="286" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="22" fill="rgba(255,255,255,0.92)">End-to-end encrypted by default</text>
+    <text x="426" y="310" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">Zero-knowledge architecture • Keys stay on your devices</text>
+
+    <!-- Lock icon -->
+    <g transform="translate(0,0)">
+      <circle cx="800" cy="470" r="118" fill="rgba(16,185,129,0.10)" stroke="rgba(16,185,129,0.30)"/>
+      <circle cx="800" cy="470" r="86" fill="rgba(56,189,248,0.06)" stroke="rgba(56,189,248,0.22)"/>
+
+      <rect x="752" y="438" width="96" height="94" rx="18" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.14)"/>
+      <path d="M772 438v-18c0-24 16-40 28-40s28 16 28 40v18" stroke="url(#accent)" stroke-width="10" stroke-linecap="round"/>
+      <circle cx="800" cy="484" r="10" fill="rgba(255,255,255,0.85)"/>
+      <rect x="795" y="494" width="10" height="22" rx="5" fill="rgba(255,255,255,0.75)"/>
+    </g>
+
+    <!-- Key / device notes -->
+    <g opacity="0.96">
+      <rect x="392" y="340" width="372" height="150" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+      <text x="420" y="374" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="16" fill="rgba(255,255,255,0.9)">Keys never leave</text>
+      <text x="420" y="402" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Your session keys stay on your devices — we can't read your code.</text>
+      <rect x="420" y="428" width="180" height="10" rx="5" fill="url(#accent)" opacity="0.8"/>
+
+      <rect x="836" y="340" width="372" height="150" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+      <text x="864" y="374" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="16" fill="rgba(255,255,255,0.9)">Signal-grade crypto</text>
+      <text x="864" y="402" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Built with TweetNaCl and modern best practices.</text>
+      <rect x="864" y="428" width="220" height="10" rx="5" fill="url(#accent)" opacity="0.65"/>
+
+      <rect x="392" y="520" width="816" height="188" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+      <text x="420" y="556" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="16" fill="rgba(255,255,255,0.9)">Encryption flow</text>
+      <text x="420" y="584" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Local device encrypts → secure bridge → your device decrypts.</text>
+
+      <rect x="420" y="614" width="240" height="44" rx="14" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)"/>
+      <text x="450" y="642" font-family="Inter, system-ui" font-weight="800" font-size="13" fill="rgba(255,255,255,0.85)">Device encrypts</text>
+
+      <rect x="680" y="614" width="240" height="44" rx="14" fill="rgba(16,185,129,0.14)" stroke="rgba(16,185,129,0.30)"/>
+      <text x="710" y="642" font-family="Inter, system-ui" font-weight="800" font-size="13" fill="rgba(255,255,255,0.9)">Secure bridge</text>
+
+      <rect x="940" y="614" width="240" height="44" rx="14" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)"/>
+      <text x="970" y="642" font-family="Inter, system-ui" font-weight="800" font-size="13" fill="rgba(255,255,255,0.85)">Device decrypts</text>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="none" role="img" aria-label="Happier history mock screenshot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#07070B"/>
+      <stop offset="1" stop-color="#0B0B12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10B981"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <filter id="shadow" x="-40" y="-40" width="1680" height="980" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" rx="36" fill="url(#bg)"/>
+
+  <g opacity="0.9">
+    <rect x="70" y="70" width="1460" height="760" rx="22" fill="#0E0F16" stroke="rgba(255,255,255,0.10)"/>
+    <circle cx="110" cy="110" r="8" fill="#FF5F57"/>
+    <circle cx="135" cy="110" r="8" fill="#FFBD2E"/>
+    <circle cx="160" cy="110" r="8" fill="#28C840"/>
+    <text x="220" y="116" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="16" fill="rgba(255,255,255,0.6)">Happier • Infinite History</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="90" y="150" width="1420" height="650" rx="18" fill="#0B0C12" stroke="rgba(255,255,255,0.10)"/>
+  </g>
+
+  <!-- Left column: dates -->
+  <g opacity="0.95">
+    <rect x="112" y="176" width="320" height="604" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+    <text x="140" y="214" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.9)">History</text>
+    <text x="140" y="244" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">Jump back instantly</text>
+
+    <text x="140" y="292" font-family="Inter, system-ui" font-weight="700" font-size="12" fill="rgba(255,255,255,0.55)">TODAY</text>
+    <rect x="132" y="306" width="280" height="56" rx="16" fill="rgba(16,185,129,0.10)" stroke="rgba(16,185,129,0.25)"/>
+    <text x="154" y="338" font-family="Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.9)">Refactor auth flow</text>
+
+    <text x="140" y="410" font-family="Inter, system-ui" font-weight="700" font-size="12" fill="rgba(255,255,255,0.55)">YESTERDAY</text>
+    <rect x="132" y="424" width="280" height="56" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="154" y="456" font-family="Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.85)">Fix flaky tests</text>
+
+    <text x="140" y="528" font-family="Inter, system-ui" font-weight="700" font-size="12" fill="rgba(255,255,255,0.55)">LAST WEEK</text>
+    <rect x="132" y="542" width="280" height="56" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="154" y="574" font-family="Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.85)">Ship landing page</text>
+  </g>
+
+  <!-- Right: scrollback with highlighted older content -->
+  <g>
+    <rect x="452" y="176" width="1036" height="604" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+    <text x="484" y="214" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.9)">Full scrollback</text>
+    <text x="484" y="240" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">Searchable, reliable, and preserved across devices.</text>
+
+    <rect x="484" y="270" width="972" height="44" rx="14" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="510" y="298" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.6)">Search messages…</text>
+
+    <!-- Messages -->
+    <g opacity="0.95">
+      <rect x="484" y="334" width="720" height="70" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+      <text x="510" y="362" font-family="Inter, system-ui" font-weight="700" font-size="13" fill="rgba(255,255,255,0.85)">You</text>
+      <text x="510" y="386" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Summarize what changed since yesterday.</text>
+
+      <rect x="736" y="418" width="720" height="96" rx="18" fill="rgba(16,185,129,0.08)" stroke="rgba(16,185,129,0.22)"/>
+      <text x="760" y="448" font-family="Inter, system-ui" font-weight="700" font-size="13" fill="rgba(255,255,255,0.9)">Agent</text>
+      <text x="760" y="472" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.72)">We added theme-safe logos, fixed reveal animations, and optimized badge assets for performance.</text>
+
+      <!-- Divider: older content -->
+      <rect x="484" y="538" width="972" height="2" rx="1" fill="rgba(255,255,255,0.08)"/>
+      <text x="484" y="565" font-family="Inter, system-ui" font-weight="700" font-size="12" fill="rgba(255,255,255,0.55)">OLDER</text>
+
+      <rect x="484" y="584" width="972" height="140" rx="18" fill="rgba(56,189,248,0.08)" stroke="rgba(56,189,248,0.22)"/>
+      <text x="510" y="616" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="14" fill="rgba(255,255,255,0.9)">Pinned summary</text>
+      <text x="510" y="642" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.70)">• Session is now visible on scroll</text>
+      <text x="510" y="666" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.70)">• Logotype switches correctly across themes</text>
+      <text x="510" y="690" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.70)">• No third-party badge requests</text>
+
+      <rect x="1190" y="604" width="240" height="10" rx="5" fill="url(#accent)" opacity="0.7"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="none" role="img" aria-label="Happier sessions overview mock screenshot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#07070B"/>
+      <stop offset="1" stop-color="#0B0B12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10B981"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <filter id="shadow" x="-40" y="-40" width="1680" height="980" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" rx="36" fill="url(#bg)"/>
+
+  <!-- Window chrome -->
+  <g opacity="0.9">
+    <rect x="70" y="70" width="1460" height="760" rx="22" fill="#0E0F16" stroke="rgba(255,255,255,0.10)"/>
+    <circle cx="110" cy="110" r="8" fill="#FF5F57"/>
+    <circle cx="135" cy="110" r="8" fill="#FFBD2E"/>
+    <circle cx="160" cy="110" r="8" fill="#28C840"/>
+    <text x="220" y="116" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="16" fill="rgba(255,255,255,0.6)">Happier • Sessions</text>
+  </g>
+
+  <!-- Sidebar -->
+  <g filter="url(#shadow)">
+    <rect x="90" y="150" width="320" height="650" rx="18" fill="#0B0C12" stroke="rgba(255,255,255,0.10)"/>
+  </g>
+  <g opacity="0.95">
+    <rect x="118" y="182" width="264" height="46" rx="14" fill="rgba(255,255,255,0.04)" stroke="rgba(255,255,255,0.10)"/>
+    <text x="140" y="211" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="14" fill="rgba(255,255,255,0.7)">Search sessions…</text>
+
+    <text x="120" y="262" font-family="Lexend, Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.55)">RECENT</text>
+
+    <rect x="110" y="286" width="290" height="64" rx="16" fill="rgba(16,185,129,0.12)" stroke="rgba(16,185,129,0.35)"/>
+    <text x="132" y="318" font-family="Lexend, Inter, system-ui" font-weight="700" font-size="16" fill="rgba(255,255,255,0.92)">Refactor auth flow</text>
+    <text x="132" y="340" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">codex • 14m ago</text>
+
+    <rect x="110" y="360" width="290" height="64" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="132" y="392" font-family="Lexend, Inter, system-ui" font-weight="700" font-size="16" fill="rgba(255,255,255,0.86)">Fix flaky tests</text>
+    <text x="132" y="414" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">claude • 2h ago</text>
+
+    <rect x="110" y="434" width="290" height="64" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="132" y="466" font-family="Lexend, Inter, system-ui" font-weight="700" font-size="16" fill="rgba(255,255,255,0.86)">Ship landing page</text>
+    <text x="132" y="488" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">gemini • 1d ago</text>
+  </g>
+
+  <!-- Main panel -->
+  <g filter="url(#shadow)">
+    <rect x="430" y="150" width="1080" height="650" rx="18" fill="#0B0C12" stroke="rgba(255,255,255,0.10)"/>
+  </g>
+
+  <!-- Header -->
+  <g>
+    <rect x="452" y="182" width="1036" height="70" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="480" y="214" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="22" fill="rgba(255,255,255,0.92)">Refactor auth flow</text>
+    <text x="480" y="238" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">End-to-end encrypted • Resume anywhere • Full history</text>
+
+    <rect x="1286" y="198" width="182" height="38" rx="12" fill="rgba(16,185,129,0.18)" stroke="rgba(16,185,129,0.45)"/>
+    <text x="1310" y="222" font-family="Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.9)">Share session</text>
+  </g>
+
+  <!-- Timeline / messages -->
+  <g opacity="0.95">
+    <rect x="452" y="270" width="1036" height="430" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.06)"/>
+
+    <rect x="488" y="304" width="760" height="86" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="512" y="336" font-family="Lexend, Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.85)">You</text>
+    <text x="512" y="360" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Can you refactor the auth middleware to support refresh tokens?</text>
+
+    <rect x="740" y="408" width="720" height="110" rx="18" fill="rgba(16,185,129,0.09)" stroke="rgba(16,185,129,0.25)"/>
+    <text x="764" y="440" font-family="Lexend, Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.9)">Agent</text>
+    <text x="764" y="464" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.72)">Sure — I'll split the middleware, add a token rotation strategy, and keep sessions resumable across devices.</text>
+    <rect x="764" y="484" width="260" height="10" rx="5" fill="url(#accent)" opacity="0.75"/>
+
+    <rect x="488" y="536" width="920" height="86" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="512" y="568" font-family="Lexend, Inter, system-ui" font-weight="700" font-size="14" fill="rgba(255,255,255,0.85)">You</text>
+    <text x="512" y="592" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Make sure it still works when I continue from my phone.</text>
+  </g>
+
+  <!-- Input -->
+  <g>
+    <rect x="452" y="720" width="1036" height="80" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="484" y="765" font-family="Inter, system-ui" font-size="15" fill="rgba(255,255,255,0.55)">Message…</text>
+    <rect x="1366" y="738" width="104" height="44" rx="14" fill="rgba(16,185,129,0.22)" stroke="rgba(16,185,129,0.45)"/>
+    <text x="1397" y="766" font-family="Inter, system-ui" font-weight="800" font-size="14" fill="rgba(255,255,255,0.92)">Send</text>
+  </g>
+</svg>

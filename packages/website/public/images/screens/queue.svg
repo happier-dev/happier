@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" fill="none" role="img" aria-label="Happier pending queue mock screenshot">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#07070B"/>
+      <stop offset="1" stop-color="#0B0B12"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10B981"/>
+      <stop offset="1" stop-color="#38BDF8"/>
+    </linearGradient>
+    <filter id="shadow" x="-40" y="-40" width="1680" height="980" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#000000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" rx="36" fill="url(#bg)"/>
+
+  <g opacity="0.9">
+    <rect x="70" y="70" width="1460" height="760" rx="22" fill="#0E0F16" stroke="rgba(255,255,255,0.10)"/>
+    <circle cx="110" cy="110" r="8" fill="#FF5F57"/>
+    <circle cx="135" cy="110" r="8" fill="#FFBD2E"/>
+    <circle cx="160" cy="110" r="8" fill="#28C840"/>
+    <text x="220" y="116" font-family="Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif" font-size="16" fill="rgba(255,255,255,0.6)">Happier • Pending Queue</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="90" y="150" width="1420" height="650" rx="18" fill="#0B0C12" stroke="rgba(255,255,255,0.10)"/>
+  </g>
+
+  <!-- Header -->
+  <g>
+    <rect x="112" y="176" width="1376" height="74" rx="16" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="140" y="210" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="22" fill="rgba(255,255,255,0.92)">Pending queue</text>
+    <text x="140" y="234" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.55)">Edit and reorder prompts before the agent processes them.</text>
+    <rect x="1322" y="196" width="166" height="34" rx="12" fill="rgba(16,185,129,0.18)" stroke="rgba(16,185,129,0.45)"/>
+    <text x="1346" y="219" font-family="Inter, system-ui" font-weight="800" font-size="13" fill="rgba(255,255,255,0.9)">Run next</text>
+  </g>
+
+  <!-- Queue list -->
+  <g opacity="0.98">
+    <rect x="112" y="270" width="980" height="530" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+    <rect x="1120" y="270" width="368" height="530" rx="18" fill="rgba(255,255,255,0.02)" stroke="rgba(255,255,255,0.07)"/>
+  </g>
+
+  <!-- Items -->
+  <g>
+    <rect x="144" y="306" width="916" height="86" rx="18" fill="rgba(16,185,129,0.10)" stroke="rgba(16,185,129,0.25)"/>
+    <text x="176" y="342" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="16" fill="rgba(255,255,255,0.92)">1. Add refresh token rotation</text>
+    <text x="176" y="366" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Update middleware + add tests.</text>
+    <rect x="980" y="326" width="54" height="40" rx="12" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)"/>
+    <text x="1000" y="352" font-family="Inter, system-ui" font-weight="800" font-size="14" fill="rgba(255,255,255,0.85)">⇅</text>
+
+    <rect x="144" y="404" width="916" height="86" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="176" y="440" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="16" fill="rgba(255,255,255,0.88)">2. Improve error UX</text>
+    <text x="176" y="464" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Add friendly messages + retry hints.</text>
+
+    <rect x="144" y="502" width="916" height="86" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="176" y="538" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="16" fill="rgba(255,255,255,0.88)">3. Add provider fallback</text>
+    <text x="176" y="562" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Switch to another model on rate limit.</text>
+
+    <rect x="144" y="600" width="916" height="86" rx="18" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="176" y="636" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="16" fill="rgba(255,255,255,0.88)">4. Summarize changes</text>
+    <text x="176" y="660" font-family="Inter, system-ui" font-size="14" fill="rgba(255,255,255,0.65)">Create a changelog entry for release notes.</text>
+  </g>
+
+  <!-- Right: editor for selected item -->
+  <g>
+    <text x="1148" y="316" font-family="Lexend, Inter, system-ui" font-weight="800" font-size="18" fill="rgba(255,255,255,0.9)">Edit item</text>
+    <rect x="1148" y="340" width="312" height="44" rx="14" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="1170" y="368" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.6)">Title</text>
+    <rect x="1148" y="396" width="312" height="220" rx="14" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)"/>
+    <text x="1170" y="430" font-family="Inter, system-ui" font-size="13" fill="rgba(255,255,255,0.6)">Prompt</text>
+    <rect x="1170" y="450" width="260" height="10" rx="5" fill="url(#accent)" opacity="0.75"/>
+
+    <rect x="1148" y="640" width="150" height="44" rx="14" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)"/>
+    <text x="1188" y="668" font-family="Inter, system-ui" font-weight="800" font-size="13" fill="rgba(255,255,255,0.85)">Remove</text>
+
+    <rect x="1310" y="640" width="150" height="44" rx="14" fill="rgba(16,185,129,0.18)" stroke="rgba(16,185,129,0.45)"/>
+    <text x="1352" y="668" font-family="Inter, system-ui" font-weight="800" font-size="13" fill="rgba(255,255,255,0.9)">Save</text>
+  </g>
+</svg>
