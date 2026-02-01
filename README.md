@@ -148,9 +148,9 @@ If something feels broken, missing, or awkward — we want to hear about it.
 Happier grows through shared experience and collaboration.
 
 ## Project Structure
-* packages/app/ – mobile, web, and desktop clients
-* packages/cli/ – Happier CLI wrapper for AI coding agents
-* packages/server/ – encrypted relay / self-hosted backend
+* apps/ui/ – mobile, web, and desktop clients
+* apps/cli/ – Happier CLI wrapper for AI coding agents
+* apps/server/ – encrypted relay / self-hosted backend
 
 ## Contributing
 
