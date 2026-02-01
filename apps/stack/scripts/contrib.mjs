@@ -4,13 +4,13 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { parseArgs } from './utils/cli/args.mjs';
-import { isTty, prompt, promptSelect, withRl } from './utils/cli/prompts.mjs';
+import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
-import { banner, bold, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
-import { cyan, dim, green, red, yellow } from './utils/ui/ansi.mjs';
+import { banner, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
+import { bold, cyan, dim, green, red, yellow } from './utils/ui/ansi.mjs';
 import { getDevRepoDir, getRootDir } from './utils/paths/paths.mjs';
-import { ensureDevCheckout, resolveDevBranchName, resolvePreferredDevRemote } from './utils/git/dev_checkout.mjs';
+import { ensureDevCheckout, resolveDevBranchName, resolveDevPushRemote, resolveDevSyncRemote } from './utils/git/dev_checkout.mjs';
 import { parseGithubOwnerRepo } from './utils/git/worktrees.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
 
@@ -117,7 +117,7 @@ async function cmdSync({ rootDir, argv }) {
   const force = flags.has('--force');
 
   const { devDir, devBranch, mainDir } = await ensureDevCheckout({ rootDir, env: process.env, remote: remoteFlag });
-  const chosenRemote = await resolvePreferredDevRemote({ repoDir: mainDir, env: process.env, preferred: remoteFlag });
+  const chosenRemote = await resolveDevSyncRemote({ repoDir: mainDir, env: process.env, preferred: remoteFlag });
   if (!chosenRemote) throw new Error('[contrib sync] no remote available (expected upstream or origin)');
 
   const dirty = await gitStatusPorcelain(devDir);
@@ -151,8 +151,10 @@ async function cmdExtract({ rootDir, argv }) {
 
   const interactive = isTty();
   const { devDir, devBranch, mainDir } = await ensureDevCheckout({ rootDir, env: process.env, remote: preferredRemote });
-  const chosenRemote = await resolvePreferredDevRemote({ repoDir: mainDir, env: process.env, preferred: preferredRemote });
-  if (!chosenRemote) throw new Error('[contrib extract] no remote available (expected upstream or origin)');
+  const syncRemote = await resolveDevSyncRemote({ repoDir: mainDir, env: process.env, preferred: preferredRemote });
+  const pushRemote = await resolveDevPushRemote({ repoDir: mainDir, env: process.env, preferred: preferredRemote });
+  if (!syncRemote) throw new Error('[contrib extract] no sync remote available (expected upstream or origin)');
+  if (!pushRemote) throw new Error('[contrib extract] no push remote available (expected origin or upstream)');
 
   const dirty = await gitStatusPorcelain(devDir);
   if (dirty) {
@@ -195,12 +197,13 @@ async function cmdExtract({ rootDir, argv }) {
 
   if (push) {
     // Push the feature branch, leaving dev untouched unless mode=reset.
-    await run('git', ['push', chosenRemote, `${featureBranch}:${featureBranch}`], { cwd: devDir });
+    // Default remote is origin (fork), so contributors don't accidentally try to push to upstream.
+    await run('git', ['push', pushRemote, `${featureBranch}:${featureBranch}`], { cwd: devDir });
   }
 
   if (mode === 'reset') {
-    await run('git', ['fetch', chosenRemote, devBranch], { cwd: devDir });
-    await run('git', ['reset', '--hard', `${chosenRemote}/${devBranch}`], { cwd: devDir });
+    await run('git', ['fetch', syncRemote, devBranch], { cwd: devDir });
+    await run('git', ['reset', '--hard', `${syncRemote}/${devBranch}`], { cwd: devDir });
   }
 
   const prUrl = await computePrUrl({ repoDir: devDir, baseBranch: resolveDevBranchName(process.env), headBranch: featureBranch });
@@ -210,11 +213,15 @@ async function cmdExtract({ rootDir, argv }) {
 
   printResult({
     json,
-    data: { ok: true, devDir, devBranch, remote: chosenRemote, featureBranch, mode, pushed: push, prUrl: prUrl || null },
+    data: { ok: true, devDir, devBranch, syncRemote, pushRemote, featureBranch, mode, pushed: push, prUrl: prUrl || null },
     text: [
       `${green('✓')} created ${cyan(featureBranch)} from ${cyan(devBranch)}`,
-      mode === 'reset' ? `${green('✓')} reset ${cyan(devBranch)} to ${cyan(`${chosenRemote}/${devBranch}`)}` : `${yellow('!')} kept ${cyan(devBranch)} as-is (stacking PRs)`,
-      push ? `${green('✓')} pushed ${cyan(featureBranch)} to ${cyan(chosenRemote)}` : `${dim('Tip:')} ${cmd(`git -C ${devDir} push ${chosenRemote} ${featureBranch}:${featureBranch}`)}`,
+      mode === 'reset'
+        ? `${green('✓')} reset ${cyan(devBranch)} to ${cyan(`${syncRemote}/${devBranch}`)}`
+        : `${yellow('!')} kept ${cyan(devBranch)} as-is (stacking PRs)`,
+      push
+        ? `${green('✓')} pushed ${cyan(featureBranch)} to ${cyan(pushRemote)}`
+        : `${dim('Tip:')} ${cmd(`git -C ${devDir} push ${pushRemote} ${featureBranch}:${featureBranch}`)}`,
       prUrl ? `${dim('PR:')} ${prUrl}` : null,
     ].join('\n'),
   });

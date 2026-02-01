@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
-import { getDefaultAutostartPaths, getHappyStacksHomeDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { getDefaultAutostartPaths, getHappyStacksHomeDir, getRepoDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
 import { getCanonicalHomeDir } from './utils/env/config.mjs';
 import { ensureEnvLocalUpdated } from './utils/env/env_local.mjs';
@@ -31,6 +31,7 @@ import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { ensureDevCheckout } from './utils/git/dev_checkout.mjs';
+import { parseGithubOwnerRepo } from './utils/git/worktrees.mjs';
 
 function resolveWorkspaceDirDefault() {
   const explicit = (process.env.HAPPIER_STACK_WORKSPACE_DIR ?? '').toString().trim();
@@ -77,6 +78,104 @@ function normalizeGithubRepoUrl(raw) {
 
   // Fallback: let git try to interpret it (could be a local path).
   return v;
+}
+
+async function parseRemoteOwnerRepo({ repoDir, remoteName }) {
+  try {
+    const url = (await runCapture('git', ['remote', 'get-url', remoteName], { cwd: repoDir })).trim();
+    return parseGithubOwnerRepo(url);
+  } catch {
+    return null;
+  }
+}
+
+async function canPushToRemote({ repoDir, remoteName }) {
+  try {
+    // This checks for push credentials + authorization without creating anything.
+    await runCapture('git', ['push', '--dry-run', remoteName, 'HEAD:refs/heads/hstack-permission-check'], { cwd: repoDir });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function maybeConfigureForkRemoteForDevProfile({ rootDir, interactive }) {
+  const repoDir = getRepoDir(rootDir, process.env);
+  if (!existsSync(join(repoDir, '.git'))) return;
+
+  const upstream = await parseRemoteOwnerRepo({ repoDir, remoteName: 'upstream' });
+  const origin = await parseRemoteOwnerRepo({ repoDir, remoteName: 'origin' });
+  if (!upstream?.owner || !upstream?.repo || !origin?.owner || !origin?.repo) {
+    return;
+  }
+
+  const originIsUpstream = upstream.owner === origin.owner && upstream.repo === origin.repo;
+  if (!originIsUpstream) {
+    return;
+  }
+
+  // origin points at upstream and the user can't push: they almost certainly need a fork.
+  const canPushOrigin = await canPushToRemote({ repoDir, remoteName: 'origin' });
+  if (canPushOrigin) {
+    return;
+  }
+
+  const forkUrlFromEnv = String(process.env.HAPPIER_STACK_FORK_URL ?? '').trim();
+  if (!interactive) {
+    if (forkUrlFromEnv) {
+      await run('git', ['remote', 'set-url', 'origin', forkUrlFromEnv], { cwd: repoDir });
+      return;
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      `${yellow('!')} Dev setup: origin points to upstream (${upstream.owner}/${upstream.repo}), but you don't have push access.\n` +
+        `${dim('Fix:')} re-run ${cyan('hstack setup --profile=dev')} in a TTY to configure a fork, or set ${cyan('HAPPIER_STACK_FORK_URL')} to your fork repo URL.`
+    );
+    return;
+  }
+
+  const configureFork = await withRl(async (rl) => {
+    return await promptSelect(rl, {
+      title:
+        `${bold('GitHub fork')}\n` +
+        `${dim('To contribute, you usually need a fork to push branches. Configure your fork as `origin` now?')}`,
+      options: [
+        { label: `yes ${dim('(recommended)')}`, value: true },
+        { label: 'no (skip)', value: false },
+      ],
+      defaultIndex: 0,
+    });
+  });
+  if (!configureFork) return;
+
+  // Best-effort open the upstream repo page to make forking easy.
+  await openUrlInBrowser(`https://github.com/${upstream.owner}/${upstream.repo}`).catch(() => {});
+
+  const forkUrl = await withRl(async (rl) => {
+    return (await prompt(rl, 'Paste your fork repo URL (https or ssh): ', { defaultValue: forkUrlFromEnv })).trim();
+  });
+  if (!forkUrl) {
+    throw new Error('[setup] missing fork URL.');
+  }
+
+  await run('git', ['remote', 'set-url', 'origin', forkUrl], { cwd: repoDir });
+
+  // Optional: ensure the fork has a dev branch matching upstream/dev (best-effort).
+  const devBranch = String(process.env.HAPPIER_STACK_DEV_BRANCH ?? '').trim() || 'dev';
+  let forkHasDev = true;
+  try {
+    await runCapture('git', ['ls-remote', '--exit-code', '--heads', 'origin', devBranch], { cwd: repoDir });
+  } catch {
+    forkHasDev = false;
+  }
+  if (!forkHasDev) {
+    try {
+      await run('git', ['fetch', 'upstream', devBranch], { cwd: repoDir });
+      await run('git', ['push', 'origin', `refs/remotes/upstream/${devBranch}:refs/heads/${devBranch}`], { cwd: repoDir });
+    } catch {
+      // ignore: user can still contribute via feature branches
+    }
+  }
 }
 
 async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, tailscaleWanted, menubarMode, happyRepoUrl }) {
@@ -1010,6 +1109,10 @@ async function cmdSetup({ rootDir, argv }) {
         console.log(dim(`Tip: iOS dev-client install is macOS-only. You can still use the web UI on mobile via Tailscale.`));
       }
     }
+
+    // Contributor UX: if the user can't push to upstream, offer to configure a fork as origin
+    // (so later `hstack contrib extract --push` defaults to pushing feature branches to origin).
+    await maybeConfigureForkRemoteForDevProfile({ rootDir, interactive });
 
     // Ensure the dedicated dev checkout exists (workspace/dev on branch "dev").
     // This is the recommended place for contributors to make changes (main stays stable).

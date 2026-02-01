@@ -20,13 +20,25 @@ export function resolveDevBranchName(env = process.env) {
   return String(env.HAPPIER_STACK_DEV_BRANCH ?? '').trim() || 'dev';
 }
 
-export async function resolvePreferredDevRemote({ repoDir, env = process.env, preferred = '' } = {}) {
+// Remote used to *read* the canonical dev branch from (sync/reset defaults).
+export async function resolveDevSyncRemote({ repoDir, env = process.env, preferred = '' } = {}) {
   const want = String(preferred ?? '').trim();
   if (want) return want;
 
   // Default preference: upstream (if configured), else origin.
   if (await gitHasRemote({ repoDir, remote: 'upstream' })) return 'upstream';
   if (await gitHasRemote({ repoDir, remote: 'origin' })) return 'origin';
+  return '';
+}
+
+// Remote used to *push* feature branches to (extract defaults).
+// Conventional git behavior: push to origin (fork), PR against upstream.
+export async function resolveDevPushRemote({ repoDir, env = process.env, preferred = '' } = {}) {
+  const want = String(preferred ?? '').trim();
+  if (want) return want;
+
+  if (await gitHasRemote({ repoDir, remote: 'origin' })) return 'origin';
+  if (await gitHasRemote({ repoDir, remote: 'upstream' })) return 'upstream';
   return '';
 }
 
@@ -46,7 +58,7 @@ export async function ensureDevCheckout({ rootDir, env = process.env, remote = '
 
   await mkdir(devDir, { recursive: true }).catch(() => {});
 
-  const chosenRemote = await resolvePreferredDevRemote({ repoDir: mainDir, env, preferred: remote });
+  const chosenRemote = await resolveDevSyncRemote({ repoDir: mainDir, env, preferred: remote });
   if (!chosenRemote) {
     throw new Error(`[dev] missing git remotes in ${mainDir}\nFix: ensure at least one of {upstream, origin} exists.`);
   }
@@ -59,4 +71,3 @@ export async function ensureDevCheckout({ rootDir, env = process.env, remote = '
 
   return { ok: true, created: true, mainDir, devDir, devBranch, remote: chosenRemote };
 }
-
