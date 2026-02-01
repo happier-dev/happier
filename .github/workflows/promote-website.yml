@@ -34,9 +34,35 @@ on:
         required: true
         default: true
         type: boolean
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target environment (deploy branch)"
+        required: true
+        type: string
+      source_ref:
+        description: "Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
+        required: false
+        default: auto
+        type: string
+      allow_cross_promote:
+        description: "Allow promoting a non-default source ref to the selected environment (use with care)."
+        required: false
+        default: false
+        type: boolean
+      bump:
+        description: "Version bump on source ref (website)"
+        required: false
+        default: none
+        type: string
+      run_build:
+        description: "Run apps/website build before promoting"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: promote-website-${{ github.ref }}
@@ -74,18 +100,31 @@ jobs:
 
           echo "ref=$src" >> "$GITHUB_OUTPUT"
 
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
       - name: Checkout source ref
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.resolve.outputs.ref }}
           fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
 
       - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Bump website version (source ref)

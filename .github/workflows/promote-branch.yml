@@ -1,0 +1,243 @@
+name: Promote Branch (fast-forward or reset)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Source branch to copy FROM"
+        required: true
+        default: dev
+        type: string
+      target:
+        description: "Target branch to update"
+        required: true
+        default: main
+        type: string
+      mode:
+        description: "Promotion mode"
+        required: true
+        type: choice
+        default: fast_forward
+        options:
+          - fast_forward
+          - reset
+      dry_run:
+        description: "Only compute and show what would change (no push)"
+        required: true
+        default: false
+        type: boolean
+      allow_reset:
+        description: "Required when mode=reset (rewrites main history)"
+        required: true
+        default: false
+        type: boolean
+      confirm:
+        description: "Type exactly: promote <target> from <source> (or: reset <target> from <source>)"
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      source:
+        description: "Source branch to copy FROM"
+        required: true
+        type: string
+      target:
+        description: "Target branch to update"
+        required: true
+        type: string
+      mode:
+        description: "Promotion mode"
+        required: true
+        type: string
+      dry_run:
+        description: "Only compute and show what would change (no push)"
+        required: false
+        default: false
+        type: boolean
+      allow_reset:
+        description: "Required when mode=reset (rewrites target history)"
+        required: false
+        default: false
+        type: boolean
+      confirm:
+        description: "Type exactly: promote <target> from <source> (or: reset <target> from <source>)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-branch-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          src="${{ inputs.source }}"
+          tgt="${{ inputs.target }}"
+          mode="${{ inputs.mode }}"
+          confirm="${{ inputs.confirm }}"
+
+          if [ -z "$src" ] || [ -z "$tgt" ]; then
+            echo "source and target are required." >&2
+            exit 1
+          fi
+
+          if [ "$src" = "$tgt" ]; then
+            echo "Refusing to promote a branch onto itself ($tgt)." >&2
+            exit 1
+          fi
+
+          if [ "$mode" = "fast_forward" ]; then
+            expected="promote $tgt from $src"
+            if [ "$confirm" != "$expected" ]; then
+              echo "Confirmation mismatch." >&2
+              echo "Expected: $expected" >&2
+              echo "Got:      $confirm" >&2
+              exit 1
+            fi
+          elif [ "$mode" = "reset" ]; then
+            if [ "${{ inputs.allow_reset }}" != "true" ]; then
+              echo "Refusing to reset without allow_reset=true." >&2
+              exit 1
+            fi
+            expected="reset $tgt from $src"
+            if [ "$confirm" != "$expected" ]; then
+              echo "Confirmation mismatch." >&2
+              echo "Expected: $expected" >&2
+              echo "Got:      $confirm" >&2
+              exit 1
+            fi
+          else
+            echo "Unknown mode: $mode" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Compute promotion summary
+        id: summary
+        run: |
+          set -euo pipefail
+
+          src="${{ inputs.source }}"
+          tgt="${{ inputs.target }}"
+
+          git fetch origin "$src" "$tgt" --tags --prune
+
+          src_sha="$(git rev-parse HEAD)"
+          tgt_sha="$(git rev-parse "origin/$tgt")"
+
+          echo "source_sha=$src_sha" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$tgt_sha" >> "$GITHUB_OUTPUT"
+
+          # Commits reachable from source but not target.
+          commit_count="$(git rev-list --count "$tgt_sha..$src_sha")"
+          echo "commit_count=$commit_count" >> "$GITHUB_OUTPUT"
+
+          # Changed paths between target..source (best-effort signal).
+          git diff --name-only "$tgt_sha..$src_sha" > /tmp/changed_paths.txt || true
+
+          changed_ui=false
+          changed_cli=false
+          changed_server=false
+          changed_website=false
+          changed_docs=false
+          changed_shared=false
+
+          while IFS= read -r p; do
+            case "$p" in
+              apps/ui/*) changed_ui=true ;;
+              apps/cli/*) changed_cli=true ;;
+              apps/server/*) changed_server=true ;;
+              apps/website/*) changed_website=true ;;
+              apps/docs/*) changed_docs=true ;;
+              packages/agents/*|packages/protocol/*) changed_shared=true ;;
+              *) ;;
+            esac
+          done < /tmp/changed_paths.txt
+
+          echo "changed_ui=$changed_ui" >> "$GITHUB_OUTPUT"
+          echo "changed_cli=$changed_cli" >> "$GITHUB_OUTPUT"
+          echo "changed_server=$changed_server" >> "$GITHUB_OUTPUT"
+          echo "changed_website=$changed_website" >> "$GITHUB_OUTPUT"
+          echo "changed_docs=$changed_docs" >> "$GITHUB_OUTPUT"
+          echo "changed_shared=$changed_shared" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Promote Branch"
+            echo ""
+            echo "- source: \`$src\`"
+            echo "- target: \`$tgt\`"
+            echo "- mode: \`${{ inputs.mode }}\`"
+            echo "- dry_run: \`${{ inputs.dry_run }}\`"
+            echo "- origin/$tgt: \`$tgt_sha\`"
+            echo "- $src: \`$src_sha\`"
+            echo "- commits to promote: \`$commit_count\`"
+            echo ""
+            echo "### Changed components ($tgt..$src)"
+            echo "- ui: \`$changed_ui\`"
+            echo "- cli: \`$changed_cli\`"
+            echo "- server: \`$changed_server\`"
+            echo "- website: \`$changed_website\`"
+            echo "- docs: \`$changed_docs\`"
+            echo "- shared (agents/protocol): \`$changed_shared\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$commit_count" = "0" ]; then
+            echo "No commits to promote (target already includes source)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Ensure target is ancestor of source (fast-forward only)
+        if: inputs.mode == 'fast_forward' && inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          tgt_sha="${{ steps.summary.outputs.target_sha }}"
+          src_sha="${{ steps.summary.outputs.source_sha }}"
+
+          if git merge-base --is-ancestor "$tgt_sha" "$src_sha"; then
+            exit 0
+          fi
+
+          echo "Cannot fast-forward: target is not an ancestor of source." >&2
+          echo "Use mode=reset (rewrites target), or resolve divergence first." >&2
+          exit 1
+
+      - name: Push fast-forward (source → target)
+        if: inputs.mode == 'fast_forward' && inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          tgt="${{ inputs.target }}"
+          src_sha="${{ steps.summary.outputs.source_sha }}"
+          git push origin "$src_sha:refs/heads/$tgt"
+
+      - name: Push reset (source → target, force-with-lease)
+        if: inputs.mode == 'reset' && inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          tgt="${{ inputs.target }}"
+          src_sha="${{ steps.summary.outputs.source_sha }}"
+
+          remote_sha="$(git ls-remote --heads origin "$tgt" | awk '{print $1}')"
+          if [ -z "${remote_sha:-}" ]; then
+            echo "Target branch '$tgt' does not exist on origin." >&2
+            exit 1
+          fi
+          git push origin "$src_sha:refs/heads/$tgt" --force-with-lease="refs/heads/$tgt:$remote_sha"

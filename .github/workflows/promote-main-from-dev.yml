@@ -1,0 +1,46 @@
+name: Promote main from dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Promotion mode"
+        required: true
+        type: choice
+        default: fast_forward
+        options:
+          - fast_forward
+          - reset
+      dry_run:
+        description: "Only compute and show what would change (no push)"
+        required: true
+        default: false
+        type: boolean
+      allow_reset:
+        description: "Required when mode=reset (rewrites main history)"
+        required: true
+        default: false
+        type: boolean
+      confirm:
+        description: "Type exactly: promote main from dev (or: reset main from dev)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-main-from-dev
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    uses: ./.github/workflows/promote-branch.yml
+    secrets: inherit
+    with:
+      source: dev
+      target: main
+      mode: ${{ inputs.mode }}
+      dry_run: ${{ inputs.dry_run }}
+      allow_reset: ${{ inputs.allow_reset }}
+      confirm: ${{ inputs.confirm }}

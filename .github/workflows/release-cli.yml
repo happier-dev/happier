@@ -15,6 +15,7 @@ on:
         required: true
         type: choice
         options:
+          - none
           - patch
           - minor
           - major
@@ -36,9 +37,34 @@ on:
         required: true
         default: false
         type: boolean
+  workflow_call:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        type: string
+      bump:
+        description: "Version bump on main (cli)"
+        required: true
+        type: string
+      npm_tag:
+        description: "npm dist-tag (production: latest, preview: next)"
+        required: false
+        default: latest
+        type: string
+      run_tests:
+        description: "Run apps/cli tests before publishing"
+        required: false
+        default: true
+        type: boolean
+      update_deploy_branch:
+        description: "Also promote main to deploy/<channel>/cli (optional audit trail)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: release-cli-${{ github.ref }}
@@ -48,25 +74,42 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
       - name: Checkout main
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           registry-url: https://registry.npmjs.org
+          cache: yarn
+          cache-dependency-path: yarn.lock
 
       - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Bump cli version (main)
         id: bump_cli
         run: |
           set -euo pipefail
+          if [ "${{ inputs.bump }}" = "none" ]; then
+            echo "version=SKIP" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           out="$(node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.bump }}")"
           echo "version=$out" >> "$GITHUB_OUTPUT"
 
@@ -75,6 +118,7 @@ jobs:
         run: yarn --cwd apps/cli test
 
       - name: Commit version bump (main)
+        if: steps.bump_cli.outputs.version != 'SKIP'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -83,6 +127,7 @@ jobs:
           git commit -m "chore(release): bump cli to v${{ steps.bump_cli.outputs.version }}"
 
       - name: Push main
+        if: steps.bump_cli.outputs.version != 'SKIP'
         run: git push origin HEAD:main
 
       - name: npm publish
@@ -110,4 +155,3 @@ jobs:
           else
             git push origin HEAD:"$DEPLOY_REF"
           fi
-

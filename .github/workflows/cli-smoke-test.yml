@@ -32,7 +32,10 @@ jobs:
         cache-dependency-path: yarn.lock
 
     - name: Install dependencies
-      run: yarn install --immutable
+      env:
+        YARN_PRODUCTION: "false"
+        npm_config_production: "false"
+      run: yarn install --frozen-lockfile --ignore-engines
 
     - name: Build package
       run: yarn workspace @happier-dev/cli build
@@ -92,7 +95,10 @@ jobs:
         cache-dependency-path: yarn.lock
 
     - name: Install dependencies
-      run: yarn install --immutable
+      env:
+        YARN_PRODUCTION: "false"
+        npm_config_production: "false"
+      run: yarn install --frozen-lockfile --ignore-engines
 
     - name: Build package
       run: yarn workspace @happier-dev/cli build
@@ -103,7 +109,7 @@ jobs:
     - name: Install packed package globally
       shell: cmd
       run: |
-        for %%f in (packages\cli\*.tgz) do npm install -g "%%f"
+        for %%f in (apps\cli\*.tgz) do npm install -g "%%f"
 
     - name: Debug npm global installation structure
       shell: cmd
