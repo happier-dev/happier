@@ -23,7 +23,7 @@
     "start": "node ./scripts/run.mjs",
     "dev": "node ./scripts/dev.mjs",
     "release": "node ./scripts/release.mjs",
-    "happy": "node ./scripts/happy.mjs",
+    "happier": "node ./scripts/happier.mjs",
     "wt": "node ./scripts/worktrees.mjs",
     "srv": "node ./scripts/server_flavor.mjs",
     "server-flavor": "node ./scripts/server_flavor.mjs",
