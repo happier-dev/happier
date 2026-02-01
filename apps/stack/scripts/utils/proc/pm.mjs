@@ -1,7 +1,7 @@
 import { homedir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
 import { pathExists } from '../fs/fs.mjs';
@@ -318,8 +318,8 @@ export async function ensureHappyCliLocalNpmLinked(rootDir, { npmLinkCli, quiet 
   const binDir = join(homeDir, 'bin');
   await mkdir(binDir, { recursive: true });
 
-  const hstackShim = join(binDir, 'hstack');
-  const happyShim = join(binDir, 'happy');
+  const legacyHappyShim = join(binDir, 'happy');
+  const happierShim = join(binDir, 'happier');
 
   const shim = `#!/bin/bash
 set -euo pipefail
@@ -330,7 +330,7 @@ if [[ -x "$hstack" ]]; then
   exec "$hstack" happy "$@"
 fi
 
-# Fallback: run happy-stacks from runtime install if present.
+# Fallback: run hstack from runtime install if present.
 HOME_DIR="\${HAPPIER_STACK_HOME_DIR:-$HOME/.happier-stack}"
 RUNTIME="$HOME_DIR/runtime/node_modules/@happier-dev/stack/bin/hstack.mjs"
 if [[ -f "$RUNTIME" ]]; then
@@ -353,17 +353,16 @@ exit 1
     return true;
   };
 
-  await writeIfChanged(happyShim, shim);
-  await chmod(happyShim, 0o755).catch(() => {});
+  // Install the Happier CLI shim under `happier` (avoid clashing with Happy's `happy` shim).
+  await writeIfChanged(happierShim, shim);
+  await chmod(happierShim, 0o755).catch(() => {});
 
-  // hstack shim: use node + CLI root; if runtime install exists, prefer it.
-  const cliRoot = resolveInstalledCliRoot(rootDir);
-  const hstackShimText = `#!/bin/bash
-set -euo pipefail
-exec node "${resolveInstalledPath(rootDir, 'bin/hstack.mjs')}" "$@"
-`;
-  await writeIfChanged(hstackShim, hstackShimText);
-  await chmod(hstackShim, 0o755).catch(() => {});
+  // Remove legacy `happy` shim (it conflicts with Happy stacks installs).
+  try {
+    await unlink(legacyHappyShim);
+  } catch {
+    // ignore
+  }
 
   // If user’s PATH points at a legacy install path, try to make it sane (best-effort).
   const entries = getPathEntries();
@@ -376,7 +375,8 @@ exec node "${resolveInstalledPath(rootDir, 'bin/hstack.mjs')}" "$@"
     }
   }
 
-  return { ok: true, cliRoot, binDir, happyShim, hstackShim };
+  const cliRoot = resolveInstalledCliRoot(rootDir);
+  return { ok: true, cliRoot, binDir, happierShim, removedLegacyHappyShim: true };
 }
 
 export async function pmExecBin(dirOrOpts, binArg, argsArg, optsArg) {
