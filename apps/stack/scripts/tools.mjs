@@ -29,6 +29,16 @@ async function main() {
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const cmd = (positionals[0] ?? '').trim();
 
+  const scriptRel = TOOL_SCRIPTS[cmd];
+
+  // If the user asked for help for a specific tool, delegate to that tool's script.
+  if (wantsHelp(argv, { flags }) && scriptRel && cmd && cmd !== 'help') {
+    const idx = argv.indexOf(cmd);
+    const forwarded = idx === -1 ? argv.slice(1) : [...argv.slice(0, idx), ...argv.slice(idx + 1)];
+    await run(process.execPath, [join(rootDir, scriptRel), ...forwarded], { cwd: rootDir, env: process.env });
+    return;
+  }
+
   if (wantsHelp(argv, { flags }) || !cmd || cmd === 'help') {
     printResult({
       json,
@@ -45,7 +55,6 @@ async function main() {
     return;
   }
 
-  const scriptRel = TOOL_SCRIPTS[cmd];
   if (!scriptRel) {
     throw new Error(`[tools] unknown tool: ${cmd}`);
   }

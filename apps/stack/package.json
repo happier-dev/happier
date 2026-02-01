@@ -4,8 +4,8 @@
   "version": "0.6.14",
   "packageManager": "yarn@1.22.22",
   "bin": {
-    "hstack": "./bin/hstack.mjs",
     "happier-stack": "./bin/hstack.mjs"
+    "hstack": "./bin/hstack.mjs"
   },
   "files": [
     "bin/",
