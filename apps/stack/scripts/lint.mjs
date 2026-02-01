@@ -8,7 +8,41 @@ import { run } from './utils/proc/proc.mjs';
 import { detectPackageManagerCmd, pickFirstScript, readPackageJsonScripts } from './utils/proc/package_scripts.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 
-const DEFAULT_COMPONENTS = ['happy', 'happy-cli', 'happy-server-light', 'happy-server'];
+const VALID_TARGETS = ['ui', 'cli', 'server'];
+
+function targetFromLegacyComponent(component) {
+  const c = String(component ?? '').trim();
+  if (c === 'happy') return 'ui';
+  if (c === 'happy-cli') return 'cli';
+  if (c === 'happy-server' || c === 'happy-server-light') return 'server';
+  return null;
+}
+
+function legacyComponentFromTarget(target) {
+  const t = String(target ?? '').trim();
+  if (t === 'ui') return 'happy';
+  if (t === 'cli') return 'happy-cli';
+  if (t === 'server') return 'happy-server';
+  return null;
+}
+
+function normalizeTargetsOrThrow(rawTargets) {
+  const requested = Array.isArray(rawTargets) ? rawTargets.map((t) => String(t ?? '').trim()).filter(Boolean) : [];
+  if (!requested.length) return ['all'];
+
+  const mapped = requested
+    .map((t) => {
+      const lower = t.toLowerCase();
+      if (lower === 'all') return 'all';
+      if (VALID_TARGETS.includes(lower)) return lower;
+      const legacy = targetFromLegacyComponent(lower);
+      return legacy ?? null;
+    })
+    .filter(Boolean);
+
+  if (!mapped.length) return ['all'];
+  return mapped;
+}
 
 function pickLintScript(scripts) {
   const candidates = [
@@ -30,20 +64,21 @@ async function main() {
   if (wantsHelp(argv, { flags })) {
     printResult({
       json,
-      data: { components: DEFAULT_COMPONENTS, flags: ['--json'] },
+      data: { targets: [...VALID_TARGETS, 'all'], flags: ['--json'] },
       text: [
         '[lint] usage:',
-        '  hapsta lint [component...] [--json]',
+        '  hapsta lint [ui|cli|server|all] [--json]',
         '',
-        'components:',
-        `  ${DEFAULT_COMPONENTS.join(' | ')}`,
+        'targets:',
+        `  ${[...VALID_TARGETS, 'all'].join(' | ')}`,
         '',
         'examples:',
         '  hapsta lint',
-        '  hapsta lint happy happy-cli',
+        '  hapsta lint ui',
+        '  hapsta lint ui cli',
         '',
         'note:',
-        '  If run from inside a component checkout/worktree and no components are provided, defaults to that component.',
+        '  If run from inside a repo checkout/worktree and no targets are provided, defaults to the inferred app (ui/cli/server).',
       ].join('\n'),
     });
     return;
@@ -52,59 +87,61 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const inferred =
+  const inferredLegacy =
     positionals.length === 0
       ? inferComponentFromCwd({
           rootDir,
           invokedCwd: getInvokedCwd(process.env),
-          components: DEFAULT_COMPONENTS,
+          components: ['happy', 'happy-cli', 'happy-server'],
         })
       : null;
-  if (inferred) {
+  if (inferredLegacy) {
     if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
-      process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
+      process.env.HAPPIER_STACK_REPO_DIR = inferredLegacy.repoDir;
     }
   }
 
-  const requested = positionals.length ? positionals : inferred ? [inferred.component] : ['all'];
+  const inferredTarget = inferredLegacy ? targetFromLegacyComponent(inferredLegacy.component) : null;
+  const requested = normalizeTargetsOrThrow(positionals.length ? positionals : inferredTarget ? [inferredTarget] : ['all']);
   const wantAll = requested.includes('all');
-  const components = wantAll ? DEFAULT_COMPONENTS : requested;
+  const targets = wantAll ? VALID_TARGETS : requested;
 
   const results = [];
-  for (const component of components) {
-    if (!DEFAULT_COMPONENTS.includes(component)) {
-      results.push({ component, ok: false, skipped: false, error: `unknown component (expected one of: ${DEFAULT_COMPONENTS.join(', ')})` });
+  for (const target of targets) {
+    if (!VALID_TARGETS.includes(target)) {
+      results.push({ target, ok: false, skipped: false, error: `unknown target (expected one of: ${[...VALID_TARGETS, 'all'].join(', ')})` });
       continue;
     }
 
+    const component = legacyComponentFromTarget(target);
     const dir = getComponentDir(rootDir, component);
     if (!(await pathExists(dir))) {
-      results.push({ component, ok: false, skipped: false, dir, error: `missing component dir: ${dir}` });
+      results.push({ target, ok: false, skipped: false, dir, error: `missing target dir: ${dir}` });
       continue;
     }
 
     const scripts = await readPackageJsonScripts(dir);
     if (!scripts) {
-      results.push({ component, ok: true, skipped: true, dir, reason: 'no package.json' });
+      results.push({ target, ok: true, skipped: true, dir, reason: 'no package.json' });
       continue;
     }
 
     const script = pickLintScript(scripts);
     if (!script) {
-      results.push({ component, ok: true, skipped: true, dir, reason: 'no lint script found in package.json' });
+      results.push({ target, ok: true, skipped: true, dir, reason: 'no lint script found in package.json' });
       continue;
     }
 
-    await ensureDepsInstalled(dir, component);
+    await ensureDepsInstalled(dir, target);
     const pm = await detectPackageManagerCmd(dir);
 
     try {
       // eslint-disable-next-line no-console
-      console.log(`[lint] ${component}: running ${pm.name} ${script}`);
+      console.log(`[lint] ${target}: running ${pm.name} ${script}`);
       await run(pm.cmd, pm.argsForScript(script), { cwd: dir, env: process.env });
-      results.push({ component, ok: true, skipped: false, dir, pm: pm.name, script });
+      results.push({ target, ok: true, skipped: false, dir, pm: pm.name, script });
     } catch (e) {
-      results.push({ component, ok: false, skipped: false, dir, pm: pm.name, script, error: String(e?.message ?? e) });
+      results.push({ target, ok: false, skipped: false, dir, pm: pm.name, script, error: String(e?.message ?? e) });
     }
   }
 
@@ -117,11 +154,11 @@ async function main() {
   const lines = ['[lint] results:'];
   for (const r of results) {
     if (r.ok && r.skipped) {
-      lines.push(`- ↪ ${r.component}: skipped (${r.reason})`);
+      lines.push(`- ↪ ${r.target}: skipped (${r.reason})`);
     } else if (r.ok) {
-      lines.push(`- ✅ ${r.component}: ok (${r.pm} ${r.script})`);
+      lines.push(`- ✅ ${r.target}: ok (${r.pm} ${r.script})`);
     } else {
-      lines.push(`- ❌ ${r.component}: failed (${r.pm ?? 'unknown'} ${r.script ?? ''})`);
+      lines.push(`- ❌ ${r.target}: failed (${r.pm ?? 'unknown'} ${r.script ?? ''})`);
       if (r.error) lines.push(`  - ${r.error}`);
     }
   }

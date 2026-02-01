@@ -11,9 +11,44 @@ import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs'
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join, sep } from 'node:path';
 
-const DEFAULT_COMPONENTS = ['happy', 'happy-cli', 'happy-server-light', 'happy-server'];
 const EXTRA_COMPONENTS = ['stacks'];
-const VALID_COMPONENTS = [...DEFAULT_COMPONENTS, ...EXTRA_COMPONENTS];
+const VALID_TARGETS = ['ui', 'cli', 'server'];
+const VALID_COMPONENTS = [...VALID_TARGETS, ...EXTRA_COMPONENTS, 'all'];
+
+function targetFromLegacyComponent(component) {
+  const c = String(component ?? '').trim();
+  if (c === 'happy') return 'ui';
+  if (c === 'happy-cli') return 'cli';
+  if (c === 'happy-server' || c === 'happy-server-light') return 'server';
+  return null;
+}
+
+function legacyComponentFromTarget(target) {
+  const t = String(target ?? '').trim();
+  if (t === 'ui') return 'happy';
+  if (t === 'cli') return 'happy-cli';
+  if (t === 'server') return 'happy-server';
+  return null;
+}
+
+function normalizeTargetsOrThrow(rawTargets) {
+  const requested = Array.isArray(rawTargets) ? rawTargets.map((t) => String(t ?? '').trim()).filter(Boolean) : [];
+  if (!requested.length) return ['all'];
+
+  const mapped = requested
+    .map((t) => {
+      const lower = t.toLowerCase();
+      if (lower === 'all') return 'all';
+      if (lower === 'stacks') return 'stacks';
+      if (VALID_TARGETS.includes(lower)) return lower;
+      const legacy = targetFromLegacyComponent(lower);
+      return legacy ?? null;
+    })
+    .filter(Boolean);
+
+  if (!mapped.length) return ['all'];
+  return mapped;
+}
 
 async function collectTestFiles(dir) {
   const entries = await readdir(dir, { withFileTypes: true });
@@ -83,18 +118,18 @@ async function main() {
       data: { components: VALID_COMPONENTS, flags: ['--json'] },
       text: [
         '[test] usage:',
-        '  hapsta test [component...] [--json]',
+        '  hapsta test [ui|cli|server|all|stacks] [--json]',
         '',
-        'components:',
+        'targets:',
         `  ${VALID_COMPONENTS.join(' | ')}`,
         '',
         'examples:',
         '  hapsta test',
         '  hapsta test stacks',
-        '  hapsta test happy happy-cli',
+        '  hapsta test ui cli',
         '',
         'note:',
-        '  If run from inside a component checkout/worktree and no components are provided, defaults to that component.',
+        '  If run from inside a repo checkout/worktree and no targets are provided, defaults to the inferred app (ui/cli/server).',
       ].join('\n'),
     });
     return;
@@ -103,33 +138,34 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const inferred =
+  const inferredLegacy =
     positionals.length === 0
       ? inferComponentFromCwd({
           rootDir,
           invokedCwd: getInvokedCwd(process.env),
-          components: DEFAULT_COMPONENTS,
+          components: ['happy', 'happy-cli', 'happy-server'],
         })
       : null;
-  if (inferred) {
+  if (inferredLegacy) {
     if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
-      process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
+      process.env.HAPPIER_STACK_REPO_DIR = inferredLegacy.repoDir;
     }
   }
 
-  const requested = positionals.length ? positionals : inferred ? [inferred.component] : ['all'];
+  const inferredTarget = inferredLegacy ? targetFromLegacyComponent(inferredLegacy.component) : null;
+  const requested = normalizeTargetsOrThrow(positionals.length ? positionals : inferredTarget ? [inferredTarget] : ['all']);
   const wantAll = requested.includes('all');
-  // Default `all` excludes "stacks" to avoid coupling to component repos and their test baselines.
-  const components = wantAll ? DEFAULT_COMPONENTS : requested;
+  // Default `all` excludes "stacks" to avoid coupling to stack tests and their baselines.
+  const targets = wantAll ? VALID_TARGETS : requested;
 
   const results = [];
-  for (const component of components) {
-    if (!VALID_COMPONENTS.includes(component)) {
-      results.push({ component, ok: false, skipped: false, error: `unknown component (expected one of: ${VALID_COMPONENTS.join(', ')})` });
+  for (const target of targets) {
+    if (!VALID_COMPONENTS.includes(target)) {
+      results.push({ target, ok: false, skipped: false, error: `unknown target (expected one of: ${VALID_COMPONENTS.join(', ')})` });
       continue;
     }
 
-    if (component === 'stacks') {
+    if (target === 'stacks') {
       try {
         // eslint-disable-next-line no-console
         console.log('[test] stacks: running node --test (hapsta unit tests)');
@@ -142,46 +178,47 @@ async function main() {
           throw new Error(`[test] stacks: no test files found under ${scriptsDir}`);
         }
         await run(process.execPath, ['--test', ...testFiles], { cwd: rootDir, env: process.env });
-        results.push({ component, ok: true, skipped: false, dir: rootDir, pm: 'node', script: '--test' });
+        results.push({ target, ok: true, skipped: false, dir: rootDir, pm: 'node', script: '--test' });
       } catch (e) {
-        results.push({ component, ok: false, skipped: false, dir: rootDir, pm: 'node', script: '--test', error: String(e?.message ?? e) });
+        results.push({ target, ok: false, skipped: false, dir: rootDir, pm: 'node', script: '--test', error: String(e?.message ?? e) });
       }
       continue;
     }
 
+    const component = legacyComponentFromTarget(target);
     const rawDir = getComponentDir(rootDir, component);
     const dir = await resolveTestDirForComponent({ component, dir: rawDir });
     if (!(await pathExists(dir))) {
-      results.push({ component, ok: false, skipped: false, dir, error: `missing component dir: ${dir}` });
+      results.push({ target, ok: false, skipped: false, dir, error: `missing target dir: ${dir}` });
       continue;
     }
 
-	    const scripts = await readPackageJsonScripts(dir);
-	    if (!scripts) {
-	      results.push({ component, ok: true, skipped: true, dir, reason: 'no package.json' });
-	      continue;
+    const scripts = await readPackageJsonScripts(dir);
+    if (!scripts) {
+      results.push({ target, ok: true, skipped: true, dir, reason: 'no package.json' });
+      continue;
     }
 
     const script = pickTestScript(scripts);
-	    if (!script) {
-	      results.push({ component, ok: true, skipped: true, dir, reason: 'no test script found in package.json' });
-	      continue;
-	    }
+    if (!script) {
+      results.push({ target, ok: true, skipped: true, dir, reason: 'no test script found in package.json' });
+      continue;
+    }
 
-	    if (component === 'happy') {
-	      await ensureHappyMonorepoNestedDepsInstalled({
-	        happyTestDir: dir,
-	        quiet: json,
-	        env: process.env,
-	        ensureDepsInstalled,
-	      });
-	    }
+    if (target === 'ui') {
+      await ensureHappyMonorepoNestedDepsInstalled({
+        happyTestDir: dir,
+        quiet: json,
+        env: process.env,
+        ensureDepsInstalled,
+      });
+    }
 
-	    await ensureDepsInstalled(dir, component, { quiet: json, env: process.env });
-	    const pm = await detectPackageManagerCmd(dir);
+    await ensureDepsInstalled(dir, target, { quiet: json, env: process.env });
+    const pm = await detectPackageManagerCmd(dir);
 
     try {
-      const line = `[test] ${component}: running ${pm.name} ${script}\n`;
+      const line = `[test] ${target}: running ${pm.name} ${script}\n`;
       if (json) {
         process.stderr.write(line);
         const out = await runCapture(pm.cmd, pm.argsForScript(script), { cwd: dir, env: process.env });
@@ -191,9 +228,9 @@ async function main() {
         console.log(line.trimEnd());
         await run(pm.cmd, pm.argsForScript(script), { cwd: dir, env: process.env });
       }
-      results.push({ component, ok: true, skipped: false, dir, pm: pm.name, script });
+      results.push({ target, ok: true, skipped: false, dir, pm: pm.name, script });
     } catch (e) {
-      results.push({ component, ok: false, skipped: false, dir, pm: pm.name, script, error: String(e?.message ?? e) });
+      results.push({ target, ok: false, skipped: false, dir, pm: pm.name, script, error: String(e?.message ?? e) });
     }
   }
 
@@ -206,11 +243,11 @@ async function main() {
   const lines = ['[test] results:'];
   for (const r of results) {
     if (r.ok && r.skipped) {
-      lines.push(`- ↪ ${r.component}: skipped (${r.reason})`);
+      lines.push(`- ↪ ${r.target}: skipped (${r.reason})`);
     } else if (r.ok) {
-      lines.push(`- ✅ ${r.component}: ok (${r.pm} ${r.script})`);
+      lines.push(`- ✅ ${r.target}: ok (${r.pm} ${r.script})`);
     } else {
-      lines.push(`- ❌ ${r.component}: failed (${r.pm ?? 'unknown'} ${r.script ?? ''})`);
+      lines.push(`- ❌ ${r.target}: failed (${r.pm ?? 'unknown'} ${r.script ?? ''})`);
       if (r.error) lines.push(`  - ${r.error}`);
     }
   }

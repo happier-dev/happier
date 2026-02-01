@@ -49,6 +49,7 @@ async function main() {
       data: {
         flags: [
           '--server=happy-server|happy-server-light',
+          '--server-flavor=light|full',
           '--no-ui',
           '--no-daemon',
           '--restart',
@@ -63,14 +64,14 @@ async function main() {
       },
       text: [
         '[start] usage:',
-        '  hapsta start [--server=happy-server|happy-server-light] [--restart] [--json]',
+        '  hapsta start [--server=happy-server|happy-server-light] [--server-flavor=light|full] [--restart] [--json]',
         '  hapsta start --mobile        # also start Expo dev-client Metro for mobile',
         '  hapsta start --expo-tailscale # forward Expo to Tailscale interface for remote access',
         '  hapsta start --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
         '  note: --json prints the resolved config (dry-run) and exits.',
         '',
         'note:',
-        '  If run from inside a component checkout/worktree, that checkout is used for this run (without requiring `hapsta wt use`).',
+        '  If run from inside a repo checkout/worktree, that checkout is used for this run (without requiring `hapsta wt use`).',
       ].join('\n'),
     });
     return;
@@ -104,6 +105,15 @@ async function main() {
   // We auto-prefer the Tailscale HTTPS URL when available, unless explicitly overridden.
   const { defaultPublicUrl, envPublicUrl, publicServerUrl: publicServerUrlPreview } = getPublicServerUrlEnvOverride({ serverPort });
   let publicServerUrl = publicServerUrlPreview;
+
+  // Convenience alias: allow `--server-flavor=light|full` for parity with `stack pr` and `tools setup-pr`.
+  // `--server=...` always wins when both are specified.
+  const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
+  if (!kv.get('--server') && serverFlavorFromArg) {
+    if (serverFlavorFromArg === 'light') kv.set('--server', 'happy-server-light');
+    else if (serverFlavorFromArg === 'full') kv.set('--server', 'happy-server');
+    else throw new Error(`[start] invalid --server-flavor=${serverFlavorFromArg} (expected: light|full)`);
+  }
 
   const serverComponentName = getServerComponentName({ kv });
   if (serverComponentName === 'both') {

@@ -419,18 +419,19 @@ async function cmdSetup({ rootDir, argv }) {
     applyBindModeToEnv(process.env, bindMode);
   }
 
-  if (wantsHelp(argv, { flags })) {
-    printResult({
-      json,
-      data: {
-        profiles: ['selfhost', 'dev'],
-        flags: [
-          '--profile=selfhost|dev',
-          '--server=happy-server-light|happy-server',
-          '--happy-repo=<owner/repo|url>        # override slopus/happy monorepo clone source',
-          '--workspace-dir=/absolute/path   # dev profile only',
-          '--install-path',
-          '--start-now',
+	  if (wantsHelp(argv, { flags })) {
+	    printResult({
+	      json,
+	      data: {
+	        profiles: ['selfhost', 'dev'],
+	        flags: [
+	          '--profile=selfhost|dev',
+	          '--server=happy-server-light|happy-server',
+	          '--server-flavor=light|full',
+	          '--happy-repo=<owner/repo|url>        # override slopus/happy monorepo clone source',
+	          '--workspace-dir=/absolute/path   # dev profile only',
+	          '--install-path',
+	          '--start-now',
           '--bind=loopback|lan',
           '--loopback',
           '--lan',
@@ -452,14 +453,15 @@ async function cmdSetup({ rootDir, argv }) {
         '  hapsta setup --auth',
         '  hapsta setup --no-auth',
         '',
-        'notes:',
-        '  - selfhost profile is a guided installer for running Happy locally (optionally with Tailscale + autostart).',
-        '  - dev profile prepares a development workspace (bootstrap wizard + optional dev tooling).',
-        '  - for PR review, use `hapsta tools review-pr` / `hapsta tools setup-pr`.',
-      ].join('\n'),
-    });
-    return;
-  }
+	        'notes:',
+	        '  - selfhost profile is a guided installer for running Happy locally (optionally with Tailscale + autostart).',
+	        '  - dev profile prepares a development workspace (bootstrap wizard + optional dev tooling).',
+	        '  - for PR review, use `hapsta tools review-pr` / `hapsta tools setup-pr`.',
+	        '  - server selection: use --server=... or the shorthand --server-flavor=light|full',
+	      ].join('\n'),
+	    });
+	    return;
+	  }
 
   const interactive = isTty();
   let profile = normalizeProfile(kv.get('--profile'));
@@ -577,11 +579,20 @@ async function cmdSetup({ rootDir, argv }) {
   }
 
   const platform = process.platform;
-  const supportsAutostart = platform === 'darwin' || platform === 'linux';
-  const supportsMenubar = platform === 'darwin';
+	  const supportsAutostart = platform === 'darwin' || platform === 'linux';
+	  const supportsMenubar = platform === 'darwin';
 
-  const serverFromArg = normalizeServerComponent(kv.get('--server'));
-  let serverComponent = serverFromArg || normalizeServerComponent(process.env.HAPPIER_STACK_SERVER_COMPONENT) || 'happy-server-light';
+	  // Convenience alias: allow `--server-flavor=light|full` for parity with `stack pr` and `tools setup-pr`.
+	  // `--server=...` always wins when both are specified.
+	  const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
+	  if (!kv.get('--server') && serverFlavorFromArg) {
+	    if (serverFlavorFromArg === 'light') kv.set('--server', 'happy-server-light');
+	    else if (serverFlavorFromArg === 'full') kv.set('--server', 'happy-server');
+	    else throw new Error(`[setup] invalid --server-flavor=${serverFlavorFromArg} (expected: light|full)`);
+	  }
+
+	  const serverFromArg = normalizeServerComponent(kv.get('--server'));
+	  let serverComponent = serverFromArg || normalizeServerComponent(process.env.HAPPIER_STACK_SERVER_COMPONENT) || 'happy-server-light';
   if (profile === 'selfhost' && interactive && !serverFromArg) {
     const docker = await detectDockerSupport();
     if (!docker.installed) {

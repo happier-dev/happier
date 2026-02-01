@@ -23,8 +23,9 @@ import { existsSync } from 'node:fs';
 import { runCapture } from './utils/proc/proc.mjs';
 import { withDetachedWorktree } from './utils/review/detached_worktree.mjs';
 
-const DEFAULT_COMPONENTS = ['happy', 'happy-cli', 'happy-server-light', 'happy-server'];
-const VALID_COMPONENTS = DEFAULT_COMPONENTS;
+const VALID_TARGETS = ['ui', 'cli', 'server'];
+const DEFAULT_TARGETS = VALID_TARGETS;
+const VALID_COMPONENTS = ['happy', 'happy-cli', 'happy-server'];
 const VALID_REVIEWERS = ['coderabbit', 'codex', 'augment'];
 const VALID_DEPTHS = ['deep', 'normal'];
 const DEFAULT_REVIEW_MAX_FILES = 50;
@@ -46,10 +47,10 @@ function normalizeReviewers(list) {
 function usage() {
   return [
     '[review] usage:',
-    '  hapsta review [component...] [--reviewers=coderabbit,codex,augment] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
+    '  hapsta tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
     '',
-    'components:',
-    `  ${VALID_COMPONENTS.join(' | ')}`,
+    'targets:',
+    `  ${[...VALID_TARGETS, 'all'].join(' | ')}`,
     '',
     'reviewers:',
     `  ${VALID_REVIEWERS.join(' | ')}`,
@@ -58,23 +59,53 @@ function usage() {
     `  ${VALID_DEPTHS.join(' | ')}`,
     '',
     'notes:',
-    '- If run from inside a component checkout/worktree and no components are provided, defaults to that component.',
-    '- In stack mode (invoked via `hapsta stack review <stack>`), if no components are provided, defaults to stack-pinned non-default components only.',
+    '- If run from inside a repo checkout/worktree and no targets are provided, defaults to the inferred app (ui/cli/server).',
+    '- In stack mode, if no targets are provided, defaults to reviewing only when the stack is pinned to a non-default repo/worktree.',
     '',
     'examples:',
-    '  hapsta review',
-    '  hapsta review happy-cli --reviewers=coderabbit,codex',
-    '  hapsta stack review exp1 --reviewers=codex',
-    '  hapsta review happy --base-remote=upstream --base-branch=main',
+    '  hapsta tools review',
+    '  hapsta tools review cli --reviewers=coderabbit,codex',
+    '  hapsta tools review ui --base-remote=upstream --base-branch=main',
   ].join('\n');
 }
 
 function resolveComponentFromCwdOrNull({ rootDir, invokedCwd }) {
-  return inferComponentFromCwd({ rootDir, invokedCwd, components: DEFAULT_COMPONENTS });
+  return inferComponentFromCwd({ rootDir, invokedCwd, components: VALID_COMPONENTS });
 }
 
 function stackRemoteFallbackFromEnv(env) {
   return String(env.HAPPIER_STACK_STACK_REMOTE ?? '').trim();
+}
+
+function targetFromLegacyComponent(component) {
+  const c = String(component ?? '').trim();
+  if (c === 'happy') return 'ui';
+  if (c === 'happy-cli') return 'cli';
+  if (c === 'happy-server' || c === 'happy-server-light') return 'server';
+  return null;
+}
+
+function legacyComponentFromTarget(target) {
+  const t = String(target ?? '').trim();
+  if (t === 'ui') return 'happy';
+  if (t === 'cli') return 'happy-cli';
+  if (t === 'server') return 'happy-server';
+  return null;
+}
+
+function normalizeTargets(rawTargets) {
+  const requested = Array.isArray(rawTargets) ? rawTargets.map((t) => String(t ?? '').trim()).filter(Boolean) : [];
+  if (!requested.length) return ['all'];
+  const mapped = requested
+    .map((t) => {
+      const lower = t.toLowerCase();
+      if (lower === 'all') return 'all';
+      if (VALID_TARGETS.includes(lower)) return lower;
+      const legacy = targetFromLegacyComponent(lower);
+      return legacy ?? null;
+    })
+    .filter(Boolean);
+  return mapped.length ? mapped : ['all'];
 }
 
 function sanitizeLabel(raw) {
@@ -324,26 +355,29 @@ async function main() {
   }
 
   const inStackMode = isStackMode(process.env);
-  const requestedComponents = positionals.length ? positionals : inferred ? [inferred.component] : ['all'];
-  const wantAll = requestedComponents.includes('all');
+  const inferredTarget = inferred ? targetFromLegacyComponent(inferred.component) : null;
+  const requestedTargets = normalizeTargets(positionals.length ? positionals : inferredTarget ? [inferredTarget] : ['all']);
+  const wantAll = requestedTargets.includes('all');
 
-  let components = wantAll ? DEFAULT_COMPONENTS : requestedComponents;
+  let targets = wantAll ? DEFAULT_TARGETS : requestedTargets;
   if (!positionals.length && !inferred && inStackMode) {
-    const pinned = resolveDefaultStackReviewComponents({ rootDir, components: DEFAULT_COMPONENTS });
-    components = pinned.length ? pinned : [];
+    const pinned = resolveDefaultStackReviewComponents({ rootDir, components: DEFAULT_TARGETS });
+    targets = pinned.length ? pinned : [];
   }
 
-  for (const c of components) {
-    if (!VALID_COMPONENTS.includes(c)) {
-      throw new Error(`[review] unknown component: ${c} (expected one of: ${VALID_COMPONENTS.join(', ')})`);
+  for (const t of targets) {
+    if (!VALID_TARGETS.includes(t)) {
+      throw new Error(`[review] unknown target: ${t} (expected one of: ${[...VALID_TARGETS, 'all'].join(', ')})`);
     }
   }
 
-  if (!components.length) {
-    const msg = inStackMode ? '[review] no non-default stack-pinned components to review' : '[review] no components selected';
+  if (!targets.length) {
+    const msg = inStackMode ? '[review] no non-default stack-pinned repo/worktree to review' : '[review] no targets selected';
     printResult({ json, data: { ok: true, skipped: true, reason: msg }, text: msg });
     return;
   }
+
+  const components = targets.map((t) => legacyComponentFromTarget(t)).filter(Boolean);
 
   const baseRefOverride = (kv.get('--base-ref') ?? '').trim();
   const baseRemoteOverride = (kv.get('--base-remote') ?? '').trim();
