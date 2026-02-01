@@ -23,7 +23,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('hapsta env path defaults to main stack env file when no explicit env file is set', async () => {
+test('hstack env path defaults to main stack env file when no explicit env file is set', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
@@ -54,7 +54,7 @@ test('hapsta env path defaults to main stack env file when no explicit env file 
   );
 });
 
-test('hapsta env edits the explicit stack env file when HAPPIER_STACK_ENV_FILE is set', async () => {
+test('hstack env edits the explicit stack env file when HAPPIER_STACK_ENV_FILE is set', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
@@ -80,7 +80,7 @@ test('hapsta env edits the explicit stack env file when HAPPIER_STACK_ENV_FILE i
   assert.ok(raw.includes('FOO=bar'), `expected FOO in explicit env file\n${raw}`);
 });
 
-test('hapsta env (no subcommand) prints usage and exits 0', async () => {
+test('hstack env (no subcommand) prints usage and exits 0', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
@@ -101,7 +101,7 @@ test('hapsta env (no subcommand) prints usage and exits 0', async () => {
   assert.ok(res.stdout.includes('[env] usage:'), `expected usage output\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 });
 
-test('hapsta env list prints keys in text mode', async () => {
+test('hstack env list prints keys in text mode', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));

@@ -33,7 +33,7 @@ async function runOk(cmd, args, { cwd, env }) {
   return res;
 }
 
-test('hapsta stack archive moves the stack and archives its referenced worktrees', async () => {
+test('hstack stack archive moves the stack and archives its referenced worktrees', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-archive-'));

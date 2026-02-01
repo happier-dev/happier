@@ -1,19 +1,19 @@
 #!/bin/bash
 
 # ============================================================================
-# Hapsta SwiftBar Plugin Installer
+# hstack SwiftBar Plugin Installer
 # ============================================================================
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PLUGIN_SOURCE="$SCRIPT_DIR/hapsta.5s.sh"
-# No legacy fallback: always install the primary hapsta plugin.
+PLUGIN_SOURCE="$SCRIPT_DIR/hstack.5s.sh"
+# No legacy fallback: always install the primary hstack plugin.
 # Default refresh: 5 minutes (good baseline; still refreshes instantly on open).
 # You can override:
 #   HAPPIER_STACK_SWIFTBAR_INTERVAL=30s ./install.sh
 PLUGIN_INTERVAL="${HAPPIER_STACK_SWIFTBAR_INTERVAL:-5m}"
-PLUGIN_BASENAME="${HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME:-hapsta}"
+PLUGIN_BASENAME="${HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME:-hstack}"
 PLUGIN_FILE="${PLUGIN_BASENAME}.${PLUGIN_INTERVAL}.sh"
 
 # Optional: install a wrapper plugin instead of copying the source.
@@ -43,7 +43,7 @@ NC='\033[0m' # No Color
 
 echo ""
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║            Hapsta SwiftBar Plugin Installer                ║${NC}"
+echo -e "${BLUE}║            hstack SwiftBar Plugin Installer                ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -136,7 +136,7 @@ echo -e "${GREEN}✓ Plugins directory: $PLUGINS_DIR${NC}"
 echo ""
 
 # Step 3: Install the plugin
-echo -e "${YELLOW}Step 3: Installing Hapsta plugin...${NC}"
+echo -e "${YELLOW}Step 3: Installing hstack plugin...${NC}"
 
 PLUGIN_DEST="$PLUGINS_DIR/$PLUGIN_FILE"
 

@@ -77,7 +77,7 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
   // (packages/happy-*/ or legacy expo-app/cli/server) the user is working in and return that repo root.
   //
   // This enables workflows like:
-  // - running `hapsta dev` from inside <repo>/apps/cli (should infer happy-cli)
+  // - running `hstack dev` from inside <repo>/apps/cli (should infer happy-cli)
   // - running from inside <workspace>/.worktrees/<owner>/<branch>/apps/cli (should infer happy-cli)
   {
     const monorepoScopes = Array.from(

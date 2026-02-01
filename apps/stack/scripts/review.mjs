@@ -47,7 +47,7 @@ function normalizeReviewers(list) {
 function usage() {
   return [
     '[review] usage:',
-    '  hapsta tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
+    '  hstack tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
     '',
     'targets:',
     `  ${[...VALID_TARGETS, 'all'].join(' | ')}`,
@@ -63,9 +63,9 @@ function usage() {
     '- In stack mode, if no targets are provided, defaults to reviewing only when the stack is pinned to a non-default repo/worktree.',
     '',
     'examples:',
-    '  hapsta tools review',
-    '  hapsta tools review cli --reviewers=coderabbit,codex',
-    '  hapsta tools review ui --base-remote=upstream --base-branch=main',
+    '  hstack tools review',
+    '  hstack tools review cli --reviewers=coderabbit,codex',
+    '  hstack tools review ui --base-remote=upstream --base-branch=main',
   ].join('\n');
 }
 
@@ -494,7 +494,7 @@ async function main() {
         roots.map((r) => `- ${r}`).join('\n') +
         `\n\n` +
         `Fix: ensure all monorepo components (happy/happy-cli/happy-server(-light)) point at the same worktree.\n` +
-        `- Stack mode: use \`hapsta stack wt <stack> -- use <owner/branch|/abs/path>\`\n` +
+        `- Stack mode: use \`hstack stack wt <stack> -- use <owner/branch|/abs/path>\`\n` +
         `- One-shot: pass \`--repo=<owner/branch|/abs/path>\` to the stack command you're running`
     );
   }

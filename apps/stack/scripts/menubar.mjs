@@ -45,12 +45,12 @@ function sandboxPluginBasename() {
   const sandboxDir = (process.env.HAPPIER_STACK_SANDBOX_DIR ?? '').trim();
   if (!sandboxDir) return '';
   const hash = createHash('sha256').update(sandboxDir).digest('hex').slice(0, 10);
-  return `hapsta.sandbox-${hash}`;
+  return `hstack.sandbox-${hash}`;
 }
 
 function removeSwiftbarPlugins({ patterns }) {
   const pats = (patterns ?? []).filter(Boolean);
-  const args = pats.length ? pats.map((p) => `"${p}"`).join(' ') : '"hapsta.*.sh" "happier-stack.*.sh"';
+  const args = pats.length ? pats.map((p) => `"${p}"`).join(' ') : '"hstack.*.sh" "happier-stack.*.sh"';
   const s =
     `DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)"; ` +
     `if [[ -z "$DIR" ]]; then DIR="$HOME/Library/Application Support/SwiftBar/Plugins"; fi; ` +
@@ -78,11 +78,11 @@ async function main() {
         banner('menubar', { subtitle: 'SwiftBar menu bar plugin (macOS).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hapsta menubar')} install [--json]`,
-        `  ${cyan('hapsta menubar')} uninstall [--json]`,
-        `  ${cyan('hapsta menubar')} open [--json]`,
-        `  ${cyan('hapsta menubar')} mode <selfhost|dev> [--json]`,
-        `  ${cyan('hapsta menubar')} status [--json]`,
+        `  ${cyan('hstack menubar')} install [--json]`,
+        `  ${cyan('hstack menubar')} uninstall [--json]`,
+        `  ${cyan('hstack menubar')} open [--json]`,
+        `  ${cyan('hstack menubar')} mode <selfhost|dev> [--json]`,
+        `  ${cyan('hstack menubar')} status [--json]`,
         '',
         sectionTitle('notes:'),
         `- ${dim('Installs the SwiftBar plugin into the active SwiftBar plugin folder')}`,
@@ -111,7 +111,7 @@ async function main() {
     }
     const patterns = isSandboxed()
       ? [`${sandboxPluginBasename()}.*.sh`]
-      : ['hapsta.*.sh', 'happier-stack.*.sh'];
+      : ['hstack.*.sh', 'happier-stack.*.sh'];
     const dir = removeSwiftbarPlugins({ patterns });
     printResult({ json, data: { ok: true, pluginsDir: dir }, text: dir ? `[menubar] removed plugins from ${dir}` : '[menubar] no plugins dir found' });
     return;
@@ -138,7 +138,7 @@ async function main() {
     const raw = positionals[1] ?? '';
     const mode = normalizeProfile(raw);
     if (!mode) {
-      throw new Error('[menubar] usage: hapsta menubar mode <selfhost|dev> [--json]');
+      throw new Error('[menubar] usage: hstack menubar mode <selfhost|dev> [--json]');
     }
     await ensureEnvLocalUpdated({
       rootDir: cliRootDir,

@@ -46,7 +46,7 @@ def _load_task_frontmatter(ctx: Mapping[str, Any]) -> dict[str, Any] | None:
 
 
 def _require_stack_context(ctx: Mapping[str, Any], fm: Mapping[str, Any]) -> bool:
-    # Enforce that Edison is running inside a Hapsta stack context.
+    # Enforce that Edison is running inside a hstack stack context.
     hs_kind = str(fm.get("hs_kind") or "").strip().lower()
     # Parent tasks are planning/umbrella tasks that may span multiple tracks/stacks.
     # They must NOT be claimed/finished directly (enforced elsewhere), so we do not
@@ -58,25 +58,25 @@ def _require_stack_context(ctx: Mapping[str, Any], fm: Mapping[str, Any]) -> boo
     stack_task = str(fm.get("stack") or "").strip()
     if not stack_task:
         raise ValueError(
-            "Hapsta: missing required task frontmatter key `stack`.\n"
+            "hstack: missing required task frontmatter key `stack`.\n"
             "Fix: edit the task file and set:\n"
             "  stack: <stack>\n"
             "Then run Edison via:\n"
-            "  hapsta edison --stack=<stack> -- <edison ...>"
+            "  hstack edison --stack=<stack> -- <edison ...>"
         )
     if not stack_env:
         raise ValueError(
-            "Hapsta: missing stack context (HAPPIER_STACK_STACK).\n"
+            "hstack: missing stack context (HAPPIER_STACK_STACK).\n"
             "Fix: run Edison through the stack wrapper:\n"
-            f"  hapsta edison --stack={stack_task} -- <edison ...>"
+            f"  hstack edison --stack={stack_task} -- <edison ...>"
         )
     if stack_env != stack_task:
         raise ValueError(
-            "Hapsta: stack mismatch.\n"
+            "hstack: stack mismatch.\n"
             f"- env stack: {stack_env}\n"
             f"- task stack: {stack_task}\n"
             "Fix: re-run with:\n"
-            f"  hapsta edison --stack={stack_task} -- <edison ...>"
+            f"  hstack edison --stack={stack_task} -- <edison ...>"
         )
     return stack_env == stack_task
 
@@ -98,7 +98,7 @@ def _require_base_metadata(ctx: Mapping[str, Any], fm: Mapping[str, Any]) -> boo
     hs_kind = str(fm.get("hs_kind") or "").strip().lower()
     if hs_kind not in {"parent", "track", "component"}:
         raise ValueError(
-            "Hapsta: missing/invalid `hs_kind`.\n"
+            "hstack: missing/invalid `hs_kind`.\n"
             "Fix: set `hs_kind: parent|track|component` in task frontmatter."
         )
 
@@ -110,9 +110,9 @@ def _require_base_metadata(ctx: Mapping[str, Any], fm: Mapping[str, Any]) -> boo
     if not base_task:
         task_id = ctx.get("task_id") or ctx.get("entity_id") or ""
         raise ValueError(
-            "Hapsta: missing required task frontmatter key `base_task`.\n"
+            "hstack: missing required task frontmatter key `base_task`.\n"
             "Fix (recommended):\n"
-            f"  hapsta edison task:scaffold {task_id} --yes\n"
+            f"  hstack edison task:scaffold {task_id} --yes\n"
             "Or set:\n"
             "  base_task: <parent-feature-task-id>"
         )
@@ -122,9 +122,9 @@ def _require_base_metadata(ctx: Mapping[str, Any], fm: Mapping[str, Any]) -> boo
         if not base_wt:
             task_id = ctx.get("task_id") or ctx.get("entity_id") or ""
             raise ValueError(
-                "Hapsta: missing required task frontmatter key `base_worktree`.\n"
+                "hstack: missing required task frontmatter key `base_worktree`.\n"
                 "Fix (recommended):\n"
-                f"  hapsta edison task:scaffold {task_id} --yes\n"
+                f"  hstack edison task:scaffold {task_id} --yes\n"
                 "Or set:\n"
                 "  base_worktree: edison/<task-id>"
             )
@@ -137,7 +137,7 @@ def _require_worktree_repo_dir(fm: Mapping[str, Any]) -> bool:
     hs_kind = str(fm.get("hs_kind") or "").strip().lower()
     if hs_kind not in {"track", "component"}:
         raise ValueError(
-            "Hapsta: missing/invalid `hs_kind`.\n"
+            "hstack: missing/invalid `hs_kind`.\n"
             "Fix:\n"
             "  - set `hs_kind: track` on the track/integration task\n"
             "  - set `hs_kind: component` on each component implementation task"
@@ -146,27 +146,27 @@ def _require_worktree_repo_dir(fm: Mapping[str, Any]) -> bool:
     repo_dir = str(os.environ.get("HAPPIER_STACK_REPO_DIR") or "").strip()
     if not repo_dir:
         raise ValueError(
-            "Hapsta: missing stack repo dir override (HAPPIER_STACK_REPO_DIR).\n"
+            "hstack: missing stack repo dir override (HAPPIER_STACK_REPO_DIR).\n"
             "Fix (recommended):\n"
-            "  hapsta edison task:scaffold <task-id> --yes\n"
+            "  hstack edison task:scaffold <task-id> --yes\n"
             "Or manually:\n"
-            "  hapsta wt new edison/<task-id> --from=upstream --use\n"
-            "  hapsta stack wt <stack> -- use <owner/branch|/abs/path>"
+            "  hstack wt new edison/<task-id> --from=upstream --use\n"
+            "  hstack stack wt <stack> -- use <owner/branch|/abs/path>"
         )
 
     p = repo_dir.replace("\\", "/")
     if "/.worktrees/" not in p:
         raise ValueError(
-            "Hapsta: repo dir is not a worktree path.\n"
+            "hstack: repo dir is not a worktree path.\n"
             "Refusing to operate on the default checkout.\n"
             "Fix:\n"
-            "  hapsta wt new edison/<task-id> --from=upstream --use\n"
-            "  hapsta stack wt <stack> -- use <owner/branch|/abs/path>"
+            "  hstack wt new edison/<task-id> --from=upstream --use\n"
+            "  hstack stack wt <stack> -- use <owner/branch|/abs/path>"
         )
 
     if not (Path(repo_dir) / ".git").exists():
         raise ValueError(
-            "Hapsta: repo dir does not look like a git checkout (missing .git).\n"
+            "hstack: repo dir does not look like a git checkout (missing .git).\n"
             f"- repo: {repo_dir}"
         )
 
@@ -176,28 +176,28 @@ def _require_worktree_repo_dir(fm: Mapping[str, Any]) -> bool:
 def _require_parent_subtask_structure(ctx: Mapping[str, Any], fm: Mapping[str, Any]) -> bool:
     hs_kind = str(fm.get("hs_kind") or "").strip().lower()
     if hs_kind not in {"parent", "track", "component"}:
-        raise ValueError("Hapsta: missing/invalid `hs_kind` (expected parent|track|component).")
+        raise ValueError("hstack: missing/invalid `hs_kind` (expected parent|track|component).")
 
     if hs_kind == "parent":
         # Parent tasks are planning roots and must NOT be claimed/finished directly.
         raise ValueError(
-            "Hapsta: refusing to claim/finish a parent task.\n"
+            "hstack: refusing to claim/finish a parent task.\n"
             "Parent tasks are planning umbrellas and should spawn track + component subtasks.\n"
             "Fix (recommended):\n"
             "  - Create a track task (hs_kind=track) as a child of this parent\n"
             "  - Create component tasks (hs_kind=component) as children of the track\n"
             "  - Or run:\n"
-            f"    hapsta edison task:scaffold {ctx.get('task_id') or ctx.get('entity_id') or '<parent-task-id>'} --yes\n"
+            f"    hstack edison task:scaffold {ctx.get('task_id') or ctx.get('entity_id') or '<parent-task-id>'} --yes\n"
         )
 
     parent_id = _get_parent_id_from_relationships(fm)
     if not parent_id:
         raise ValueError(
-            "Hapsta: task must have a parent relationship (canonical `relationships:`).\n"
+            "hstack: task must have a parent relationship (canonical `relationships:`).\n"
             "Fix:\n"
             "  edison task link <parent_id> <child_id>\n"
             "Or (recommended):\n"
-            "  hapsta edison task:scaffold <parent-task-id> --yes"
+            "  hstack edison task:scaffold <parent-task-id> --yes"
         )
 
     # Validate the parent task's hs_kind and stack invariants by loading its frontmatter.
@@ -206,7 +206,7 @@ def _require_parent_subtask_structure(ctx: Mapping[str, Any], fm: Mapping[str, A
     parent = repo.get(str(parent_id))
     if not parent:
         raise ValueError(
-            f"Hapsta: parent task not found: {parent_id}\n"
+            f"hstack: parent task not found: {parent_id}\n"
             "Fix: ensure the parent task exists or re-link tasks."
         )
     try:
@@ -220,7 +220,7 @@ def _require_parent_subtask_structure(ctx: Mapping[str, Any], fm: Mapping[str, A
     if hs_kind == "track":
         if parent_kind != "parent":
             raise ValueError(
-                "Hapsta: track tasks must be children of a parent task.\n"
+                "hstack: track tasks must be children of a parent task.\n"
                 f"- this task: hs_kind=track\n"
                 f"- parent: {parent_id} hs_kind={parent_kind or '<missing>'}\n"
                 "Fix: link the track under the umbrella parent task."
@@ -229,7 +229,7 @@ def _require_parent_subtask_structure(ctx: Mapping[str, Any], fm: Mapping[str, A
         track_name = str(fm.get("track") or "").strip()
         if not track_name:
             raise ValueError(
-                "Hapsta: track task must declare `track` (e.g. upstream|fork|integration).\n"
+                "hstack: track task must declare `track` (e.g. upstream|fork|integration).\n"
                 "Fix: set `track: upstream` in task frontmatter."
             )
         v = fm.get("components")
@@ -240,7 +240,7 @@ def _require_parent_subtask_structure(ctx: Mapping[str, Any], fm: Mapping[str, A
             comps = [p.strip() for p in v.split(",") if p.strip()]
         if len(comps) == 0:
             raise ValueError(
-                "Hapsta: track task must declare `components`.\n"
+                "hstack: track task must declare `components`.\n"
                 "Fix: set `components: [happy, happy-cli, ...]` in task frontmatter."
             )
         return True
@@ -248,7 +248,7 @@ def _require_parent_subtask_structure(ctx: Mapping[str, Any], fm: Mapping[str, A
     # component task: must be under a track, and must share the same stack.
     if parent_kind != "track":
         raise ValueError(
-            "Hapsta: component tasks must be children of a track task.\n"
+            "hstack: component tasks must be children of a track task.\n"
             f"- this task: hs_kind=component\n"
             f"- parent: {parent_id} hs_kind={parent_kind or '<missing>'}\n"
             "Fix: link this component task under the correct track task."
@@ -257,7 +257,7 @@ def _require_parent_subtask_structure(ctx: Mapping[str, Any], fm: Mapping[str, A
     this_stack = str(fm.get("stack") or "").strip()
     if parent_stack and this_stack and parent_stack != this_stack:
         raise ValueError(
-            "Hapsta: component task stack must match its track stack.\n"
+            "hstack: component task stack must match its track stack.\n"
             f"- track stack: {parent_stack}\n"
             f"- task stack: {this_stack}\n"
             "Fix: set this task's `stack` to match the track task."
@@ -266,7 +266,7 @@ def _require_parent_subtask_structure(ctx: Mapping[str, Any], fm: Mapping[str, A
 
 
 def can_start_task(ctx: Mapping[str, Any]) -> bool:
-    """Hapsta override of builtin can_start_task (FAIL-CLOSED)."""
+    """hstack override of builtin can_start_task (FAIL-CLOSED)."""
     try:
         from edison.core.state.builtin.guards import task as builtin_task_guards
         if not builtin_task_guards.can_start_task(ctx):
@@ -276,7 +276,7 @@ def can_start_task(ctx: Mapping[str, Any]) -> bool:
 
     fm = _load_task_frontmatter(ctx)
     if not isinstance(fm, Mapping):
-        raise ValueError("Hapsta: cannot read task frontmatter (missing/invalid YAML frontmatter).")
+        raise ValueError("hstack: cannot read task frontmatter (missing/invalid YAML frontmatter).")
 
     return (
         _require_stack_context(ctx, fm)
@@ -287,7 +287,7 @@ def can_start_task(ctx: Mapping[str, Any]) -> bool:
 
 
 def can_finish_task(ctx: Mapping[str, Any]) -> bool:
-    """Hapsta override of builtin can_finish_task (FAIL-CLOSED)."""
+    """hstack override of builtin can_finish_task (FAIL-CLOSED)."""
     try:
         from edison.core.state.builtin.guards import task as builtin_task_guards
         if not builtin_task_guards.can_finish_task(ctx):
@@ -297,7 +297,7 @@ def can_finish_task(ctx: Mapping[str, Any]) -> bool:
 
     fm = _load_task_frontmatter(ctx)
     if not isinstance(fm, Mapping):
-        raise ValueError("Hapsta: cannot read task frontmatter (missing/invalid YAML frontmatter).")
+        raise ValueError("hstack: cannot read task frontmatter (missing/invalid YAML frontmatter).")
 
     # Must still be in the correct stack context when marking done/validated.
     return _require_stack_context(ctx, fm) and _require_parent_subtask_structure(ctx, fm) and _require_base_metadata(ctx, fm) and _require_worktree_repo_dir(fm)

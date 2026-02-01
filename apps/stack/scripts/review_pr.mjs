@@ -20,7 +20,7 @@ import { bold, cyan, dim } from './utils/ui/ansi.mjs';
 function usage() {
   return [
     '[review-pr] usage:',
-    '  hapsta tools review-pr --repo=<pr-url|number> [--name=<stack>] [--dev|--start] [--mobile|--no-mobile] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--keep-sandbox] [--json] [-- <stack dev/start args...>]',
+    '  hstack tools review-pr --repo=<pr-url|number> [--name=<stack>] [--dev|--start] [--mobile|--no-mobile] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--keep-sandbox] [--json] [-- <stack dev/start args...>]',
     '',
     'VM port forwarding (optional):',
     '- `--vm-ports`: convenience preset for port-forwarded VMs (stack ports ~13xxx, Expo ports ~18xxx)',
@@ -31,7 +31,7 @@ function usage() {
     '',
     'What it does:',
     '- creates a temporary sandbox dir',
-    '- runs `hapsta tools setup-pr ...` inside that sandbox (fully isolated state)',
+    '- runs `hstack tools setup-pr ...` inside that sandbox (fully isolated state)',
     '- on exit (including Ctrl+C): stops sandbox processes and deletes the sandbox dir',
     '',
   ].join('\n');
@@ -45,7 +45,7 @@ function waitForExit(child) {
 }
  
 async function tryStopSandbox({ rootDir, sandboxDir }) {
-  const bin = join(rootDir, 'bin', 'hapsta.mjs');
+  const bin = join(rootDir, 'bin', 'hstack.mjs');
   const child = spawn(process.execPath, [bin, '--sandbox-dir', sandboxDir, 'stop', '--yes', '--aggressive', '--sweep-owned', '--no-service'], {
     cwd: rootDir,
     env: process.env,
@@ -182,7 +182,7 @@ async function main() {
     const intro = [
       '',
       '',
-      bold(`✨ ${cyan('Hapsta')} review-pr ✨`),
+      bold(`✨ ${cyan('hstack')} review-pr ✨`),
       '',
       'It will help you review a PR for Happier in a completely isolated environment.',
       dim('Uses the light server flavor by default (no Redis, no Postgres, no Docker).'),
@@ -279,7 +279,7 @@ async function main() {
     }
   }
  
-  const bin = join(rootDir, 'bin', 'hapsta.mjs');
+  const bin = join(rootDir, 'bin', 'hstack.mjs');
  
   let child = null;
   let gotSignal = null;
@@ -400,7 +400,7 @@ async function main() {
           // eslint-disable-next-line no-console
           console.warn(`[review-pr] tip: inspect stack wiring with:`);
           // eslint-disable-next-line no-console
-          console.warn(`  npx --yes -p @happier-dev/stack hapsta --sandbox-dir "${sandboxDir}" stack info ${effectiveStackName}`);
+          console.warn(`  npx --yes -p @happier-dev/stack hstack --sandbox-dir "${sandboxDir}" stack info ${effectiveStackName}`);
         }
       } else {
         await rm(markerPath, { force: false });

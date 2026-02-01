@@ -209,14 +209,14 @@ async function main() {
       json,
       data: {
         usage:
-          'hapsta tools setup-pr --repo=<pr-url|number> [--name=<stack>] [--server-flavor=light|full] [--dev|--start] [--mobile] [--deps=none|link|install|link-or-install] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--json] [-- <stack dev/start args...>]',
+          'hstack tools setup-pr --repo=<pr-url|number> [--name=<stack>] [--server-flavor=light|full] [--dev|--start] [--mobile] [--deps=none|link|install|link-or-install] [--forks|--upstream] [--seed-auth|--no-seed-auth] [--copy-auth-from=<stack>] [--link-auth|--copy-auth] [--update] [--force] [--json] [-- <stack dev/start args...>]',
       },
       text: [
         '[setup-pr] usage:',
-        '  hapsta tools setup-pr --repo=<pr-url|number> [--dev]',
+        '  hstack tools setup-pr --repo=<pr-url|number> [--dev]',
         '',
         'What it does (idempotent):',
-        '- ensures hapsta home exists (init)',
+        '- ensures hstack home exists (init)',
         '- bootstraps/clones missing repos (upstream by default)',
         '- creates or reuses a PR stack and checks out the PR worktree',
         '- optionally seeds auth (best available source: dev-auth → main)',
@@ -227,7 +227,7 @@ async function main() {
         '- if the PR was force-pushed, add --force',
         '',
         'example:',
-        '  hapsta tools setup-pr \\',
+        '  hstack tools setup-pr \\',
         '    --repo=https://github.com/happier-dev/happier/pull/123 \\',
         '    --dev',
       ].join('\n'),
@@ -375,7 +375,7 @@ async function main() {
     const installLog = join(baseLogDir, `install.${Date.now()}.log`);
     try {
       await runCommandLogged({
-        label: `init hapsta home${isSandboxed() ? ' (sandbox)' : ''}`,
+        label: `init hstack home${isSandboxed() ? ' (sandbox)' : ''}`,
         cmd: process.execPath,
         args: [join(rootDir, 'scripts', 'init.mjs'), '--no-bootstrap'],
         cwd: rootDir,

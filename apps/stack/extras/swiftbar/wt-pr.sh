@@ -19,17 +19,17 @@ STACK_NAME="${2:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-HAPSTA="$SCRIPT_DIR/hapsta.sh"
-if [[ ! -x "$HAPSTA" ]]; then
+hstack="$SCRIPT_DIR/hstack.sh"
+if [[ ! -x "$hstack" ]]; then
   if [[ -n "${HAPPIER_STACK_SANDBOX_DIR:-}" ]]; then
-    echo "missing hapsta wrapper in sandbox: $HAPSTA" >&2
+    echo "missing hstack wrapper in sandbox: $hstack" >&2
     exit 1
   fi
-  HAPSTA="$(command -v hapsta 2>/dev/null || true)"
-  [[ -z "$HAPSTA" ]] && HAPSTA="$(command -v happier-stack 2>/dev/null || true)"
+  hstack="$(command -v hstack 2>/dev/null || true)"
+  [[ -z "$hstack" ]] && hstack="$(command -v happier-stack 2>/dev/null || true)"
 fi
-if [[ -z "$HAPSTA" ]]; then
-  echo "hapsta not found (run: npx @happier-dev/stack@latest init)" >&2
+if [[ -z "$hstack" ]]; then
+  echo "hstack not found (run: npx @happier-dev/stack@latest init)" >&2
   exit 1
 fi
 
@@ -46,7 +46,7 @@ if [[ -z "$COMPONENT" ]]; then
   COMPONENT="$(osascript <<'APPLESCRIPT'
 tell application "System Events"
   activate
-  set theChoice to choose from list {"happy", "happy-cli", "happy-server-light", "happy-server"} with title "Hapsta — Component" with prompt "Choose component:" default items {"happy"}
+  set theChoice to choose from list {"happy", "happy-cli", "happy-server-light", "happy-server"} with title "hstack — Component" with prompt "Choose component:" default items {"happy"}
   if theChoice is false then
     return ""
   end if
@@ -64,7 +64,7 @@ fi
 PR_INPUT="$(osascript <<'APPLESCRIPT'
 tell application "System Events"
   activate
-  set theDialogText to text returned of (display dialog "PR URL or number:" default answer "" with title "Hapsta — PR worktree")
+  set theDialogText to text returned of (display dialog "PR URL or number:" default answer "" with title "hstack — PR worktree")
   return theDialogText
 end tell
 APPLESCRIPT
@@ -79,7 +79,7 @@ fi
 REMOTE_CHOICE="$(osascript <<'APPLESCRIPT'
 tell application "System Events"
   activate
-  set theChoice to button returned of (display dialog "Remote to fetch PR from:" with title "Hapsta — PR remote" buttons {"upstream", "origin"} default button "upstream")
+  set theChoice to button returned of (display dialog "Remote to fetch PR from:" with title "hstack — PR remote" buttons {"upstream", "origin"} default button "upstream")
   return theChoice
 end tell
 APPLESCRIPT
@@ -91,9 +91,9 @@ if [[ -z "$REMOTE_CHOICE" ]]; then
 fi
 
 if [[ -n "$STACK_NAME" && "$STACK_NAME" != "main" ]]; then
-  "$HAPSTA" stack wt "$STACK_NAME" -- pr "$COMPONENT" "$PR_INPUT" --remote="$REMOTE_CHOICE" --use
+  "$hstack" stack wt "$STACK_NAME" -- pr "$COMPONENT" "$PR_INPUT" --remote="$REMOTE_CHOICE" --use
 else
-  "$HAPSTA" wt pr "$COMPONENT" "$PR_INPUT" --remote="$REMOTE_CHOICE" --use
+  "$hstack" wt pr "$COMPONENT" "$PR_INPUT" --remote="$REMOTE_CHOICE" --use
 fi
 
 echo "ok"

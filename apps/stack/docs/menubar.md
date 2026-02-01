@@ -1,6 +1,6 @@
 # Menu bar (SwiftBar)
 
-`hapsta` ships a macOS menu bar plugin powered by [SwiftBar](https://swiftbar.app/).
+`hstack` ships a macOS menu bar plugin powered by [SwiftBar](https://swiftbar.app/).
 
 SwiftBar runs a script on an interval and renders its output as native macOS menu items.
 
@@ -51,8 +51,8 @@ The menu supports two modes:
 - From a terminal:
 
 ```bash
-hapsta menubar mode selfhost
-hapsta menubar mode dev
+hstack menubar mode selfhost
+hstack menubar mode dev
 ```
 
 ## Stacks (multiple instances)
@@ -75,26 +75,26 @@ The menu also includes:
 
 The menu also provides “jump off” actions for the worktree tooling:
 
-- `hapsta wt use --interactive`
-- `hapsta wt new --interactive`
-- `hapsta wt sync-all`
-- `hapsta wt update-all --dry-run` / `hapsta wt update-all`
-- `hapsta wt pr ...` (via an in-menu prompt)
+- `hstack wt use --interactive`
+- `hstack wt new --interactive`
+- `hstack wt sync-all`
+- `hstack wt update-all --dry-run` / `hstack wt update-all`
+- `hstack wt pr ...` (via an in-menu prompt)
 
 For stack-specific worktree selection (which components a stack uses), use:
 
-- `hapsta stack edit <name> --interactive`
-  - or `hapsta stack wt <name> -- use --interactive`
+- `hstack stack edit <name> --interactive`
+  - or `hstack stack wt <name> -- use --interactive`
 
 ### Note (worktree switching)
 
 Happier is a single monorepo, so switching worktrees is always a **repo-level** action. Use:
 
-- `hapsta stack wt <name> -- use --interactive`
+- `hstack stack wt <name> -- use --interactive`
 
 ## Implementation notes
 
-- **Entry script**: `extras/swiftbar/hapsta.5s.sh` (installed into SwiftBar as `hapsta.<interval>.sh`)
+- **Entry script**: `extras/swiftbar/hstack.5s.sh` (installed into SwiftBar as `hstack.<interval>.sh`)
 - **Shared functions**: `extras/swiftbar/lib/*.sh` (sourced by the entry script)
 - **Helper scripts**:
   - `extras/swiftbar/set-interval.sh`
@@ -111,13 +111,13 @@ brew install --cask swiftbar
 ### 2) Install the plugin
 
 ```bash
-hapsta menubar install
+hstack menubar install
 ```
 
 If you want a different default refresh interval at install time:
 
 ```bash
-HAPPIER_STACK_SWIFTBAR_INTERVAL=15m hapsta menubar install
+HAPPIER_STACK_SWIFTBAR_INTERVAL=15m hstack menubar install
 ```
 
 ### 3) Open the active SwiftBar plugin folder
@@ -125,7 +125,7 @@ HAPPIER_STACK_SWIFTBAR_INTERVAL=15m hapsta menubar install
 SwiftBar can be configured to use a custom plugin directory. To open the *active* one:
 
 ```bash
-hapsta menubar open
+hstack menubar open
 ```
 
 ## Uninstall
@@ -133,16 +133,16 @@ hapsta menubar open
 Remove the installed SwiftBar plugin files (does not delete your stacks/workspace):
 
 ```bash
-hapsta menubar uninstall
+hstack menubar uninstall
 ```
 
 ## How refresh works (important)
 
 SwiftBar’s refresh interval is controlled by the **filename** suffix:
 
-- `hapsta.30s.sh` → every 30 seconds
-- `hapsta.5m.sh` → every 5 minutes
-- `hapsta.1h.sh` → every 1 hour
+- `hstack.30s.sh` → every 30 seconds
+- `hstack.5m.sh` → every 5 minutes
+- `hstack.1h.sh` → every 1 hour
 
 The plugin defaults to a slower interval (recommended), and also sets:
 
@@ -172,16 +172,16 @@ Controls and settings:
 Notes:
 
 - Cached git info can be stale; it’s meant for at-a-glance signal.
-- Actions like worktree switching/build/dev are always live (they use `hapsta`); only *displayed git status* is cached.
+- Actions like worktree switching/build/dev are always live (they use `hstack`); only *displayed git status* is cached.
 
 ## Maintenance (selfhost mode)
 
 In **selfhost** mode, the menu includes a **Maintenance** section that can:
 
-- show whether a `hapsta` update is available (from cached `~/.happier-stack/cache/update.json`)
+- show whether a `hstack` update is available (from cached `~/.happier-stack/cache/update.json`)
 - run:
-  - `hapsta self check`
-  - `hapsta self update`
+  - `hstack self check`
+  - `hstack self update`
 
 ## Terminal preference for interactive actions
 
@@ -196,7 +196,7 @@ Notes:
 
 ## Start SwiftBar at login (optional)
 
-SwiftBar is independent from the Hapsta LaunchAgent/service.
+SwiftBar is independent from the hstack LaunchAgent/service.
 
 - In SwiftBar Preferences, enable **Launch at Login**, or
 - Add SwiftBar to macOS **Login Items**.
@@ -209,7 +209,7 @@ SwiftBar is independent from the Hapsta LaunchAgent/service.
 - Check which plugin folder SwiftBar is using:
   - SwiftBar → Preferences → Plugin Folder
 - Open the active folder:
-  - `hapsta menubar open`
+  - `hstack menubar open`
 
 ### Daemon shows “auth required” / “no machine”
 
@@ -231,7 +231,7 @@ stack-specific CLI home directory.
 - Or run manually:
 
 ```bash
-hapsta auth login
+hstack auth login
 ```
 
 ### “Daemon stale” even though it’s running

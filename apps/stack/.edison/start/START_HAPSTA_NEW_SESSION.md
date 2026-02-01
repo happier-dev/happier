@@ -1,6 +1,6 @@
-# START_HAPSTA_NEW_SESSION
+# START_hstack_NEW_SESSION
 
-You are starting a new session in the **Happier** monorepo. This repo uses **Hapsta** for isolation.
+You are starting a new session in the **Happier** monorepo. This repo uses **hstack** for isolation.
 
 ## Critical: how isolation works here
 
@@ -13,26 +13,26 @@ You are starting a new session in the **Happier** monorepo. This repo uses **Hap
 
 - **Never edit** the default repo checkout (typically `<workspace>/happier`).
 - **Always run Edison via the wrapper**:
-  - `hapsta edison -- <edison args...>`
-  - `hapsta edison --stack=<stack> -- <edison args...>` (recommended)
+  - `hstack edison -- <edison args...>`
+  - `hstack edison --stack=<stack> -- <edison args...>` (recommended)
 
 ## Recommended flow
 
-1. Plan feature tasks: `hapsta edison -- read START_PLAN_FEATURE --type start`
+1. Plan feature tasks: `hstack edison -- read START_PLAN_FEATURE --type start`
 2. Scaffold track/component tasks + stacks + worktrees:
 
 ```bash
-hapsta edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes
+hstack edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes
 ```
 
-3. Validate tasks: `hapsta edison -- read START_VALIDATE_TASK --type start`
+3. Validate tasks: `hstack edison -- read START_VALIDATE_TASK --type start`
 
 ## Role-specific constitutions
 
-- `hapsta edison -- read AGENTS --type constitutions`
-- `hapsta edison -- read ORCHESTRATOR --type constitutions`
-- `hapsta edison -- read VALIDATORS --type constitutions`
+- `hstack edison -- read AGENTS --type constitutions`
+- `hstack edison -- read ORCHESTRATOR --type constitutions`
+- `hstack edison -- read VALIDATORS --type constitutions`
 
 ## Repo ground truth
 
-- `AGENTS.md` (Hapsta workflows + commands)
+- `AGENTS.md` (hstack workflows + commands)

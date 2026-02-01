@@ -22,11 +22,11 @@ async function main() {
 
   const helpText = [
     '[env] usage:',
-    '  hapsta env set KEY=VALUE [KEY2=VALUE2...]',
-    '  hapsta env unset KEY [KEY2...]',
-    '  hapsta env get KEY',
-    '  hapsta env list',
-    '  hapsta env path',
+    '  hstack env set KEY=VALUE [KEY2=VALUE2...]',
+    '  hstack env unset KEY [KEY2...]',
+    '  hstack env get KEY',
+    '  hstack env list',
+    '  hstack env path',
     '',
     'defaults:',
     '  - If running under a stack wrapper (HAPPIER_STACK_ENV_FILE is set), edits that stack env file.',
@@ -41,7 +41,7 @@ async function main() {
       json,
       data: {
         usage:
-          'hapsta env set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
+          'hstack env set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
       },
       text: helpText,
     });
@@ -56,7 +56,7 @@ async function main() {
     printResult({
       json,
       data: {
-        usage: 'hapsta env set|unset|get|list|path [--json]',
+        usage: 'hstack env set|unset|get|list|path [--json]',
       },
       text: helpText,
     });
@@ -88,7 +88,7 @@ async function main() {
   if (subcmd === 'get') {
     const key = (positionals[1] ?? '').trim();
     if (!key) {
-      throw new Error('[env] usage: hapsta env get KEY');
+      throw new Error('[env] usage: hstack env get KEY');
     }
     const value = Object.prototype.hasOwnProperty.call(parsed, key) ? parsed[key] : null;
     printResult({
@@ -102,7 +102,7 @@ async function main() {
   if (subcmd === 'set') {
     const pairs = positionals.slice(1);
     if (!pairs.length) {
-      throw new Error('[env] usage: hapsta env set KEY=VALUE [KEY2=VALUE2...]');
+      throw new Error('[env] usage: hstack env set KEY=VALUE [KEY2=VALUE2...]');
     }
     const updates = pairs.map((p) => {
       const idx = p.indexOf('=');
@@ -129,7 +129,7 @@ async function main() {
   if (subcmd === 'unset' || subcmd === 'remove' || subcmd === 'rm') {
     const keys = positionals.slice(1).map((k) => k.trim()).filter(Boolean);
     if (!keys.length) {
-      throw new Error('[env] usage: hapsta env unset KEY [KEY2...]');
+      throw new Error('[env] usage: hstack env unset KEY [KEY2...]');
     }
     await ensureEnvFilePruned({ envPath, removeKeys: keys });
     printResult({
@@ -140,7 +140,7 @@ async function main() {
     return;
   }
 
-  throw new Error(`[env] unknown subcommand: ${subcmd}\n[env] usage: hapsta env set|unset|get|list|path`);
+  throw new Error(`[env] unknown subcommand: ${subcmd}\n[env] usage: hstack env set|unset|get|list|path`);
 }
 
 main().catch((err) => {

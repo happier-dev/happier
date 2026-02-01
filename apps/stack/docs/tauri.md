@@ -8,7 +8,7 @@ The Tauri app is a native desktop wrapper around the web UI. It’s useful when 
 ## Important behavior
 
 - The Tauri app must embed an explicit API base URL.
-- By default, `hapsta` will embed:
+- By default, `hstack` will embed:
   - a **Tailscale Serve** `https://*.ts.net` URL if it detects one on this machine (so the built app can be copied to other devices on the same tailnet), otherwise
   - the local loopback URL `http://127.0.0.1:<port>` (same-machine only).
 - If you change what URL you want embedded, rebuild the Tauri app.
@@ -23,13 +23,13 @@ The Tauri app is a native desktop wrapper around the web UI. It’s useful when 
 Build (one-off):
 
 ```bash
-hapsta build --tauri
+hstack build --tauri
 ```
 
 Or during bootstrap:
 
 ```bash
-hapsta bootstrap --tauri
+hstack bootstrap --tauri
 ```
 
 ## Run it
@@ -37,7 +37,7 @@ hapsta bootstrap --tauri
 1) Start the local server (or install the service):
 
 ```bash
-hapsta start
+hstack start
 ```
 
 2) Launch the built app bundle (location is under `~/.happier/stacks/main/tauri-target/`).
@@ -48,13 +48,13 @@ If you build the Tauri app while Tailscale Serve is enabled on the server machin
 
 Requirements:
 
-- The server machine is running `hapsta start` and Tailscale Serve is enabled
+- The server machine is running `hstack start` and Tailscale Serve is enabled
 - The other computer is on the same tailnet and can access the `https://*.ts.net` URL
 
 ## Configuration (high-signal)
 
 - `HAPPIER_STACK_TAURI_IDENTIFIER` (default `com.happier.stack`)
-- `HAPPIER_STACK_TAURI_PRODUCT_NAME` (default `Hapsta`)
+- `HAPPIER_STACK_TAURI_PRODUCT_NAME` (default `hstack`)
 - `HAPPIER_STACK_TAURI_DEBUG=0` (build release-like without devtools)
 - `HAPPIER_STACK_TAURI_SERVER_URL` (force the embedded API URL)
 - `HAPPIER_STACK_TAURI_PREFER_TAILSCALE=0` (disable Tailscale detection; always embed `127.0.0.1`)

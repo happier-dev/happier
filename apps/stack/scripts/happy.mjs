@@ -19,7 +19,7 @@ async function main() {
       data: { passthrough: true },
       text: [
         '[happy] usage:',
-        '  hapsta happy <happy-cli args...>',
+        '  hstack happy <happy-cli args...>',
         '',
         'notes:',
         '  - This runs the `happy-cli` component from your configured workspace/components.',
@@ -44,7 +44,7 @@ async function main() {
   const entrypoint = join(cliDir, 'dist', 'index.mjs');
   if (!existsSync(entrypoint)) {
     console.error(`[happy] missing happy-cli build at: ${entrypoint}`);
-    console.error('Run: hapsta bootstrap');
+    console.error('Run: hstack bootstrap');
     process.exit(1);
   }
 

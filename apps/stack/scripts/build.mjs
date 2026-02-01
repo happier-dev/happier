@@ -29,7 +29,7 @@ async function main() {
       data: { flags: ['--tauri', '--no-tauri', '--no-ui'], json: true },
       text: [
         '[build] usage:',
-        '  hapsta build [--tauri] [--json]',
+        '  hstack build [--tauri] [--json]',
         '  node scripts/build.mjs [--tauri|--no-tauri] [--no-ui] [--json]',
         '',
         'note:',
@@ -40,7 +40,7 @@ async function main() {
   }
   const rootDir = getRootDir(import.meta.url);
 
-  // If invoked from inside the Happy UI checkout/worktree, prefer that directory without requiring `hapsta wt use ...`.
+  // If invoked from inside the Happy UI checkout/worktree, prefer that directory without requiring `hstack wt use ...`.
   const inferred = inferComponentFromCwd({
     rootDir,
     invokedCwd: getInvokedCwd(process.env),
@@ -73,7 +73,7 @@ async function main() {
     // Ensure the output dir exists so server-light doesn't crash if used, but do not run Expo export.
     await rm(outDir, { recursive: true, force: true });
     await mkdir(outDir, { recursive: true });
-    await writeFile(join(outDir, '.hapsta-build-skipped'), 'no-ui\n', 'utf-8');
+    await writeFile(join(outDir, '.hstack-build-skipped'), 'no-ui\n', 'utf-8');
     if (json) {
       printResult({ json, data: { ok: true, outDir, skippedUi: true, tauriBuilt: false } });
     } else {
@@ -127,7 +127,7 @@ async function main() {
   //
   // Default: do NOT build Tauri (it's slow and requires extra toolchain).
   // Enable explicitly with:
-  // - `hapsta build -- --tauri`, or
+  // - `hstack build -- --tauri`, or
   // - `HAPPIER_STACK_BUILD_TAURI=1`
   const envBuildTauri = (process.env.HAPPIER_STACK_BUILD_TAURI ?? '').trim();
   const buildTauriFromEnv = envBuildTauri !== '' ? envBuildTauri !== '0' : false;
@@ -216,7 +216,7 @@ async function main() {
     : 'com.happier.stack';
   tauriConfig.productName = process.env.HAPPIER_STACK_TAURI_PRODUCT_NAME?.trim()
     ? process.env.HAPPIER_STACK_TAURI_PRODUCT_NAME.trim()
-    : 'Hapsta';
+    : 'hstack';
   if (tauriConfig.app?.windows?.length) {
     tauriConfig.app.windows = tauriConfig.app.windows.map((w) => ({
       ...w,

@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { runCapture } from './utils/proc/proc.mjs';
-import { getHapstaRegistry } from './utils/cli/cli_registry.mjs';
+import { gethstackRegistry } from './utils/cli/cli_registry.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { getHappyStacksHomeDir, getRootDir } from './utils/paths/paths.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
@@ -32,7 +32,7 @@ function parseShellArg({ argv, kv }) {
 }
 
 function visibleTopLevelCommands() {
-  const { commands } = getHapstaRegistry();
+  const { commands } = gethstackRegistry();
   // Hide legacy aliases; include visible primary names and visible aliases.
   const out = [];
   for (const c of commands) {
@@ -114,9 +114,9 @@ function renderZsh(model) {
   const group = (name) => (model.groups?.[name] ?? []).join(' ');
 
   return [
-    '#compdef hapsta happier-stack',
+    '#compdef hstack happier-stack',
     '',
-    '_hapsta() {',
+    '_hstack() {',
     '  local -a top',
     `  top=(${top})`,
     '',
@@ -124,7 +124,7 @@ function renderZsh(model) {
     '  cmd="${words[2]:-}"',
     '',
     '  if (( CURRENT == 2 )); then',
-    "    _describe -t commands 'hapsta command' top",
+    "    _describe -t commands 'hstack command' top",
     '    return',
     '  fi',
     '',
@@ -141,8 +141,8 @@ function renderZsh(model) {
     '  esac',
     '}',
     '',
-    'compdef _hapsta hapsta',
-    'compdef _hapsta happier-stack',
+    'compdef _hstack hstack',
+    'compdef _hstack happier-stack',
     '',
   ].join('\n');
 }
@@ -153,7 +153,7 @@ function renderBash(model) {
 
   const group = (name) => quoteList(model.groups?.[name] ?? []);
   return [
-    '_hapsta_completions() {',
+    '_hstack_completions() {',
     '  local cur prev cmd',
     '  COMPREPLY=()',
     '  cur="${COMP_WORDS[COMP_CWORD]}"',
@@ -179,7 +179,7 @@ function renderBash(model) {
     '  return 0',
     '}',
     '',
-    'complete -F _hapsta_completions hapsta happier-stack',
+    'complete -F _hstack_completions hstack happier-stack',
     '',
   ].join('\n');
 }
@@ -187,7 +187,7 @@ function renderBash(model) {
 function renderFish(model) {
   const lines = [];
   const add = (cmd, sub = null) => {
-    for (const bin of ['hapsta', 'happier-stack']) {
+    for (const bin of ['hstack', 'happier-stack']) {
       if (sub) {
         lines.push(`complete -c ${bin} -n '__fish_seen_subcommand_from ${cmd}' -f -a '${sub.join(' ')}'`);
       } else {
@@ -211,9 +211,9 @@ function renderFish(model) {
 
 function completionPaths({ homeDir, shell }) {
   const dir = join(homeDir, 'completions');
-  if (shell === 'zsh') return { dir, file: join(dir, '_hapsta') };
-  if (shell === 'bash') return { dir, file: join(dir, 'hapsta.bash') };
-  return { dir, file: join(dir, 'hapsta.fish') };
+  if (shell === 'zsh') return { dir, file: join(dir, '_hstack') };
+  if (shell === 'bash') return { dir, file: join(dir, 'hstack.bash') };
+  return { dir, file: join(dir, 'hstack.fish') };
 }
 
 async function ensureShellInstall({ homeDir, shell }) {
@@ -228,10 +228,10 @@ async function ensureShellInstall({ homeDir, shell }) {
   const bashProfile = join(homedir(), '.bash_profile');
 
   const fishDir = join(homedir(), '.config', 'fish', 'conf.d');
-  const fishConf = join(fishDir, 'hapsta.fish');
+  const fishConf = join(fishDir, 'hstack.fish');
 
-  const markerStart = '# >>> hapsta completions >>>';
-  const markerEnd = '# <<< hapsta completions <<<';
+  const markerStart = '# >>> hstack completions >>>';
+  const markerEnd = '# <<< hstack completions <<<';
 
   const completionsDir = join(homeDir, 'completions');
   const shBlock = [
@@ -249,8 +249,8 @@ async function ensureShellInstall({ homeDir, shell }) {
   const bashBlock = [
     '',
     markerStart,
-    `if [[ -f "${join(completionsDir, 'hapsta.bash')}" ]]; then`,
-    `  . "${join(completionsDir, 'hapsta.bash')}"`,
+    `if [[ -f "${join(completionsDir, 'hstack.bash')}" ]]; then`,
+    `  . "${join(completionsDir, 'hstack.bash')}"`,
     'fi',
     markerEnd,
     '',
@@ -305,16 +305,16 @@ async function main() {
       json,
       data: { commands: ['print', 'install'], flags: ['--shell=zsh|bash|fish', '--json'] },
       text: [
-        banner('completion', { subtitle: 'Shell completions for hapsta/happier-stack.' }),
+        banner('completion', { subtitle: 'Shell completions for hstack/happier-stack.' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hapsta completion')} print [--shell=zsh|bash|fish] [--json]`,
-        `  ${cyan('hapsta completion')} install [--shell=zsh|bash|fish] [--json]`,
+        `  ${cyan('hstack completion')} print [--shell=zsh|bash|fish] [--json]`,
+        `  ${cyan('hstack completion')} install [--shell=zsh|bash|fish] [--json]`,
         '',
         sectionTitle('notes:'),
         bullets([
-          dim('Installs best-effort completions for hapsta/happier-stack.'),
-          dim('Re-run after upgrading hapsta to refresh completions.'),
+          dim('Installs best-effort completions for hstack/happier-stack.'),
+          dim('Re-run after upgrading hstack to refresh completions.'),
         ]),
       ].join('\n'),
     });

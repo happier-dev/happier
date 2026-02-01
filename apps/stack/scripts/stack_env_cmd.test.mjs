@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('hapsta stack env set/unset writes to stack env file', async () => {
+test('hstack stack env set/unset writes to stack env file', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-env-'));
@@ -61,7 +61,7 @@ test('hapsta stack env set/unset writes to stack env file', async () => {
   assert.ok(!afterUnset.includes('FOO=bar'), `expected env file to remove FOO\n${afterUnset}`);
 });
 
-test('hapsta stack env <name> defaults to list', async () => {
+test('hstack stack env <name> defaults to list', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-env-'));

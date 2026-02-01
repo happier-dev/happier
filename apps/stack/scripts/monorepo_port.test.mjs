@@ -1020,7 +1020,7 @@ test('monorepo port guide can wait for conflict resolution and finish the port',
   assert.equal(content, 'value=source\n');
 });
 
-test('monorepo port works via bin/hapsta.mjs entrypoint (CLI registry end-to-end)', async (t) => {
+test('monorepo port works via bin/hstack.mjs entrypoint (CLI registry end-to-end)', async (t) => {
   const root = await withTempRoot(t);
   const target = join(root, 'target-mono');
   const sourceCli = join(root, 'source-cli');
@@ -1056,11 +1056,11 @@ test('monorepo port works via bin/hapsta.mjs entrypoint (CLI registry end-to-end
   const out = await runCapture(
     process.execPath,
     [
-      join(process.cwd(), 'bin', 'hapsta.mjs'),
+      join(process.cwd(), 'bin', 'hstack.mjs'),
       'monorepo',
       'port',
       `--target=${target}`,
-      `--branch=port/test-hapsta`,
+      `--branch=port/test-hstack`,
       '--base=main',
       `--from-happy-cli=${sourceCli}`,
       `--from-happy-cli-base=${base}`,

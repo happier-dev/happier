@@ -9,7 +9,7 @@ export const REVIEW_PR_META_FILENAME = '.happier-stack-review-pr.json';
 export function reviewPrSandboxPrefixBase(baseStackName) {
   const base = String(baseStackName ?? '').trim() || 'pr';
   // Keep prefix stable for listing/reuse; mkdtemp adds a random suffix.
-  return `hapsta-review-pr-${base}-`;
+  return `hstack-review-pr-${base}-`;
 }
 
 export function reviewPrSandboxPrefixPath(baseStackName) {

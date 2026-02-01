@@ -1,11 +1,11 @@
 # Paths, folders, and env precedence
 
-This doc explains the **directories** that Hapsta uses (home/workspace/runtime/stacks), and the **environment file precedence** used by `hapsta`.
+This doc explains the **directories** that hstack uses (home/workspace/runtime/stacks), and the **environment file precedence** used by `hstack`.
 
 If you’re ever unsure what your machine is actually using, run:
 
 ```bash
-hapsta where
+hstack where
 ```
 
 ---
@@ -13,7 +13,7 @@ hapsta where
 ## Quick glossary
 
 - **CLI root dir**
-  - The directory containing the `@happier-dev/stack` scripts (`scripts/*.mjs`) that your `hapsta` command is currently executing.
+  - The directory containing the `@happier-dev/stack` scripts (`scripts/*.mjs`) that your `hstack` command is currently executing.
   - This is *not* necessarily your current shell `cwd`.
   - It can be:
     - a cloned repo checkout (e.g. `/Users/<you>/.../happier-dev`), or
@@ -25,11 +25,11 @@ hapsta where
 
 - **Runtime dir** (`HAPPIER_STACK_RUNTIME_DIR`)
   - Default: `~/.happier-stack/runtime`
-  - Used by `hapsta self update` to install/upgrade a pinned `@happier-dev/stack` runtime package.
+  - Used by `hstack self update` to install/upgrade a pinned `@happier-dev/stack` runtime package.
 
 - **Workspace dir** (`HAPPIER_STACK_WORKSPACE_DIR`)
   - Default: `~/.happier-stack/workspace` (when it exists).
-  - This is the **storage workspace for the Happier monorepo checkout + worktrees** used by Hapsta.
+  - This is the **storage workspace for the Happier monorepo checkout + worktrees** used by hstack.
   - It typically contains:
     - `<workspace>/happier` (the default monorepo checkout)
     - `<workspace>/.worktrees/<owner>/<branch...>` (repo worktrees)
@@ -37,7 +37,7 @@ hapsta where
 - **Repo dir** (`HAPPIER_STACK_REPO_DIR`)
   - Default: `<workspace>/happier`
   - This is the active Happier monorepo checkout (either the default checkout, or a worktree).
-  - `hapsta wt use ...` and `hapsta stack wt <stack> -- use ...` update this value.
+  - `hstack wt use ...` and `hstack stack wt <stack> -- use ...` update this value.
 
 - **Worktrees root**
   - Default: `<workspace>/.worktrees`
@@ -52,22 +52,22 @@ hapsta where
 
 ## “Where am I actually running from?”
 
-`hapsta` may **re-exec** to a different CLI root dir (for example, when you use an installed shim but want it to run a local checkout).
+`hstack` may **re-exec** to a different CLI root dir (for example, when you use an installed shim but want it to run a local checkout).
 
-- Run `hapsta where` to see:
+- Run `hstack where` to see:
   - **rootDir** (CLI root dir)
   - **homeDir** (stacks home dir)
   - **runtimeDir**
   - **workspaceDir**
   - resolved env file paths
 
-Tip: `hapsta where --json` is easier to parse.
+Tip: `hstack where --json` is easier to parse.
 
 ---
 
 ## Env files + precedence (lowest → highest)
 
-Hapsta loads env in `scripts/utils/env.mjs`.
+hstack loads env in `scripts/utils/env.mjs`.
 
 ### 0) “Canonical pointer” env (discovery)
 
@@ -84,7 +84,7 @@ If home config exists, we load:
 - `~/.happier-stack/.env` (**defaults**)
 - `~/.happier-stack/env.local` (**overrides**, prefix-aware for `HAPPIER_STACK_*`)
 
-If home config does *not* exist (cloned repo usage before `hapsta init`), we load:
+If home config does *not* exist (cloned repo usage before `hstack init`), we load:
 
 - `<cliRootDir>/.env`
 - `<cliRootDir>/env.local` (prefix-aware for `HAPPIER_STACK_*`)
@@ -116,7 +116,7 @@ Stack env files are allowed to contain **non-prefixed keys** (like `DATABASE_URL
 
 - Put **global, machine-wide defaults** in `~/.happier-stack/.env`.
 - Put **your personal overrides** in `~/.happier-stack/env.local`.
-- Put **per-stack isolation config** in the stack env file `~/.happier/stacks/<name>/env` (this is what `hapsta stack edit` and `hapsta stack wt` mutate).
+- Put **per-stack isolation config** in the stack env file `~/.happier/stacks/<name>/env` (this is what `hstack stack edit` and `hstack stack wt` mutate).
 - Put **repo-local dev-only defaults** in `<cliRootDir>/.env` (works best when you’re actually running from that checkout as the CLI root dir).
 
 ---
@@ -126,10 +126,10 @@ Stack env files are allowed to contain **non-prefixed keys** (like `DATABASE_URL
 If you want to test the full install + setup flows without touching your real installation, run with:
 
 ```bash
-npx @happier-dev/stack@latest --sandbox-dir /tmp/hapsta-sandbox where
+npx @happier-dev/stack@latest --sandbox-dir /tmp/hstack-sandbox where
 ```
 
-In sandbox mode, Hapsta redirects **home/workspace/runtime/storage** under the sandbox folder (so you can `rm -rf` it to reset).
+In sandbox mode, hstack redirects **home/workspace/runtime/storage** under the sandbox folder (so you can `rm -rf` it to reset).
 
 Global OS side effects (PATH edits, SwiftBar plugin install, LaunchAgents/systemd services) are **disabled by default** in sandbox mode.
 To explicitly allow them for testing, set:

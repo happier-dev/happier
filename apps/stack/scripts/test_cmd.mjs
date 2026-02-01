@@ -118,15 +118,15 @@ async function main() {
       data: { components: VALID_COMPONENTS, flags: ['--json'] },
       text: [
         '[test] usage:',
-        '  hapsta test [ui|cli|server|all|stacks] [--json]',
+        '  hstack test [ui|cli|server|all|stacks] [--json]',
         '',
         'targets:',
         `  ${VALID_COMPONENTS.join(' | ')}`,
         '',
         'examples:',
-        '  hapsta test',
-        '  hapsta test stacks',
-        '  hapsta test ui cli',
+        '  hstack test',
+        '  hstack test stacks',
+        '  hstack test ui cli',
         '',
         'note:',
         '  If run from inside a repo checkout/worktree and no targets are provided, defaults to the inferred app (ui/cli/server).',
@@ -168,7 +168,7 @@ async function main() {
     if (target === 'stacks') {
       try {
         // eslint-disable-next-line no-console
-        console.log('[test] stacks: running node --test (hapsta unit tests)');
+        console.log('[test] stacks: running node --test (hstack unit tests)');
         // Note: do not rely on shell glob expansion here.
         // Node 20 does not expand globs for `--test`, and bash/sh won't expand globs inside quotes.
         // Enumerate files ourselves so this works reliably in CI.

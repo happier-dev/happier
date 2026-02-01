@@ -65,7 +65,7 @@ async function ensureYarnReady({ dir, env, quiet = false }) {
   const key = `${resolve(dir)}|${String(e.HOME ?? '')}|${String(e.XDG_CACHE_HOME ?? '')}`;
   if (_yarnReadyKeys.has(key)) return;
 
-  // If stdin isn't a TTY (e.g. `hapsta tui ...` uses stdio:ignore for child stdin),
+  // If stdin isn't a TTY (e.g. `hstack tui ...` uses stdio:ignore for child stdin),
   // Corepack prompts can deadlock. Provide a single "yes" to unblock initial downloads.
   const isTui = (e.HAPPIER_STACK_TUI ?? '').toString().trim() === '1';
   // Also auto-yes in quiet mode so guided flows don't get stuck on:
@@ -82,7 +82,7 @@ export async function requireDir(label, dir) {
   }
   throw new Error(
     `[local] missing ${label} at ${dir}\n` +
-      `Run: hapsta setup (or hapsta bootstrap) to clone the Happier monorepo into your workspace.`
+      `Run: hstack setup (or hstack bootstrap) to clone the Happier monorepo into your workspace.`
   );
 }
 
@@ -318,26 +318,26 @@ export async function ensureHappyCliLocalNpmLinked(rootDir, { npmLinkCli, quiet 
   const binDir = join(homeDir, 'bin');
   await mkdir(binDir, { recursive: true });
 
-  const hapstaShim = join(binDir, 'hapsta');
+  const hstackShim = join(binDir, 'hstack');
   const happyShim = join(binDir, 'happy');
 
   const shim = `#!/bin/bash
 set -euo pipefail
-# Prefer the sibling hapsta shim (works for sandbox installs too).
+# Prefer the sibling hstack shim (works for sandbox installs too).
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
-HAPSTA="$BIN_DIR/hapsta"
-if [[ -x "$HAPSTA" ]]; then
-  exec "$HAPSTA" happy "$@"
+hstack="$BIN_DIR/hstack"
+if [[ -x "$hstack" ]]; then
+  exec "$hstack" happy "$@"
 fi
 
 # Fallback: run happy-stacks from runtime install if present.
 HOME_DIR="\${HAPPIER_STACK_HOME_DIR:-$HOME/.happier-stack}"
-RUNTIME="$HOME_DIR/runtime/node_modules/@happier-dev/stack/bin/hapsta.mjs"
+RUNTIME="$HOME_DIR/runtime/node_modules/@happier-dev/stack/bin/hstack.mjs"
 if [[ -f "$RUNTIME" ]]; then
   exec node "$RUNTIME" happy "$@"
 fi
 
-echo "error: cannot find hapsta shim or runtime install" >&2
+echo "error: cannot find hstack shim or runtime install" >&2
 exit 1
 `;
 
@@ -356,14 +356,14 @@ exit 1
   await writeIfChanged(happyShim, shim);
   await chmod(happyShim, 0o755).catch(() => {});
 
-  // hapsta shim: use node + CLI root; if runtime install exists, prefer it.
+  // hstack shim: use node + CLI root; if runtime install exists, prefer it.
   const cliRoot = resolveInstalledCliRoot(rootDir);
-  const hapstaShimText = `#!/bin/bash
+  const hstackShimText = `#!/bin/bash
 set -euo pipefail
-exec node "${resolveInstalledPath(rootDir, 'bin/hapsta.mjs')}" "$@"
+exec node "${resolveInstalledPath(rootDir, 'bin/hstack.mjs')}" "$@"
 `;
-  await writeIfChanged(hapstaShim, hapstaShimText);
-  await chmod(hapstaShim, 0o755).catch(() => {});
+  await writeIfChanged(hstackShim, hstackShimText);
+  await chmod(hstackShim, 0o755).catch(() => {});
 
   // If user’s PATH points at a legacy install path, try to make it sane (best-effort).
   const entries = getPathEntries();
@@ -376,7 +376,7 @@ exec node "${resolveInstalledPath(rootDir, 'bin/hapsta.mjs')}" "$@"
     }
   }
 
-  return { ok: true, cliRoot, binDir, happyShim, hapstaShim };
+  return { ok: true, cliRoot, binDir, happyShim, hstackShim };
 }
 
 export async function pmExecBin(dirOrOpts, binArg, argsArg, optsArg) {

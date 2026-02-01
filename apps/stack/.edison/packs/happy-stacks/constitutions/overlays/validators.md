@@ -1,15 +1,15 @@
 <!-- EXTEND: pack-constitution -->
-## Hapsta validation guardrails (MANDATORY)
+## hstack validation guardrails (MANDATORY)
 
 - **Do not recommend killing all daemons**. Multiple daemons are expected (one per stack).
-- **Do not recommend bypassing `hapsta`** (no direct `yarn/expo/docker compose`).
+- **Do not recommend bypassing `hstack`** (no direct `yarn/expo/docker compose`).
 - **Do not run `edison ...` directly**:
-  - Use `hapsta edison --stack=<stack> -- <edison args...>`
+  - Use `hstack edison --stack=<stack> -- <edison args...>`
 - **Validate stack-scoped behavior**:
-  - Evidence should come from `hapsta edison --stack=<stack> -- evidence capture <task-id>`.
+  - Evidence should come from `hstack edison --stack=<stack> -- evidence capture <task-id>`.
   - If evidence is missing, instruct operators to rerun with the correct `--stack` (fail-closed).
 
-## Hapsta scope discipline (CRITICAL)
+## hstack scope discipline (CRITICAL)
 
 - **Validate only the repos/worktrees targeted by the task** (the component repos pinned by the stack).
   - For `hs_kind=component` tasks, the scope is the single `component:` repo in the task frontmatter.
@@ -22,7 +22,7 @@
   - Do **not** reject just because the repo root is dirty when the task does not target it.
 - **How to review the right code**:
   - Use the stack-resolved component dirs printed by the wrapper (`[edison] component dirs (from stack env): ...`).
-  - If you need git status/diff, run them inside the target worktree directory (or via `hapsta wt git <worktreeSpec> -- <git args...>`).
+  - If you need git status/diff, run them inside the target worktree directory (or via `hstack wt git <worktreeSpec> -- <git args...>`).
   - If the validator prompt lists “Changed Files (Detected)” in repo root that are unrelated to the targeted component dirs, **ignore them** for scope/risk decisions.
 
 ## Diff review: validate against the correct base branch (MANDATORY)
@@ -31,7 +31,7 @@ When reviewing code changes, do **not** rely on `git diff` from the repo root.
 
 - **The ONLY acceptable way to review a component’s task diff is command evidence**: `command-task-diff.txt`.
   - If it is missing, **fail-closed** and instruct the operator to re-run:
-    - `hapsta edison --stack=<stack> -- evidence capture <task-id> --only task-diff`
+    - `hstack edison --stack=<stack> -- evidence capture <task-id> --only task-diff`
   - Do **not** substitute ad-hoc `git diff` output from other repos/dirs as a replacement.
 
 - **What `command-task-diff.txt` represents**:
@@ -45,9 +45,9 @@ When reviewing code changes, do **not** rely on `git diff` from the repo root.
 
 - **How to view it (MUST use evidence commands; do NOT browse snapshot dirs)**:
   - Check freshness + completeness:
-    - `hapsta edison --stack=<stack> -- evidence status <task-id> --preset <preset>`
+    - `hstack edison --stack=<stack> -- evidence status <task-id> --preset <preset>`
   - View the diff evidence:
-    - `hapsta edison --stack=<stack> -- evidence show <task-id> --command task-diff`
+    - `hstack edison --stack=<stack> -- evidence show <task-id> --command task-diff`
       - Use `--head N` / `--tail N` if needed.
 
 - **Evidence must NOT be written into component repos/worktrees**:

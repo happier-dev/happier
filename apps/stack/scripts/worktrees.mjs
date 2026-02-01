@@ -109,7 +109,7 @@ async function maybeStash({ dir, enabled, keep, message }) {
   if (clean) {
     return { stashed: false, kept: false };
   }
-  const msg = message || `hapsta auto-stash (${new Date().toISOString()})`;
+  const msg = message || `hstack auto-stash (${new Date().toISOString()})`;
   // Include untracked files (-u). If stash applies cleanly later, we'll pop.
   await git(dir, ['stash', 'push', '-u', '-m', msg]);
   return { stashed: true, kept: Boolean(keep) };
@@ -567,7 +567,7 @@ async function cmdUse({ rootDir, args, flags }) {
   const component = args.length >= 2 ? args[0] : DEFAULT_REPO_COMPONENT;
   const spec = args.length >= 2 ? args[1] : args[0];
   if (!spec) {
-    throw new Error('[wt] usage: hapsta wt use <owner/branch|path|default|main> [--force]');
+    throw new Error('[wt] usage: hstack wt use <owner/branch|path|default|main> [--force]');
   }
 
   void component;
@@ -583,11 +583,11 @@ async function cmdUse({ rootDir, args, flags }) {
         `\n` +
         `Recommendation:\n` +
         `- Create a new isolated stack and switch that stack instead:\n` +
-        `  hapsta stack new exp1 --interactive\n` +
-        `  hapsta stack wt exp1 -- use ${spec}\n` +
+        `  hstack stack new exp1 --interactive\n` +
+        `  hstack stack wt exp1 -- use ${spec}\n` +
         `\n` +
         `If you really intend to repoint the main stack, re-run with --force:\n` +
-        `  hapsta wt use ${spec} --force\n`
+        `  hstack wt use ${spec} --force\n`
     );
   }
 
@@ -610,7 +610,7 @@ async function cmdUse({ rootDir, args, flags }) {
   const monoRoot = coerceHappyMonorepoRootFromPath(resolvedDir);
   if (!monoRoot) {
     throw new Error(
-      `[wt] invalid target for Hapsta worktrees:\n` +
+      `[wt] invalid target for hstack worktrees:\n` +
         `- expected a path inside the Happier monorepo (contains apps/ui|apps/cli|apps/server)\n` +
         `- but got: ${resolvedDir}\n` +
         `Fix: pick a worktree under ${worktreesRoot}/ or pass an absolute path to a Happier checkout/worktree.`
@@ -669,7 +669,7 @@ async function cmdNew({ rootDir, argv }) {
 
   if (!slug) {
     throw new Error(
-      '[wt] usage: hapsta wt new <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use]'
+      '[wt] usage: hstack wt new <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use]'
     );
   }
 
@@ -761,7 +761,7 @@ async function cmdDuplicate({ rootDir, argv }) {
 
   if (!fromSpec || !slug) {
     throw new Error(
-      '[wt] usage: hapsta wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]'
+      '[wt] usage: hstack wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]'
     );
   }
 
@@ -799,7 +799,7 @@ async function cmdPr({ rootDir, argv }) {
 
   if (!prInput) {
     throw new Error(
-      '[wt] usage: hapsta wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--force] [--json]'
+      '[wt] usage: hstack wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--force] [--json]'
     );
   }
 
@@ -849,7 +849,7 @@ async function cmdPr({ rootDir, argv }) {
       dir: destWorktreeRoot,
       enabled: flags.has('--stash'),
       keep: flags.has('--stash-keep'),
-      message: `[hapsta] wt pr ${pr.number}`,
+      message: `[hstack] wt pr ${pr.number}`,
     });
     if (!(await isWorktreeClean(destWorktreeRoot)) && !stash.stashed) {
       throw new Error(`[wt] worktree is not clean (${destWorktreeRoot}). Re-run with --stash to auto-stash changes.`);
@@ -862,8 +862,8 @@ async function cmdPr({ rootDir, argv }) {
     const isAncestor = await gitOk(repoRoot, ['merge-base', '--is-ancestor', oldHead, newTip]);
     if (!isAncestor && !force) {
       const hint = fetchTarget
-        ? `[wt] re-run with: hapsta wt pr ${pr.number} --update --force`
-        : `[wt] re-run with: hapsta wt pr ${pr.number} --remote=${remoteName} --update --force`;
+        ? `[wt] re-run with: hstack wt pr ${pr.number} --update --force`
+        : `[wt] re-run with: hstack wt pr ${pr.number} --remote=${remoteName} --update --force`;
       throw new Error(
         `[wt] PR update is not a fast-forward (likely force-push) for ${branchName}\n` +
           hint
@@ -1109,7 +1109,7 @@ async function cmdUpdate({ rootDir, argv }) {
     dir,
     enabled: flags.has('--stash'),
     keep: stashKeep,
-    message: `[hapsta] wt update ${component}`,
+    message: `[hstack] wt update ${component}`,
   });
   if (!(await isWorktreeClean(dir)) && !stash.stashed) {
     throw new Error(`[wt] working tree is not clean (${dir}). Re-run with --stash to auto-stash changes.`);
@@ -1229,7 +1229,7 @@ async function cmdGit({ rootDir, argv }) {
   const spec = positionals[2] ? positionals[2] : (positionals[1] ?? '');
   void legacyComponent;
   if (!after.length) {
-    throw new Error('[wt] git requires args after `--` (example: hapsta wt git main -- status)');
+    throw new Error('[wt] git requires args after `--` (example: hstack wt git main -- status)');
   }
 
   const dir = resolveComponentWorktreeDir({ rootDir, component, spec });
@@ -1666,7 +1666,7 @@ async function cmdArchive({ rootDir, argv }) {
   void legacyComponent;
   if (!spec) {
     throw new Error(
-      '[wt] usage: hapsta wt archive <worktreeSpec|path|active|default|main> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]'
+      '[wt] usage: hstack wt archive <worktreeSpec|path|active|default|main> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]'
     );
   }
 
@@ -1841,22 +1841,22 @@ async function main() {
       },
       text: [
         '[wt] usage:',
-        '  hapsta wt sync [--remote=<name>] [--json]',
-        '  hapsta wt sync-all [--remote=<name>] [--json]',
-        '  hapsta wt list [--active|--all] [--json]',
-        '  hapsta wt new <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use] [--force] [--interactive|-i] [--json]',
-        '  hapsta wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]',
-        '  hapsta wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--stash|--stash-keep] [--force] [--json]',
-        '  hapsta wt use <owner/branch|path|default|main> [--force] [--interactive|-i] [--json]',
-        '  hapsta wt status [worktreeSpec|default|path] [--json]',
-        '  hapsta wt update [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
-        '  hapsta wt update-all [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
-        '  hapsta wt push [worktreeSpec|default|path] [--remote=origin] [--dry-run] [--json]',
-        '  hapsta wt git [worktreeSpec|active|default|main|path] -- <git args...> [--json]',
-        '  hapsta wt shell [worktreeSpec|active|default|main|path] [--shell=/bin/zsh] [--json]',
-        '  hapsta wt code [worktreeSpec|active|default|main|path] [--json]',
-        '  hapsta wt cursor [worktreeSpec|active|default|main|path] [--json]',
-        '  hapsta wt archive <worktreeSpec|active|default|main|path> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]',
+        '  hstack wt sync [--remote=<name>] [--json]',
+        '  hstack wt sync-all [--remote=<name>] [--json]',
+        '  hstack wt list [--active|--all] [--json]',
+        '  hstack wt new <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use] [--force] [--interactive|-i] [--json]',
+        '  hstack wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]',
+        '  hstack wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--stash|--stash-keep] [--force] [--json]',
+        '  hstack wt use <owner/branch|path|default|main> [--force] [--interactive|-i] [--json]',
+        '  hstack wt status [worktreeSpec|default|path] [--json]',
+        '  hstack wt update [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
+        '  hstack wt update-all [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
+        '  hstack wt push [worktreeSpec|default|path] [--remote=origin] [--dry-run] [--json]',
+        '  hstack wt git [worktreeSpec|active|default|main|path] -- <git args...> [--json]',
+        '  hstack wt shell [worktreeSpec|active|default|main|path] [--shell=/bin/zsh] [--json]',
+        '  hstack wt code [worktreeSpec|active|default|main|path] [--json]',
+        '  hstack wt cursor [worktreeSpec|active|default|main|path] [--json]',
+        '  hstack wt archive <worktreeSpec|active|default|main|path> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]',
         '',
         'selectors:',
         '  (omitted) or "active": current active checkout (env override if set; else <workspace>/happier)',

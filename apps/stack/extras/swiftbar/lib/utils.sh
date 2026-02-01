@@ -97,7 +97,7 @@ swiftbar_find_git_root_upwards() {
 swiftbar_repo_key_from_path() {
   # Usage: swiftbar_repo_key_from_path <path>
   #
-  # Heuristic for hapsta layouts:
+  # Heuristic for hstack layouts:
   # - Worktrees: */workspace/.worktrees/<owner>/<branch...>
   # - Default:   */workspace/happier
   #
@@ -213,7 +213,7 @@ swiftbar_hash() {
 swiftbar_run_cache_dir() {
   # Per-process (per-refresh) cache. Avoid persisting across SwiftBar refreshes.
   local base="${TMPDIR:-/tmp}"
-  local dir="${base%/}/hapsta-swiftbar-cache-${UID:-0}-$$"
+  local dir="${base%/}/hstack-swiftbar-cache-${UID:-0}-$$"
   mkdir -p "$dir" 2>/dev/null || true
   echo "$dir"
 }
@@ -325,7 +325,7 @@ resolve_home_dir() {
   echo "$canonical"
 }
 
-resolve_hapsta_root_dir() {
+resolve_hstack_root_dir() {
   # Prefer the repo root if explicitly provided (dev); otherwise use the home install root.
   local cli_root="${HAPPIER_STACK_CLI_ROOT_DIR:-}"
   if [[ -n "$cli_root" ]] && [[ -f "$cli_root/extras/swiftbar/lib/utils.sh" ]]; then
@@ -339,7 +339,7 @@ resolve_stacks_storage_root() {
   # Priority:
   # 1) explicit env var
   # 2) home env.local
-  # 3) home .env (canonical pointer file, written by `hapsta init`)
+  # 3) home .env (canonical pointer file, written by `hstack init`)
   # 4) default to ~/.happier/stacks
   if [[ -n "${HAPPIER_STACK_STORAGE_DIR:-}" ]]; then
     echo "$(expand_home_path "$HAPPIER_STACK_STORAGE_DIR")"
@@ -347,7 +347,7 @@ resolve_stacks_storage_root() {
   fi
 
   local root
-  root="$(resolve_hapsta_root_dir)"
+  root="$(resolve_hstack_root_dir)"
 
   local p
   p="$(dotenv_get "$root/env.local" "HAPPIER_STACK_STORAGE_DIR")"
@@ -434,11 +434,11 @@ resolve_stack_label() {
   echo "$primary"
 }
 
-resolve_hapsta_bin() {
+resolve_hstack_bin() {
   local root
-  root="$(resolve_hapsta_root_dir)"
+  root="$(resolve_hstack_root_dir)"
 
-  local wrapper="$root/extras/swiftbar/hapsta.sh"
+  local wrapper="$root/extras/swiftbar/hstack.sh"
   if [[ -x "$wrapper" ]]; then
     echo "$wrapper"
     return
@@ -446,7 +446,7 @@ resolve_hapsta_bin() {
 
   if ! swiftbar_is_sandboxed; then
     local global
-    global="$(command -v hapsta 2>/dev/null || true)"
+    global="$(command -v hstack 2>/dev/null || true)"
     if [[ -n "$global" ]]; then
       echo "$global"
       return
@@ -463,7 +463,7 @@ resolve_node_bin() {
     return
   fi
 
-  # Fall back to reading the canonical pointer env (written by `hapsta init`).
+  # Fall back to reading the canonical pointer env (written by `hstack init`).
   local home
   home="$(resolve_home_dir)"
   local env_file="$home/.env"
@@ -485,7 +485,7 @@ resolve_workspace_dir() {
     return
   fi
   local root
-  root="$(resolve_hapsta_root_dir)"
+  root="$(resolve_hstack_root_dir)"
   local p
   p="$(dotenv_get "$root/.env" "HAPPIER_STACK_WORKSPACE_DIR")"
   [[ -z "$p" ]] && p="$(dotenv_get "$root/env.local" "HAPPIER_STACK_WORKSPACE_DIR")"
@@ -542,7 +542,7 @@ resolve_main_port() {
   fi
 
   local root
-  root="$(resolve_hapsta_root_dir)"
+  root="$(resolve_hstack_root_dir)"
   p="$(dotenv_get "$root/env.local" "HAPPIER_STACK_SERVER_PORT")"
   if [[ -n "$p" ]]; then
     echo "$p"
@@ -664,7 +664,7 @@ resolve_main_server_component() {
   fi
 
   local root
-  root="$(resolve_hapsta_root_dir)"
+  root="$(resolve_hstack_root_dir)"
   c="$(dotenv_get "$root/env.local" "HAPPIER_STACK_SERVER_COMPONENT")"
   if [[ -n "$c" ]]; then
     echo "$c"
@@ -692,7 +692,7 @@ resolve_menubar_mode() {
 
   if [[ -z "$raw" ]]; then
     local root
-    root="$(resolve_hapsta_root_dir)"
+    root="$(resolve_hstack_root_dir)"
     raw="$(dotenv_get "$root/env.local" "HAPPIER_STACK_MENUBAR_MODE")"
   fi
   if [[ -z "$raw" ]]; then

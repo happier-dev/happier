@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('hapsta stack new pins HAPPIER_STACK_REPO_DIR from --repo path', async () => {
+test('hstack stack new pins HAPPIER_STACK_REPO_DIR from --repo path', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-monorepo-spec-'));

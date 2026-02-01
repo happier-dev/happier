@@ -23,11 +23,11 @@ import { patchIosXcodeProjectsForSigningAndIdentity, resolveIosAppXcodeProjects 
  * - Ensure the QR/deeplink opens the *dev build* even if the App Store app is installed.
  *
  * Usage:
- *   hapsta mobile
- *   hapsta mobile --host=lan
- *   hapsta mobile --scheme=dev.happier.app.dev
-  *   hapsta mobile --no-metro
- *   hapsta mobile --run-ios --device="Your iPhone"
+ *   hstack mobile
+ *   hstack mobile --host=lan
+ *   hstack mobile --scheme=dev.happier.app.dev
+  *   hstack mobile --no-metro
+ *   hstack mobile --run-ios --device="Your iPhone"
  */
 
 async function main() {
@@ -57,11 +57,11 @@ async function main() {
       },
       text: [
         '[mobile] usage:',
-        '  hapsta mobile [--host=lan|localhost|tunnel] [--port=8081] [--scheme=...] [--json]',
-        '  hapsta mobile --restart   # force-restart Metro for this stack/worktree',
-        '  hapsta mobile --run-ios [--device=...] [--configuration=Debug|Release]',
-        '  hapsta mobile --prebuild [--platform=ios|all] [--clean]',
-        '  hapsta mobile --no-metro   # just build/install (if --run-ios) without starting Metro',
+        '  hstack mobile [--host=lan|localhost|tunnel] [--port=8081] [--scheme=...] [--json]',
+        '  hstack mobile --restart   # force-restart Metro for this stack/worktree',
+        '  hstack mobile --run-ios [--device=...] [--configuration=Debug|Release]',
+        '  hstack mobile --prebuild [--platform=ios|all] [--clean]',
+        '  hstack mobile --no-metro   # just build/install (if --run-ios) without starting Metro',
         '',
         'Notes:',
         '- This script is designed to avoid editing upstream UI config in-place.',
@@ -80,7 +80,7 @@ async function main() {
   // - legacy: <happyDir>/expo-app (split-repo era)
   // - current: <happyDir>/apps/ui (monorepo packages/)
   //
-  // `hapsta mobile` should operate on the Expo project root, not the monorepo root.
+  // `hstack mobile` should operate on the Expo project root, not the monorepo root.
   const packagesAppDir = join(happyDir, 'apps', 'ui');
   const legacyExpoAppDir = join(happyDir, 'expo-app');
   const uiDir = existsSync(join(packagesAppDir, 'app.config.js'))
@@ -106,8 +106,8 @@ async function main() {
   const host = kv.get('--host') ?? process.env.HAPPIER_STACK_MOBILE_HOST ?? 'lan';
   const portRaw = kv.get('--port') ?? process.env.HAPPIER_STACK_MOBILE_PORT ?? '8081';
   // Default behavior:
-  // - `hapsta mobile` starts Metro and keeps running.
-  // - `hapsta mobile --run-ios` / `hapsta mobile:ios` just builds/installs and exits (unless --metro is provided).
+  // - `hstack mobile` starts Metro and keeps running.
+  // - `hstack mobile --run-ios` / `hstack mobile:ios` just builds/installs and exits (unless --metro is provided).
   const shouldStartMetro =
     flags.has('--metro') ||
     (!flags.has('--no-metro') && !flags.has('--run-ios') && !flags.has('--prebuild'));

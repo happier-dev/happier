@@ -38,9 +38,9 @@
 **DO NOT PROCEED WITHOUT READING YOUR CONSTITUTION FIRST.**
 <!-- EDISON:END -->
 
-# Agent / Contributor Guide (hapsta)
+# Agent / Contributor Guide (hstack)
 
-Hapsta is designed for:
+hstack is designed for:
 
 - running the **Happier** stack locally (server + UI + CLI/daemon)
 - accessing it remotely (recommended: **Tailscale Serve** for HTTPS secure context)
@@ -76,37 +76,37 @@ If you are an LLM agent: treat this file as the “ground truth” for workflows
 
 ## Non-negotiables (agents)
 
-### Command discipline (only use `hapsta ...`)
+### Command discipline (only use `hstack ...`)
 
-Use Hapsta for everything:
+Use hstack for everything:
 
-- `hapsta start` / `hapsta dev`
-- `hapsta typecheck` / `hapsta lint` / `hapsta test` / `hapsta build`
-- `hapsta stack ...` (isolated stacks)
-- `hapsta wt ...` (repo worktrees)
-- `hapsta tailscale ...` / `hapsta service ...`
-- `hapsta tools ...` (setup-pr/review-pr/import/review/edison)
+- `hstack start` / `hstack dev`
+- `hstack typecheck` / `hstack lint` / `hstack test` / `hstack build`
+- `hstack stack ...` (isolated stacks)
+- `hstack wt ...` (repo worktrees)
+- `hstack tailscale ...` / `hstack service ...`
+- `hstack tools ...` (setup-pr/review-pr/import/review/edison)
 
 Do not run these directly in the monorepo:
 
 - `yarn dev`, `yarn start`, `expo ...`, `tsc`, `eslint`, `docker compose ...`
-- raw `git worktree ...` (use `hapsta wt ...`)
+- raw `git worktree ...` (use `hstack wt ...`)
 
-If you’re tempted to run a low-level command, route it through `hapsta` (or add a `hapsta` subcommand).
+If you’re tempted to run a low-level command, route it through `hstack` (or add a `hstack` subcommand).
 
 ### You must develop in worktrees only
 
 - Do **not** develop directly in the default checkout (typically `<workspace>/happier`).
   - Treat it as **read-only** “launcher defaults”.
 - All changes should happen inside:
-  - `<workspace>/.worktrees/<owner>/<branch...>` (created/managed by `hapsta wt ...`)
+  - `<workspace>/.worktrees/<owner>/<branch...>` (created/managed by `hstack wt ...`)
 
 ### You must test changes inside isolated stacks
 
 - When testing a feature/PR, create an isolated stack and point it at your worktree:
-  - `hapsta stack new exp1 --interactive`
-  - `hapsta stack wt exp1 -- use <owner/branch|/abs/path>`
-- Avoid editing `env.local` by hand; prefer stack env files and `hapsta stack env ...`.
+  - `hstack stack new exp1 --interactive`
+  - `hstack stack wt exp1 -- use <owner/branch|/abs/path>`
+- Avoid editing `env.local` by hand; prefer stack env files and `hstack stack env ...`.
 
 ---
 
@@ -127,17 +127,17 @@ Examples:
 
 ### Common commands
 
-- Create: `hapsta wt new pr/my-feature --from=upstream --use`
-- PR checkout: `hapsta wt pr 123 --use`
-- Switch active checkout: `hapsta wt use slopus/pr/123-fix-thing`
-- List/status: `hapsta wt list` / `hapsta wt status`
+- Create: `hstack wt new pr/my-feature --from=upstream --use`
+- PR checkout: `hstack wt pr 123 --use`
+- Switch active checkout: `hstack wt use slopus/pr/123-fix-thing`
+- List/status: `hstack wt list` / `hstack wt status`
 
 ### Targeting a worktree without mutating a stack
 
 Pass a one-shot override:
 
-- `hapsta stack typecheck <stack> --repo=<owner/branch|/abs/path>`
-- `hapsta stack build <stack> --repo=<owner/branch|/abs/path>`
+- `hstack stack typecheck <stack> --repo=<owner/branch|/abs/path>`
+- `hstack stack build <stack> --repo=<owner/branch|/abs/path>`
 
 ---
 
@@ -145,15 +145,15 @@ Pass a one-shot override:
 
 The default stack (`main`) is meant to stay stable.
 
-By default, `hapsta wt use` refuses to repoint `main` to an arbitrary worktree/path. Recommended flow:
+By default, `hstack wt use` refuses to repoint `main` to an arbitrary worktree/path. Recommended flow:
 
 - Create a new stack and switch that stack:
-  - `hapsta stack new exp1 --interactive`
-  - `hapsta stack wt exp1 -- use slopus/pr/my-branch`
+  - `hstack stack new exp1 --interactive`
+  - `hstack stack wt exp1 -- use slopus/pr/my-branch`
 
 Override (only if you really mean it):
 
-- `hapsta wt use slopus/pr/my-branch --force`
+- `hstack wt use slopus/pr/my-branch --force`
 
 ---
 
@@ -190,7 +190,7 @@ These are intentional safety properties. Preserve them unless explicitly redesig
 
 - Configure a seed stack once (recommended: `dev-auth`).
 - New stacks can reuse auth without re-login:
-  - `hapsta stack auth <name> copy-from dev-auth`
+  - `hstack stack auth <name> copy-from dev-auth`
 
 Environment knobs:
 

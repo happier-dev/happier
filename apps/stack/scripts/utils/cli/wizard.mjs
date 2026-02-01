@@ -79,7 +79,7 @@ export async function promptWorktreeSource({ rl, rootDir, component, stackName, 
       return 'default';
     }
     const picked = await promptSelectFn(rl, {
-      title: `${bold(`Available ${cyan('repo')} worktrees`)}\n${dim('Tip: use `hapsta wt new ... --use` to create more worktrees.')}`,
+      title: `${bold(`Available ${cyan('repo')} worktrees`)}\n${dim('Tip: use `hstack wt new ... --use` to create more worktrees.')}`,
       options: specs.map((s) => ({ label: s, value: s })),
       defaultIndex: 0,
     });

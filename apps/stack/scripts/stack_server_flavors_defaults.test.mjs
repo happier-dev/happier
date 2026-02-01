@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('hapsta stack new defaults to happy-server-light with a single monorepo repo dir', async () => {
+test('hstack stack new defaults to happy-server-light with a single monorepo repo dir', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-server-flavors-'));

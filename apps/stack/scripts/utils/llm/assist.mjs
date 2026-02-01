@@ -20,7 +20,7 @@ function shouldAsk(options) {
 }
 
 function buildInteractiveLaunchScript({ toolCmd, cd, title, promptText }) {
-  const t = String(title ?? 'Hapsta (LLM)').trim();
+  const t = String(title ?? 'hstack (LLM)').trim();
   const cwd = String(cd ?? '').trim();
   const cmd = String(toolCmd ?? '').trim();
   const prompt = String(promptText ?? '').trimEnd();
@@ -170,7 +170,7 @@ export async function launchLlmAssistant({
 
     // new-terminal
     const script = buildCodexExecScript({ cd, permissionMode: permissionMode || defaultPermissionMode, promptText: prompt });
-    const res = await launchScriptInNewTerminal({ scriptText: script, title: title || 'Hapsta migration (LLM)' });
+    const res = await launchScriptInNewTerminal({ scriptText: script, title: title || 'hstack migration (LLM)' });
     if (!res.ok) {
       return { ok: false, reason: res.reason || 'failed to launch terminal', terminalSupport };
     }
@@ -214,10 +214,10 @@ export async function launchLlmAssistant({
   const script = buildInteractiveLaunchScript({
     toolCmd: chosenTool.cmd,
     cd,
-    title: title || `Hapsta (${chosenTool.id})`,
+    title: title || `hstack (${chosenTool.id})`,
     promptText: prompt,
   });
-  const res = await launchScriptInNewTerminal({ scriptText: script, title: title || `Hapsta (${chosenTool.id})` });
+  const res = await launchScriptInNewTerminal({ scriptText: script, title: title || `hstack (${chosenTool.id})` });
   if (!res.ok) {
     return { ok: false, reason: res.reason || 'failed to launch terminal', terminalSupport };
   }

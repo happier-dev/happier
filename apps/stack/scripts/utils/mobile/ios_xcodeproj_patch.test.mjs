@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { patchIosXcodeProjectsForSigningAndIdentity } from './ios_xcodeproj_patch.mjs';
 
 async function makeTempUiDir() {
-  return await mkdtemp(join(tmpdir(), 'hapsta-mobile-'));
+  return await mkdtemp(join(tmpdir(), 'hstack-mobile-'));
 }
 
 test('patchIosXcodeProjectsForSigningAndIdentity patches legacy ios/Happy.xcodeproj + ios/Happy/Info.plist', async () => {

@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Runs non-interactively from SwiftBar:
 # - figures out SwiftBar's active plugin directory
-# - renames (or installs) hapsta.<interval>.sh
+# - renames (or installs) hstack.<interval>.sh
 # - restarts SwiftBar so the new schedule takes effect
 
 INTERVAL="${1:-}"
@@ -26,13 +26,13 @@ if [[ -z "$PLUGIN_DIR" ]]; then
 fi
 mkdir -p "$PLUGIN_DIR"
 
-PLUGIN_BASENAME="${HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME:-hapsta}"
+PLUGIN_BASENAME="${HAPPIER_STACK_SWIFTBAR_PLUGIN_BASENAME:-hstack}"
 TARGET="$PLUGIN_DIR/${PLUGIN_BASENAME}.${INTERVAL}.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-HAPSTA_ROOT_DIR="${HAPPIER_STACK_CLI_ROOT_DIR:-$DEFAULT_ROOT_DIR}"
-SOURCE="${HAPSTA_ROOT_DIR}/extras/swiftbar/hapsta.5s.sh"
+hstack_ROOT_DIR="${HAPPIER_STACK_CLI_ROOT_DIR:-$DEFAULT_ROOT_DIR}"
+SOURCE="${hstack_ROOT_DIR}/extras/swiftbar/hstack.5s.sh"
 
 # If a plugin already exists, rename it into place; otherwise copy from repo source.
 EXISTING="$(ls "$PLUGIN_DIR"/"${PLUGIN_BASENAME}".*.sh 2>/dev/null | head -1 || true)"

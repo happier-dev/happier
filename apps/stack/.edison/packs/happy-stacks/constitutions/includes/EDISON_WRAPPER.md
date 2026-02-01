@@ -1,9 +1,9 @@
-## Edison invocation (MANDATORY in Hapsta projects)
+## Edison invocation (MANDATORY in hstack projects)
 
 - **Do not run** `edison ...` directly.
-- Always use the Hapsta wrapper:
-  - `hapsta edison -- <edison args...>`
-  - `hapsta edison --stack=<stack> -- <edison args...>`
+- Always use the hstack wrapper:
+  - `hstack edison -- <edison args...>`
+  - `hstack edison --stack=<stack> -- <edison args...>`
 
 Why:
 - The wrapper loads the correct stack env (`HAPPIER_STACK_STACK` + `HAPPIER_STACK_ENV_FILE`).

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # SwiftBar menu action wrapper.
-# Runs `hapsta` using the stable shim installed under <homeDir>/bin.
+# Runs `hstack` using the stable shim installed under <homeDir>/bin.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_HOME_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -20,21 +20,21 @@ HOME_DIR="${HOME_DIR:-$DEFAULT_HOME_DIR}"
 export HAPPIER_STACK_HOME_DIR="$HOME_DIR"
 export HAPPIER_STACK_CANONICAL_HOME_DIR="$CANONICAL_HOME_DIR"
 
-HAPSTA_BIN="$HOME_DIR/bin/hapsta"
-if [[ ! -x "$HAPSTA_BIN" ]]; then
+hstack_BIN="$HOME_DIR/bin/hstack"
+if [[ ! -x "$hstack_BIN" ]]; then
   # Allow installs that used the alias name as the shim.
-  HAPSTA_BIN="$HOME_DIR/bin/happier-stack"
+  hstack_BIN="$HOME_DIR/bin/happier-stack"
 fi
 
-if [[ ! -x "$HAPSTA_BIN" ]]; then
+if [[ ! -x "$hstack_BIN" ]]; then
   # Fall back to PATH (best-effort).
-  HAPSTA_BIN="$(command -v hapsta 2>/dev/null || true)"
+  hstack_BIN="$(command -v hstack 2>/dev/null || true)"
 fi
 
-if [[ -z "${HAPSTA_BIN:-}" ]]; then
-  echo "hapsta not found. Run: npx @happier-dev/stack@latest init" >&2
+if [[ -z "${hstack_BIN:-}" ]]; then
+  echo "hstack not found. Run: npx @happier-dev/stack@latest init" >&2
   exit 1
 fi
 
-exec "$HAPSTA_BIN" "$@"
+exec "$hstack_BIN" "$@"
 

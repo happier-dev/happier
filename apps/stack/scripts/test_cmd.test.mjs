@@ -38,11 +38,11 @@ async function writeYarnOkPackage({ dir, name, scriptOutput }) {
     ),
     'utf-8'
   );
-  // Ensure deps are considered "already installed" by hapsta.
+  // Ensure deps are considered "already installed" by hstack.
   await writeFile(join(dir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
 }
 
-test('hapsta test --json keeps stdout JSON-only and runs monorepo root when happy points at apps/ui', async () => {
+test('hstack test --json keeps stdout JSON-only and runs monorepo root when happy points at apps/ui', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 

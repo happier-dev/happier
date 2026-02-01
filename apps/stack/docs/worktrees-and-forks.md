@@ -1,11 +1,11 @@
-# Worktrees + forks (hapsta)
+# Worktrees + forks (hstack)
 
 This repo is designed to run the **Happier** stack locally, while still making it easy to:
 
 - keep using **your fork** day-to-day
 - create **clean upstream PR branches** quickly (without carrying fork-only patches)
 
-Hapsta is **monorepo-only**: UI/CLI/server all live in the same Happier git repo.
+hstack is **monorepo-only**: UI/CLI/server all live in the same Happier git repo.
 
 ---
 
@@ -13,13 +13,13 @@ Hapsta is **monorepo-only**: UI/CLI/server all live in the same Happier git repo
 
 - Keep a stable default checkout at `<workspace>/happier`
 - Put all development work in repo worktrees under `<workspace>/.worktrees/<owner>/<branch...>`
-- Point stacks at a repo checkout via **`HAPPIER_STACK_REPO_DIR`** (managed by `hapsta wt use ...` / `hapsta stack wt ...`)
+- Point stacks at a repo checkout via **`HAPPIER_STACK_REPO_DIR`** (managed by `hstack wt use ...` / `hstack stack wt ...`)
 
 ---
 
 ## Layout
 
-Default paths (see `hapsta where` for your actual values):
+Default paths (see `hstack where` for your actual values):
 
 - Default repo checkout: `<workspace>/happier`
 - Worktrees root: `<workspace>/.worktrees`
@@ -40,7 +40,7 @@ Inside the monorepo, services live under:
 
 ## Branch naming convention
 
-Branches created/managed by `hapsta` worktree tooling are named:
+Branches created/managed by `hstack` worktree tooling are named:
 
 ```
 <owner>/<branch...>
@@ -55,9 +55,9 @@ Where:
 
 ---
 
-## Choosing which checkout Hapsta runs
+## Choosing which checkout hstack runs
 
-Hapsta selects the active repo checkout using:
+hstack selects the active repo checkout using:
 
 - `HAPPIER_STACK_REPO_DIR` (absolute path to the monorepo root)
 
@@ -65,17 +65,17 @@ Recommended ways to set it:
 
 ```bash
 # Switch the active checkout for the current (non-stack) commands
-hapsta wt use slopus/pr/123-fix-thing
+hstack wt use slopus/pr/123-fix-thing
 
 # Switch the active checkout for a specific stack
-hapsta stack wt pr123 -- use slopus/pr/123-fix-thing
+hstack stack wt pr123 -- use slopus/pr/123-fix-thing
 ```
 
 If you want a one-shot override without changing the stack env file:
 
 ```bash
-hapsta stack typecheck pr123 --repo=slopus/pr/123-fix-thing
-hapsta stack build pr123 --repo=/absolute/path/to/checkout
+hstack stack typecheck pr123 --repo=slopus/pr/123-fix-thing
+hstack stack build pr123 --repo=/absolute/path/to/checkout
 ```
 
 ---
@@ -85,15 +85,15 @@ hapsta stack build pr123 --repo=/absolute/path/to/checkout
 Create a new worktree branch based on **upstream** (for upstream PRs):
 
 ```bash
-hapsta wt new pr/my-feature --from=upstream --use
-hapsta wt push active --remote=upstream
+hstack wt new pr/my-feature --from=upstream --use
+hstack wt push active --remote=upstream
 ```
 
 Create a new worktree branch based on **your fork** (for fork-only patches):
 
 ```bash
-hapsta wt new local/my-patch --from=origin --use
-hapsta wt push active --remote=origin
+hstack wt new local/my-patch --from=origin --use
+hstack wt push active --remote=origin
 ```
 
 ---
@@ -103,16 +103,16 @@ hapsta wt push active --remote=origin
 Create a worktree at the PR head ref:
 
 ```bash
-hapsta wt pr https://github.com/leeroybrun/happier-dev/pull/123 --use
+hstack wt pr https://github.com/leeroybrun/happier-dev/pull/123 --use
 
 # or just the PR number (remote defaults to upstream)
-hapsta wt pr 123 --use
+hstack wt pr 123 --use
 ```
 
 Update when the PR changes:
 
 ```bash
-hapsta wt pr 123 --update --stash
+hstack wt pr 123 --update --stash
 ```
 
 Notes:
@@ -127,10 +127,10 @@ Notes:
 Choose which backend flavor a stack runs with:
 
 ```bash
-hapsta srv status
-hapsta srv use happy-server-light
-hapsta srv use happy-server
-hapsta srv use --interactive
+hstack srv status
+hstack srv use happy-server-light
+hstack srv use happy-server
+hstack srv use --interactive
 ```
 
 Notes:

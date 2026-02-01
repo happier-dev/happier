@@ -9,4 +9,4 @@
 - [ ] No assumptions about Node APIs in the client bundle
 - [ ] Metro bundling considerations (no dynamic require patterns that break Metro)
 - [ ] If NativeWind is used, className usage is consistent and typed (avoid inventing Tailwind CSS web patterns)
-- [ ] Changes validated via stack-scoped `hapsta` evidence when applicable (typecheck/lint/build/test)
+- [ ] Changes validated via stack-scoped `hstack` evidence when applicable (typecheck/lint/build/test)

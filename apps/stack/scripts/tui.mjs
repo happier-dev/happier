@@ -105,7 +105,7 @@ function isTuiHelp(argv) {
 }
 
 function inferStackNameFromForwardedArgs(args) {
-  // Primary: stack-scoped usage: `hapsta tui stack <subcmd> <name> ...`
+  // Primary: stack-scoped usage: `hstack tui stack <subcmd> <name> ...`
   const i = args.indexOf('stack');
   if (i >= 0) {
     const name = args[i + 2];
@@ -122,7 +122,7 @@ async function preflightCorepackYarnForStack({ envPath }) {
   // In stack mode we isolate HOME/XDG caches per stack, which can cause Corepack to prompt
   // the first time a stack runs Yarn.
   //
-  // In `hapsta tui`, the child runs under a pseudo-TTY (via `script`) and the TUI consumes
+  // In `hstack tui`, the child runs under a pseudo-TTY (via `script`) and the TUI consumes
   // all keyboard input, so Corepack's interactive prompt deadlocks.
   //
   // Fix: pre-download Yarn in a *non-tty* subprocess using the stack's isolated HOME/XDG,
@@ -317,15 +317,15 @@ async function main() {
   if (isTuiHelp(argv)) {
     printResult({
       json: false,
-      data: { usage: 'hapsta tui <hapsta args...>', json: false },
+      data: { usage: 'hstack tui <hstack args...>', json: false },
       text: [
         '[tui] usage:',
-        '  hapsta tui <hapsta args...>',
+        '  hstack tui <hstack args...>',
         '',
         'examples:',
-        '  hapsta tui stack dev resume-upstream',
-        '  hapsta tui stack start resume-upstream',
-        '  hapsta tui stack auth dev-auth login',
+        '  hstack tui stack dev resume-upstream',
+        '  hstack tui stack start resume-upstream',
+        '  hstack tui stack auth dev-auth login',
         '',
         'layouts:',
         '  single  : one pane (focused)',
@@ -355,7 +355,7 @@ async function main() {
   }
 
   const rootDir = getRootDir(import.meta.url);
-  const happysBin = join(rootDir, 'bin', 'hapsta.mjs');
+  const happysBin = join(rootDir, 'bin', 'hstack.mjs');
   const forwarded = argv;
 
   const stackName = inferStackNameFromForwardedArgs(forwarded);
@@ -564,7 +564,7 @@ async function main() {
 
     const focusPane = panes[focused];
     const focusLabel = focusPane ? `${focusPane.id} (${focusPane.title})` : String(focused);
-    const header = `hapsta tui | ${forwarded.join(' ')} | layout=${layout} | focus=${focusLabel}`;
+    const header = `hstack tui | ${forwarded.join(' ')} | layout=${layout} | focus=${focusLabel}`;
     process.stdout.write(padRight(header, cols) + '\n');
 
     const bodyY = 1;

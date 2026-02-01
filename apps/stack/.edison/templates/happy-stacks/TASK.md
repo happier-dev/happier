@@ -1,9 +1,9 @@
 ---
-# Hapsta task planning metadata (MANDATORY)
+# hstack task planning metadata (MANDATORY)
 #
 # This metadata is enforced by happy-stacks guards on claim/done transitions.
 # Agents MUST run Edison inside a stack context:
-#   hapsta edison --stack=<stack> -- <edison ...>
+#   hstack edison --stack=<stack> -- <edison ...>
 #
 # hs_kind:
 # - parent: umbrella planning task for a feature (NOT claimable; use track/component tasks)
@@ -41,14 +41,14 @@ component: "<<FILL: happy|happy-cli|happy-server-light|happy-server>>"
 
 {{description}}
 
-## Hapsta Execution Plan (MANDATORY)
+## hstack Execution Plan (MANDATORY)
 
-- [ ] Create/confirm a dedicated stack: `hapsta stack new {{stack}} --interactive`
+- [ ] Create/confirm a dedicated stack: `hstack stack new {{stack}} --interactive`
 - [ ] Create/confirm a component worktree per component
-- [ ] Point the stack at the worktree(s): `hapsta stack wt {{stack}} -- use ...`
+- [ ] Point the stack at the worktree(s): `hstack stack wt {{stack}} -- use ...`
 - [ ] Implement only inside component worktree paths (never default checkouts)
 - [ ] Capture evidence via stack-scoped runner:
-  - `hapsta edison --stack={{stack}} -- evidence capture {{id}}`
+  - `hstack edison --stack={{stack}} -- evidence capture {{id}}`
 
 ## Primary Files / Areas
 

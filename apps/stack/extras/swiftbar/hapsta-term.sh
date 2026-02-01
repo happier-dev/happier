@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Open preferred terminal and run a hapsta command.
+# Open preferred terminal and run a hstack command.
 #
 # Preference order follows wt shell semantics:
 # - HAPPIER_STACK_WT_TERMINAL=ghostty|iterm|terminal|current
@@ -36,9 +36,9 @@ if [[ ! -d "$WORKDIR" ]]; then
   WORKDIR="$HOME"
 fi
 
-HAPSTA_SH="$ROOT_DIR/extras/swiftbar/hapsta.sh"
-if [[ ! -x "$HAPSTA_SH" ]]; then
-  echo "missing hapsta wrapper: $HAPSTA_SH" >&2
+hstack_SH="$ROOT_DIR/extras/swiftbar/hstack.sh"
+if [[ ! -x "$hstack_SH" ]]; then
+  echo "missing hstack wrapper: $hstack_SH" >&2
   exit 1
 fi
 
@@ -46,7 +46,7 @@ pref_raw="$(echo "${HAPPIER_STACK_WT_TERMINAL:-auto}" | tr '[:upper:]' '[:lower:
 pref="$pref_raw"
 if [[ "$pref" == "" ]]; then pref="auto"; fi
 
-cmd=( "$HAPSTA_SH" "$@" )
+cmd=( "$hstack_SH" "$@" )
 
 escape_for_osascript_string() {
   local s="$1"
@@ -64,7 +64,7 @@ shell_cmd() {
     escaped="$(printf "%s" "$q" | sed "s/'/'\\\\''/g")"
     joined+="'${escaped}' "
   done
-  joined+="; echo; echo \"[hapsta] done\"; exec /bin/zsh -i"
+  joined+="; echo; echo \"[hstack] done\"; exec /bin/zsh -i"
   echo "$joined"
 }
 

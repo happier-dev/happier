@@ -7,11 +7,11 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 /**
  * Link the local Happier CLI wrapper into your PATH.
  *
- * This is intentionally extracted so you can re-run linking without doing a full `hapsta bootstrap`.
+ * This is intentionally extracted so you can re-run linking without doing a full `hstack bootstrap`.
  *
  * What it does:
  * - optionally builds the monorepo CLI package (apps/cli or packages/cli) (controlled by env/flags)
- * - installs `happy`/`hapsta` shims under `<homeDir>/bin` (default: `~/.happier-stack/bin`) (recommended over `npm link`)
+ * - installs `happy`/`hstack` shims under `<homeDir>/bin` (default: `~/.happier-stack/bin`) (recommended over `npm link`)
  *
  * Env:
  * - HAPPIER_STACK_CLI_BUILD=0 to skip building happy-cli
@@ -32,7 +32,7 @@ async function main() {
       data: { flags: ['--no-build', '--no-link'], json: true },
       text: [
         '[cli-link] usage:',
-        '  hapsta cli:link [--no-build] [--no-link] [--json]',
+        '  hstack cli:link [--no-build] [--no-link] [--json]',
         '  node scripts/cli-link.mjs [--no-build] [--no-link] [--json]',
       ].join('\n'),
     });

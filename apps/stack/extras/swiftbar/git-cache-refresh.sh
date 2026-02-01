@@ -12,8 +12,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-HAPSTA_ROOT_DIR="${HAPPIER_STACK_CLI_ROOT_DIR:-$DEFAULT_ROOT_DIR}"
-LIB_DIR="$HAPSTA_ROOT_DIR/extras/swiftbar/lib"
+hstack_ROOT_DIR="${HAPPIER_STACK_CLI_ROOT_DIR:-$DEFAULT_ROOT_DIR}"
+LIB_DIR="$hstack_ROOT_DIR/extras/swiftbar/lib"
 if [[ ! -f "$LIB_DIR/utils.sh" ]]; then
   echo "missing SwiftBar libs at: $LIB_DIR" >&2
   exit 1
@@ -21,8 +21,8 @@ fi
 
 # shellcheck source=/dev/null
 source "$LIB_DIR/utils.sh"
-HAPSTA_ROOT_DIR="$(resolve_hapsta_root_dir)"
-LIB_DIR="$HAPSTA_ROOT_DIR/extras/swiftbar/lib"
+hstack_ROOT_DIR="$(resolve_hstack_root_dir)"
+LIB_DIR="$hstack_ROOT_DIR/extras/swiftbar/lib"
 # shellcheck source=/dev/null
 source "$LIB_DIR/git.sh"
 

@@ -10,8 +10,8 @@ get_menu_icon_b64() {
   fi
 
   # Default: prefer a menu-bar friendly PNG icon (repo-local).
-  if [[ -z "$source" ]] && [[ -f "$HAPSTA_ROOT_DIR/extras/swiftbar/icons/logo-white.png" ]]; then
-    source="$HAPSTA_ROOT_DIR/extras/swiftbar/icons/logo-white.png"
+  if [[ -z "$source" ]] && [[ -f "$hstack_ROOT_DIR/extras/swiftbar/icons/logo-white.png" ]]; then
+    source="$hstack_ROOT_DIR/extras/swiftbar/icons/logo-white.png"
   fi
 
   if [[ -z "$source" ]]; then
@@ -20,9 +20,9 @@ get_menu_icon_b64() {
   fi
 
   local cache_dir="$HAPPY_HOME_DIR/swiftbar"
-  local cache_png="$cache_dir/hapsta-icon.png"
-  local cache_b64="$cache_dir/hapsta-icon.b64"
-  local cache_meta="$cache_dir/hapsta-icon.meta"
+  local cache_png="$cache_dir/hstack-icon.png"
+  local cache_b64="$cache_dir/hstack-icon.b64"
+  local cache_meta="$cache_dir/hstack-icon.meta"
 
   mkdir -p "$cache_dir" 2>/dev/null || true
 
@@ -87,6 +87,6 @@ icon_b64_for_file() {
 status_icon_b64() {
   local level="$1"  # green | orange | red
   local size="${2:-14}"
-  local path="$HAPSTA_ROOT_DIR/extras/swiftbar/icons/happy-$level.png"
+  local path="$hstack_ROOT_DIR/extras/swiftbar/icons/happy-$level.png"
   icon_b64_for_file "$path" "happy-$level" "$size"
 }

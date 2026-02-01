@@ -1,10 +1,10 @@
 validation:
-  # Hapsta evidence policy:
+  # hstack evidence policy:
   # - "fast" preset: type-check + build + lint (good for UI iteration)
   # - "standard" preset: fast + tests
   #
   # IMPORTANT: command evidence is generated via `edison evidence capture <task-id>`
-  # and is expected to run through `hapsta` wrappers (see .edison/config/ci.yml).
+  # and is expected to run through `hstack` wrappers (see .edison/config/ci.yml).
 
   # Default to the fast preset; validators/QA can opt into "standard" per task when needed.
   defaultPreset: fast
@@ -147,7 +147,7 @@ validation:
   # Optional web server profiles for validators that need a running stack.
   #
   # IMPORTANT:
-  # - These profiles rely on running Edison via `hapsta edison --stack=<name> -- ...`
+  # - These profiles rely on running Edison via `hstack edison --stack=<name> -- ...`
   #   so the stack env (including HAPPIER_STACK_SERVER_PORT) is loaded.
   web_servers:
     happy-stack: &happy_stack
@@ -161,35 +161,35 @@ validation:
       ensure_running: true
       stop_after: true
       start:
-        command: "node ./bin/hapsta.mjs stack start \"$HAPPIER_STACK_STACK\""
+        command: "node ./bin/hstack.mjs stack start \"$HAPPIER_STACK_STACK\""
       stop:
         # Stop only when Edison started the stack.
         #
         # NOTE: `edison` tracks `started_by_us` separately from `process_pid`.
-        # `hapsta stack start` may exit after launching background processes; we still
+        # `hstack stack start` may exit after launching background processes; we still
         # want to run stop when `started_by_us=true`.
         run_even_if_no_process: true
-        command: "node ./bin/hapsta.mjs stack stop \"$HAPPIER_STACK_STACK\" --yes"
+        command: "node ./bin/hstack.mjs stack stop \"$HAPPIER_STACK_STACK\" --yes"
 
     # Alias for the `e2e-web` pack's expected profile name.
     browser-e2e:
       <<: *happy_stack
 
   validators:
-    # Hapsta wiring: bind browser-e2e to the Hapsta web server profile.
+    # hstack wiring: bind browser-e2e to the hstack web server profile.
     # Prompt comes from the `e2e-web` pack (MCP-only) plus `.edison/validators/overlays/browser-e2e.md`.
     browser-e2e:
       web_server:
         ref: browser-e2e
 
-    # Cross-track drift review (Hapsta).
+    # Cross-track drift review (hstack).
     #
     # Lightweight: it reviews drift between tracks (upstream vs fork/integration) using
-    # `hapsta edison track:coherence` output and git diffs/range-diff.
+    # `hstack edison track:coherence` output and git diffs/range-diff.
     #
     # Included in `fast`, `standard`, `fast-ui`, and `standard-ui` as a mandatory blocking check.
     track-drift-review:
-      name: "Track Drift Review (Hapsta)"
+      name: "Track Drift Review (hstack)"
       engine: codex-cli
       fallback_engine: pal-mcp
       prompt: ".edison/validators/track-drift-review.md"

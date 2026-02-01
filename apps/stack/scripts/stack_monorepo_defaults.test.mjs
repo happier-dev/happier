@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('hapsta stack new defaults to HAPPIER_STACK_REPO_DIR when happier monorepo exists', async () => {
+test('hstack stack new defaults to HAPPIER_STACK_REPO_DIR when happier monorepo exists', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-monorepo-defaults-'));

@@ -64,14 +64,14 @@ async function main() {
       },
       text: [
         '[start] usage:',
-        '  hapsta start [--server=happy-server|happy-server-light] [--server-flavor=light|full] [--restart] [--json]',
-        '  hapsta start --mobile        # also start Expo dev-client Metro for mobile',
-        '  hapsta start --expo-tailscale # forward Expo to Tailscale interface for remote access',
-        '  hapsta start --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
+        '  hstack start [--server=happy-server|happy-server-light] [--server-flavor=light|full] [--restart] [--json]',
+        '  hstack start --mobile        # also start Expo dev-client Metro for mobile',
+        '  hstack start --expo-tailscale # forward Expo to Tailscale interface for remote access',
+        '  hstack start --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
         '  note: --json prints the resolved config (dry-run) and exits.',
         '',
         'note:',
-        '  If run from inside a repo checkout/worktree, that checkout is used for this run (without requiring `hapsta wt use`).',
+        '  If run from inside a repo checkout/worktree, that checkout is used for this run (without requiring `hstack wt use`).',
       ].join('\n'),
     });
     return;
@@ -183,7 +183,7 @@ async function main() {
     if (serverComponentName === 'happy-server-light') {
       throw new Error(
         `[local] UI build directory not found at ${uiBuildDir}. ` +
-          `Run: ${cmd('hapsta build')}`
+          `Run: ${cmd('hstack build')}`
       );
     }
     // For happy-server, UI serving is optional.

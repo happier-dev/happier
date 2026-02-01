@@ -1,7 +1,7 @@
 packs:
   # Enable tech-aware overlays/validators for Happy component development.
   # NOTE: This controls Edison’s own composition/validation guidance; it does NOT
-  # start any servers or change Hapsta runtime behavior by itself.
+  # start any servers or change hstack runtime behavior by itself.
   active:
     - happy-stacks
     - expo

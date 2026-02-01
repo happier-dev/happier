@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('hapsta <stack> <cmd> ... rewrites to hapsta stack <cmd> <stack> ... when stack exists', async () => {
+test('hstack <stack> <cmd> ... rewrites to hstack stack <cmd> <stack> ... when stack exists', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-shorthand-'));
@@ -39,7 +39,7 @@ test('hapsta <stack> <cmd> ... rewrites to hapsta stack <cmd> <stack> ... when s
     HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
-  const res = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), stackName, 'env', 'path', '--json'], {
+  const res = await runNode([join(rootDir, 'bin', 'hstack.mjs'), stackName, 'env', 'path', '--json'], {
     cwd: rootDir,
     env: baseEnv,
   });

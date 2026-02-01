@@ -249,7 +249,7 @@ export async function ensureDevExpoServer({
   // scoping app persistence (MMKV / SecureStore) to a stack-specific namespace.
   //
   // This stays upstream-safe because the app behavior is unchanged unless the Expo public
-  // env var is explicitly set. Hapsta sets it automatically for stack-mode dev-client.
+  // env var is explicitly set. hstack sets it automatically for stack-mode dev-client.
   if (wantDevClient) {
     const explicitScope = (
       env.HAPPIER_STACK_STORAGE_SCOPE ??
@@ -265,7 +265,7 @@ export async function ensureDevExpoServer({
     }
   }
 
-  // We own the browser opening behavior in Hapsta so we can reliably open the correct origin.
+  // We own the browser opening behavior in hstack so we can reliably open the correct origin.
   env.EXPO_NO_BROWSER = '1';
   env.BROWSER = 'none';
 

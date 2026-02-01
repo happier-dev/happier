@@ -1,4 +1,4 @@
-name: Hapsta build
+name: hstack build
 
 on:
     pull_request:
@@ -28,8 +28,8 @@ jobs:
             - name: Install dependencies
               run: yarn install --frozen-lockfile
 
-            - name: Unit tests (hapsta)
-              run: node ./bin/hapsta.mjs test stacks
+            - name: Unit tests (hstack)
+              run: node ./bin/hstack.mjs test stacks
 
             - name: Build
               # This validates the build command wiring without requiring the Happier monorepo checkout.
@@ -37,10 +37,10 @@ jobs:
 
             - name: CLI smoke (help)
               run: |
-                  node ./bin/hapsta.mjs help
-                  node ./bin/hapsta.mjs init --help
-                  node ./bin/hapsta.mjs self status --no-check
-                  node ./bin/hapsta.mjs where --json
+                  node ./bin/hstack.mjs help
+                  node ./bin/hstack.mjs init --help
+                  node ./bin/hstack.mjs self status --no-check
+                  node ./bin/hstack.mjs where --json
                   node ./scripts/utils/cli/smoke_help.mjs
 
             - name: npm pack smoke

@@ -102,7 +102,7 @@ export async function createWorktreeFromBaseWorktree({
 }) {
   const args = ['wt', 'new', component, slug, `--remote=${remoteName}`, `--base-worktree=${baseWorktreeSpec}`];
   if (depsMode) args.push(`--deps=${depsMode}`);
-  await run(process.execPath, [join(rootDir, 'bin', 'hapsta.mjs'), ...args], { cwd: rootDir, env });
+  await run(process.execPath, [join(rootDir, 'bin', 'hstack.mjs'), ...args], { cwd: rootDir, env });
 
   const repoDir = componentRepoDir(rootDir, component, env);
   const owner = await getRemoteOwner({ repoDir, remoteName });
@@ -172,7 +172,7 @@ export async function getRemoteOwner({ repoDir, remoteName = 'upstream' }) {
 
 export async function createWorktree({ rootDir, component, slug, remoteName = 'upstream', env = process.env }) {
   // Create without modifying env.local (unless caller passes --use elsewhere).
-  await run(process.execPath, [join(rootDir, 'bin', 'hapsta.mjs'), 'wt', 'new', component, slug, `--remote=${remoteName}`], {
+  await run(process.execPath, [join(rootDir, 'bin', 'hstack.mjs'), 'wt', 'new', component, slug, `--remote=${remoteName}`], {
     cwd: rootDir,
     env,
   });
