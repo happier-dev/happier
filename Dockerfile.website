@@ -1,22 +1,28 @@
-# Stage 1: install deps (website-local lockfile)
+# Stage 1: install dependencies with workspace context
 FROM node:22-alpine AS deps
 
-WORKDIR /repo/apps/website
+WORKDIR /repo
 
-COPY apps/website/package.json apps/website/yarn.lock ./
+COPY package.json yarn.lock ./
+
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/protocol
+
+COPY apps/ui/package.json apps/ui/
+COPY apps/server/package.json apps/server/
+COPY apps/cli/package.json apps/cli/
+COPY apps/website/package.json apps/website/
+COPY apps/docs/package.json apps/docs/
+COPY packages/agents/package.json packages/agents/
+COPY packages/protocol/package.json packages/protocol/
+
 RUN yarn install --frozen-lockfile --ignore-engines
 
 # Stage 2: build static site
 FROM deps AS builder
 
-COPY apps/website/index.html ./
-COPY apps/website/vite.config.js ./
-COPY apps/website/postcss.config.js ./
-COPY apps/website/tailwind.config.js ./
-COPY apps/website/public ./public
-COPY apps/website/src ./src
+COPY apps/website ./apps/website
 
-RUN yarn build
+RUN yarn workspace @happier-dev/website build
 
 # Stage 3: serve with nginx
 FROM nginx:alpine AS runner

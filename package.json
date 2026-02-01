@@ -4,15 +4,33 @@
     "scripts": {
         "build:packages": "yarn workspace @happier-dev/agents build && yarn workspace @happier-dev/protocol build",
         "ci:act": "bash scripts/ci/run-act-tests.sh",
-        "test": "yarn --cwd apps/ui test && yarn --cwd apps/cli test && yarn --cwd apps/server test",
-        "typecheck": "yarn --cwd apps/ui typecheck && yarn --cwd apps/cli typecheck && yarn --cwd apps/server typecheck"
+        "test": "yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test && yarn workspace @happier-dev/server test",
+        "typecheck": "yarn workspace @happier-dev/app typecheck && yarn workspace @happier-dev/cli typecheck && yarn workspace @happier-dev/server typecheck",
+        "ui": "yarn workspace @happier-dev/app start",
+        "ui:web": "yarn workspace @happier-dev/app web",
+        "ui:ios": "yarn workspace @happier-dev/app ios",
+        "ui:android": "yarn workspace @happier-dev/app android",
+        "ui:tauri": "yarn workspace @happier-dev/app tauri:dev",
+        "server": "yarn workspace @happier-dev/server dev",
+        "server:light": "yarn workspace @happier-dev/server dev:light",
+        "server:start": "yarn workspace @happier-dev/server start",
+        "server:start:light": "yarn workspace @happier-dev/server start:light",
+        "cli": "yarn workspace @happier-dev/cli dev",
+        "cli:start": "yarn workspace @happier-dev/cli start",
+        "cli:doctor": "yarn workspace @happier-dev/cli doctor",
+        "website": "yarn workspace @happier-dev/website dev",
+        "website:build": "yarn workspace @happier-dev/website build",
+        "docs": "yarn workspace docs dev",
+        "docs:build": "yarn workspace docs build",
+        "docs:types": "yarn workspace docs types:check"
     },
     "workspaces": {
         "packages": [
             "apps/ui",
             "apps/cli",
             "apps/server",
-            "apps/stack",
+            "apps/website",
+            "apps/docs",
             "packages/agents",
             "packages/protocol"
         ],

@@ -8,11 +8,13 @@ WORKDIR /repo
 
 COPY package.json yarn.lock ./
 
-RUN mkdir -p apps/ui apps/server apps/cli packages/agents packages/protocol
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/protocol
 
 COPY apps/ui/package.json apps/ui/
 COPY apps/server/package.json apps/server/
 COPY apps/cli/package.json apps/cli/
+COPY apps/website/package.json apps/website/
+COPY apps/docs/package.json apps/docs/
 COPY packages/agents/package.json packages/agents/
 COPY packages/protocol/package.json packages/protocol/
 

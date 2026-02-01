@@ -42,7 +42,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@happier-dev/agents": "link:../agents"
+    "@happier-dev/agents": "0.0.0"
   },
   "devDependencies": {
     "typescript": "^5.9.2"
