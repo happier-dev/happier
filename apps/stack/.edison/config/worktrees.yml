@@ -1,0 +1,5 @@
+worktrees:
+  # IMPORTANT: Hapsta already manages isolation via component worktrees + stacks.
+  # Edison "session worktrees" and "meta worktrees" are disabled for this project to avoid conflicts.
+  enabled: false
+

@@ -1,0 +1,132 @@
+## Track Drift Review (Hapsta)
+
+**Goal**: Perform a **lightweight coherence review** between Hapsta tracks (typically `upstream` vs `fork`/`integration`).
+
+This is **not** functional validation. Assume each track’s own validation already covers typecheck/lint/build/tests/browser-e2e. Your job is to answer:
+
+- Are the **differences between tracks intentional**?
+- If a change exists upstream, is it **present or intentionally re-implemented** in the fork/integration track?
+- Are there **surprising fork-only changes** that should be rejected or split?
+
+### Hard constraints
+
+- Do **not** start servers manually (no `yarn dev`, no direct `expo`, etc.).
+- Use **Hapsta** entrypoints only (`hapsta ...`).
+- Keep this review **fast**: focus on drift, not re-testing.
+
+---
+
+## Inputs
+
+You have:
+
+- The task being validated (usually a `hs_kind=track` task, but may be `component`)
+- Evidence files (if present) and the ability to compute drift directly
+- Access to the working tree(s) via git
+
+---
+
+## Step 1: Load the drift report
+
+Read the drift probe output from command evidence (fast path).
+
+1) Check evidence freshness/completeness:
+
+```bash
+hapsta edison --stack=<stack> -- evidence status <task-id> --preset <preset>
+```
+
+2) View the command evidence output (do NOT browse snapshot directories):
+
+```bash
+hapsta edison --stack=<stack> -- evidence show <task-id> --command track-coherence
+```
+
+Interpretation (this command output is JSON from `hapsta edison track:coherence --json`):
+
+- If it returns `{ skipped: true, reason: "no_targets" }`: **PASS** (no cross-track validation applicable).
+- Otherwise, it returns `results[]` with per-component comparisons:
+  - `missing[]`: upstream commits that do not have a patch-equivalent in target (per `--cherry-pick`)
+  - `extra[]`: target commits not present (patch-equivalent) in upstream
+
+Important:
+
+- `missing[]` does **not automatically mean wrong**. It can also mean “implemented differently” (patch differs).
+- Your job is to decide if missing is a real omission or an intentional re-implementation.
+
+### SKIP behavior (must be fast and well-formed)
+
+If the drift probe indicates there are **no target tracks** (`skipped: true, reason: "no_targets"`), you must immediately return an **approve** verdict with a single-line summary. Do not run any additional git diffs.
+
+Output exactly:
+
+```text
+Verdict: approve
+Summary: SKIP (single-track: no fork/integration targets for cross-track drift review)
+```
+
+This keeps the validator run near-zero cost while still producing a valid Edison validator report (Edison extracts `Verdict:` from your response and writes the structured report file).
+
+---
+
+## Step 2: Review “missing” commits (upstream → target)
+
+For each `(component, sourceHead, targetHead)` where `missing.length > 0`:
+
+1) Inspect the upstream commit(s):
+
+```bash
+cd <sourceDir>
+git show <sha>
+```
+
+2) Check whether the target track includes the equivalent behavior change, even if via different code:
+
+```bash
+cd <targetDir>
+git diff --name-status <sourceHead>..<targetHead
+git diff <sourceHead>..<targetHead
+```
+
+Guidance:
+
+- If the upstream change is clearly **absent** in target: **FAIL** and recommend cherry-picking or re-implementing.
+- If the upstream change is present but implemented differently: **PASS**, but record the rationale.
+
+---
+
+## Step 3: Review “extra” commits (fork/integration-only)
+
+Extras are allowed in forks, but must be intentional and safe.
+
+For each `(component, extra commits)`:
+
+- Quickly assess whether extra commits:
+  - are fork-only infrastructure (ok), OR
+  - change behavior in a risky/unexpected way (reject), OR
+  - mix unrelated features (reject; suggest splitting tasks/branches)
+
+Use:
+
+```bash
+cd <targetDir>
+git show <sha>
+```
+
+---
+
+## Step 4: Produce a short verdict
+
+Output a validator report that includes:
+
+- **Verdict**: PASS / FAIL
+- **Scope**: which components were reviewed
+- **Summary**:
+  - missing commits (if any) + whether they are “omission” vs “re-implemented”
+  - risky/irrelevant extras (if any)
+- **Required follow-ups** (only if FAIL or if you require a split)
+
+If you PASS with re-implementation differences, include:
+
+- a brief explanation of why the divergence is acceptable
+- which files/areas show the equivalence

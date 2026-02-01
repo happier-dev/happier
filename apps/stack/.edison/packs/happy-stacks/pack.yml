@@ -1,0 +1,7 @@
+name: happy-stacks
+version: 0.1.0
+description: Hapsta pack (worktrees/stacks discipline, safe evidence capture via hapsta, upstream-first workflow)
+category: workflow
+tags: [happy-stacks, hapsta, stacks, worktrees, upstream]
+dependencies: []
+

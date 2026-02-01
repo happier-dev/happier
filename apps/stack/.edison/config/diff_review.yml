@@ -1,0 +1,6 @@
+# Hapsta uses stack-pinned repo checkouts/worktrees.
+# Validators must NOT substitute ad-hoc `git diff` from the repo root as a replacement for evidence.
+# The canonical PR-style diff is captured as command evidence (`task-diff`).
+diffReview:
+  mode: evidence
+  evidenceCommand: task-diff
