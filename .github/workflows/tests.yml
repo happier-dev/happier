@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  expo-app:
-    name: Expo App Tests
+  ui:
+    name: UI Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -38,19 +38,13 @@ jobs:
           corepack prepare yarn@1.22.22 --activate
 
       - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
         run: yarn install --frozen-lockfile
 
-      - name: Build workspace link deps (agents/protocol)
-        run: |
-          set -euo pipefail
-          yarn --cwd packages/agents -s build
-          mkdir -p packages/protocol/node_modules/@happier-dev
-          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happier-dev/agents"
-          yarn --cwd packages/protocol -s build
-
       - name: Run tests
-        working-directory: expo-app
-        run: yarn test
+        run: yarn workspace @happier-dev/app test
 
   server:
     name: Server Tests
@@ -66,7 +60,7 @@ jobs:
         with:
           node-version: 20
           cache: yarn
-          cache-dependency-path: server/yarn.lock
+          cache-dependency-path: yarn.lock
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
@@ -80,26 +74,13 @@ jobs:
           corepack prepare yarn@1.22.22 --activate
 
       - name: Install dependencies
-        working-directory: server
-        run: yarn install --frozen-lockfile
-
-      - name: Build @happier-dev/agents (local workspace link)
-        working-directory: server
-        run: ./node_modules/.bin/tsc -p ../packages/agents/tsconfig.json
-
-      - name: Link @happier-dev/agents for protocol build (CI only)
-        run: |
-          set -euo pipefail
-          mkdir -p packages/protocol/node_modules/@happier-dev
-          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happier-dev/agents"
-
-      - name: Build @happier-dev/protocol (local workspace link)
-        working-directory: server
-        run: ./node_modules/.bin/tsc -p ../packages/protocol/tsconfig.json
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Run tests
-        working-directory: server
-        run: yarn test
+        run: yarn workspace @happier-dev/server test
 
   cli:
     name: CLI Tests (incl. tmux integration)
@@ -120,7 +101,7 @@ jobs:
         with:
           node-version: 20
           cache: yarn
-          cache-dependency-path: cli/yarn.lock
+          cache-dependency-path: yarn.lock
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
@@ -161,38 +142,21 @@ jobs:
           tmux -V
 
       - name: Install dependencies
-        working-directory: cli
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile
-
-      - name: Build @happier-dev/agents (local workspace link)
-        working-directory: cli
-        run: ./node_modules/.bin/tsc -p ../packages/agents/tsconfig.json
-
-      - name: Link @happier-dev/agents for protocol build (CI only)
-        run: |
-          set -euo pipefail
-          mkdir -p packages/protocol/node_modules/@happier-dev
-          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happier-dev/agents"
-
-      - name: Build @happier-dev/protocol (local workspace link)
-        working-directory: cli
-        run: ./node_modules/.bin/tsc -p ../packages/protocol/tsconfig.json
+        run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Disable remote logging for CI (avoid hanging test process)
-        working-directory: cli
         run: |
           set -euo pipefail
-          if [ -f .env.integration-test ]; then
-            sed -i 's/^DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING=.*/DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING=/' .env.integration-test
-            sed -i 's/^DEBUG=.*/DEBUG=/' .env.integration-test
+          if [ -f apps/cli/.env.integration-test ]; then
+            sed -i 's/^DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING=.*/DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING=/' apps/cli/.env.integration-test
+            sed -i 's/^DEBUG=.*/DEBUG=/' apps/cli/.env.integration-test
           fi
 
       - name: Run tests
-        working-directory: cli
-        run: yarn test
+        run: yarn workspace @happier-dev/cli test
 
   cli-daemon-e2e:
     name: CLI + Server (light/sqlite) E2E
@@ -219,9 +183,7 @@ jobs:
         with:
           node-version: 20
           cache: yarn
-          cache-dependency-path: |
-            cli/yarn.lock
-            server/yarn.lock
+          cache-dependency-path: yarn.lock
 
       - name: Setup Node (act)
         if: env.ACT == 'true'
@@ -261,38 +223,17 @@ jobs:
           fi
           tmux -V
 
-      - name: Install server dependencies
-        working-directory: server
-        run: yarn install --frozen-lockfile
-
       - name: Prepare SQLite schema (light)
-        working-directory: server
-        run: yarn -s db:push:light
-
-      - name: Install CLI dependencies
-        working-directory: cli
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
-        run: yarn install --frozen-lockfile
-
-      - name: Build @happier-dev/agents (local workspace link)
-        working-directory: cli
-        run: ./node_modules/.bin/tsc -p ../packages/agents/tsconfig.json
-
-      - name: Link @happier-dev/agents for protocol build (CI only)
         run: |
           set -euo pipefail
-          mkdir -p packages/protocol/node_modules/@happier-dev
-          ln -sfn "$(pwd)/packages/agents" "packages/protocol/node_modules/@happier-dev/agents"
-
-      - name: Build @happier-dev/protocol (local workspace link)
-        working-directory: cli
-        run: ./node_modules/.bin/tsc -p ../packages/protocol/tsconfig.json
+          yarn install --frozen-lockfile --ignore-engines
+          yarn --cwd apps/server -s db:push:light
 
       - name: Build CLI
-        working-directory: cli
-        run: yarn build
+        run: yarn workspace @happier-dev/cli build
 
       - name: Install provider CLI stubs (CI only)
         run: |
@@ -352,7 +293,7 @@ jobs:
 
           mkdir -p "${HAPPY_SERVER_LIGHT_DATA_DIR}"
 
-          nohup yarn --cwd server start:light > "/tmp/happy-server-light.log" 2>&1 &
+          nohup yarn --cwd apps/server start:light > "/tmp/happy-server-light.log" 2>&1 &
           SERVER_PID=$!
           echo "${SERVER_PID}" > "/tmp/happy-server-light.pid"
 
@@ -382,7 +323,7 @@ jobs:
 
           # Create a real account + token via the normal `/v1/auth` flow (ed25519 signature),
           # then write the credentials file expected by `.env.integration-test`.
-          (cd server && node --input-type=module - <<'NODE'
+          (cd apps/server && node --input-type=module - <<'NODE'
           import fs from "node:fs";
           import os from "node:os";
           import path from "node:path";
@@ -428,7 +369,7 @@ jobs:
           NODE
           )
 
-          yarn --cwd cli -s vitest run src/daemon/daemon.integration.test.ts
+          yarn --cwd apps/cli -s vitest run src/daemon/daemon.integration.test.ts
 
       - name: Dump server logs (on failure)
         if: failure()

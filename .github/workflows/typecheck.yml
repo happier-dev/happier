@@ -25,8 +25,12 @@ jobs:
               with:
                   node-version: 20
                   cache: yarn
+                  cache-dependency-path: yarn.lock
 
             - name: Install dependencies
+              env:
+                YARN_PRODUCTION: "false"
+                npm_config_production: "false"
               run: yarn install --frozen-lockfile
 
             - name: TypeScript typecheck

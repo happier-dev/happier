@@ -1,0 +1,98 @@
+name: Reset Branch (main ↔ dev)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Source branch to copy FROM"
+        required: true
+        type: choice
+        options:
+          - dev
+          - main
+      target:
+        description: "Target branch to reset TO the source"
+        required: true
+        type: choice
+        options:
+          - dev
+          - main
+      allow_reset:
+        description: "I understand this will rewrite the target branch history"
+        required: true
+        default: false
+        type: boolean
+      confirm:
+        description: "Type exactly: reset <target> from <source> (e.g. 'reset main from dev')"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reset-branch-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          src="${{ inputs.source }}"
+          tgt="${{ inputs.target }}"
+
+          if [ "${{ inputs.allow_reset }}" != "true" ]; then
+            echo "Refusing to reset without allow_reset=true." >&2
+            exit 1
+          fi
+
+          if [ "$src" = "$tgt" ]; then
+            echo "Refusing to reset a branch onto itself ($tgt)." >&2
+            exit 1
+          fi
+
+          expected="reset $tgt from $src"
+          if [ "${{ inputs.confirm }}" != "$expected" ]; then
+            echo "Confirmation mismatch." >&2
+            echo "Expected: $expected" >&2
+            echo "Got:      ${{ inputs.confirm }}" >&2
+            exit 1
+          fi
+
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source }}
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Reset target branch (force-with-lease)
+        run: |
+          set -euo pipefail
+          src="${{ inputs.source }}"
+          tgt="${{ inputs.target }}"
+          tgt_ref="refs/heads/$tgt"
+
+          src_sha="$(git rev-parse HEAD)"
+          remote_sha="$(git ls-remote --heads origin "$tgt" | awk '{print $1}')"
+
+          if [ -z "${remote_sha:-}" ]; then
+            echo "Target branch '$tgt' does not exist on origin." >&2
+            exit 1
+          fi
+
+          echo "Resetting '$tgt' to '$src'..."
+          echo "  source: $src_sha"
+          echo "  target: $remote_sha"
+
+          git push origin "HEAD:$tgt_ref" --force-with-lease="$tgt_ref:$remote_sha"

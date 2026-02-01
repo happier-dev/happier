@@ -1,0 +1,467 @@
+name: Release (dev → main)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deploy environment (deploy/<env>/*)"
+        required: true
+        type: choice
+        default: preview
+        options:
+          - preview
+          - production
+      promote_mode:
+        description: "How to update main from dev"
+        required: true
+        type: choice
+        default: fast_forward
+        options:
+          - fast_forward
+          - reset
+      dry_run:
+        description: "Run checks and show plan, but do not push/deploy"
+        required: true
+        default: false
+        type: boolean
+      allow_reset:
+        description: "Required when promote_mode=reset (rewrites main history)"
+        required: true
+        default: false
+        type: boolean
+      bump:
+        description: "Version bump to apply (only for changed components)"
+        required: true
+        type: choice
+        default: none
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      deploy_ui:
+        description: "Promote deploy/<env>/ui"
+        required: true
+        default: true
+        type: boolean
+      deploy_server:
+        description: "Promote deploy/<env>/server"
+        required: true
+        default: true
+        type: boolean
+      deploy_website:
+        description: "Promote deploy/<env>/website"
+        required: true
+        default: true
+        type: boolean
+      deploy_docs:
+        description: "Promote deploy/<env>/docs"
+        required: true
+        default: true
+        type: boolean
+      publish_cli:
+        description: "Publish CLI to npm (runs after bump + promotion)"
+        required: true
+        default: false
+        type: boolean
+      cli_bump:
+        description: "CLI bump for npm publish (ignored if publish_cli=false)"
+        required: true
+        type: choice
+        default: patch
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      cli_smoke_linux:
+        description: "Run CLI smoke test on Linux"
+        required: true
+        default: true
+        type: boolean
+      build_docs:
+        description: "Build docs as part of release checks"
+        required: true
+        default: true
+        type: boolean
+      build_website:
+        description: "Build website as part of release checks"
+        required: true
+        default: true
+        type: boolean
+      sync_dev_from_main:
+        description: "Fast-forward dev to main after version bumps (keeps future releases fast-forwardable)"
+        required: true
+        default: true
+        type: boolean
+      confirm:
+        description: "Type exactly: release dev to main (or: reset main from dev)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-dev-to-main
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    outputs:
+      changed_ui: ${{ steps.plan.outputs.changed_ui }}
+      changed_cli: ${{ steps.plan.outputs.changed_cli }}
+      changed_server: ${{ steps.plan.outputs.changed_server }}
+      changed_website: ${{ steps.plan.outputs.changed_website }}
+      changed_docs: ${{ steps.plan.outputs.changed_docs }}
+      changed_shared: ${{ steps.plan.outputs.changed_shared }}
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          mode="${{ inputs.promote_mode }}"
+          confirm="${{ inputs.confirm }}"
+
+          if [ "$mode" = "fast_forward" ]; then
+            expected="release dev to main"
+            if [ "$confirm" != "$expected" ]; then
+              echo "Confirmation mismatch." >&2
+              echo "Expected: $expected" >&2
+              echo "Got:      $confirm" >&2
+              exit 1
+            fi
+          elif [ "$mode" = "reset" ]; then
+            if [ "${{ inputs.allow_reset }}" != "true" ]; then
+              echo "Refusing to reset without allow_reset=true." >&2
+              exit 1
+            fi
+            expected="reset main from dev"
+            if [ "$confirm" != "$expected" ]; then
+              echo "Confirmation mismatch." >&2
+              echo "Expected: $expected" >&2
+              echo "Got:      $confirm" >&2
+              exit 1
+            fi
+          else
+            echo "Unknown promote_mode: $mode" >&2
+            exit 1
+          fi
+
+          if [ "${{ inputs.publish_cli }}" = "true" ] && [ "${{ inputs.cli_bump }}" = "none" ]; then
+            echo "publish_cli=true requires cli_bump != none." >&2
+            exit 1
+          fi
+
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout dev
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack (Yarn)
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Test + typecheck
+        run: |
+          set -euo pipefail
+          yarn test
+          yarn typecheck
+
+      - name: Build website
+        if: inputs.build_website
+        run: yarn website:build
+
+      - name: Build docs
+        if: inputs.build_docs
+        run: yarn docs:build
+
+      - name: CLI smoke test (Linux)
+        if: inputs.cli_smoke_linux
+        run: |
+          set -euo pipefail
+          yarn workspace @happier-dev/cli build
+          yarn workspace @happier-dev/cli pack
+
+          PACKAGE_FILE="$(ls apps/cli/*.tgz | head -n 1)"
+          if [ -z "${PACKAGE_FILE:-}" ]; then
+            echo "Unable to find packed CLI tarball in apps/cli/*.tgz" >&2
+            exit 1
+          fi
+
+          npm install -g "./$PACKAGE_FILE"
+
+          timeout 30s happier --help
+          timeout 10s happier --version
+          timeout 30s happier doctor
+          timeout 10s happier daemon status
+
+      - name: Compute changed components (main..dev)
+        id: plan
+        run: |
+          set -euo pipefail
+
+          git fetch origin main dev --prune --tags
+
+          dev_sha="$(git rev-parse HEAD)"
+          main_sha="$(git rev-parse origin/main)"
+
+          git diff --name-only "$main_sha..$dev_sha" > /tmp/changed_paths.txt || true
+
+          changed_ui=false
+          changed_cli=false
+          changed_server=false
+          changed_website=false
+          changed_docs=false
+          changed_shared=false
+
+          while IFS= read -r p; do
+            case "$p" in
+              apps/ui/*) changed_ui=true ;;
+              apps/cli/*) changed_cli=true ;;
+              apps/server/*) changed_server=true ;;
+              apps/website/*) changed_website=true ;;
+              apps/docs/*) changed_docs=true ;;
+              packages/agents/*|packages/protocol/*) changed_shared=true ;;
+              *) ;;
+            esac
+          done < /tmp/changed_paths.txt
+
+          echo "changed_ui=$changed_ui" >> "$GITHUB_OUTPUT"
+          echo "changed_cli=$changed_cli" >> "$GITHUB_OUTPUT"
+          echo "changed_server=$changed_server" >> "$GITHUB_OUTPUT"
+          echo "changed_website=$changed_website" >> "$GITHUB_OUTPUT"
+          echo "changed_docs=$changed_docs" >> "$GITHUB_OUTPUT"
+          echo "changed_shared=$changed_shared" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Release plan (dev → main)"
+            echo ""
+            echo "- environment: \`${{ inputs.environment }}\`"
+            echo "- promote_mode: \`${{ inputs.promote_mode }}\`"
+            echo "- dry_run: \`${{ inputs.dry_run }}\`"
+            echo "- bump: \`${{ inputs.bump }}\`"
+            echo "- publish_cli: \`${{ inputs.publish_cli }}\` (cli_bump=\`${{ inputs.cli_bump }}\`)"
+            echo ""
+            echo "### Changed components (main..dev)"
+            echo "- ui: \`$changed_ui\`"
+            echo "- cli: \`$changed_cli\`"
+            echo "- server: \`$changed_server\`"
+            echo "- website: \`$changed_website\`"
+            echo "- docs: \`$changed_docs\`"
+            echo "- shared (agents/protocol): \`$changed_shared\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  promote_main:
+    if: inputs.dry_run != true
+    needs: [checks]
+    uses: ./.github/workflows/promote-branch.yml
+    secrets: inherit
+    with:
+      source: dev
+      target: main
+      mode: ${{ inputs.promote_mode }}
+      dry_run: ${{ inputs.dry_run }}
+      allow_reset: ${{ inputs.allow_reset }}
+      confirm: ${{ inputs.promote_mode == 'reset' && 'reset main from dev' || 'promote main from dev' }}
+
+  bump_versions:
+    if: inputs.dry_run != true
+    needs: [checks, promote_main]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide if we need version bumps
+        id: decide
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.bump }}" != "none" ] || [ "${{ inputs.publish_cli }}" = "true" ]; then
+            echo "should_bump=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_bump=false" >> "$GITHUB_OUTPUT"
+            echo "No version bumps requested." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Create GitHub App token
+        if: steps.decide.outputs.should_bump == 'true'
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout main
+        if: steps.decide.outputs.should_bump == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Setup Node
+        if: steps.decide.outputs.should_bump == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack (Yarn)
+        if: steps.decide.outputs.should_bump == 'true'
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        if: steps.decide.outputs.should_bump == 'true'
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Apply version bumps (single commit)
+        if: steps.decide.outputs.should_bump == 'true'
+        id: bumps
+        run: |
+          set -euo pipefail
+
+          bump="${{ inputs.bump }}"
+          bumped=()
+
+          if [ "$bump" != "none" ]; then
+            if [ "${{ needs.checks.outputs.changed_ui }}" = "true" ] || [ "${{ needs.checks.outputs.changed_shared }}" = "true" ]; then
+              node scripts/release/bump-version.mjs --component app --bump "$bump" >/tmp/bump_app.txt
+              bumped+=("app")
+            fi
+            if [ "${{ needs.checks.outputs.changed_server }}" = "true" ] || [ "${{ needs.checks.outputs.changed_shared }}" = "true" ]; then
+              node scripts/release/bump-version.mjs --component server --bump "$bump" >/tmp/bump_server.txt
+              bumped+=("server")
+            fi
+            if [ "${{ needs.checks.outputs.changed_website }}" = "true" ]; then
+              node scripts/release/bump-version.mjs --component website --bump "$bump" >/tmp/bump_website.txt
+              bumped+=("website")
+            fi
+          fi
+
+          if [ "${{ inputs.publish_cli }}" = "true" ]; then
+            node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.cli_bump }}" >/tmp/bump_cli.txt
+            bumped+=("cli")
+          fi
+
+          if [ "${#bumped[@]}" -eq 0 ]; then
+            echo "No version bumps requested." >> "$GITHUB_STEP_SUMMARY"
+            echo "did_bump=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "did_bump=true" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add apps/ui/package.json apps/ui/app.config.js apps/server/package.json apps/website/package.json apps/cli/package.json || true
+
+          # Also pick up any tauri version edits if present.
+          if [ -d apps/ui/src-tauri ]; then
+            git add apps/ui/src-tauri || true
+          fi
+
+          git commit -m "chore(release): bump versions (${bumped[*]})"
+          git push origin HEAD:main
+
+  deploy_ui:
+    if: inputs.dry_run != true && inputs.deploy_ui == true && (needs.checks.outputs.changed_ui == 'true' || needs.checks.outputs.changed_shared == 'true')
+    needs: [checks, promote_main, bump_versions]
+    uses: ./.github/workflows/promote-ui.yml
+    secrets: inherit
+    with:
+      environment: ${{ inputs.environment }}
+      source_ref: main
+      allow_cross_promote: false
+      bump: none
+      deploy_web: true
+      expo_action: none
+      expo_platform: ios
+      run_tests: false
+
+  deploy_server:
+    if: inputs.dry_run != true && inputs.deploy_server == true && (needs.checks.outputs.changed_server == 'true' || needs.checks.outputs.changed_shared == 'true')
+    needs: [checks, promote_main, bump_versions]
+    uses: ./.github/workflows/promote-server.yml
+    secrets: inherit
+    with:
+      environment: ${{ inputs.environment }}
+      source_ref: main
+      allow_cross_promote: false
+      bump: none
+      run_tests: false
+
+  deploy_website:
+    if: inputs.dry_run != true && inputs.deploy_website == true && needs.checks.outputs.changed_website == 'true'
+    needs: [checks, promote_main, bump_versions]
+    uses: ./.github/workflows/promote-website.yml
+    secrets: inherit
+    with:
+      environment: ${{ inputs.environment }}
+      source_ref: main
+      allow_cross_promote: false
+      bump: none
+      run_build: true
+
+  deploy_docs:
+    if: inputs.dry_run != true && inputs.deploy_docs == true && needs.checks.outputs.changed_docs == 'true'
+    needs: [checks, promote_main, bump_versions]
+    uses: ./.github/workflows/promote-docs.yml
+    secrets: inherit
+    with:
+      environment: ${{ inputs.environment }}
+      source_ref: main
+      allow_cross_promote: false
+      run_build: true
+
+  publish_cli:
+    if: inputs.dry_run != true && inputs.publish_cli == true
+    needs: [checks, promote_main, bump_versions]
+    uses: ./.github/workflows/release-cli.yml
+    secrets: inherit
+    with:
+      channel: ${{ inputs.environment }}
+      bump: none
+      npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
+      run_tests: false
+      update_deploy_branch: true
+
+  sync_dev:
+    if: inputs.dry_run != true && inputs.sync_dev_from_main == true
+    needs: [checks, promote_main, bump_versions]
+    uses: ./.github/workflows/promote-branch.yml
+    secrets: inherit
+    with:
+      source: main
+      target: dev
+      mode: fast_forward
+      dry_run: false
+      allow_reset: false
+      confirm: promote dev from main
