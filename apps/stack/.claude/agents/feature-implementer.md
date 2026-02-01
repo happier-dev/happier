@@ -430,7 +430,7 @@ Do not skip commands. Do not fabricate evidence. If you capture a failing run, f
   - **Never claim/finish the parent task**; claim a track or component task instead.
 
 - **Only run project commands via `hapsta ...`**.
-  - Do **not** run `yarn/npm/npx/expo/tsc/docker compose` directly inside component repos.
+  - Do **not** run `yarn/npm/npx/expo/tsc/docker compose` directly inside repo checkouts/worktrees.
   - Route everything through `hapsta` so stacks/env/worktrees/ports stay isolated.
   - Do **not** run `edison ...` directly in this repo:
     - Use `hapsta edison -- <edison args...>`
@@ -440,13 +440,13 @@ Do not skip commands. Do not fabricate evidence. If you capture a failing run, f
     - Treat them as **not applicable** to happier-dev (Edison worktrees are disabled here).
     - Hapsta rules override.
 
-- **Develop in component worktrees only**.
-  - Do **not** edit `components/<component>` default checkouts.
-  - Use `hapsta wt new ...` / `hapsta wt pr ...` and open/edit in the worktree directory under `components/.worktrees/...`.
+- **Develop in monorepo worktrees only**.
+  - Do **not** work directly on the primary monorepo checkout; use a git worktree for changes.
+  - Use `hapsta wt new ...` / `hapsta wt pr ...` and open/edit the worktree under `<workspace>/.worktrees/...` (default: `~/.happier-stack/workspace/.worktrees`).
 
 - **Test changes inside an isolated stack** (not `main`).
   - Create a stack: `hapsta stack new <name> --interactive`
-  - Point the stack at your worktree: `hapsta stack wt <name> -- use <component> <owner/branch>`
+  - Point the stack at your worktree: `hapsta stack wt <name> -- use <owner/branch|path|default|main>`
   - Recommended (one-shot): scaffold the whole structure + stacks + worktrees:
     - `hapsta edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes`
   - **Fail-closed**: Edison task transitions require running inside the correct stack context:
@@ -471,7 +471,7 @@ Do not skip commands. Do not fabricate evidence. If you capture a failing run, f
 
 - Capture required evidence via Edison:
   - `hapsta edison --stack=<stack> -- evidence capture <task-id>`
-  - This runs stack-scoped `hapsta stack typecheck/lint/build/test` and fingerprints the *actual* component repos used by that stack.
+  - This runs stack-scoped `hapsta stack typecheck/lint/build/test` and fingerprints the *actual* repo/worktree used by that stack.
 
 ## Happy component translations (MANDATORY where applicable)
 

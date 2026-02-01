@@ -662,9 +662,12 @@ async function cmdUseInteractive({ rootDir }) {
 
 async function cmdNew({ rootDir, argv }) {
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const slug = positionals[2];
-  if (!component || !slug) {
+  const legacyComponent = positionals[2] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const slug = positionals[2] ? positionals[2] : positionals[1];
+  void legacyComponent;
+
+  if (!slug) {
     throw new Error(
       '[wt] usage: hapsta wt new <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use]'
     );
@@ -673,7 +676,7 @@ async function cmdNew({ rootDir, argv }) {
   const { flags, kv } = parseArgs(argv.slice(1));
   const repoRoot = getComponentRepoRoot(rootDir, component);
   if (!(await pathExists(repoRoot))) {
-    throw new Error(`[wt] missing component repo at ${repoRoot}`);
+    throw new Error(`[wt] missing repo at ${repoRoot}`);
   }
 
   const remoteOverride = (kv.get('--remote') ?? '').trim();
@@ -683,7 +686,7 @@ async function cmdNew({ rootDir, argv }) {
   const remote = await resolveRemoteOwner(repoRoot, remoteName);
   remoteName = remote.remoteName;
   const { owner } = remote;
-  const defaultBranch = await resolveRemoteDefaultBranchName(repoRoot, remoteName, { component });
+  const defaultBranch = await resolveRemoteDefaultBranchName(repoRoot, remoteName);
 
   const baseOverride = (kv.get('--base') ?? '').trim();
   const baseWorktreeSpec = (kv.get('--base-worktree') ?? kv.get('--from-worktree') ?? '').trim();
@@ -732,14 +735,14 @@ async function cmdNew({ rootDir, argv }) {
   }
 
   const depsMode = parseDepsMode(kv.get('--deps'));
-  const depsDir = resolveComponentSpecToDir({ rootDir, component, spec: destWorktreeRoot }) ?? destWorktreeRoot;
+  const depsDir = destWorktreeRoot;
   const deps = await maybeSetupDeps({ repoRoot, baseDir: baseWorktreeDir || '', worktreeDir: depsDir, depsMode, component });
 
   const shouldUse = flags.has('--use');
   const force = flags.has('--force');
   if (shouldUse) {
     // Delegate to cmdUse so monorepo components stay coherent (and so stack-mode writes to the stack env file).
-    await cmdUse({ rootDir, args: [component, destWorktreeRoot], flags });
+    await cmdUse({ rootDir, args: [destWorktreeRoot], flags });
   }
 
   return { component, branch: branchName, path: depsDir, base, used: shouldUse, deps, repoKey, worktreeRoot: destWorktreeRoot };
@@ -750,10 +753,13 @@ async function cmdDuplicate({ rootDir, argv }) {
   const json = wantsJson(argv, { flags });
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const fromSpec = positionals[2];
-  const slug = positionals[3];
-  if (!component || !fromSpec || !slug) {
+  const legacyComponent = positionals[3] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const fromSpec = positionals[3] ? positionals[2] : positionals[1];
+  const slug = positionals[3] ? positionals[3] : positionals[2];
+  void legacyComponent;
+
+  if (!fromSpec || !slug) {
     throw new Error(
       '[wt] usage: hapsta wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]'
     );
@@ -786,9 +792,12 @@ async function cmdPr({ rootDir, argv }) {
   const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const prInput = positionals[2];
-  if (!component || !prInput) {
+  const legacyComponent = positionals[2] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const prInput = positionals[2] ? positionals[2] : positionals[1];
+  void legacyComponent;
+
+  if (!prInput) {
     throw new Error(
       '[wt] usage: hapsta wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--force] [--json]'
     );
@@ -796,7 +805,7 @@ async function cmdPr({ rootDir, argv }) {
 
   const repoRoot = getComponentRepoRoot(rootDir, component);
   if (!(await pathExists(repoRoot))) {
-    throw new Error(`[wt] missing component repo at ${repoRoot}`);
+    throw new Error(`[wt] missing repo at ${repoRoot}`);
   }
 
   const pr = parseGithubPullRequest(prInput);
@@ -840,7 +849,7 @@ async function cmdPr({ rootDir, argv }) {
       dir: destWorktreeRoot,
       enabled: flags.has('--stash'),
       keep: flags.has('--stash-keep'),
-      message: `[hapsta] wt pr ${component} ${pr.number}`,
+      message: `[hapsta] wt pr ${pr.number}`,
     });
     if (!(await isWorktreeClean(destWorktreeRoot)) && !stash.stashed) {
       throw new Error(`[wt] worktree is not clean (${destWorktreeRoot}). Re-run with --stash to auto-stash changes.`);
@@ -853,8 +862,8 @@ async function cmdPr({ rootDir, argv }) {
     const isAncestor = await gitOk(repoRoot, ['merge-base', '--is-ancestor', oldHead, newTip]);
     if (!isAncestor && !force) {
       const hint = fetchTarget
-        ? `[wt] re-run with: hapsta wt pr ${component} ${pr.number} --update --force`
-        : `[wt] re-run with: hapsta wt pr ${component} ${pr.number} --remote=${remoteName} --update --force`;
+        ? `[wt] re-run with: hapsta wt pr ${pr.number} --update --force`
+        : `[wt] re-run with: hapsta wt pr ${pr.number} --remote=${remoteName} --update --force`;
       throw new Error(
         `[wt] PR update is not a fast-forward (likely force-push) for ${branchName}\n` +
           hint
@@ -912,13 +921,13 @@ async function cmdPr({ rootDir, argv }) {
 
   // Optional deps handling (useful when PR branches add/change dependencies).
   const depsMode = parseDepsMode(kv.get('--deps'));
-  const depsDir = resolveComponentSpecToDir({ rootDir, component, spec: destWorktreeRoot }) ?? destWorktreeRoot;
+  const depsDir = destWorktreeRoot;
   const deps = await maybeSetupDeps({ repoRoot, baseDir: repoRoot, worktreeDir: depsDir, depsMode, component });
 
   const shouldUse = flags.has('--use');
   if (shouldUse) {
     // Reuse cmdUse so it writes to env.local or stack env file depending on context.
-    await cmdUse({ rootDir, args: [component, destWorktreeRoot], flags });
+    await cmdUse({ rootDir, args: [destWorktreeRoot], flags });
   }
 
   const newHead = (await git(destWorktreeRoot, ['rev-parse', 'HEAD'])).trim();
@@ -944,11 +953,10 @@ async function cmdPr({ rootDir, argv }) {
 
 async function cmdStatus({ rootDir, argv }) {
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const spec = positionals[2] ?? '';
-  if (!component) {
-    throw new Error('[wt] usage: hapsta wt status [worktreeSpec|default|path]');
-  }
+  const legacyComponent = positionals[2] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const spec = positionals[2] ? positionals[2] : (positionals[1] ?? '');
+  void legacyComponent;
 
   const dir = resolveComponentWorktreeDir({ rootDir, component, spec });
   if (!(await pathExists(dir))) {
@@ -989,11 +997,10 @@ async function cmdStatus({ rootDir, argv }) {
 async function cmdPush({ rootDir, argv }) {
   const { flags, kv } = parseArgs(argv);
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const spec = positionals[2] ?? '';
-  if (!component) {
-    throw new Error('[wt] usage: hapsta wt push [worktreeSpec|default|path] [--remote=origin] [--dry-run]');
-  }
+  const legacyComponent = positionals[2] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const spec = positionals[2] ? positionals[2] : (positionals[1] ?? '');
+  void legacyComponent;
 
   const dir = resolveComponentWorktreeDir({ rootDir, component, spec });
   if (!(await pathExists(dir))) {
@@ -1018,17 +1025,14 @@ async function cmdPush({ rootDir, argv }) {
 async function cmdUpdate({ rootDir, argv }) {
   const { flags, kv } = parseArgs(argv);
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const spec = positionals[2] ?? '';
-  if (!component) {
-    throw new Error(
-      '[wt] usage: hapsta wt update [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--force]'
-    );
-  }
+  const legacyComponent = positionals[2] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const spec = positionals[2] ? positionals[2] : (positionals[1] ?? '');
+  void legacyComponent;
 
   const repoRoot = getComponentRepoRoot(rootDir, component);
   if (!(await pathExists(repoRoot))) {
-    throw new Error(`[wt] missing component repo at ${repoRoot}`);
+    throw new Error(`[wt] missing repo at ${repoRoot}`);
   }
 
   const dir = resolveComponentWorktreeDir({ rootDir, component, spec });
@@ -1045,7 +1049,7 @@ async function cmdUpdate({ rootDir, argv }) {
   const remote = await resolveRemoteOwner(repoRoot, remoteName);
   remoteName = remote.remoteName;
   const { owner } = remote;
-  const defaultBranch = await resolveRemoteDefaultBranchName(repoRoot, remoteName, { component });
+  const defaultBranch = await resolveRemoteDefaultBranchName(repoRoot, remoteName);
   const mirrorBranch = `${owner}/${defaultBranch}`;
 
   const baseOverride = (kv.get('--base') ?? '').trim();
@@ -1220,11 +1224,10 @@ async function cmdGit({ rootDir, argv }) {
   const json = wantsJson(before, { flags });
 
   const positionals = before.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const spec = positionals[2] ?? '';
-  if (!component) {
-    throw new Error('[wt] usage: hapsta wt git [worktreeSpec|active|main|default|path] -- <git args...>');
-  }
+  const legacyComponent = positionals[2] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const spec = positionals[2] ? positionals[2] : (positionals[1] ?? '');
+  void legacyComponent;
   if (!after.length) {
     throw new Error('[wt] git requires args after `--` (example: hapsta wt git main -- status)');
   }
@@ -1251,23 +1254,19 @@ async function cmdGit({ rootDir, argv }) {
 }
 
 async function cmdSync({ rootDir, argv }) {
-  const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  if (!component) {
-    throw new Error('[wt] usage: hapsta wt sync [--remote=<name>]');
-  }
-
+  void argv;
   const { kv } = parseArgs(argv);
+  const component = DEFAULT_REPO_COMPONENT;
   const repoRoot = getComponentRepoRoot(rootDir, component);
   if (!(await pathExists(repoRoot))) {
-    throw new Error(`[wt] missing component repo at ${repoRoot}`);
+    throw new Error(`[wt] missing repo at ${repoRoot}`);
   }
 
   let remoteName = (kv.get('--remote') ?? '').trim() || 'upstream';
   const remote = await resolveRemoteOwner(repoRoot, remoteName);
   remoteName = remote.remoteName;
   const { owner } = remote;
-  const defaultBranch = await resolveRemoteDefaultBranchName(repoRoot, remoteName, { component });
+  const defaultBranch = await resolveRemoteDefaultBranchName(repoRoot, remoteName);
 
   await git(repoRoot, ['fetch', '--quiet', remoteName, defaultBranch]);
 
@@ -1379,13 +1378,10 @@ async function cmdShell({ rootDir, argv }) {
   const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const spec = positionals[2] ?? '';
-  if (!component) {
-    throw new Error(
-      '[wt] usage: hapsta wt shell [worktreeSpec|active|default|main|path] [--package] [--shell=/bin/zsh] [--terminal=auto|current|ghostty|iterm|terminal] [--new-window] [--json]'
-    );
-  }
+  const legacyComponent = positionals[2] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const spec = positionals[2] ? positionals[2] : (positionals[1] ?? '');
+  void legacyComponent;
   const packageDir = resolveComponentWorktreeDir({ rootDir, component, spec });
   const dir = resolveMonorepoEditorDir({ dir: packageDir, preferPackageDir: flags.has('--package') });
   if (!(await pathExists(dir))) {
@@ -1429,11 +1425,10 @@ async function cmdCode({ rootDir, argv }) {
   const { flags } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const spec = positionals[2] ?? '';
-  if (!component) {
-    throw new Error('[wt] usage: hapsta wt code [worktreeSpec|active|default|main|path] [--package] [--json]');
-  }
+  const legacyComponent = positionals[2] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const spec = positionals[2] ? positionals[2] : (positionals[1] ?? '');
+  void legacyComponent;
   const packageDir = resolveComponentWorktreeDir({ rootDir, component, spec });
   const dir = resolveMonorepoEditorDir({ dir: packageDir, preferPackageDir: flags.has('--package') });
   if (!(await pathExists(dir))) {
@@ -1454,11 +1449,10 @@ async function cmdCursor({ rootDir, argv }) {
   const { flags } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = positionals[1];
-  const spec = positionals[2] ?? '';
-  if (!component) {
-    throw new Error('[wt] usage: hapsta wt cursor [worktreeSpec|active|default|main|path] [--package] [--json]');
-  }
+  const legacyComponent = positionals[2] ? positionals[1] : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const spec = positionals[2] ? positionals[2] : (positionals[1] ?? '');
+  void legacyComponent;
   const packageDir = resolveComponentWorktreeDir({ rootDir, component, spec });
   const dir = resolveMonorepoEditorDir({ dir: packageDir, preferPackageDir: flags.has('--package') });
   if (!(await pathExists(dir))) {
@@ -1554,7 +1548,7 @@ async function cmdUpdateAll({ rootDir, argv }) {
       continue;
     }
     try {
-      const args = ['update', component, dir];
+      const args = ['update', dir];
       if (remote) args.push(`--remote=${remote}`);
       if (base) args.push(`--base=${base}`);
       if (mode === 'merge') args.push('--merge');
@@ -1602,8 +1596,6 @@ async function cmdNewInteractive({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(dim('Recommended: base worktrees on upstream to keep PR history clean.'));
 
-    const component = DEFAULT_REPO_COMPONENT;
-
     const slug = await prompt(rl, `${dim('Branch slug')} (example: pr/my-feature): `, { defaultValue: '' });
     if (!slug) {
       throw new Error('[wt] slug is required');
@@ -1612,7 +1604,7 @@ async function cmdNewInteractive({ rootDir, argv }) {
     // Default remote is upstream; allow override.
     const remote = await prompt(rl, `${dim('Remote name')} (default: upstream): `, { defaultValue: 'upstream' });
 
-    const args = ['new', component, slug, `--remote=${remote}`];
+    const args = ['new', slug, `--remote=${remote}`];
     if (kv.get('--base')?.trim()) {
       args.push(`--base=${kv.get('--base').trim()}`);
     }
@@ -1668,13 +1660,10 @@ async function cmdArchive({ rootDir, argv }) {
   const detachStacks = flags.has('--detach-stacks');
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const component = (positionals[1] ?? '').trim();
-  const spec = (positionals[2] ?? '').trim();
-  if (!component) {
-    throw new Error(
-      '[wt] usage: hapsta wt archive <worktreeSpec|path|active|default|main> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]'
-    );
-  }
+  const legacyComponent = positionals[2] ? String(positionals[1] ?? '').trim() : '';
+  const component = DEFAULT_REPO_COMPONENT;
+  const spec = String(positionals[2] ? positionals[2] : positionals[1] ?? '').trim();
+  void legacyComponent;
   if (!spec) {
     throw new Error(
       '[wt] usage: hapsta wt archive <worktreeSpec|path|active|default|main> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]'
@@ -1683,7 +1672,7 @@ async function cmdArchive({ rootDir, argv }) {
 
   const resolved = resolveComponentWorktreeDir({ rootDir, component, spec });
   if (!resolved) {
-    throw new Error(`[wt] unable to resolve worktree: ${component} ${spec}`);
+    throw new Error(`[wt] unable to resolve worktree: ${spec}`);
   }
 
   let worktreeDir = resolved;

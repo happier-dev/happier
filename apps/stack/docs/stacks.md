@@ -104,7 +104,7 @@ hapsta stack doctor exp1
 
 ## Edit a stack (interactive)
 
-To change server flavor, port, or component worktrees for an existing stack:
+To change server flavor, port, or repo worktree for an existing stack:
 
 ```bash
 hapsta stack edit exp1 --interactive
@@ -121,7 +121,7 @@ hapsta stack srv exp1 -- use happy-server
 hapsta stack srv exp1 -- use --interactive
 ```
 
-## Switch component worktrees for a stack (`stack wt`)
+## Switch repo worktree for a stack (`stack wt`)
 
 If you want the **exact** same UX as `hapsta wt`, but scoped to a stack env file:
 
@@ -166,9 +166,9 @@ These commands run with the stack env file applied:
 
 Global/non-stack commands:
 
-- `hapsta setup` (recommended; installs shims/runtime and bootstraps components)
+- `hapsta setup` (recommended; installs shims/runtime and bootstraps the monorepo)
 - (advanced) `hapsta init` (plumbing: shims/runtime/pointer env)
-- (advanced) `hapsta bootstrap` (clone/install components and deps)
+- (advanced) `hapsta bootstrap` (clone/install monorepo + deps)
 
 ## Services (autostart)
 
@@ -190,7 +190,7 @@ Implementation notes:
 - Linux: implemented via **systemd user services** (if available)
 - The service persists `HAPPIER_STACK_ENV_FILE`, so you can edit the stack env file without reinstalling.
 
-## Component/worktree selection per stack
+## Repo/worktree selection per stack
 
 When creating a stack you can point the stack at a repo worktree:
 

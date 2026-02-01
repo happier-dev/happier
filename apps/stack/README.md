@@ -351,7 +351,7 @@ Details: `[docs/tauri.md](docs/tauri.md)`.
 - **Setup**:
   - `hapsta setup` (guided; selfhost or dev)
   - (advanced) `hapsta init` (plumbing: shims/runtime/pointer env)
-  - (advanced) `hapsta bootstrap --interactive` (component installer wizard)
+  - (advanced) `hapsta bootstrap --interactive` (workspace bootstrap wizard)
 - **Run**:
   - `hapsta start` (production-like; serves built UI via server-light)
   - `hapsta dev` (dev; Expo dev server for UI, optional dev-client via `--mobile`)
@@ -360,7 +360,7 @@ Details: `[docs/tauri.md](docs/tauri.md)`.
   - `hapsta srv use --interactive`
 - **Worktrees**:
   - `hapsta wt use --interactive`
-  - `hapsta wt pr <component> <pr-url|number> --use [--update] [--stash] [--force]`
+  - `hapsta wt pr <pr-url|number> --use [--update] [--stash] [--force]`
   - `hapsta wt sync-all`
   - `hapsta wt update-all --dry-run` / `hapsta wt update-all --stash`
 - **Stacks**:
@@ -369,10 +369,12 @@ Details: `[docs/tauri.md](docs/tauri.md)`.
   - `hapsta stack edit <name> --interactive`
   - `hapsta stack wt <name> -- use --interactive`
   - `hapsta stack happy <name> -- <happy-cli args...>`
-  - `hapsta stack review <name> [component...] [--reviewers=coderabbit,codex] [--base-ref=<ref>]`
-  - `hapsta stack migrate`
-- **Reviews (local diff review)**:
-  - `hapsta review [component...] [--reviewers=coderabbit,codex] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>]`
+- **Tools (maintainer / automation)**:
+  - `hapsta tools setup-pr --repo=<pr-url|number> [--dev|--start]`
+  - `hapsta tools review-pr --repo=<pr-url|number> [--dev|--start]`
+  - `hapsta tools review` (local diff review)
+  - `hapsta tools import` (split repos → monorepo porting helpers)
+  - `hapsta tools edison`
 - **Menu bar (SwiftBar)**:
   - `hapsta menubar install`
 
@@ -393,7 +395,7 @@ Where config lives by default:
 
 - `~/.happier-stack/.env`: stable “pointer” file (home/workspace/runtime)
 - `~/.happier-stack/env.local`: optional global overrides
-- `~/.happier/stacks/main/env`: main stack config (port, server flavor, component overrides)
+- `~/.happier/stacks/main/env`: main stack config (port, server flavor, repo/worktree override)
 
 Notes:
 
@@ -411,6 +413,13 @@ Notes:
 - **Repo env templates**:
   - **Use `.env.example` as the canonical template** (copy it to `.env` if you’re running this repo directly).
   - If an LLM tool refuses to read/edit `.env.example` due to safety restrictions, **do not create an `env.example` workaround**—instead, ask the user to apply the change manually.
+
+### Breaking changes (vs “Happy Stacks”)
+
+- No compatibility/migration for previous installs: uninstall old setups and run `hapsta setup` again.
+- Env prefix is now `HAPPIER_STACK_*` (no legacy aliases like `HAPPY_STACKS_*` / `HAPPY_LOCAL_*`).
+- Workspace/worktrees are monorepo-first (default: `~/.happier-stack/workspace` and `~/.happier-stack/workspace/.worktrees`).
+- Yarn-only (no pnpm support).
 
 ### Sandbox / test installs (fully isolated)
 
