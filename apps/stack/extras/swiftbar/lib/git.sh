@@ -507,7 +507,7 @@ git_worktree_count() {
 
 git_worktrees_tsv() {
   # Output: path<TAB>branchRefOrEmpty
-  # Example branch line in porcelain: "branch refs/heads/slopus/pr/foo"
+  # Example branch line in porcelain: "branch refs/heads/pr/foo"
   local dir="$1"
   if ! is_git_repo "$dir"; then
     return

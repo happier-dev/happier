@@ -92,7 +92,7 @@ npx --yes -p @happier-dev/stack hstack setup --profile=dev
 
 During setup, you’ll be guided through:
 
-- where to store your **workspace** (the folder that will contain `happier/` and `.worktrees/`)
+- where to store your **workspace** (the folder that will contain `main/`, `dev/`, `pr/`, `local/`, `tmp/`)
 - bootstrapping/cloning the Happier monorepo
 - **recommended**: setting up a dedicated `dev-auth` seed stack (authenticate once, then new stacks can reuse it)
 - **recommended**: creating a dedicated dev stack (keep `main` stable)
@@ -101,7 +101,7 @@ During setup, you’ll be guided through:
 You can also set it non-interactively:
 
 ```bash
-npx --yes -p @happier-dev/stack hstack setup --profile=dev --workspace-dir=~/Development/happy
+npx --yes -p @happier-dev/stack hstack setup --profile=dev --workspace-dir=~/Documents/Development/happier
 ```
 
 ### Why this exists
@@ -109,7 +109,7 @@ npx --yes -p @happier-dev/stack hstack setup --profile=dev --workspace-dir=~/Dev
 - **Automated setup**: `hstack setup` + `hstack start` gets the whole stack up and running.
 - **No hosted dependency**: run the full stack on your own computer.
 - **Lower latency**: localhost/LAN is typically much faster than remote hosted servers.
-- **Custom forks**: easily use forks of the Happier UI + CLI (e.g. `happier-dev/*`) while still contributing upstream to `slopus/*`.
+- **Custom forks**: easily use forks while still contributing upstream to `leeroybrun/happier-dev`.
 - **Worktrees**: clean upstream PR branches without mixing fork-only patches.
 - **Stacks**: run multiple isolated instances in parallel (ports + dirs + repo pinning).
 - **Remote access**: `hstack tailscale ...` helps you get an HTTPS URL for mobile/remote devices.
@@ -153,8 +153,12 @@ More details + automation: `[docs/remote-access.md](docs/remote-access.md)`.
 ### How it’s organized
 
 - **Scripts**: `scripts/*.mjs` (bootstrap/dev/start/build/stacks/worktrees/service/tailscale/mobile)
-- **Repo checkout**: `<workspace>/happier` (the monorepo clone)
-- **Worktrees**: `<workspace>/.worktrees/<owner>/<branch...>`
+- **Stable checkout**: `<workspace>/main` (the monorepo clone; treated as read-only)
+- **Dev checkout**: `<workspace>/dev` (created by `hstack setup --profile=dev`)
+- **Worktrees**:
+  - PRs: `<workspace>/pr/...`
+  - locals: `<workspace>/local/<owner>/...`
+  - tmp: `<workspace>/tmp/<owner>/...`
 - **CWD-scoped commands**: if you run `hstack test/typecheck/lint` from inside `apps/ui` / `apps/cli` / `apps/server` and omit a target, hstack infers the “service” automatically; `hstack build/dev/start` also prefer the checkout you’re currently inside.
 
 ### Quickstarts (feature-focused)
@@ -170,11 +174,11 @@ Details: `[docs/remote-access.md](docs/remote-access.md)`.
 
 #### Worktrees + forks (clean upstream PRs)
 
-Create a clean upstream PR worktree:
+Create a clean local worktree:
 
 ```bash
-hstack wt new pr/my-feature --from=upstream --use
-hstack wt push active --remote=upstream
+hstack wt new my-feature --use
+hstack wt push active --remote=origin
 ```
 
 Test an upstream PR locally:
@@ -298,7 +302,7 @@ Point a stack at a PR worktree:
 
 ```bash
 hstack wt pr happy 123 --use
-hstack stack wt exp1 -- use happy slopus/pr/123-fix-thing
+hstack stack wt exp1 -- use happy pr/123-fix-thing
 hstack stack dev exp1
 ```
 
@@ -418,7 +422,7 @@ Notes:
 
 - No compatibility/migration for previous installs: uninstall old setups and run `hstack setup` again.
 - Env prefix is now `HAPPIER_STACK_*` (no legacy aliases like `HAPPY_STACKS_*` / `HAPPY_LOCAL_*`).
-- Workspace/worktrees are monorepo-first (default: `~/.happier-stack/workspace` and `~/.happier-stack/workspace/.worktrees`).
+- Workspace/worktrees are monorepo-first (default workspace: `~/.happier-stack/workspace`, with `main/`, `dev/`, `pr/`, `local/`, `tmp/`).
 - Yarn-only (no pnpm support).
 
 ### Sandbox / test installs (fully isolated)

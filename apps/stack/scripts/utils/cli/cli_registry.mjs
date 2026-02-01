@@ -30,6 +30,13 @@ export function gethstackRegistry() {
       description: 'Guided setup (selfhost or dev)',
     },
     {
+      name: 'contrib',
+      kind: 'node',
+      scriptRelPath: 'scripts/contrib.mjs',
+      rootUsage: 'hstack contrib status|ensure-dev|sync|extract [--json]',
+      description: 'Contributor workflows (dev checkout + branch extraction)',
+    },
+    {
       name: 'tools',
       kind: 'node',
       scriptRelPath: 'scripts/tools.mjs',

@@ -31,17 +31,21 @@ hstack where
   - Default: `~/.happier-stack/workspace` (when it exists).
   - This is the **storage workspace for the Happier monorepo checkout + worktrees** used by hstack.
   - It typically contains:
-    - `<workspace>/happier` (the default monorepo checkout)
-    - `<workspace>/.worktrees/<owner>/<branch...>` (repo worktrees)
+    - `<workspace>/main` (stable monorepo checkout)
+    - `<workspace>/dev` (dev monorepo checkout; created by `hstack setup --profile=dev`)
+    - `<workspace>/pr/...` (PR worktrees)
+    - `<workspace>/local/<owner>/...` (local worktrees)
+    - `<workspace>/tmp/<owner>/...` (temporary worktrees)
 
 - **Repo dir** (`HAPPIER_STACK_REPO_DIR`)
-  - Default: `<workspace>/happier`
-  - This is the active Happier monorepo checkout (either the default checkout, or a worktree).
+  - Default: `<workspace>/main`
+  - This is the active Happier monorepo checkout (either `main`, `dev`, or a worktree).
   - `hstack wt use ...` and `hstack stack wt <stack> -- use ...` update this value.
 
-- **Worktrees root**
-  - Default: `<workspace>/.worktrees`
-  - Stores monorepo worktrees under: `<workspace>/.worktrees/<owner>/<branch...>`
+- **Worktrees**
+  - PRs: `<workspace>/pr/...`
+  - locals: `<workspace>/local/<owner>/...`
+  - tmp: `<workspace>/tmp/<owner>/...`
 
 - **Stacks storage dir**
   - Default: `~/.happier/stacks`
@@ -60,6 +64,12 @@ hstack where
   - **runtimeDir**
   - **workspaceDir**
   - resolved env file paths
+
+Tip: to pin the shim to a local checkout, use:
+
+```bash
+hstack self use-cli dev
+```
 
 Tip: `hstack where --json` is easier to parse.
 

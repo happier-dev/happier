@@ -10,10 +10,10 @@ test('listWorktreeSpecs does not recurse into worktree roots', async () => {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-list-wt-specs-'));
   try {
     const workspaceDir = join(tmp, 'workspace');
-    const env = { ...process.env, HAPPIER_STACK_WORKSPACE_DIR: workspaceDir };
+    const env = { ...process.env, HAPPIER_STACK_WORKSPACE_DIR: workspaceDir, HAPPIER_STACK_OWNER: 'test' };
     const rootDir = tmp;
 
-    const wtRoot = join(workspaceDir, '.worktrees', 'slopus', 'tmp', 'mono-wt');
+    const wtRoot = join(workspaceDir, 'tmp', 'test', 'mono-wt');
     await mkdir(wtRoot, { recursive: true });
     await writeFile(join(wtRoot, '.git'), 'gitdir: dummy\n', 'utf-8');
 
@@ -24,8 +24,8 @@ test('listWorktreeSpecs does not recurse into worktree roots', async () => {
     await writeFile(join(nested, '.git'), 'gitdir: dummy\n', 'utf-8');
 
     const specs = await listWorktreeSpecs({ rootDir, component: 'happy', env });
-    assert.ok(specs.includes('slopus/tmp/mono-wt'), specs.join('\n'));
-    assert.ok(!specs.includes('slopus/tmp/mono-wt/nested'), specs.join('\n'));
+    assert.ok(specs.includes('tmp/mono-wt'), specs.join('\n'));
+    assert.ok(!specs.includes('tmp/mono-wt/nested'), specs.join('\n'));
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }

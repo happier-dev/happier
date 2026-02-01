@@ -4,7 +4,7 @@ hstack supports two server “flavors”. You can switch between them globally (
 
 ## What’s the difference?
 
-Historically, both flavors lived in the same upstream server repo (`slopus/happy-server`), but optimized for different use cases.
+Historically, both flavors lived in the same upstream server repo, but optimized for different use cases.
 
 With the Happier monorepo, the server code comes from the monorepo server package (typically `apps/server`). In branches where
 the server includes the SQLite schema (`apps/server/prisma/sqlite/schema.prisma`, legacy paths may differ),

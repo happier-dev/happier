@@ -4,8 +4,9 @@ hstack is the recommended workflow for developing **Happier** locally.
 
 Key principles:
 
-- Use **repo worktrees** under `<workspace>/.worktrees/<owner>/<branch...>`
-- Keep `<workspace>/happier` as a stable default checkout
+- Use **repo worktrees** under `<workspace>/{pr,local,tmp}/...`
+- Keep `<workspace>/main` as the stable checkout (treat it as read-only)
+- Use `<workspace>/dev` as the default dev checkout (created by `hstack setup --profile=dev`)
 - Run feature work in isolated **stacks** (ports + dirs + env file)
 
 Quickstart (dev profile):

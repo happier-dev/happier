@@ -15,7 +15,7 @@ async function withTempRoot(t) {
 }
 
 async function writeHappyMonorepoStub({ rootDir }) {
-  const monoRoot = join(rootDir, 'happier');
+  const monoRoot = join(rootDir, 'main');
   await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
@@ -25,7 +25,7 @@ async function writeHappyMonorepoStub({ rootDir }) {
   return monoRoot;
 }
 
-test('getComponentDir derives monorepo component package dirs from workspace/happier', async (t) => {
+test('getComponentDir derives monorepo component package dirs from workspace/main', async (t) => {
   const rootDir = await withTempRoot(t);
   const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
 

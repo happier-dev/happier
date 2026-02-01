@@ -2,7 +2,7 @@ import './utils/env/env.mjs';
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { parseArgs } from './utils/cli/args.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
@@ -15,6 +15,10 @@ import { readJsonIfExists } from './utils/fs/json.mjs';
 import { readPackageJsonVersion } from './utils/fs/package_json.mjs';
 import { banner, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
+import { getCanonicalHomeEnvPath, getHomeEnvPath, ensureCanonicalHomeEnvUpdated, ensureHomeEnvUpdated } from './utils/env/config.mjs';
+import { ensureEnvFilePruned } from './utils/env/env_file.mjs';
+import { coerceHappyMonorepoRootFromPath, getDevRepoDir, getRepoDir, getWorkspaceDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { parseEnvToObject } from './utils/env/dotenv.mjs';
 
 function packageJsonPathForNodeModules({ rootDir, packageName }) {
   const name = String(packageName ?? '').trim();
@@ -267,6 +271,123 @@ async function cmdCheck({ rootDir, argv }) {
   });
 }
 
+function resolveCliRootCandidate({ rootDir, target }) {
+  const raw = String(target ?? '').trim();
+  if (!raw) return null;
+
+  const workspaceDir = getWorkspaceDir(rootDir, process.env);
+  if (raw === 'main') {
+    return join(getRepoDir(rootDir, process.env), 'apps', 'stack');
+  }
+  if (raw === 'dev') {
+    return join(getDevRepoDir(rootDir, process.env), 'apps', 'stack');
+  }
+
+  // Allow absolute/relative path targets. If the path is a monorepo root, accept apps/stack.
+  const expanded = expandHome(raw);
+  const abs = expanded.startsWith('/') ? expanded : resolve(process.cwd(), expanded);
+  if (existsSync(join(abs, 'bin', 'hstack.mjs'))) return abs;
+  if (existsSync(join(abs, 'apps', 'stack', 'bin', 'hstack.mjs'))) return join(abs, 'apps', 'stack');
+  if (existsSync(join(abs, 'package.json')) && existsSync(join(abs, 'bin', 'hstack.mjs'))) return abs;
+  // If user passed a workspace dir by mistake, allow selecting main/dev via keywords.
+  void workspaceDir;
+  return abs;
+}
+
+async function cmdUseCli({ rootDir, argv }) {
+  const { flags, kv } = parseArgs(argv);
+  const json = wantsJson(argv, { flags });
+
+  const positional = argv.filter((a) => !a.startsWith('--'));
+  const target = positional[1] ?? '';
+  const stackFlag = String(kv.get('--stack') ?? '').trim();
+
+  const key = 'HAPPIER_STACK_CLI_ROOT_DIR';
+  const homeEnv = getHomeEnvPath();
+  const canonicalEnv = getCanonicalHomeEnvPath();
+
+  if ((!target && !stackFlag) || wantsHelp(argv, { flags })) {
+    printResult({
+      json,
+      data: { ok: true, command: 'use-cli', targets: ['default', 'main', 'dev', '/abs/path/to/apps/stack'], flags: ['--stack=<name>'] },
+      text: [
+        banner('self use-cli', { subtitle: 'Point the hstack shim at a local checkout (or reset to runtime).' }),
+        '',
+        sectionTitle('usage:'),
+        `  ${cyan('hstack self')} use-cli default`,
+        `  ${cyan('hstack self')} use-cli main`,
+        `  ${cyan('hstack self')} use-cli dev`,
+        `  ${cyan('hstack self')} use-cli /abs/path/to/apps/stack`,
+        `  ${cyan('hstack self')} use-cli --stack=<name>`,
+        '',
+        sectionTitle('notes:'),
+        bullets([
+          `Writes ${cyan(homeEnv)} and ${cyan(canonicalEnv)}.`,
+          `Takes effect for new shells (and SwiftBar/launchd) because the ${cyan('hstack')} shim reads the canonical pointer file.`,
+        ]),
+      ].join('\n'),
+    });
+    return;
+  }
+
+  if (target === 'default' || target === 'runtime') {
+    await ensureEnvFilePruned({ envPath: homeEnv, removeKeys: [key] });
+    await ensureEnvFilePruned({ envPath: canonicalEnv, removeKeys: [key] });
+    printResult({
+      json,
+      data: { ok: true, mode: 'runtime' },
+      text: `${green('✓')} using runtime CLI (cleared ${cyan(key)})`,
+    });
+    return;
+  }
+
+  const candidate = (() => {
+    if (!stackFlag) return resolveCliRootCandidate({ rootDir, target });
+    return null;
+  })();
+
+  if (stackFlag) {
+    const { envPath } = resolveStackEnvPath(stackFlag, process.env);
+    const raw = existsSync(envPath) ? await readFile(envPath, 'utf-8') : '';
+    const parsed = raw ? parseEnvToObject(raw) : {};
+    const repoDirRaw = String(parsed.HAPPIER_STACK_REPO_DIR ?? '').trim();
+    if (!repoDirRaw) {
+      throw new Error(`[self use-cli] stack "${stackFlag}" has no HAPPIER_STACK_REPO_DIR in ${envPath}`);
+    }
+    const repoRoot = coerceHappyMonorepoRootFromPath(repoDirRaw) || repoDirRaw;
+    const fromStack = join(repoRoot, 'apps', 'stack');
+    const entry = join(fromStack, 'bin', 'hstack.mjs');
+    if (!existsSync(entry)) {
+      throw new Error(`[self use-cli] stack "${stackFlag}" repo does not contain apps/stack (${entry} missing)`);
+    }
+    await ensureHomeEnvUpdated({ updates: [{ key, value: fromStack }] });
+    await ensureCanonicalHomeEnvUpdated({ updates: [{ key, value: fromStack }] });
+    printResult({
+      json,
+      data: { ok: true, mode: 'local', stack: stackFlag, cliRootDir: fromStack },
+      text: `${green('✓')} using local CLI from stack "${stackFlag}" at ${cyan(fromStack)}`,
+    });
+    return;
+  }
+
+  const entry = candidate ? join(candidate, 'bin', 'hstack.mjs') : null;
+  if (!candidate || !entry || !existsSync(entry)) {
+    throw new Error(
+      `[self use-cli] invalid target: ${target}\n` +
+        `Expected one of: default|main|dev|/abs/path/to/apps/stack\n` +
+        `Missing: ${entry || '<path>/bin/hstack.mjs'}`
+    );
+  }
+
+  await ensureHomeEnvUpdated({ updates: [{ key, value: candidate }] });
+  await ensureCanonicalHomeEnvUpdated({ updates: [{ key, value: candidate }] });
+  printResult({
+    json,
+    data: { ok: true, mode: 'local', cliRootDir: candidate },
+    text: `${green('✓')} using local CLI at ${cyan(candidate)}`,
+  });
+}
+
 async function main() {
   const rootDir = getRootDir(import.meta.url);
   const argv = process.argv.slice(2);
@@ -278,7 +399,7 @@ async function main() {
     const json = wantsJson(argv, { flags });
     printResult({
       json,
-      data: { commands: ['status', 'update', 'check'], flags: ['--no-check', '--to=<version>', '--quiet'] },
+      data: { commands: ['status', 'update', 'check', 'use-cli'], flags: ['--no-check', '--to=<version>', '--quiet'] },
       text: [
         banner('self', { subtitle: 'Runtime install + self-update.' }),
         '',
@@ -286,6 +407,7 @@ async function main() {
         `  ${cyan('hstack self')} status [--no-check] [--json]`,
         `  ${cyan('hstack self')} update [--to=<version>] [--json]`,
         `  ${cyan('hstack self')} check [--quiet] [--json]`,
+        `  ${cyan('hstack self')} use-cli default|main|dev|/abs/path/to/apps/stack [--json]`,
       ].join('\n'),
     });
     return;
@@ -301,6 +423,10 @@ async function main() {
   }
   if (cmd === 'check') {
     await cmdCheck({ rootDir, argv });
+    return;
+  }
+  if (cmd === 'use-cli') {
+    await cmdUseCli({ rootDir, argv });
     return;
   }
 

@@ -32,7 +32,7 @@ function usage() {
     '',
     'What it does:',
     '- imports legacy split repos (happy / happy-cli / happy-server) into hstack by pinning stack component paths',
-    '- optionally ports commits into the slopus/happy monorepo layout via `hstack monorepo port`',
+    '- optionally ports commits into the Happier monorepo layout via `hstack monorepo port`',
     '',
     'Notes:',
     '- This is for users who still have split repos/branches/PRs (pre-monorepo).',
@@ -517,7 +517,7 @@ function buildLlmPromptForImport() {
     hs,
     'Goals:',
     '- Import legacy split repos (happy / happy-cli / happy-server) into a stack in hstack.',
-    '- Optionally migrate commits into the slopus/happy monorepo layout (packages/happy-* or legacy expo-app/cli/server).',
+    '- Optionally migrate commits into the Happier monorepo layout (packages/happy-* or legacy expo-app/cli/server).',
     '',
     'How to proceed:',
     '1) Run the guided import wizard:',
@@ -553,7 +553,7 @@ function buildLlmPromptForMigrate({ stackName }) {
     `Target stack: ${stackName || '<stack>'}`,
     '',
     'Goal:',
-    '- Port the stack’s pinned split-repo commits into a monorepo worktree (slopus/happy layout).',
+    '- Port the stack’s pinned split-repo commits into a monorepo worktree (Happier layout).',
     '- Create a new monorepo stack by default (keep the legacy stack intact).',
     '',
     'Command:',
@@ -821,13 +821,10 @@ async function cmdMigrateStack({ rootDir, argv }) {
     const defaultMonorepo = await resolveDefaultMonorepoRoot({ rootDir });
     let monorepoRepoRoot = defaultMonorepo;
     if (!monorepoRepoRoot) {
-      const raw = await prompt(rl, `Monorepo repo path or URL (slopus/happy): `, { defaultValue: '' });
+      const raw = await prompt(rl, `Monorepo repo path or URL (Happier): `, { defaultValue: '' });
       const r = raw.trim() ? await resolveRepoRootFromPathOrUrl({ rootDir, label: 'happy-monorepo', raw, rl }) : '';
       if (!r || !isHappyMonorepoRoot(r)) {
-        throw new Error(
-          '[import] target is not a slopus/happy monorepo root ' +
-            '(missing apps/ui|apps/cli|apps/server or legacy expo-app/cli/server).'
-        );
+        throw new Error('[import] target is not a Happier monorepo root (missing apps/ui|apps/cli|apps/server).');
       }
       monorepoRepoRoot = r;
     }
@@ -1186,13 +1183,10 @@ async function main() {
             `${yellow('!')} No monorepo checkout detected in your hstack workspace yet.\n` +
               dim(`Fix: run ${cmdFmt('hstack setup --profile=dev')} (or ${cmdFmt('hstack bootstrap')}) first, then re-run import.`)
           );
-          const raw = await prompt(rl, `Monorepo target path (slopus/happy root): `, { defaultValue: '' });
+          const raw = await prompt(rl, `Monorepo target path (Happier monorepo root): `, { defaultValue: '' });
           monorepoRepoRoot = raw.trim() ? await gitRoot(raw.trim()) : '';
           if (!monorepoRepoRoot || !isHappyMonorepoRoot(monorepoRepoRoot)) {
-            throw new Error(
-              '[import] target is not a slopus/happy monorepo root ' +
-                '(missing apps/ui|apps/cli|apps/server or legacy expo-app/cli/server).'
-            );
+            throw new Error('[import] target is not a Happier monorepo root (missing apps/ui|apps/cli|apps/server).');
           }
         }
 

@@ -28,7 +28,7 @@ test('swiftbar: monorepo stacks do not offer per-component worktree switching', 
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-swiftbar-mono-wt-'));
 
   const workspaceDir = join(tmp, 'workspace');
-  const monorepoRoot = join(workspaceDir, 'happier');
+  const monorepoRoot = join(workspaceDir, 'main');
   const appPkg = join(monorepoRoot, 'apps', 'ui');
   const cliPkg = join(monorepoRoot, 'apps', 'cli');
   const serverPkg = join(monorepoRoot, 'apps', 'server');
@@ -43,9 +43,9 @@ test('swiftbar: monorepo stacks do not offer per-component worktree switching', 
   await git(monorepoRoot, ['add', '.']);
   await git(monorepoRoot, ['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-m', 'init']);
 
-  const wtPath = join(workspaceDir, '.worktrees', 'slopus', 'pr', 'foo');
-  await mkdir(join(workspaceDir, '.worktrees', 'slopus', 'pr'), { recursive: true });
-  await git(monorepoRoot, ['worktree', 'add', '-b', 'slopus/pr/foo', wtPath, 'HEAD']);
+  const wtPath = join(workspaceDir, 'pr', 'foo');
+  await mkdir(join(workspaceDir, 'pr'), { recursive: true });
+  await git(monorepoRoot, ['worktree', 'add', '-b', 'pr/foo', wtPath, 'HEAD']);
 
   const stackDir = join(tmp, 'stack');
   await mkdir(stackDir, { recursive: true });

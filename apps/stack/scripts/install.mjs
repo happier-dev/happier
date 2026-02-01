@@ -357,7 +357,7 @@ async function main() {
   const defaults = {
     repoSource: defaultRepoSource,
     forkOwner: 'happier-dev',
-    upstreamOwner: 'slopus',
+    upstreamOwner: 'leeroybrun',
     serverComponentName: getServerComponentName({ kv }),
     allowClone: !flags.has('--no-clone') && ((process.env.HAPPIER_STACK_CLONE_MISSING ?? '1') !== '0' || flags.has('--clone')),
     enableAutostart: (!sandboxed || allowGlobal) && (flags.has('--autostart') || (process.env.HAPPIER_STACK_AUTOSTART ?? '0') === '1'),
@@ -395,9 +395,11 @@ async function main() {
 
   const serverComponentName = (wizard?.serverComponentName ?? getServerComponentName({ kv })).trim();
   // Repo roots (clone locations)
+  //
+  // Happier-only: everything lives in a single monorepo checkout.
   const uiRepoDir = getComponentRepoDir(rootDir, 'happy');
 
-  // Ensure UI exists first (monorepo anchor in slopus/happy).
+  // Ensure UI exists first (monorepo anchor).
   await ensureComponentPresent({
     dir: uiRepoDir,
     label: 'UI',
@@ -406,11 +408,15 @@ async function main() {
     quiet: quietUi,
     runMaybeVerbose,
   });
+  // IMPORTANT: main checkout must always be on branch "main", even if the GitHub default branch becomes "dev".
+  await ensureGitBranchCheckedOut({ repoDir: uiRepoDir, branch: 'main', label: 'monorepo' });
 
   // Package dirs (where we run installs/builds). Recompute after cloning UI.
   const uiDir = getComponentDir(rootDir, 'happy');
   const cliDir = getComponentDir(rootDir, 'happy-cli');
   const serverFullDir = getComponentDir(rootDir, 'happy-server');
+  const cliRepoDir = uiRepoDir;
+  const serverFullRepoDir = uiRepoDir;
 
   if (!isHappyMonorepoRoot(uiRepoDir)) {
     throw new Error(
@@ -489,14 +495,11 @@ async function main() {
 
   // Optional git remote + mirror branch configuration
   if (wizard?.configureGit) {
-    // Ensure upstream remotes exist so `hstack wt sync-all` works consistently.
+    // Ensure upstream remote exists so `hstack wt sync-all` works consistently.
     const upstreamRepos = getRepoUrls({ repoSource: 'upstream' });
-    await ensureUpstreamRemote({ repoDir: uiRepoDir, upstreamUrl: upstreamRepos.ui });
-    if (serverFullRepoDir !== uiRepoDir && (await pathExists(serverFullRepoDir))) {
-      await ensureUpstreamRemote({ repoDir: serverFullRepoDir, upstreamUrl: upstreamRepos.serverFull });
-    }
+    await ensureUpstreamRemote({ repoDir: uiRepoDir, upstreamUrl: upstreamRepos.monorepo });
 
-    // Create/update mirror branches like slopus/main for each repo (best-effort).
+    // Create/update mirror branches like upstream/main (best-effort).
     try {
       if (quietUi) {
         await runMaybeVerbose({

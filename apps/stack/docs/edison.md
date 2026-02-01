@@ -14,14 +14,14 @@ Edison is **not** responsible for isolation in this repo; isolation is provided 
 
 ## Isolation model in this repo
 
-- **Repo worktrees** live under `<workspace>/.worktrees/<owner>/<branch...>`
+- **Repo worktrees** live under `<workspace>/{dev,pr,local,tmp}/...`
 - **Stacks** live under `~/.happier/stacks/<stack>/...` and each stack has its own ports/db/cli-home/etc.
 - Edison worktrees are **disabled** for this project (to avoid conflicting with hstack worktrees)
 
 Practical implications:
 
-- Do **not** edit the default repo checkout (typically `<workspace>/happier`).
-- Do all implementation work in a worktree under `<workspace>/.worktrees/...`.
+- Do **not** edit the stable checkout (typically `<workspace>/main`).
+- Do all implementation work in `<workspace>/dev` or a worktree under `<workspace>/{pr,local,tmp}/...`.
 - Run evidence/validation in the correct stack context.
 
 ---

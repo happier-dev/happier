@@ -29,7 +29,7 @@ test('hstack stack new defaults to HAPPIER_STACK_REPO_DIR when happier monorepo 
   const sandboxDir = join(tmp, 'sandbox');
   const stackName = 'exp-test';
 
-  const monoRoot = join(workspaceDir, 'happier');
+  const monoRoot = join(workspaceDir, 'main');
   await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });

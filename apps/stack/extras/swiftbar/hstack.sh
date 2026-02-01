@@ -21,10 +21,6 @@ export HAPPIER_STACK_HOME_DIR="$HOME_DIR"
 export HAPPIER_STACK_CANONICAL_HOME_DIR="$CANONICAL_HOME_DIR"
 
 hstack_BIN="$HOME_DIR/bin/hstack"
-if [[ ! -x "$hstack_BIN" ]]; then
-  # Allow installs that used the alias name as the shim.
-  hstack_BIN="$HOME_DIR/bin/happier-stack"
-fi
 
 if [[ ! -x "$hstack_BIN" ]]; then
   # Fall back to PATH (best-effort).
@@ -37,4 +33,3 @@ if [[ -z "${hstack_BIN:-}" ]]; then
 fi
 
 exec "$hstack_BIN" "$@"
-

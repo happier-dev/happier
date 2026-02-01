@@ -91,8 +91,8 @@ export async function promptWorktreeSource({ rl, rootDir, component, stackName, 
   // eslint-disable-next-line no-console
   console.log(bold(`Create a new ${cyan('repo')} worktree`));
   // eslint-disable-next-line no-console
-  console.log(dim(`This will create a worktree under ${cyan('.worktrees/')}${dim('<owner>/<branch...>')} based on ${createRemote}.`));
-  const slug = await promptFn(rl, `New worktree slug (example: pr/${stackName}/my-feature): `, {
+  console.log(dim(`This will create a worktree under ${cyan('local/')}${dim('<owner>/...')} based on ${createRemote}.`));
+  const slug = await promptFn(rl, `New worktree slug (example: my-feature): `, {
     defaultValue: '',
   });
   if (!slug) {

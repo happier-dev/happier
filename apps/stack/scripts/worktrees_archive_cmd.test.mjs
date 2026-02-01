@@ -50,7 +50,7 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
     HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
-  const repoDir = join(workspaceDir, 'happier');
+  const repoDir = join(workspaceDir, 'main');
   await mkdir(repoDir, { recursive: true });
   await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
@@ -59,9 +59,9 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
   await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
 
-  const worktreeDir = join(workspaceDir, '.worktrees', 'slopus', 'pr', 'test-archive');
+  const worktreeDir = join(workspaceDir, 'pr', 'test-archive');
   await mkdir(dirname(worktreeDir), { recursive: true });
-  await runOk('git', ['worktree', 'add', '-b', 'slopus/pr/test-archive', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
+  await runOk('git', ['worktree', 'add', '-b', 'pr/test-archive', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
 
   await writeFile(join(worktreeDir, 'staged.txt'), 'staged\n', 'utf-8');
   await runOk('git', ['add', 'staged.txt'], { cwd: worktreeDir, env: baseEnv });
@@ -76,7 +76,7 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
   const date = '2000-01-02';
   // Simulate a minimal PATH environment like launchd/SwiftBar shells.
   const nodeEnv = { ...baseEnv, PATH: '' };
-  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'slopus/pr/test-archive', `--date=${date}`, '--json'], {
+  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'pr/test-archive', `--date=${date}`, '--json'], {
     cwd: rootDir,
     env: nodeEnv,
   });
@@ -84,7 +84,7 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
   const parsed = JSON.parse(res.stdout);
   assert.equal(parsed.ok, true, `expected ok=true JSON output\n${res.stdout}`);
 
-  const archivedDir = join(workspaceDir, '.worktrees-archive', date, 'slopus', 'pr', 'test-archive');
+  const archivedDir = join(workspaceDir, 'archive', 'worktrees', date, 'pr', 'test-archive');
   assert.equal(parsed.destDir, archivedDir, `expected destDir in JSON output to match archive path\n${res.stdout}`);
   const legacyGitFile = await stat(join(archivedDir, '.git.worktree')).catch(() => null);
   assert.equal(legacyGitFile, null, 'expected .git.worktree to be removed (avoid untracked noise)');
@@ -93,7 +93,7 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
 
   const meta = await readFile(join(archivedDir, 'ARCHIVE_META.txt'), 'utf-8');
   assert.ok(meta.includes('component=happy'), `expected component in ARCHIVE_META.txt\n${meta}`);
-  assert.ok(meta.includes('ref=slopus/pr/test-archive'), `expected ref in ARCHIVE_META.txt\n${meta}`);
+  assert.ok(meta.includes('ref=pr/test-archive'), `expected ref in ARCHIVE_META.txt\n${meta}`);
 
   const afterStatus = await runOk('git', ['status', '--porcelain'], { cwd: archivedDir, env: baseEnv });
   assert.ok(afterStatus.stdout.includes('A  staged.txt'), `expected staged file preserved\n${afterStatus.stdout}`);
@@ -103,7 +103,7 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
   const list = await runOk('git', ['worktree', 'list', '--porcelain'], { cwd: repoDir, env: baseEnv });
   assert.ok(!list.stdout.includes(worktreeDir), `expected source repo worktree entry pruned\n${list.stdout}`);
 
-  const branchExists = await runCmd('git', ['show-ref', '--verify', 'refs/heads/slopus/pr/test-archive'], { cwd: repoDir, env: baseEnv });
+  const branchExists = await runCmd('git', ['show-ref', '--verify', 'refs/heads/pr/test-archive'], { cwd: repoDir, env: baseEnv });
   assert.notEqual(branchExists.code, 0, 'expected source repo branch deleted');
 });
 
@@ -124,7 +124,7 @@ test('hstack wt archive refuses to break stacks unless --detach-stacks is provid
     HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
-  const repoDir = join(workspaceDir, 'happier');
+  const repoDir = join(workspaceDir, 'main');
   await mkdir(repoDir, { recursive: true });
   await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
@@ -133,9 +133,9 @@ test('hstack wt archive refuses to break stacks unless --detach-stacks is provid
   await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
 
-  const worktreeDir = join(workspaceDir, '.worktrees', 'slopus', 'pr', 'linked-to-stack');
+  const worktreeDir = join(workspaceDir, 'pr', 'linked-to-stack');
   await mkdir(dirname(worktreeDir), { recursive: true });
-  await runOk('git', ['worktree', 'add', '-b', 'slopus/pr/linked-to-stack', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
+  await runOk('git', ['worktree', 'add', '-b', 'pr/linked-to-stack', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
   await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');
 
   const stackName = 'exp-test';
@@ -147,7 +147,7 @@ test('hstack wt archive refuses to break stacks unless --detach-stacks is provid
   const nodeEnv = { ...baseEnv, PATH: '' };
 
   const denied = await runNode(
-    [join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'slopus/pr/linked-to-stack', `--date=${date}`],
+    [join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'pr/linked-to-stack', `--date=${date}`],
     { cwd: rootDir, env: nodeEnv }
   );
   assert.notEqual(denied.code, 0, `expected archive to refuse without --detach-stacks\nstdout:\n${denied.stdout}\nstderr:\n${denied.stderr}`);
@@ -156,7 +156,7 @@ test('hstack wt archive refuses to break stacks unless --detach-stacks is provid
     [
       join(rootDir, 'scripts', 'worktrees.mjs'),
       'archive',
-      'slopus/pr/linked-to-stack',
+      'pr/linked-to-stack',
       `--date=${date}`,
       '--detach-stacks',
       '--json',
@@ -168,7 +168,7 @@ test('hstack wt archive refuses to break stacks unless --detach-stacks is provid
   const nextEnv = await readFile(envPath, 'utf-8');
   assert.ok(!nextEnv.includes('HAPPIER_STACK_REPO_DIR='), `expected stack env to detach from worktree\n${nextEnv}`);
 
-  const archivedDir = join(workspaceDir, '.worktrees-archive', date, 'slopus', 'pr', 'linked-to-stack');
+  const archivedDir = join(workspaceDir, 'archive', 'worktrees', date, 'pr', 'linked-to-stack');
   const gitStat = await stat(join(archivedDir, '.git'));
   assert.ok(gitStat.isDirectory(), 'expected archived .git to be a directory (detached repo)');
 });
@@ -190,7 +190,7 @@ test('hstack wt archive can archive a broken git worktree (missing .git/worktree
     HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
-  const repoDir = join(workspaceDir, 'happier');
+  const repoDir = join(workspaceDir, 'main');
   await mkdir(repoDir, { recursive: true });
   await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
@@ -199,9 +199,9 @@ test('hstack wt archive can archive a broken git worktree (missing .git/worktree
   await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
 
-  const worktreeDir = join(workspaceDir, '.worktrees', 'slopus', 'pr', 'broken-worktree');
+  const worktreeDir = join(workspaceDir, 'pr', 'broken-worktree');
   await mkdir(dirname(worktreeDir), { recursive: true });
-  await runOk('git', ['worktree', 'add', '-b', 'slopus/pr/broken-worktree', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
+  await runOk('git', ['worktree', 'add', '-b', 'pr/broken-worktree', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
 
   // Create uncommitted changes (no staging; the index will be deleted when we break the worktree).
   await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');
@@ -222,16 +222,16 @@ test('hstack wt archive can archive a broken git worktree (missing .git/worktree
 
   const date = '2000-01-05';
   const nodeEnv = { ...baseEnv, PATH: '' };
-  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'slopus/pr/broken-worktree', `--date=${date}`, '--json'], {
+  const res = await runNode([join(rootDir, 'scripts', 'worktrees.mjs'), 'archive', 'pr/broken-worktree', `--date=${date}`, '--json'], {
     cwd: rootDir,
     env: nodeEnv,
   });
   assert.equal(res.code, 0, `expected archive exit 0\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   const parsed = JSON.parse(res.stdout);
   assert.equal(parsed.ok, true, `expected ok=true JSON output\n${res.stdout}`);
-  assert.equal(parsed.branch, 'slopus/pr/broken-worktree', 'expected branch name to be preserved');
+  assert.equal(parsed.branch, 'pr/broken-worktree', 'expected branch name to be preserved');
 
-  const archivedDir = join(workspaceDir, '.worktrees-archive', date, 'slopus', 'pr', 'broken-worktree');
+  const archivedDir = join(workspaceDir, 'archive', 'worktrees', date, 'pr', 'broken-worktree');
   const gitStat = await stat(join(archivedDir, '.git'));
   assert.ok(gitStat.isDirectory(), 'expected archived .git to be a directory (detached repo)');
 

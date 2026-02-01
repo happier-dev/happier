@@ -50,7 +50,7 @@ function sandboxPluginBasename() {
 
 function removeSwiftbarPlugins({ patterns }) {
   const pats = (patterns ?? []).filter(Boolean);
-  const args = pats.length ? pats.map((p) => `"${p}"`).join(' ') : '"hstack.*.sh" "happier-stack.*.sh"';
+  const args = pats.length ? pats.map((p) => `"${p}"`).join(' ') : '"hstack.*.sh"';
   const s =
     `DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)"; ` +
     `if [[ -z "$DIR" ]]; then DIR="$HOME/Library/Application Support/SwiftBar/Plugins"; fi; ` +
@@ -111,7 +111,7 @@ async function main() {
     }
     const patterns = isSandboxed()
       ? [`${sandboxPluginBasename()}.*.sh`]
-      : ['hstack.*.sh', 'happier-stack.*.sh'];
+      : ['hstack.*.sh'];
     const dir = removeSwiftbarPlugins({ patterns });
     printResult({ json, data: { ok: true, pluginsDir: dir }, text: dir ? `[menubar] removed plugins from ${dir}` : '[menubar] no plugins dir found' });
     return;

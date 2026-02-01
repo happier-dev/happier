@@ -42,8 +42,9 @@ swiftbar_worktree_spec_from_path() {
   # Usage: swiftbar_worktree_spec_from_path <worktree_path> <repo_key>
   #
   # Returns:
-  # - "default" for the managed default checkout at: */workspace/happier
-  # - "<owner>/<branch...>" for managed worktrees at: */workspace/.worktrees/<owner>/<branch...>
+  # - "main" for the managed stable checkout at: */workspace/main
+  # - "dev" for the managed dev checkout at: */workspace/dev
+  # - "<category>/<...>" for managed worktrees at: */workspace/{pr,local,tmp}/...
   # - "" otherwise (unmanaged path; menu should offer open-only actions)
   local wt_path="$1"
   local repo_key="$2"
@@ -51,18 +52,27 @@ swiftbar_worktree_spec_from_path() {
 
   local workspace
   workspace="$(resolve_workspace_dir)"
-  local default_repo="${workspace}/happier"
-  local wts_root="${workspace}/.worktrees"
+  local main_repo="${workspace}/main"
+  local dev_repo="${workspace}/dev"
 
-  if [[ "$wt_path" == "$default_repo" || "$wt_path" == "$default_repo/"* ]]; then
-    echo "default"
+  if [[ "$wt_path" == "$main_repo" || "$wt_path" == "$main_repo/"* ]]; then
+    echo "main"
     return
   fi
-  if [[ "$wt_path" == "$wts_root/"* ]]; then
-    local rest="${wt_path#"$wts_root/"}"
-    echo "$rest"
+  if [[ "$wt_path" == "$dev_repo" || "$wt_path" == "$dev_repo/"* ]]; then
+    echo "dev"
     return
   fi
+
+  local cat
+  for cat in pr local tmp; do
+    local root="${workspace}/${cat}"
+    if [[ "$wt_path" == "$root/"* ]]; then
+      local rest="${wt_path#"$workspace/"}"
+      echo "$rest"
+      return
+    fi
+  done
   echo ""
 }
 
@@ -98,8 +108,8 @@ swiftbar_repo_key_from_path() {
   # Usage: swiftbar_repo_key_from_path <path>
   #
   # Heuristic for hstack layouts:
-  # - Worktrees: */workspace/.worktrees/<owner>/<branch...>
-  # - Default:   */workspace/happier
+  # - Checkouts: */workspace/{main,dev}
+  # - Worktrees: */workspace/{pr,local,tmp}/...
   #
   # Returns "" when it can't be derived (unmanaged path).
   local p="$1"
@@ -107,7 +117,7 @@ swiftbar_repo_key_from_path() {
 
   local workspace
   workspace="$(resolve_workspace_dir)"
-  if [[ "$p" == "${workspace}/happier"* || "$p" == "${workspace}/.worktrees/"* ]]; then
+  if [[ "$p" == "${workspace}/main"* || "$p" == "${workspace}/dev"* || "$p" == "${workspace}/pr/"* || "$p" == "${workspace}/local/"* || "$p" == "${workspace}/tmp/"* ]]; then
     # Kept as a stable identifier for older renderers; effectively "the monorepo".
     echo "happy"
     return

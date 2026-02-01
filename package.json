@@ -29,6 +29,7 @@
             "apps/ui",
             "apps/cli",
             "apps/server",
+            "apps/stack",
             "apps/website",
             "apps/docs",
             "packages/agents",

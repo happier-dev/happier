@@ -7,7 +7,7 @@ test('promptWorktreeSource does not list worktrees unless user selects "pick"', 
   let listed = 0;
   const listWorktreeSpecs = async () => {
     listed++;
-    return ['slopus/pr/123'];
+    return ['pr/123'];
   };
 
   const promptSelect = async () => 'default';
@@ -30,7 +30,7 @@ test('promptWorktreeSource lists worktrees when user selects "pick"', async () =
   let listed = 0;
   const listWorktreeSpecs = async () => {
     listed++;
-    return ['slopus/pr/123', 'slopus/pr/456'];
+    return ['pr/123', 'pr/456'];
   };
 
   let selectCount = 0;
@@ -41,7 +41,7 @@ test('promptWorktreeSource lists worktrees when user selects "pick"', async () =
       return 'pick';
     }
     assert.ok(title.startsWith('Available '));
-    return 'slopus/pr/456';
+    return 'pr/456';
   };
   const prompt = async () => '';
 
@@ -54,7 +54,6 @@ test('promptWorktreeSource lists worktrees when user selects "pick"', async () =
     deps: { listWorktreeSpecs, promptSelect, prompt },
   });
 
-  assert.equal(res, 'slopus/pr/456');
+  assert.equal(res, 'pr/456');
   assert.equal(listed, 1);
 });
-

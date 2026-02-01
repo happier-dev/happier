@@ -127,7 +127,7 @@ If you want the **exact** same UX as `hstack wt`, but scoped to a stack env file
 
 ```bash
 hstack stack wt exp1 -- status
-hstack stack wt exp1 -- use slopus/pr/my-ui-pr
+hstack stack wt exp1 -- use pr/my-ui-pr
 hstack stack wt exp1 -- use default
 ```
 
@@ -196,20 +196,24 @@ When creating a stack you can point the stack at a repo worktree:
 
 ```bash
 hstack stack new exp3 \\
-  --repo=slopus/pr/my-feature \\
+  --repo=local/my-feature \\
   --server=happy-server
 ```
 
-Worktree specs are interpreted as:
+Worktree specs are interpreted relative to the workspace:
 
 ```
-<workspace>/.worktrees/<spec...>
+main                -> <workspace>/main
+dev                 -> <workspace>/dev
+pr/<...>            -> <workspace>/pr/<...>
+local/<...>         -> <workspace>/local/<owner>/<...>
+tmp/<...>           -> <workspace>/tmp/<owner>/<...>
 ```
 
-So `--repo=slopus/pr/foo` maps to:
+So `--repo=pr/foo` maps to:
 
 ```
-<workspace>/.worktrees/slopus/pr/foo
+<workspace>/pr/foo
 ```
 
 You can also pass an absolute path.

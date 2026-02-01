@@ -14,7 +14,7 @@ async function withTempRoot(t) {
   return dir;
 }
 
-test('inferComponentFromCwd resolves the default monorepo checkout under <workspace>/happier', async (t) => {
+test('inferComponentFromCwd resolves the stable monorepo checkout under <workspace>/main', async (t) => {
   const rootDir = await withTempRoot(t);
   const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
   process.env.HAPPIER_STACK_WORKSPACE_DIR = rootDir;
@@ -26,7 +26,7 @@ test('inferComponentFromCwd resolves the default monorepo checkout under <worksp
     }
   });
 
-  const repoRoot = join(rootDir, 'happier');
+  const repoRoot = join(rootDir, 'main');
   await mkdir(join(repoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(repoRoot, 'apps', 'cli'), { recursive: true });
   await mkdir(join(repoRoot, 'apps', 'server'), { recursive: true });
@@ -40,7 +40,7 @@ test('inferComponentFromCwd resolves the default monorepo checkout under <worksp
   assert.deepEqual(inferred, { component: 'happy', repoDir: repoRoot });
 });
 
-test('inferComponentFromCwd resolves happier monorepo subpackages under <workspace>/happier', async (t) => {
+test('inferComponentFromCwd resolves happier monorepo subpackages under <workspace>/main', async (t) => {
   const rootDir = await withTempRoot(t);
   const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
   process.env.HAPPIER_STACK_WORKSPACE_DIR = rootDir;
@@ -52,7 +52,7 @@ test('inferComponentFromCwd resolves happier monorepo subpackages under <workspa
     }
   });
 
-  const monoRoot = join(rootDir, 'happier');
+  const monoRoot = join(rootDir, 'main');
   await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'cli', 'src'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
@@ -70,7 +70,7 @@ test('inferComponentFromCwd resolves happier monorepo subpackages under <workspa
   assert.deepEqual(inferred, { component: 'happy-cli', repoDir: monoRoot });
 });
 
-test('inferComponentFromCwd resolves happy monorepo worktree roots under <workspace>/.worktrees', async (t) => {
+test('inferComponentFromCwd resolves happy monorepo worktree roots under <workspace>/pr', async (t) => {
   const rootDir = await withTempRoot(t);
   const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
   process.env.HAPPIER_STACK_WORKSPACE_DIR = rootDir;
@@ -82,7 +82,7 @@ test('inferComponentFromCwd resolves happy monorepo worktree roots under <worksp
     }
   });
 
-  const repoRoot = join(rootDir, '.worktrees', 'slopus', 'pr', '123-fix');
+  const repoRoot = join(rootDir, 'pr', '123-fix');
   await mkdir(join(repoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(repoRoot, 'apps', 'cli', 'nested'), { recursive: true });
   await mkdir(join(repoRoot, 'apps', 'server'), { recursive: true });
