@@ -14,17 +14,17 @@ import { bold, cyan, dim, green, red, yellow } from './utils/ui/ansi.mjs';
 import { clipboardAvailable, copyTextToClipboard } from './utils/ui/clipboard.mjs';
 import { detectInstalledLlmTools } from './utils/llm/tools.mjs';
 import { launchLlmAssistant } from './utils/llm/assist.mjs';
-import { buildHapstaRunnerShellSnippet } from './utils/llm/hapsta_runner.mjs';
+import { buildhstackRunnerShellSnippet } from './utils/llm/hstack_runner.mjs';
 
 function usage() {
   return [
     '[monorepo] usage:',
-    '  hapsta monorepo port --target=/abs/path/to/monorepo [--clone-target] [--target-repo=<git-url>] [--branch=port/<name>] [--base=<ref>] [--onto-current] [--dry-run] [--3way] [--skip-applied] [--continue-on-failure] [--json]',
-    '  hapsta monorepo port guide [--target=/abs/path/to/monorepo] [--clone-target] [--target-repo=<git-url>] [--json]',
-    '  hapsta monorepo port preflight --target=/abs/path/to/monorepo [--base=<ref>] [--3way] [--json]',
-    '  hapsta monorepo port status [--target=/abs/path/to/monorepo] [--json]',
-    '  hapsta monorepo port continue [--target=/abs/path/to/monorepo] [--json]',
-    '  hapsta monorepo port llm --target=/abs/path/to/monorepo [--copy] [--launch] [--json]',
+    '  hstack monorepo port --target=/abs/path/to/monorepo [--clone-target] [--target-repo=<git-url>] [--branch=port/<name>] [--base=<ref>] [--onto-current] [--dry-run] [--3way] [--skip-applied] [--continue-on-failure] [--json]',
+    '  hstack monorepo port guide [--target=/abs/path/to/monorepo] [--clone-target] [--target-repo=<git-url>] [--json]',
+    '  hstack monorepo port preflight --target=/abs/path/to/monorepo [--base=<ref>] [--3way] [--json]',
+    '  hstack monorepo port status [--target=/abs/path/to/monorepo] [--json]',
+    '  hstack monorepo port continue [--target=/abs/path/to/monorepo] [--json]',
+    '  hstack monorepo port llm --target=/abs/path/to/monorepo [--copy] [--launch] [--json]',
     '    [--from-happy=/abs/path/to/old-happy --from-happy-base=<ref> --from-happy-ref=<ref>]',
     '    [--from-happy-cli=/abs/path/to/old-happy-cli --from-happy-cli-base=<ref> --from-happy-cli-ref=<ref>]',
     '    [--from-happy-server=/abs/path/to/old-happy-server --from-happy-server-base=<ref> --from-happy-server-ref=<ref>]',
@@ -47,9 +47,9 @@ function usage() {
     '',
     'LLM tip:',
     '- If you want an LLM to help resolve conflicts, run:',
-    '    hapsta monorepo port llm --target=/abs/path/to/monorepo --launch',
+    '    hstack monorepo port llm --target=/abs/path/to/monorepo --launch',
     '  or, if you prefer copy/paste:',
-    '    hapsta monorepo port llm --target=/abs/path/to/monorepo --copy',
+    '    hstack monorepo port llm --target=/abs/path/to/monorepo --copy',
     '  then paste the copied prompt into your LLM.',
   ].join('\n');
 }
@@ -1211,7 +1211,7 @@ async function cmdPortStatus({ kv, json }) {
       lines.push(`- ${dim('continue:')}       git -C ${targetRepoRoot} am --continue`);
       lines.push(`- ${dim('skip patch:')}     git -C ${targetRepoRoot} am --skip`);
       lines.push(`- ${dim('abort:')}          git -C ${targetRepoRoot} am --abort`);
-      lines.push(`- ${dim('helper:')}         hapsta monorepo port continue --target=${targetRepoRoot}`);
+      lines.push(`- ${dim('helper:')}         hstack monorepo port continue --target=${targetRepoRoot}`);
     }
     return lines.join('\n');
   })();
@@ -1224,7 +1224,7 @@ async function cmdPortStatus({ kv, json }) {
 }
 
 function buildPortLlmPromptText({ targetRepoRoot }) {
-  const hs = buildHapstaRunnerShellSnippet();
+  const hs = buildhstackRunnerShellSnippet();
   return [
     'You are an assistant helping the user port split-repo commits into the slopus/happy monorepo.',
     '',
@@ -1258,7 +1258,7 @@ function buildPortGuideLlmPromptText({ targetRepoRoot, initialCommandArgs }) {
   return [
     'You are an assistant helping the user port split-repo commits into the slopus/happy monorepo.',
     '',
-    buildHapstaRunnerShellSnippet(),
+    buildhstackRunnerShellSnippet(),
     `Target monorepo root: ${targetRepoRoot}`,
     '',
     'Goal:',
@@ -1307,8 +1307,8 @@ async function cmdPortContinue({ kv, flags, json }) {
           `[monorepo] git reports unmerged files (e.g. ${dim('UU')}). This usually means you resolved them in an editor but forgot ${bold('git add')}.`,
           `[monorepo] conflicted files: ${conflictedFiles.join(', ')}`,
           `[monorepo] next: git -C ${targetRepoRoot} add ${conflictedFiles.map((f) => JSON.stringify(f)).join(' ')}`,
-          `[monorepo] then re-run: hapsta monorepo port continue --target=${targetRepoRoot}`,
-          `[monorepo] tip: you can also run: hapsta monorepo port continue --target=${targetRepoRoot} --stage`,
+          `[monorepo] then re-run: hstack monorepo port continue --target=${targetRepoRoot}`,
+          `[monorepo] tip: you can also run: hstack monorepo port continue --target=${targetRepoRoot} --stage`,
         ].join('\n');
         printResult({
           json,
@@ -1326,7 +1326,7 @@ async function cmdPortContinue({ kv, flags, json }) {
           `[monorepo] files: ${markerHits.join(', ')}`,
           `[monorepo] next: open the file(s), remove ${dim('<<<<<<< / ======= / >>>>>>>')} markers, then run:`,
           `  git -C ${targetRepoRoot} add ${markerHits.map((f) => JSON.stringify(f)).join(' ')}`,
-          `  hapsta monorepo port continue --target=${targetRepoRoot}`,
+          `  hstack monorepo port continue --target=${targetRepoRoot}`,
         ].join('\n');
         printResult({
           json,
@@ -1346,7 +1346,7 @@ async function cmdPortContinue({ kv, flags, json }) {
           `[monorepo] files: ${markerHits.join(', ')}`,
           `[monorepo] next: open the file(s), remove ${dim('<<<<<<< / ======= / >>>>>>>')} markers, then run:`,
           `  git -C ${targetRepoRoot} add ${markerHits.map((f) => JSON.stringify(f)).join(' ')}`,
-          `  hapsta monorepo port continue --target=${targetRepoRoot}`,
+          `  hstack monorepo port continue --target=${targetRepoRoot}`,
         ].join('\n');
         printResult({
           json,
@@ -1368,7 +1368,7 @@ async function cmdPortContinue({ kv, flags, json }) {
         `${red('[monorepo]')} continue failed (still conflicted).`,
         conflictedFiles.length ? `[monorepo] conflicted files: ${conflictedFiles.join(', ')}` : '',
         stderr ? `[monorepo] git:\n${stderr}` : '',
-        `[monorepo] next: resolve, stage (${bold('git add')}), then re-run: hapsta monorepo port continue --target=${targetRepoRoot}`,
+        `[monorepo] next: resolve, stage (${bold('git add')}), then re-run: hstack monorepo port continue --target=${targetRepoRoot}`,
       ]
         .filter(Boolean)
         .join('\n');
@@ -1535,7 +1535,7 @@ async function cmdPortGuide({ kv, flags, json }) {
     console.log(
       [
         '',
-        bold(`✨ ${cyan('Hapsta')} monorepo port ✨`),
+        bold(`✨ ${cyan('hstack')} monorepo port ✨`),
         '',
         'This wizard ports commits from split repos into the Happy monorepo layout:',
         `- ${cyan('happy')} → apps/ui/ (or legacy expo-app/)`,
@@ -1561,7 +1561,7 @@ async function cmdPortGuide({ kv, flags, json }) {
           (await promptSelect(rl, {
             title:
               `${bold('Target directory is not a git repo')}\n` +
-              `${dim('Do you want Hapsta to clone the monorepo into this directory?')}\n` +
+              `${dim('Do you want hstack to clone the monorepo into this directory?')}\n` +
               `${dim(targetInput)}`,
             options: [
               { label: `${green('yes (recommended)')} — clone slopus/happy into this directory`, value: true },
@@ -1660,7 +1660,7 @@ async function cmdPortGuide({ kv, flags, json }) {
             console.log(bold('[monorepo] launching LLM...'));
             const res = await launchLlmAssistant({
               rl,
-              title: 'Hapsta port conflict',
+              title: 'hstack port conflict',
               subtitle: 'Resolve current git am conflict',
               promptText,
               cwd: targetRepoRoot,
@@ -1686,7 +1686,7 @@ async function cmdPortGuide({ kv, flags, json }) {
             continue;
           }
           if (action === 'quit') {
-            throw new Error('[monorepo] guide stopped (git am still in progress). Run `hapsta monorepo port status` / `... continue` to proceed.');
+            throw new Error('[monorepo] guide stopped (git am still in progress). Run `hstack monorepo port status` / `... continue` to proceed.');
           }
           if (action === 'stage-continue') {
             const stageFlags = new Set([...(attemptFlags ?? []), '--stage']);
@@ -1981,7 +1981,7 @@ async function cmdPortGuide({ kv, flags, json }) {
             // eslint-disable-next-line no-await-in-loop
             const res = await launchLlmAssistant({
               rl,
-              title: 'Hapsta monorepo port',
+              title: 'hstack monorepo port',
               subtitle: 'Resolve conflicts and complete the port',
               promptText,
               cwd: targetRepoRoot,
@@ -2038,7 +2038,7 @@ async function cmdPortGuide({ kv, flags, json }) {
             // eslint-disable-next-line no-await-in-loop
             const res = await launchLlmAssistant({
               rl,
-              title: 'Hapsta port conflict',
+              title: 'hstack port conflict',
               subtitle: 'Resolve current git am conflict',
               promptText,
               cwd: targetRepoRoot,
@@ -2065,7 +2065,7 @@ async function cmdPortGuide({ kv, flags, json }) {
             continue;
           }
           if (action === 'quit') {
-            throw new Error('[monorepo] guide stopped (git am still in progress). Run `hapsta monorepo port status` / `... continue` to proceed.');
+            throw new Error('[monorepo] guide stopped (git am still in progress). Run `hstack monorepo port status` / `... continue` to proceed.');
           }
 
           if (action === 'stage-continue') {
@@ -2101,7 +2101,7 @@ async function cmdPortLlm({ kv, flags, json }) {
   const wantsLaunch = flags?.has?.('--launch') || process.argv.includes('--launch');
   if (wantsLaunch) {
     const launched = await launchLlmAssistant({
-      title: 'Hapsta monorepo port (LLM)',
+      title: 'hstack monorepo port (LLM)',
       subtitle: 'Runs the port + resolves conflicts (one patch at a time).',
       promptText,
       cwd: targetRepoRoot,

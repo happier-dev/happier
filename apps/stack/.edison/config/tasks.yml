@@ -1,6 +1,6 @@
 tasks:
   paths:
-    # Hapsta project-owned artifact templates (NOT composed via `edison compose`).
+    # hstack project-owned artifact templates (NOT composed via `edison compose`).
     # These enforce mandatory frontmatter keys used by happy-stacks guards.
     template: ".edison/templates/happy-stacks/TASK.md"
     qaTemplate: ".edison/templates/happy-stacks/QA.md"

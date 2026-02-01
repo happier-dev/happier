@@ -18,21 +18,21 @@ import { readEnvObjectFromFile } from './utils/env/read.mjs';
 import { clipboardAvailable, copyTextToClipboard } from './utils/ui/clipboard.mjs';
 import { detectInstalledLlmTools } from './utils/llm/tools.mjs';
 import { launchLlmAssistant } from './utils/llm/assist.mjs';
-import { buildHapstaRunnerShellSnippet } from './utils/llm/hapsta_runner.mjs';
+import { buildhstackRunnerShellSnippet } from './utils/llm/hstack_runner.mjs';
 
 function usage() {
   return [
     '[import] usage:',
-    '  hapsta import',
-    '  hapsta import inspect [--happy=<path|url>] [--happy-cli=<path|url>] [--happy-server=<path|url>] [--happy-server-light=<path|url>] [--yes] [--json]',
-    '  hapsta import apply --stack=<name> [--server=happy-server|happy-server-light] [--happy=<path|url>] [--happy-ref=<ref>] [--happy-cli=<path|url>] [--happy-cli-ref=<ref>] [--happy-server=<path|url>] [--happy-server-ref=<ref>] [--happy-server-light=<path|url>] [--happy-server-light-ref=<ref>] [--yes] [--json]',
-    '  hapsta import migrate [--stack=<name>]',
-    '  hapsta import llm [--mode=import|migrate] [--stack=<name>] [--copy] [--launch]',
-    '  hapsta import [--json]',
+    '  hstack import',
+    '  hstack import inspect [--happy=<path|url>] [--happy-cli=<path|url>] [--happy-server=<path|url>] [--happy-server-light=<path|url>] [--yes] [--json]',
+    '  hstack import apply --stack=<name> [--server=happy-server|happy-server-light] [--happy=<path|url>] [--happy-ref=<ref>] [--happy-cli=<path|url>] [--happy-cli-ref=<ref>] [--happy-server=<path|url>] [--happy-server-ref=<ref>] [--happy-server-light=<path|url>] [--happy-server-light-ref=<ref>] [--yes] [--json]',
+    '  hstack import migrate [--stack=<name>]',
+    '  hstack import llm [--mode=import|migrate] [--stack=<name>] [--copy] [--launch]',
+    '  hstack import [--json]',
     '',
     'What it does:',
-    '- imports legacy split repos (happy / happy-cli / happy-server) into Hapsta by pinning stack component paths',
-    '- optionally ports commits into the slopus/happy monorepo layout via `hapsta monorepo port`',
+    '- imports legacy split repos (happy / happy-cli / happy-server) into hstack by pinning stack component paths',
+    '- optionally ports commits into the slopus/happy monorepo layout via `hstack monorepo port`',
     '',
     'Notes:',
     '- This is for users who still have split repos/branches/PRs (pre-monorepo).',
@@ -157,7 +157,7 @@ async function resolveRepoRootFromPathOrUrl({ rootDir, label, raw, rl }) {
     return r;
   }
 
-  // Git URL: clone into the Hapsta workspace so it can be pinned reliably.
+  // Git URL: clone into the hstack workspace so it can be pinned reliably.
   const workspaceDir = getWorkspaceDir(rootDir);
   const repoName = repoNameFromGitUrl(input);
   const targetDir = join(workspaceDir, 'imports', 'repos', label, sanitizeSlugPart(repoName));
@@ -201,7 +201,7 @@ async function resolveRepoRootFromPathOrUrlNonInteractive({ rootDir, label, raw,
   if (!yes) {
     throw new Error(
       `[import] ${label}: got a git URL but non-interactive mode cannot prompt.\n` +
-        `[import] re-run with --yes to allow cloning into the Hapsta workspace.\n` +
+        `[import] re-run with --yes to allow cloning into the hstack workspace.\n` +
         `[import] url: ${input}`
     );
   }
@@ -254,7 +254,7 @@ async function ensureWorktreeForRef({ rootDir, componentLabel, repoRoot, ref }) 
   // A normal clone has a branch checked out in its "main worktree" already.
   // `git worktree add <dir> <branch>` fails if `<branch>` is currently checked out anywhere.
   //
-  // To make `hapsta import apply` robust for typical contributor setups,
+  // To make `hstack import apply` robust for typical contributor setups,
   // create a dedicated, uniquely named branch under the source repo when the ref is a local branch.
   const isLocalBranch = await gitOk(repoRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${r}`]);
   if (isLocalBranch) {
@@ -352,7 +352,7 @@ async function chooseCheckoutPathForRepo({ rl, rootDir, componentLabel, repoRoot
     });
   }
   if (branches.length) {
-    options.push({ value: { kind: 'branch' }, label: `${cyan('other branch')} — create a new worktree under your Hapsta workspace` });
+    options.push({ value: { kind: 'branch' }, label: `${cyan('other branch')} — create a new worktree under your hstack workspace` });
   }
 
   const picked = await promptSelect(rl, {
@@ -426,7 +426,7 @@ async function pinStackComponentDirs({ stackName, pins }) {
   if (!unique.length) return envPath;
   if (unique.length > 1) {
     throw new Error(
-      `[import] multiple repo roots detected; Hapsta is monorepo-only.\n` +
+      `[import] multiple repo roots detected; hstack is monorepo-only.\n` +
         unique.map((r) => `- ${r}`).join('\n') +
         `\nFix: pass paths/URLs that all resolve to the same Happier monorepo checkout/worktree.`
     );
@@ -510,13 +510,13 @@ function readPinnedComponentDirFromEnvObject(envObj, component) {
 }
 
 function buildLlmPromptForImport() {
-  const hs = buildHapstaRunnerShellSnippet();
+  const hs = buildhstackRunnerShellSnippet();
   return [
-    'You are an assistant helping the user migrate legacy Happy split repos into Hapsta.',
+    'You are an assistant helping the user migrate legacy Happy split repos into hstack.',
     '',
     hs,
     'Goals:',
-    '- Import legacy split repos (happy / happy-cli / happy-server) into a stack in Hapsta.',
+    '- Import legacy split repos (happy / happy-cli / happy-server) into a stack in hstack.',
     '- Optionally migrate commits into the slopus/happy monorepo layout (packages/happy-* or legacy expo-app/cli/server).',
     '',
     'How to proceed:',
@@ -545,9 +545,9 @@ function buildLlmPromptForImport() {
 }
 
 function buildLlmPromptForMigrate({ stackName }) {
-  const hs = buildHapstaRunnerShellSnippet();
+  const hs = buildhstackRunnerShellSnippet();
   return [
-    'You are an assistant helping the user migrate an existing Hapsta stack to the monorepo.',
+    'You are an assistant helping the user migrate an existing hstack stack to the monorepo.',
     '',
     hs,
     `Target stack: ${stackName || '<stack>'}`,
@@ -578,7 +578,7 @@ function buildMonorepoMigrationPrompt({ targetMonorepoRoot, branch, sources }) {
   return [
     'You are an assistant helping the user migrate split-repo commits into the Happy monorepo layout.',
     '',
-    buildHapstaRunnerShellSnippet(),
+    buildhstackRunnerShellSnippet(),
     `Target monorepo worktree: ${targetMonorepoRoot}`,
     `Port branch: ${branch}`,
     '',
@@ -615,7 +615,7 @@ async function cmdLlm({ argv }) {
   const wantsLaunch = flags.has('--launch');
   if (wantsLaunch) {
     const launched = await launchLlmAssistant({
-      title: 'Hapsta import/migrate (LLM)',
+      title: 'hstack import/migrate (LLM)',
       subtitle: 'Guides import and/or runs the monorepo port + conflict resolution.',
       promptText,
       cwd: rootDir,
@@ -756,7 +756,7 @@ async function cmdApply({ rootDir, argv }) {
   // eslint-disable-next-line no-console
   console.log(sectionTitle('Next'));
   // eslint-disable-next-line no-console
-  console.log(bullets([cmdFmt(`hapsta stack dev ${ensured}`), cmdFmt(`hapsta import migrate --stack=${ensured}`)]));
+  console.log(bullets([cmdFmt(`hstack stack dev ${ensured}`), cmdFmt(`hstack import migrate --stack=${ensured}`)]));
 }
 
 async function cmdMigrateStack({ rootDir, argv }) {
@@ -806,7 +806,7 @@ async function cmdMigrateStack({ rootDir, argv }) {
     if (!hasAnyPins) {
       throw new Error(
         `[import] stack ${stackName} does not have any pinned component dirs.\n` +
-          `[import] Fix: run ${cmdFmt('hapsta import')} to create an imported stack first, then re-run migrate.`
+          `[import] Fix: run ${cmdFmt('hstack import')} to create an imported stack first, then re-run migrate.`
       );
     }
 
@@ -856,7 +856,7 @@ async function cmdMigrateStack({ rootDir, argv }) {
     if (pins.happy) sources.happy = pins.happy;
     if (pins['happy-cli']) sources['happy-cli'] = pins['happy-cli'];
     if (pins['happy-server']) sources['happy-server'] = pins['happy-server'];
-    // Port flow is owned by `hapsta monorepo port guide` (preflight + auto-apply + conflicts + optional LLM).
+    // Port flow is owned by `hstack monorepo port guide` (preflight + auto-apply + conflicts + optional LLM).
     // eslint-disable-next-line no-console
     console.log('');
     // eslint-disable-next-line no-console
@@ -911,7 +911,7 @@ async function cmdMigrateStack({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(sectionTitle('Next'));
     // eslint-disable-next-line no-console
-    console.log(bullets([`Run: ${cmdFmt(`hapsta stack dev ${finalStackName}`)}`]));
+    console.log(bullets([`Run: ${cmdFmt(`hstack stack dev ${finalStackName}`)}`]));
   });
 }
 
@@ -960,7 +960,7 @@ async function main() {
   // eslint-disable-next-line no-console
   console.log(
     banner('Import legacy repos', {
-      subtitle: 'Bring your pre-monorepo (split repo) work into Hapsta, then optionally migrate to monorepo.',
+      subtitle: 'Bring your pre-monorepo (split repo) work into hstack, then optionally migrate to monorepo.',
     })
   );
   // eslint-disable-next-line no-console
@@ -971,7 +971,7 @@ async function main() {
       `${bold('components')}: the main codebases (UI = ${cyan('happy')}, CLI/daemon = ${cyan('happy-cli')}, server = ${cyan('happy-server')})`,
       `${bold('stack')}: an isolated runtime (ports + data + env) under ${dim('~/.happy/stacks/<name>')}`,
       `${bold('import')}: pin a stack to your existing repo checkouts (so you can run your work as-is)`,
-      `${bold('migrate')}: port your split-repo commits into the monorepo layout via ${cyan('hapsta monorepo port')}`,
+      `${bold('migrate')}: port your split-repo commits into the monorepo layout via ${cyan('hstack monorepo port')}`,
     ])
   );
 
@@ -987,7 +987,7 @@ async function main() {
       console.log(
         bullets([
           `Paste a ${bold('local path')} or a ${bold('git URL')} (GitHub HTTPS/SSH).`,
-          `If you paste a URL, we clone it into your Hapsta workspace under ${dim('imports/repos/...')}.`,
+          `If you paste a URL, we clone it into your hstack workspace under ${dim('imports/repos/...')}.`,
           `Tip: if you already have a worktree checked out on the branch you want, paste that worktree path.`,
         ])
       );
@@ -1160,7 +1160,7 @@ async function main() {
       // eslint-disable-next-line no-console
       console.log('');
       // eslint-disable-next-line no-console
-      console.log(dim(`Tip: run it with ${cmdFmt(`hapsta stack dev ${ensuredStack}`)} (or ${cmdFmt(`hapsta stack start ${ensuredStack}`)}).`));
+      console.log(dim(`Tip: run it with ${cmdFmt(`hstack stack dev ${ensuredStack}`)} (or ${cmdFmt(`hstack stack start ${ensuredStack}`)}).`));
 
       // Optional migration
       // eslint-disable-next-line no-console
@@ -1183,8 +1183,8 @@ async function main() {
         if (!monorepoRepoRoot) {
           // eslint-disable-next-line no-console
           console.log(
-            `${yellow('!')} No monorepo checkout detected in your Hapsta workspace yet.\n` +
-              dim(`Fix: run ${cmdFmt('hapsta setup --profile=dev')} (or ${cmdFmt('hapsta bootstrap')}) first, then re-run import.`)
+            `${yellow('!')} No monorepo checkout detected in your hstack workspace yet.\n` +
+              dim(`Fix: run ${cmdFmt('hstack setup --profile=dev')} (or ${cmdFmt('hstack bootstrap')}) first, then re-run import.`)
           );
           const raw = await prompt(rl, `Monorepo target path (slopus/happy root): `, { defaultValue: '' });
           monorepoRepoRoot = raw.trim() ? await gitRoot(raw.trim()) : '';
@@ -1229,7 +1229,7 @@ async function main() {
 
           let migrationCompleted = false;
           try {
-            // This delegates all port logic to `hapsta monorepo port guide` (preflight + auto-apply + conflicts + optional LLM).
+            // This delegates all port logic to `hstack monorepo port guide` (preflight + auto-apply + conflicts + optional LLM).
             // eslint-disable-next-line no-console
             console.log('');
             // eslint-disable-next-line no-console
@@ -1299,8 +1299,8 @@ async function main() {
             // eslint-disable-next-line no-console
             console.log(
               bullets([
-                `Run: ${cmdFmt(`hapsta stack dev ${finalStackName}`)}`,
-                `If you need to import more branches later, re-run: ${cmdFmt('hapsta import')}`,
+                `Run: ${cmdFmt(`hstack stack dev ${finalStackName}`)}`,
+                `If you need to import more branches later, re-run: ${cmdFmt('hstack import')}`,
               ])
             );
           }

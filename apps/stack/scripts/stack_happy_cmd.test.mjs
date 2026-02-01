@@ -60,7 +60,7 @@ async function writeFailingStubHappyCli({ cliDir, errorMessage }) {
   return cliDir;
 }
 
-test('hapsta stack happy <name> runs happy-cli under that stack env', async () => {
+test('hstack stack happy <name> runs happy-cli under that stack env', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-'));
@@ -96,7 +96,7 @@ test('hapsta stack happy <name> runs happy-cli under that stack env', async () =
     HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
-  const res = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'happy', stackName], { cwd: rootDir, env: baseEnv });
+  const res = await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happy', stackName], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
   const out = JSON.parse(res.stdout.trim());
@@ -107,7 +107,7 @@ test('hapsta stack happy <name> runs happy-cli under that stack env', async () =
   assert.equal(out.serverUrl, 'http://127.0.0.1:3999');
 });
 
-test('hapsta stack happy <name> --identity=<name> uses identity-scoped HAPPY_HOME_DIR', async () => {
+test('hstack stack happy <name> --identity=<name> uses identity-scoped HAPPY_HOME_DIR', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-identity-'));
@@ -145,7 +145,7 @@ test('hapsta stack happy <name> --identity=<name> uses identity-scoped HAPPY_HOM
   };
 
   const res = await runNode(
-    [join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'happy', stackName, `--identity=${identity}`],
+    [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happy', stackName, `--identity=${identity}`],
     { cwd: rootDir, env: baseEnv }
   );
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
@@ -157,7 +157,7 @@ test('hapsta stack happy <name> --identity=<name> uses identity-scoped HAPPY_HOM
   assert.equal(out.serverUrl, 'http://127.0.0.1:3999');
 });
 
-test('hapsta <stack> happy ... shorthand runs happy-cli under that stack env', async () => {
+test('hstack <stack> happy ... shorthand runs happy-cli under that stack env', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-'));
@@ -193,7 +193,7 @@ test('hapsta <stack> happy ... shorthand runs happy-cli under that stack env', a
     HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
-  const res = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), stackName, 'happy'], { cwd: rootDir, env: baseEnv });
+  const res = await runNode([join(rootDir, 'bin', 'hstack.mjs'), stackName, 'happy'], { cwd: rootDir, env: baseEnv });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
   const out = JSON.parse(res.stdout.trim());
@@ -202,7 +202,7 @@ test('hapsta <stack> happy ... shorthand runs happy-cli under that stack env', a
   assert.equal(out.serverUrl, 'http://127.0.0.1:4101');
 });
 
-test('hapsta stack happy <name> does not print wrapper stack traces on happy-cli failure', async () => {
+test('hstack stack happy <name> does not print wrapper stack traces on happy-cli failure', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-fail-'));
@@ -236,7 +236,7 @@ test('hapsta stack happy <name> does not print wrapper stack traces on happy-cli
     HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
     HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
-  const res = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'happy', stackName, 'attach', 'abc'], {
+  const res = await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happy', stackName, 'attach', 'abc'], {
     cwd: rootDir,
     env: baseEnv,
   });

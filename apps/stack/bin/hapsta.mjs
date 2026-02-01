@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { commandHelpArgs, renderHapstaRootHelp, resolveHapstaCommand } from '../scripts/utils/cli/cli_registry.mjs';
+import { commandHelpArgs, renderhstackRootHelp, resolvehstackCommand } from '../scripts/utils/cli/cli_registry.mjs';
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/paths/canonical_home.mjs';
 import { resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
 
@@ -44,7 +44,7 @@ function resolveCliRootDir() {
   ).trim();
   if (fromEnv) return expandHome(fromEnv);
 
-  // Stable pointer file: even if the real home dir is elsewhere, `hapsta init` writes the pointer here.
+  // Stable pointer file: even if the real home dir is elsewhere, `hstack init` writes the pointer here.
   const canonicalEnv = getCanonicalHomeEnvPathFromEnv(process.env);
   const v =
     dotenvGetQuick(canonicalEnv, 'HAPPIER_STACK_CLI_ROOT_DIR') ||
@@ -61,7 +61,7 @@ function maybeReexecToCliRoot(cliRootDir) {
   if (!cliRoot) return;
   if (cliRoot === cliRootDir) return;
 
-  const cliBin = join(cliRoot, 'bin', 'hapsta.mjs');
+  const cliBin = join(cliRoot, 'bin', 'hstack.mjs');
   if (!existsSync(cliBin)) return;
 
   const argv = process.argv.slice(2);
@@ -81,7 +81,7 @@ function resolveHomeDir() {
   const fromEnv = (process.env.HAPPIER_STACK_HOME_DIR ?? '').trim();
   if (fromEnv) return expandHome(fromEnv);
 
-  // Stable pointer file: even if the real home dir is elsewhere, `hapsta init` writes the pointer here.
+  // Stable pointer file: even if the real home dir is elsewhere, `hstack init` writes the pointer here.
   const canonicalEnv = getCanonicalHomeEnvPathFromEnv(process.env);
   const v = dotenvGetQuick(canonicalEnv, 'HAPPIER_STACK_HOME_DIR') || '';
   return v ? expandHome(v) : join(homedir(), '.happier-stack');
@@ -159,7 +159,7 @@ function applySandboxDirIfRequested(argv) {
   const runtimeDir = join(sandboxDir, 'runtime');
   const storageDir = join(sandboxDir, 'storage');
 
-  // Sandbox isolation MUST win over any pre-exported Hapsta env vars.
+  // Sandbox isolation MUST win over any pre-exported hstack env vars.
   // Otherwise sandbox runs can accidentally read/write "real" machine state.
   //
   // Keep only a tiny set of sandbox-safe globals; everything else should be driven by flags
@@ -272,7 +272,7 @@ function maybeAutoUpdateNotice(cliRootDir, cmd) {
   if (shouldNotify) {
     const from = current ? current : 'current';
     // Keep it short; no network calls here.
-    console.error(`[hapsta] update available: ${from} -> ${latest} (run: hapsta self update)`);
+    console.error(`[hstack] update available: ${from} -> ${latest} (run: hstack self update)`);
     try {
       mkdirSync(cacheDir, { recursive: true });
       writeFileSync(
@@ -309,13 +309,13 @@ function maybeAutoUpdateNotice(cliRootDir, cmd) {
 }
 
 function usage() {
-  return renderHapstaRootHelp();
+  return renderhstackRootHelp();
 }
 
 function runNodeScript(cliRootDir, scriptRelPath, args) {
   const scriptPath = join(cliRootDir, scriptRelPath);
   if (!existsSync(scriptPath)) {
-    console.error(`[hapsta] missing script: ${scriptPath}`);
+    console.error(`[hstack] missing script: ${scriptPath}`);
     process.exit(1);
   }
   const res = spawnSync(process.execPath, [scriptPath, ...args], {
@@ -341,7 +341,7 @@ function main() {
 
   maybeReexecToCliRoot(cliRootDir);
 
-  // If the user passed only flags (common via `npx --yes -p @happier-dev/stack hapsta --help`),
+  // If the user passed only flags (common via `npx --yes -p @happier-dev/stack hstack --help`),
   // treat it as root help rather than `help --help` (which would look like
   // "unknown command: --help").
   const cmd = argv.find((a) => !a.startsWith('--')) ?? 'help';
@@ -356,9 +356,9 @@ function main() {
       console.log(usage());
       return;
     }
-    const targetCmd = resolveHapstaCommand(target);
+    const targetCmd = resolvehstackCommand(target);
     if (!targetCmd || targetCmd.kind !== 'node') {
-      console.error(`[hapsta] unknown command: ${target}`);
+      console.error(`[hstack] unknown command: ${target}`);
       console.error('');
       console.log(usage());
       process.exit(1);
@@ -367,11 +367,11 @@ function main() {
     return runNodeScript(cliRootDir, targetCmd.scriptRelPath, helpArgs);
   }
 
-  let resolved = resolveHapstaCommand(cmd);
+  let resolved = resolvehstackCommand(cmd);
   if (!resolved) {
     // Stack shorthand:
     // If the first token is not a known command, but it *is* an existing stack name,
-    // treat `hapsta <stack> <command> ...` as `hapsta stack <command> <stack> ...`.
+    // treat `hstack <stack> <command> ...` as `hstack stack <command> <stack> ...`.
     const stackName = cmd;
     const { envPath } = resolveStackEnvPath(stackName, process.env);
     const stackExists = existsSync(envPath);
@@ -379,22 +379,22 @@ function main() {
       const cmdIdx = rest.findIndex((a) => !a.startsWith('-'));
       if (cmdIdx < 0) {
         if (rest.includes('--help') || rest.includes('-h')) {
-          const stackCmd = resolveHapstaCommand('stack');
+          const stackCmd = resolvehstackCommand('stack');
           if (!stackCmd || stackCmd.kind !== 'node') {
-            console.error('[hapsta] internal error: missing stack command');
+            console.error('[hstack] internal error: missing stack command');
             process.exit(1);
           }
           return runNodeScript(cliRootDir, stackCmd.scriptRelPath, ['--help']);
         }
-        console.error(`[hapsta] missing command after stack name: ${stackName}`);
+        console.error(`[hstack] missing command after stack name: ${stackName}`);
         console.error('');
         console.error('Try one of:');
-        console.error(`  hapsta ${stackName} env list`);
-        console.error(`  hapsta ${stackName} dev`);
-        console.error(`  hapsta ${stackName} start`);
+        console.error(`  hstack ${stackName} env list`);
+        console.error(`  hstack ${stackName} dev`);
+        console.error(`  hstack ${stackName} start`);
         console.error('');
         console.error('Equivalent long form:');
-        console.error(`  hapsta stack <command> ${stackName} ...`);
+        console.error(`  hstack stack <command> ${stackName} ...`);
         process.exit(1);
       }
 
@@ -403,15 +403,15 @@ function main() {
       const post = rest.slice(cmdIdx + 1);
       const stackArgs = [stackSubcmd, stackName, ...preFlags, ...post];
 
-      resolved = resolveHapstaCommand('stack');
+      resolved = resolvehstackCommand('stack');
       if (!resolved || resolved.kind !== 'node') {
-        console.error('[hapsta] internal error: missing stack command');
+        console.error('[hstack] internal error: missing stack command');
         process.exit(1);
       }
       return runNodeScript(cliRootDir, resolved.scriptRelPath, stackArgs);
     }
 
-    console.error(`[hapsta] unknown command: ${cmd}`);
+    console.error(`[hstack] unknown command: ${cmd}`);
     console.error('');
     console.error(usage());
     process.exit(1);

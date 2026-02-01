@@ -78,13 +78,13 @@ function fileHasContent(path) {
 }
 
 function authLoginSuggestion(stackName) {
-  return stackName === 'main' ? 'hapsta auth login' : `hapsta stack auth ${stackName} login`;
+  return stackName === 'main' ? 'hstack auth login' : `hstack stack auth ${stackName} login`;
 }
 
 function authCopyFromSeedSuggestion(stackName) {
   if (stackName === 'main') return null;
   const from = resolveAuthSeedFromEnv(process.env);
-  return `hapsta stack auth ${stackName} copy-from ${from}`;
+  return `hstack stack auth ${stackName} copy-from ${from}`;
 }
 
 function resolveServerComponentForCurrentStack() {
@@ -179,7 +179,7 @@ async function cmdDevKey({ argv, json }) {
       // eslint-disable-next-line no-console
         console.log(
           bullets([
-          `${dim('save locally:')} ${cmdFmt('hapsta auth dev-key --set "<base64url-secret-or-backup-format>"')}`,
+          `${dim('save locally:')} ${cmdFmt('hstack auth dev-key --set "<base64url-secret-or-backup-format>"')}`,
           `${dim('or export for this shell:')} export HAPPIER_STACK_DEV_AUTH_SECRET_KEY="<base64url-secret>"`,
         ])
       );
@@ -414,7 +414,7 @@ async function cmdCopyFrom({ argv, json }) {
   const fromStackName = (positionals[1] ?? '').trim();
   if (!fromStackName) {
     throw new Error(
-      '[auth] usage: hapsta stack auth <name> copy-from <sourceStack|legacy> [--force] [--with-infra] [--json]  OR  hapsta auth copy-from <sourceStack|legacy> --all [--except=main,dev-auth] [--force] [--with-infra] [--json]\n' +
+      '[auth] usage: hstack stack auth <name> copy-from <sourceStack|legacy> [--force] [--with-infra] [--json]  OR  hstack auth copy-from <sourceStack|legacy> --all [--except=main,dev-auth] [--force] [--with-infra] [--json]\n' +
         'notes:\n' +
         '  - sourceStack can be a stack name (e.g. main, dev-auth)\n' +
         '  - legacy uses ~/.happy/{cli,server-light} as a source (best-effort)'
@@ -540,8 +540,8 @@ async function cmdCopyFrom({ argv, json }) {
 
   if (stackName === 'main' && !allowMain) {
     throw new Error(
-      '[auth] copy-from is intended for stack-scoped usage (e.g. hapsta stack auth <name> copy-from main), or pass --all.\n' +
-        'If you really intend to seed the main Hapsta install, re-run with: --allow-main'
+      '[auth] copy-from is intended for stack-scoped usage (e.g. hstack stack auth <name> copy-from main), or pass --all.\n' +
+        'If you really intend to seed the main hstack install, re-run with: --allow-main'
     );
   }
 
@@ -840,12 +840,12 @@ async function cmdStatus({ json }) {
   console.log(daemonLine);
   console.log(serverLine);
   if (!health.ok) {
-    const startHint = stackName === 'main' ? 'hapsta dev' : `hapsta stack dev ${stackName}`;
+    const startHint = stackName === 'main' ? 'hstack dev' : `hstack stack dev ${stackName}`;
     console.log(`  ↪ this stack does not appear to be running. Start it with: ${startHint}`);
     return;
   }
   if (auth.ok && daemon.status !== 'running') {
-    console.log(`  ↪ daemon is not running for this stack. If you expected it to be running, try: hapsta doctor`);
+    console.log(`  ↪ daemon is not running for this stack. If you expected it to be running, try: hstack doctor`);
   }
 }
 
@@ -989,30 +989,30 @@ async function main() {
   if (wantsHelp(argv, { flags }) || cmd === 'help') {
     printResult({
       json,
-      data: { commands: ['status', 'login', 'copy-from', 'dev-key'], stackScoped: 'hapsta stack auth <name> status|login|copy-from' },
+      data: { commands: ['status', 'login', 'copy-from', 'dev-key'], stackScoped: 'hstack stack auth <name> status|login|copy-from' },
       text: [
         '',
-        banner('auth', { subtitle: 'Login and auth seeding helpers for Hapsta.' }),
+        banner('auth', { subtitle: 'Login and auth seeding helpers for hstack.' }),
         '',
         sectionTitle('Usage (global)'),
         bullets([
-          `${dim('status:')} ${cmdFmt('hapsta auth status')} ${dim('[--json]')}`,
-          `${dim('login:')}  ${cmdFmt('hapsta auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
-          `${dim('seed:')}   ${cmdFmt('hapsta auth copy-from <sourceStack|legacy> --all')} ${dim('[--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]')}`,
-          `${dim('dev key:')} ${cmdFmt('hapsta auth dev-key')} ${dim('[--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]')}`,
+          `${dim('status:')} ${cmdFmt('hstack auth status')} ${dim('[--json]')}`,
+          `${dim('login:')}  ${cmdFmt('hstack auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
+          `${dim('seed:')}   ${cmdFmt('hstack auth copy-from <sourceStack|legacy> --all')} ${dim('[--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]')}`,
+          `${dim('dev key:')} ${cmdFmt('hstack auth dev-key')} ${dim('[--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]')}`,
         ]),
         '',
         sectionTitle('Usage (stack-scoped)'),
         bullets([
-          `${dim('status:')} ${cmdFmt('hapsta stack auth <name> status')} ${dim('[--json]')}`,
-          `${dim('login:')}  ${cmdFmt('hapsta stack auth <name> login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
-          `${dim('seed:')}   ${cmdFmt('hapsta stack auth <name> copy-from <sourceStack|legacy>')} ${dim('[--force] [--with-infra] [--link] [--json]')}`,
+          `${dim('status:')} ${cmdFmt('hstack stack auth <name> status')} ${dim('[--json]')}`,
+          `${dim('login:')}  ${cmdFmt('hstack stack auth <name> login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
+          `${dim('seed:')}   ${cmdFmt('hstack stack auth <name> copy-from <sourceStack|legacy>')} ${dim('[--force] [--with-infra] [--link] [--json]')}`,
         ]),
         '',
         sectionTitle('Advanced'),
         bullets([
-          `${dim('UX labels only:')} ${cmdFmt('hapsta auth login --context=selfhost|dev|stack')}`,
-          `${dim('import legacy creds into main:')} ${cmdFmt('hapsta auth copy-from legacy --allow-main')} ${dim('[--link] [--force]')}`,
+          `${dim('UX labels only:')} ${cmdFmt('hstack auth login --context=selfhost|dev|stack')}`,
+          `${dim('import legacy creds into main:')} ${cmdFmt('hstack auth copy-from legacy --allow-main')} ${dim('[--link] [--force]')}`,
         ]),
       ].join('\n'),
     });

@@ -33,7 +33,7 @@ async function runOk(cmd, args, { cwd, env }) {
   return res;
 }
 
-test('hapsta wt archive detaches and moves a git worktree (preserving uncommitted changes)', async () => {
+test('hstack wt archive detaches and moves a git worktree (preserving uncommitted changes)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-archive-'));
@@ -107,7 +107,7 @@ test('hapsta wt archive detaches and moves a git worktree (preserving uncommitte
   assert.notEqual(branchExists.code, 0, 'expected source repo branch deleted');
 });
 
-test('hapsta wt archive refuses to break stacks unless --detach-stacks is provided', async () => {
+test('hstack wt archive refuses to break stacks unless --detach-stacks is provided', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-archive-stacks-'));
@@ -173,7 +173,7 @@ test('hapsta wt archive refuses to break stacks unless --detach-stacks is provid
   assert.ok(gitStat.isDirectory(), 'expected archived .git to be a directory (detached repo)');
 });
 
-test('hapsta wt archive can archive a broken git worktree (missing .git/worktrees entry)', async () => {
+test('hstack wt archive can archive a broken git worktree (missing .git/worktrees entry)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-archive-broken-'));

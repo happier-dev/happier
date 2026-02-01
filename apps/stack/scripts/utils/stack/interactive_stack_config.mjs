@@ -62,7 +62,7 @@ export async function interactiveNew({ rootDir, rl, defaults, deps = {} }) {
   }
 
   if (out.repo == null) {
-    // NOTE: promptWorktreeSource is still component-named internally; for Hapsta, this is the monorepo checkout.
+    // NOTE: promptWorktreeSource is still component-named internally; for hstack, this is the monorepo checkout.
     out.repo = await promptWorktreeSourceFn({
       rl,
       rootDir,

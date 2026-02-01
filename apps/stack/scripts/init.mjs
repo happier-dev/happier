@@ -50,10 +50,10 @@ async function loadEnvFile(path, { override = false, overridePrefix = null } = {
 
 function isWorkspaceBootstrapped(workspaceDir) {
   // Heuristic: if the expected component repos exist in the workspace, we consider bootstrap "already done"
-  // and avoid re-running the interactive bootstrap wizard from `hapsta init`.
+  // and avoid re-running the interactive bootstrap wizard from `hstack init`.
   //
   // Users can always re-run bootstrap explicitly:
-  //   hapsta bootstrap --interactive
+  //   hstack bootstrap --interactive
   try {
     const componentsDir = join(workspaceDir, 'components');
     const ui = join(componentsDir, 'happy', 'package.json');
@@ -82,10 +82,10 @@ async function ensurePathInstalled({ homeDir }) {
   const bashrc = join(homedir(), '.bashrc');
   const bashProfile = join(homedir(), '.bash_profile');
   const fishDir = join(homedir(), '.config', 'fish', 'conf.d');
-  const fishConf = join(fishDir, 'hapsta.fish');
+  const fishConf = join(fishDir, 'hstack.fish');
 
-  const markerStart = '# >>> hapsta >>>';
-  const markerEnd = '# <<< hapsta <<<';
+  const markerStart = '# >>> hstack >>>';
+  const markerEnd = '# <<< hstack <<<';
 
   const lineSh = `export PATH="${escapeForDoubleQuotes(join(homeDir, 'bin'))}:$PATH"`;
   const blockSh = `\n${markerStart}\n${lineSh}\n${markerEnd}\n`;
@@ -135,14 +135,14 @@ async function main() {
         banner('init', { subtitle: 'Initialize ~/.happier-stack (runtime + shims).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hapsta init')} [--canonical-home-dir=/path] [--home-dir=/path] [--workspace-dir=/path] [--runtime-dir=/path] [--storage-dir=/path] [--cli-root-dir=/path] [--tailscale-bin=/path] [--tailscale-cmd-timeout-ms=MS] [--tailscale-enable-timeout-ms=MS] [--tailscale-enable-timeout-ms-auto=MS] [--tailscale-reset-timeout-ms=MS] [--install-path] [--no-runtime] [--force-runtime] [--no-bootstrap] [--] [bootstrap args...]`,
+        `  ${cyan('hstack init')} [--canonical-home-dir=/path] [--home-dir=/path] [--workspace-dir=/path] [--runtime-dir=/path] [--storage-dir=/path] [--cli-root-dir=/path] [--tailscale-bin=/path] [--tailscale-cmd-timeout-ms=MS] [--tailscale-enable-timeout-ms=MS] [--tailscale-enable-timeout-ms-auto=MS] [--tailscale-reset-timeout-ms=MS] [--install-path] [--no-runtime] [--force-runtime] [--no-bootstrap] [--] [bootstrap args...]`,
         '',
         sectionTitle('what it does:'),
         bullets([
           `${cyan('home')} — stores runtime, shims, caches (default: ${cyan('~/.happier-stack')})`,
           `${cyan('workspace')} — where component checkouts live (default: ${cyan('~/.happier-stack/workspace')})`,
           `${cyan('runtime')} — stable install used by services/SwiftBar (default: ${cyan('~/.happier-stack/runtime')})`,
-          `${cyan('shims')} — installs ${cyan('hapsta')} under ${cyan('~/.happier-stack/bin')}`,
+          `${cyan('shims')} — installs ${cyan('hstack')} under ${cyan('~/.happier-stack/bin')}`,
         ]),
         '',
         sectionTitle('notes:'),
@@ -151,7 +151,7 @@ async function main() {
           `Runtime install is skipped if the same version is already installed (use ${cyan('--force-runtime')} to reinstall).`,
           `Set ${cyan('HAPPIER_STACK_INIT_NO_RUNTIME=1')} to persist skipping runtime installs on this machine.`,
           `Optional: ${cyan('--install-path')} adds shims to your shell PATH (idempotent).`,
-          `By default, runs ${cyan('hapsta bootstrap --interactive')} at the end (TTY only) if components are missing.`,
+          `By default, runs ${cyan('hstack bootstrap --interactive')} at the end (TTY only) if components are missing.`,
         ]),
         '',
       ].join('\n')
@@ -161,7 +161,7 @@ async function main() {
 
   const cliRootDir = getCliRootDir();
 
-  // Important: `hapsta init` must be idempotent and must not "forget" custom dirs from a prior install.
+  // Important: `hstack init` must be idempotent and must not "forget" custom dirs from a prior install.
   //
   // Other scripts load this pointer via `scripts/utils/env.mjs`, but `init.mjs` is often run before
   // anything else (or directly from a repo checkout). So we load it here too.
@@ -307,7 +307,7 @@ async function main() {
     }
   }
 
-  const hapstaShimPath = join(homeDir, 'bin', 'hapsta');
+  const hstackShimPath = join(homeDir, 'bin', 'hstack');
   const happierStackShimPath = join(homeDir, 'bin', 'happier-stack');
   const happyShimPath = join(homeDir, 'bin', 'happy');
   const shim = [
@@ -360,24 +360,24 @@ async function main() {
     '  CLI_ROOT_DIR="$(grep -E \'^HAPPIER_STACK_CLI_ROOT_DIR=\' "$ENV_FILE" | head -n 1 | sed \'s/^HAPPIER_STACK_CLI_ROOT_DIR=//\')" || true',
     'fi',
     'if [[ -n "$CLI_ROOT_DIR" ]]; then',
-    '  CLI_ENTRY="$CLI_ROOT_DIR/bin/hapsta.mjs"',
+    '  CLI_ENTRY="$CLI_ROOT_DIR/bin/hstack.mjs"',
     '  if [[ -f "$CLI_ENTRY" ]]; then',
     '    exec "$NODE_BIN" "$CLI_ENTRY" "$@"',
     '  fi',
     'fi',
     'RUNTIME_DIR="${HAPPIER_STACK_RUNTIME_DIR:-$HOME_DIR/runtime}"',
-    'ENTRY="$RUNTIME_DIR/node_modules/@happier-dev/stack/bin/hapsta.mjs"',
+    'ENTRY="$RUNTIME_DIR/node_modules/@happier-dev/stack/bin/hstack.mjs"',
     'if [[ -f "$ENTRY" ]]; then',
     '  exec "$NODE_BIN" "$ENTRY" "$@"',
     'fi',
-    'echo "[hapsta] missing runtime install; run: hapsta init --force-runtime" >&2',
+    'echo "[hstack] missing runtime install; run: hstack init --force-runtime" >&2',
     'exit 127',
     '',
   ].join('\n');
 
-  await writeExecutable(hapstaShimPath, shim);
-  await writeExecutable(happierStackShimPath, `#!/bin/bash\nset -euo pipefail\nexec \"${hapstaShimPath}\" \"$@\"\n`);
-  await writeExecutable(happyShimPath, `#!/bin/bash\nset -euo pipefail\nexec \"${hapstaShimPath}\" happy \"$@\"\n`);
+  await writeExecutable(hstackShimPath, shim);
+  await writeExecutable(happierStackShimPath, `#!/bin/bash\nset -euo pipefail\nexec \"${hstackShimPath}\" \"$@\"\n`);
+  await writeExecutable(happyShimPath, `#!/bin/bash\nset -euo pipefail\nexec \"${hstackShimPath}\" happy \"$@\"\n`);
 
   let didInstallPath = false;
   if (argv.includes('--install-path')) {
@@ -404,9 +404,9 @@ async function main() {
 
   if (!argv.includes('--install-path') || !didInstallPath) {
     console.log(sectionTitle('PATH'));
-    console.log(dim('To use `hapsta` (and `happier-stack`) from any terminal, add shims to PATH:'));
+    console.log(dim('To use `hstack` (and `happier-stack`) from any terminal, add shims to PATH:'));
     console.log(cmd(`export PATH="${join(homeDir, 'bin')}:$PATH"`));
-    console.log(dim(`(or re-run: ${cmd('hapsta init --install-path')})`));
+    console.log(dim(`(or re-run: ${cmd('hstack init --install-path')})`));
     console.log('');
   } else {
     console.log(dim('Note: restart your terminal (or source your shell config) to pick up PATH changes.'));
@@ -440,17 +440,17 @@ async function main() {
 
   if (wantBootstrap && alreadyBootstrapped && !bootstrapExplicit) {
     console.log(`${green('✓')} bootstrap already set up; skipping`);
-    console.log(`${dim('Tip: for guided onboarding run:')} ${cmd('hapsta setup')}`);
+    console.log(`${dim('Tip: for guided onboarding run:')} ${cmd('hstack setup')}`);
     console.log('');
   }
 
-  // When `hapsta setup` drives init, avoid printing confusing “next steps”.
+  // When `hstack setup` drives init, avoid printing confusing “next steps”.
   if (invokedBySetup) {
     return;
   }
 
   console.log(sectionTitle('Next steps'));
-  console.log(bullets([cmd(`export PATH="${join(homeDir, 'bin')}:$PATH"`), cmd('hapsta setup')]));
+  console.log(bullets([cmd(`export PATH="${join(homeDir, 'bin')}:$PATH"`), cmd('hstack setup')]));
 }
 
 main().catch((err) => {

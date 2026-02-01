@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('hapsta wt use switches all monorepo group components when target is a monorepo worktree', async () => {
+test('hstack wt use switches all monorepo group components when target is a monorepo worktree', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-use-mono-'));

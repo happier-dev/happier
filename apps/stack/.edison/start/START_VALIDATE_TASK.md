@@ -1,4 +1,4 @@
-# START_VALIDATE_TASK (Hapsta validation “slash command”)
+# START_VALIDATE_TASK (hstack validation “slash command”)
 
 Use this when you are asked to validate a task in **happier-dev**.
 
@@ -9,13 +9,13 @@ Validation must be **stack-scoped** and must reflect the *actual* component work
 Always run via:
 
 ```bash
-hapsta edison --stack=<stack> -- <edison args...>
+hstack edison --stack=<stack> -- <edison args...>
 ```
 
-Tip: if the command includes a task id / QA id, `hapsta edison` can often infer the stack from frontmatter, so this also works:
+Tip: if the command includes a task id / QA id, `hstack edison` can often infer the stack from frontmatter, so this also works:
 
 ```bash
-hapsta edison -- evidence capture <task-id>
+hstack edison -- evidence capture <task-id>
 ```
 
 ## What to validate (recommended)
@@ -34,7 +34,7 @@ hapsta edison -- evidence capture <task-id>
 3. Capture required evidence:
 
 ```bash
-hapsta edison --stack=<stack> -- evidence capture <task-id>
+hstack edison --stack=<stack> -- evidence capture <task-id>
 ```
 
 Presets:
@@ -50,7 +50,7 @@ Validation-only requirement (MANDATORY):
 - CodeRabbit does NOT run automatically; you must capture it explicitly when missing:
 
 ```bash
-hapsta edison --stack=<stack> -- evidence capture <task-id> --preset standard-validate --only coderabbit
+hstack edison --stack=<stack> -- evidence capture <task-id> --preset standard-validate --only coderabbit
 ```
 
 4. If the validator needs a running server:
@@ -58,7 +58,7 @@ hapsta edison --stack=<stack> -- evidence capture <task-id> --preset standard-va
    - Do not manually start/stop random daemons or kill all stacks.
 
 5. Mark outcome (depending on workflow):
-   - If you are a validator, follow the QA workflow (`qa validate`, `qa done`, etc.) via `hapsta edison`.
+   - If you are a validator, follow the QA workflow (`qa validate`, `qa done`, etc.) via `hstack edison`.
 
 ## Getting to a “validatable” state (quick checklist)
 
@@ -71,5 +71,5 @@ hapsta edison --stack=<stack> -- evidence capture <task-id> --preset standard-va
 
 - **Stack mismatch**: rerun with the correct stack.
 - **Missing worktree pinning**: rerun scaffold or repoint stack component dirs to worktrees.
-- **Auth missing**: `hapsta stack auth <stack> copy-from main`
+- **Auth missing**: `hstack stack auth <stack> copy-from main`
 

@@ -154,7 +154,7 @@ async function runSetupPreflight({ profile, serverComponent, tailscaleWanted, me
   if (!gitOk) {
     throw new Error(
       `[setup] missing prerequisite: git\n` +
-        `Hapsta needs git to clone/update the Happier repo.\n` +
+        `hstack needs git to clone/update the Happier repo.\n` +
         `Fix: install git, then re-run setup.`
     );
   }
@@ -271,7 +271,7 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
     }
     // If a user wants to change or recreate:
     // eslint-disable-next-line no-console
-    console.log(dim(`Tip: to recreate the seed stack, run: ${yellow('hapsta stack create-dev-auth-seed')}`));
+    console.log(dim(`Tip: to recreate the seed stack, run: ${yellow('hstack stack create-dev-auth-seed')}`));
     return;
   }
 
@@ -305,7 +305,7 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
 
     if (!wantLoginNow) {
       // eslint-disable-next-line no-console
-      console.log(dim(`Tip: run ${yellow('hapsta stack create-dev-auth-seed dev-auth --login')} anytime to sign in.`));
+      console.log(dim(`Tip: run ${yellow('hstack stack create-dev-auth-seed dev-auth --login')} anytime to sign in.`));
       return;
     }
 
@@ -336,7 +336,7 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
     // eslint-disable-next-line no-console
     console.log(bold('Automatic sign-in for new stacks'));
     // eslint-disable-next-line no-console
-    console.log(dim(`Enabled: when you create a new stack, Hapsta will reuse auth from ${cyan(seedChoice)} automatically.`));
+    console.log(dim(`Enabled: when you create a new stack, hstack will reuse auth from ${cyan(seedChoice)} automatically.`));
     // eslint-disable-next-line no-console
     console.log(`${dim('Seed from:')} ${cyan(seedChoice)}`);
     // eslint-disable-next-line no-console
@@ -391,15 +391,15 @@ async function maybeConfigureAuthDefaults({ rootDir, profile, interactive }) {
     // eslint-disable-next-line no-console
     console.log(dim(`Stored at: ${sourcesAfter.devKeyPath}`));
     // eslint-disable-next-line no-console
-    console.log(dim(`Tip: to print it later, run: ${yellow('hapsta auth dev-key --print')}`));
+    console.log(dim(`Tip: to print it later, run: ${yellow('hstack auth dev-key --print')}`));
   } else {
     // eslint-disable-next-line no-console
-    console.log(dim(`Tip: to store a dev key later, run: ${yellow('hapsta auth dev-key --set "<key>"')}`));
+    console.log(dim(`Tip: to store a dev key later, run: ${yellow('hstack auth dev-key --set "<key>"')}`));
   }
 }
 
 async function cmdSetup({ rootDir, argv }) {
-  // Alias: `hapsta setup pr ...` (maintainer-friendly, idempotent PR setup).
+  // Alias: `hstack setup pr ...` (maintainer-friendly, idempotent PR setup).
   // This delegates to `tools setup-pr` (implemented in setup_pr.mjs) so the logic stays centralized.
   const firstPositional = argv.find((a) => !a.startsWith('--')) ?? '';
   if (firstPositional === 'pr') {
@@ -444,19 +444,19 @@ async function cmdSetup({ rootDir, argv }) {
       },
       text: [
         '[setup] usage:',
-        '  hapsta setup',
-        '  hapsta setup --profile=selfhost',
-        '  hapsta setup --profile=dev',
-        '  hapsta setup --profile=dev --workspace-dir=~/Development/happy',
-        '  hapsta setup --happy-repo=happier-dev/happier',
-        '  hapsta tools setup-pr --repo=<pr-url|number>',
-        '  hapsta setup --auth',
-        '  hapsta setup --no-auth',
+        '  hstack setup',
+        '  hstack setup --profile=selfhost',
+        '  hstack setup --profile=dev',
+        '  hstack setup --profile=dev --workspace-dir=~/Development/happy',
+        '  hstack setup --happy-repo=happier-dev/happier',
+        '  hstack tools setup-pr --repo=<pr-url|number>',
+        '  hstack setup --auth',
+        '  hstack setup --no-auth',
         '',
 	        'notes:',
 	        '  - selfhost profile is a guided installer for running Happy locally (optionally with Tailscale + autostart).',
 	        '  - dev profile prepares a development workspace (bootstrap wizard + optional dev tooling).',
-	        '  - for PR review, use `hapsta tools review-pr` / `hapsta tools setup-pr`.',
+	        '  - for PR review, use `hstack tools review-pr` / `hstack tools setup-pr`.',
 	        '  - server selection: use --server=... or the shorthand --server-flavor=light|full',
 	      ].join('\n'),
 	    });
@@ -468,7 +468,7 @@ async function cmdSetup({ rootDir, argv }) {
   if (!profile && interactive) {
     profile = await withRl(async (rl) => {
       return await promptSelect(rl, {
-        title: bold(`✨ ${cyan('Hapsta')} setup ✨\n\nWhat is your goal?`),
+        title: bold(`✨ ${cyan('hstack')} setup ✨\n\nWhat is your goal?`),
         options: [
           { label: `${cyan('Self-host')}: use Happy on this machine`, value: 'selfhost' },
           { label: `${cyan('Development')}: worktrees + stacks + contributor workflows`, value: 'dev' },
@@ -551,7 +551,7 @@ async function cmdSetup({ rootDir, argv }) {
       bold('What will happen:'),
       profile === 'selfhost'
         ? [
-            `- ${cyan('init')}: set up Hapsta home + shims`,
+            `- ${cyan('init')}: set up hstack home + shims`,
             `- ${cyan('bootstrap')}: clone/install the repo`,
             `- ${cyan('start')}: start Happy now (recommended)`,
             `- ${cyan('login')}: guided login (recommended)`,
@@ -560,7 +560,7 @@ async function cmdSetup({ rootDir, argv }) {
           ]
         : [
             `- ${cyan('workspace')}: choose where the repo + worktrees live`,
-            `- ${cyan('init')}: set up Hapsta home + shims`,
+            `- ${cyan('init')}: set up hstack home + shims`,
             `- ${cyan('bootstrap')}: clone/install the repo + dev tooling`,
             `- ${cyan('auth')}: (recommended) set up a ${cyan('dev-auth')} seed stack (login once, reuse everywhere)`,
             `- ${cyan('stacks')}: (recommended) next you’ll create an isolated dev stack for day-to-day work (keeps main stable)`,
@@ -642,7 +642,7 @@ async function cmdSetup({ rootDir, argv }) {
     const suggested = defaultWorkspaceDir;
     const helpLines = [
       bold('Workspace location'),
-      dim('This is where Hapsta will keep:'),
+      dim('This is where hstack will keep:'),
       `- ${dim('repo')}:      ${cyan(join(suggested, 'happier'))}`,
       `- ${dim('worktrees')}: ${cyan(join(suggested, '.worktrees'))}`,
       '',
@@ -828,13 +828,13 @@ async function cmdSetup({ rootDir, argv }) {
           `${bold('Command shortcuts')}\n` +
           `${dim(
             `Optional: add ${cyan(join(getCanonicalHomeDir(), 'bin'))} to your shell PATH so you can run ${cyan(
-              'hapsta'
+              'hstack'
             )} from any terminal.`
           )}\n` +
-          `${dim(`If you skip this, you can always run commands via ${cyan('npx --yes -p @happier-dev/stack hapsta ...')}.`)}`,
+          `${dim(`If you skip this, you can always run commands via ${cyan('npx --yes -p @happier-dev/stack hstack ...')}.`)}`,
         options: [
-          { label: `yes (${green('recommended')}, default) — enable ${cyan('hapsta')} in your terminal`, value: true },
-          { label: `no — keep using ${cyan('npx --yes -p @happier-dev/stack hapsta ...')}`, value: false },
+          { label: `yes (${green('recommended')}, default) — enable ${cyan('hstack')} in your terminal`, value: true },
+          { label: `no — keep using ${cyan('npx --yes -p @happier-dev/stack hstack ...')}`, value: false },
         ],
         defaultIndex: 0,
       });
@@ -936,7 +936,7 @@ async function cmdSetup({ rootDir, argv }) {
 
   // 1) Ensure plumbing exists (runtime + shims + pointer env). Avoid auto-bootstrap here; setup drives bootstrap explicitly.
   await runNodeScriptMaybeQuiet({
-    label: 'init hapsta home',
+    label: 'init hstack home',
     rel: 'scripts/init.mjs',
     args: [
       '--no-bootstrap',
@@ -970,7 +970,7 @@ async function cmdSetup({ rootDir, argv }) {
       rootDir,
       rel: 'scripts/install.mjs',
       // Dev setup: use Expo dev server, so exporting a production web bundle is wasted work.
-      // Users can always run `hapsta build` later if they want `hapsta start` to serve a prebuilt UI.
+      // Users can always run `hstack build` later if they want `hstack start` to serve a prebuilt UI.
       args: ['--interactive', '--clone', '--no-ui-build'],
       interactiveChild: true,
     });
@@ -1053,7 +1053,7 @@ async function cmdSetup({ rootDir, argv }) {
     const tailscaleOk = await commandExists('tailscale');
     if (!tailscaleOk) {
       // eslint-disable-next-line no-console
-      console.log(`${yellow('!')} Tailscale not installed. To enable remote HTTPS later: ${cyan('hapsta tailscale enable')}`);
+      console.log(`${yellow('!')} Tailscale not installed. To enable remote HTTPS later: ${cyan('hstack tailscale enable')}`);
       await openUrlInBrowser('https://tailscale.com/download').catch(() => {});
     } else if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
       // eslint-disable-next-line no-console
@@ -1082,7 +1082,7 @@ async function cmdSetup({ rootDir, argv }) {
   // 7) Optional: start now (without requiring setup to keep running).
   if (startNow) {
     // Self-host UX: ensure the prebuilt UI exists so the light server can serve it immediately.
-    // (Without this, `hapsta start` will refuse to serve UI when the build dir is missing.)
+    // (Without this, `hstack start` will refuse to serve UI when the build dir is missing.)
     const serveUiWanted = (process.env.HAPPIER_STACK_SERVE_UI ?? '1').toString().trim() !== '0';
     if (profile === 'selfhost' && serveUiWanted) {
       const uiBuildDir = process.env.HAPPIER_STACK_UI_BUILD_DIR?.trim()
@@ -1136,7 +1136,7 @@ async function cmdSetup({ rootDir, argv }) {
 
         if (!existsSync(accessKey)) {
           // eslint-disable-next-line no-console
-          console.log('[setup] auth: not completed yet (missing access.key). You can retry with: hapsta auth login');
+          console.log('[setup] auth: not completed yet (missing access.key). You can retry with: hstack auth login');
         } else {
           // eslint-disable-next-line no-console
           console.log('[setup] auth: complete');
@@ -1144,7 +1144,7 @@ async function cmdSetup({ rootDir, argv }) {
       }
     } else {
       // eslint-disable-next-line no-console
-      console.log('[setup] tip: when you are ready, authenticate with: hapsta auth login');
+      console.log('[setup] tip: when you are ready, authenticate with: hstack auth login');
     }
 
     await openUrlInBrowser(openTarget).catch(() => {});
@@ -1155,9 +1155,9 @@ async function cmdSetup({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log('[setup] auth: skipped because Happy was not started. When ready:');
     // eslint-disable-next-line no-console
-    console.log('  hapsta start');
+    console.log('  hstack start');
     // eslint-disable-next-line no-console
-    console.log('  hapsta auth login');
+    console.log('  hstack auth login');
   }
 
   // Final tips (keep short).
@@ -1170,9 +1170,9 @@ async function cmdSetup({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(dim('Happy is ready. If you need help later, run:'));
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('hapsta doctor')}`);
+    console.log(`  ${yellow('hstack doctor')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('hapsta stop --yes')}`);
+    console.log(`  ${yellow('hstack stop --yes')}`);
   } else {
     // eslint-disable-next-line no-console
     console.log('');
@@ -1181,15 +1181,15 @@ async function cmdSetup({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(dim('Next steps (development):'));
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('hapsta stack new dev --interactive')} ${dim('# create a dedicated dev stack (recommended)')}`);
+    console.log(`  ${yellow('hstack stack new dev --interactive')} ${dim('# create a dedicated dev stack (recommended)')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('hapsta stack dev dev')}              ${dim('# run that stack (server + daemon + Expo web)')}`);
+    console.log(`  ${yellow('hstack stack dev dev')}              ${dim('# run that stack (server + daemon + Expo web)')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('hapsta wt new ...')}   ${dim('# create a worktree for a branch/PR')}`);
+    console.log(`  ${yellow('hstack wt new ...')}   ${dim('# create a worktree for a branch/PR')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('hapsta stack new ...')} ${dim('# create an isolated runtime stack')}`);
+    console.log(`  ${yellow('hstack stack new ...')} ${dim('# create an isolated runtime stack')}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${yellow('hapsta stack dev <name>')} ${dim('# run a specific stack')}`);
+    console.log(`  ${yellow('hstack stack dev <name>')} ${dim('# run a specific stack')}`);
   }
 }
 

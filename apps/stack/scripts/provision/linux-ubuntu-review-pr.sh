@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Provision an Ubuntu VM for running Hapsta (Happier Stack) in an isolated Linux environment.
+# Provision an Ubuntu VM for running hstack (Happier Stack) in an isolated Linux environment.
 #
 # Intended usage (inside a Lima VM):
 #   curl -fsSL https://raw.githubusercontent.com/leeroybrun/happier-dev/main/apps/stack/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \
@@ -9,7 +9,7 @@ set -euo pipefail
 #     && /tmp/linux-ubuntu-review-pr.sh
 #
 # After provisioning, run:
-#   npx --yes -p @happier-dev/stack@latest hapsta setup --profile=dev --bind=loopback
+#   npx --yes -p @happier-dev/stack@latest hstack setup --profile=dev --bind=loopback
 
 require_cmd() {
   command -v "$1" >/dev/null 2>&1
@@ -63,4 +63,4 @@ echo ""
 echo "[provision] done."
 echo ""
 echo "Next:"
-echo "  npx --yes -p @happier-dev/stack@latest hapsta setup --profile=dev --bind=loopback"
+echo "  npx --yes -p @happier-dev/stack@latest hstack setup --profile=dev --bind=loopback"

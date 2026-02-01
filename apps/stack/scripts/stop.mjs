@@ -16,13 +16,13 @@ function usage() {
     '',
     sectionTitle('Usage'),
     bullets([
-      `${dim('stop all (non-interactive):')} ${cmd('hapsta stop --yes')}`,
-      `${dim('exclude some stacks:')} ${cmd('hapsta stop --except-stacks=main,exp1 --yes')}`,
-      `${dim('aggressive:')} ${cmd('hapsta stop --yes --aggressive')} ${dim('(also stops daemon-tracked sessions)')}`,
-      `${dim('sweep-owned:')} ${cmd('hapsta stop --yes --sweep-owned')} ${dim('(final owned-process sweep)')}`,
-      `${dim('no docker:')} ${cmd('hapsta stop --yes --no-docker')}`,
-      `${dim('no service:')} ${cmd('hapsta stop --yes --no-service')}`,
-      `${dim('json:')} ${cmd('hapsta stop --yes --json')}`,
+      `${dim('stop all (non-interactive):')} ${cmd('hstack stop --yes')}`,
+      `${dim('exclude some stacks:')} ${cmd('hstack stop --except-stacks=main,exp1 --yes')}`,
+      `${dim('aggressive:')} ${cmd('hstack stop --yes --aggressive')} ${dim('(also stops daemon-tracked sessions)')}`,
+      `${dim('sweep-owned:')} ${cmd('hstack stop --yes --sweep-owned')} ${dim('(final owned-process sweep)')}`,
+      `${dim('no docker:')} ${cmd('hstack stop --yes --no-docker')}`,
+      `${dim('no service:')} ${cmd('hstack stop --yes --no-service')}`,
+      `${dim('json:')} ${cmd('hstack stop --yes --json')}`,
     ]),
     '',
     sectionTitle('What it does'),
@@ -95,7 +95,7 @@ async function main() {
     console.log('');
     console.log(sectionTitle('Proceed'));
     // eslint-disable-next-line no-console
-    console.log(bullets([`${dim('re-run:')} ${cmd('hapsta stop --yes')}`]));
+    console.log(bullets([`${dim('re-run:')} ${cmd('hstack stop --yes')}`]));
     process.exit(1);
   }
 

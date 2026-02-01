@@ -1,11 +1,11 @@
-# START_PLAN_FEATURE (Hapsta feature planning “slash command”)
+# START_PLAN_FEATURE (hstack feature planning “slash command”)
 
 Use this when you are asked to plan a new feature/change in **happier-dev**.
 
 ## Goal
 
 Produce a plan that is:
-- **worktree + stack enforced** (Hapsta discipline)
+- **worktree + stack enforced** (hstack discipline)
 - decomposed into **parent → track → component** tasks
 - ready for safe parallel work across multiple components/worktrees
 
@@ -28,7 +28,7 @@ Frontmatter minimum:
 Recommended creation command (then edit the created file to fill frontmatter):
 
 ```bash
-hapsta edison -- task new --id <id> --slug <slug>
+hstack edison -- task new --id <id> --slug <slug>
 ```
 
 Then open the created task file under `.project/tasks/todo/` and set:
@@ -45,7 +45,7 @@ Common tracks:
 ### 4) Scaffold everything (recommended)
 
 ```bash
-hapsta edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes
+hstack edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes
 ```
 
 This creates:
@@ -59,7 +59,7 @@ This creates:
 - Only claim **component** tasks.
 - Never edit default checkouts.
 - Always run within stack context for evidence:
-  - `hapsta edison --stack=<stack> -- evidence capture <task-id>`
+  - `hstack edison --stack=<stack> -- evidence capture <task-id>`
 
 ### 6) “Definition of Done” for the plan
 

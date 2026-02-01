@@ -13,22 +13,22 @@ The recommended approach is **Tailscale Serve**, which gives you an `https://*.t
 2) Enable Serve:
 
 ```bash
-hapsta tailscale enable
-hapsta tailscale url
+hstack tailscale enable
+hstack tailscale url
 ```
 
-3) Open the URL from `hapsta tailscale url` on another device (also signed into Tailscale).
+3) Open the URL from `hstack tailscale url` on another device (also signed into Tailscale).
 
 Tip: on iOS, you can “Add to Home Screen” from Safari to use it like an app.
 
 ## Automation
 
-If Serve is already configured, `hapsta start` will automatically prefer the `https://*.ts.net` URL for “public” links unless you explicitly set `HAPPIER_STACK_SERVER_URL`.
+If Serve is already configured, `hstack start` will automatically prefer the `https://*.ts.net` URL for “public” links unless you explicitly set `HAPPIER_STACK_SERVER_URL`.
 
-You can also ask hapsta to enable Serve automatically at boot:
+You can also ask hstack to enable Serve automatically at boot:
 
 ```bash
-HAPPIER_STACK_TAILSCALE_SERVE=1 hapsta start
+HAPPIER_STACK_TAILSCALE_SERVE=1 hstack start
 ```
 
 Useful knobs:

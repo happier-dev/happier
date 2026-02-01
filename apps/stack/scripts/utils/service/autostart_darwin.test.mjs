@@ -15,9 +15,9 @@ test('buildLaunchdPath includes node dir and common tool paths', () => {
   assert.ok(p.includes('/bin'), 'includes /bin');
 });
 
-test('pickLaunchdProgramArgs uses stable hapsta shim when present', async () => {
+test('pickLaunchdProgramArgs uses stable hstack shim when present', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-home-'));
-  const shim = join(dir, 'bin', 'hapsta');
+  const shim = join(dir, 'bin', 'hstack');
   await mkdir(join(dir, 'bin'), { recursive: true });
   await writeFile(shim, '#!/bin/sh\necho ok\n', { encoding: 'utf-8' });
 
@@ -33,14 +33,14 @@ test('pickLaunchdProgramArgs uses stable hapsta shim when present', async () => 
   }
 });
 
-test('pickLaunchdProgramArgs falls back to node + hapsta.mjs when shim missing', () => {
+test('pickLaunchdProgramArgs falls back to node + hstack.mjs when shim missing', () => {
   const prev = process.env.HAPPIER_STACK_CANONICAL_HOME_DIR;
   process.env.HAPPIER_STACK_CANONICAL_HOME_DIR = '/definitely-not-a-real-path';
   try {
     const execPath = '/usr/local/bin/node';
     const args = pickLaunchdProgramArgs({ rootDir: '/cli/root', execPath });
     assert.equal(args[0], execPath);
-    assert.ok(String(args[1]).endsWith('/bin/hapsta.mjs'));
+    assert.ok(String(args[1]).endsWith('/bin/hstack.mjs'));
     assert.equal(args[2], 'start');
   } finally {
     if (prev == null) delete process.env.HAPPIER_STACK_CANONICAL_HOME_DIR;

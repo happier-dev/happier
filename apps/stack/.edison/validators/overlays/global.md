@@ -1,5 +1,5 @@
 <!-- EXTEND: tech-stack -->
-## Hapsta evidence-first policy (CRITICAL)
+## hstack evidence-first policy (CRITICAL)
 
 When validating tasks in `happier-dev`, do **not** run ad-hoc `git` commands such as:
 

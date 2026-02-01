@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
 
-import { getHapstaRegistry } from './cli_registry.mjs';
+import { gethstackRegistry } from './cli_registry.mjs';
 
 function cliRootDir() {
   // scripts/utils/cli/* -> scripts/utils -> scripts -> repo root
@@ -12,15 +12,15 @@ function cliRootDir() {
 
 function runOrThrow(label, args) {
   const root = cliRootDir();
-  const bin = join(root, 'bin', 'hapsta.mjs');
+  const bin = join(root, 'bin', 'hstack.mjs');
   const res = spawnSync(process.execPath, [bin, ...args], { stdio: 'inherit', cwd: root, env: process.env });
   if (res.status !== 0) {
-    throw new Error(`[smoke_help] failed (${label}): node bin/hapsta.mjs ${args.join(' ')}`);
+    throw new Error(`[smoke_help] failed (${label}): node bin/hstack.mjs ${args.join(' ')}`);
   }
 }
 
 function visibleCommands() {
-  const { commands } = getHapstaRegistry();
+  const { commands } = gethstackRegistry();
   return commands.filter((c) => !c.hidden).map((c) => c.name);
 }
 

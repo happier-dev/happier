@@ -29,7 +29,7 @@ async function touchWorktree(dir) {
   await writeFile(join(dir, '.git'), 'gitdir: /dev/null\n', 'utf-8');
 }
 
-test('hapsta stack wt <stack> -- list defaults to active-only (no exhaustive enumeration)', async () => {
+test('hstack stack wt <stack> -- list defaults to active-only (no exhaustive enumeration)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-wt-list-'));
@@ -91,7 +91,7 @@ test('hapsta stack wt <stack> -- list defaults to active-only (no exhaustive enu
   assert.ok(!res.stdout.includes(`- ${monoOther}`), `expected other to be omitted\n${res.stdout}`);
 });
 
-test('hapsta stack wt <stack> -- list --all shows all worktrees (opt-in)', async () => {
+test('hstack stack wt <stack> -- list --all shows all worktrees (opt-in)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-wt-list-'));

@@ -117,24 +117,24 @@ async function main() {
 
   const helpText = [
     '[eas] usage:',
-    '  hapsta eas <subcommand> [--json] [-- <args...>]',
-    '  hapsta eas build [--platform=ios|android|all] [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas args...>]',
-    '  hapsta eas ios [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas build args...>]',
-    '  hapsta eas android [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas build args...>]',
-    '  hapsta eas env:sync [--environment=production|preview|development] [--dry-run] [--hide-values] [--visibility=plaintext|sensitive|secret] [--scope=project|account] [--json]',
+    '  hstack eas <subcommand> [--json] [-- <args...>]',
+    '  hstack eas build [--platform=ios|android|all] [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas args...>]',
+    '  hstack eas ios [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas build args...>]',
+    '  hstack eas android [--profile=production] [--local] [--wait|--no-wait] [--non-interactive|--interactive] [--json] [-- <extra eas build args...>]',
+    '  hstack eas env:sync [--environment=production|preview|development] [--dry-run] [--hide-values] [--visibility=plaintext|sensitive|secret] [--scope=project|account] [--json]',
     '',
     'examples:',
-    '  hapsta stack eas happier build --platform ios --profile production',
-    '  hapsta stack eas happier build --platform ios --profile production --local',
-    '  hapsta stack eas happier ios --profile production',
-    '  hapsta stack eas happier whoami',
-    '  hapsta stack eas happier login',
-    '  hapsta stack eas happier project:init',
-    '  hapsta stack eas happier project:info -- --json',
-    '  hapsta stack eas happier env:sync --environment production',
+    '  hstack stack eas happier build --platform ios --profile production',
+    '  hstack stack eas happier build --platform ios --profile production --local',
+    '  hstack stack eas happier ios --profile production',
+    '  hstack stack eas happier whoami',
+    '  hstack stack eas happier login',
+    '  hstack stack eas happier project:init',
+    '  hstack stack eas happier project:info -- --json',
+    '  hstack stack eas happier env:sync --environment production',
     '',
     'notes:',
-    '- `hapsta stack eas <name> ...` automatically loads that stack env.',
+    '- `hstack stack eas <name> ...` automatically loads that stack env.',
     '- For cloud builds, consider setting EXPO_EAS_PROJECT_ID / EXPO_UPDATES_URL in EAS project env too.',
   ].join('\n');
 
@@ -143,7 +143,7 @@ async function main() {
       json,
       data: {
         usage:
-          'hapsta eas <subcommand> [--json] [-- <args...>]',
+          'hstack eas <subcommand> [--json] [-- <args...>]',
       },
       text: helpText,
     });
@@ -154,7 +154,7 @@ async function main() {
   const subcmd = (positionals[0] ?? '').trim() || 'help';
 
   if (subcmd === 'help') {
-    printResult({ json, data: { usage: 'hapsta eas build|help' }, text: helpText });
+    printResult({ json, data: { usage: 'hstack eas build|help' }, text: helpText });
     return;
   }
 

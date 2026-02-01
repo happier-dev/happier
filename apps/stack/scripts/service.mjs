@@ -18,7 +18,7 @@ import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/lay
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 
 /**
- * Manage the autostart service installed by `hapsta bootstrap -- --autostart`.
+ * Manage the autostart service installed by `hstack bootstrap -- --autostart`.
  *
  * - macOS: launchd LaunchAgents
  * - Linux: systemd user services
@@ -47,7 +47,7 @@ function getAutostartEnv({ rootDir }) {
   // Instead, persist only the env file path; `scripts/utils/env.mjs` will load it on every start.
   //
   // Stack installs:
-  // - `hapsta stack service <name> ...` runs under a stack env already, so we persist that pointer.
+  // - `hstack stack service <name> ...` runs under a stack env already, so we persist that pointer.
   //
   // Main installs:
   // - default to the main stack env (outside the repo): ~/.happy/stacks/main/env
@@ -134,9 +134,9 @@ function systemdEnvLines(env) {
 async function ensureSystemdUserServiceEnabled({ rootDir, label, env }) {
   const unitPath = systemdUnitPath();
   await mkdir(dirname(unitPath), { recursive: true });
-  const hapstaShim = join(getCanonicalHomeDir(), 'bin', 'hapsta');
-  const entry = existsSync(hapstaShim) ? hapstaShim : join(rootDir, 'bin', 'hapsta.mjs');
-  const exec = existsSync(hapstaShim) ? entry : `${process.execPath} ${entry}`;
+  const hstackShim = join(getCanonicalHomeDir(), 'bin', 'hstack');
+  const entry = existsSync(hstackShim) ? hstackShim : join(rootDir, 'bin', 'hstack.mjs');
+  const exec = existsSync(hstackShim) ? entry : `${process.execPath} ${entry}`;
 
   const unit = `[Unit]
 Description=Happier Stack (${label})
@@ -213,7 +213,7 @@ async function launchctlTry(args) {
 async function restartLaunchAgentBestEffort() {
   const { plistPath, label } = getDefaultAutostartPaths();
   if (!existsSync(plistPath)) {
-    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hapsta service:install (or hapsta bootstrap -- --autostart)`);
+    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hstack service:install (or hstack bootstrap -- --autostart)`);
   }
   const uid = getUid();
   if (uid == null) {
@@ -226,7 +226,7 @@ async function restartLaunchAgentBestEffort() {
 async function startLaunchAgent({ persistent }) {
   const { plistPath } = getDefaultAutostartPaths();
   if (!existsSync(plistPath)) {
-    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hapsta service:install (or hapsta bootstrap -- --autostart)`);
+    throw new Error(`[local] LaunchAgent plist not found at ${plistPath}. Run: hstack service:install (or hstack bootstrap -- --autostart)`);
   }
 
   const { label } = getDefaultAutostartPaths();
@@ -353,7 +353,7 @@ async function postStartDiagnostics() {
   console.log(banner('service', { subtitle: `Post-start diagnostics (${stackName})` }));
   console.log('');
 
-  const authCmd = stackName === 'main' ? 'hapsta auth login' : `hapsta stack auth ${stackName} login`;
+  const authCmd = stackName === 'main' ? 'hstack auth login' : `hstack stack auth ${stackName} login`;
 
   if (res.ok && res.kind === 'running') {
     console.log(sectionTitle('Daemon'));
@@ -382,7 +382,7 @@ async function postStartDiagnostics() {
   console.log('');
   console.log(sectionTitle('Logs'));
   if (logPath) {
-    console.log(bullets([kv('latest:', logPath), `${dim('tail:')} ${cmdFmt(`hapsta service logs`)}`]));
+    console.log(bullets([kv('latest:', logPath), `${dim('tail:')} ${cmdFmt(`hstack service logs`)}`]));
     const tail = await readLastLines(logPath, 80);
     if (tail) {
       console.log('');
@@ -488,7 +488,7 @@ async function showStatus() {
 
   console.log('');
   console.log(sectionTitle('Tips'));
-  console.log(bullets([`${dim('Show status:')} ${cmdFmt('hapsta service status')}`, `${dim('View logs:')} ${cmdFmt('hapsta service logs')}`]));
+  console.log(bullets([`${dim('Show status:')} ${cmdFmt('hstack service status')}`, `${dim('View logs:')} ${cmdFmt('hstack service logs')}`]));
 }
 
 async function showLogs(lines = 120) {
@@ -520,17 +520,17 @@ async function main() {
         banner('service', { subtitle: 'Autostart service management (launchd/systemd user).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hapsta service')} install|uninstall [--json]`,
-        `  ${cyan('hapsta service')} status [--json]`,
-        `  ${cyan('hapsta service')} start|stop|restart [--json]`,
-        `  ${cyan('hapsta service')} enable|disable [--json]`,
-        `  ${cyan('hapsta service')} logs [--json]`,
-        `  ${cyan('hapsta service')} tail`,
+        `  ${cyan('hstack service')} install|uninstall [--json]`,
+        `  ${cyan('hstack service')} status [--json]`,
+        `  ${cyan('hstack service')} start|stop|restart [--json]`,
+        `  ${cyan('hstack service')} enable|disable [--json]`,
+        `  ${cyan('hstack service')} logs [--json]`,
+        `  ${cyan('hstack service')} tail`,
         '',
         sectionTitle('legacy aliases:'),
         bullets([
-          dim('hapsta service:install|uninstall|status|start|stop|restart|enable|disable'),
-          dim('hapsta logs | hapsta logs:tail'),
+          dim('hstack service:install|uninstall|status|start|stop|restart|enable|disable'),
+          dim('hstack logs | hstack logs:tail'),
         ]),
       ].join('\n'),
     });

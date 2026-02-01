@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# <xbar.title>Hapsta</xbar.title>
+# <xbar.title>hstack</xbar.title>
 # <xbar.version>1.0.0</xbar.version>
-# <xbar.author>Hapsta</xbar.author>
+# <xbar.author>hstack</xbar.author>
 # <xbar.author.github>happier-dev</xbar.author.github>
 # <xbar.desc>Monitor and control your Happier stacks from the menu bar</xbar.desc>
 # <xbar.dependencies>node</xbar.dependencies>
@@ -19,7 +19,7 @@
 
 # SwiftBar runs with a minimal environment, so users often won't have
 # HAPPIER_STACK_HOME_DIR / HAPPIER_STACK_WORKSPACE_DIR exported.
-# Treat <canonicalHomeDir>/.env as the canonical pointer file (written by `hapsta init`).
+# Treat <canonicalHomeDir>/.env as the canonical pointer file (written by `hstack init`).
 # Default: ~/.happier-stack/.env
 CANONICAL_HOME_DIR="${HAPPIER_STACK_CANONICAL_HOME_DIR:-$HOME/.happier-stack}"
 CANONICAL_ENV_FILE="$CANONICAL_HOME_DIR/.env"
@@ -69,20 +69,20 @@ BLUE="#007AFF"
 # Load libs
 # ============================================================================
 
-HAPSTA_ROOT_DIR="${HAPPIER_STACK_CLI_ROOT_DIR:-$HAPPIER_STACK_HOME_DIR}"
-LIB_DIR="$HAPSTA_ROOT_DIR/extras/swiftbar/lib"
+hstack_ROOT_DIR="${HAPPIER_STACK_CLI_ROOT_DIR:-$HAPPIER_STACK_HOME_DIR}"
+LIB_DIR="$hstack_ROOT_DIR/extras/swiftbar/lib"
 if [[ ! -f "$LIB_DIR/utils.sh" ]]; then
-  echo "Hapsta"
+  echo "hstack"
   echo "---"
   echo "SwiftBar libs missing at: $LIB_DIR"
-  echo "↪ run: hapsta menubar install"
+  echo "↪ run: hstack menubar install"
   exit 0
 fi
 
 # shellcheck source=/dev/null
 source "$LIB_DIR/utils.sh"
-HAPSTA_ROOT_DIR="$(resolve_hapsta_root_dir)"
-LIB_DIR="$HAPSTA_ROOT_DIR/extras/swiftbar/lib"
+hstack_ROOT_DIR="$(resolve_hstack_root_dir)"
+LIB_DIR="$hstack_ROOT_DIR/extras/swiftbar/lib"
 # shellcheck source=/dev/null
 source "$LIB_DIR/icons.sh"
 # shellcheck source=/dev/null
@@ -96,8 +96,8 @@ source "$LIB_DIR/render.sh"
 # Menu
 # ============================================================================
 
-HAPSTA_BIN="$(resolve_hapsta_bin)"
-HAPSTA_TERM="$HAPSTA_ROOT_DIR/extras/swiftbar/hapsta-term.sh"
+hstack_BIN="$(resolve_hstack_bin)"
+hstack_TERM="$hstack_ROOT_DIR/extras/swiftbar/hstack-term.sh"
 MAIN_PORT="$(resolve_main_port)"
 MAIN_SERVER_COMPONENT="$(resolve_main_server_component)"
 TAILSCALE_URL="$(get_tailscale_url)"
@@ -136,12 +136,12 @@ else
   if [[ -n "$ICON_B64" ]]; then
     echo "● | templateImage=$ICON_B64 color=$STATUS_COLOR"
   else
-    echo "Hapsta"
+    echo "hstack"
   fi
 fi
 
 echo "---"
-echo "Hapsta | size=14 font=SF Pro Display"
+echo "hstack | size=14 font=SF Pro Display"
 echo "---"
 
 # Mode (selfhost vs dev)
@@ -150,11 +150,11 @@ if [[ "$MENUBAR_MODE" == "selfhost" ]]; then
 else
   echo "Mode: Dev | sfimage=hammer"
 fi
-if [[ -n "$HAPSTA_BIN" ]]; then
+if [[ -n "$hstack_BIN" ]]; then
   if [[ "$MENUBAR_MODE" == "selfhost" ]]; then
-    echo "--Switch to Dev mode | bash=$HAPSTA_BIN param1=menubar param2=mode param3=dev dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Switch to Dev mode | bash=$hstack_BIN param1=menubar param2=mode param3=dev dir=$hstack_ROOT_DIR terminal=false refresh=true"
   else
-    echo "--Switch to Selfhost mode | bash=$HAPSTA_BIN param1=menubar param2=mode param3=selfhost dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Switch to Selfhost mode | bash=$hstack_BIN param1=menubar param2=mode param3=selfhost dir=$hstack_ROOT_DIR terminal=false refresh=true"
   fi
 fi
 echo "---"
@@ -172,8 +172,8 @@ render_component_tailscale "" "main" "$TAILSCALE_URL"
 echo "---"
 if [[ "$MENUBAR_MODE" == "selfhost" ]]; then
   echo "Maintenance | sfimage=wrench.and.screwdriver"
-  if [[ -n "$HAPSTA_BIN" ]]; then
-    UPDATE_JSON="${HAPSTA_ROOT_DIR}/cache/update.json"
+  if [[ -n "$hstack_BIN" ]]; then
+    UPDATE_JSON="${hstack_ROOT_DIR}/cache/update.json"
     update_available=""
     latest=""
     current=""
@@ -187,19 +187,19 @@ if [[ "$MENUBAR_MODE" == "selfhost" ]]; then
     else
       echo "--Updates: up to date | color=$GRAY"
     fi
-    echo "--Check for updates | bash=$HAPSTA_BIN param1=self param2=check dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--Update hapsta runtime | bash=$HAPSTA_BIN param1=self param2=update dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--Doctor | bash=$HAPSTA_BIN param1=doctor dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Check for updates | bash=$hstack_BIN param1=self param2=check dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--Update hstack runtime | bash=$hstack_BIN param1=self param2=update dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--Doctor | bash=$hstack_BIN param1=doctor dir=$hstack_ROOT_DIR terminal=false refresh=true"
   else
-    echo "--⚠️ hapsta not found (run: npx @happier-dev/stack@latest init)" 
+    echo "--⚠️ hstack not found (run: npx @happier-dev/stack@latest init)" 
   fi
 else
   echo "Stacks | sfimage=server.rack"
   STACKS_PREFIX="--"
 
-  if [[ -n "$HAPSTA_BIN" ]]; then
-    echo "${STACKS_PREFIX}New stack (interactive) | bash=$HAPSTA_TERM param1=stack param2=new param3=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "${STACKS_PREFIX}List stacks | bash=$HAPSTA_TERM param1=stack param2=list dir=$HAPSTA_ROOT_DIR terminal=false"
+  if [[ -n "$hstack_BIN" ]]; then
+    echo "${STACKS_PREFIX}New stack (interactive) | bash=$hstack_TERM param1=stack param2=new param3=--interactive dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "${STACKS_PREFIX}List stacks | bash=$hstack_TERM param1=stack param2=list dir=$hstack_ROOT_DIR terminal=false"
     print_sep "$STACKS_PREFIX"
   fi
 
@@ -252,26 +252,26 @@ else
   render_components_menu "" "main" "main" "$MAIN_ENV_FILE"
 
   echo "Worktrees | sfimage=arrow.triangle.branch"
-  if [[ -z "$HAPSTA_BIN" ]]; then
-    echo "--⚠️ hapsta not found (run: npx @happier-dev/stack@latest init)"
+  if [[ -z "$hstack_BIN" ]]; then
+    echo "--⚠️ hstack not found (run: npx @happier-dev/stack@latest init)"
   else
-    echo "--Use (interactive) | bash=$HAPSTA_TERM param1=wt param2=use param3=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--New (interactive) | bash=$HAPSTA_TERM param1=wt param2=new param3=--interactive dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--PR worktree (prompt) | bash=$HAPSTA_ROOT_DIR/extras/swiftbar/wt-pr.sh dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--Sync mirrors (all) | bash=$HAPSTA_BIN param1=wt param2=sync-all dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--Update all (dry-run) | bash=$HAPSTA_TERM param1=wt param2=update-all param3=--dry-run dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--Update all (apply) | bash=$HAPSTA_BIN param1=wt param2=update-all dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+    echo "--Use (interactive) | bash=$hstack_TERM param1=wt param2=use param3=--interactive dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--New (interactive) | bash=$hstack_TERM param1=wt param2=new param3=--interactive dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--PR worktree (prompt) | bash=$hstack_ROOT_DIR/extras/swiftbar/wt-pr.sh dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--Sync mirrors (all) | bash=$hstack_BIN param1=wt param2=sync-all dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--Update all (dry-run) | bash=$hstack_TERM param1=wt param2=update-all param3=--dry-run dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--Update all (apply) | bash=$hstack_BIN param1=wt param2=update-all dir=$hstack_ROOT_DIR terminal=false refresh=true"
   fi
 
   echo "---"
   echo "Setup / Tools"
-  if [[ -z "$HAPSTA_BIN" ]]; then
-    echo "--⚠️ hapsta not found (run: npx @happier-dev/stack@latest init)"
+  if [[ -z "$hstack_BIN" ]]; then
+    echo "--⚠️ hstack not found (run: npx @happier-dev/stack@latest init)"
   else
-    echo "--Setup (guided) | bash=$HAPSTA_TERM param1=setup dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--Bootstrap (clone/install) | bash=$HAPSTA_TERM param1=bootstrap dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--CLI link (install happy wrapper) | bash=$HAPSTA_TERM param1=cli:link dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-    echo "--Mobile dev helper | bash=$HAPSTA_TERM param1=mobile dir=$HAPSTA_ROOT_DIR terminal=false"
+    echo "--Setup (guided) | bash=$hstack_TERM param1=setup dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--Bootstrap (clone/install) | bash=$hstack_TERM param1=bootstrap dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--CLI link (install happy wrapper) | bash=$hstack_TERM param1=cli:link dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--Mobile dev helper | bash=$hstack_TERM param1=mobile dir=$hstack_ROOT_DIR terminal=false"
   fi
 fi
 
@@ -279,18 +279,18 @@ echo "---"
 echo "Refresh | sfimage=arrow.clockwise refresh=true"
 echo "---"
 echo "Refresh interval | sfimage=timer"
-SET_INTERVAL="$HAPSTA_ROOT_DIR/extras/swiftbar/set-interval.sh"
-echo "--10s | bash=$SET_INTERVAL param1=10s dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--30s | bash=$SET_INTERVAL param1=30s dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--1m | bash=$SET_INTERVAL param1=1m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--5m (recommended) | bash=$SET_INTERVAL param1=5m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--10m | bash=$SET_INTERVAL param1=10m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--15m | bash=$SET_INTERVAL param1=15m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--30m | bash=$SET_INTERVAL param1=30m dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--1h | bash=$SET_INTERVAL param1=1h dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--2h | bash=$SET_INTERVAL param1=2h dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--6h | bash=$SET_INTERVAL param1=6h dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--12h | bash=$SET_INTERVAL param1=12h dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
-echo "--1d | bash=$SET_INTERVAL param1=1d dir=$HAPSTA_ROOT_DIR terminal=false refresh=true"
+SET_INTERVAL="$hstack_ROOT_DIR/extras/swiftbar/set-interval.sh"
+echo "--10s | bash=$SET_INTERVAL param1=10s dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--30s | bash=$SET_INTERVAL param1=30s dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--1m | bash=$SET_INTERVAL param1=1m dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--5m (recommended) | bash=$SET_INTERVAL param1=5m dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--10m | bash=$SET_INTERVAL param1=10m dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--15m | bash=$SET_INTERVAL param1=15m dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--30m | bash=$SET_INTERVAL param1=30m dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--1h | bash=$SET_INTERVAL param1=1h dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--2h | bash=$SET_INTERVAL param1=2h dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--6h | bash=$SET_INTERVAL param1=6h dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--12h | bash=$SET_INTERVAL param1=12h dir=$hstack_ROOT_DIR terminal=false refresh=true"
+echo "--1d | bash=$SET_INTERVAL param1=1d dir=$hstack_ROOT_DIR terminal=false refresh=true"
 
 exit 0

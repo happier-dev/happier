@@ -75,7 +75,7 @@ async function copyDir(src, dest) {
 }
 
 async function createPackSandbox({ monorepoRoot, packageRelDir }) {
-  const sandboxRoot = await mkdtemp(join(tmpdir(), 'hapsta-pack-'));
+  const sandboxRoot = await mkdtemp(join(tmpdir(), 'hstack-pack-'));
 
   // Minimal monorepo layout needed for pack steps that reference workspace deps:
   // - root package.json + yarn.lock (for repo root detection)
@@ -124,10 +124,10 @@ async function main() {
       data: { targets: [...VALID_TARGETS, '--dir=/abs/path'], flags: ['--json'] },
       text: [
         '[pack] usage:',
-        '  hapsta pack cli [--json]',
-        '  hapsta pack server [--json]',
-        '  hapsta pack ui [--json]',
-        '  hapsta pack --dir=/abs/path/to/apps/cli [--json]',
+        '  hstack pack cli [--json]',
+        '  hstack pack server [--json]',
+        '  hstack pack ui [--json]',
+        '  hstack pack --dir=/abs/path/to/apps/cli [--json]',
         '',
         'notes:',
         '- packs in a temporary sandbox to avoid dirtying the worktree',
@@ -147,7 +147,7 @@ async function main() {
         : null;
 
   if (!explicitDir && !raw) {
-    throw new Error('[pack] missing target (expected: hapsta pack cli|server|ui | --dir=...)');
+    throw new Error('[pack] missing target (expected: hstack pack cli|server|ui | --dir=...)');
   }
 
   const target = raw

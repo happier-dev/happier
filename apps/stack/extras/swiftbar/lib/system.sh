@@ -210,15 +210,15 @@ get_tailscale_url() {
   # Try multiple methods to get the Tailscale URL (best-effort).
   local url=""
 
-  # Preferred: use hapsta (respects our own timeouts/env handling).
-  local hapsta_sh="$HAPSTA_ROOT_DIR/extras/swiftbar/hapsta.sh"
-  if [[ -x "$hapsta_sh" ]]; then
+  # Preferred: use hstack (respects our own timeouts/env handling).
+  local hstack_sh="$hstack_ROOT_DIR/extras/swiftbar/hstack.sh"
+  if [[ -x "$hstack_sh" ]]; then
     # Keep SwiftBar responsive: use a tight timeout for this periodic probe.
     local t0 t1
     t0="$(swiftbar_now_ms 2>/dev/null || echo 0)"
-    url="$("$hapsta_sh" tailscale:url --timeout-ms=2500 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
+    url="$("$hstack_sh" tailscale:url --timeout-ms=2500 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
     t1="$(swiftbar_now_ms 2>/dev/null || echo 0)"
-    swiftbar_profile_log "time" "label=tailscale_url_hapsta" "ms=$((t1 - t0))" "ok=$([[ "$url" == https://* ]] && echo 1 || echo 0)"
+    swiftbar_profile_log "time" "label=tailscale_url_hstack" "ms=$((t1 - t0))" "ok=$([[ "$url" == https://* ]] && echo 1 || echo 0)"
     if [[ "$url" == https://* ]]; then
       echo "$url"
       return

@@ -26,7 +26,7 @@ async function cmdUse({ rootDir, argv }) {
   const flavorRaw = positionals[1] ?? '';
   const flavor = normalizeFlavor(flavorRaw);
   if (!flavor) {
-    throw new Error('[server-flavor] usage: hapsta srv use <happy-server-light|happy-server> [--json]');
+    throw new Error('[server-flavor] usage: hstack srv use <happy-server-light|happy-server> [--json]');
   }
   if (!['happy-server-light', 'happy-server'].includes(flavor)) {
     throw new Error(`[server-flavor] unknown flavor: ${flavor}`);
@@ -94,9 +94,9 @@ async function main() {
       data: { commands: ['status', 'use'] },
       text: [
         '[server-flavor] usage:',
-        '  hapsta srv status [--json]',
-        '  hapsta srv use <happy-server-light|happy-server> [--json]',
-        '  hapsta srv use --interactive [--json]',
+        '  hstack srv status [--json]',
+        '  hstack srv use <happy-server-light|happy-server> [--json]',
+        '  hstack srv use --interactive [--json]',
         '',
         'notes:',
         '  - This sets the default server flavor for future stack runs.',

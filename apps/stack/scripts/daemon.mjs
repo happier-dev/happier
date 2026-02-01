@@ -11,7 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { getRootDir } from './utils/paths/paths.mjs';
 
 /**
- * Daemon lifecycle helpers for Hapsta.
+ * Daemon lifecycle helpers for hstack.
  *
  * Centralizes:
  * - stopping old daemons (stack-scoped)
@@ -250,7 +250,7 @@ function allowDaemonWaitForAuthWithoutTty() {
 function authLoginHint({ stackName, cliIdentity }) {
   const id = (cliIdentity ?? '').toString().trim();
   const suffix = id && id !== 'default' ? ` --identity=${id} --no-open` : '';
-  return stackName === 'main' ? `hapsta auth login${suffix}` : `hapsta stack auth ${stackName} login${suffix}`;
+  return stackName === 'main' ? `hstack auth login${suffix}` : `hstack stack auth ${stackName} login${suffix}`;
 }
 
 function authCopyFromSeedHint({ stackName, cliIdentity }) {
@@ -259,7 +259,7 @@ function authCopyFromSeedHint({ stackName, cliIdentity }) {
   const id = (cliIdentity ?? '').toString().trim();
   if (id && id !== 'default') return null;
   const seed = resolveAuthSeedFromEnv(process.env);
-  return `hapsta stack auth ${stackName} copy-from ${seed}`;
+  return `hstack stack auth ${stackName} copy-from ${seed}`;
 }
 
 async function maybeAutoReseedInvalidAuth({ stackName, quiet = false }) {
@@ -643,7 +643,7 @@ export async function startLocalDaemonWithAuth({
       console.error(
         `[local] daemon failed to start (server returned an error).\n` +
           `[local] Try:\n` +
-          `- hapsta doctor\n` +
+          `- hstack doctor\n` +
           (copyHint ? `- ${copyHint}\n` : '') +
           `- ${authLoginHint({ stackName: resolvedStackName, cliIdentity: resolvedCliIdentity })}`
       );

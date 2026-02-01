@@ -92,7 +92,7 @@ If implementation exists before the test:
 Projects differ; Edison is framework- and language-agnostic. Use the project’s configured test command as the authoritative baseline:
 
 ```bash
-KIND="{{hs_kind}}"; if [ -z "$KIND" ] || [ "$KIND" = "parent" ]; then echo "Refusing evidence capture for hs_kind=parent. Run evidence on a track/component task."; exit 1; fi; TASK_STACK="{{stack}}"; TASK_STACK="${TASK_STACK%\"}"; TASK_STACK="${TASK_STACK#\"}"; ENV_STACK="${HAPPIER_STACK_STACK:?Run via: hapsta edison --stack=$TASK_STACK -- evidence capture <task-id>}"; if [ -z "$TASK_STACK" ]; then echo "Missing task stack (fill frontmatter: stack)"; exit 1; fi; if [ "$ENV_STACK" != "$TASK_STACK" ]; then echo "Stack mismatch: env=$ENV_STACK task=$TASK_STACK"; exit 1; fi; IFS="," read -r -a COMPS <<< "{{components_csv}}"; node ./bin/hapsta.mjs stack test "$TASK_STACK" "${COMPS[@]}"
+KIND="{{hs_kind}}"; if [ -z "$KIND" ] || [ "$KIND" = "parent" ]; then echo "Refusing evidence capture for hs_kind=parent. Run evidence on a track/component task."; exit 1; fi; TASK_STACK="{{stack}}"; TASK_STACK="${TASK_STACK%\"}"; TASK_STACK="${TASK_STACK#\"}"; ENV_STACK="${HAPPIER_STACK_STACK:?Run via: hstack edison --stack=$TASK_STACK -- evidence capture <task-id>}"; if [ -z "$TASK_STACK" ]; then echo "Missing task stack (fill frontmatter: stack)"; exit 1; fi; if [ "$ENV_STACK" != "$TASK_STACK" ]; then echo "Stack mismatch: env=$ENV_STACK task=$TASK_STACK"; exit 1; fi; IFS="," read -r -a COMPS <<< "{{components_csv}}"; node ./bin/hstack.mjs stack test "$TASK_STACK" "${COMPS[@]}"
 ```
 
 **Rule of thumb**:
@@ -239,7 +239,7 @@ If the change is truly content-only (Markdown/YAML/templates) and no executable 
 
 **Verify RED Phase**:
 ```bash
-KIND="{{hs_kind}}"; if [ -z "$KIND" ] || [ "$KIND" = "parent" ]; then echo "Refusing evidence capture for hs_kind=parent. Run evidence on a track/component task."; exit 1; fi; TASK_STACK="{{stack}}"; TASK_STACK="${TASK_STACK%\"}"; TASK_STACK="${TASK_STACK#\"}"; ENV_STACK="${HAPPIER_STACK_STACK:?Run via: hapsta edison --stack=$TASK_STACK -- evidence capture <task-id>}"; if [ -z "$TASK_STACK" ]; then echo "Missing task stack (fill frontmatter: stack)"; exit 1; fi; if [ "$ENV_STACK" != "$TASK_STACK" ]; then echo "Stack mismatch: env=$ENV_STACK task=$TASK_STACK"; exit 1; fi; IFS="," read -r -a COMPS <<< "{{components_csv}}"; node ./bin/hapsta.mjs stack test "$TASK_STACK" "${COMPS[@]}"
+KIND="{{hs_kind}}"; if [ -z "$KIND" ] || [ "$KIND" = "parent" ]; then echo "Refusing evidence capture for hs_kind=parent. Run evidence on a track/component task."; exit 1; fi; TASK_STACK="{{stack}}"; TASK_STACK="${TASK_STACK%\"}"; TASK_STACK="${TASK_STACK#\"}"; ENV_STACK="${HAPPIER_STACK_STACK:?Run via: hstack edison --stack=$TASK_STACK -- evidence capture <task-id>}"; if [ -z "$TASK_STACK" ]; then echo "Missing task stack (fill frontmatter: stack)"; exit 1; fi; if [ "$ENV_STACK" != "$TASK_STACK" ]; then echo "Stack mismatch: env=$ENV_STACK task=$TASK_STACK"; exit 1; fi; IFS="," read -r -a COMPS <<< "{{components_csv}}"; node ./bin/hstack.mjs stack test "$TASK_STACK" "${COMPS[@]}"
 # Expected: Test FAILS for the right reason (feature/behavior missing)
 ```
 
@@ -258,7 +258,7 @@ Write the MINIMUM code needed to make the test pass.
 
 **Verify GREEN Phase**:
 ```bash
-KIND="{{hs_kind}}"; if [ -z "$KIND" ] || [ "$KIND" = "parent" ]; then echo "Refusing evidence capture for hs_kind=parent. Run evidence on a track/component task."; exit 1; fi; TASK_STACK="{{stack}}"; TASK_STACK="${TASK_STACK%\"}"; TASK_STACK="${TASK_STACK#\"}"; ENV_STACK="${HAPPIER_STACK_STACK:?Run via: hapsta edison --stack=$TASK_STACK -- evidence capture <task-id>}"; if [ -z "$TASK_STACK" ]; then echo "Missing task stack (fill frontmatter: stack)"; exit 1; fi; if [ "$ENV_STACK" != "$TASK_STACK" ]; then echo "Stack mismatch: env=$ENV_STACK task=$TASK_STACK"; exit 1; fi; IFS="," read -r -a COMPS <<< "{{components_csv}}"; node ./bin/hapsta.mjs stack test "$TASK_STACK" "${COMPS[@]}"
+KIND="{{hs_kind}}"; if [ -z "$KIND" ] || [ "$KIND" = "parent" ]; then echo "Refusing evidence capture for hs_kind=parent. Run evidence on a track/component task."; exit 1; fi; TASK_STACK="{{stack}}"; TASK_STACK="${TASK_STACK%\"}"; TASK_STACK="${TASK_STACK#\"}"; ENV_STACK="${HAPPIER_STACK_STACK:?Run via: hstack edison --stack=$TASK_STACK -- evidence capture <task-id>}"; if [ -z "$TASK_STACK" ]; then echo "Missing task stack (fill frontmatter: stack)"; exit 1; fi; if [ "$ENV_STACK" != "$TASK_STACK" ]; then echo "Stack mismatch: env=$ENV_STACK task=$TASK_STACK"; exit 1; fi; IFS="," read -r -a COMPS <<< "{{components_csv}}"; node ./bin/hstack.mjs stack test "$TASK_STACK" "${COMPS[@]}"
 # Expected: Test PASSES
 ```
 
@@ -278,7 +278,7 @@ Improve code quality while keeping tests passing.
 
 **Verify REFACTOR Phase**:
 ```bash
-KIND="{{hs_kind}}"; if [ -z "$KIND" ] || [ "$KIND" = "parent" ]; then echo "Refusing evidence capture for hs_kind=parent. Run evidence on a track/component task."; exit 1; fi; TASK_STACK="{{stack}}"; TASK_STACK="${TASK_STACK%\"}"; TASK_STACK="${TASK_STACK#\"}"; ENV_STACK="${HAPPIER_STACK_STACK:?Run via: hapsta edison --stack=$TASK_STACK -- evidence capture <task-id>}"; if [ -z "$TASK_STACK" ]; then echo "Missing task stack (fill frontmatter: stack)"; exit 1; fi; if [ "$ENV_STACK" != "$TASK_STACK" ]; then echo "Stack mismatch: env=$ENV_STACK task=$TASK_STACK"; exit 1; fi; IFS="," read -r -a COMPS <<< "{{components_csv}}"; node ./bin/hapsta.mjs stack test "$TASK_STACK" "${COMPS[@]}"
+KIND="{{hs_kind}}"; if [ -z "$KIND" ] || [ "$KIND" = "parent" ]; then echo "Refusing evidence capture for hs_kind=parent. Run evidence on a track/component task."; exit 1; fi; TASK_STACK="{{stack}}"; TASK_STACK="${TASK_STACK%\"}"; TASK_STACK="${TASK_STACK#\"}"; ENV_STACK="${HAPPIER_STACK_STACK:?Run via: hstack edison --stack=$TASK_STACK -- evidence capture <task-id>}"; if [ -z "$TASK_STACK" ]; then echo "Missing task stack (fill frontmatter: stack)"; exit 1; fi; if [ "$ENV_STACK" != "$TASK_STACK" ]; then echo "Stack mismatch: env=$ENV_STACK task=$TASK_STACK"; exit 1; fi; IFS="," read -r -a COMPS <<< "{{components_csv}}"; node ./bin/hstack.mjs stack test "$TASK_STACK" "${COMPS[@]}"
 # Expected: ALL tests still PASS
 ```
 
@@ -388,7 +388,7 @@ Do not skip commands. Do not fabricate evidence. If you capture a failing run, f
 ## Pack Extensions
 
 <!-- Pack overlays extend here with pack-specific constitution content -->
-## Hapsta execution discipline (MANDATORY)
+## hstack execution discipline (MANDATORY)
 
 - **Task structure is mandatory (fail-closed via guards)**:
   - Create a **parent task** first (`hs_kind: parent`) that declares:
@@ -406,40 +406,40 @@ Do not skip commands. Do not fabricate evidence. If you capture a failing run, f
     - `base_worktree: edison/<task-id>`
   - **Never claim/finish the parent task**; claim a track or component task instead.
 
-- **Only run project commands via `hapsta ...`**.
+- **Only run project commands via `hstack ...`**.
   - Do **not** run `yarn/npm/npx/expo/tsc/docker compose` directly inside repo checkouts/worktrees.
-  - Route everything through `hapsta` so stacks/env/worktrees/ports stay isolated.
+  - Route everything through `hstack` so stacks/env/worktrees/ports stay isolated.
   - Do **not** run `edison ...` directly in this repo:
-    - Use `hapsta edison -- <edison args...>`
-    - Use `hapsta edison --stack=<stack> -- <edison args...>` for task/evidence/validation
+    - Use `hstack edison -- <edison args...>`
+    - Use `hstack edison --stack=<stack> -- <edison args...>` for task/evidence/validation
     - See: `.edison/guidelines/agents/HAPPIER_STACK_EDISON_WRAPPER.md`
   - If any core Edison docs mention “worktree confinement” or `edison exec` workflows:
     - Treat them as **not applicable** to happier-dev (Edison worktrees are disabled here).
-    - Hapsta rules override.
+    - hstack rules override.
 
 - **Develop in monorepo worktrees only**.
   - Do **not** work directly on the primary monorepo checkout; use a git worktree for changes.
-  - Use `hapsta wt new ...` / `hapsta wt pr ...` and open/edit the worktree under `<workspace>/.worktrees/...` (default: `~/.happier-stack/workspace/.worktrees`).
+  - Use `hstack wt new ...` / `hstack wt pr ...` and open/edit the worktree under `<workspace>/.worktrees/...` (default: `~/.happier-stack/workspace/.worktrees`).
 
 - **Test changes inside an isolated stack** (not `main`).
-  - Create a stack: `hapsta stack new <name> --interactive`
-  - Point the stack at your worktree: `hapsta stack wt <name> -- use <owner/branch|path|default|main>`
+  - Create a stack: `hstack stack new <name> --interactive`
+  - Point the stack at your worktree: `hstack stack wt <name> -- use <owner/branch|path|default|main>`
   - Recommended (one-shot): scaffold the whole structure + stacks + worktrees:
-    - `hapsta edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes`
+    - `hstack edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes`
   - **Fail-closed**: Edison task transitions require running inside the correct stack context:
-    - `hapsta edison --stack=<stack> -- <edison command>`
+    - `hstack edison --stack=<stack> -- <edison command>`
   - Helpful reads:
-    - `hapsta edison -- read START_PLAN_FEATURE --type start`
-    - `hapsta edison -- read START_VALIDATE_TASK --type start`
-    - `hapsta edison -- read START_HAPSTA_NEW_SESSION --type start`
+    - `hstack edison -- read START_PLAN_FEATURE --type start`
+    - `hstack edison -- read START_VALIDATE_TASK --type start`
+    - `hstack edison -- read START_hstack_NEW_SESSION --type start`
 
 - **Auth failures: prefer copy-from your configured seed stack** (non-interactive, safe).
   - Recommended seed: `dev-auth` (set by developers via `HAPPIER_STACK_AUTH_SEED_FROM=dev-auth`).
-  - `hapsta stack auth <stack> copy-from dev-auth`
-  - If you don't know the seed stack, fall back to: `hapsta stack auth <stack> copy-from main`
+  - `hstack stack auth <stack> copy-from dev-auth`
+  - If you don't know the seed stack, fall back to: `hstack stack auth <stack> copy-from main`
 
 - **Dev UI login key (agents should only consume, not create)**:
-  - Print the UI-accepted dev key format: `hapsta auth dev-key --print`
+  - Print the UI-accepted dev key format: `hstack auth dev-key --print`
 
 - **Multiple daemons are expected** with multiple stacks.
   - Do **not** kill all daemons. Diagnose per stack.
@@ -447,8 +447,8 @@ Do not skip commands. Do not fabricate evidence. If you capture a failing run, f
 ## Evidence (trusted runner)
 
 - Capture required evidence via Edison:
-  - `hapsta edison --stack=<stack> -- evidence capture <task-id>`
-  - This runs stack-scoped `hapsta stack typecheck/lint/build/test` and fingerprints the *actual* repo/worktree used by that stack.
+  - `hstack edison --stack=<stack> -- evidence capture <task-id>`
+  - This runs stack-scoped `hstack stack typecheck/lint/build/test` and fingerprints the *actual* repo/worktree used by that stack.
 
 ## Happy component translations (MANDATORY where applicable)
 
@@ -482,7 +482,7 @@ These rules apply **only** when the task’s target component repo has an i18n s
 - **Allowed “same as English” cases** (do not translate blindly):
   - Keep common technical/proper tokens in English where appropriate (examples seen in repo patterns): `GitHub`, `URL`, `API`, `CLI`, `OAuth`, `QR`, `JSON`, `HTTP`, `HTTPS`, `ID`, `PID`.
 
-- **Verification (must be stack-scoped via Hapsta)**:
+- **Verification (must be stack-scoped via hstack)**:
   - Run a stack-scoped typecheck for the `happy` component (or capture evidence). Missing keys/shape mismatches must fail the typecheck due to `TranslationStructure`.
 
 ### Component: `happy-cli` (not translated — do NOT “half-translate”)

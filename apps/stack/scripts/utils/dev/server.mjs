@@ -104,7 +104,7 @@ export async function startDevServer({
         if (!free) {
           throw new Error(
             `[local] restart refused: server port ${serverPort} is occupied and the PID is not provably stack-owned.\n` +
-              `[local] Fix: run 'hapsta stack stop ${autostart.stackName}' then re-run, or re-run without --restart.`
+              `[local] Fix: run 'hstack stack stop ${autostart.stackName}' then re-run, or re-run without --restart.`
           );
         }
       }

@@ -64,17 +64,17 @@ async function main() {
       },
       text: [
         '[dev] usage:',
-        '  hapsta dev [--server=happy-server|happy-server-light] [--server-flavor=light|full] [--restart] [--json]',
-        '  hapsta dev --watch         # rebuild/restart happy-cli daemon on file changes (TTY default)',
-        '  hapsta dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
-        '  hapsta dev --no-browser    # do not open the UI in your browser automatically',
-        '  hapsta dev --mobile        # also start Expo dev-client Metro for mobile',
-        '  hapsta dev --expo-tailscale # forward Expo to Tailscale interface for remote access',
-        '  hapsta dev --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
+        '  hstack dev [--server=happy-server|happy-server-light] [--server-flavor=light|full] [--restart] [--json]',
+        '  hstack dev --watch         # rebuild/restart happy-cli daemon on file changes (TTY default)',
+        '  hstack dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
+        '  hstack dev --no-browser    # do not open the UI in your browser automatically',
+        '  hstack dev --mobile        # also start Expo dev-client Metro for mobile',
+        '  hstack dev --expo-tailscale # forward Expo to Tailscale interface for remote access',
+        '  hstack dev --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
         '  note: --json prints the resolved config (dry-run) and exits.',
         '',
         'note:',
-        '  If run from inside a repo checkout/worktree, that checkout is used for this run (without requiring `hapsta wt use`).',
+        '  If run from inside a repo checkout/worktree, that checkout is used for this run (without requiring `hstack wt use`).',
         '',
         'env:',
         '  HAPPIER_STACK_EXPO_TAILSCALE=1   # enable Expo Tailscale forwarding via env var',
@@ -427,7 +427,7 @@ async function main() {
   if (watchEnabled && stackMode && serverComponentName === 'happy-server' && !serverWatcher) {
     console.warn(
       `[local] watch: server restart is disabled because the running server PID is unknown.\n` +
-        `[local] watch: fix: re-run with --restart so Hapsta can (re)spawn the server and track its PID.`
+        `[local] watch: fix: re-run with --restart so hstack can (re)spawn the server and track its PID.`
     );
   }
 

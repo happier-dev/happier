@@ -1,6 +1,6 @@
-## Track Drift Review (Hapsta)
+## Track Drift Review (hstack)
 
-**Goal**: Perform a **lightweight coherence review** between Hapsta tracks (typically `upstream` vs `fork`/`integration`).
+**Goal**: Perform a **lightweight coherence review** between hstack tracks (typically `upstream` vs `fork`/`integration`).
 
 This is **not** functional validation. Assume each track’s own validation already covers typecheck/lint/build/tests/browser-e2e. Your job is to answer:
 
@@ -11,7 +11,7 @@ This is **not** functional validation. Assume each track’s own validation alre
 ### Hard constraints
 
 - Do **not** start servers manually (no `yarn dev`, no direct `expo`, etc.).
-- Use **Hapsta** entrypoints only (`hapsta ...`).
+- Use **hstack** entrypoints only (`hstack ...`).
 - Keep this review **fast**: focus on drift, not re-testing.
 
 ---
@@ -33,16 +33,16 @@ Read the drift probe output from command evidence (fast path).
 1) Check evidence freshness/completeness:
 
 ```bash
-hapsta edison --stack=<stack> -- evidence status <task-id> --preset <preset>
+hstack edison --stack=<stack> -- evidence status <task-id> --preset <preset>
 ```
 
 2) View the command evidence output (do NOT browse snapshot directories):
 
 ```bash
-hapsta edison --stack=<stack> -- evidence show <task-id> --command track-coherence
+hstack edison --stack=<stack> -- evidence show <task-id> --command track-coherence
 ```
 
-Interpretation (this command output is JSON from `hapsta edison track:coherence --json`):
+Interpretation (this command output is JSON from `hstack edison track:coherence --json`):
 
 - If it returns `{ skipped: true, reason: "no_targets" }`: **PASS** (no cross-track validation applicable).
 - Otherwise, it returns `results[]` with per-component comparisons:

@@ -81,7 +81,7 @@ export function printAuthLoginInstructions({
   // eslint-disable-next-line no-console
   console.log(`- If you see a blank page, wait for the first build (Expo/Metro) to finish.`);
   // eslint-disable-next-line no-console
-  console.log(`- Re-run anytime: ${yellow(rerunCmd || 'hapsta auth login')}`);
+  console.log(`- Re-run anytime: ${yellow(rerunCmd || 'hstack auth login')}`);
   // eslint-disable-next-line no-console
   console.log(`${green('✓')} You can safely close the browser when it finishes.`);
 }

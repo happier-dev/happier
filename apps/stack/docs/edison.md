@@ -1,6 +1,6 @@
-## Edison in Hapsta
+## Edison in hstack
 
-This doc explains how we use **Edison** with **Hapsta** for task/QA/evidence/validation, while keeping isolation strictly enforced via **stacks + repo worktrees**.
+This doc explains how we use **Edison** with **hstack** for task/QA/evidence/validation, while keeping isolation strictly enforced via **stacks + repo worktrees**.
 
 ---
 
@@ -8,7 +8,7 @@ This doc explains how we use **Edison** with **Hapsta** for task/QA/evidence/val
 
 Edison is a **task + QA + evidence + validation workflow layer** with generated role prompts and trusted evidence capture.
 
-Edison is **not** responsible for isolation in this repo; isolation is provided by **Hapsta**.
+Edison is **not** responsible for isolation in this repo; isolation is provided by **hstack**.
 
 ---
 
@@ -16,7 +16,7 @@ Edison is **not** responsible for isolation in this repo; isolation is provided 
 
 - **Repo worktrees** live under `<workspace>/.worktrees/<owner>/<branch...>`
 - **Stacks** live under `~/.happier/stacks/<stack>/...` and each stack has its own ports/db/cli-home/etc.
-- Edison worktrees are **disabled** for this project (to avoid conflicting with Hapsta worktrees)
+- Edison worktrees are **disabled** for this project (to avoid conflicting with hstack worktrees)
 
 Practical implications:
 
@@ -26,14 +26,14 @@ Practical implications:
 
 ---
 
-## The one correct entrypoint: `hapsta edison`
+## The one correct entrypoint: `hstack edison`
 
 Do not run `edison ...` directly in this repo.
 
 Use:
 
-- `hapsta edison -- <edison args...>`
-- `hapsta edison --stack=<stack> -- <edison args...>` (recommended)
+- `hstack edison -- <edison args...>`
+- `hstack edison --stack=<stack> -- <edison args...>` (recommended)
 
 Why this wrapper is mandatory:
 
@@ -47,7 +47,7 @@ Reference:
 
 ---
 
-## Task model (Hapsta)
+## Task model (hstack)
 
 We keep a strict structure so stacks/worktrees are never “forgotten”.
 

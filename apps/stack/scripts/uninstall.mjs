@@ -36,11 +36,11 @@ async function main() {
       data: { flags: ['--remove-workspace', '--remove-stacks', '--yes', '--global'], json: true },
       text: [
         '[uninstall] usage:',
-        '  hapsta uninstall [--json]   # dry-run',
-        '  hapsta uninstall --yes [--json]',
-        '  hapsta uninstall --remove-workspace --yes',
-        '  hapsta uninstall --remove-stacks --yes',
-        '  hapsta uninstall --global --yes   # also remove global OS integrations (services/SwiftBar) even in sandbox mode',
+        '  hstack uninstall [--json]   # dry-run',
+        '  hstack uninstall --yes [--json]',
+        '  hstack uninstall --remove-workspace --yes',
+        '  hstack uninstall --remove-stacks --yes',
+        '  hstack uninstall --global --yes   # also remove global OS integrations (services/SwiftBar) even in sandbox mode',
         '',
         'notes:',
         '  - default removes: runtime, shims, cache, SwiftBar assets + plugin files, and LaunchAgent services',
@@ -66,7 +66,7 @@ async function main() {
     // eslint-disable-next-line no-console
     console.log('');
     // eslint-disable-next-line no-console
-    console.log(banner('uninstall', { subtitle: 'Remove Hapsta runtime + shims (and optionally workspace/stacks).' }));
+    console.log(banner('uninstall', { subtitle: 'Remove hstack runtime + shims (and optionally workspace/stacks).' }));
     // eslint-disable-next-line no-console
     console.log('');
   }
@@ -155,7 +155,7 @@ async function main() {
     },
     text: [
       dryRun ? `${yellow('!')} dry run (no changes made)` : `${green('✓')} complete`,
-      dryRun ? `${dim('Re-run with')} ${cmd('hapsta uninstall --yes')} ${dim('to apply removals.')}` : null,
+      dryRun ? `${dim('Re-run with')} ${cmd('hstack uninstall --yes')} ${dim('to apply removals.')}` : null,
       '',
       sectionTitle('Plan'),
       bullets([

@@ -77,7 +77,7 @@ async function main() {
         '',
         sectionTitle('Usage'),
         bullets([
-          `${dim('recommended:')} ${cmd('hapsta doctor')} ${dim('[--fix] [--json]')}`,
+          `${dim('recommended:')} ${cmd('hstack doctor')} ${dim('[--fix] [--json]')}`,
           `${dim('direct:')} ${cmd('node scripts/doctor.mjs')} ${dim('[--fix] [--server=happy-server|happy-server-light] [--json]')}`,
         ]),
         '',
@@ -157,7 +157,7 @@ async function main() {
   };
   if (!json) {
     console.log('');
-    console.log(banner('hapsta doctor', { subtitle: 'Diagnose common local setup failure modes.' }));
+    console.log(banner('hstack doctor', { subtitle: 'Diagnose common local setup failure modes.' }));
     console.log('');
     console.log(sectionTitle('Details'));
     console.log(bullets([
@@ -196,7 +196,7 @@ async function main() {
         if (!json) {
           console.log(`${yellow('!')} fix skipped: refusing to kill unknown port listeners in stack mode.`);
           console.log(
-            `${dim('Tip:')} use stack-safe controls instead: ${cmd(`hapsta stack stop ${(process.env.HAPPIER_STACK_STACK ?? 'main').toString()} --aggressive`)}`
+            `${dim('Tip:')} use stack-safe controls instead: ${cmd(`hstack stack stop ${(process.env.HAPPIER_STACK_STACK ?? 'main').toString()} --aggressive`)}`
           );
         }
       } else {
@@ -213,7 +213,7 @@ async function main() {
       if (!json) console.log(`${green('✓')} ui build dir present`);
     } else {
       report.checks.uiBuildDir = { ok: false, missing: uiBuildDir };
-      if (!json) console.log(`${red('x')} ui build dir missing (${uiBuildDir}) → run: ${cmd('hapsta build')}`);
+      if (!json) console.log(`${red('x')} ui build dir missing (${uiBuildDir}) → run: ${cmd('hstack build')}`);
     }
   } else {
     report.checks.uiServing = { ok: false, reason: 'disabled (HAPPIER_STACK_SERVE_UI=0)' };
@@ -241,7 +241,7 @@ async function main() {
         const stackName = (process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
         console.log(`  ${dim('↪ likely cause:')} missing credentials at ${accessKeyPath}`);
         console.log(`  ${dim('↪ fix:')} authenticate for this stack:`);
-        console.log(`    ${cmd(stackName === 'main' ? 'hapsta auth login' : `hapsta stack auth ${stackName} login`)}`);
+        console.log(`    ${cmd(stackName === 'main' ? 'hstack auth login' : `hstack stack auth ${stackName} login`)}`);
       }
     }
   }
@@ -289,29 +289,29 @@ async function main() {
     }
   } catch {
     report.checks.happyOnPath = { ok: false };
-    if (!json) console.log(`${dim('ℹ')} happy on PATH: not found (run: ${cmd('hapsta init --install-path')})`);
+    if (!json) console.log(`${dim('ℹ')} happy on PATH: not found (run: ${cmd('hstack init --install-path')})`);
   }
 
-  // hapsta on PATH
+  // hstack on PATH
   try {
-    const happysPath = await resolveCommandPath('hapsta');
+    const happysPath = await resolveCommandPath('hstack');
     if (happysPath) {
       report.checks.happysOnPath = { ok: true, path: happysPath };
-      if (!json) console.log(`${green('✓')} hapsta on PATH: ${happysPath}`);
+      if (!json) console.log(`${green('✓')} hstack on PATH: ${happysPath}`);
     }
   } catch {
     report.checks.happysOnPath = { ok: false };
-    if (!json) console.log(`${dim('ℹ')} hapsta on PATH: not found (run: ${cmd('hapsta init --install-path')})`);
+    if (!json) console.log(`${dim('ℹ')} hstack on PATH: not found (run: ${cmd('hstack init --install-path')})`);
   }
 
   if (!json) {
     if (!runtimeVersion) {
       console.log('');
       console.log(sectionTitle('Tips'));
-      console.log(`- ${cmd('hapsta self update')} ${dim('(install a stable runtime; recommended for SwiftBar/services)')}`);
+      console.log(`- ${cmd('hstack self update')} ${dim('(install a stable runtime; recommended for SwiftBar/services)')}`);
     }
     if (!report.checks.happysOnPath?.ok) {
-      console.log(`- Add shims to PATH: ${cmd(`export PATH="${join(getHappyStacksHomeDir(), 'bin')}:$PATH"`)} ${dim(`(or: ${cmd('hapsta init --install-path')})`)}`);
+      console.log(`- Add shims to PATH: ${cmd(`export PATH="${join(getHappyStacksHomeDir(), 'bin')}:$PATH"`)} ${dim(`(or: ${cmd('hstack init --install-path')})`)}`);
     }
     console.log('');
   }

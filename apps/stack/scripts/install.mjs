@@ -21,7 +21,7 @@ import { createStepPrinter } from './utils/cli/progress.mjs';
  * Install/setup the local stack:
  * - ensure the Happier monorepo exists (optionally clone if missing)
  * - install dependencies where needed (yarn)
- * - build happy-cli (optional) and install `happy`/`hapsta` shims under `<homeDir>/bin`
+ * - build happy-cli (optional) and install `happy`/`hstack` shims under `<homeDir>/bin`
  * - build the web UI bundle (so `run` can serve it)
  * - optional macOS autostart (LaunchAgent)
  */
@@ -128,12 +128,12 @@ async function ensureComponentPresent({ dir, label, repoUrl, allowClone, quiet =
     return;
   }
   if (!allowClone) {
-    throw new Error(`[local] missing ${label} at ${dir} (run with --clone or set HAPPIER_STACK_REPO_URL and re-run hapsta bootstrap)`);
+    throw new Error(`[local] missing ${label} at ${dir} (run with --clone or set HAPPIER_STACK_REPO_URL and re-run hstack bootstrap)`);
   }
   if (!repoUrl) {
     throw new Error(
       `[local] missing ${label} at ${dir} and no repo URL configured.\n` +
-        `Set HAPPIER_STACK_REPO_URL, or run: hapsta bootstrap --interactive`
+        `Set HAPPIER_STACK_REPO_URL, or run: hstack bootstrap --interactive`
     );
   }
   await mkdir(dirname(dir), { recursive: true });
@@ -186,7 +186,7 @@ async function interactiveWizard({ rootDir, defaults }) {
     );
     if (repoSource === 'upstream') {
       // eslint-disable-next-line no-console
-      console.log(dim(`Tip: to use forks, re-run: ${cyan('hapsta bootstrap --interactive --forks')}`));
+      console.log(dim(`Tip: to use forks, re-run: ${cyan('hstack bootstrap --interactive --forks')}`));
     }
 
     let forkOwner = defaults.forkOwner;
@@ -204,7 +204,7 @@ async function interactiveWizard({ rootDir, defaults }) {
     }
 
     const serverMode = await promptSelect(rl, {
-      title: `${bold('Server flavor')}\n${dim('Pick the backend this stack should run. You can switch later with `hapsta srv use ...`.')}`,
+      title: `${bold('Server flavor')}\n${dim('Pick the backend this stack should run. You can switch later with `hstack srv use ...`.')}`,
       options: [
         { label: `${cyan('happy-server-light')} only (${green('recommended')})`, value: 'happy-server-light' },
         { label: `${cyan('happy-server')} only — full server (Docker-managed infra)`, value: 'happy-server' },
@@ -282,9 +282,9 @@ async function main() {
       },
       text: [
         '[bootstrap] usage:',
-        '  hapsta bootstrap [--forks|--upstream] [--server=happy-server|happy-server-light|both] [--json]',
-        '  hapsta bootstrap --interactive',
-        '  hapsta bootstrap --no-clone',
+        '  hstack bootstrap [--forks|--upstream] [--server=happy-server|happy-server-light|both] [--json]',
+        '  hstack bootstrap --interactive',
+        '  hstack bootstrap --no-clone',
       ].join('\n'),
     });
     return;
@@ -489,7 +489,7 @@ async function main() {
 
   // Optional git remote + mirror branch configuration
   if (wizard?.configureGit) {
-    // Ensure upstream remotes exist so `hapsta wt sync-all` works consistently.
+    // Ensure upstream remotes exist so `hstack wt sync-all` works consistently.
     const upstreamRepos = getRepoUrls({ repoSource: 'upstream' });
     await ensureUpstreamRemote({ repoDir: uiRepoDir, upstreamUrl: upstreamRepos.ui });
     if (serverFullRepoDir !== uiRepoDir && (await pathExists(serverFullRepoDir))) {

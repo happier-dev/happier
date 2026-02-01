@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Create/configure a Lima VM for testing Hapsta in an isolated Linux environment,
+# Create/configure a Lima VM for testing hstack in an isolated Linux environment,
 # while still opening the Expo web UI on the macOS host via localhost port forwarding
 # (required for WebCrypto/secure-context APIs).
 #
@@ -14,9 +14,9 @@ set -euo pipefail
 #
 # What it does:
 # - creates the VM (if missing)
-# - injects port forwarding rules for the Hapsta VM port ranges
+# - injects port forwarding rules for the hstack VM port ranges
 # - restarts the VM so the rules take effect
-# - prints next steps (provision script + hapsta commands)
+# - prints next steps (provision script + hstack commands)
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   cat <<'EOF'
@@ -87,10 +87,10 @@ path = Path(os.environ["LIMA_YAML"])
 memory = os.environ.get("LIMA_MEMORY", "8GiB")
 text = path.read_text(encoding="utf-8")
 
-MEM_MARK_BEGIN = "# --- hapsta vm sizing (managed by hapsta) ---"
-MEM_MARK_END = "# --- /hapsta vm sizing ---"
-MARK_BEGIN = "# --- hapsta port forwards (managed by hapsta) ---"
-MARK_END = "# --- /hapsta port forwards ---"
+MEM_MARK_BEGIN = "# --- hstack vm sizing (managed by hstack) ---"
+MEM_MARK_END = "# --- /hstack vm sizing ---"
+MARK_BEGIN = "# --- hstack port forwards (managed by hstack) ---"
+MARK_END = "# --- /hstack port forwards ---"
 
 entries = [
     "  - guestPortRange: [13000, 13999]\n    hostPortRange:  [13000, 13999]\n",
@@ -111,9 +111,9 @@ block_as_section = (
 )
 
 block_as_list_items = (
-    f"  # --- hapsta port forwards (managed by hapsta) ---\n"
+    f"  # --- hstack port forwards (managed by hstack) ---\n"
     + "".join(entries) +
-    f"  # --- /hapsta port forwards ---\n"
+    f"  # --- /hstack port forwards ---\n"
 )
 
 if MEM_MARK_BEGIN in text and MEM_MARK_END in text:
@@ -165,9 +165,9 @@ Inside the VM:
     && /tmp/linux-ubuntu-review-pr.sh
 
 Then:
-  npx --yes -p @happier-dev/stack@latest hapsta setup --profile=dev --bind=loopback
+  npx --yes -p @happier-dev/stack@latest hstack setup --profile=dev --bind=loopback
 
 Tip:
   Open the printed URLs on your macOS host via http://localhost:<port> or http://*.localhost:<port>.
-  For `npx --yes -p @happier-dev/stack hapsta review-pr ...` inside the VM, pass `--vm-ports` so stack ports land in the forwarded ranges.
+  For `npx --yes -p @happier-dev/stack hstack review-pr ...` inside the VM, pass `--vm-ports` so stack ports land in the forwarded ranges.
 EOF

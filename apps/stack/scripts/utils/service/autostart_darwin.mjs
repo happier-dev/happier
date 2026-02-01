@@ -41,12 +41,12 @@ export function buildLaunchdPath({ execPath = process.execPath, basePath = proce
 export function pickLaunchdProgramArgs({ rootDir, execPath = process.execPath } = {}) {
   // Prefer the stable shim under the canonical home dir (used by selfhost installs).
   // This keeps the LaunchAgent pointing at a stable path while allowing runtime updates.
-  const hapstaShim = join(getCanonicalHomeDir(), 'bin', 'hapsta');
-  if (existsSync(hapstaShim)) {
-    return [hapstaShim, 'start'];
+  const hstackShim = join(getCanonicalHomeDir(), 'bin', 'hstack');
+  if (existsSync(hstackShim)) {
+    return [hstackShim, 'start'];
   }
   // Fallback: call the Node entry directly (works in repo-only installs).
-  return [execPath, resolveInstalledPath(rootDir, 'bin/hapsta.mjs'), 'start'];
+  return [execPath, resolveInstalledPath(rootDir, 'bin/hstack.mjs'), 'start'];
 }
 
 function xmlEscape(s) {

@@ -30,7 +30,7 @@ async function main() {
     printResult({
       json,
       data: { flags: ['--json'], commands: ['where'] },
-      text: ['[where] usage:', '  hapsta where [--json]'].join('\n'),
+      text: ['[where] usage:', '  hstack where [--json]'].join('\n'),
     });
     return;
   }

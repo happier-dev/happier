@@ -1,16 +1,16 @@
 <!-- EXTEND: pack-constitution -->
-## Hapsta orchestration rules (MANDATORY)
+## hstack orchestration rules (MANDATORY)
 
-- **Edison must be invoked through Hapsta**:
+- **Edison must be invoked through hstack**:
   - Do **not** run `edison ...` directly in this repo.
   - Always run:
-    - `hapsta edison -- <edison args...>`
-    - `hapsta edison --stack=<stack> -- <edison args...>` (recommended)
+    - `hstack edison -- <edison args...>`
+    - `hstack edison --stack=<stack> -- <edison args...>` (recommended)
   - See: `.edison/guidelines/agents/HAPPIER_STACK_EDISON_WRAPPER.md`
   - Useful reads:
-    - `hapsta edison -- read START_PLAN_FEATURE --type start`
-    - `hapsta edison -- read START_VALIDATE_TASK --type start`
-    - `hapsta edison -- read START_HAPSTA_NEW_SESSION --type start`
+    - `hstack edison -- read START_PLAN_FEATURE --type start`
+    - `hstack edison -- read START_VALIDATE_TASK --type start`
+    - `hstack edison -- read START_hstack_NEW_SESSION --type start`
 
 - **Task decomposition is mandatory**:
   - Create a **parent** task first (`hs_kind: parent`) that declares the overall `components: [...]`.
@@ -25,7 +25,7 @@
     - `base_task: <parent-task-id>`
     - `base_worktree: edison/<task-id>`
   - Prefer assigning/claiming work at the **component task** level; validate at the **track task** level.
-  - Recommended: use `hapsta edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes`.
+  - Recommended: use `hstack edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes`.
 
 - **Upstream-first workflow**:
   - Implement in an upstream-based worktree (`--from=upstream`) when the change should be upstreamed.
@@ -37,7 +37,7 @@
   - Use `--force` only when explicitly intended.
 
 - **Evidence is stack-scoped by default**:
-  - Run: `hapsta edison --stack=<stack> -- evidence capture <task-id>`
+  - Run: `hstack edison --stack=<stack> -- evidence capture <task-id>`
   - This ensures evidence reflects the exact component repos/worktrees the stack uses.
 
 ## Happy component translations (MANDATORY where applicable)

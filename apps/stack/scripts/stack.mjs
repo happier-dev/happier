@@ -272,9 +272,9 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     throw new Error(
       `[stack] stack "${stackName}" does not exist yet.\n` +
       `[stack] Create it first:\n` +
-      `  hapsta stack new ${stackName}\n` +
+      `  hstack stack new ${stackName}\n` +
       `  # or:\n` +
-      `  hapsta stack new ${stackName} --interactive\n`
+      `  hstack stack new ${stackName} --interactive\n`
     );
   }
   // IMPORTANT: stack env file should be authoritative. If the user has HAPPIER_STACK_*
@@ -412,7 +412,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   stackName = config.stackName?.trim() ? config.stackName.trim() : '';
   if (!stackName) {
     throw new Error(
-      '[stack] usage: hapsta stack new <name> [--port=NNN] [--server=happy-server|happy-server-light] ' +
+      '[stack] usage: hstack stack new <name> [--port=NNN] [--server=happy-server|happy-server-light] ' +
         '[--repo=<owner/...>|<path>|default] [--remote=<name>] ' +
         '[--copy-auth-from=<stack|legacy>] [--link-auth] [--no-copy-auth] [--interactive] [--force-port]'
     );
@@ -563,7 +563,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
       throw new Error(
         `[stack] repo checkout does not exist: ${resolved || '(empty)'}\n` +
           `Fix:\n` +
-          `- run: hapsta setup --profile=dev (clones the monorepo into the workspace)\n` +
+          `- run: hstack setup --profile=dev (clones the monorepo into the workspace)\n` +
           `- or pass an explicit --repo=<path|worktreeSpec>\n`
       );
     }
@@ -593,7 +593,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     }).catch((err) => {
       if (!json && emit) {
         console.warn(`[stack] auth copy skipped: ${err instanceof Error ? err.message : String(err)}`);
-        console.warn(`[stack] tip: you can always run: hapsta stack auth ${stackName} login`);
+        console.warn(`[stack] tip: you can always run: hstack stack auth ${stackName} login`);
       }
     });
   }
@@ -621,7 +621,7 @@ async function cmdEdit({ rootDir, argv }) {
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const stackName = stackNameFromArg(positionals, 1);
   if (!stackName) {
-    throw new Error('[stack] usage: hapsta stack edit <name> [--interactive]');
+    throw new Error('[stack] usage: hstack stack edit <name> [--interactive]');
   }
 
   const envPath = resolveStackEnvPath(stackName).envPath;
@@ -1202,7 +1202,7 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
           if (Number(cur?.ownerPid) === Number(child.pid)) {
             // Only delete runtime state when we're confident no child processes are left behind.
             // If the runner crashes but a child (server/expo/daemon) stays alive, keeping stack.runtime.json
-            // allows `hapsta stack stop --aggressive` to kill the recorded PIDs safely.
+            // allows `hstack stack stop --aggressive` to kill the recorded PIDs safely.
             const processes = cur?.processes && typeof cur.processes === 'object' ? cur.processes : {};
             const anyAlive = Object.values(processes)
               .map((p) => Number(p))
@@ -1217,7 +1217,7 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
             } else if (!wantsJson) {
               console.warn(
                 `[stack] ${stackName}: preserving ${runtimeStatePath} after runner exit (child processes still alive). ` +
-                  `Run: hapsta stack stop ${stackName} --yes --aggressive`
+                  `Run: hstack stack stop ${stackName} --yes --aggressive`
               );
             }
           }
@@ -1332,14 +1332,14 @@ async function cmdSrv({ rootDir, stackName, args }) {
 
 async function cmdWt({ rootDir, stackName, args }) {
   // Forward to scripts/worktrees.mjs under the stack env.
-  // This makes `hapsta stack wt <name> -- ...` behave exactly like `hapsta wt ...`,
+  // This makes `hstack stack wt <name> -- ...` behave exactly like `hstack wt ...`,
   // but read/write the stack env file (HAPPIER_STACK_ENV_FILE) instead of repo env.local.
   let forwarded = args[0] === '--' ? args.slice(1) : args;
 
   // Stack users usually want to see what *this stack* is using (active checkout),
   // not an exhaustive enumeration of every worktree on disk.
   //
-  // `hapsta wt list` defaults to showing all worktrees. In stack mode, default to
+  // `hstack wt list` defaults to showing all worktrees. In stack mode, default to
   // an active-only view unless the caller opts into `--all`.
   if (forwarded[0] === 'list') {
     const wantsAll = forwarded.includes('--all') || forwarded.includes('--all-worktrees');
@@ -1359,7 +1359,7 @@ async function cmdWt({ rootDir, stackName, args }) {
 
 async function cmdAuth({ rootDir, stackName, args }) {
   // Forward to scripts/auth.mjs under the stack env.
-  // This makes `hapsta stack auth <name> ...` resolve CLI home/urls for that stack.
+  // This makes `hstack stack auth <name> ...` resolve CLI home/urls for that stack.
   const forwarded = args[0] === '--' ? args.slice(1) : args;
   const extraEnv = await getRuntimePortExtraEnv(stackName);
   await withStackEnv({
@@ -1820,9 +1820,9 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
         serverComponent,
         created: created.trim() ? JSON.parse(created.trim()) : { ok: true },
         next: {
-          login: `hapsta stack auth ${name} login`,
+          login: `hstack stack auth ${name} login`,
           setEnv: `# add to ${getHomeEnvLocalPath()}:\nHAPPIER_STACK_AUTH_SEED_FROM=${name}\nHAPPIER_STACK_AUTO_AUTH_SEED=1`,
-          reseedAll: `hapsta auth copy-from ${name} --all --except=main,${name}`,
+          reseedAll: `hstack auth copy-from ${name} --all --except=main,${name}`,
         },
       },
     });
@@ -2024,12 +2024,12 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
                 savedDevKey = true;
                 console.log(`[stack] dev key saved: ${res.path}`);
               } else {
-                console.log(`[stack] dev key not saved; you can do it later with: ${yellow('hapsta auth dev-key --set="<key>"')}`);
+                console.log(`[stack] dev key not saved; you can do it later with: ${yellow('hstack auth dev-key --set="<key>"')}`);
               }
 
               console.log('');
               console.log(`[stack] step 3/3: authenticate the CLI against this stack ${dim('(web auth)')}`);
-              console.log(`[stack] launching: ${yellow(`hapsta stack auth ${name} login`)}`);
+              console.log(`[stack] launching: ${yellow(`hstack stack auth ${name} login`)}`);
               await run(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), 'login', '--no-force'], {
                 cwd: rootDir,
                 env,
@@ -2061,7 +2061,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
         console.log('');
         console.log('[stack] login step complete.');
       } else {
-        console.log(`[stack] skipping guided login. You can do it later with: ${yellow(`hapsta stack auth ${name} login`)}`);
+        console.log(`[stack] skipping guided login. You can do it later with: ${yellow(`hstack stack auth ${name} login`)}`);
       }
 
       if (!skipDefaultSeed) {
@@ -2116,7 +2116,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
             console.log('[stack] dev key not provided; skipping');
           }
         } else {
-          console.log(`[stack] tip: you can set it later with: ${yellow('hapsta auth dev-key --set="<key>"')}`);
+          console.log(`[stack] tip: you can set it later with: ${yellow('hstack auth dev-key --set="<key>"')}`);
         }
       }
     });
@@ -2124,8 +2124,8 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
     console.log(`- set as default seed (recommended) in ${getHomeEnvLocalPath()}:`);
     console.log(`  HAPPIER_STACK_AUTH_SEED_FROM=${name}`);
     console.log(`  HAPPIER_STACK_AUTO_AUTH_SEED=1`);
-    console.log(`- (optional) seed existing stacks: hapsta auth copy-from ${name} --all --except=main,${name}`);
-    console.log(`- (optional) store dev key for UI automation: hapsta auth dev-key --set="<key>"`);
+    console.log(`- (optional) seed existing stacks: hstack auth copy-from ${name} --all --except=main,${name}`);
+    console.log(`- (optional) store dev key for UI automation: hstack auth dev-key --set="<key>"`);
   }
 }
 
@@ -2290,7 +2290,7 @@ async function cmdDuplicate({ rootDir, argv }) {
   const fromStack = (positionals[1] ?? '').trim();
   const toStack = (positionals[2] ?? '').trim();
   if (!fromStack || !toStack) {
-    throw new Error('[stack] usage: hapsta stack duplicate <from> <to> [--duplicate-worktrees] [--deps=...] [--json]');
+    throw new Error('[stack] usage: hstack stack duplicate <from> <to> [--duplicate-worktrees] [--deps=...] [--json]');
   }
   if (toStack === 'main') {
     throw new Error('[stack] refusing to duplicate into stack name "main"');
@@ -2382,7 +2382,7 @@ async function cmdInfo({ rootDir, argv }) {
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const stackName = (positionals[1] ?? '').trim();
   if (!stackName) {
-    throw new Error('[stack] usage: hapsta stack info <name> [--json]');
+    throw new Error('[stack] usage: hstack stack info <name> [--json]');
   }
   if (!stackExistsSync(stackName)) {
     throw new Error(`[stack] info: stack does not exist: ${stackName}`);
@@ -2426,11 +2426,11 @@ async function cmdPrStack({ rootDir, argv }) {
       json,
       data: {
         usage:
-          'hapsta stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--server=happy-server|happy-server-light] [--remote=upstream] [--deps=none|link|install|link-or-install] [--seed-auth] [--copy-auth-from=<stack>] [--with-infra] [--auth-force] [--dev|--start] [--background] [--mobile] [--expo-tailscale] [--json] [-- <stack dev/start args...>]',
+          'hstack stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--server=happy-server|happy-server-light] [--remote=upstream] [--deps=none|link|install|link-or-install] [--seed-auth] [--copy-auth-from=<stack>] [--with-infra] [--auth-force] [--dev|--start] [--background] [--mobile] [--expo-tailscale] [--json] [-- <stack dev/start args...>]',
       },
       text: [
         '[stack] usage:',
-        '  hapsta stack pr <name> --repo=<pr-url|number> [--dev|--start]',
+        '  hstack stack pr <name> --repo=<pr-url|number> [--dev|--start]',
         '    [--seed-auth] [--copy-auth-from=<stack>] [--link-auth] [--with-infra] [--auth-force]',
         '    [--remote=upstream] [--deps=none|link|install|link-or-install] [--update] [--force] [--background]',
         '    [--mobile]         # also start Expo dev-client Metro for mobile',
@@ -2439,19 +2439,19 @@ async function cmdPrStack({ rootDir, argv }) {
         '',
         'examples:',
         '  # Create stack + check out PRs + start dev UI',
-        '  hapsta stack pr pr123 \\',
+        '  hstack stack pr pr123 \\',
         '    --repo=https://github.com/leeroybrun/happier-dev/pull/123 \\',
         '    --seed-auth --copy-auth-from=dev-auth \\',
         '    --dev',
         '',
         '  # Use numeric PR refs (remote defaults to upstream)',
-        '  hapsta stack pr pr123 --repo=123 --seed-auth --copy-auth-from=dev-auth --dev',
+        '  hstack stack pr pr123 --repo=123 --seed-auth --copy-auth-from=dev-auth --dev',
         '',
         '  # Reuse an existing non-stacks Happy install for auth seeding',
         '  (deprecated) legacy ~/.happy is not supported for reliable seeding',
         '',
         'notes:',
-        '  - This composes existing commands: `hapsta stack new`, `hapsta stack wt ...`, and `hapsta stack auth ...`',
+        '  - This composes existing commands: `hstack stack new`, `hstack stack wt ...`, and `hstack stack auth ...`',
         '  - For auth seeding, pass `--seed-auth` and optionally `--copy-auth-from=dev-auth` (or legacy/main)',
         '  - `--link-auth` symlinks auth files instead of copying (keeps credentials in sync, but reduces isolation)',
       ].join('\n'),
@@ -2462,7 +2462,7 @@ async function cmdPrStack({ rootDir, argv }) {
   const positionals = argv0.filter((a) => !a.startsWith('--'));
   const stackName = (positionals[1] ?? '').trim();
   if (!stackName) {
-    throw new Error('[stack] pr: missing stack name. Usage: hapsta stack pr <name> --repo=<pr>');
+    throw new Error('[stack] pr: missing stack name. Usage: hstack stack pr <name> --repo=<pr>');
   }
   if (stackName === 'main') {
     throw new Error('[stack] pr: stack name "main" is reserved; pick a unique name for this PR stack');
@@ -2576,7 +2576,7 @@ async function cmdPrStack({ rootDir, argv }) {
       options.push({ label: 'dev-auth (recommended) — use your dedicated dev auth seed stack', value: 'dev-auth' });
     }
     if (hasMainAccessKey) {
-      options.push({ label: 'main — use Hapsta main credentials', value: 'main' });
+      options.push({ label: 'main — use hstack main credentials', value: 'main' });
     }
     if (hasLegacyAccessKey) {
       options.push({ label: 'legacy — use ~/.happy credentials (best-effort)', value: 'legacy' });
@@ -2637,7 +2637,7 @@ async function cmdPrStack({ rootDir, argv }) {
     if (existing.serverComponent !== serverComponent) {
       throw new Error(
         `[stack] pr: existing stack "${stackName}" uses server=${existing.serverComponent}, but command requested server=${serverComponent}.\n` +
-          `Fix: create a new stack name, or switch the stack's server flavor first (hapsta stack srv ${stackName} -- use ...).`
+          `Fix: create a new stack name, or switch the stack's server flavor first (hstack stack srv ${stackName} -- use ...).`
       );
     }
     created = { ok: true, stackName, reused: true, serverComponent: existing.serverComponent };
@@ -2946,14 +2946,14 @@ async function cmdStackDaemon({ rootDir, stackName, argv, json }) {
         banner('stack daemon', { subtitle: `Manage the happy-cli daemon for stack ${cyan(stackName || 'main')}.` }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hapsta stack daemon')} <name> status [--identity=<name>] [--json]`,
-        `  ${cyan('hapsta stack daemon')} <name> start [--identity=<name>] [--json]`,
-        `  ${cyan('hapsta stack daemon')} <name> stop [--identity=<name>] [--json]`,
-        `  ${cyan('hapsta stack daemon')} <name> restart [--identity=<name>] [--json]`,
+        `  ${cyan('hstack stack daemon')} <name> status [--identity=<name>] [--json]`,
+        `  ${cyan('hstack stack daemon')} <name> start [--identity=<name>] [--json]`,
+        `  ${cyan('hstack stack daemon')} <name> stop [--identity=<name>] [--json]`,
+        `  ${cyan('hstack stack daemon')} <name> restart [--identity=<name>] [--json]`,
         '',
         sectionTitle('example:'),
-        `  ${cmdFmt(`hapsta stack daemon ${stackName || 'main'} restart`)}`,
-        `  ${cmdFmt(`hapsta stack daemon ${stackName || 'main'} start --identity=account-b`)}`,
+        `  ${cmdFmt(`hstack stack daemon ${stackName || 'main'} restart`)}`,
+        `  ${cmdFmt(`hstack stack daemon ${stackName || 'main'} start --identity=account-b`)}`,
       ].join('\n'),
     });
     return;
@@ -2967,7 +2967,7 @@ async function cmdStackDaemon({ rootDir, stackName, argv, json }) {
         `[stack] invalid daemon subcommand: ${action}`,
         '',
         'usage:',
-        '  hapsta stack daemon <name> start|stop|restart|status [--json]',
+        '  hstack stack daemon <name> start|stop|restart|status [--json]',
       ].join('\n'),
     });
     process.exit(1);
@@ -3015,7 +3015,7 @@ async function cmdStackDaemon({ rootDir, stackName, argv, json }) {
 
         if (!hasCreds) {
           if (json) {
-            const loginCmd = `hapsta stack auth ${stackName} login${identity !== 'default' ? ` --identity=${identity} --no-open` : ''}`;
+            const loginCmd = `hstack stack auth ${stackName} login${identity !== 'default' ? ` --identity=${identity} --no-open` : ''}`;
             return { ok: false, action, error: 'auth_required', cliIdentity: identity, cliHomeDir, loginCmd };
           }
 
@@ -3045,7 +3045,7 @@ async function cmdStackDaemon({ rootDir, stackName, argv, json }) {
                 stdio: 'inherit',
               });
             } else {
-              const loginCmd = `hapsta stack auth ${stackName} login${identity !== 'default' ? ` --identity=${identity} --no-open` : ''}`;
+              const loginCmd = `hstack stack auth ${stackName} login${identity !== 'default' ? ` --identity=${identity} --no-open` : ''}`;
               throw new Error(`[stack] daemon auth required. Run:\n${loginCmd}`);
             }
           }
@@ -3139,8 +3139,8 @@ function isKnownStackCommandToken(token) {
 
 function normalizeStackNameFirstArgs(argv) {
   // Back-compat UX:
-  // Allow `hapsta stack <name> <command> ...` (stack name first) as a shortcut for:
-  //   `hapsta stack <command> <name> ...`
+  // Allow `hstack stack <name> <command> ...` (stack name first) as a shortcut for:
+  //   `hstack stack <command> <name> ...`
   //
   // We only apply this rewrite when the first positional is *not* a known stack subcommand,
   // but *is* an existing stack name.
@@ -3184,12 +3184,12 @@ async function main() {
   const json = wantsJson(argv, { flags });
 
   const wantsHelpFlag = wantsHelp(argv, { flags });
-  // Allow subcommand-specific help (so `hapsta stack pr --help` shows PR stack flags).
+  // Allow subcommand-specific help (so `hstack stack pr --help` shows PR stack flags).
   if (wantsHelpFlag && cmd === 'pr') {
     await cmdPrStack({ rootDir, argv });
     return;
   }
-  // Allow subcommand-specific help (so `hapsta stack daemon <name> --help` works).
+  // Allow subcommand-specific help (so `hstack stack daemon <name> --help` works).
   if (wantsHelpFlag && cmd === 'daemon') {
     const stackName = stackNameFromArg(positionals, 1) || 'main';
     const passthrough = argv.slice(2);
@@ -3238,40 +3238,40 @@ async function main() {
       },
       text: [
         '[stack] usage:',
-        '  hapsta stack new <name> [--port=NNN] [--server=happy-server|happy-server-light] [--repo=default|<owner/...>|<path>] [--interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
-        '  hapsta stack edit <name> --interactive [--json]',
-        '  hapsta stack list [--json]',
-        '  hapsta stack audit [--fix] [--fix-main] [--fix-ports] [--fix-workspace] [--fix-paths] [--unpin-ports] [--unpin-ports-except=stack1,stack2] [--json]',
-        '  hapsta stack archive <name> [--dry-run] [--date=YYYY-MM-DD] [--json]',
-        '  hapsta stack duplicate <from> <to> [--duplicate-worktrees] [--deps=none|link|install|link-or-install] [--json]',
-        '  hapsta stack info <name> [--json]',
-        '  hapsta stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--dev|--start] [--json] [-- ...]',
-        '  hapsta stack create-dev-auth-seed [name] [--server=happy-server|happy-server-light] [--login|--no-login] [--skip-default-seed] [--non-interactive] [--json]',
-        '  hapsta stack daemon <name> start|stop|restart|status [--json]',
-        '  hapsta stack happy <name> [-- ...]',
-        '  hapsta stack env <name> set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
-        '  hapsta stack auth <name> status|login|copy-from [--json]',
-        '  hapsta stack dev <name> [-- ...]',
-        '  hapsta stack start <name> [-- ...]',
-        '  hapsta stack build <name> [-- ...]',
-        '  hapsta stack review <name> [component...] [--reviewers=coderabbit,codex] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--json]',
-        '  hapsta stack typecheck <name> [component...] [--json]',
-        '  hapsta stack lint <name> [component...] [--json]',
-        '  hapsta stack test <name> [component...] [--json]',
-        '  hapsta stack doctor <name> [-- ...]',
-        '  hapsta stack mobile <name> [-- ...]',
-        '  hapsta stack mobile:install <name> [--name="Happy (exp1)"] [--device=...] [--json]',
-        '  hapsta stack mobile-dev-client <name> --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]',
-        '  hapsta stack resume <name> <sessionId...> [--json]',
-        '  hapsta stack stop <name> [--aggressive] [--sweep-owned] [--no-docker] [--json]',
-        '  hapsta stack code <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
-        '  hapsta stack cursor <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
-        '  hapsta stack open <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]   # prefer Cursor, else VS Code',
-        '  hapsta stack srv <name> -- status|use ...',
-        '  hapsta stack wt <name> -- <wt args...>',
-        '  hapsta stack tailscale:status|enable|disable|url <name> [-- ...]',
-        '  hapsta stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
-        '  hapsta stack service:* <name>   # legacy alias',
+        '  hstack stack new <name> [--port=NNN] [--server=happy-server|happy-server-light] [--repo=default|<owner/...>|<path>] [--interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
+        '  hstack stack edit <name> --interactive [--json]',
+        '  hstack stack list [--json]',
+        '  hstack stack audit [--fix] [--fix-main] [--fix-ports] [--fix-workspace] [--fix-paths] [--unpin-ports] [--unpin-ports-except=stack1,stack2] [--json]',
+        '  hstack stack archive <name> [--dry-run] [--date=YYYY-MM-DD] [--json]',
+        '  hstack stack duplicate <from> <to> [--duplicate-worktrees] [--deps=none|link|install|link-or-install] [--json]',
+        '  hstack stack info <name> [--json]',
+        '  hstack stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--dev|--start] [--json] [-- ...]',
+        '  hstack stack create-dev-auth-seed [name] [--server=happy-server|happy-server-light] [--login|--no-login] [--skip-default-seed] [--non-interactive] [--json]',
+        '  hstack stack daemon <name> start|stop|restart|status [--json]',
+        '  hstack stack happy <name> [-- ...]',
+        '  hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
+        '  hstack stack auth <name> status|login|copy-from [--json]',
+        '  hstack stack dev <name> [-- ...]',
+        '  hstack stack start <name> [-- ...]',
+        '  hstack stack build <name> [-- ...]',
+        '  hstack stack review <name> [component...] [--reviewers=coderabbit,codex] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--json]',
+        '  hstack stack typecheck <name> [component...] [--json]',
+        '  hstack stack lint <name> [component...] [--json]',
+        '  hstack stack test <name> [component...] [--json]',
+        '  hstack stack doctor <name> [-- ...]',
+        '  hstack stack mobile <name> [-- ...]',
+        '  hstack stack mobile:install <name> [--name="Happy (exp1)"] [--device=...] [--json]',
+        '  hstack stack mobile-dev-client <name> --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]',
+        '  hstack stack resume <name> <sessionId...> [--json]',
+        '  hstack stack stop <name> [--aggressive] [--sweep-owned] [--no-docker] [--json]',
+        '  hstack stack code <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
+        '  hstack stack cursor <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
+        '  hstack stack open <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]   # prefer Cursor, else VS Code',
+        '  hstack stack srv <name> -- status|use ...',
+        '  hstack stack wt <name> -- <wt args...>',
+        '  hstack stack tailscale:status|enable|disable|url <name> [-- ...]',
+        '  hstack stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
+        '  hstack stack service:* <name>   # legacy alias',
       ].join('\n'),
     });
     return;
@@ -3322,55 +3322,55 @@ async function main() {
       cmd === 'service'
         ? [
             '[stack] usage:',
-            '  hapsta stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
+            '  hstack stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
             '',
             'example:',
-            '  hapsta stack service exp1 status',
+            '  hstack stack service exp1 status',
           ]
         : cmd === 'wt'
           ? [
               '[stack] usage:',
-              '  hapsta stack wt <name> -- <wt args...>',
+              '  hstack stack wt <name> -- <wt args...>',
               '',
               'example:',
-              '  hapsta stack wt exp1 -- use happy slopus/pr/123-fix-thing',
+              '  hstack stack wt exp1 -- use happy slopus/pr/123-fix-thing',
             ]
           : cmd === 'srv'
             ? [
                 '[stack] usage:',
-                '  hapsta stack srv <name> -- status|use ...',
+                '  hstack stack srv <name> -- status|use ...',
                 '',
                 'example:',
-                '  hapsta stack srv exp1 -- status',
+                '  hstack stack srv exp1 -- status',
               ]
           : cmd === 'env'
             ? [
                 '[stack] usage:',
-                '  hapsta stack env <name> set KEY=VALUE [KEY2=VALUE2...]',
-                '  hapsta stack env <name> unset KEY [KEY2...]',
-                '  hapsta stack env <name> get KEY',
-                '  hapsta stack env <name> list',
-                '  hapsta stack env <name> path',
+                '  hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...]',
+                '  hstack stack env <name> unset KEY [KEY2...]',
+                '  hstack stack env <name> get KEY',
+                '  hstack stack env <name> list',
+                '  hstack stack env <name> path',
               ]
             : cmd === 'daemon'
               ? [
                   '[stack] usage:',
-                  '  hapsta stack daemon <name> start|stop|restart|status [--json]',
+                  '  hstack stack daemon <name> start|stop|restart|status [--json]',
                   '',
                   'example:',
-                  '  hapsta stack daemon main status',
+                  '  hstack stack daemon main status',
                 ]
             : cmd.startsWith('tailscale:')
               ? [
                   '[stack] usage:',
-                  '  hapsta stack tailscale:status|enable|disable|url <name> [-- ...]',
+                  '  hstack stack tailscale:status|enable|disable|url <name> [-- ...]',
                   '',
                   'example:',
-                  '  hapsta stack tailscale:status exp1',
+                  '  hstack stack tailscale:status exp1',
                 ]
               : [
                   '[stack] missing stack name.',
-                  'Run: hapsta stack --help',
+                  'Run: hstack stack --help',
                 ];
 
     printResult({ json, data: { ok: false, error: 'missing_stack_name', cmd }, text: helpLines.join('\n') });
@@ -3396,7 +3396,7 @@ async function main() {
     const hasPositional = passthrough.some((a) => !a.startsWith('-'));
     const envArgv = hasPositional ? passthrough : ['list', ...passthrough];
     // Forward to scripts/env.mjs under the stack env.
-    // This keeps stack env editing behavior unified with `hapsta env ...`.
+    // This keeps stack env editing behavior unified with `hstack env ...`.
     await withStackEnv({
       stackName,
       fn: async ({ env }) => {
@@ -3412,7 +3412,7 @@ async function main() {
   if (cmd === 'eas') {
     // Forward EAS commands under the stack env.
     // Example:
-    //   hapsta stack eas <name> build --platform ios --profile production
+    //   hstack stack eas <name> build --platform ios --profile production
     await withStackEnv({
       stackName,
       fn: async ({ env }) => {
@@ -3423,8 +3423,8 @@ async function main() {
   }
   if (cmd === 'happy') {
     // Allow stack-scoped CLI identity selection:
-    // - `hapsta stack happy <name> --identity=account-a -- <happy-cli args...>`
-    // - (no passthrough args) `hapsta stack happy <name> --identity=account-a`
+    // - `hstack stack happy <name> --identity=account-a -- <happy-cli args...>`
+    // - (no passthrough args) `hstack stack happy <name> --identity=account-a`
     //
     // Implementation detail: we set HAPPY_HOME_DIR (highest precedence) so anything that uses
     // the CLI home dir (credentials, daemon control, logs, etc.) uses the selected identity.
@@ -3595,7 +3595,7 @@ async function main() {
         data: { ok: false, error: 'missing_session_ids' },
         text: [
           '[stack] usage:',
-          '  hapsta stack resume <name> <sessionId...>',
+          '  hstack stack resume <name> <sessionId...>',
         ].join('\n'),
       });
       process.exit(1);
@@ -3674,10 +3674,10 @@ async function main() {
         data: { ok: false, error: 'missing_service_subcommand', stackName },
         text: [
           '[stack] usage:',
-          '  hapsta stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
+          '  hstack stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
           '',
           'example:',
-          `  hapsta stack service ${stackName} status`,
+          `  hstack stack service ${stackName} status`,
         ].join('\n'),
       });
       process.exit(1);

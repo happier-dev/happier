@@ -24,10 +24,10 @@ async function main() {
         banner('mobile-dev-client', { subtitle: 'Install the shared iOS dev-client app (one-time).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hapsta mobile-dev-client')} --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]`,
+        `  ${cyan('hstack mobile-dev-client')} --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]`,
         '',
         sectionTitle('notes:'),
-        `- Installs a dedicated ${cyan('Hapsta Dev')} Expo dev-client app on your iPhone.`,
+        `- Installs a dedicated ${cyan('hstack Dev')} Expo dev-client app on your iPhone.`,
         `- This app is intended to be ${cyan('reused across stacks')} (no per-stack installs).`,
         `- Requires ${yellow('Xcode')} + ${yellow('CocoaPods')} (macOS).`,
       ].join('\n'),
@@ -39,7 +39,7 @@ async function main() {
     printResult({
       json,
       data: { ok: false, error: 'missing_install_flag' },
-      text: `${yellow('!')} missing ${cyan('--install')}. Run: ${cmd('hapsta mobile-dev-client --help')}`,
+      text: `${yellow('!')} missing ${cyan('--install')}. Run: ${cmd('hstack mobile-dev-client --help')}`,
     });
     process.exit(1);
   }

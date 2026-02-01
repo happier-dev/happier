@@ -1,6 +1,6 @@
-# Happier development (Hapsta)
+# Happier development (hstack)
 
-Hapsta is the recommended workflow for developing **Happier** locally.
+hstack is the recommended workflow for developing **Happier** locally.
 
 Key principles:
 
@@ -11,7 +11,7 @@ Key principles:
 Quickstart (dev profile):
 
 ```bash
-npx --yes -p @happier-dev/stack hapsta setup --profile=dev
+npx --yes -p @happier-dev/stack hstack setup --profile=dev
 ```
 
 Common flows:

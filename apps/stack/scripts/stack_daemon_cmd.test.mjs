@@ -20,7 +20,7 @@ function runNode(args, { cwd, env }) {
 
 async function writeDummyAuth({ cliHomeDir }) {
   // For these tests, we don't care about the auth format—only that credentials exist.
-  // Hapsta will short-circuit daemon start when access.key is missing.
+  // hstack will short-circuit daemon start when access.key is missing.
   await mkdir(cliHomeDir, { recursive: true });
   await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
   await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
@@ -112,7 +112,7 @@ async function ensureMinimalHappierMonorepo({ monoRoot }) {
   await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
 }
 
-test('hapsta stack daemon <name> restart restarts only the daemon', async () => {
+test('hstack stack daemon <name> restart restarts only the daemon', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-daemon-'));
@@ -151,7 +151,7 @@ test('hapsta stack daemon <name> restart restarts only the daemon', async () => 
   };
 
   // Start daemon once.
-  const startRes = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'start', '--json'], {
+  const startRes = await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', stackName, 'start', '--json'], {
     cwd: rootDir,
     env: baseEnv,
   });
@@ -162,7 +162,7 @@ test('hapsta stack daemon <name> restart restarts only the daemon', async () => 
   );
 
   // Restart daemon (should run stop+start+status via our helper).
-  const restartRes = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'restart', '--json'], {
+  const restartRes = await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', stackName, 'restart', '--json'], {
     cwd: rootDir,
     env: baseEnv,
   });
@@ -180,11 +180,11 @@ test('hapsta stack daemon <name> restart restarts only the daemon', async () => 
   assert.ok(logText.includes('status'), `expected stub daemon status to be called\n${logText}`);
 
   // Cleanup: stop the spawned background daemon process (best-effort via our stub).
-  await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'stop', '--json'], { cwd: rootDir, env: baseEnv });
+  await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', stackName, 'stop', '--json'], { cwd: rootDir, env: baseEnv });
   await rm(tmp, { recursive: true, force: true });
 });
 
-test('hapsta stack <name> daemon start works (stack name first)', async () => {
+test('hstack stack <name> daemon start works (stack name first)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-daemon-name-first-'));
@@ -221,7 +221,7 @@ test('hapsta stack <name> daemon start works (stack name first)', async () => {
     HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
   };
 
-  const startRes = await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', stackName, 'daemon', 'start', '--json'], {
+  const startRes = await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', stackName, 'daemon', 'start', '--json'], {
     cwd: rootDir,
     env: baseEnv,
   });
@@ -236,11 +236,11 @@ test('hapsta stack <name> daemon start works (stack name first)', async () => {
   const logText = await (await import('node:fs/promises')).readFile(logPath, 'utf-8').then(String);
   assert.ok(logText.includes('start'), `expected stub daemon start to be called\n${logText}`);
 
-  await runNode([join(rootDir, 'bin', 'hapsta.mjs'), 'stack', stackName, 'daemon', 'stop', '--json'], { cwd: rootDir, env: baseEnv });
+  await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', stackName, 'daemon', 'stop', '--json'], { cwd: rootDir, env: baseEnv });
   await rm(tmp, { recursive: true, force: true });
 });
 
-test('hapsta stack daemon <name> start/stop with --identity uses an isolated cli home dir', async () => {
+test('hstack stack daemon <name> start/stop with --identity uses an isolated cli home dir', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-daemon-identity-'));
@@ -280,7 +280,7 @@ test('hapsta stack daemon <name> start/stop with --identity uses an isolated cli
   };
 
   const startRes = await runNode(
-    [join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'start', `--identity=${identity}`, '--json'],
+    [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', stackName, 'start', `--identity=${identity}`, '--json'],
     { cwd: rootDir, env: baseEnv }
   );
   assert.equal(
@@ -294,7 +294,7 @@ test('hapsta stack daemon <name> start/stop with --identity uses an isolated cli
   assert.ok(logText.includes('start'), `expected stub daemon start to be called in identity home\n${logText}`);
 
   const stopRes = await runNode(
-    [join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'daemon', stackName, 'stop', `--identity=${identity}`, '--json'],
+    [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'daemon', stackName, 'stop', `--identity=${identity}`, '--json'],
     { cwd: rootDir, env: baseEnv }
   );
   assert.equal(
@@ -309,7 +309,7 @@ test('hapsta stack daemon <name> start/stop with --identity uses an isolated cli
   await rm(tmp, { recursive: true, force: true });
 });
 
-test('hapsta stack auth <name> login --identity=<name> --print prints identity-scoped HAPPY_HOME_DIR', async () => {
+test('hstack stack auth <name> login --identity=<name> --print prints identity-scoped HAPPY_HOME_DIR', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-auth-identity-'));
@@ -350,7 +350,7 @@ test('hapsta stack auth <name> login --identity=<name> --print prints identity-s
 
   const res = await runNode(
     [
-      join(rootDir, 'bin', 'hapsta.mjs'),
+      join(rootDir, 'bin', 'hstack.mjs'),
       'stack',
       'auth',
       stackName,

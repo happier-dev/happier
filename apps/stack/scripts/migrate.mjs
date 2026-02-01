@@ -17,7 +17,7 @@ import { importPrismaClientForHappyServerLight, importPrismaClientFromNodeModule
 function usage() {
   return [
     '[migrate] usage:',
-    '  hapsta migrate light-to-server --from-stack=<name> --to-stack=<name> [--include-files] [--force] [--json]',
+    '  hstack migrate light-to-server --from-stack=<name> --to-stack=<name> [--include-files] [--force] [--json]',
     '',
     'Notes:',
     '- This migrates chat data from happy-server-light (SQLite) to happy-server (Postgres).',

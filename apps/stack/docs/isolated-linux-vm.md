@@ -1,6 +1,6 @@
 # Isolated Linux VM (Apple Silicon) for `review-pr`
 
-If you want to validate `hapsta review-pr` on a **fresh system** (no existing `~/.happier-stack`, no host tooling), the simplest repeatable approach on Apple Silicon is a Linux VM managed by **Lima** (it uses Apple’s Virtualization.framework).
+If you want to validate `hstack review-pr` on a **fresh system** (no existing `~/.happier-stack`, no host tooling), the simplest repeatable approach on Apple Silicon is a Linux VM managed by **Lima** (it uses Apple’s Virtualization.framework).
 
 This avoids Docker/container UX issues (browser opening, Expo networking, file watching) while still being truly “clean”.
 
@@ -31,7 +31,7 @@ LIMA_MEMORY=12GiB ./scripts/provision/macos-lima-happy-vm.sh happy-test
 ```
 
 Port ranges note:
-- `review-pr` runs in a **fully isolated sandbox** (separate Hapsta home dir), so VM defaults written to
+- `review-pr` runs in a **fully isolated sandbox** (separate hstack home dir), so VM defaults written to
   `~/.happier-stack/env.local` inside the VM won’t be read automatically.
 - Prefer passing `--vm-ports` (or explicit `--stack-port-start=...`) to `review-pr` so the sandbox uses the forwarded ranges.
 
@@ -70,7 +70,7 @@ limactl stop happy-pr || true
 open -a TextEdit ~/.lima/happy-pr/lima.yaml
 ```
 
-Add a `portForwards` section to forward the Hapsta VM port ranges to your host `localhost`:
+Add a `portForwards` section to forward the hstack VM port ranges to your host `localhost`:
 
 ```yaml
 portForwards:
@@ -114,12 +114,12 @@ curl -fsSL https://raw.githubusercontent.com/leeroybrun/happier-dev/main/apps/st
   && /tmp/linux-ubuntu-review-pr.sh
 ```
 
-### 3b) (Optional) Run the Hapsta dev setup wizard
+### 3b) (Optional) Run the hstack dev setup wizard
 
 If your goal is to **work on changes** (not just review a PR), you can run the dev profile:
 
 ```bash
-npx --yes -p @happier-dev/stack@latest hapsta setup --profile=dev --bind=loopback
+npx --yes -p @happier-dev/stack@latest hstack setup --profile=dev --bind=loopback
 ```
 
 Notes:
@@ -131,7 +131,7 @@ Notes:
 Inside the VM:
 
 ```bash
-npx --yes -p @happier-dev/stack@latest hapsta review-pr \
+npx --yes -p @happier-dev/stack@latest hstack review-pr \
   --repo=https://github.com/leeroybrun/happier-dev/pull/<PR_NUMBER> \
   --vm-ports \
   --no-mobile \
@@ -143,7 +143,7 @@ npx --yes -p @happier-dev/stack@latest hapsta review-pr \
 Notes:
 - `--no-mobile` keeps the validation focused (Expo mobile dev-client adds more host requirements).
 - You can also add `--keep-sandbox` if you want to inspect the sandbox contents after a failure.
-- For full reproducibility, pin the version: `npx --yes -p @happier-dev/stack@0.3.0 hapsta review-pr ...`
+- For full reproducibility, pin the version: `npx --yes -p @happier-dev/stack@0.3.0 hstack review-pr ...`
 - `--vm-ports` forces the stack/server and Expo dev-server (web) ports into the forwarded VM ranges
   (pairs with the `portForwards` config in this doc).
 
@@ -160,7 +160,7 @@ npm pack
 2) Copy the generated `happier-dev-stack-*.tgz` into the VM (any method you like), then inside the VM:
 
 ```bash
-npx --yes ./happier-dev-stack-*.tgz hapsta review-pr ...
+npx --yes ./happier-dev-stack-*.tgz hstack review-pr ...
 ```
 
 ## Option B: GUI VM (UTM) – simplest when you want a “real desktop”
@@ -169,7 +169,7 @@ If you want the most realistic “reviewer” experience (open browser, etc.), a
 
 1. Install UTM (macOS host): `brew install --cask utm`
 2. Create an Ubuntu 24.04 ARM64 VM (UTM wizard).
-3. Run the same provisioning + `node bin/hapsta.mjs review-pr ...` inside the VM.
+3. Run the same provisioning + `node bin/hstack.mjs review-pr ...` inside the VM.
 
 ## Option C: Apple “container” / Docker
 
@@ -196,9 +196,9 @@ limactl start happy-pr
 
 Then re-run the provisioning step (Node + build deps) from this doc.
 
-### Soft reset: keep the VM, delete Hapsta state
+### Soft reset: keep the VM, delete hstack state
 
-If you want a “clean-ish” rerun without recreating the VM, delete the Hapsta home + any workspace you chose:
+If you want a “clean-ish” rerun without recreating the VM, delete the hstack home + any workspace you chose:
 
 Inside the VM:
 
@@ -206,7 +206,7 @@ Inside the VM:
 rm -rf ~/.happier-stack ~/.happy
 ```
 
-If you used `hapsta setup --profile=dev` and picked a custom workspace directory (outside `~/.happier-stack/workspace`), delete that directory too.
+If you used `hstack setup --profile=dev` and picked a custom workspace directory (outside `~/.happier-stack/workspace`), delete that directory too.
 
 ---
 

@@ -86,7 +86,7 @@ function getArgValue(args, flag) {
 }
 
 function enforceValidatePresetPolicy({ edisonArgs }) {
-  // Policy (Hapsta):
+  // Policy (hstack):
   // - CodeRabbit is required for *validation* (qa validate --execute), but must not run automatically.
   // - We enforce this by requiring a `*-validate` preset in execute mode, which makes CodeRabbit evidence
   //   required at preflight (command-coderabbit.txt). Preflight will instruct the operator to run
@@ -98,7 +98,7 @@ function enforceValidatePresetPolicy({ edisonArgs }) {
   const preset = String(getArgValue(edisonArgs, '--preset') ?? '').trim();
   if (!preset) {
     throw new Error(
-      '[edison] QA validation in Hapsta requires an explicit validation preset.\n' +
+      '[edison] QA validation in hstack requires an explicit validation preset.\n' +
         '\n' +
         'Use one of:\n' +
         '  - --preset standard-validate\n' +
@@ -113,7 +113,7 @@ function enforceValidatePresetPolicy({ edisonArgs }) {
     throw new Error(
       `[edison] Invalid preset for qa validate --execute: ${preset}\n` +
         '\n' +
-        'In Hapsta, execute-mode validation must use a validation-only preset so CodeRabbit evidence is required:\n' +
+        'In hstack, execute-mode validation must use a validation-only preset so CodeRabbit evidence is required:\n' +
         '  - --preset standard-validate\n' +
         '  - --preset standard-ui-validate\n' +
         '\n' +
@@ -124,7 +124,7 @@ function enforceValidatePresetPolicy({ edisonArgs }) {
 
 async function enforceQaRunPreflightPolicy({ rootDir, env, edisonArgs }) {
   // `edison qa run <validator> <task>` executes a single validator directly (no preset support).
-  // In Hapsta, we still want "validation-grade" prerequisites to be enforced and surfaced
+  // In hstack, we still want "validation-grade" prerequisites to be enforced and surfaced
   // *before* execution, without auto-running heavier evidence like CodeRabbit.
   //
   // Policy:
@@ -170,7 +170,7 @@ async function enforceQaRunPreflightPolicy({ rootDir, env, edisonArgs }) {
   throw new Error(
     `[edison] Refusing to run qa run without validation-only evidence (preset=${preset}).\n\n` +
       `Fix:\n` +
-      `  hapsta edison --stack=$HAPPIER_STACK_STACK -- evidence capture ${taskId} --preset ${preset}${missingHint}\n\n` +
+      `  hstack edison --stack=$HAPPIER_STACK_STACK -- evidence capture ${taskId} --preset ${preset}${missingHint}\n\n` +
       `Rationale:\n` +
       `  This keeps CodeRabbit evidence mandatory for validation while ensuring it never runs automatically.\n`
   );
@@ -206,7 +206,7 @@ async function ensureStackServerPortForWebServerValidation({ rootDir, stackName,
       // Do NOT force `--restart` here:
       // - If the prior ephemeral port is still occupied (common after a crash), `--restart` fails closed.
       // - For validation we prefer to bring up the stack on a fresh port rather than fail preflight.
-      [join(rootDir, 'bin', 'hapsta.mjs'), 'stack', 'start', stackName],
+      [join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'start', stackName],
       { cwd: rootDir, env, stdio: 'ignore', detached: true }
     );
     child.unref();
@@ -548,8 +548,8 @@ async function ensureQaFile({ rootDir, taskId, title, frontmatterExtra = {} }) {
   };
   const body =
     `# ${title}\n\n` +
-    `## Automated Checks (Hapsta)\n\n` +
-    `- Evidence capture (stack-scoped): \`hapsta edison --stack=${frontmatterExtra.stack ?? '<stack>'} -- evidence capture ${taskId}\`\n`;
+    `## Automated Checks (hstack)\n\n` +
+    `- Evidence capture (stack-scoped): \`hstack edison --stack=${frontmatterExtra.stack ?? '<stack>'} -- evidence capture ${taskId}\`\n`;
   const text = renderYamlFrontmatter(fm) + '\n' + body;
   await writeFile(path, text, 'utf-8');
   return { path, created: true };
@@ -561,7 +561,7 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
   const taskId = positionals[1]?.trim?.() ? positionals[1].trim() : '';
   if (!taskId) {
     throw new Error(
-      '[edison] usage: hapsta edison task:scaffold <task-id> [--mode=upstream|fork|both] [--tracks=upstream,fork] [--yes] [--reuse-only] [--json]'
+      '[edison] usage: hstack edison task:scaffold <task-id> [--mode=upstream|fork|both] [--tracks=upstream,fork] [--yes] [--reuse-only] [--json]'
     );
   }
 
@@ -601,7 +601,7 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
     trackNames = mode === 'both' ? ['upstream', 'fork'] : [mode === 'fork' ? 'fork' : 'upstream'];
   }
 
-  const stacksJson = await runCapture('node', ['./bin/hapsta.mjs', 'stack', 'list', '--json'], { cwd: rootDir });
+  const stacksJson = await runCapture('node', ['./bin/hstack.mjs', 'stack', 'list', '--json'], { cwd: rootDir });
   let stacks = [];
   try {
     const parsed = JSON.parse(stacksJson || '[]');
@@ -627,12 +627,12 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
   if (hsKind === 'parent') {
     if (!components.length) {
       throw new Error(
-        `[edison] parent task must declare components.\nFix: edit ${mdPath} and set:\n  components:\n    - happy\n    - happy-cli\nThen run:\n  hapsta edison task:scaffold ${taskId} --yes`
+        `[edison] parent task must declare components.\nFix: edit ${mdPath} and set:\n  components:\n    - happy\n    - happy-cli\nThen run:\n  hstack edison task:scaffold ${taskId} --yes`
       );
     }
     if (!yes) {
       throw new Error(
-        `[edison] parent scaffold will create track + component subtasks, stacks, and worktrees.\nRe-run with:\n  hapsta edison task:scaffold ${taskId} --yes`
+        `[edison] parent scaffold will create track + component subtasks, stacks, and worktrees.\nRe-run with:\n  hstack edison task:scaffold ${taskId} --yes`
       );
     }
 
@@ -669,8 +669,8 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
         `- Stack: ${stack}\n` +
         `- Components: ${components.join(', ')}\n\n` +
         `## Commands (MANDATORY)\n\n` +
-        `- Run inside stack context: \`hapsta edison --stack=${stack} -- <edison ...>\`\n` +
-        `- Evidence: \`hapsta edison --stack=${stack} -- evidence capture ${trackTaskId}\`\n`;
+        `- Run inside stack context: \`hstack edison --stack=${stack} -- <edison ...>\`\n` +
+        `- Evidence: \`hstack edison --stack=${stack} -- evidence capture ${trackTaskId}\`\n`;
 
       const trackRes = await ensureTaskFile({ rootDir, taskId: trackTaskId, frontmatter: trackFm, body: trackBody, state: 'todo' });
       createdTasks.push({ id: trackTaskId, kind: 'track', stack, path: trackRes.path, created: trackRes.created });
@@ -678,7 +678,7 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
       const stackExists = Array.isArray(stacks) && stacks.some((s) => String(s?.name ?? '') === stack);
       const expectedStackRemote = track === 'fork' || track === 'integration' ? 'origin' : 'upstream';
       if (!stackExists) {
-        await run('node', ['./bin/hapsta.mjs', 'stack', 'new', stack, `--remote=${expectedStackRemote}`, '--json'], { cwd: rootDir });
+        await run('node', ['./bin/hstack.mjs', 'stack', 'new', stack, `--remote=${expectedStackRemote}`, '--json'], { cwd: rootDir });
         createdStacks.push({ stack });
         stacks.push({ name: stack });
       }
@@ -686,7 +686,7 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
       // If the stack already exists, reuse pinned worktrees when possible.
       let stackInfo = null;
       if (stackExists) {
-        const raw = await runCapture('node', ['./bin/hapsta.mjs', 'stack', 'info', stack, '--json'], { cwd: rootDir });
+        const raw = await runCapture('node', ['./bin/hstack.mjs', 'stack', 'info', stack, '--json'], { cwd: rootDir });
         stackInfo = JSON.parse(raw);
         const actualRemote = String(stackInfo?.stackRemote ?? '').trim() || 'upstream';
         if (actualRemote !== expectedStackRemote) {
@@ -696,7 +696,7 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
               `- expected: ${expectedStackRemote}\n` +
               `- actual: ${actualRemote}\n\n` +
               `Fix:\n` +
-              `- run: hapsta stack edit ${stack} --interactive\n` +
+              `- run: hstack stack edit ${stack} --interactive\n` +
               `- set: Git remote for creating new worktrees = ${expectedStackRemote}\n`
           );
         }
@@ -749,8 +749,8 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
           `- Stack: ${stack}\n` +
           `- Component: ${c}\n\n` +
           `## Commands (MANDATORY)\n\n` +
-          `- Run inside stack context: \`hapsta edison --stack=${stack} -- <edison ...>\`\n` +
-          `- Evidence: \`hapsta edison --stack=${stack} -- evidence capture ${compTaskId}\`\n`;
+          `- Run inside stack context: \`hstack edison --stack=${stack} -- <edison ...>\`\n` +
+          `- Evidence: \`hstack edison --stack=${stack} -- evidence capture ${compTaskId}\`\n`;
 
         const compRes = await ensureTaskFile({ rootDir, taskId: compTaskId, frontmatter: compFm, body: compBody, state: 'todo' });
         createdTasks.push({ id: compTaskId, kind: 'component', component: c, stack, path: compRes.path, created: compRes.created });
@@ -773,20 +773,20 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
             `[edison] --reuse-only: stack "${stack}" is not pinned to a worktree for component "${c}".\n` +
               `Fix:\n` +
               `- pin an existing worktree to the stack:\n` +
-              `  hapsta stack wt ${stack} -- use ${c} <owner/branch|/abs/path>\n` +
+              `  hstack stack wt ${stack} -- use ${c} <owner/branch|/abs/path>\n` +
               `- then re-run:\n` +
-              `  hapsta edison task:scaffold ${taskId} --yes --reuse-only\n`
+              `  hstack edison task:scaffold ${taskId} --yes --reuse-only\n`
           );
         } else {
           const from = track === 'fork' ? 'origin' : 'upstream';
           const stdout = await runCapture(
             'node',
-            ['./bin/hapsta.mjs', 'wt', 'new', c, baseWorktree, `--from=${from}`, '--json'],
+            ['./bin/hstack.mjs', 'wt', 'new', c, baseWorktree, `--from=${from}`, '--json'],
             { cwd: rootDir }
           );
           const res = JSON.parse(stdout);
           createdWorktrees.push({ component: c, variant: from, taskId: compTaskId, path: res.path, branch: res.branch });
-          await run('node', ['./bin/hapsta.mjs', 'stack', 'wt', stack, '--', 'use', c, res.path, '--json'], { cwd: rootDir });
+          await run('node', ['./bin/hstack.mjs', 'stack', 'wt', stack, '--', 'use', c, res.path, '--json'], { cwd: rootDir });
           pinned.push({ stack, component: c, taskId: compTaskId, path: res.path });
         }
       }
@@ -806,19 +806,19 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
         throw new Error(
           `[edison] stack "${stack}" does not exist.\n` +
             `Fix:\n` +
-            `  hapsta stack new ${stack} --interactive\n` +
+            `  hstack stack new ${stack} --interactive\n` +
             `Or re-run non-interactively with --yes:\n` +
-            `  hapsta edison task:scaffold ${taskId} --yes\n`
+            `  hstack edison task:scaffold ${taskId} --yes\n`
         );
       }
       const stackRemote = mode === 'fork' ? 'origin' : 'upstream';
-      await run('node', ['./bin/hapsta.mjs', 'stack', 'new', stack, `--remote=${stackRemote}`, '--json'], { cwd: rootDir });
+      await run('node', ['./bin/hstack.mjs', 'stack', 'new', stack, `--remote=${stackRemote}`, '--json'], { cwd: rootDir });
       createdStacks.push({ stack });
     }
 
     let stackInfo = null;
     if (stackExists) {
-      const raw = await runCapture('node', ['./bin/hapsta.mjs', 'stack', 'info', stack, '--json'], { cwd: rootDir });
+      const raw = await runCapture('node', ['./bin/hstack.mjs', 'stack', 'info', stack, '--json'], { cwd: rootDir });
       stackInfo = JSON.parse(raw);
     }
 
@@ -838,19 +838,19 @@ async function cmdTaskScaffold({ rootDir, argv, json }) {
           `[edison] --reuse-only: stack "${stack}" is not pinned to a worktree for component "${c}".\n` +
             `Fix:\n` +
             `- pin an existing worktree to the stack:\n` +
-            `  hapsta stack wt ${stack} -- use ${c} <owner/branch|/abs/path>\n` +
+            `  hstack stack wt ${stack} -- use ${c} <owner/branch|/abs/path>\n` +
             `- then re-run:\n` +
-            `  hapsta edison task:scaffold ${taskId} --yes --reuse-only\n`
+            `  hstack edison task:scaffold ${taskId} --yes --reuse-only\n`
         );
       } else {
         const stdout = await runCapture(
           'node',
-          ['./bin/hapsta.mjs', 'wt', 'new', c, baseWorktree, `--from=${from}`, '--json'],
+          ['./bin/hstack.mjs', 'wt', 'new', c, baseWorktree, `--from=${from}`, '--json'],
           { cwd: rootDir }
         );
         const res = JSON.parse(stdout);
         createdWorktrees.push({ component: c, variant: from, taskId, path: res.path, branch: res.branch });
-        await run('node', ['./bin/hapsta.mjs', 'stack', 'wt', stack, '--', 'use', c, res.path, '--json'], { cwd: rootDir });
+        await run('node', ['./bin/hstack.mjs', 'stack', 'wt', stack, '--', 'use', c, res.path, '--json'], { cwd: rootDir });
         pinned.push({ stack, component: c, taskId, path: res.path });
       }
     }
@@ -985,7 +985,7 @@ async function maybeInstallCodexWrapper({ rootDir, env }) {
   //     --add-dir <home>/.codex
   //   when not already present.
   //
-  // This applies only to processes launched via this `hapsta edison` wrapper.
+  // This applies only to processes launched via this `hstack edison` wrapper.
   let real = '';
   try {
     // NOTE: use the current PATH (before we inject our own wrapper) to find the real binary.
@@ -1009,7 +1009,7 @@ import path from "node:path";
 
 const realBin = process.env.CODEX_REAL_BIN || "";
 if (!realBin) {
-  console.error("[hapsta edison] CODEX_REAL_BIN is not set; refusing to run codex wrapper.");
+  console.error("[hstack edison] CODEX_REAL_BIN is not set; refusing to run codex wrapper.");
   process.exit(127);
 }
 
@@ -1119,7 +1119,7 @@ import { spawn } from "node:child_process";
 
 const realBin = process.env.CODERABBIT_REAL_BIN || "";
 if (!realBin) {
-  console.error("[hapsta edison] CODERABBIT_REAL_BIN is not set; refusing to run coderabbit wrapper.");
+  console.error("[hstack edison] CODERABBIT_REAL_BIN is not set; refusing to run coderabbit wrapper.");
   process.exit(127);
 }
 
@@ -1340,7 +1340,7 @@ async function cmdTrackCoherence({ rootDir, argv, json }) {
   const taskId = positionals[1]?.trim?.() ? positionals[1].trim() : '';
   if (!taskId) {
     throw new Error(
-      '[edison] usage: hapsta edison track:coherence <task-id> [--source=upstream] [--targets=fork,integration] [--max-lines=120] [--fail-on-extra] [--enforce] [--json]'
+      '[edison] usage: hstack edison track:coherence <task-id> [--source=upstream] [--targets=fork,integration] [--max-lines=120] [--fail-on-extra] [--enforce] [--json]'
     );
   }
 
@@ -1624,9 +1624,9 @@ async function cmdTrackCoherence({ rootDir, argv, json }) {
     }
     lines.push('');
     lines.push('tips:');
-    lines.push('- ensure you created both tracks via: hapsta edison task:scaffold <parent-task-id> --mode=both --yes');
-    lines.push('- ensure stacks point at the intended worktrees: hapsta stack wt <stack> -- status');
-    lines.push('- if git objects are missing, sync mirrors: hapsta wt sync-all');
+    lines.push('- ensure you created both tracks via: hstack edison task:scaffold <parent-task-id> --mode=both --yes');
+    lines.push('- ensure stacks point at the intended worktrees: hstack stack wt <stack> -- status');
+    lines.push('- if git objects are missing, sync mirrors: hstack wt sync-all');
   }
 
   printResult({
@@ -1662,17 +1662,17 @@ async function main() {
       data: { flags: ['--stack=<name>', '--json'], examples: true },
       text: [
         '[edison] usage:',
-        '  hapsta edison [--stack=<name>] -- <edison args...>',
-        '  hapsta edison meta:init [--json]',
-        '  hapsta edison task:scaffold <task-id> [--mode=upstream|fork|both] [--tracks=upstream,fork] [--yes] [--json]',
-        '  hapsta edison track:coherence <task-id> [--source=upstream] [--targets=fork,integration] [--max-lines=120] [--fail-on-extra] [--enforce] [--no-diff] [--json]',
+        '  hstack edison [--stack=<name>] -- <edison args...>',
+        '  hstack edison meta:init [--json]',
+        '  hstack edison task:scaffold <task-id> [--mode=upstream|fork|both] [--tracks=upstream,fork] [--yes] [--json]',
+        '  hstack edison track:coherence <task-id> [--source=upstream] [--targets=fork,integration] [--max-lines=120] [--fail-on-extra] [--enforce] [--no-diff] [--json]',
         '',
         'examples:',
-        '  hapsta edison -- compose all',
-        '  hapsta edison --stack=exp1 -- evidence capture T-123',
-        '  hapsta edison task:scaffold T-123 --yes',
-        '  hapsta edison track:coherence T-123.1 --json',
-        '  hapsta edison meta:init',
+        '  hstack edison -- compose all',
+        '  hstack edison --stack=exp1 -- evidence capture T-123',
+        '  hstack edison task:scaffold T-123 --yes',
+        '  hstack edison track:coherence T-123.1 --json',
+        '  hstack edison meta:init',
         '',
         'notes:',
         '- When --stack is provided, this wrapper:',
@@ -1710,7 +1710,7 @@ async function main() {
 
   let env = { ...process.env };
   // If no stack was provided, best-effort infer it from a task/QA id passed to the command.
-  // This allows `hapsta edison -- evidence capture <task-id>` (no explicit --stack) to be stack-scoped automatically.
+  // This allows `hstack edison -- evidence capture <task-id>` (no explicit --stack) to be stack-scoped automatically.
   if (!stackName) {
     const inferred = await inferStackFromArgs({ rootDir, edisonArgs: argv.filter((a) => a !== '--') });
     if (inferred) stackName = inferred;
@@ -1722,7 +1722,7 @@ async function main() {
       throw new Error(
         `[edison] stack "${stackName}" inferred/provided but env file is missing/empty.\n` +
           `Fix:\n` +
-          `  hapsta stack new ${stackName} --interactive\n`
+          `  hstack stack new ${stackName} --interactive\n`
       );
     }
     const stackEnv = parseEnvToObject(raw);

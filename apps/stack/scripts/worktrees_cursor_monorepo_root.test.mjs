@@ -18,7 +18,7 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('hapsta wt cursor opens the monorepo root (not a subpackage dir) in monorepo worktrees', async () => {
+test('hstack wt cursor opens the monorepo root (not a subpackage dir) in monorepo worktrees', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-cursor-mono-'));
