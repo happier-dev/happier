@@ -64,7 +64,7 @@ test('hapsta test --json keeps stdout JSON-only and runs monorepo root when happ
     HAPPIER_STACK_ENV_FILE: join(tmp, 'nonexistent-env'),
   };
 
-  const res = await runNode([join(rootDir, 'scripts', 'test_cmd.mjs'), 'happy', '--json'], { cwd: rootDir, env });
+  const res = await runNode([join(rootDir, 'scripts', 'test_cmd.mjs'), 'ui', '--json'], { cwd: rootDir, env });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
 
   // Stdout must be JSON only.
@@ -85,7 +85,7 @@ test('hapsta test --json keeps stdout JSON-only and runs monorepo root when happ
     `expected ok=true, got:\n${JSON.stringify(parsed, null, 2)}\n\nstderr:\n${res.stderr}\n\nstdout:\n${res.stdout}`
   );
   assert.equal(parsed?.results?.length, 1);
-  assert.equal(parsed.results[0].component, 'happy');
+  assert.equal(parsed.results[0].target, 'ui');
 
   // Monorepo detection: when happy points at apps/ui, tests should run from the monorepo root.
   assert.equal(parsed.results[0].dir, monoRoot);

@@ -47,6 +47,7 @@ async function main() {
       data: {
         flags: [
           '--server=happy-server|happy-server-light',
+          '--server-flavor=light|full',
           '--no-ui',
           '--no-daemon',
           '--restart',
@@ -63,7 +64,7 @@ async function main() {
       },
       text: [
         '[dev] usage:',
-        '  hapsta dev [--server=happy-server|happy-server-light] [--restart] [--json]',
+        '  hapsta dev [--server=happy-server|happy-server-light] [--server-flavor=light|full] [--restart] [--json]',
         '  hapsta dev --watch         # rebuild/restart happy-cli daemon on file changes (TTY default)',
         '  hapsta dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
         '  hapsta dev --no-browser    # do not open the UI in your browser automatically',
@@ -73,7 +74,7 @@ async function main() {
         '  note: --json prints the resolved config (dry-run) and exits.',
         '',
         'note:',
-        '  If run from inside a component checkout/worktree, that checkout is used for this run (without requiring `hapsta wt use`).',
+        '  If run from inside a repo checkout/worktree, that checkout is used for this run (without requiring `hapsta wt use`).',
         '',
         'env:',
         '  HAPPIER_STACK_EXPO_TAILSCALE=1   # enable Expo Tailscale forwarding via env var',
@@ -99,6 +100,15 @@ async function main() {
     if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
       process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
     }
+  }
+
+  // Convenience alias: allow `--server-flavor=light|full` for parity with `stack pr` and `tools setup-pr`.
+  // `--server=...` always wins when both are specified.
+  const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
+  if (!kv.get('--server') && serverFlavorFromArg) {
+    if (serverFlavorFromArg === 'light') kv.set('--server', 'happy-server-light');
+    else if (serverFlavorFromArg === 'full') kv.set('--server', 'happy-server');
+    else throw new Error(`[dev] invalid --server-flavor=${serverFlavorFromArg} (expected: light|full)`);
   }
 
   const serverComponentName = getServerComponentName({ kv });

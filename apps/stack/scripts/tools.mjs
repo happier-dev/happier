@@ -38,7 +38,7 @@ async function main() {
         '  hapsta tools setup-pr --repo=<pr-url|number> [--dev|--start] [--json] [-- ...]',
         '  hapsta tools review-pr --repo=<pr-url|number> [--dev|--start] [--json] [-- ...]',
         '  hapsta tools import [--json]',
-        '  hapsta tools review [--json]',
+        '  hapsta tools review [ui|cli|server|all] [--json]',
         '  hapsta tools edison [--stack=<name>] -- <edison args...>',
       ].join('\n'),
     });

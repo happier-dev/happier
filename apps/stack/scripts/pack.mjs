@@ -9,7 +9,23 @@ import { getComponentDir, getRootDir } from './utils/paths/paths.mjs';
 import { runCapture } from './utils/proc/proc.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
 
-const VALID_COMPONENTS = ['happy-cli', 'happy-server', 'happy'];
+const VALID_TARGETS = ['cli', 'server', 'ui'];
+
+function targetFromLegacyComponent(component) {
+  const c = String(component ?? '').trim();
+  if (c === 'happy') return 'ui';
+  if (c === 'happy-cli') return 'cli';
+  if (c === 'happy-server' || c === 'happy-server-light') return 'server';
+  return null;
+}
+
+function legacyComponentFromTarget(target) {
+  const t = String(target ?? '').trim();
+  if (t === 'ui') return 'happy';
+  if (t === 'cli') return 'happy-cli';
+  if (t === 'server') return 'happy-server';
+  return null;
+}
 
 export async function findMonorepoRoot(startDir) {
   let dir = startDir;
@@ -31,17 +47,17 @@ async function readJson(path) {
 export async function resolvePackDirForComponent({ component, componentDir, explicitDir }) {
   if (explicitDir) return explicitDir;
 
-  // In the Happy monorepo, stacks often point components at the monorepo root.
+  // In the monorepo, stacks often point the active repo dir at the monorepo root.
   // For packing/publishing we want the actual workspace package dir.
   const monorepoRoot = await findMonorepoRoot(componentDir);
   if (monorepoRoot) {
     try {
       const rootPkg = await readJson(join(monorepoRoot, 'package.json'));
       const name = String(rootPkg?.name ?? '').trim();
-      const hasPackages = await pathExists(join(monorepoRoot, 'packages'));
-      if (name === 'monorepo' && hasPackages) {
-        if (component === 'happy-cli') return join(monorepoRoot, 'packages', 'happy-cli');
-        if (component === 'happy-server') return join(monorepoRoot, 'packages', 'happy-server');
+      if (name === 'monorepo') {
+        if (component === 'happy-cli') return join(monorepoRoot, 'apps', 'cli');
+        if (component === 'happy-server') return join(monorepoRoot, 'apps', 'server');
+        if (component === 'happy') return join(monorepoRoot, 'apps', 'ui');
       }
     } catch {
       // ignore
@@ -61,9 +77,9 @@ async function copyDir(src, dest) {
 async function createPackSandbox({ monorepoRoot, packageRelDir }) {
   const sandboxRoot = await mkdtemp(join(tmpdir(), 'hapsta-pack-'));
 
-  // Minimal monorepo layout needed for the happy-cli prepack step:
+  // Minimal monorepo layout needed for pack steps that reference workspace deps:
   // - root package.json + yarn.lock (for repo root detection)
-  // - apps/cli (the package being packed)
+  // - target package dir (e.g. apps/cli)
   // - packages/agents + packages/protocol (bundled deps source)
   const filesToCopy = [
     'package.json',
@@ -72,10 +88,6 @@ async function createPackSandbox({ monorepoRoot, packageRelDir }) {
   for (const f of filesToCopy) {
     await copyDir(join(monorepoRoot, f), join(sandboxRoot, f));
   }
-
-  const pkgsSrc = join(monorepoRoot, 'packages');
-  const pkgsDest = join(sandboxRoot, 'packages');
-  await runCapture('mkdir', ['-p', pkgsDest], { cwd: '/', env: process.env });
 
   const dirsToCopy = [
     packageRelDir,
@@ -109,16 +121,17 @@ async function main() {
   if (wantsHelp(argv, { flags })) {
     printResult({
       json,
-      data: { commands: VALID_COMPONENTS, flags: ['--dir=/abs/path', '--json'] },
+      data: { targets: [...VALID_TARGETS, '--dir=/abs/path'], flags: ['--json'] },
       text: [
         '[pack] usage:',
-        '  hapsta pack happy-cli [--json]',
-        '  hapsta pack happy-server [--json]',
+        '  hapsta pack cli [--json]',
+        '  hapsta pack server [--json]',
+        '  hapsta pack ui [--json]',
         '  hapsta pack --dir=/abs/path/to/apps/cli [--json]',
         '',
         'notes:',
         '- packs in a temporary sandbox to avoid dirtying the worktree',
-        '- validates bundledDependencies output by inspecting the generated tarball',
+        '- can validate bundledDependencies output by inspecting the generated tarball (best-effort)',
       ].join('\n'),
     });
     return;
@@ -126,21 +139,26 @@ async function main() {
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const explicitDir = (kv.get('--dir') ?? '').toString().trim();
-  const component =
+  const raw =
     explicitDir
       ? null
       : positionals.length === 1
         ? positionals[0]
         : null;
 
-  if (!explicitDir && !component) {
-    throw new Error('[pack] missing target (expected: hapsta pack happy-cli | hapsta pack happy-server | --dir=...)');
+  if (!explicitDir && !raw) {
+    throw new Error('[pack] missing target (expected: hapsta pack cli|server|ui | --dir=...)');
   }
-  if (component && !VALID_COMPONENTS.includes(component)) {
-    throw new Error(`[pack] unknown component: ${component} (expected one of: ${VALID_COMPONENTS.join(', ')})`);
+
+  const target = raw
+    ? (VALID_TARGETS.includes(String(raw).trim().toLowerCase()) ? String(raw).trim().toLowerCase() : targetFromLegacyComponent(raw))
+    : null;
+  if (raw && !target) {
+    throw new Error(`[pack] unknown target: ${raw} (expected one of: ${VALID_TARGETS.join(', ')})`);
   }
 
   const rootDir = getRootDir(import.meta.url);
+  const component = target ? legacyComponentFromTarget(target) : null;
   const componentDir = component ? getComponentDir(rootDir, component) : '';
   const packDir = await resolvePackDirForComponent({
     component: component ?? 'happy-cli',
@@ -161,8 +179,8 @@ async function main() {
     throw new Error(`[pack] could not locate monorepo root (package.json + yarn.lock) from: ${packDir}`);
   }
   const packageRelDir = relative(monorepoRoot, packDir).split(sep).join('/');
-  if (!packageRelDir.startsWith('packages/')) {
-    throw new Error(`[pack] expected pack dir to be under monorepo packages/: ${packDir}`);
+  if (!(packageRelDir.startsWith('apps/') || packageRelDir.startsWith('packages/'))) {
+    throw new Error(`[pack] expected pack dir to be under monorepo apps/ or packages/: ${packDir}`);
   }
 
   const sandboxRoot = await createPackSandbox({ monorepoRoot, packageRelDir });
@@ -183,13 +201,16 @@ async function main() {
     const tarPaths = tarListRaw.split('\n').map((l) => l.trim()).filter(Boolean);
     const { hasAgents, hasProtocol } = analyzeTarList(tarPaths);
 
-    const ok = hasAgents && hasProtocol;
+    // Only enforce bundled deps for CLI by default; other packages may intentionally not bundle.
+    const shouldEnforceBundledDeps = target === 'cli';
+    const ok = shouldEnforceBundledDeps ? hasAgents && hasProtocol : true;
     const data = {
       ok,
       packDir,
       sandboxRoot,
       tarball: { name: basename(tarballPath) },
       bundled: { agents: hasAgents, protocol: hasProtocol },
+      enforcement: { bundledDeps: shouldEnforceBundledDeps },
       dryRun: { ok: true, output: json ? undefined : dryRunOut },
     };
 
@@ -201,9 +222,9 @@ async function main() {
     const lines = [
       `[pack] dir: ${packDir}`,
       `[pack] tarball: ${basename(tarballPath)} (generated in a temp sandbox)`,
-      `[pack] bundledDependencies:`,
-      `- @happier-dev/agents:   ${hasAgents ? '✅ present' : '❌ missing'}`,
-      `- @happier-dev/protocol: ${hasProtocol ? '✅ present' : '❌ missing'}`,
+      `[pack] bundledDependencies (best-effort):`,
+      `- @happier-dev/agents:   ${hasAgents ? '✅ present' : shouldEnforceBundledDeps ? '❌ missing' : '↪ not required'}`,
+      `- @happier-dev/protocol: ${hasProtocol ? '✅ present' : shouldEnforceBundledDeps ? '❌ missing' : '↪ not required'}`,
     ];
     if (!ok) {
       lines.push('', '[pack] NOTE: missing bundled deps in tarball; publish would likely break for npm consumers.');

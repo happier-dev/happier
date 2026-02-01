@@ -36,16 +36,15 @@ test('resolvePackDirForComponent maps monorepo root to apps/cli', async () => {
   try {
     await writeFile(join(root, 'package.json'), JSON.stringify({ name: 'monorepo' }));
     await writeFile(join(root, 'yarn.lock'), '# lock');
-    await mkdir(join(root, 'packages', 'happy-cli'), { recursive: true });
+    await mkdir(join(root, 'apps', 'cli'), { recursive: true });
 
     const resolved = await resolvePackDirForComponent({
       component: 'happy-cli',
       componentDir: root,
       explicitDir: null,
     });
-    assert.equal(resolve(resolved), resolve(join(root, 'packages', 'happy-cli')));
+    assert.equal(resolve(resolved), resolve(join(root, 'apps', 'cli')));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
-
