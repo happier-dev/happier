@@ -12,6 +12,28 @@ This avoids Docker/container UX issues (browser opening, Expo networking, file w
 brew install lima
 ```
 
+### 1b) Automated E2E smoke test (optional)
+
+On your macOS host (this repo):
+
+```bash
+./scripts/provision/macos-lima-hstack-e2e.sh happy-e2e
+```
+
+What it validates (best-effort):
+- `hstack setup --profile=selfhost` in a fully isolated sandbox (no auth / tailscale / autostart / menubar)
+- server health endpoint (`/health`)
+- UI is served by server-light (`/` returns HTML)
+- monorepo worktree creation (`hstack wt new ...`)
+
+Notes:
+- This runs inside the VM (Linux) and uses `npx` by default.
+- You can pin the version under test: `HSTACK_VERSION=0.6.14 ./scripts/provision/macos-lima-hstack-e2e.sh happy-e2e`.
+- If you’re testing a fork, you can point the runner at your fork’s raw scripts:
+  `HSTACK_RAW_BASE=https://raw.githubusercontent.com/<owner>/<repo>/<ref>/apps/stack ./scripts/provision/macos-lima-hstack-e2e.sh happy-e2e`.
+- If you’re testing unpublished local changes, copy a packed tarball into the VM and run:
+  `HSTACK_TGZ=./happier-dev-stack-*.tgz /tmp/linux-ubuntu-e2e.sh`.
+
 ### 2) Create + configure a VM (recommended script)
 
 On your macOS host (this repo):
