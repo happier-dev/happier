@@ -104,7 +104,7 @@ jobs:
         if: inputs.run_build
         run: |
           set -euo pipefail
-          yarn --cwd apps/website build
+          yarn workspace @happier-dev/website build
 
       - name: Commit version bump (source ref)
         if: steps.bump_website.outputs.skipped != 'true'
