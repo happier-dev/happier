@@ -170,7 +170,7 @@ As a rule:
 
 - **No (should stay shared / upstream-compatible)**:
   - core app logic
-  - shared tooling changes (anything under `happy-stacks/scripts/` that improves workflows)
+  - shared tooling changes (anything under `apps/stack/scripts/` that improves workflows)
   - general configurability hooks (e.g. “support `EXPO_*` overrides”)
 
 ---
