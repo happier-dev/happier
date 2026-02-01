@@ -3248,7 +3248,7 @@ async function main() {
         '  hstack stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--dev|--start] [--json] [-- ...]',
         '  hstack stack create-dev-auth-seed [name] [--server=happy-server|happy-server-light] [--login|--no-login] [--skip-default-seed] [--non-interactive] [--json]',
         '  hstack stack daemon <name> start|stop|restart|status [--json]',
-        '  hstack stack happy <name> [-- ...]',
+        '  hstack stack happier <name> [-- ...]',
         '  hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
         '  hstack stack auth <name> status|login|copy-from [--json]',
         '  hstack stack dev <name> [-- ...]',
@@ -3421,10 +3421,10 @@ async function main() {
     });
     return;
   }
-  if (cmd === 'happy') {
+  if (cmd === 'happier') {
     // Allow stack-scoped CLI identity selection:
-    // - `hstack stack happy <name> --identity=account-a -- <happy-cli args...>`
-    // - (no passthrough args) `hstack stack happy <name> --identity=account-a`
+    // - `hstack stack happier <name> --identity=account-a -- <happier-cli args...>`
+    // - (no passthrough args) `hstack stack happier <name> --identity=account-a`
     //
     // Implementation detail: we set HAPPY_HOME_DIR (highest precedence) so anything that uses
     // the CLI home dir (credentials, daemon control, logs, etc.) uses the selected identity.
@@ -3463,8 +3463,8 @@ async function main() {
             }
           : env;
 
-        // Passthrough: preserve happy-cli output and exit code; avoid wrapper stack traces.
-        const child = spawn(process.execPath, [join(rootDir, 'scripts', 'happy.mjs'), ...forwardedArgs], {
+        // Passthrough: preserve CLI output and exit code; avoid wrapper stack traces.
+        const child = spawn(process.execPath, [join(rootDir, 'scripts', 'happier.mjs'), ...forwardedArgs], {
           cwd: rootDir,
           env: envForHappy,
           stdio: 'inherit',

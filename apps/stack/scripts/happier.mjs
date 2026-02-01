@@ -18,11 +18,11 @@ async function main() {
       json,
       data: { passthrough: true },
       text: [
-        '[happy] usage:',
-        '  hstack happy <happy-cli args...>',
+        '[happier] usage:',
+        '  hstack happier <happier-cli args...>',
         '',
         'notes:',
-        '  - This runs the `happy-cli` component from your configured workspace/components.',
+        '  - This runs the monorepo CLI component (apps/cli) with stack env defaults.',
         '  - It auto-fills HAPPY_HOME_DIR / HAPPY_SERVER_URL / HAPPY_WEBAPP_URL when missing.',
       ].join('\n'),
     });
@@ -31,8 +31,7 @@ async function main() {
 
   const rootDir = getRootDir(import.meta.url);
 
-  const stackName =
-    (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName();
+  const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim() || getStackName();
   const serverPort = resolveServerPortFromEnv({ env: process.env, defaultPort: 3005 });
 
   const internalServerUrl = `http://127.0.0.1:${serverPort}`;
@@ -43,7 +42,7 @@ async function main() {
   const cliDir = getComponentDir(rootDir, 'happy-cli');
   const entrypoint = join(cliDir, 'dist', 'index.mjs');
   if (!existsSync(entrypoint)) {
-    console.error(`[happy] missing happy-cli build at: ${entrypoint}`);
+    console.error(`[happier] missing CLI build at: ${entrypoint}`);
     console.error('Run: hstack bootstrap');
     process.exit(1);
   }
@@ -60,7 +59,7 @@ async function main() {
 
   if (res.error) {
     const msg = res.error instanceof Error ? res.error.message : String(res.error);
-    console.error(`[happy] failed to run happy-cli: ${msg}`);
+    console.error(`[happier] failed to run CLI: ${msg}`);
     process.exit(1);
   }
 
@@ -69,9 +68,10 @@ async function main() {
 
 main().catch((err) => {
   const message = err instanceof Error ? err.message : String(err);
-  console.error('[happy] failed:', message);
+  console.error('[happier] failed:', message);
   if (process.env.DEBUG && err instanceof Error && err.stack) {
     console.error(err.stack);
   }
   process.exit(1);
 });
+

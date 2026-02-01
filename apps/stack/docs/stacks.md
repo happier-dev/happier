@@ -133,13 +133,13 @@ hstack stack wt exp1 -- use default
 
 This updates the stack env file (`~/.happier/stacks/<name>/env`), not repo `env.local` (legacy path still supported).
 
-## Run happy-cli against a specific stack (`stack happy`)
+## Run the Happier CLI against a specific stack (`stack happier`)
 
 If you want to run a `happy` CLI command against a specific stack (instead of whatever your current shell env points at), use:
 
 ```bash
-hstack stack happy exp1 -- status
-hstack stack happy exp1 -- daemon status
+hstack stack happier exp1 -- status
+hstack stack happier exp1 -- daemon status
 ```
 
 Stack shorthand also works:
@@ -158,7 +158,7 @@ These commands run with the stack env file applied:
 - `hstack stack doctor <name>`
 - `hstack stack mobile <name>`
 - `hstack stack eas <name> [subcommand...]`
-- `hstack stack happy <name> [-- ...]`
+- `hstack stack happier <name> [-- ...]`
 - `hstack stack srv <name> -- status|use ...`
 - `hstack stack wt <name> -- <wt args...>`
 - `hstack stack tailscale:status|enable|disable|url <name>`

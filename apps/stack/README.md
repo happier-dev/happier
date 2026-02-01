@@ -372,7 +372,7 @@ Details: `[docs/tauri.md](docs/tauri.md)`.
   - `hstack stack dev <name>` / `hstack stack start <name>`
   - `hstack stack edit <name> --interactive`
   - `hstack stack wt <name> -- use --interactive`
-  - `hstack stack happy <name> -- <happy-cli args...>`
+  - `hstack stack happier <name> -- <happier-cli args...>`
 - **Tools (maintainer / automation)**:
   - `hstack tools setup-pr --repo=<pr-url|number> [--dev|--start]`
   - `hstack tools review-pr --repo=<pr-url|number> [--dev|--start]`

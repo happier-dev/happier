@@ -393,7 +393,7 @@ async function main() {
   // Convenience shim for the Happier CLI (avoid clashing with Happy stacks' `happy`).
   await writeExecutable(
     happierShimPath,
-    `#!/bin/bash\nset -euo pipefail\nexec "${hstackShimPath}" happy "$@"\n`
+    `#!/bin/bash\nset -euo pipefail\nexec "${hstackShimPath}" happier "$@"\n`
   );
 
   // Remove legacy `happy` shim if it exists (it conflicts with Happy stacks installs).

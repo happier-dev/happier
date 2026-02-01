@@ -327,14 +327,14 @@ set -euo pipefail
 BIN_DIR="$(cd "$(dirname "$0")" && pwd)"
 hstack="$BIN_DIR/hstack"
 if [[ -x "$hstack" ]]; then
-  exec "$hstack" happy "$@"
+  exec "$hstack" happier "$@"
 fi
 
 # Fallback: run hstack from runtime install if present.
 HOME_DIR="\${HAPPIER_STACK_HOME_DIR:-$HOME/.happier-stack}"
 RUNTIME="$HOME_DIR/runtime/node_modules/@happier-dev/stack/bin/hstack.mjs"
 if [[ -f "$RUNTIME" ]]; then
-  exec node "$RUNTIME" happy "$@"
+  exec node "$RUNTIME" happier "$@"
 fi
 
 echo "error: cannot find hstack shim or runtime install" >&2

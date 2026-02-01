@@ -244,11 +244,11 @@ export function gethstackRegistry() {
       description: 'CLI auth helper',
     },
     {
-      name: 'happy',
+      name: 'happier',
       kind: 'node',
-      scriptRelPath: 'scripts/happy.mjs',
-      rootUsage: 'hstack happy <happy-cli args...>',
-      description: 'Run happy-cli against this stack',
+      scriptRelPath: 'scripts/happier.mjs',
+      rootUsage: 'hstack happier <happier-cli args...>',
+      description: 'Run the Happier CLI against this stack',
     },
     {
       name: 'wt',
