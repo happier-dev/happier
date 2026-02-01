@@ -49,22 +49,41 @@ fi
 VM_NAME="${1:-happy-test}"
 TEMPLATE="${LIMA_TEMPLATE:-ubuntu-24.04}"
 LIMA_MEMORY="${LIMA_MEMORY:-8GiB}"
+LIMA_VM_TYPE="${LIMA_VM_TYPE:-}" # optional: vz|qemu|krunkit (see: limactl create --list-drivers)
 TEMPLATE_LOCATOR="${TEMPLATE}"
 if [[ "${TEMPLATE_LOCATOR}" == template://* ]]; then
   TEMPLATE_LOCATOR="template:${TEMPLATE_LOCATOR#template://}"
 elif [[ "${TEMPLATE_LOCATOR}" != template:* ]]; then
   TEMPLATE_LOCATOR="template:${TEMPLATE_LOCATOR}"
 fi
-LIMA_DIR="${HOME}/.lima/${VM_NAME}"
+LIMA_HOME_DIR="${LIMA_HOME:-${HOME}/.lima}"
+export LIMA_HOME="${LIMA_HOME_DIR}"
+LIMA_DIR="${LIMA_HOME_DIR}/${VM_NAME}"
 LIMA_YAML="${LIMA_DIR}/lima.yaml"
 
 echo "[lima] vm: ${VM_NAME}"
 echo "[lima] template: ${TEMPLATE}"
 echo "[lima] memory: ${LIMA_MEMORY} (override with LIMA_MEMORY=...)"
+echo "[lima] LIMA_HOME: ${LIMA_HOME_DIR}"
+if [[ -n "${LIMA_VM_TYPE}" ]]; then
+  echo "[lima] vmType: ${LIMA_VM_TYPE}"
+fi
 
 if [[ ! -f "${LIMA_YAML}" ]]; then
   echo "[lima] creating VM..."
-  limactl create --name "${VM_NAME}" --tty=false "${TEMPLATE_LOCATOR}"
+  if [[ "${LIMA_VM_TYPE}" == "qemu" ]]; then
+    if ! command -v qemu-system-aarch64 >/dev/null 2>&1; then
+      echo "[lima] qemu vmType requested but qemu-system-aarch64 is missing." >&2
+      echo "[lima] Fix: brew install qemu" >&2
+      exit 1
+    fi
+  fi
+  create_args=(create --name "${VM_NAME}" --tty=false)
+  if [[ -n "${LIMA_VM_TYPE}" ]]; then
+    create_args+=(--vm-type "${LIMA_VM_TYPE}")
+  fi
+  create_args+=("${TEMPLATE_LOCATOR}")
+  limactl "${create_args[@]}"
 fi
 
 if [[ ! -f "${LIMA_YAML}" ]]; then
