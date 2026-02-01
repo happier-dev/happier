@@ -1,0 +1,177 @@
+{
+  "cleanupPeriodDays": 120,
+  "enableAllProjectMcpServers": true,
+  "env": {
+    "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "64000"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/auto-format.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit"
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/compaction-reminder.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/remind-tdd.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit"
+      },
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/enforce-worktree.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Write|Edit|Glob|Grep|Bash"
+      },
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/commit-guard.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "Bash(git commit:*)"
+      },
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/prevent-destructive-git.sh",
+            "type": "command"
+          }
+        ],
+        "matcher": "*"
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-cleanup.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-init.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/stop-continuation.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/inject-session-context.sh",
+            "type": "command"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/inject-task-rules.sh",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Edit(./**)",
+      "Write(./**)",
+      "Glob(./**)",
+      "Grep(./**)",
+      "Bash(edison:*)",
+      "Bash(git:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "Bash(mkdir:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(chmod:*)",
+      "Bash(touch:*)",
+      "Bash(pwd:*)",
+      "WebSearch",
+      "WebFetch",
+      "Bash(yarn install:*)",
+      "Bash(yarn test:*)",
+      "Bash(yarn lint:*)",
+      "Bash(yarn typecheck:*)",
+      "Bash(yarn build:*)",
+      "Bash(yarn format:*)",
+      "Bash(yarn exec:*)",
+      "Bash(npm ci:*)",
+      "Bash(npm install:*)",
+      "Bash(npm test:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(tsc:*)",
+      "Bash(eslint:*)",
+      "Bash(prettier:*)",
+      "Bash(prisma:*)",
+      "Bash(yarn prisma:*)",
+      "Bash(npx prisma:*)",
+      "Bash(playwright:*)",
+      "Bash(yarn playwright:*)",
+      "Bash(npx playwright:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git tag:*)",
+      "Bash(docker push:*)"
+    ],
+    "deny": [
+      "Read(./.env*)",
+      "Edit(./.env*)",
+      "Write(./.env*)",
+      "Bash(sudo:*)",
+      "Bash(rm -rf /:*)",
+      "Bash(mkfs:*)",
+      "Bash(dd:*)"
+    ]
+  }
+}

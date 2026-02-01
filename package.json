@@ -12,6 +12,7 @@
             "apps/ui",
             "apps/cli",
             "apps/server",
+            "apps/stack",
             "packages/agents",
             "packages/protocol"
         ],

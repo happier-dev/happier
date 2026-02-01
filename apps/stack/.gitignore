@@ -1,0 +1,36 @@
+components/
+node_modules/
+
+# Logs / artifacts produced by build+run
+.happy/
+
+# Common tooling caches (if created in this repo)
+.DS_Store
+
+.env
+.env.*.local
+env.local
+
+.worktrees/
+.edison/_generated/
+.edison/_locks/
+.edison/config.local/
+.edison/session/
+.project/
+.project/logs/
+.project/archive/
+.project/.session-id
+.project/sessions/_tx/
+.project/sessions/_locks/
+.project/qa/evidence-snapshots/
+.project/qa/locks/
+.project/qa/score-history/
+/triage
+/.tmp
+/.edison/_tmp
+/.agent-diffs
+/.cache
+/.home
+/docs/commit-audits
+/.tmp-home
+/.tmp-sandbox

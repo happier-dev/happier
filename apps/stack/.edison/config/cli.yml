@@ -1,0 +1,28 @@
+cli:
+  # Fail-closed wrapper enforcement (recommended for LLM/agent workflows).
+  #
+  # This project requires the Hapsta wrapper so that:
+  # - stack-scoped env vars are loaded correctly
+  # - evidence fingerprinting includes the stack’s actual repo checkout
+  # - agents don’t accidentally run outside the enforced stack/worktree context
+  wrapper:
+    enabled: true
+    env_var: HAPPIER_STACK_EDISON_WRAPPER
+    value: "1"
+    message: |
+      Hapsta: do not run `edison ...` directly in this repo.
+
+      Fix:
+        hapsta edison -- <edison args...>
+
+      Stack-scoped (recommended for tasks/evidence/validation):
+        hapsta edison --stack=<stack> -- <edison args...>
+
+      Helpful reads:
+        hapsta edison -- read START_HAPSTA_NEW_SESSION --type start
+        hapsta edison -- read START_PLAN_FEATURE --type start
+        hapsta edison -- read START_VALIDATE_TASK --type start
+
+      Tip:
+        If you pass a task id or QA id, `hapsta edison` can infer the stack from frontmatter:
+          hapsta edison -- evidence capture <task-id>

@@ -1,0 +1,48 @@
+name: Hapsta build
+
+on:
+    pull_request:
+    push:
+        branches:
+            - main
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            - name: Setup Node
+              uses: actions/setup-node@v4
+              with:
+                  node-version: 24
+
+            - name: Enable corepack (yarn)
+              run: |
+                  corepack enable
+                  corepack prepare yarn@1.22.22 --activate
+                  yarn --version
+
+            - name: Install dependencies
+              run: yarn install --frozen-lockfile
+
+            - name: Unit tests (hapsta)
+              run: node ./bin/hapsta.mjs test stacks
+
+            - name: Build
+              # This validates the build command wiring without requiring the Happier monorepo checkout.
+              run: yarn build -- --no-ui
+
+            - name: CLI smoke (help)
+              run: |
+                  node ./bin/hapsta.mjs help
+                  node ./bin/hapsta.mjs init --help
+                  node ./bin/hapsta.mjs self status --no-check
+                  node ./bin/hapsta.mjs where --json
+                  node ./scripts/utils/cli/smoke_help.mjs
+
+            - name: npm pack smoke
+              run: |
+                  npm pack --silent
