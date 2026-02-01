@@ -29,6 +29,7 @@ import { daemonStartGate, formatDaemonAuthRequiredError } from './utils/auth/dae
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
+import { isSandboxed } from './utils/env/sandbox.mjs';
 
 /**
  * Dev mode stack:
@@ -90,15 +91,21 @@ async function main() {
     applyBindModeToEnv(process.env, bindMode);
   }
 
-  const inferred = inferComponentFromCwd({
-    rootDir,
-    invokedCwd: getInvokedCwd(process.env),
-    components: ['happy', 'happy-cli', 'happy-server-light', 'happy-server'],
-  });
-  if (inferred) {
-    // Stack env should win. Only infer from CWD when the repo dir isn't already configured.
-    if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
-      process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
+  // Outside sandbox mode we allow a convenience: if you run `hstack dev` from inside a repo checkout/worktree,
+  // we use that checkout even if you never ran `hstack wt use`.
+  //
+  // In sandbox mode this would break isolation by pointing at your "real" checkout, so we disable it.
+  if (!isSandboxed()) {
+    const inferred = inferComponentFromCwd({
+      rootDir,
+      invokedCwd: getInvokedCwd(process.env),
+      components: ['happy', 'happy-cli', 'happy-server-light', 'happy-server'],
+    });
+    if (inferred) {
+      // Stack env should win. Only infer from CWD when the repo dir isn't already configured.
+      if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
+        process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
+      }
     }
   }
 
@@ -125,13 +132,6 @@ async function main() {
   const serverDir = getComponentDir(rootDir, serverComponentName);
   const uiDir = getComponentDir(rootDir, 'happy');
   const cliDir = getComponentDir(rootDir, 'happy-cli');
-
-  assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
-  assertServerPrismaProviderMatches({ serverComponentName, serverDir });
-
-  await requireDir(serverComponentName, serverDir);
-  await requireDir('happy', uiDir);
-  await requireDir('happy-cli', cliDir);
 
   const cliBin = join(cliDir, 'bin', 'happy.mjs');
   const autostart = getDefaultAutostartPaths();
@@ -186,6 +186,13 @@ async function main() {
     });
     return;
   }
+
+  assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
+  assertServerPrismaProviderMatches({ serverComponentName, serverDir });
+
+  await requireDir(serverComponentName, serverDir);
+  await requireDir('happy', uiDir);
+  await requireDir('happy-cli', cliDir);
 
   const children = [];
   let shuttingDown = false;

@@ -29,6 +29,7 @@ import { resolveServerUiEnv } from './utils/server/ui_env.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
+import { isSandboxed } from './utils/env/sandbox.mjs';
 
 /**
  * Run the local stack in "production-like" mode:
@@ -85,15 +86,21 @@ async function main() {
     applyBindModeToEnv(process.env, bindMode);
   }
 
-  const inferred = inferComponentFromCwd({
-    rootDir,
-    invokedCwd: getInvokedCwd(process.env),
-    components: ['happy', 'happy-cli', 'happy-server-light', 'happy-server'],
-  });
-  if (inferred) {
-    // Stack env should win. Only infer from CWD when the repo dir isn't already configured.
-    if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
-      process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
+  // Outside sandbox mode we allow a convenience: if you run `hstack start` from inside a repo checkout/worktree,
+  // we use that checkout even if you never ran `hstack wt use`.
+  //
+  // In sandbox mode this would break isolation by pointing at your "real" checkout, so we disable it.
+  if (!isSandboxed()) {
+    const inferred = inferComponentFromCwd({
+      rootDir,
+      invokedCwd: getInvokedCwd(process.env),
+      components: ['happy', 'happy-cli', 'happy-server-light', 'happy-server'],
+    });
+    if (inferred) {
+      // Stack env should win. Only infer from CWD when the repo dir isn't already configured.
+      if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
+        process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
+      }
     }
   }
 
@@ -137,16 +144,6 @@ async function main() {
   const serverDir = getComponentDir(rootDir, serverComponentName);
   const cliDir = getComponentDir(rootDir, 'happy-cli');
   const uiDir = getComponentDir(rootDir, 'happy');
-  const serverStartScript = resolveServerStartScript({ serverComponentName, serverDir });
-
-  assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
-  assertServerPrismaProviderMatches({ serverComponentName, serverDir });
-
-  await requireDir(serverComponentName, serverDir);
-  await requireDir('happy-cli', cliDir);
-  if (startMobile) {
-    await requireDir('happy', uiDir);
-  }
 
   const cliBin = join(cliDir, 'bin', 'happy.mjs');
 
@@ -176,6 +173,17 @@ async function main() {
       },
     });
     return;
+  }
+
+  const serverStartScript = resolveServerStartScript({ serverComponentName, serverDir });
+
+  assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
+  assertServerPrismaProviderMatches({ serverComponentName, serverDir });
+
+  await requireDir(serverComponentName, serverDir);
+  await requireDir('happy-cli', cliDir);
+  if (startMobile) {
+    await requireDir('happy', uiDir);
   }
 
   const uiBuildDirExists = await pathExists(uiBuildDir);

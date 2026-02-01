@@ -114,7 +114,7 @@ function renderZsh(model) {
   const group = (name) => (model.groups?.[name] ?? []).join(' ');
 
   return [
-    '#compdef hstack happier-stack',
+    '#compdef hstack',
     '',
     '_hstack() {',
     '  local -a top',
@@ -142,7 +142,6 @@ function renderZsh(model) {
     '}',
     '',
     'compdef _hstack hstack',
-    'compdef _hstack happier-stack',
     '',
   ].join('\n');
 }
@@ -179,7 +178,7 @@ function renderBash(model) {
     '  return 0',
     '}',
     '',
-    'complete -F _hstack_completions hstack happier-stack',
+    'complete -F _hstack_completions hstack',
     '',
   ].join('\n');
 }
@@ -187,7 +186,7 @@ function renderBash(model) {
 function renderFish(model) {
   const lines = [];
   const add = (cmd, sub = null) => {
-    for (const bin of ['hstack', 'happier-stack']) {
+    for (const bin of ['hstack']) {
       if (sub) {
         lines.push(`complete -c ${bin} -n '__fish_seen_subcommand_from ${cmd}' -f -a '${sub.join(' ')}'`);
       } else {
@@ -305,7 +304,7 @@ async function main() {
       json,
       data: { commands: ['print', 'install'], flags: ['--shell=zsh|bash|fish', '--json'] },
       text: [
-        banner('completion', { subtitle: 'Shell completions for hstack/happier-stack.' }),
+        banner('completion', { subtitle: 'Shell completions for hstack.' }),
         '',
         sectionTitle('usage:'),
         `  ${cyan('hstack completion')} print [--shell=zsh|bash|fish] [--json]`,
@@ -313,7 +312,7 @@ async function main() {
         '',
         sectionTitle('notes:'),
         bullets([
-          dim('Installs best-effort completions for hstack/happier-stack.'),
+          dim('Installs best-effort completions for hstack.'),
           dim('Re-run after upgrading hstack to refresh completions.'),
         ]),
       ].join('\n'),

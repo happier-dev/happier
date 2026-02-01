@@ -248,7 +248,7 @@ export function gethstackRegistry() {
       kind: 'node',
       scriptRelPath: 'scripts/worktrees.mjs',
       rootUsage: 'hstack wt <args...>',
-      description: 'Worktrees across components',
+      description: 'Worktrees (Happier monorepo)',
     },
     {
       name: 'srv',
