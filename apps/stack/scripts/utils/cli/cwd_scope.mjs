@@ -1,8 +1,8 @@
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve, sep } from 'node:path';
 
-import { getWorktreesRoot } from '../git/worktrees.mjs';
-import { getRepoDir, happyMonorepoSubdirForComponent, isHappyMonorepoRoot } from '../paths/paths.mjs';
+import { WORKTREE_CATEGORIES, getWorktreeCategoryRoot } from '../git/worktrees.mjs';
+import { getDevRepoDir, getRepoDir, getWorkspaceDir, happyMonorepoSubdirForComponent, isHappyMonorepoRoot } from '../paths/paths.mjs';
 
 export function getInvokedCwd(env = process.env) {
   return String(env.HAPPIER_STACK_INVOKED_CWD ?? env.PWD ?? '').trim();
@@ -70,7 +70,7 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
   }
 
   const abs = resolve(cwd);
-  const worktreesRoot = getWorktreesRoot(rootDir);
+  const workspaceDir = getWorkspaceDir(rootDir);
 
   // Monorepo-aware inference:
   // If we're inside a happy monorepo checkout/worktree, infer which "logical component"
@@ -78,12 +78,17 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
   //
   // This enables workflows like:
   // - running `hstack dev` from inside <repo>/apps/cli (should infer happy-cli)
-  // - running from inside <workspace>/.worktrees/<owner>/<branch>/apps/cli (should infer happy-cli)
+  // - running from inside <workspace>/pr/.../apps/cli (should infer happy-cli)
+  // - running from inside <workspace>/local/.../apps/cli (should infer happy-cli)
+  // - running from inside <workspace>/tmp/.../apps/cli (should infer happy-cli)
   {
+    const categoryRoots = WORKTREE_CATEGORIES.map((c) => resolve(getWorktreeCategoryRoot(rootDir, c, process.env)));
     const monorepoScopes = Array.from(
       new Set([
         resolve(getRepoDir(rootDir)),
-        resolve(worktreesRoot), // repo-scoped worktrees root (monorepo-only)
+        resolve(getDevRepoDir(rootDir)),
+        resolve(workspaceDir),
+        ...categoryRoots,
       ])
     );
     for (const scope of monorepoScopes) {

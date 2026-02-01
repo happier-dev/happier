@@ -13,7 +13,7 @@ test('getComponentDir prefers happy-server for happy-server-light when unified s
   });
 
   const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
-  const repoRoot = join(rootDir, 'happier');
+  const repoRoot = join(rootDir, 'main');
   const serverDir = join(repoRoot, 'apps', 'server');
   await mkdir(serverDir, { recursive: true });
   // Monorepo markers (layout detection).
@@ -36,7 +36,7 @@ test('getComponentDir resolves happy-server-light to the monorepo server package
   });
 
   const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
-  const repoRoot = join(rootDir, 'happier');
+  const repoRoot = join(rootDir, 'main');
   const serverDir = join(repoRoot, 'apps', 'server');
   await mkdir(serverDir, { recursive: true });
   await mkdir(join(repoRoot, 'apps', 'ui'), { recursive: true });

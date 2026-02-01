@@ -30,7 +30,7 @@ SwiftBar runs a script on an interval and renders its output as native macOS men
   - Each stack shows service rows (Server/Daemon/Autostart/Tailscale) with per-service submenus
 - **Repo (git/worktrees)**
   - Available under a top-level **Repo** submenu (to keep the main menu clean)
-  - Shows repo/worktree status for the active monorepo checkout (`<workspace>/happier` or a worktree under `<workspace>/.worktrees/...`)
+  - Shows repo/worktree status for the active monorepo checkout (`<workspace>/main`, `<workspace>/dev`, or a worktree under `<workspace>/{pr,local,tmp}/...`)
   - Each repo entry includes a **Worktrees** submenu listing all worktrees, with actions to switch/open
   - Quick actions: `wt status/sync/update`, PR worktree prompt, open shells/editors (`wt shell/code/cursor`)
   - Shows **origin** and **upstream** comparisons for the repo’s main branch (based on your last `git fetch`)

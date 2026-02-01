@@ -27,7 +27,7 @@ Everything else should stay identical to the upstream-compatible branch so merge
 
 ## Golden rules (hstack)
 
-- **Do not develop in the default repo checkout** (typically `<workspace>/happier`). Use worktrees under `<workspace>/.worktrees/...`.
+- **Do not develop in the stable checkout** (typically `<workspace>/main`). Use `<workspace>/dev` or worktrees under `<workspace>/{pr,local,tmp}/...`.
 - **Use `hstack` entrypoints** (not raw `yarn`, `expo`, etc) when you’re running stack/dev/build/test commands.
 - **Do not commit generated native directories** for Expo apps:
   - `apps/ui/ios/`
@@ -40,17 +40,17 @@ Everything else should stay identical to the upstream-compatible branch so merge
 
 Example (Happier monorepo):
 
-- Upstream-compatible worktree:
-  - `<workspace>/.worktrees/happier-dev/dev`
-  - Branch: `happier-dev/dev`
-- Branded fork worktree:
-  - `<workspace>/.worktrees/happier-dev/happier`
-  - Branch: `happier-dev/happier`
+- Upstream-compatible dev checkout:
+  - `<workspace>/dev`
+  - Branch: `dev`
+- Branded fork worktree (example):
+  - `<workspace>/local/<owner>/happier`
+  - Branch: `feature/happier-branding` (or similar)
 
 Pin your branded stack to the branded worktree (recommended):
 
 ```bash
-hstack stack wt happier -- use happier-dev/happier
+hstack stack wt happier -- use local/happier
 ```
 
 Keep your stable/main stack on defaults, and use `happier` (or another stack) for branded testing/building.
@@ -100,7 +100,7 @@ Then set those **per stack** (in the stack env file) so the behavior is isolated
 
 Work in:
 
-- `<workspace>/.worktrees/happier-dev/dev`
+- `<workspace>/dev`
 
 Keep it upstream-friendly:
 

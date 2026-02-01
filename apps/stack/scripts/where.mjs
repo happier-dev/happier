@@ -5,14 +5,14 @@ import { join } from 'node:path';
 
 import { parseArgs } from './utils/cli/args.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
-import { getComponentDir, getHappyStacksHomeDir, getRepoDir, getRootDir, getStackLabel, getStackName, getWorkspaceDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { getComponentDir, getDevRepoDir, getHappyStacksHomeDir, getRepoDir, getRootDir, getStackLabel, getStackName, getWorkspaceDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getRuntimeDir } from './utils/paths/runtime.mjs';
 import { getCanonicalHomeDir, getCanonicalHomeEnvPath } from './utils/env/config.mjs';
 import { getSandboxDir } from './utils/env/sandbox.mjs';
 import { banner, bullets, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim } from './utils/ui/ansi.mjs';
-import { getWorktreesRoot } from './utils/git/worktrees.mjs';
+import { WORKTREE_CATEGORIES, getWorktreeCategoryRoot } from './utils/git/worktrees.mjs';
 
 function getHomeEnvPaths() {
   const homeDir = getHappyStacksHomeDir();
@@ -43,7 +43,11 @@ async function main() {
   const runtimeDir = getRuntimeDir();
   const workspaceDir = getWorkspaceDir(rootDir);
   const repoDir = getRepoDir(rootDir);
-  const worktreesDir = getWorktreesRoot(rootDir);
+  const worktreeCategoryDirs = Object.fromEntries(
+    WORKTREE_CATEGORIES.map((c) => [c, getWorktreeCategoryRoot(rootDir, c, process.env)])
+  );
+  const mainDir = getRepoDir(rootDir, { ...process.env, HAPPIER_STACK_REPO_DIR: '' });
+  const devDir = getDevRepoDir(rootDir, process.env);
 
   const stackName = getStackName();
   const stackLabel = getStackLabel(stackName);
@@ -69,7 +73,8 @@ async function main() {
       runtimeDir,
       workspaceDir,
       repoDir,
-      worktreesDir,
+      checkouts: { main: mainDir, dev: devDir },
+      worktrees: worktreeCategoryDirs,
       stack: { name: stackName, label: stackLabel },
       envFiles: {
         canonical: { path: canonicalEnv, exists: existsSync(canonicalEnv) },
@@ -98,7 +103,11 @@ async function main() {
         kv('runtime:', runtimeDir),
         kv('workspace:', workspaceDir),
         kv('repo:', repoDir),
-        kv('worktrees:', worktreesDir),
+        kv('main:', mainDir),
+        kv('dev:', devDir),
+        kv('pr:', worktreeCategoryDirs.pr),
+        kv('local:', worktreeCategoryDirs.local),
+        kv('tmp:', worktreeCategoryDirs.tmp),
       ].filter(Boolean)),
       '',
       sectionTitle('Active stack'),

@@ -11,8 +11,8 @@ hstack is **monorepo-only**: UI/CLI/server all live in the same Happier git repo
 
 ## Key idea
 
-- Keep a stable default checkout at `<workspace>/happier`
-- Put all development work in repo worktrees under `<workspace>/.worktrees/<owner>/<branch...>`
+- Keep a stable checkout at `<workspace>/main`
+- Put all development work in `<workspace>/dev` or repo worktrees under `<workspace>/{pr,local,tmp}/...`
 - Point stacks at a repo checkout via **`HAPPIER_STACK_REPO_DIR`** (managed by `hstack wt use ...` / `hstack stack wt ...`)
 
 ---
@@ -21,14 +21,18 @@ hstack is **monorepo-only**: UI/CLI/server all live in the same Happier git repo
 
 Default paths (see `hstack where` for your actual values):
 
-- Default repo checkout: `<workspace>/happier`
-- Worktrees root: `<workspace>/.worktrees`
-- Worktree path: `<workspace>/.worktrees/<owner>/<branch...>`
+- Stable checkout: `<workspace>/main`
+- Dev checkout: `<workspace>/dev` (created by `hstack setup --profile=dev`)
+- Worktrees:
+  - PRs: `<workspace>/pr/...`
+  - locals: `<workspace>/local/<owner>/...`
+  - tmp: `<workspace>/tmp/<owner>/...`
 
 Examples:
 
-- `<workspace>/.worktrees/slopus/pr/123-fix-thing`
-- `<workspace>/.worktrees/happier-dev/local/my-fork-only-patch`
+- `<workspace>/pr/123-fix-thing`
+- `<workspace>/local/<owner>/my-feature`
+- `<workspace>/tmp/<owner>/scratch`
 
 Inside the monorepo, services live under:
 
@@ -40,18 +44,13 @@ Inside the monorepo, services live under:
 
 ## Branch naming convention
 
-Branches created/managed by `hstack` worktree tooling are named:
+Branches created/managed by `hstack` worktree tooling are typically named:
 
 ```
-<owner>/<branch...>
+<owner>/<slug>
 ```
 
-Where:
-
-- `<owner>` is derived from the remote you base from:
-  - **origin/fork** → your fork owner (e.g. `happier-dev`)
-  - **upstream** → upstream owner (e.g. `slopus`)
-- `<branch...>` is whatever you choose (`pr/...`, `feat/...`, `local/...`, etc.)
+PR worktrees use `pr/...` branch names.
 
 ---
 
@@ -65,16 +64,16 @@ Recommended ways to set it:
 
 ```bash
 # Switch the active checkout for the current (non-stack) commands
-hstack wt use slopus/pr/123-fix-thing
+hstack wt use pr/123-fix-thing
 
 # Switch the active checkout for a specific stack
-hstack stack wt pr123 -- use slopus/pr/123-fix-thing
+hstack stack wt pr123 -- use pr/123-fix-thing
 ```
 
 If you want a one-shot override without changing the stack env file:
 
 ```bash
-hstack stack typecheck pr123 --repo=slopus/pr/123-fix-thing
+hstack stack typecheck pr123 --repo=pr/123-fix-thing
 hstack stack build pr123 --repo=/absolute/path/to/checkout
 ```
 
@@ -82,19 +81,14 @@ hstack stack build pr123 --repo=/absolute/path/to/checkout
 
 ## Creating worktrees
 
-Create a new worktree branch based on **upstream** (for upstream PRs):
+Create a new local worktree (recommended for day-to-day feature work):
 
 ```bash
-hstack wt new pr/my-feature --from=upstream --use
-hstack wt push active --remote=upstream
-```
-
-Create a new worktree branch based on **your fork** (for fork-only patches):
-
-```bash
-hstack wt new local/my-patch --from=origin --use
+hstack wt new my-feature --use
 hstack wt push active --remote=origin
 ```
+
+Use `--category=tmp` for truly throwaway worktrees.
 
 ---
 
@@ -118,7 +112,7 @@ hstack wt pr 123 --update --stash
 Notes:
 
 - `--update` fails closed if the PR was force-pushed and the update is not a fast-forward; re-run with `--force`.
-- `--slug=<name>` creates a nicer local branch name (example: `slopus/pr/123-fix-thing`).
+- `--slug=<name>` creates a nicer local branch name (example: `pr/123-fix-thing`).
 
 ---
 

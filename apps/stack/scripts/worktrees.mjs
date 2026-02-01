@@ -9,12 +9,22 @@ import {
   coerceHappyMonorepoRootFromPath,
   getComponentRepoDir,
   getHappyStacksHomeDir,
+  getDevRepoDir,
   getRootDir,
   getRepoDir,
   getWorkspaceDir,
   resolveStackEnvPath,
 } from './utils/paths/paths.mjs';
-import { getWorktreesRoot, inferRemoteNameForOwner, listWorktreeSpecs, parseGithubOwner, resolveComponentSpecToDir } from './utils/git/worktrees.mjs';
+import {
+  WORKTREE_CATEGORIES,
+  getWorktreeArchiveRoot,
+  getWorktreeCategoryRoot,
+  inferRemoteNameForOwner,
+  listWorktreeSpecs,
+  parseGithubOwner,
+  parseGithubOwnerRepo,
+  resolveComponentSpecToDir,
+} from './utils/git/worktrees.mjs';
 import { parseGithubPullRequest, sanitizeSlugPart } from './utils/git/refs.mjs';
 import { readTextIfExists } from './utils/fs/ops.mjs';
 import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
@@ -71,6 +81,10 @@ function resolveComponentWorktreeDir({ rootDir, component, spec }) {
     return getDefaultRepoDir(rootDir);
   }
 
+  if (raw === 'dev') {
+    return getDevRepoDir(rootDir, process.env);
+  }
+
   if (raw === 'active') {
     return getActiveRepoDir(rootDir);
   }
@@ -83,7 +97,7 @@ function resolveComponentWorktreeDir({ rootDir, component, spec }) {
     }
   }
 
-  // Absolute paths and <owner>/<branch...> specs.
+  // Absolute paths and workspace-relative specs (Option C).
   const resolved = resolveComponentSpecToDir({ rootDir, component: DEFAULT_REPO_COMPONENT, spec: raw });
   if (resolved) {
     return coerceHappyMonorepoRootFromPath(resolved) ?? resolved;
@@ -567,7 +581,7 @@ async function cmdUse({ rootDir, args, flags }) {
   const component = args.length >= 2 ? args[0] : DEFAULT_REPO_COMPONENT;
   const spec = args.length >= 2 ? args[1] : args[0];
   if (!spec) {
-    throw new Error('[wt] usage: hstack wt use <owner/branch|path|default|main> [--force]');
+    throw new Error('[wt] usage: hstack wt use <main|dev|pr/...|local/...|tmp/...|path> [--force]');
   }
 
   void component;
@@ -591,7 +605,7 @@ async function cmdUse({ rootDir, args, flags }) {
     );
   }
 
-  const worktreesRoot = getWorktreesRoot(rootDir);
+  const workspaceDir = getWorkspaceDir(rootDir);
   const envPath = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : null;
 
   if (spec === 'default' || spec === 'main') {
@@ -613,7 +627,7 @@ async function cmdUse({ rootDir, args, flags }) {
       `[wt] invalid target for hstack worktrees:\n` +
         `- expected a path inside the Happier monorepo (contains apps/ui|apps/cli|apps/server)\n` +
         `- but got: ${resolvedDir}\n` +
-        `Fix: pick a worktree under ${worktreesRoot}/ or pass an absolute path to a Happier checkout/worktree.`
+        `Fix: pick a checkout under ${workspaceDir}/{main,dev,pr,local,tmp}/ or pass an absolute path to a Happier checkout/worktree.`
     );
   }
   const writeDir = monoRoot;
@@ -664,12 +678,12 @@ async function cmdNew({ rootDir, argv }) {
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const legacyComponent = positionals[2] ? positionals[1] : '';
   const component = DEFAULT_REPO_COMPONENT;
-  const slug = positionals[2] ? positionals[2] : positionals[1];
+  const slugInput = positionals[2] ? positionals[2] : positionals[1];
   void legacyComponent;
 
-  if (!slug) {
+  if (!slugInput) {
     throw new Error(
-      '[wt] usage: hstack wt new <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use]'
+      '[wt] usage: hstack wt new <slug> [--category=local|tmp] [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use]'
     );
   }
 
@@ -679,14 +693,33 @@ async function cmdNew({ rootDir, argv }) {
     throw new Error(`[wt] missing repo at ${repoRoot}`);
   }
 
+  const parseCategoryFromSlug = (raw) => {
+    const s = String(raw ?? '').trim();
+    const parts = s.split('/').filter(Boolean);
+    const first = parts[0] ?? '';
+    if (first === 'tmp') return { category: 'tmp', slug: parts.slice(1).join('/') };
+    if (first === 'local') return { category: 'local', slug: parts.slice(1).join('/') };
+    return { category: '', slug: s };
+  };
+
+  const categoryFlag = (kv.get('--category') ?? '').toString().trim().toLowerCase();
+  const fromSlug = parseCategoryFromSlug(slugInput);
+  const category = categoryFlag || fromSlug.category || 'local';
+  const slug = fromSlug.slug || String(slugInput).trim();
+  if (!slug) {
+    throw new Error('[wt] invalid slug (empty after parsing category prefix).');
+  }
+  if (category !== 'local' && category !== 'tmp') {
+    throw new Error(`[wt] invalid --category: ${category}. Expected: local | tmp`);
+  }
+  if (slug.startsWith('pr/')) {
+    throw new Error(`[wt] "pr/" is reserved. Use: hstack wt pr <number|url>`);
+  }
+
   const remoteOverride = (kv.get('--remote') ?? '').trim();
   const from = (kv.get('--from') ?? '').trim().toLowerCase() || 'upstream';
-  let remoteName = remoteOverride || (from === 'origin' ? 'origin' : 'upstream');
-
-  const remote = await resolveRemoteOwner(repoRoot, remoteName);
-  remoteName = remote.remoteName;
-  const { owner } = remote;
-  const defaultBranch = await resolveRemoteDefaultBranchName(repoRoot, remoteName);
+  const remoteName = remoteOverride || (from === 'origin' ? 'origin' : 'upstream');
+  const baseBranch = (kv.get('--base-branch') ?? process.env.HAPPIER_STACK_DEV_BRANCH ?? 'dev').toString().trim() || 'dev';
 
   const baseOverride = (kv.get('--base') ?? '').trim();
   const baseWorktreeSpec = (kv.get('--base-worktree') ?? kv.get('--from-worktree') ?? '').trim();
@@ -705,26 +738,23 @@ async function cmdNew({ rootDir, argv }) {
     }
   }
 
-  // Default: base worktrees on a local mirror branch like `slopus/main` (or `happier-dev/happy-server-light`).
-  // This scales to multiple upstream remotes without relying on a generic "upstream-main".
-  const mirrorBranch = `${owner}/${defaultBranch}`;
-  const base = baseOverride || baseFromWorktree || mirrorBranch;
-  const branchName = `${owner}/${slug}`;
+  const base = baseOverride || baseFromWorktree || `${remoteName}/${baseBranch}`;
 
-  const worktreesRoot = getWorktreesRoot(rootDir);
-  const repoKey = worktreeRepoKeyForComponent(rootDir, component);
-  const destWorktreeRoot = join(worktreesRoot, repoKey, owner, ...slug.split('/'));
+  const workspaceDir = getWorkspaceDir(rootDir);
+  const localOwner =
+    (process.env.HAPPIER_STACK_OWNER ?? '').toString().trim() ||
+    (process.env.USER ?? process.env.LOGNAME ?? '').toString().trim() ||
+    'unknown';
+  const destWorktreeRoot = join(workspaceDir, category, localOwner, ...slug.split('/'));
   await mkdir(dirname(destWorktreeRoot), { recursive: true });
 
   // Ensure remotes are present.
   await git(repoRoot, ['fetch', '--all', '--prune', '--quiet']);
-
-  // Keep the mirror branch up to date when using the default base.
   if (!baseOverride && !baseFromWorktree) {
-    await git(repoRoot, ['fetch', '--quiet', remoteName, defaultBranch]);
-    await git(repoRoot, ['branch', '-f', mirrorBranch, `${remoteName}/${defaultBranch}`]);
-    await git(repoRoot, ['branch', '--set-upstream-to', `${remoteName}/${defaultBranch}`, mirrorBranch]).catch(() => {});
+    await git(repoRoot, ['fetch', '--quiet', remoteName, baseBranch]);
   }
+
+  const branchName = `${localOwner}/${slug}`;
 
   // If the branch already exists (common when migrating between workspaces),
   // attach a new worktree to that branch instead of failing.
@@ -745,7 +775,7 @@ async function cmdNew({ rootDir, argv }) {
     await cmdUse({ rootDir, args: [destWorktreeRoot], flags });
   }
 
-  return { component, branch: branchName, path: depsDir, base, used: shouldUse, deps, repoKey, worktreeRoot: destWorktreeRoot };
+  return { component, category, owner: localOwner, branch: branchName, path: depsDir, base, used: shouldUse, deps, worktreeRoot: destWorktreeRoot };
 }
 
 async function cmdDuplicate({ rootDir, argv }) {
@@ -820,15 +850,25 @@ async function cmdPr({ rootDir, argv }) {
   // If we can fetch directly from the PR URL's repo, do it. This avoids any assumptions about local
   // remote names like "origin" vs "upstream" and works even when the repo doesn't have that remote set up.
   const remoteName = canFetchByUrl ? '' : await normalizeRemoteName(repoRoot, remoteFromArg || 'upstream');
-  const { owner } = canFetchByUrl ? { owner: pr.owner } : await resolveRemoteOwner(repoRoot, remoteName);
+  const baseOwnerRepo = canFetchByUrl ? { owner: pr.owner, repo: pr.repo } : parseGithubOwnerRepo((await git(repoRoot, ['remote', 'get-url', remoteName])).trim());
+  if (!baseOwnerRepo?.owner) {
+    throw new Error(`[wt] unable to resolve base repo owner for PR fetch (remote=${remoteName || 'url'})`);
+  }
+
+  const canonicalRaw = (process.env.HAPPIER_STACK_CANONICAL_REPO ?? '').toString().trim();
+  const canonical = (() => {
+    const m = canonicalRaw.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+    if (m) return { owner: m[1], repo: m[2] };
+    return { owner: 'leeroybrun', repo: 'happier-dev' };
+  })();
+  const isCanonical = baseOwnerRepo.owner === canonical.owner && (baseOwnerRepo.repo ? baseOwnerRepo.repo === canonical.repo : true);
 
   const slugExtra = sanitizeSlugPart(kv.get('--slug') ?? '');
-  const slug = slugExtra ? `pr/${pr.number}-${slugExtra}` : `pr/${pr.number}`;
-  const branchName = `${owner}/${slug}`;
+  const name = slugExtra ? `${pr.number}-${slugExtra}` : String(pr.number);
+  const branchName = isCanonical ? `pr/${name}` : `pr/${baseOwnerRepo.owner}/${name}`;
 
-  const worktreesRoot = getWorktreesRoot(rootDir);
-  const repoKey = worktreeRepoKeyForComponent(rootDir, component);
-  const destWorktreeRoot = join(worktreesRoot, repoKey, owner, ...slug.split('/'));
+  const workspaceDir = getWorkspaceDir(rootDir);
+  const destWorktreeRoot = isCanonical ? join(workspaceDir, 'pr', name) : join(workspaceDir, 'pr', baseOwnerRepo.owner, name);
   await mkdir(dirname(destWorktreeRoot), { recursive: true });
 
   const exists = await pathExists(destWorktreeRoot);
@@ -934,11 +974,13 @@ async function cmdPr({ rootDir, argv }) {
   const res = {
     component,
     pr: pr.number,
-    remote: remoteName,
+    remote: remoteName || (fetchTarget ? 'url' : ''),
+    category: 'pr',
+    baseRepo: baseOwnerRepo.owner ? `${baseOwnerRepo.owner}/${baseOwnerRepo.repo ?? ''}`.replace(/\/$/, '') : null,
+    canonicalRepo: `${canonical.owner}/${canonical.repo}`,
     branch: branchName,
     path: depsDir,
     worktreeRoot: destWorktreeRoot,
-    repoKey,
     used: shouldUse,
     updated: exists,
     oldHead,
@@ -1596,7 +1638,7 @@ async function cmdNewInteractive({ rootDir, argv }) {
     // eslint-disable-next-line no-console
     console.log(dim('Recommended: base worktrees on upstream to keep PR history clean.'));
 
-    const slug = await prompt(rl, `${dim('Branch slug')} (example: pr/my-feature): `, { defaultValue: '' });
+    const slug = await prompt(rl, `${dim('Worktree slug')} (example: my-feature, or tmp/e2e-test): `, { defaultValue: '' });
     if (!slug) {
       throw new Error('[wt] slug is required');
     }
@@ -1620,14 +1662,10 @@ async function cmdList({ rootDir, args, flags }) {
   const activeOnly = !wantsAll && (flags?.has('--active') || flags?.has('--active-only'));
   void args;
 
-  const dir = getWorktreesRoot(rootDir);
+  const dirs = WORKTREE_CATEGORIES.map((c) => getWorktreeCategoryRoot(rootDir, c, process.env));
   const activeDir = getActiveRepoDir(rootDir);
 
   if (activeOnly) {
-    return { activeDir, worktrees: [] };
-  }
-
-  if (!(await pathExists(dir))) {
     return { activeDir, worktrees: [] };
   }
 
@@ -1647,7 +1685,12 @@ async function cmdList({ rootDir, args, flags }) {
       await walk(join(d, e.name));
     }
   };
-  await walk(dir);
+
+  for (const dir of dirs) {
+    if (!(await pathExists(dir))) continue;
+    // eslint-disable-next-line no-await-in-loop
+    await walk(dir);
+  }
   worktrees.sort();
 
   return { activeDir, worktrees };
@@ -1682,16 +1725,20 @@ async function cmdArchive({ rootDir, argv }) {
     // Broken worktrees can have a missing linked gitdir; fall back to the resolved directory.
     worktreeDir = resolved;
   }
-  const worktreesRoot = resolve(getWorktreesRoot(rootDir));
-  const worktreesRootReal = await realpath(worktreesRoot).catch(() => worktreesRoot);
+  const workspaceDir = resolve(getWorkspaceDir(rootDir));
+  const workspaceDirReal = await realpath(workspaceDir).catch(() => workspaceDir);
   const worktreeDirReal = await realpath(worktreeDir).catch(() => worktreeDir);
-  const rel = relative(worktreesRootReal, worktreeDirReal);
+  const rel = relative(workspaceDirReal, worktreeDirReal);
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error(`[wt] refusing to archive non-worktree path (expected under ${worktreesRoot}): ${worktreeDir}`);
+    throw new Error(`[wt] refusing to archive non-worktree path (expected under ${workspaceDir}): ${worktreeDir}`);
+  }
+  const cat = rel.split('/').filter(Boolean)[0] ?? '';
+  if (!WORKTREE_CATEGORIES.includes(cat)) {
+    throw new Error(`[wt] refusing to archive non-worktree path (expected under ${workspaceDir}/{pr,local,tmp}): ${worktreeDir}`);
   }
 
   const date = (kv.get('--date') ?? '').toString().trim() || getTodayYmd();
-  const archiveRoot = join(dirname(worktreesRoot), '.worktrees-archive', date);
+  const archiveRoot = join(getWorktreeArchiveRoot(rootDir, process.env), date);
   const destDir = join(archiveRoot, rel);
 
   const expectedBranch = rel || null;
@@ -1723,7 +1770,6 @@ async function cmdArchive({ rootDir, argv }) {
     }
   }
 
-  const workspaceDir = getWorkspaceDir(rootDir);
   const sourcePath = relative(workspaceDir, worktreeDir);
 
   const linkedStacks = await findStacksReferencingWorktree({ rootDir, worktreeDir });
@@ -1844,24 +1890,27 @@ async function main() {
         '  hstack wt sync [--remote=<name>] [--json]',
         '  hstack wt sync-all [--remote=<name>] [--json]',
         '  hstack wt list [--active|--all] [--json]',
-        '  hstack wt new <slug> [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use] [--force] [--interactive|-i] [--json]',
+        '  hstack wt new <slug> [--category=local|tmp] [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use] [--force] [--interactive|-i] [--json]',
         '  hstack wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]',
         '  hstack wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--stash|--stash-keep] [--force] [--json]',
-        '  hstack wt use <owner/branch|path|default|main> [--force] [--interactive|-i] [--json]',
+        '  hstack wt use <main|dev|pr/...|local/...|tmp/...|path> [--force] [--interactive|-i] [--json]',
         '  hstack wt status [worktreeSpec|default|path] [--json]',
         '  hstack wt update [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
         '  hstack wt update-all [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
         '  hstack wt push [worktreeSpec|default|path] [--remote=origin] [--dry-run] [--json]',
-        '  hstack wt git [worktreeSpec|active|default|main|path] -- <git args...> [--json]',
-        '  hstack wt shell [worktreeSpec|active|default|main|path] [--shell=/bin/zsh] [--json]',
-        '  hstack wt code [worktreeSpec|active|default|main|path] [--json]',
-        '  hstack wt cursor [worktreeSpec|active|default|main|path] [--json]',
-        '  hstack wt archive <worktreeSpec|active|default|main|path> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]',
+        '  hstack wt git [worktreeSpec|active|main|dev|path] -- <git args...> [--json]',
+        '  hstack wt shell [worktreeSpec|active|main|dev|path] [--shell=/bin/zsh] [--json]',
+        '  hstack wt code [worktreeSpec|active|main|dev|path] [--json]',
+        '  hstack wt cursor [worktreeSpec|active|main|dev|path] [--json]',
+        '  hstack wt archive <worktreeSpec|active|main|dev|path> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]',
         '',
         'selectors:',
-        '  (omitted) or "active": current active checkout (env override if set; else <workspace>/happier)',
-        '  "default" or "main": default checkout (typically under <workspace>/happier)',
-        '  "<owner>/<branch...>": <workspace>/.worktrees/<owner>/<branch...>',
+        '  (omitted) or "active": current active checkout (env override if set; else <workspace>/main)',
+        '  "main": stable checkout under <workspace>/main',
+        '  "dev": development checkout under <workspace>/dev',
+        '  "pr/...": PR worktrees under <workspace>/pr/...',
+        '  "local/...": local worktrees under <workspace>/local/<owner>/...',
+        '  "tmp/...": temporary worktrees under <workspace>/tmp/<owner>/...',
         '  "<absolute path>": explicit checkout path',
         '',
         'note:',

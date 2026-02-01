@@ -15,6 +15,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, lstat, rename, symlink, writeFile, readdir, chmod } from 'node:fs/promises';
 import os from 'node:os';
 import { normalizeGitRoots } from './utils/edison/git_roots.mjs';
+import { worktreeSpecFromDir } from './utils/git/worktrees.mjs';
 
 const COMPONENTS = ['happy', 'happy-cli', 'happy-server-light', 'happy-server'];
 
@@ -937,13 +938,13 @@ async function cmdMetaInit({ rootDir, json }) {
     results.push({ path: rel, ok: true });
   }
 
-  // If a legacy `.worktrees/_meta` exists (non-git worktree), keep it as a backup dir by renaming.
+  // If a legacy `.worktrees/_meta` exists, keep it as a backup dir by moving it under .project/archive.
   const legacyMeta = join(rootDir, '.worktrees', '_meta');
   try {
     const st = await lstat(legacyMeta);
     if (st.isDirectory()) {
-      const backup = join(rootDir, '.worktrees', `_meta_backup_${Date.now()}`);
-      await mkdir(join(rootDir, '.worktrees'), { recursive: true });
+      const backup = join(rootDir, '.project', 'archive', 'legacy-worktrees-meta', String(Date.now()));
+      await mkdir(join(rootDir, '.project', 'archive', 'legacy-worktrees-meta'), { recursive: true });
       await rename(legacyMeta, backup);
       results.push({ path: '.worktrees/_meta', ok: true, movedTo: backup });
     }
@@ -1183,7 +1184,12 @@ spawnOnce();
   // Choose a review cwd that matches the task scope as closely as possible.
   // Happy-stacks sets EDISON_CI__FINGERPRINT__GIT_ROOTS to the targeted component repos.
   const roots = parseJsonArrayFromEnv(env.EDISON_CI__FINGERPRINT__GIT_ROOTS);
-  const wt = componentDirs.find((p) => typeof p === 'string' && p.includes('/.worktrees/')) || '';
+  const wt =
+    componentDirs.find((p) => {
+      if (typeof p !== 'string') return false;
+      const spec = worktreeSpecFromDir({ rootDir, component: 'happy', dir: p, env });
+      return Boolean(spec && spec !== 'main');
+    }) || '';
   const inferredCwd = wt || firstExistingPath(roots) || (env.AGENTS_PROJECT_ROOT ?? '').toString() || rootDir;
 
   const sep = pathListSeparator();
@@ -1586,8 +1592,10 @@ async function cmdTrackCoherence({ rootDir, argv, json }) {
   lines.push('');
 
   for (const r of results) {
-    const aWt = String(r.sourceDir).includes('/.worktrees/');
-    const bWt = String(r.targetDir).includes('/.worktrees/');
+    const aSpec = worktreeSpecFromDir({ rootDir, component: r.component, dir: r.sourceDir, env: process.env });
+    const bSpec = worktreeSpecFromDir({ rootDir, component: r.component, dir: r.targetDir, env: process.env });
+    const aWt = Boolean(aSpec && aSpec !== 'main');
+    const bWt = Boolean(bSpec && bSpec !== 'main');
     lines.push(`component: ${r.component}  (${r.source} → ${r.target})`);
     lines.push(`- source stack: ${r.sourceStack}`);
     lines.push(`- target stack: ${r.targetStack}`);
@@ -1688,8 +1696,8 @@ async function main() {
     return;
   }
 
-  // One-time setup helper for this repo: keep Edison/tool state in `.worktrees/_meta` via symlinks,
-  // without using git worktrees.
+  // One-time setup helper for this repo: keep Edison/tool state in `.edison` + `.project`
+  // (no git worktrees involved).
   if (argv[0] === 'meta:init') {
     await cmdMetaInit({ rootDir, json });
     return;
@@ -1746,7 +1754,8 @@ async function main() {
     if (!json) {
       const pretty = COMPONENTS.map((name, i) => {
         const p = componentDirs[i];
-        const isWt = String(p).includes('/.worktrees/');
+        const spec = worktreeSpecFromDir({ rootDir, component: name, dir: p, env });
+        const isWt = Boolean(spec && spec !== 'main');
         return `  - ${name}: ${p}${isWt ? '' : '   (WARNING: not a worktree path)'}`;
       });
       // eslint-disable-next-line no-console
@@ -1754,8 +1763,8 @@ async function main() {
         [
           `[edison] stack=${stackName} (stack-scoped)`,
           '[edison] IMPORTANT:',
-          '- never edit the default repo checkout (typically <workspace>/happier)',
-          '- always run inside the stack context + repo worktrees under <workspace>/.worktrees/...',
+          '- never edit the stable checkout (typically <workspace>/main)',
+          '- always run inside the stack context + repo worktrees under <workspace>/{dev,pr,local,tmp}/...',
           '- task model: parent (planning) -> track (owns 1 stack) -> component (owns 1 component)',
           '[edison] component dirs (from stack env):',
           ...pretty,

@@ -29,7 +29,7 @@ test('hstack stack new defaults to happy-server-light with a single monorepo rep
   const sandboxDir = join(tmp, 'sandbox');
   const stackName = 'exp-flavors';
 
-  const monoRoot = join(workspaceDir, 'happier');
+  const monoRoot = join(workspaceDir, 'main');
   await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'server', 'prisma', 'sqlite'), { recursive: true });

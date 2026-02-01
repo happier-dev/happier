@@ -12,7 +12,7 @@ import { padRight, parsePrefixedLabel, stripAnsi } from './utils/ui/text.mjs';
 import { commandExists } from './utils/proc/commands.mjs';
 import { renderQrAscii } from './utils/ui/qr.mjs';
 import { resolveMobileQrPayload } from './utils/mobile/dev_client_links.mjs';
-import { getWorktreesRoot } from './utils/git/worktrees.mjs';
+import { worktreeSpecFromDir } from './utils/git/worktrees.mjs';
 
 function nowTs() {
   const d = new Date();
@@ -211,12 +211,10 @@ function formatRepoRef({ rootDir, dir }) {
 
   const abs = resolve(raw);
   const defaultDir = resolve(getRepoDir(rootDir, { ...process.env, HAPPIER_STACK_REPO_DIR: '' }));
-  const worktreesPrefix = resolve(getWorktreesRoot(rootDir, process.env)) + sep;
+  if (abs === defaultDir) return 'main';
 
-  if (abs === defaultDir) return 'default';
-  if (abs.startsWith(worktreesPrefix)) {
-    return abs.slice(worktreesPrefix.length);
-  }
+  const spec = worktreeSpecFromDir({ rootDir, component: 'happy', dir: abs, env: process.env });
+  if (spec) return spec;
   return abs;
 }
 

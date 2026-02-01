@@ -93,7 +93,7 @@ export function getWorkspaceDir(cliRootDir = null, env = process.env) {
 export function getRepoDir(rootDir, env = process.env) {
   const fromEnv = normalizePathForEnv(rootDir, env.HAPPIER_STACK_REPO_DIR, env);
   const workspaceDir = getWorkspaceDir(rootDir, env);
-  const fallback = join(workspaceDir, 'happier');
+  const fallback = join(workspaceDir, 'main');
 
   // Prefer explicitly configured repo dir (if set).
   const candidate = fromEnv || fallback;
@@ -103,6 +103,13 @@ export function getRepoDir(rootDir, env = process.env) {
   // for monorepo-aware components below.
   const root = coerceHappyMonorepoRootFromPath(candidate);
   return root || candidate;
+}
+
+export function getDevRepoDir(rootDir, env = process.env) {
+  // The "dev" checkout is a first-class worktree created by `hstack setup --profile=dev`.
+  // It is not treated as the default repo dir (that is always <workspace>/main).
+  const workspaceDir = getWorkspaceDir(rootDir, env);
+  return join(workspaceDir, 'dev');
 }
 
 function normalizePathForEnv(rootDir, raw, env = process.env) {
@@ -171,7 +178,7 @@ export function getComponentDir(rootDir, name, env = process.env) {
 
   // Monorepo-only default:
   // If no explicit per-component override is set, always resolve monorepo package dirs from the repo dir
-  // (default: <workspace>/happier).
+  // (default: <workspace>/main).
   if (isHappyMonorepoComponentName(n)) {
     const repoRoot = getRepoDir(rootDir, env);
     const pkg = resolveHappyMonorepoPackageDir({ monorepoRoot: repoRoot, component: n });

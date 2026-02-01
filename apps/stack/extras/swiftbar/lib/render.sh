@@ -641,12 +641,12 @@ render_component_repo() {
     if [[ -z "$tsv" ]]; then
       print_item "$p3" "No worktrees found | color=$GRAY"
     else
-      # Map worktree paths back to hstack specs (default or workspace/.worktrees/...).
+      # Map worktree paths back to hstack specs (main/dev or workspace/{pr,local,tmp}/...).
       local repo_key
       repo_key="$(swiftbar_repo_key_from_path "$active_dir" 2>/dev/null || true)"
       local root=""
       if [[ -n "$repo_key" ]]; then
-        root="$(resolve_workspace_dir)/.worktrees/"
+        root="$(resolve_workspace_dir)/"
       fi
       local shown=0
       while IFS=$'\t' read -r wt_path wt_branchref; do
@@ -684,7 +684,7 @@ render_component_repo() {
 
         print_item "$p3" "$label"
 
-        # Only show "use" actions when we can express the worktree as a spec (default or under .worktrees).
+        # Only show "use" actions when we can express the worktree as a spec (main/dev or under pr/local/tmp).
         # Some git worktrees can exist outside our managed tree; for those we only offer open/shell actions.
         if [[ -n "$spec" ]]; then
           if [[ "$context" == "stack" && -n "$stack_name" ]]; then

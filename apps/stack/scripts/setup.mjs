@@ -30,6 +30,7 @@ import { listAllStackNames } from './utils/stack/stacks.mjs';
 import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
+import { ensureDevCheckout } from './utils/git/dev_checkout.mjs';
 
 function resolveWorkspaceDirDefault() {
   const explicit = (process.env.HAPPIER_STACK_WORKSPACE_DIR ?? '').toString().trim();
@@ -85,7 +86,7 @@ async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, t
   const updates = [
     { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: serverComponent },
     // Default for selfhost:
-    // - monorepo: upstream (slopus/*)
+    // - monorepo: upstream (Happier)
     // - server-light: fork-only today (handled in bootstrap)
     ...(repoSourceForProfile
       ? [
@@ -428,7 +429,7 @@ async function cmdSetup({ rootDir, argv }) {
 	          '--profile=selfhost|dev',
 	          '--server=happy-server-light|happy-server',
 	          '--server-flavor=light|full',
-	          '--happy-repo=<owner/repo|url>        # override slopus/happy monorepo clone source',
+	          '--happy-repo=<owner/repo|url>        # override the monorepo clone source',
 	          '--workspace-dir=/absolute/path   # dev profile only',
 	          '--install-path',
 	          '--start-now',
@@ -643,8 +644,11 @@ async function cmdSetup({ rootDir, argv }) {
     const helpLines = [
       bold('Workspace location'),
       dim('This is where hstack will keep:'),
-      `- ${dim('repo')}:      ${cyan(join(suggested, 'happier'))}`,
-      `- ${dim('worktrees')}: ${cyan(join(suggested, '.worktrees'))}`,
+      `- ${dim('main')}:  ${cyan(join(suggested, 'main'))} ${dim('(stable checkout)')}`,
+      `- ${dim('dev')}:   ${cyan(join(suggested, 'dev'))} ${dim('(development checkout)')}`,
+      `- ${dim('pr')}:    ${cyan(join(suggested, 'pr'))}`,
+      `- ${dim('local')}: ${cyan(join(suggested, 'local'))}`,
+      `- ${dim('tmp')}:   ${cyan(join(suggested, 'tmp'))}`,
       '',
       dim('Pick a stable folder that is easy to open in your editor (example: ~/Development/happy).'),
       '',
@@ -1006,6 +1010,10 @@ async function cmdSetup({ rootDir, argv }) {
         console.log(dim(`Tip: iOS dev-client install is macOS-only. You can still use the web UI on mobile via Tailscale.`));
       }
     }
+
+    // Ensure the dedicated dev checkout exists (workspace/dev on branch "dev").
+    // This is the recommended place for contributors to make changes (main stays stable).
+    await ensureDevCheckout({ rootDir, env: process.env });
   } else {
     // Selfhost setup: run non-interactively and keep it simple.
     await runNodeScriptMaybeQuiet({

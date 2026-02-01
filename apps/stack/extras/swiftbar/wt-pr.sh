@@ -26,7 +26,6 @@ if [[ ! -x "$hstack" ]]; then
     exit 1
   fi
   hstack="$(command -v hstack 2>/dev/null || true)"
-  [[ -z "$hstack" ]] && hstack="$(command -v happier-stack 2>/dev/null || true)"
 fi
 if [[ -z "$hstack" ]]; then
   echo "hstack not found (run: npx @happier-dev/stack@latest init)" >&2

@@ -49,18 +49,31 @@ async function loadEnvFile(path, { override = false, overridePrefix = null } = {
 }
 
 function isWorkspaceBootstrapped(workspaceDir) {
-  // Heuristic: if the expected component repos exist in the workspace, we consider bootstrap "already done"
+  // Heuristic: if the Happier monorepo checkout exists under the workspace, consider bootstrap "already done"
   // and avoid re-running the interactive bootstrap wizard from `hstack init`.
   //
   // Users can always re-run bootstrap explicitly:
   //   hstack bootstrap --interactive
+  const looksLikeMonorepo = (dir) => {
+    try {
+      return (
+        existsSync(join(dir, 'apps', 'ui', 'package.json')) &&
+        existsSync(join(dir, 'apps', 'cli', 'package.json')) &&
+        existsSync(join(dir, 'apps', 'server', 'package.json'))
+      );
+    } catch {
+      return false;
+    }
+  };
+
   try {
-    const componentsDir = join(workspaceDir, 'components');
-    const ui = join(componentsDir, 'happy', 'package.json');
-    const cli = join(componentsDir, 'happy-cli', 'package.json');
-    const serverLight = join(componentsDir, 'happy-server-light', 'package.json');
-    const serverFull = join(componentsDir, 'happy-server', 'package.json');
-    return existsSync(ui) && existsSync(cli) && (existsSync(serverLight) || existsSync(serverFull));
+    const candidates = [
+      // New default layout (Option C):
+      join(workspaceDir, 'main'),
+      // Legacy fallback while refactors are in-flight:
+      join(workspaceDir, 'happier'),
+    ];
+    return candidates.some(looksLikeMonorepo);
   } catch {
     return false;
   }
@@ -308,8 +321,6 @@ async function main() {
   }
 
   const hstackShimPath = join(homeDir, 'bin', 'hstack');
-  const happierStackShimPath = join(homeDir, 'bin', 'happier-stack');
-  const happyShimPath = join(homeDir, 'bin', 'happy');
   const shim = [
     '#!/bin/bash',
     'set -euo pipefail',
@@ -376,8 +387,6 @@ async function main() {
   ].join('\n');
 
   await writeExecutable(hstackShimPath, shim);
-  await writeExecutable(happierStackShimPath, `#!/bin/bash\nset -euo pipefail\nexec \"${hstackShimPath}\" \"$@\"\n`);
-  await writeExecutable(happyShimPath, `#!/bin/bash\nset -euo pipefail\nexec \"${hstackShimPath}\" happy \"$@\"\n`);
 
   let didInstallPath = false;
   if (argv.includes('--install-path')) {
@@ -404,7 +413,7 @@ async function main() {
 
   if (!argv.includes('--install-path') || !didInstallPath) {
     console.log(sectionTitle('PATH'));
-    console.log(dim('To use `hstack` (and `happier-stack`) from any terminal, add shims to PATH:'));
+    console.log(dim('To use `hstack` from any terminal, add shims to PATH:'));
     console.log(cmd(`export PATH="${join(homeDir, 'bin')}:$PATH"`));
     console.log(dim(`(or re-run: ${cmd('hstack init --install-path')})`));
     console.log('');

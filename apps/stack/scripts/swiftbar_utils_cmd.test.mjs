@@ -40,14 +40,14 @@ test('swiftbar utils: derives worktree spec from path', async () => {
     `set -euo pipefail`,
     `export HAPPIER_STACK_WORKSPACE_DIR="/x"`,
     `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
-    `echo "$(swiftbar_worktree_spec_from_path "/x/happier" "happy")"`,
-    `echo "$(swiftbar_worktree_spec_from_path "/x/.worktrees/slopus/pr/foo" "happy")"`,
+    `echo "$(swiftbar_worktree_spec_from_path "/x/main" "happy")"`,
+    `echo "$(swiftbar_worktree_spec_from_path "/x/pr/foo" "happy")"`,
     `v="$(swiftbar_worktree_spec_from_path "/x/other/place" "happy")"`,
     `printf '%s\\n' "$v"`,
   ].join('\n');
   const res = await run('bash', ['-lc', bashScript], { cwd: rootDir, env: process.env });
   assert.equal(res.code, 0, `expected bash exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-  assert.equal(res.stdout, 'default\nslopus/pr/foo\n\n', `unexpected output:\n${res.stdout}`);
+  assert.equal(res.stdout, 'main\npr/foo\n\n', `unexpected output:\n${res.stdout}`);
 });
 
 test('swiftbar utils: finds git root by walking up from nested package dir', async () => {
@@ -76,8 +76,8 @@ test('swiftbar utils: derives repo key from component dir path', async () => {
     `set -euo pipefail`,
     `export HAPPIER_STACK_WORKSPACE_DIR="/x"`,
     `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
-    `echo "$(swiftbar_repo_key_from_path "/x/happier/apps/ui")"`,
-    `echo "$(swiftbar_repo_key_from_path "/x/.worktrees/slopus/pr/foo/apps/ui")"`,
+    `echo "$(swiftbar_repo_key_from_path "/x/main/apps/ui")"`,
+    `echo "$(swiftbar_repo_key_from_path "/x/pr/foo/apps/ui")"`,
     `echo "$(swiftbar_repo_key_from_path "/x/other/place")"`,
   ].join('\n');
   const res = await run('bash', ['-lc', bashScript], { cwd: rootDir, env: process.env });

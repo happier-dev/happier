@@ -17,11 +17,13 @@ test('interactive stack new in monorepo mode does not prompt for happy-server-li
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-interactive-new-mono-'));
 
   const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
+  const prevOwner = process.env.HAPPIER_STACK_OWNER;
   try {
     const workspaceDir = join(tmp, 'workspace');
     process.env.HAPPIER_STACK_WORKSPACE_DIR = workspaceDir;
+    process.env.HAPPIER_STACK_OWNER = 'test';
 
-    const monoRoot = join(workspaceDir, '.worktrees', 'slopus', 'tmp', 'mono-wt');
+    const monoRoot = join(workspaceDir, 'tmp', 'test', 'mono-wt');
     await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
     await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
     await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
@@ -51,19 +53,24 @@ test('interactive stack new in monorepo mode does not prompt for happy-server-li
         },
         promptWorktreeSource: async ({ component }) => {
           prompted.push(component);
-          if (component === 'happy') return 'slopus/tmp/mono-wt';
+          if (component === 'happy') return 'tmp/mono-wt';
           throw new Error(`unexpected promptWorktreeSource call: ${component}`);
         },
       },
     });
 
     assert.deepEqual(prompted, ['happy']);
-    assert.equal(out.repo, 'slopus/tmp/mono-wt');
+    assert.equal(out.repo, 'tmp/mono-wt');
   } finally {
     if (prevWorkspace == null) {
       delete process.env.HAPPIER_STACK_WORKSPACE_DIR;
     } else {
       process.env.HAPPIER_STACK_WORKSPACE_DIR = prevWorkspace;
+    }
+    if (prevOwner == null) {
+      delete process.env.HAPPIER_STACK_OWNER;
+    } else {
+      process.env.HAPPIER_STACK_OWNER = prevOwner;
     }
     await rm(tmp, { recursive: true, force: true });
   }

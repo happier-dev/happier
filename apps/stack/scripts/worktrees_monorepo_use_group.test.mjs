@@ -28,7 +28,7 @@ test('hstack wt use switches all monorepo group components when target is a mono
   const sandboxDir = join(tmp, 'sandbox');
   const envFile = join(tmp, 'env');
 
-  const monoRoot = join(workspaceDir, '.worktrees', 'slopus', 'tmp', 'mono-wt');
+  const monoRoot = join(workspaceDir, 'tmp', 'test', 'mono-wt');
   await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'server'), { recursive: true });
@@ -44,12 +44,13 @@ test('hstack wt use switches all monorepo group components when target is a mono
     HAPPIER_STACK_STACK: 'exp',
     HAPPIER_STACK_HOME_DIR: homeDir,
     HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_OWNER: 'test',
     HAPPIER_STACK_SANDBOX_DIR: sandboxDir,
     HAPPIER_STACK_ENV_FILE: envFile,
   };
 
   const res = await runNode(
-    [join(rootDir, 'scripts', 'worktrees.mjs'), 'use', 'slopus/tmp/mono-wt', '--force', '--json'],
+    [join(rootDir, 'scripts', 'worktrees.mjs'), 'use', 'tmp/mono-wt', '--force', '--json'],
     { cwd: rootDir, env }
   );
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);

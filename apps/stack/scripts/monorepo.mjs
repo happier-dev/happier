@@ -30,7 +30,7 @@ function usage() {
     '    [--from-happy-server=/abs/path/to/old-happy-server --from-happy-server-base=<ref> --from-happy-server-ref=<ref>]',
     '',
     'what it does:',
-    '- Best-effort ports commits from split repos into the slopus/happy monorepo layout by applying patches into:',
+    '- Best-effort ports commits from split repos into the Happier monorepo layout by applying patches into:',
     '  - old happy (UI)        -> apps/ui/ (or legacy: expo-app/)',
     '  - old happy-cli (CLI)   -> apps/cli/ (or legacy: cli/)',
     '  - old happy-server      -> apps/server/ (or legacy: server/)',
@@ -189,9 +189,9 @@ async function resolveTargetRepoRootFromArgs({ kv }) {
   }
   if (!isHappyMonorepoRoot(repoRoot)) {
     throw new Error(
-      `[monorepo] target does not look like a slopus/happy monorepo root ` +
-        `(missing apps/ui|apps/cli|apps/server or legacy expo-app/cli/server): ${repoRoot}`
-    );
+        `[monorepo] target does not look like a Happier monorepo root ` +
+          `(missing apps/ui|apps/cli|apps/server or legacy expo-app/cli/server): ${repoRoot}`
+      );
   }
   return repoRoot;
 }
@@ -246,7 +246,7 @@ async function resolvePortScratchDir(targetRepoRoot, rel) {
 async function ensureClonedHappyMonorepo({ targetPath, repoUrl }) {
   const dest = String(targetPath ?? '').trim();
   if (!dest) throw new Error('[monorepo] clone-target: missing --target=<dir>');
-  const url = String(repoUrl ?? '').trim() || 'https://github.com/slopus/happy.git';
+  const url = String(repoUrl ?? '').trim() || 'https://github.com/leeroybrun/happier-dev.git';
 
   const exists = await pathExists(dest);
   if (exists) {
@@ -270,7 +270,7 @@ async function resolveOrCloneTargetRepoRoot({ targetInput, targetArg, flags, kv,
   if (repoRoot) {
     if (!isHappyMonorepoRoot(repoRoot)) {
       throw new Error(
-        `[monorepo] target does not look like a slopus/happy monorepo root ` +
+        `[monorepo] target does not look like a Happier monorepo root ` +
           `(missing apps/ui|apps/cli|apps/server or legacy expo-app/cli/server): ${repoRoot}`
       );
     }
@@ -292,11 +292,11 @@ async function resolveOrCloneTargetRepoRoot({ targetInput, targetArg, flags, kv,
     }
     const targetRepo = String(kv?.get?.('--target-repo') ?? '').trim();
     const spin = progress?.spinner?.(`Cloning target monorepo into ${hint}`);
-    const cloned = await ensureClonedHappyMonorepo({ targetPath: hint, repoUrl: targetRepo || 'https://github.com/slopus/happy.git' });
+    const cloned = await ensureClonedHappyMonorepo({ targetPath: hint, repoUrl: targetRepo || 'https://github.com/leeroybrun/happier-dev.git' });
     spin?.succeed?.(`Cloned target monorepo (${hint})`);
     const clonedRoot = await resolveGitRoot(cloned);
     if (!clonedRoot || !isHappyMonorepoRoot(clonedRoot)) {
-      throw new Error(`[monorepo] cloned target does not look like a slopus/happy monorepo root: ${cloned}`);
+      throw new Error(`[monorepo] cloned target does not look like a Happier monorepo root: ${cloned}`);
     }
     return clonedRoot;
   }
@@ -1226,7 +1226,7 @@ async function cmdPortStatus({ kv, json }) {
 function buildPortLlmPromptText({ targetRepoRoot }) {
   const hs = buildhstackRunnerShellSnippet();
   return [
-    'You are an assistant helping the user port split-repo commits into the slopus/happy monorepo.',
+    'You are an assistant helping the user port split-repo commits into the Happier monorepo.',
     '',
     hs,
     `Target monorepo root: ${targetRepoRoot}`,
@@ -1256,7 +1256,7 @@ function buildPortGuideLlmPromptText({ targetRepoRoot, initialCommandArgs }) {
   const parts = Array.isArray(initialCommandArgs) ? initialCommandArgs : [];
   const cmd = ['hs', 'monorepo', ...parts.map((p) => String(p))].join(' ');
   return [
-    'You are an assistant helping the user port split-repo commits into the slopus/happy monorepo.',
+    'You are an assistant helping the user port split-repo commits into the Happier monorepo.',
     '',
     buildhstackRunnerShellSnippet(),
     `Target monorepo root: ${targetRepoRoot}`,
@@ -1479,7 +1479,7 @@ async function cmdPortPreflight({ argv, flags, kv, json }) {
   const targetRepoRoot = await resolveGitRoot(target);
   if (!targetRepoRoot) throw new Error(`[monorepo] preflight: target is not a git repo: ${target}`);
   if (!isHappyMonorepoRoot(targetRepoRoot)) {
-    throw new Error(`[monorepo] preflight: target is not a slopus/happy monorepo root: ${targetRepoRoot}`);
+      throw new Error(`[monorepo] preflight: target is not a Happier monorepo root: ${targetRepoRoot}`);
   }
 
   const threeWay = flags.has('--3way');
@@ -1564,23 +1564,23 @@ async function cmdPortGuide({ kv, flags, json }) {
               `${dim('Do you want hstack to clone the monorepo into this directory?')}\n` +
               `${dim(targetInput)}`,
             options: [
-              { label: `${green('yes (recommended)')} — clone slopus/happy into this directory`, value: true },
+              { label: `${green('yes (recommended)')} — clone the Happier monorepo into this directory`, value: true },
               { label: 'no — I will provide an existing monorepo checkout', value: false },
             ],
             defaultIndex: 0,
           })) === true;
         if (!shouldClone) {
-          throw new Error(`[monorepo] invalid target (expected an existing slopus/happy monorepo checkout): ${targetInput}`);
+          throw new Error(`[monorepo] invalid target (expected an existing Happier monorepo checkout): ${targetInput}`);
         }
       }
-      const repoUrl = (kv.get('--target-repo') ?? '').trim() || 'https://github.com/slopus/happy.git';
+      const repoUrl = (kv.get('--target-repo') ?? '').trim() || 'https://github.com/leeroybrun/happier-dev.git';
       // eslint-disable-next-line no-console
       console.log(dim(`[monorepo] cloning target monorepo -> ${targetInput}`));
       await ensureClonedHappyMonorepo({ targetPath: targetInput, repoUrl });
       targetRepoRoot = await resolveGitRoot(targetInput);
     }
     if (!targetRepoRoot || !isHappyMonorepoRoot(targetRepoRoot)) {
-      throw new Error(`[monorepo] invalid target (expected slopus/happy monorepo root): ${targetInput}`);
+      throw new Error(`[monorepo] invalid target (expected Happier monorepo root): ${targetInput}`);
     }
     const existingPlan = await readPortPlan(targetRepoRoot);
     if (existingPlan?.plan?.resumeArgv && Array.isArray(existingPlan.plan.resumeArgv)) {

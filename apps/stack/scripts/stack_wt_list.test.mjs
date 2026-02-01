@@ -40,9 +40,9 @@ test('hstack stack wt <stack> -- list defaults to active-only (no exhaustive enu
   const stackName = 'exp-test';
 
   // Create isolated monorepo worktrees on disk (repo-scoped, inside our temp workspace).
-  const wtRoot = join(workspaceDir, '.worktrees');
-  const monoActive = join(wtRoot, 'slopus', 'pr', 'active-branch');
-  const monoOther = join(wtRoot, 'slopus', 'pr', 'other-branch');
+  const wtRoot = join(workspaceDir, 'pr');
+  const monoActive = join(wtRoot, 'active-branch');
+  const monoOther = join(wtRoot, 'other-branch');
   await touchWorktree(monoActive);
   await touchWorktree(monoOther);
   await mkdir(join(monoActive, 'apps', 'ui'), { recursive: true });
@@ -101,9 +101,9 @@ test('hstack stack wt <stack> -- list --all shows all worktrees (opt-in)', async
   const workspaceDir = join(tmp, 'workspace');
   const stackName = 'exp-test';
 
-  const wtRoot = join(workspaceDir, '.worktrees');
-  const monoActive = join(wtRoot, 'slopus', 'pr', 'active-branch');
-  const monoOther = join(wtRoot, 'slopus', 'pr', 'other-branch');
+  const wtRoot = join(workspaceDir, 'pr');
+  const monoActive = join(wtRoot, 'active-branch');
+  const monoOther = join(wtRoot, 'other-branch');
   await touchWorktree(monoActive);
   await touchWorktree(monoOther);
   await mkdir(join(monoActive, 'apps', 'ui'), { recursive: true });

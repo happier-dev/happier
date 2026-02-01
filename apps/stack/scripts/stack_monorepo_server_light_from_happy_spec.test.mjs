@@ -29,8 +29,8 @@ test('hstack stack new pins HAPPIER_STACK_REPO_DIR from --repo path', async () =
   const sandboxDir = join(tmp, 'sandbox');
   const stackName = 'exp-mono-spec';
 
-  // Create a monorepo worktree checkout (repo-scoped worktrees live under <workspace>/.worktrees/<owner>/<branch...>).
-  const monoRoot = join(workspaceDir, '.worktrees', 'slopus', 'tmp', 'leeroy-wip');
+  // Create a monorepo worktree checkout (repo-scoped worktrees live under <workspace>/{pr,local,tmp}/...).
+  const monoRoot = join(workspaceDir, 'tmp', 'leeroy-wip');
   await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'cli'), { recursive: true });
   await mkdir(join(monoRoot, 'apps', 'server', 'prisma', 'sqlite'), { recursive: true });

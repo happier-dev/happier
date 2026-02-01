@@ -50,8 +50,8 @@ test('hstack stack archive moves the stack and archives its referenced worktrees
     HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
 
-  // Create a minimal git repo and a worktree under <workspace>/.worktrees.
-  const repoDir = join(workspaceDir, 'happier');
+  // Create a minimal git repo and a worktree under <workspace>/pr.
+  const repoDir = join(workspaceDir, 'main');
   await mkdir(repoDir, { recursive: true });
   await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
@@ -60,9 +60,9 @@ test('hstack stack archive moves the stack and archives its referenced worktrees
   await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
 
-  const worktreeDir = join(workspaceDir, '.worktrees', 'slopus', 'pr', 'archived-by-stack');
+  const worktreeDir = join(workspaceDir, 'pr', 'archived-by-stack');
   await mkdir(dirname(worktreeDir), { recursive: true });
-  await runOk('git', ['worktree', 'add', '-b', 'slopus/pr/archived-by-stack', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
+  await runOk('git', ['worktree', 'add', '-b', 'pr/archived-by-stack', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
   await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');
 
   const stackName = 'exp-test';
@@ -84,7 +84,7 @@ test('hstack stack archive moves the stack and archives its referenced worktrees
   assert.equal(parsed.archivedStackDir, archivedStackDir, `expected archivedStackDir in JSON output\n${res.stdout}`);
   await stat(join(archivedStackDir, 'env'));
 
-  const archivedWorktreeDir = join(workspaceDir, '.worktrees-archive', date, 'slopus', 'pr', 'archived-by-stack');
+  const archivedWorktreeDir = join(workspaceDir, 'archive', 'worktrees', date, 'pr', 'archived-by-stack');
   const gitStat = await stat(join(archivedWorktreeDir, '.git'));
   assert.ok(gitStat.isDirectory(), 'expected archived worktree to be detached (standalone .git dir)');
 });

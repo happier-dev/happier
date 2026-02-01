@@ -24,9 +24,10 @@ import { isTcpPortFree, listListenPids, pickNextFreeTcpPort } from './utils/net/
 import {
   createWorktree,
   createWorktreeFromBaseWorktree,
-  getWorktreesRoot,
+  WORKTREE_CATEGORIES,
+  getWorktreeCategoryRoot,
   inferRemoteNameForOwner,
-  isComponentWorktreePath,
+  isWorktreePath,
   resolveComponentSpecToDir,
   worktreeSpecFromDir,
 } from './utils/git/worktrees.mjs';
@@ -2164,16 +2165,14 @@ async function cmdArchiveStack({ rootDir, argv, stackName }) {
   const { env } = await readStackEnvObject(stackName);
 
   const workspaceDir = getWorkspaceDir(rootDir);
-  const worktreesRoot = getWorktreesRoot(rootDir);
 
   // Collect unique git worktree roots referenced by this stack.
   const byRoot = new Map();
   const rawRepo = (env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim();
   if (rawRepo) {
     const abs = isAbsolute(rawRepo) ? rawRepo : resolve(workspaceDir, rawRepo);
-    // Only archive paths that live under the repo-scoped worktrees root (<workspace>/.worktrees).
-    const rel = relative(worktreesRoot, abs);
-    if (rel && !rel.startsWith('..') && !isAbsolute(rel)) {
+    // Only archive paths that live under workspace worktree categories (<workspace>/{pr,local,tmp}/...).
+    if (isWorktreePath({ rootDir, dir: abs, env: process.env })) {
       try {
         const top = (await runCapture('git', ['rev-parse', '--show-toplevel'], { cwd: abs })).trim();
         if (top) {
@@ -2323,14 +2322,15 @@ async function cmdDuplicate({ rootDir, argv }) {
   }
 
   let nextRepoDir = fromRepoDir;
-  if (duplicateWorktrees && isComponentWorktreePath({ rootDir, component: 'happy', dir: fromRepoDir, env: fromEnv })) {
+  if (duplicateWorktrees && isWorktreePath({ rootDir, dir: fromRepoDir, env: fromEnv })) {
     const spec = worktreeSpecFromDir({ rootDir, component: 'happy', dir: fromRepoDir, env: fromEnv });
     if (spec) {
-      const [owner, ...restParts] = spec.split('/').filter(Boolean);
-      const rest = restParts.join('/');
-      const slug = `dup/${sanitizeSlugPart(toStack)}/${rest}`;
+      // Duplicate into a disposable tmp worktree by default. This avoids collisions and keeps
+      // the new stack isolated even if the source worktree is later archived/deleted.
+      const slugSafe = sanitizeSlugPart(spec.replaceAll('/', '-'));
+      const slug = `tmp/dup/${sanitizeSlugPart(toStack)}/${slugSafe || 'worktree'}`;
 
-      const remoteName = await inferRemoteNameForOwner({ repoDir: fromRepoDir, owner });
+      const remoteName = 'upstream';
       const created = await createWorktreeFromBaseWorktree({
         rootDir,
         component: 'happy',
@@ -2670,10 +2670,10 @@ async function cmdPrStack({ rootDir, argv }) {
         // Fail-closed invariant for PR stacks:
         // If you asked to pin a component to a PR checkout, it MUST be a worktree path under
         // the active workspace components dir (including sandbox workspace).
-        if (parsed?.path && !isComponentWorktreePath({ rootDir, component, dir: parsed.path, env })) {
+        if (parsed?.path && !isWorktreePath({ rootDir, dir: parsed.path, env })) {
           throw new Error(
             `[stack] pr: refusing to pin ${component} because the checked out path is not a worktree.\n` +
-              `- expected under: ${resolve(getWorktreesRoot(rootDir, env))}/...\n` +
+              `- expected under: ${resolve(getWorkspaceDir(rootDir, env))}/{pr,local,tmp}/...\n` +
               `- actual: ${String(parsed.path ?? '').trim()}\n` +
               `Fix: this is a bug. Please re-run with --force, or delete/recreate the stack (${stackName}).`
           );
@@ -2690,7 +2690,7 @@ async function cmdPrStack({ rootDir, argv }) {
       if (!repoDir) {
         throw new Error('[stack] pr: expected a monorepo worktree root but could not resolve it from the checked out path.');
       }
-      if (!isComponentWorktreePath({ rootDir, component: 'happy', dir: repoDir, env: process.env })) {
+      if (!isWorktreePath({ rootDir, dir: repoDir, env: process.env })) {
         throw new Error(`[stack] pr: refusing to pin repo because the checked out path is not a worktree: ${repoDir}`);
       }
       await ensureEnvFileUpdated({ envPath: stackEnvPath, updates: [{ key: 'HAPPIER_STACK_REPO_DIR', value: repoDir }] });
@@ -3333,7 +3333,7 @@ async function main() {
               '  hstack stack wt <name> -- <wt args...>',
               '',
               'example:',
-              '  hstack stack wt exp1 -- use happy slopus/pr/123-fix-thing',
+              '  hstack stack wt exp1 -- use happy pr/123-fix-thing',
             ]
           : cmd === 'srv'
             ? [
