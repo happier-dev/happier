@@ -48,7 +48,7 @@ export async function prepareDaemonAuthSeed({
     serverDir,
     env: serverEnv,
     // This probe is used only for auth seeding heuristics (and should never block stack startup).
-    // For unified server-light, running migrations here can race the running server and lock SQLite.
+    // For server-light (embedded PGlite), avoid doing anything that could fight for the single-connection DB.
     bestEffort: true,
   });
   return await prepareDaemonAuthSeedIfNeeded({

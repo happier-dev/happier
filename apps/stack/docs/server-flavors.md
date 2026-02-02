@@ -1,44 +1,40 @@
-# Server flavors: `happy-server-light` vs `happy-server`
+# Server flavors: `happier-server-light` vs `happier-server`
 
 hstack supports two server “flavors”. You can switch between them globally (main stack) or per stack.
 
 ## What’s the difference?
 
-Historically, both flavors lived in the same upstream server repo, but optimized for different use cases.
+Both flavors use the **same server codebase** (the monorepo server package, typically `apps/server`), but run with different backends and storage assumptions.
 
-With the Happier monorepo, the server code comes from the monorepo server package (typically `apps/server`). In branches where
-the server includes the SQLite schema (`apps/server/prisma/sqlite/schema.prisma`, legacy paths may differ),
-hstack treats `happy-server-light` and `happy-server` as **two flavors of the same checkout** (different backends, same repo).
+### `happier-server-light` (recommended default)
 
-Long-term, the intent is one server package with multiple backends (“flavors”), not separate repos.
+- **No Docker required**
+- Uses **embedded Postgres via PGlite** (“PG_Light”) stored under the stack directory (per-stack isolation)
+- Stores local public files under the stack directory
+- Best choice for a stable “main” stack and quick local installs
 
-### Unified codebase (recommended)
+Light stacks are isolated by default:
 
-When your `happy-server` checkout includes the light flavor artifacts (notably `prisma/sqlite/schema.prisma` — legacy: `prisma/schema.sqlite.prisma`), hstack treats it as a **single unified server codebase** that supports both:
+```
+~/.happier/stacks/<stack>/server-light/files
+~/.happier/stacks/<stack>/server-light/pglite
+```
 
-- `happy-server` (full / Postgres+Redis+S3)
-- `happy-server-light` (light / SQLite+local files, can serve UI)
+Key env vars (stored in the stack env file):
 
-In that setup:
+- `HAPPIER_SERVER_LIGHT_DATA_DIR`
+- `HAPPIER_SERVER_LIGHT_FILES_DIR`
+- `HAPPIER_SERVER_LIGHT_DB_DIR`
 
-- there is **no server code duplication**
-- `happy-server-light` can point at the **same checkout/worktree** as `happy-server`
-- `hstack stack new` will default to pinning **both** server component dirs to the same path
-- `hstack start/dev --server=happy-server-light` will run `start:light` / `dev:light` when available
+### `happier-server` (full server)
 
-- **`happy-server-light`** (recommended default)
-  - optimized for local usage
-  - can **serve the built web UI** (so `hstack start` works end-to-end without a separate web server)
-  - usually the best choice when you just want a stable “main” stack on your machine
-
-- **`happy-server`** (full server)
-  - closer to upstream “full” behavior (useful when developing server changes meant to go upstream)
-  - the upstream server typically does **not** serve the built UI itself, but hstack provides a **UI gateway** so you still get a single URL that serves the UI and proxies API/websockets/files
-  - useful when you need to test upstream/server-only behavior or reproduce upstream issues, with per-stack infra isolation
+- Docker-managed infra per stack (Postgres + Redis + Minio/S3)
+- Closer to “production-like” behavior
+- Useful when you need Redis/S3 semantics or want to reproduce full-server-only issues
 
 ## Full server infra (no AWS required)
 
-`happy-server` requires:
+`happier-server` requires:
 
 - Postgres (`DATABASE_URL`)
 - Redis (`REDIS_URL`)
@@ -47,7 +43,7 @@ In that setup:
 hstack can **manage this for you automatically per stack** using Docker Compose (Postgres + Redis + Minio),
 so you **do not need AWS S3**.
 
-This happens automatically when you run `hstack start/dev --server=happy-server` (or when a stack uses `happy-server`),
+This happens automatically when you run `hstack start/dev --server=happier-server` (or when a stack uses `happier-server`),
 unless you disable it with:
 
 ```bash
@@ -56,9 +52,9 @@ export HAPPIER_STACK_MANAGED_INFRA=0
 
 If disabled, you must provide `DATABASE_URL`, `REDIS_URL`, and `S3_*` yourself.
 
-## UI serving with `happy-server`
+## UI serving with `happier-server`
 
-The upstream `happy-server` does not serve the built UI itself.
+The upstream `happier-server` does not serve the built UI itself.
 
 For a “one URL” UX (especially with Tailscale), hstack starts a lightweight **UI gateway** that:
 
@@ -67,12 +63,12 @@ For a “one URL” UX (especially with Tailscale), hstack starts a lightweight 
 - reverse-proxies realtime websocket upgrades (`/v1/updates`)
 - reverse-proxies public files (to local Minio)
 
-This means `hstack start --server=happy-server` can still work end-to-end without requiring AWS S3 or a separate nginx setup.
+This means `hstack start --server=happier-server` can still work end-to-end without requiring AWS S3 or a separate nginx setup.
 
-## Migrating between flavors (SQLite ⇢ Postgres)
+## Migrating between flavors (PG_Light ⇢ Postgres)
 
 hstack includes an **experimental** migration helper that can copy core chat data from a
-`happy-server-light` stack (SQLite) into a `happy-server` stack (Postgres):
+`happier-server-light` stack (embedded PGlite) into a `happier-server` stack (Docker Postgres):
 
 ```bash
 hstack migrate light-to-server --from-stack=main --to-stack=full1
@@ -92,10 +88,9 @@ Notes:
 
 - **`hstack start`** is “production-like”. It avoids running heavyweight schema sync loops under launchd KeepAlive.
 - **`hstack dev`** is for rapid iteration:
-  - for `happy-server`: hstack runs `prisma migrate deploy` by default (configurable via `HAPPIER_STACK_PRISMA_MIGRATE`).
-  - for `happy-server-light`:
-    - **unified** server-light (recommended): hstack runs `prisma migrate deploy` (SQLite migrations) using the unified schema under `prisma/sqlite/schema.prisma` (legacy: `prisma/schema.sqlite.prisma`).
-    - **legacy** server-light: hstack does **not** run `prisma migrate deploy` (it commonly fails with `P3005` when the DB was created via `prisma db push` and no migrations exist). The legacy server-light dev/start scripts handle schema via `prisma db push`.
+  - for `happier-server`: hstack runs `prisma migrate deploy` by default (configurable via `HAPPIER_STACK_PRISMA_MIGRATE`).
+  - for `happier-server-light`:
+    - hstack runs the server package’s `migrate:light:deploy` script, which applies `prisma migrate deploy` against the **embedded PGlite DB** using the standard Postgres schema (`prisma/schema.prisma`).
 
 Important: for a given run (`hstack start` / `hstack dev`) you choose **one** flavor.
 
@@ -105,8 +100,8 @@ Use the `srv` helper (persisted in `~/.happier/stacks/main/env` by default, or i
 
 ```bash
 hstack srv status
-hstack srv use happy-server-light
-hstack srv use happy-server
+hstack srv use happier-server-light
+hstack srv use happier-server
 hstack srv use --interactive
 ```
 
@@ -118,8 +113,8 @@ Use the stack wrapper:
 
 ```bash
 hstack stack srv exp1 -- status
-hstack stack srv exp1 -- use happy-server-light
-hstack stack srv exp1 -- use happy-server
+hstack stack srv exp1 -- use happier-server-light
+hstack stack srv exp1 -- use happier-server
 hstack stack srv exp1 -- use --interactive
 ```
 
@@ -130,11 +125,11 @@ This updates the stack env file (typically `~/.happier/stacks/<name>/env`).
 You can override the server flavor for a single run:
 
 ```bash
-hstack start --server=happy-server-light
-hstack start --server=happy-server
+hstack start --server=happier-server-light
+hstack start --server=happier-server
 
-hstack dev --server=happy-server-light
-hstack dev --server=happy-server
+hstack dev --server=happier-server-light
+hstack dev --server=happier-server
 ```
 
 ## Flavor vs repo selection
@@ -145,3 +140,8 @@ There are two separate concepts:
   - controlled by `HAPPIER_STACK_SERVER_COMPONENT` (via `hstack srv use ...`)
 - **Repo selection**: which monorepo checkout/worktree the stack runs from
   - controlled by `HAPPIER_STACK_REPO_DIR` (via `hstack wt use ...` / `hstack stack wt <stack> -- use ...`)
+
+## SQLite note
+
+SQLite is **not** used by `happier-server-light` today (it is PG_Light via embedded PGlite). SQLite may be reintroduced later as an additional light flavor, but it is not part of the current default stack.
+

@@ -103,7 +103,7 @@ async function ensureGitBranchCheckedOut({ repoDir, branch, label }) {
     } catch {
       throw new Error(
         `[local] ${label}: expected branch "${b}" to exist in ${repoDir}.\n` +
-          `[local] Fix: use --forks for happier-server-light (sqlite), or use --server=happier-server with --upstream.`
+          `[local] Fix: ensure the remote has that branch (or pick a different --branch/base), then re-run bootstrap.`
       );
     }
   }

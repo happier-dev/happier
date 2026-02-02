@@ -706,7 +706,7 @@ async function cmdSetup({ rootDir, argv }) {
         const picked = await promptSelect(rl, {
           title: `${bold('Server flavor')}\n${dim('Pick the backend you want to run locally. You can switch later.')}`,
           options: [
-            { label: `happier-server-light (${green('recommended')}) — simplest local install (SQLite)`, value: 'happier-server-light' },
+            { label: `happier-server-light (${green('recommended')}) — simplest local install (PG_Light via embedded PGlite)`, value: 'happier-server-light' },
             { label: `happier-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happier-server' },
           ],
           defaultIndex: serverComponent === 'happier-server' ? 1 : 0,
@@ -1118,7 +1118,7 @@ async function cmdSetup({ rootDir, argv }) {
       rootDir,
       rel: 'scripts/install.mjs',
       // Self-hosting: always clone the Happier monorepo from upstream.
-      // Server-light (sqlite) is still fork-only today and is handled by bootstrap defaults.
+      // Light flavor uses embedded Postgres (PGlite) and is handled by the server package itself.
       args: [`--server=${serverComponent}`, '--upstream', '--clone'],
     });
   }

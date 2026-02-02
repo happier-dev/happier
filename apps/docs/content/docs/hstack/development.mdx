@@ -72,7 +72,7 @@ Stacks are how you test changes without mutating your “main” environment.
 
 Each stack runs exactly one server flavor:
 
-- `happier-server-light` (recommended) — simplest local install (SQLite)
+- `happier-server-light` (recommended) — simplest local install (PG_Light via embedded PGlite)
 - `happier-server` (full) — Docker-managed Postgres/Redis/Minio
 
 See: `/docs/hstack/server-flavors`.
@@ -101,7 +101,7 @@ See: `/docs/hstack/server-flavors`.
 Create a worktree based on upstream (recommended for clean PR history):
 
 ```bash
-hstack wt new my-feature --from=upstream --use
+hstack wt new local/my-feature --from=upstream --use
 ```
 
 Create an isolated stack and point it at the active worktree:
@@ -173,6 +173,13 @@ Recommended flow:
 hstack helps keep this clean by defaulting new worktrees to upstream-based histories and by encouraging `origin` pushes.
 
 See: `/docs/hstack/worktrees-and-forks`.
+
+If you prefer a guided workflow for “extract feature branch from dev”, use:
+
+```bash
+hstack contrib ensure-dev
+hstack contrib extract my-feature --push
+```
 
 ---
 

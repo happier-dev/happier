@@ -63,7 +63,9 @@ export async function startDevServer({
     serverEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR?.trim()
       ? baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR.trim()
       : join(dataDir, 'files');
-    serverEnv.DATABASE_URL = baseEnv.DATABASE_URL?.trim() ? baseEnv.DATABASE_URL.trim() : `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+    serverEnv.HAPPIER_SERVER_LIGHT_DB_DIR = baseEnv.HAPPIER_SERVER_LIGHT_DB_DIR?.trim()
+      ? baseEnv.HAPPIER_SERVER_LIGHT_DB_DIR.trim()
+      : join(dataDir, 'pglite');
   }
 
   if (serverComponentName === 'happier-server') {

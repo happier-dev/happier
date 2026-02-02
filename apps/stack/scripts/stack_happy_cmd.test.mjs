@@ -246,3 +246,47 @@ test('hstack stack happier <name> does not print wrapper stack traces on CLI fai
   assert.ok(!res.stderr.includes('[stack] failed:'), `expected no [stack] failed stack trace, got:\n${res.stderr}`);
   assert.ok(!res.stderr.includes('node:internal'), `expected no node:internal stack trace, got:\n${res.stderr}`);
 });
+
+test('hstack stack <name> happier ... stack-name-first shorthand works', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-stack-happy-name-first-'));
+
+  const storageDir = join(tmp, 'storage');
+  const homeDir = join(tmp, 'home');
+  const workspaceDir = join(tmp, 'workspace');
+  const monoRoot = join(workspaceDir, 'happier');
+  const stackName = 'exp-test';
+
+  await ensureMinimalHappierMonorepo({ monoRoot });
+  await writeStubHappyCli({ cliDir: join(monoRoot, 'apps', 'cli'), message: 'name-first' });
+
+  const stackCliHome = join(storageDir, stackName, 'cli');
+  const envPath = join(storageDir, stackName, 'env');
+  await mkdir(dirname(envPath), { recursive: true });
+  await writeFile(
+    envPath,
+    [
+      `HAPPIER_STACK_REPO_DIR=${monoRoot}`,
+      `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
+      `HAPPIER_STACK_SERVER_PORT=3999`,
+      '',
+    ].join('\n'),
+    'utf-8'
+  );
+
+  const baseEnv = {
+    ...process.env,
+    HAPPIER_STACK_HOME_DIR: homeDir,
+    HAPPIER_STACK_STORAGE_DIR: storageDir,
+    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+  };
+
+  const res = await runNode([join(rootDir, 'bin', 'hstack.mjs'), 'stack', stackName, 'happier'], { cwd: rootDir, env: baseEnv });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim());
+  assert.equal(out.message, 'name-first');
+  assert.equal(out.stack, stackName);
+});

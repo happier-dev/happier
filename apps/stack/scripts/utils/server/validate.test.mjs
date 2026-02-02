@@ -32,7 +32,7 @@ async function writeSchemas({ dir, schemaPrisma, schemaSqlitePrisma }) {
   }
 }
 
-test('assertServerPrismaProviderMatches accepts unified light flavor (prisma/sqlite/schema.prisma)', async () => {
+test('assertServerPrismaProviderMatches accepts happier-server-light when schema.prisma is postgresql', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
   try {
     await writeSchemas({ dir, schemaPrisma: PG_SCHEMA, schemaSqlitePrisma: SQLITE_SCHEMA });
@@ -42,10 +42,10 @@ test('assertServerPrismaProviderMatches accepts unified light flavor (prisma/sql
   }
 });
 
-test('assertServerPrismaProviderMatches rejects happier-server-light when only postgres schema exists', async () => {
+test('assertServerPrismaProviderMatches rejects happier-server-light when schema.prisma is sqlite', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
   try {
-    await writeSchemas({ dir, schemaPrisma: PG_SCHEMA, schemaSqlitePrisma: null });
+    await writeSchemas({ dir, schemaPrisma: SQLITE_SCHEMA, schemaSqlitePrisma: SQLITE_SCHEMA });
     assert.throws(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server-light', serverDir: dir }));
   } finally {
     await rm(dir, { recursive: true, force: true });

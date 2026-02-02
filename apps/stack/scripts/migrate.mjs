@@ -1,5 +1,5 @@
 import './utils/env/env.mjs';
-import { copyFile, mkdir, readFile } from 'node:fs/promises';
+import { cp, mkdir, readFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 
 import { parseArgs } from './utils/cli/args.mjs';
@@ -12,7 +12,7 @@ import { ensureHappyServerManagedInfra, applyHappyServerMigrations } from './uti
 import { runCapture } from './utils/proc/proc.mjs';
 import { pickNextFreeTcpPort } from './utils/net/ports.mjs';
 import { getEnvValue } from './utils/env/values.mjs';
-import { importPrismaClientForHappyServerLight, importPrismaClientFromNodeModules } from './utils/server/prisma_import.mjs';
+import { importPrismaClientFromNodeModules } from './utils/server/prisma_import.mjs';
 
 function usage() {
   return [
@@ -20,7 +20,7 @@ function usage() {
     '  hstack migrate light-to-server --from-stack=<name> --to-stack=<name> [--include-files] [--force] [--json]',
     '',
     'Notes:',
-    '- This migrates chat data from happier-server-light (SQLite) to happier-server (Postgres).',
+    '- This migrates chat data from happier-server-light (PG_Light via embedded PGlite) to happier-server (Docker Postgres).',
     '- It preserves IDs, so existing session URLs keep working on the new server.',
     '- If --include-files is set, it mirrors server-light local files into Minio (S3) in the target stack.',
   ].join('\n');
@@ -28,14 +28,19 @@ function usage() {
 
 const readEnvObject = readEnvObjectFromFile;
 
-function parseFileDatabaseUrl(url) {
-  const raw = String(url ?? '').trim();
-  if (!raw) return null;
-  if (raw.startsWith('file:')) {
-    const path = raw.slice('file:'.length);
-    return { url: raw, path };
-  }
-  return null;
+function normalizePgliteServerConnToDatabaseUrl(rawConn) {
+  const raw = String(rawConn ?? '').trim();
+  if (!raw) throw new Error('[migrate] invalid PGlite server connection string (empty)');
+  const url = (() => {
+    try {
+      return new URL(raw);
+    } catch {
+      // pglite-socket can return "127.0.0.1:NNNN" (host:port). Convert to a postgres URL.
+      return new URL(`postgresql://postgres@${raw}/postgres?sslmode=disable`);
+    }
+  })();
+  url.searchParams.set('connection_limit', '1');
+  return url.toString();
 }
 
 async function ensureTargetSecretMatchesSource({ sourceSecretPath, targetSecretPath }) {
@@ -73,11 +78,7 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
 
   const fromDataDir = getEnvValue(fromEnv, 'HAPPIER_SERVER_LIGHT_DATA_DIR') || join(from.baseDir, 'server-light');
   const fromFilesDir = getEnvValue(fromEnv, 'HAPPIER_SERVER_LIGHT_FILES_DIR') || join(fromDataDir, 'files');
-  const fromDbUrl = getEnvValue(fromEnv, 'DATABASE_URL') || `file:${join(fromDataDir, 'happier-server-light.sqlite')}`;
-  const fromParsed = parseFileDatabaseUrl(fromDbUrl);
-  if (!fromParsed?.path) {
-    throw new Error(`[migrate] from-stack DATABASE_URL must be file:... (got: ${fromDbUrl})`);
-  }
+  const fromDbDir = getEnvValue(fromEnv, 'HAPPIER_SERVER_LIGHT_DB_DIR') || join(fromDataDir, 'pglite');
 
   const toPortRaw = getEnvValue(toEnv, 'HAPPIER_STACK_SERVER_PORT');
   let toPort = toPortRaw ? Number(toPortRaw) : NaN;
@@ -121,14 +122,33 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
   });
   await applyHappyServerMigrations({ serverDir: fullDir, env: { ...process.env, ...infra.env } });
 
-  // Copy sqlite DB to a snapshot so migration is consistent even if the source server is running.
+  // Snapshot the embedded DB dir so migration is consistent even if the source server is running.
   const snapshotDir = join(to.baseDir, 'migrations');
   await mkdir(snapshotDir, { recursive: true });
-  const snapshotPath = join(snapshotDir, `happier-server-light.${basename(fromParsed.path)}.${Date.now()}.sqlite`);
-  await copyFile(fromParsed.path, snapshotPath);
-  const snapshotDbUrl = `file:${snapshotPath}`;
+  const snapshotDbDir = join(snapshotDir, `pglite.${basename(fromDbDir)}.${Date.now()}`);
+  await cp(fromDbDir, snapshotDbDir, { recursive: true, force: true });
 
-  const SourcePrismaClient = await importPrismaClientForHappyServerLight({ serverDir: lightDir });
+  // Ensure schema is applied on the snapshot DB (idempotent).
+  await runCapture('yarn', ['-s', 'migrate:light:deploy'], {
+    cwd: lightDir,
+    env: {
+      ...process.env,
+      HAPPIER_SERVER_LIGHT_DATA_DIR: fromDataDir,
+      HAPPIER_SERVER_LIGHT_FILES_DIR: fromFilesDir,
+      HAPPIER_SERVER_LIGHT_DB_DIR: snapshotDbDir,
+    },
+  });
+
+  // Read from the snapshot via a temporary pglite socket and the standard Prisma client.
+  const { PGlite } = await import('@electric-sql/pglite');
+  const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
+  const pglite = new PGlite(snapshotDbDir);
+  await pglite.waitReady;
+  const pgliteServer = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+  await pgliteServer.start();
+  const snapshotDbUrl = normalizePgliteServerConnToDatabaseUrl(pgliteServer.getServerConn());
+
+  const SourcePrismaClient = await importPrismaClientFromNodeModules({ dir: lightDir });
   const TargetPrismaClient = await importPrismaClientFromNodeModules({ dir: fullDir });
 
   const sourceDb = new SourcePrismaClient({ datasources: { db: { url: snapshotDbUrl } } });
@@ -224,7 +244,7 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
         ok: true,
         fromStack,
         toStack,
-        snapshotPath,
+        snapshotDbDir,
         migrated: { accounts: accounts.length, sessions: sessions.length, messages: migrated, machines: machines.length, accessKeys: accessKeys.length },
         filesMirrored: Boolean(includeFiles),
       },
@@ -232,14 +252,32 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
         `[migrate] ok`,
         `[migrate] from: ${fromStack} (${fromFlavor})`,
         `[migrate] to:   ${toStack} (${toFlavor})`,
-        `[migrate] sqlite snapshot: ${snapshotPath}`,
+        `[migrate] pglite snapshot dir: ${snapshotDbDir}`,
         `[migrate] messages: ${migrated}`,
         includeFiles ? `[migrate] files: mirrored from ${fromFilesDir} -> minio bucket ${infra.env.S3_BUCKET}` : `[migrate] files: skipped`,
       ].join('\n'),
     });
   } finally {
-    await sourceDb.$disconnect().catch(() => {});
-    await targetDb.$disconnect().catch(() => {});
+    try {
+      await sourceDb.$disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      await targetDb.$disconnect();
+    } catch {
+      // ignore
+    }
+    try {
+      await pgliteServer.stop();
+    } catch {
+      // ignore
+    }
+    try {
+      await pglite.close();
+    } catch {
+      // ignore
+    }
   }
 }
 

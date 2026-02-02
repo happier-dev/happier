@@ -25,10 +25,6 @@ function detectPrismaProvider(schemaText) {
 
 export function assertServerPrismaProviderMatches({ serverComponentName, serverDir }) {
   const schemaPath = join(serverDir, 'prisma', 'schema.prisma');
-  const sqliteSchemaPaths = [
-    join(serverDir, 'prisma', 'sqlite', 'schema.prisma'),
-    join(serverDir, 'prisma', 'schema.sqlite.prisma'),
-  ];
 
   let schemaText = '';
   try {
@@ -41,36 +37,14 @@ export function assertServerPrismaProviderMatches({ serverComponentName, serverD
   const provider = detectPrismaProvider(schemaText);
   if (!provider) return;
 
-  // Unified happier-server flavors:
-  // - full: prisma/schema.prisma (postgresql)
-  // - light: prisma/sqlite/schema.prisma (sqlite) (legacy: prisma/schema.sqlite.prisma)
+  // Happier server flavors share a single server package in the monorepo.
+  // Both the full server and the current light server use a Postgres schema (light runs via embedded PGlite).
   if (serverComponentName === 'happier-server-light') {
-    for (const sqliteSchemaPath of sqliteSchemaPaths) {
-      try {
-        const sqliteSchemaText = readFileSync(sqliteSchemaPath, 'utf-8');
-        const sqliteProvider = detectPrismaProvider(sqliteSchemaText);
-        if (sqliteProvider && sqliteProvider !== 'sqlite') {
-          throw new Error(
-            `[server] happier-server-light expects Prisma datasource provider \"sqlite\", but found \"${sqliteProvider}\" in:\n` +
-              `- ${sqliteSchemaPath}\n` +
-              `Fix: point happier-server-light at a checkout that includes sqlite support, or switch server flavor to happier-server.`
-          );
-        }
-        if (sqliteProvider === 'sqlite') {
-          return;
-        }
-        // Exists, but could not parse provider: keep checking other variants and fall through to legacy behavior.
-      } catch {
-        // missing/unreadable: try other variants and then fall through to legacy behavior below
-      }
-    }
-
-    if (provider !== 'sqlite') {
+    if (provider !== 'postgresql') {
       throw new Error(
-        `[server] happier-server-light expects Prisma datasource provider \"sqlite\", but found \"${provider}\" in:\n` +
+        `[server] happier-server-light expects Prisma datasource provider \"postgresql\", but found \"${provider}\" in:\n` +
           `- ${schemaPath}\n` +
-          `This usually means you're pointing happier-server-light at a postgres-only happier-server checkout/PR.\n` +
-          `Fix: either switch server flavor to happier-server, or use a checkout that supports the light flavor (e.g. one that contains prisma/sqlite/schema.prisma or prisma/schema.sqlite.prisma).`
+          `Fix: point happier-server-light at a checkout that includes the current light flavor implementation (PGlite) and uses the Postgres schema.`
       );
     }
     return;
@@ -80,7 +54,7 @@ export function assertServerPrismaProviderMatches({ serverComponentName, serverD
     throw new Error(
       `[server] happier-server expects Prisma datasource provider \"postgresql\", but found \"sqlite\" in:\n` +
         `- ${schemaPath}\n` +
-        `Fix: either switch server flavor to happier-server-light, or point happier-server at the full-server checkout.`
+        `Fix: point happier-server at a checkout that uses the Postgres schema.`
     );
   }
 }

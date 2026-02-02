@@ -19,9 +19,7 @@ async function writeJson(path, obj) {
 test('resolveServer*Script uses light scripts when unified light flavor is detected', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hs-flavor-scripts-'));
   try {
-    await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
-    await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
-    await writeJson(join(dir, 'package.json'), { scripts: { 'start:light': 'node x', 'dev:light': 'node y' } });
+    await writeJson(join(dir, 'package.json'), { scripts: { 'start:light': 'node x', 'dev:light': 'node y', 'migrate:light:deploy': 'node z' } });
 
     assert.equal(resolveServerDevScript({ serverComponentName: 'happier-server-light', serverDir: dir, prismaPush: true }), 'dev:light');
     assert.equal(resolveServerDevScript({ serverComponentName: 'happier-server-light', serverDir: dir, prismaPush: false }), 'dev:light');
@@ -60,10 +58,8 @@ test('resolveServer*Script returns start for happier-server', async () => {
 test('resolveServerLightPrismaMigrateDeployArgs adds --schema when unified light flavor is detected', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hs-flavor-scripts-'));
   try {
-    await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
-    await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
-
-    assert.deepEqual(resolveServerLightPrismaMigrateDeployArgs({ serverDir: dir }), ['migrate', 'deploy', '--schema', 'prisma/sqlite/schema.prisma']);
+    await writeJson(join(dir, 'package.json'), { scripts: { 'migrate:light:deploy': 'node z' } });
+    assert.deepEqual(resolveServerLightPrismaMigrateDeployArgs({ serverDir: dir }), ['migrate', 'deploy', '--schema', 'prisma/schema.prisma']);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -81,12 +77,21 @@ test('resolveServerLightPrismaMigrateDeployArgs supports legacy schema.sqlite.pr
   }
 });
 
-test('resolveServerLightPrismaClientImport returns file URL when unified light flavor is detected', async () => {
+test('resolveServerLightPrismaClientImport returns @prisma/client for pglite light flavor', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'hs-flavor-scripts-'));
+  try {
+    await writeJson(join(dir, 'package.json'), { scripts: { 'migrate:light:deploy': 'node z' } });
+    assert.equal(resolveServerLightPrismaClientImport({ serverDir: dir }), '@prisma/client');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('resolveServerLightPrismaClientImport returns file URL for sqlite light flavor (legacy)', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hs-flavor-scripts-'));
   try {
     await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
     await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
-
     const spec = resolveServerLightPrismaClientImport({ serverDir: dir });
     assert.equal(typeof spec, 'string');
     assert.ok(spec.startsWith('file:'), `expected file: URL import spec, got: ${spec}`);
@@ -96,26 +101,11 @@ test('resolveServerLightPrismaClientImport returns file URL when unified light f
   }
 });
 
-test('resolveServerLightPrismaClientImport returns @prisma/client for legacy happier-server-light', async () => {
+test('resolvePrismaClientImportForServerComponent returns @prisma/client for pglite server-light', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hs-flavor-scripts-'));
   try {
-    assert.equal(resolveServerLightPrismaClientImport({ serverDir: dir }), '@prisma/client');
-    assert.deepEqual(resolveServerLightPrismaMigrateDeployArgs({ serverDir: dir }), ['migrate', 'deploy']);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test('resolvePrismaClientImportForServerComponent returns sqlite client file URL for unified server-light', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'hs-flavor-scripts-'));
-  try {
-    await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
-    await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
-
-    const spec = resolvePrismaClientImportForServerComponent({ serverComponentName: 'happier-server-light', serverDir: dir });
-    assert.equal(typeof spec, 'string');
-    assert.ok(spec.startsWith('file:'), `expected file: URL import spec, got: ${spec}`);
-    assert.ok(spec.endsWith('/generated/sqlite-client/index.js'), `unexpected import spec: ${spec}`);
+    await writeJson(join(dir, 'package.json'), { scripts: { 'migrate:light:deploy': 'node z' } });
+    assert.equal(resolvePrismaClientImportForServerComponent({ serverComponentName: 'happier-server-light', serverDir: dir }), '@prisma/client');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -124,13 +114,8 @@ test('resolvePrismaClientImportForServerComponent returns sqlite client file URL
 test('resolvePrismaClientImportForServerComponent accepts serverComponent alias (back-compat)', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hs-flavor-scripts-'));
   try {
-    await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
-    await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
-
-    const spec = resolvePrismaClientImportForServerComponent({ serverComponent: 'happier-server-light', serverDir: dir });
-    assert.equal(typeof spec, 'string');
-    assert.ok(spec.startsWith('file:'), `expected file: URL import spec, got: ${spec}`);
-    assert.ok(spec.endsWith('/generated/sqlite-client/index.js'), `unexpected import spec: ${spec}`);
+    await writeJson(join(dir, 'package.json'), { scripts: { 'migrate:light:deploy': 'node z' } });
+    assert.equal(resolvePrismaClientImportForServerComponent({ serverComponent: 'happier-server-light', serverDir: dir }), '@prisma/client');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

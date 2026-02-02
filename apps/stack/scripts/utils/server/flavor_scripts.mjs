@@ -17,19 +17,37 @@ function hasScript(scripts, name) {
   return typeof scripts?.[name] === 'string' && scripts[name].trim().length > 0;
 }
 
+function detectServerLightDbFlavor({ serverDir }) {
+  const scripts = readScripts(serverDir);
+  if (hasScript(scripts, 'migrate:light:deploy')) {
+    // Current Happier "light" flavor uses embedded Postgres via PGlite.
+    return 'pglite';
+  }
+  // Legacy SQLite-era layouts (kept for old checkouts and potential future reintroduction).
+  if (existsSync(join(serverDir, 'prisma', 'sqlite', 'schema.prisma'))) return 'sqlite';
+  if (existsSync(join(serverDir, 'prisma', 'schema.sqlite.prisma'))) return 'sqlite';
+  return 'unknown';
+}
+
 export function isUnifiedHappyServerLight({ serverDir }) {
-  return (
-    existsSync(join(serverDir, 'prisma', 'sqlite', 'schema.prisma')) ||
-    existsSync(join(serverDir, 'prisma', 'schema.sqlite.prisma'))
-  );
+  // "Unified" means the monorepo server package supports a first-class light flavor.
+  // Today that is PGlite-based.
+  return detectServerLightDbFlavor({ serverDir }) === 'pglite';
 }
 
 export function resolveServerLightPrismaSchemaArgs({ serverDir }) {
-  if (existsSync(join(serverDir, 'prisma', 'sqlite', 'schema.prisma'))) {
-    return ['--schema', 'prisma/sqlite/schema.prisma'];
+  const flavor = detectServerLightDbFlavor({ serverDir });
+  if (flavor === 'pglite') {
+    // Light flavor uses the main Postgres schema.
+    return ['--schema', 'prisma/schema.prisma'];
   }
-  if (existsSync(join(serverDir, 'prisma', 'schema.sqlite.prisma'))) {
-    return ['--schema', 'prisma/schema.sqlite.prisma'];
+  if (flavor === 'sqlite') {
+    if (existsSync(join(serverDir, 'prisma', 'sqlite', 'schema.prisma'))) {
+      return ['--schema', 'prisma/sqlite/schema.prisma'];
+    }
+    if (existsSync(join(serverDir, 'prisma', 'schema.sqlite.prisma'))) {
+      return ['--schema', 'prisma/schema.sqlite.prisma'];
+    }
   }
   return [];
 }
@@ -39,11 +57,16 @@ export function resolveServerLightPrismaMigrateDeployArgs({ serverDir }) {
 }
 
 export function resolveServerLightPrismaClientImport({ serverDir }) {
-  if (!isUnifiedHappyServerLight({ serverDir })) {
+  const flavor = detectServerLightDbFlavor({ serverDir });
+  if (flavor === 'pglite') {
+    // Light flavor uses the standard Postgres Prisma client (schema.prisma).
     return '@prisma/client';
   }
-  const clientPath = join(serverDir, 'generated', 'sqlite-client', 'index.js');
-  return pathToFileURL(clientPath).href;
+  if (flavor === 'sqlite') {
+    const clientPath = join(serverDir, 'generated', 'sqlite-client', 'index.js');
+    return pathToFileURL(clientPath).href;
+  }
+  return '@prisma/client';
 }
 
 export function resolvePrismaClientImportForServerComponent({ serverComponentName, serverComponent, serverDir }) {
@@ -62,15 +85,13 @@ export function resolveServerDevScript({ serverComponentName, serverDir, prismaP
   }
 
   if (serverComponentName === 'happier-server-light') {
-    const unified = isUnifiedHappyServerLight({ serverDir });
-    if (unified) {
-      // Server-light now relies on deterministic migrations (not db push).
-      // Prefer the dedicated dev script that runs migrate deploy before starting.
-      if (hasScript(scripts, 'dev:light')) {
-        return 'dev:light';
-      }
-      // Fallback: no dev script, run the light start script.
-      return hasScript(scripts, 'start:light') ? 'start:light' : 'start';
+    // Prefer the dedicated dev script that ensures migrations are applied before starting.
+    if (hasScript(scripts, 'dev:light')) {
+      return 'dev:light';
+    }
+    // Fallback: no dev script, run the light start script.
+    if (hasScript(scripts, 'start:light')) {
+      return 'start:light';
     }
 
     // Legacy behavior: prefer `dev` for older server-light checkouts.
@@ -88,8 +109,7 @@ export function resolveServerStartScript({ serverComponentName, serverDir }) {
   const scripts = readScripts(serverDir);
 
   if (serverComponentName === 'happier-server-light') {
-    const unified = isUnifiedHappyServerLight({ serverDir });
-    if (unified && hasScript(scripts, 'start:light')) {
+    if (hasScript(scripts, 'start:light')) {
       return 'start:light';
     }
   }

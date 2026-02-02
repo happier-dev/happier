@@ -1085,7 +1085,7 @@ async function main() {
             rootDir,
             componentLabel: 'happy-server-light',
             repoRoot: repos['happy-server-light'],
-            repoHintLabel: 'server-light (sqlite)',
+            repoHintLabel: 'server-light (light flavor)',
           });
           selected['happy-server-light'] = r.path;
           if (r.branch && r.branch !== 'unknown' && r.branch !== 'detached') selectedBranches.push(r.branch);

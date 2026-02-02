@@ -466,13 +466,13 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     stackEnv.HAPPIER_STACK_SERVER_PORT = String(port);
   }
 
-  // Server-light storage isolation: ensure non-main stacks have their own sqlite + local files dir by default.
-  // (This prevents a dev stack from mutating main stack's DB when schema changes.)
+  // Server-light storage isolation: ensure stacks have their own light data dir (files + embedded pglite) by default.
+  // (This prevents a dev stack from mutating main stack's data when schema changes.)
   if (serverComponent === 'happier-server-light') {
     const dataDir = join(baseDir, 'server-light');
     stackEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
     stackEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-    stackEnv.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+    stackEnv.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
   }
   if (serverComponent === 'happier-server') {
     // Persist stable infra credentials in the stack env (ports are ephemeral unless explicitly pinned).
@@ -669,7 +669,10 @@ async function cmdEdit({ rootDir, argv }) {
     const dataDir = join(baseDir, 'server-light');
     next.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
     next.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-    next.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+    next.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
+    // Light flavor manages its own embedded pglite connection string at runtime.
+    // Do not persist DATABASE_URL in the stack env.
+    delete next.DATABASE_URL;
   }
   if (serverComponent === 'happier-server') {
     // Persist stable infra credentials. Ports are ephemeral unless explicitly pinned.
@@ -1438,7 +1441,7 @@ async function cmdAudit({ rootDir, argv }) {
         const dataDir = join(baseDir, 'server-light');
         nextEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
         nextEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-        nextEnv.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+        nextEnv.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
       }
 
       await writeStackEnv({ stackName, env: nextEnv });
@@ -1524,18 +1527,25 @@ async function cmdAudit({ rootDir, argv }) {
     if (isServerLight) {
       const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR');
       const filesDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_FILES_DIR');
-      const dbUrl = getEnvValue(env, 'DATABASE_URL');
+      const dbDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DB_DIR');
       const expectedDataDir = join(baseDir, 'server-light');
       const expectedFilesDir = join(expectedDataDir, 'files');
-      const expectedDbUrl = `file:${join(expectedDataDir, 'happier-server-light.sqlite')}`;
+      const expectedDbDir = join(expectedDataDir, 'pglite');
 
       if (!dataDir) issues.push({ code: 'missing_server_light_data_dir', message: `missing HAPPIER_SERVER_LIGHT_DATA_DIR (expected ${expectedDataDir})` });
       if (!filesDir) issues.push({ code: 'missing_server_light_files_dir', message: `missing HAPPIER_SERVER_LIGHT_FILES_DIR (expected ${expectedFilesDir})` });
-      if (!dbUrl) issues.push({ code: 'missing_database_url', message: `missing DATABASE_URL (expected ${expectedDbUrl})` });
+      if (!dbDir) issues.push({ code: 'missing_server_light_db_dir', message: `missing HAPPIER_SERVER_LIGHT_DB_DIR (expected ${expectedDbDir})` });
       if (dataDir && dataDir !== expectedDataDir) issues.push({ code: 'server_light_data_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir} (expected ${expectedDataDir})` });
       if (filesDir && filesDir !== expectedFilesDir) issues.push({ code: 'server_light_files_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_FILES_DIR=${filesDir} (expected ${expectedFilesDir})` });
-      if (dbUrl && dbUrl !== expectedDbUrl) issues.push({ code: 'database_url_mismatch', message: `DATABASE_URL=${dbUrl} (expected ${expectedDbUrl})` });
+      if (dbDir && dbDir !== expectedDbDir) issues.push({ code: 'server_light_db_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_DB_DIR=${dbDir} (expected ${expectedDbDir})` });
 
+      const legacyDbUrl = getEnvValue(env, 'DATABASE_URL');
+      if (legacyDbUrl) {
+        issues.push({
+          code: 'legacy_database_url',
+          message: `DATABASE_URL is set for a light stack (${legacyDbUrl}); light uses embedded pglite and does not require DATABASE_URL in the stack env`,
+        });
+      }
     }
 
     // Best-effort env repair (opt-in; non-main stacks only by default).
@@ -1563,13 +1573,13 @@ async function cmdAudit({ rootDir, argv }) {
       if (isServerLight) {
         const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR');
         const filesDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_FILES_DIR');
-        const dbUrl = getEnvValue(env, 'DATABASE_URL');
+        const dbDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DB_DIR');
         const expectedDataDir = join(baseDir, 'server-light');
         const expectedFilesDir = join(expectedDataDir, 'files');
-        const expectedDbUrl = `file:${join(expectedDataDir, 'happier-server-light.sqlite')}`;
+        const expectedDbDir = join(expectedDataDir, 'pglite');
         if (!dataDir || (fixPaths && dataDir !== expectedDataDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_DATA_DIR', value: expectedDataDir });
         if (!filesDir || (fixPaths && filesDir !== expectedFilesDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_FILES_DIR', value: expectedFilesDir });
-        if (!dbUrl || (fixPaths && dbUrl !== expectedDbUrl)) updates.push({ key: 'DATABASE_URL', value: expectedDbUrl });
+        if (!dbDir || (fixPaths && dbDir !== expectedDbDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_DB_DIR', value: expectedDbDir });
       }
 
       if (fixWorkspace) {
@@ -1592,6 +1602,16 @@ async function cmdAudit({ rootDir, argv }) {
 
       if (updates.length) {
         await ensureEnvFileUpdated({ envPath, updates });
+      }
+
+      // Light stacks no longer persist DATABASE_URL in the env file (light uses embedded PGlite).
+      // For legacy SQLite-era stacks, prune it when fixing paths so future commands don't accidentally
+      // treat the stack as SQLite-backed.
+      if (isServerLight && fixPaths) {
+        const legacyDbUrl = getEnvValue(env, 'DATABASE_URL');
+        if (legacyDbUrl) {
+          await ensureEnvFilePruned({ envPath, removeKeys: ['DATABASE_URL'] });
+        }
       }
     }
 
@@ -3087,7 +3107,7 @@ const STACK_NAME_FIRST_SUPPORTED_COMMANDS = new Set([
   'pr',
   'create-dev-auth-seed',
   'daemon',
-  'happy',
+  'happier',
   'env',
   'auth',
   'dev',
@@ -3193,7 +3213,7 @@ async function main() {
         'pr',
         'create-dev-auth-seed',
         'daemon',
-        'happy',
+        'happier',
         'env',
         'auth',
         'dev',

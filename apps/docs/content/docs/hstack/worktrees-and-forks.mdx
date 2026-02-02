@@ -110,7 +110,7 @@ hstack stack build exp1 --repo=/absolute/path/to/checkout
 Create a new worktree (defaults to local category, based on upstream):
 
 ```bash
-hstack wt new my-feature --use
+hstack wt new local/my-feature --use
 ```
 
 Throwaway worktree:
@@ -294,3 +294,30 @@ Notes:
 
 - This selects a runtime flavor (light/full). It does **not** select a different git repo.
 - Both flavors come from the same monorepo server code (`apps/server`).
+
+---
+
+## Fork setup (contributors)
+
+For contributor workflows, hstack expects:
+
+- `upstream` → the canonical repo you PR into
+- `origin` → your fork (where you push branches)
+
+If you run `hstack setup --profile=dev` and `origin` still points to `upstream` (and you can’t push there), setup will guide you to configure a fork URL for `origin`.
+
+Non-interactive option:
+
+```bash
+export HAPPIER_STACK_FORK_URL="https://github.com/<you>/happier.git"
+hstack setup --profile=dev
+```
+
+Once configured, a common PR flow is:
+
+```bash
+hstack wt new local/my-feature --from=upstream --use
+hstack wt push active --remote=origin
+```
+
+If you prefer working in the long-lived `dev/` checkout, use `hstack contrib extract` to create feature branches cleanly. See `/docs/hstack/development`.
