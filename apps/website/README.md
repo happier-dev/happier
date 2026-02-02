@@ -24,6 +24,26 @@ pnpm build
 pnpm preview
 ```
 
+## Pre-release vs Release
+
+This website currently supports two homepage variants:
+
+- `index.prerelease.html` — pre-release notice + links (Discord/GitHub/Discussions)
+- `index.release.html` — full “Get Started” / install-focused marketing page
+
+`index.html` is the active entry file used by Vite.
+
+To switch locally:
+
+```bash
+cp index.prerelease.html index.html
+# or
+cp index.release.html index.html
+```
+
+Docker/Doc Ploy wiring (planned):
+we can later add a build-time switch (e.g. `WEBSITE_VARIANT=prerelease|release`) that copies the chosen variant to `index.html` before `vite build`, without having to edit files manually.
+
 ## Features
 
 - Dark/Light mode with system preference detection
