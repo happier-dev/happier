@@ -44,10 +44,14 @@ This document describes how to deploy the Happier backend (`apps/server`) and th
 - Debug logging: `DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING` (enables file logging + dev log endpoint).
 
 ## Docker image
-A production Dockerfile is provided at `Dockerfile.server`.
+A single multi-target Dockerfile is provided at `Dockerfile`.
 
-Recommended (unified) build:
-- `docker/Dockerfile` target `server` (see `docker/README.md`).
+Build targets:
+- API server: `server`
+- Worker: `server-worker`
+- Website: `website`
+- Webapp: `webapp`
+- Docs: `docs`
 
 Key notes:
 - The server defaults to port `3005` (set `PORT` explicitly in container environments).
@@ -73,6 +77,6 @@ Use `.env`/`.env.dev` to load local settings when running `yarn workspace @happi
 
 ## Implementation references
 - Entrypoint: `apps/server/sources/main.ts`
-- Dockerfile: `Dockerfile.server`
+- Dockerfile: `Dockerfile`
 - Kubernetes manifests: `apps/server/deploy`
 - Env usage: `apps/server/sources` (`rg -n "process.env"`)
