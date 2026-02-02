@@ -1,6 +1,6 @@
 import type { Settings } from './settings';
 
-const WEB_FLAG_KEY = 'HAPPY_DEBUG_SETTINGS_SYNC';
+const WEB_FLAG_KEY = 'HAPPIER_DEBUG_SETTINGS_SYNC';
 
 function readWebFlag(): boolean {
     try {
@@ -17,11 +17,11 @@ function readWebFlag(): boolean {
 /**
  * Opt-in debug switch for verbose settings sync logging.
  *
- * - Web: `localStorage.setItem('HAPPY_DEBUG_SETTINGS_SYNC', '1')` then reload
- * - Native: set env `EXPO_PUBLIC_HAPPY_DEBUG_SETTINGS_SYNC=1`
+ * - Web: `localStorage.setItem('HAPPIER_DEBUG_SETTINGS_SYNC', '1')` then reload
+ * - Native: set env `EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC=1`
  */
 export function isSettingsSyncDebugEnabled(env: Record<string, string | undefined> = process.env): boolean {
-    const fromEnv = env.EXPO_PUBLIC_HAPPY_DEBUG_SETTINGS_SYNC;
+    const fromEnv = env.EXPO_PUBLIC_HAPPIER_DEBUG_SETTINGS_SYNC;
     if (typeof fromEnv === 'string') {
         const n = fromEnv.trim().toLowerCase();
         if (n === '1' || n === 'true' || n === 'yes' || n === 'on') return true;
@@ -98,4 +98,3 @@ export function dbgSettings(
         // ignore
     }
 }
-

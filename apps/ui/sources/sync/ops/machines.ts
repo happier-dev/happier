@@ -121,7 +121,7 @@ export type MachinePreviewEnvResult =
  *
  * This calls the daemon's `preview-env` RPC (if supported). The daemon computes:
  * - effective env = { ...daemon.process.env, ...expand(extraEnv) }
- * - applies `HAPPY_ENV_PREVIEW_SECRETS` policy for sensitive variables
+ * - applies `HAPPIER_ENV_PREVIEW_SECRETS` policy for sensitive variables
  *
  * If the daemon is old and doesn't support `preview-env`, returns `{ supported: false }`.
  */
