@@ -166,31 +166,9 @@ jobs:
               fi
 
               local delivery_id=""
-              delivery_id="$(python3 - <<'PY'
-import uuid
-print(str(uuid.uuid4()))
-PY
-)"
+              delivery_id="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
               local payload=""
-              payload="$(REF="$REF" SHA="$SHA" REPOSITORY="$REPOSITORY" python3 - <<'PY'
-import json, os
-ref = os.environ.get('REF', '')
-sha = os.environ.get('SHA', '')
-repo = os.environ.get('REPOSITORY', '')
-owner, name = (repo.split('/', 1) + [''])[:2] if repo else ('', '')
-print(json.dumps({
-  "ref": ref,
-  "before": "0" * 40,
-  "after": sha,
-  "repository": {
-    "full_name": repo,
-    "name": name,
-    "owner": {"name": owner},
-    "default_branch": "main",
-  },
-}))
-PY
-)"
+              payload="$(REF="$REF" SHA="$SHA" REPOSITORY="$REPOSITORY" python3 -c 'import json, os; ref=os.environ.get(\"REF\", \"\"); sha=os.environ.get(\"SHA\", \"\"); repo=os.environ.get(\"REPOSITORY\", \"\"); owner,name=((repo.split(\"/\",1)+[\"\"])[:2] if repo else (\"\",\"\")); print(json.dumps({\"ref\": ref, \"before\": \"0\"*40, \"after\": sha, \"repository\": {\"full_name\": repo, \"name\": name, \"owner\": {\"name\": owner}, \"default_branch\": \"main\"}}))')"
 
               triggered=$((triggered + 1))
               echo "POST ${url}"
