@@ -39,8 +39,10 @@ export async function startApi() {
     });
     app.register(import('@fastify/cors'), {
         origin: '*',
-        allowedHeaders: '*',
-        methods: ['GET', 'POST', 'DELETE']
+        // Keep permissive defaults for now. Tighten via a proxy/WAF or by
+        // changing this list once deployments are stable.
+        allowedHeaders: ['authorization', 'content-type'],
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
     });
     app.register(import('@fastify/rate-limit'), {
         global: false // Only apply to routes with explicit config

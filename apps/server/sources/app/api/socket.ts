@@ -35,8 +35,9 @@ export function startSocket(app: Fastify) {
         cors: {
             origin: "*",
             methods: ["GET", "POST", "OPTIONS"],
-            credentials: true,
-            allowedHeaders: ["*"]
+            // We authenticate via token in the Socket.IO handshake, not cookies.
+            credentials: false,
+            allowedHeaders: ["authorization", "content-type"]
         },
         ...(shouldEnableRedisAdapter ? { adapter: createAdapter(getRedisClient()) } : {}),
         transports: ['websocket', 'polling'],
