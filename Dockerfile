@@ -6,6 +6,8 @@ ARG NODE_VERSION=22
 FROM node:${NODE_VERSION}-alpine AS deps-alpine
 WORKDIR /repo
 RUN apk add --no-cache libc6-compat
+ENV REDISMS_DISABLE_POSTINSTALL=1
+ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
 COPY package.json yarn.lock ./
 RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/protocol
@@ -23,6 +25,8 @@ RUN yarn install --frozen-lockfile --ignore-engines
 FROM node:${NODE_VERSION} AS deps-debian
 RUN apt-get update && apt-get install -y python3 ffmpeg make g++ build-essential && rm -rf /var/lib/apt/lists/*
 WORKDIR /repo
+ENV REDISMS_DISABLE_POSTINSTALL=1
+ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
 COPY package.json yarn.lock ./
 RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/protocol
@@ -42,7 +46,9 @@ RUN yarn install --frozen-lockfile --ignore-engines
 
 # Website (Vite static)
 FROM deps-alpine AS website-builder
+ARG WEBSITE_VARIANT=prerelease
 COPY apps/website ./apps/website
+RUN test -f "apps/website/index.${WEBSITE_VARIANT}.html" && cp "apps/website/index.${WEBSITE_VARIANT}.html" "apps/website/index.html"
 RUN yarn workspace @happier-dev/website build
 
 FROM nginx:alpine AS website
@@ -164,8 +170,18 @@ FROM node:${NODE_VERSION} AS server
 WORKDIR /repo
 RUN apt-get update && apt-get install -y python3 ffmpeg && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
+ENV PORT=3005
+ENV RUN_MIGRATIONS=1
 COPY --from=server-builder /repo/node_modules /repo/node_modules
 COPY --from=server-builder /repo/apps/server /repo/apps/server
-EXPOSE 3000
-CMD ["sh", "-lc", "yarn --cwd apps/server prisma migrate deploy && exec yarn --cwd apps/server start"]
+COPY --from=server-builder /repo/apps/server/scripts/run-server.sh /usr/local/bin/run-server
+RUN chmod +x /usr/local/bin/run-server
+EXPOSE 3005
+CMD ["run-server"]
 
+# Convenience: worker image variant (same bits, different defaults)
+FROM server AS server-worker
+ENV SERVER_ROLE=worker
+
+# Default target when building without --target
+FROM server AS default
