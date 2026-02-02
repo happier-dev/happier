@@ -4,7 +4,7 @@ export type LightMigrateDeployPlan = {
 };
 
 export function requireLightDataDir(env: NodeJS.ProcessEnv): string {
-    const raw = env.HAPPY_SERVER_LIGHT_DATA_DIR;
+    const raw = env.HAPPY_SERVER_LIGHT_DATA_DIR ?? env.HAPPIER_SERVER_LIGHT_DATA_DIR;
     if (typeof raw !== 'string' || raw.trim() === '') {
         throw new Error('Missing HAPPY_SERVER_LIGHT_DATA_DIR (set it or ensure applyLightDefaultEnv sets it)');
     }
