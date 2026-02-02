@@ -651,8 +651,13 @@ async function cmdUseInteractive({ rootDir }) {
     console.log(bold('Switch active worktree'));
 
     const specs = await listWorktreeSpecs({ rootDir, component: DEFAULT_REPO_COMPONENT });
+    const devDir = getDevRepoDir(rootDir, process.env);
+    const hasDev = Boolean(devDir && (await pathExists(join(devDir, '.git'))));
 
     const kindOptions = [{ label: `default (${dim('main checkout')})`, value: 'default' }];
+    if (hasDev) {
+      kindOptions.push({ label: `dev (${dim('dev checkout')})`, value: 'dev' });
+    }
     if (specs.length) {
       kindOptions.push({ label: `pick existing worktree (${green('recommended')})`, value: 'pick' });
     }
@@ -661,6 +666,10 @@ async function cmdUseInteractive({ rootDir }) {
       options: kindOptions,
       defaultIndex: 0,
     });
+    if (choice === 'dev') {
+      await cmdUse({ rootDir, args: ['dev'], flags: new Set(['--force']) });
+      return;
+    }
     if (choice === 'pick') {
       const picked = await promptSelect(rl, {
         title: `${bold(`Available ${cyan('repo')} worktrees`)}`,
@@ -1664,12 +1673,20 @@ async function cmdList({ rootDir, args, flags }) {
 
   const dirs = WORKTREE_CATEGORIES.map((c) => getWorktreeCategoryRoot(rootDir, c, process.env));
   const activeDir = getActiveRepoDir(rootDir);
+  const mainDir = getDefaultRepoDir(rootDir);
+  const devDir = getDevRepoDir(rootDir, process.env);
 
   if (activeOnly) {
     return { activeDir, worktrees: [] };
   }
 
   const worktrees = [];
+  if (await pathExists(join(mainDir, '.git'))) {
+    worktrees.push(mainDir);
+  }
+  if (await pathExists(join(devDir, '.git'))) {
+    worktrees.push(devDir);
+  }
   const walk = async (d) => {
     // In git worktrees, ".git" is usually a file that points to the shared git dir.
     // If this is a worktree root, record it and do not descend into it (avoids traversing huge trees like node_modules).
