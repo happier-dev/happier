@@ -448,7 +448,7 @@ export async function runGemini(opts: {
       }
 
       stopCaffeinate();
-      happyServer.stop();
+      happierMcpServer.stop();
 
       if (geminiBackend) {
         await geminiBackend.dispose();
@@ -554,13 +554,13 @@ export async function runGemini(opts: {
   // Start Happier MCP server and create Gemini backend
   //
 
-  const happyServer = await startHappyServer(session);
-  const bridgeScript = join(projectPath(), 'bin', 'happy-mcp.mjs');
+  const happierMcpServer = await startHappyServer(session);
+  const bridgeScript = join(projectPath(), 'bin', 'happier-mcp.mjs');
   // Use process.execPath (bun or node) as command to support both runtimes
   const mcpServers = {
-    happy: {
+    happier: {
       command: process.execPath,
-      args: [bridgeScript, '--url', happyServer.url]
+      args: [bridgeScript, '--url', happierMcpServer.url]
     }
   };
 
@@ -1357,7 +1357,7 @@ export async function runGemini(opts: {
       await geminiBackend.dispose();
     }
 
-    happyServer.stop();
+    happierMcpServer.stop();
 
     if (process.stdin.isTTY) {
       try { process.stdin.setRawMode(false); } catch { /* ignore */ }

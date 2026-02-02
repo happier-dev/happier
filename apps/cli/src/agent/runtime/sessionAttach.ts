@@ -13,12 +13,12 @@ const SessionAttachPayloadSchema = z.object({
 export type SessionAttachPayload = z.infer<typeof SessionAttachPayloadSchema>;
 
 export async function readSessionAttachFromEnv(): Promise<{ encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' } | null> {
-  const rawPath = typeof process.env.HAPPY_SESSION_ATTACH_FILE === 'string' ? process.env.HAPPY_SESSION_ATTACH_FILE.trim() : '';
+  const rawPath = typeof process.env.HAPPIER_SESSION_ATTACH_FILE === 'string' ? process.env.HAPPIER_SESSION_ATTACH_FILE.trim() : '';
   if (!rawPath) return null;
 
   const filePath = resolve(rawPath);
 
-  // Basic safety: require attach file to live within HAPPY_HOME_DIR.
+  // Basic safety: require attach file to live within HAPPIER_HOME_DIR.
   // This prevents accidental reads from arbitrary locations when a user sets env vars manually.
   if (!filePath.startsWith(resolve(configuration.happyHomeDir) + sep)) {
     throw new Error('Invalid session attach file location');

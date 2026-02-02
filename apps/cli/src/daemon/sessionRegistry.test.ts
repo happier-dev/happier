@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 describe('sessionRegistry', () => {
-  const originalHappyHomeDir = process.env.HAPPY_HOME_DIR;
+  const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
   let happyHomeDir: string;
 
   beforeEach(() => {
-    happyHomeDir = join(tmpdir(), `happy-cli-session-registry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    process.env.HAPPY_HOME_DIR = happyHomeDir;
+    happyHomeDir = join(tmpdir(), `happier-cli-session-registry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    process.env.HAPPIER_HOME_DIR = happyHomeDir;
     vi.resetModules();
   });
 
@@ -18,9 +18,9 @@ describe('sessionRegistry', () => {
       rmSync(happyHomeDir, { recursive: true, force: true });
     }
     if (originalHappyHomeDir === undefined) {
-      delete process.env.HAPPY_HOME_DIR;
+      delete process.env.HAPPIER_HOME_DIR;
     } else {
-      process.env.HAPPY_HOME_DIR = originalHappyHomeDir;
+      process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
     }
   });
 

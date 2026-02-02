@@ -4,17 +4,18 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 describe('readDaemonState', () => {
-    const previousHomeDir = process.env.HAPPY_HOME_DIR;
+    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
 
     afterEach(() => {
-        process.env.HAPPY_HOME_DIR = previousHomeDir;
+        if (previousHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
+        else process.env.HAPPIER_HOME_DIR = previousHomeDir;
     });
 
     it('retries when the daemon state file appears shortly after the call starts', async () => {
-        const homeDir = mkdtempSync(join(tmpdir(), 'happy-cli-daemon-state-'));
+        const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-state-'));
 
         vi.resetModules();
-        process.env.HAPPY_HOME_DIR = homeDir;
+        process.env.HAPPIER_HOME_DIR = homeDir;
 
         const [{ configuration }, { readDaemonState }] = await Promise.all([
             import('./configuration'),
@@ -42,4 +43,3 @@ describe('readDaemonState', () => {
         expect(state?.pid).toBe(123);
     });
 });
-

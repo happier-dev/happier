@@ -237,7 +237,7 @@ function isVersionAtMost(info: CodexVersionInfo, target: CodexVersionTarget): bo
 }
 
 function getElicitationResponseStyle(info: CodexVersionInfo): ElicitationResponseStyle {
-    const override = process.env.HAPPY_CODEX_ELICITATION_STYLE?.toLowerCase();
+    const override = process.env.HAPPIER_CODEX_ELICITATION_STYLE?.toLowerCase();
     if (override === 'decision' || override === 'both') {
         return override;
     }

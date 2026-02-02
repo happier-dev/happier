@@ -154,7 +154,7 @@ export async function probeAcpAgentCapabilities(params: {
             clientCapabilities: {
                 fs: { readTextFile: false, writeTextFile: false },
             },
-            clientInfo: { name: 'happy-cli-capabilities', version: '0' },
+            clientInfo: { name: 'happier-cli-capabilities', version: '0' },
         };
 
         const initResponse = await Promise.race([

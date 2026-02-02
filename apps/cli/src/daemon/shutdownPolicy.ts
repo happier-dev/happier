@@ -1,4 +1,4 @@
-export type DaemonShutdownSource = 'happy-app' | 'happy-cli' | 'os-signal' | 'exception';
+export type DaemonShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 
 export function getDaemonShutdownExitCode(source: DaemonShutdownSource): 0 | 1 {
   return source === 'exception' ? 1 : 0;
@@ -10,4 +10,3 @@ export function getDaemonShutdownExitCode(source: DaemonShutdownSource): 0 | 1 {
 export function getDaemonShutdownWatchdogTimeoutMs(): number {
   return 15_000;
 }
-

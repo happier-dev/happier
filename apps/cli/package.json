@@ -10,9 +10,7 @@
   "repository": "happier-dev/happier",
   "bin": {
     "happier": "./bin/happier.mjs",
-    "happier-mcp": "./bin/happier-mcp.mjs",
-    "happy": "./bin/happier.mjs",
-    "happy-mcp": "./bin/happier-mcp.mjs"
+    "happier-mcp": "./bin/happier-mcp.mjs"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -71,7 +69,8 @@
     "pretypecheck": "yarn -s build:shared",
     "prebuild": "yarn -s build:shared",
     "pretest": "yarn -s build:shared",
-    "postinstall": "node scripts/unpack-tools.cjs && yarn -s build:shared",
+    "postinstall:real": "node scripts/unpack-tools.cjs && yarn -s build:shared",
+    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(!fs.existsSync('scripts/unpack-tools.cjs'))process.exit(0);const yarn=process.platform==='win32'?'yarn.cmd':'yarn';const r=cp.spawnSync(yarn,['-s','postinstall:real'],{stdio:'inherit'});process.exit(r.status??1);\"",
     "tool:trace:extract": "tsx scripts/tool-trace-extract.ts",
     "tool:trace:fixtures:v1": "tsx scripts/tool-trace-fixtures-v1.ts",
     "// ==== Dev/Stable Variant Management ====": "",

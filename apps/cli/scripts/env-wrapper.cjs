@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Cross-platform environment wrapper for happy CLI
- * Sets HAPPY_HOME_DIR and provides visual feedback
+ * Cross-platform environment wrapper for Happier CLI
+ * Sets HAPPIER_HOME_DIR and provides visual feedback
  *
  * Usage: node scripts/env-wrapper.js <variant> <command> [...args]
  *
  * Variants:
- *   - stable: Production-ready version using ~/.happy/
- *   - dev: Development version using ~/.happy-dev/
+ *   - stable: Production-ready version using ~/.happier/
+ *   - dev: Development version using ~/.happier-dev/
  *
  * Examples:
  *   node scripts/env-wrapper.js stable daemon start
@@ -21,16 +21,16 @@ const fs = require('fs');
 
 const VARIANTS = {
   stable: {
-    homeDir: path.join(os.homedir(), '.happy'),
+    homeDir: path.join(os.homedir(), '.happier'),
     color: '\x1b[32m', // Green
     label: '✅ STABLE',
-    serverUrl: process.env.HAPPY_SERVER_URL || 'https://api.happier.dev'
+    serverUrl: process.env.HAPPIER_SERVER_URL || 'https://api.happier.dev'
   },
   dev: {
-    homeDir: path.join(os.homedir(), '.happy-dev'),
+    homeDir: path.join(os.homedir(), '.happier-dev'),
     color: '\x1b[33m', // Yellow
     label: '🔧 DEV',
-    serverUrl: process.env.HAPPY_SERVER_URL || 'https://api.happier.dev'
+    serverUrl: process.env.HAPPIER_SERVER_URL || 'https://api.happier.dev'
   }
 };
 
@@ -42,8 +42,8 @@ if (!variant || !VARIANTS[variant]) {
   console.error('Usage: node scripts/env-wrapper.js <stable|dev> <command> [...args]');
   console.error('');
   console.error('Variants:');
-  console.error('  stable - Production-ready version (data: ~/.happy/)');
-  console.error('  dev    - Development version (data: ~/.happy-dev/)');
+  console.error('  stable - Production-ready version (data: ~/.happier/)');
+  console.error('  dev    - Development version (data: ~/.happier-dev/)');
   console.error('');
   console.error('Examples:');
   console.error('  node scripts/env-wrapper.js stable daemon start');
@@ -73,9 +73,9 @@ console.log(`${config.color}${config.label}\x1b[0m Happier CLI (data: ${config.h
 // Set environment and execute command
 const env = {
   ...process.env,
-  HAPPY_HOME_DIR: config.homeDir,
-  HAPPY_SERVER_URL: config.serverUrl,
-  HAPPY_VARIANT: variant, // For internal validation
+  HAPPIER_HOME_DIR: config.homeDir,
+  HAPPIER_SERVER_URL: config.serverUrl,
+  HAPPIER_VARIANT: variant, // For internal validation
 };
 
 const binPath = path.join(__dirname, '..', 'bin', 'happier.mjs');

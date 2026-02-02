@@ -1,7 +1,7 @@
 /**
- * Minimal persistence functions for happy CLI
+ * Minimal persistence functions for Happier CLI
  * 
- * Handles settings and private key storage in ~/.happy/ or local .happy/
+ * Handles settings and private key storage in ~/.happier/ or local .happier/
  */
 
 import { FileHandle } from 'node:fs/promises'
@@ -107,7 +107,7 @@ export async function readSettings(): Promise<Settings> {
     if (schemaVersion > SUPPORTED_SCHEMA_VERSION) {
       logger.warn(
         `⚠️ Settings schema v${schemaVersion} > supported v${SUPPORTED_SCHEMA_VERSION}. ` +
-        'Update happy-cli for full functionality.'
+        'Update Happier CLI for full functionality.'
       );
     }
 

@@ -16,7 +16,7 @@
  * limitations under the License.
  *
  * Centralized tmux utilities with control sequence support and session management
- * Ensures consistent tmux handling across happy-cli with proper session naming
+ * Ensures consistent tmux handling across Happier CLI with proper session naming
  */
 
 import { spawn, SpawnOptions } from 'child_process';
@@ -888,8 +888,8 @@ export class TmuxUtilities {
             // clients concurrently create windows in the same session (tmux does not always
             // auto-retry the window index allocation). Retry a few times to make concurrent
             // session starts robust.
-            const maxAttempts = readPositiveIntegerEnv('HAPPY_CLI_TMUX_CREATE_WINDOW_MAX_ATTEMPTS', 3);
-            const retryDelayMs = readNonNegativeIntegerEnv('HAPPY_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS', 25);
+            const maxAttempts = readPositiveIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_MAX_ATTEMPTS', 3);
+            const retryDelayMs = readNonNegativeIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS', 25);
 
             let createResult: TmuxCommandResult | null = null;
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {

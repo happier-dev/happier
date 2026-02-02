@@ -4,7 +4,7 @@
  * These tests start isolated tmux servers (via `-S` or `TMUX_TMPDIR`) and must
  * never interact with a user's existing tmux sessions.
  *
- * Enable with: `HAPPY_CLI_TMUX_INTEGRATION=1`
+ * Enable with: `HAPPIER_CLI_TMUX_INTEGRATION=1`
  */
 
 import { describe, it, expect } from 'vitest';
@@ -20,7 +20,7 @@ function isTmuxInstalled(): boolean {
 }
 
 function shouldRunTmuxIntegration(): boolean {
-    return process.env.HAPPY_CLI_TMUX_INTEGRATION === '1' && isTmuxInstalled();
+    return process.env.HAPPIER_CLI_TMUX_INTEGRATION === '1' && isTmuxInstalled();
 }
 
 function waitForFile(path: string, timeoutMs: number): Promise<void> {
@@ -39,7 +39,7 @@ function waitForFile(path: string, timeoutMs: number): Promise<void> {
 }
 
 function writeDumpScript(dir: string): string {
-    const scriptPath = join(dir, 'happy-cli-tmux-dump.cjs');
+    const scriptPath = join(dir, 'happier-cli-tmux-dump.cjs');
     writeFileSync(
         scriptPath,
         [
@@ -148,7 +148,7 @@ function killIsolatedTmuxServer(socketPath: string): void {
 
 describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt-in)', { timeout: 20_000 }, () => {
     it('spawnInTmux returns a real pane PID via -P/-F (regression: PR107 option ordering)', async () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-cli-tmux-it-'));
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
         const socketPath = join(dir, 'tmux.sock');
         const utils = new TmuxUtilities('happy', undefined, socketPath);
 
@@ -193,7 +193,7 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
     });
 
     it('spawnInTmux passes -e KEY=VALUE env values literally (regression: PR107 quoting/escaping)', async () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-cli-tmux-it-'));
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
         const socketPath = join(dir, 'tmux.sock');
         const utils = new TmuxUtilities('happy', undefined, socketPath);
 
@@ -229,7 +229,7 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
     });
 
     it('spawnInTmux quotes command tokens safely (regression: PR107 args.join(\" \") injection/splitting)', async () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-cli-tmux-it-'));
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
         const socketPath = join(dir, 'tmux.sock');
         const utils = new TmuxUtilities('happy', undefined, socketPath);
 
@@ -266,10 +266,10 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
     });
 
     it('TMUX_TMPDIR affects which tmux server commands talk to (regression: PR107 wrong-server assumptions)', async () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-cli-tmux-it-'));
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
         // IMPORTANT: keep the socket path short to avoid unix domain socket length limits (common on macOS).
         // tmux will create tmux-<uid>/default within this directory.
-        const tmuxTmpDir = mkdtempSync(join(tmpdir(), 'happy-cli-tmux-tmpdir-it-'));
+        const tmuxTmpDir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-tmpdir-it-'));
 
         const utils = new TmuxUtilities('happy', { TMUX_TMPDIR: tmuxTmpDir });
 

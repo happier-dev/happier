@@ -92,7 +92,7 @@ describe('registerCommonHandlers capabilities', () => {
     });
 
     it('detects checklist new-session deterministically from PATH', async () => {
-        const dir = await mkdtemp(join(tmpdir(), 'happy-cli-capabilities-'));
+        const dir = await mkdtemp(join(tmpdir(), 'happier-cli-capabilities-'));
         try {
             const isWindows = process.platform === 'win32';
 
@@ -187,7 +187,7 @@ describe('registerCommonHandlers capabilities', () => {
     });
 
     it('supports per-capability params (includeLoginStatus) and skips registry checks when onlyIfInstalled=true and not installed', async () => {
-        const dir = await mkdtemp(join(tmpdir(), 'happy-cli-capabilities-login-'));
+        const dir = await mkdtemp(join(tmpdir(), 'happier-cli-capabilities-login-'));
         try {
             const isWindows = process.platform === 'win32';
             const fakeCodex = join(dir, isWindows ? 'codex.cmd' : 'codex');

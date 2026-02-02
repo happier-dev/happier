@@ -16,7 +16,7 @@ vi.mock('@/ui/logger', () => ({
     debug: vi.fn(),
     debugLargeJson: vi.fn(),
     warn: vi.fn(),
-    logFilePath: '/tmp/happy-cli-test.log',
+    logFilePath: '/tmp/happier-cli-test.log',
   },
 }))
 

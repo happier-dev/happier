@@ -23,7 +23,7 @@ const binSource = join(projectRoot, 'bin', 'happier-dev.mjs');
 
 // Get the action from command line args
 const action = process.argv[2] || 'link';
-const targetBins = ['happier-dev', 'happy-dev'];
+const targetBins = ['happier-dev'];
 
 function getGlobalBinDir() {
     // Try npm global bin first using execFileSync (safer than execSync)
@@ -88,7 +88,6 @@ function link() {
         console.log('\nNow you can use:');
         console.log('  happier      → stable npm version (unchanged)');
         console.log('  happier-dev  → local development version');
-        console.log('  happy-dev    → local development version (legacy alias)');
         console.log('\nTo undo: yarn unlink:dev');
     } catch (e) {
         if (e.code === 'EACCES') {
@@ -112,7 +111,7 @@ function unlink() {
             const stat = fs.lstatSync(binTarget);
             if (stat.isSymbolicLink()) {
                 const linkTarget = fs.readlinkSync(binTarget);
-                if (linkTarget === binSource || linkTarget.includes('happy-cli') || linkTarget.includes('@happier-dev/cli')) {
+                if (linkTarget === binSource || linkTarget.includes('@happier-dev/cli')) {
                     fs.unlinkSync(binTarget);
                 }
             }

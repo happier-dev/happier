@@ -59,7 +59,7 @@ async function handleAuthLogin(args: string[]): Promise<void> {
 
   if (noOpen) {
     // Used by the auth UI layer to skip automatic browser open attempts.
-    process.env.HAPPY_NO_BROWSER_OPEN = '1';
+    process.env.HAPPIER_NO_BROWSER_OPEN = '1';
   }
 
   if (forceAuth) {

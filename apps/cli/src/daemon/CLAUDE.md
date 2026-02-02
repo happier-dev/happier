@@ -23,7 +23,7 @@ Control Flow:
    - HTTP server: starts on random port for local CLI control (list, stop, spawn)
    - WebSocket: establishes persistent connection to backend via `ApiMachineClient`
    - RPC registration: exposes `spawn-happy-session`, `stop-session`, `requestShutdown` handlers
-   - Heartbeat loop: every 60s (or HAPPY_DAEMON_HEARTBEAT_INTERVAL) checks for version updates and prunes dead sessions
+   - Heartbeat loop: every 60s (or HAPPIER_DAEMON_HEARTBEAT_INTERVAL) checks for version updates and prunes dead sessions
 5. Awaits shutdown promise which resolves when:
    - OS signal received (SIGINT/SIGTERM)
    - HTTP `/stop` endpoint called
@@ -112,7 +112,7 @@ Local HTTP server (127.0.0.1 only) provides:
 ### Doctor Command
 
 `happier doctor` uses `ps aux | grep` to find all Happier processes:
-- Production: matches `happier.mjs`, `@happier-dev/cli`, `dist/index.mjs` (and legacy `happy.mjs` / `happy-coder`)
+- Production: matches `happier.mjs`, `@happier-dev/cli`, `dist/index.mjs`
 - Development: matches `tsx.*src/index.ts`
 - Categorizes by command args: daemon, daemon-spawned, user-session, doctor
 
@@ -449,5 +449,3 @@ Authorization: Bearer <token>
    - Clients only receive updates for fields that changed
 
 5. **RPC Pattern**: Machine-scoped RPC methods prefixed with machineId (like sessions)
-
-

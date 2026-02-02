@@ -22,19 +22,14 @@ export function classifyHappyProcess(proc: { pid: number; name?: string; cmd?: s
   const isHappy =
     (name === 'node' &&
       (cmd.includes('@happier-dev/cli') ||
-        cmd.includes('happy-coder') ||
         cmd.includes('dist/index.mjs') ||
         cmd.includes('bin/happier.mjs') ||
-        cmd.includes('bin/happy.mjs') ||
         (cmd.includes('tsx') &&
           cmd.includes('src/index.ts') &&
-          (cmd.includes('apps/cli') || cmd.includes('happy-cli') || cmd.includes('@happier-dev/cli'))))) ||
+          (cmd.includes('apps/cli') || cmd.includes('@happier-dev/cli'))))) ||
     cmd.includes('happier.mjs') ||
-    cmd.includes('happy.mjs') ||
     cmd.includes('@happier-dev/cli') ||
-    cmd.includes('happy-coder') ||
-    name === 'happier' ||
-    name === 'happy';
+    name === 'happier';
 
   if (!isHappy) return null;
 

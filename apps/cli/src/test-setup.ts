@@ -11,7 +11,7 @@ export function setup() {
   process.env.VITEST_POOL_TIMEOUT = '60000'
 
   const skipBuild = (() => {
-    const raw = process.env.HAPPY_CLI_TEST_SKIP_BUILD
+    const raw = process.env.HAPPIER_CLI_TEST_SKIP_BUILD
     if (typeof raw !== 'string') return false
     return ['1', 'true', 'yes'].includes(raw.trim().toLowerCase())
   })()

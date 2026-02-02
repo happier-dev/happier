@@ -29,20 +29,20 @@ class Configuration {
 
   constructor() {
     // Server configuration - priority: parameter > environment > default
-    this.serverUrl = process.env.HAPPY_SERVER_URL || 'https://api.happier.dev'
-    this.webappUrl = process.env.HAPPY_WEBAPP_URL || 'https://app.happier.dev'
+    this.serverUrl = process.env.HAPPIER_SERVER_URL || 'https://api.happier.dev'
+    this.webappUrl = process.env.HAPPIER_WEBAPP_URL || 'https://app.happier.dev'
 
     // Check if we're running as daemon based on process args
     const args = process.argv.slice(2)
     this.isDaemonProcess = args.length >= 2 && args[0] === 'daemon' && (args[1] === 'start-sync')
 
-    // Directory configuration - Priority: HAPPY_HOME_DIR env > default home dir
-    if (process.env.HAPPY_HOME_DIR) {
+    // Directory configuration - Priority: HAPPIER_HOME_DIR env > default home dir
+    if (process.env.HAPPIER_HOME_DIR) {
       // Expand ~ to home directory if present
-      const expandedPath = process.env.HAPPY_HOME_DIR.replace(/^~/, homedir())
+      const expandedPath = process.env.HAPPIER_HOME_DIR.replace(/^~/, homedir())
       this.happyHomeDir = expandedPath
     } else {
-      this.happyHomeDir = join(homedir(), '.happy')
+      this.happyHomeDir = join(homedir(), '.happier')
     }
 
     this.logsDir = join(this.happyHomeDir, 'logs')
@@ -51,17 +51,17 @@ class Configuration {
     this.daemonStateFile = join(this.happyHomeDir, 'daemon.state.json')
     this.daemonLockFile = join(this.happyHomeDir, 'daemon.state.json.lock')
 
-    this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPY_EXPERIMENTAL?.toLowerCase() || '');
-    this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPY_DISABLE_CAFFEINATE?.toLowerCase() || '');
+    this.isExperimentalEnabled = ['true', '1', 'yes'].includes(process.env.HAPPIER_EXPERIMENTAL?.toLowerCase() || '');
+    this.disableCaffeinate = ['true', '1', 'yes'].includes(process.env.HAPPIER_DISABLE_CAFFEINATE?.toLowerCase() || '');
 
     this.currentCliVersion = packageJson.version
 
     // Validate variant configuration
-    const variant = process.env.HAPPY_VARIANT || 'stable'
+    const variant = process.env.HAPPIER_VARIANT || 'stable'
     if (variant === 'dev' && !this.happyHomeDir.includes('dev')) {
-      console.warn('⚠️  WARNING: HAPPY_VARIANT=dev but HAPPY_HOME_DIR does not contain "dev"')
+      console.warn('⚠️  WARNING: HAPPIER_VARIANT=dev but HAPPIER_HOME_DIR does not contain "dev"')
       console.warn(`   Current: ${this.happyHomeDir}`)
-      console.warn(`   Expected: Should contain "dev" (e.g., ~/.happy-dev)`)
+      console.warn(`   Expected: Should contain "dev" (e.g., ~/.happier-dev)`)
     }
 
     // Visual indicator on CLI startup (only if not daemon process to avoid log clutter)

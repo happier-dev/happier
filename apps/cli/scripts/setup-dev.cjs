@@ -10,10 +10,10 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const STABLE_DIR = path.join(os.homedir(), '.happy');
-const DEV_DIR = path.join(os.homedir(), '.happy-dev');
+const STABLE_DIR = path.join(os.homedir(), '.happier');
+const DEV_DIR = path.join(os.homedir(), '.happier-dev');
 
-console.log('🔧 Setting up happy-cli development environment...\n');
+console.log('🔧 Setting up Happier CLI development environment...\n');
 
 // Create directories
 [STABLE_DIR, DEV_DIR].forEach(dir => {
@@ -27,11 +27,11 @@ console.log('🔧 Setting up happy-cli development environment...\n');
 
 // Create .envrc for direnv users (optional)
 const envrcContent = `# Happier CLI environment (for direnv users)
-# Automatically sets HAPPY_HOME_DIR based on directory
+# Automatically sets HAPPIER_HOME_DIR based on directory
 #
-# To use: cd to happy-cli-dev directory, run: direnv allow
-export HAPPY_HOME_DIR="$HOME/.happy-dev"
-export HAPPY_VARIANT="dev"
+# To use: cd to happier-cli-dev directory, run: direnv allow
+export HAPPIER_HOME_DIR="$HOME/.happier-dev"
+export HAPPIER_VARIANT="dev"
 `;
 
 const envrcPath = path.join(__dirname, '..', '.envrc.example');

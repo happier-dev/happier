@@ -79,7 +79,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         controlledByUser: false,
     };
 
-    const profileIdEnv = process.env.HAPPY_SESSION_PROFILE_ID;
+    const profileIdEnv = process.env.HAPPIER_SESSION_PROFILE_ID;
     const profileId = profileIdEnv === undefined ? undefined : (profileIdEnv.trim() || null);
 
     const metadata: Metadata = {

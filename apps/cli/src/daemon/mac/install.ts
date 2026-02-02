@@ -23,20 +23,9 @@ const PLIST_FILE = `/Library/LaunchDaemons/${PLIST_LABEL}.plist`;
 
 // NOTE: Local installation like --local does not make too much sense I feel like
 
-export async function install(): Promise<void> {
-    try {
-        // Check if already installed
-        if (existsSync(PLIST_FILE)) {
-            logger.info('Daemon plist already exists. Uninstalling first...');
-            execSync(`launchctl unload ${PLIST_FILE}`, { stdio: 'inherit' });
-        }
-
-        // Get the path to the happier CLI executable
-        const happyPath = process.argv[0]; // Node.js executable
-        const scriptPath = process.argv[1]; // Script path
-
-        // Create plist content
-        const plistContent = trimIdent(`
+export function buildLaunchdPlistContent(params: Readonly<{ nodePath: string; scriptPath: string; homeDir: string }>): string {
+    const { nodePath, scriptPath, homeDir } = params;
+    return trimIdent(`
             <?xml version="1.0" encoding="UTF-8"?>
             <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
             <plist version="1.0">
@@ -46,14 +35,14 @@ export async function install(): Promise<void> {
                 
                 <key>ProgramArguments</key>
                 <array>
-                    <string>${happyPath}</string>
+                    <string>${nodePath}</string>
                     <string>${scriptPath}</string>
-                    <string>happy-daemon</string>
+                    <string>happier-daemon</string>
                 </array>
                 
                 <key>EnvironmentVariables</key>
                 <dict>
-                    <key>HAPPY_DAEMON_MODE</key>
+                    <key>HAPPIER_DAEMON_MODE</key>
                     <string>true</string>
                 </dict>
                 
@@ -64,16 +53,32 @@ export async function install(): Promise<void> {
                 <true/>
                 
                 <key>StandardErrorPath</key>
-                <string>${os.homedir()}/.happy/daemon.err</string>
+                <string>${homeDir}/.happier/daemon.err</string>
                 
                 <key>StandardOutPath</key>
-                <string>${os.homedir()}/.happy/daemon.log</string>
+                <string>${homeDir}/.happier/daemon.log</string>
                 
                 <key>WorkingDirectory</key>
                 <string>/tmp</string>
             </dict>
             </plist>
         `);
+}
+
+export async function install(): Promise<void> {
+    try {
+        // Check if already installed
+        if (existsSync(PLIST_FILE)) {
+            logger.info('Daemon plist already exists. Uninstalling first...');
+            execSync(`launchctl unload ${PLIST_FILE}`, { stdio: 'inherit' });
+        }
+
+        // Get the path to the happier CLI executable
+        const nodePath = process.argv[0]; // Node.js executable
+        const scriptPath = process.argv[1]; // Script path
+
+        // Create plist content
+        const plistContent = buildLaunchdPlistContent({ nodePath, scriptPath, homeDir: os.homedir() });
 
         // Write plist file
         writeFileSync(PLIST_FILE, plistContent);
@@ -85,7 +90,7 @@ export async function install(): Promise<void> {
         execSync(`launchctl load ${PLIST_FILE}`, { stdio: 'inherit' });
 
         logger.info('Daemon installed and started successfully');
-        logger.info('Check logs at ~/.happy/daemon.log');
+        logger.info('Check logs at ~/.happier/daemon.log');
 
     } catch (error) {
         logger.debug('Failed to install daemon:', error);

@@ -10,7 +10,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
 }>): Promise<void> {
   const { pidToTrackedSession } = params;
 
-  // On daemon restart, reattach to still-running sessions via disk markers (stack-scoped by HAPPY_HOME_DIR).
+  // On daemon restart, reattach to still-running sessions via disk markers (stack-scoped by HAPPIER_HOME_DIR).
   try {
     const markers = await listSessionMarkers();
     const happyProcesses = await findAllHappyProcesses();

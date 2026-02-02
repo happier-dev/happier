@@ -49,7 +49,7 @@ describe('TmuxUtilities tmux socket path', () => {
         vi.resetModules();
         const { TmuxUtilities } = await import('@/integrations/tmux');
 
-        const socketPath = '/tmp/happy-cli-tmux-test.sock';
+        const socketPath = '/tmp/happier-cli-tmux-test.sock';
         const utils = new TmuxUtilities('happy', undefined, socketPath);
         await utils.executeTmuxCommand(['list-sessions']);
 

@@ -1,13 +1,13 @@
 import { describe, expect, test, vi } from 'vitest';
 
 describe('createSessionAttachFile', () => {
-  test('writes a 0600 attach file under HAPPY_HOME_DIR and cleanup deletes it', async () => {
+  test('writes a 0600 attach file under HAPPIER_HOME_DIR and cleanup deletes it', async () => {
     const { mkdtemp, readFile, stat } = await import('node:fs/promises');
     const { tmpdir } = await import('node:os');
     const { join, resolve, sep } = await import('node:path');
 
     const dir = await mkdtemp(join(tmpdir(), 'happy-home-'));
-    process.env.HAPPY_HOME_DIR = dir;
+    process.env.HAPPIER_HOME_DIR = dir;
     const baseDir = resolve(join(dir, 'tmp', 'session-attach'));
 
     vi.resetModules();
@@ -44,7 +44,7 @@ describe('createSessionAttachFile', () => {
     const { basename, join, resolve, sep } = await import('node:path');
 
     const dir = await mkdtemp(join(tmpdir(), 'happy-home-'));
-    process.env.HAPPY_HOME_DIR = dir;
+    process.env.HAPPIER_HOME_DIR = dir;
     const baseDir = resolve(join(dir, 'tmp', 'session-attach'));
 
     vi.resetModules();

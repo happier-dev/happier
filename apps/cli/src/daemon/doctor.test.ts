@@ -31,10 +31,9 @@ describe('classifyHappyProcess', () => {
     const res = classifyHappyProcess({
       pid: 123,
       name: 'node',
-      cmd: '/usr/bin/node /repo/node_modules/.bin/tsx src/index.ts daemon start-sync --happy-cli',
+      cmd: '/usr/bin/node /repo/apps/cli/node_modules/.bin/tsx /repo/apps/cli/src/index.ts daemon start-sync',
     });
     expect(res).not.toBeNull();
     expect(res!.type).toBe('dev-daemon');
   });
 });
-

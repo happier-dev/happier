@@ -327,7 +327,7 @@ export async function startDaemon(): Promise<void> {
         // Empty string means "no profile" and should still be preserved.
         const sessionProfileEnv: Record<string, string> = {};
         if (options.profileId !== undefined) {
-          sessionProfileEnv.HAPPY_SESSION_PROFILE_ID = options.profileId;
+          sessionProfileEnv.HAPPIER_SESSION_PROFILE_ID = options.profileId;
         }
 
         // Final merge: profile vars + session identity, then auth (auth takes precedence to protect authentication)
@@ -424,7 +424,7 @@ export async function startDaemon(): Promise<void> {
 	        }
 
 	        const extraEnvForChildWithMessage = sessionAttachFilePath
-	          ? { ...extraEnvForChild, HAPPY_SESSION_ATTACH_FILE: sessionAttachFilePath }
+	          ? { ...extraEnvForChild, HAPPIER_SESSION_ATTACH_FILE: sessionAttachFilePath }
 	          : extraEnvForChild;
 
 	        // Check if tmux is available and should be used
@@ -802,7 +802,7 @@ export async function startDaemon(): Promise<void> {
       getChildren: getCurrentChildren,
       stopSession,
       spawnSession,
-      requestShutdown: () => requestShutdown('happy-cli'),
+      requestShutdown: () => requestShutdown('happier-cli'),
       onHappySessionWebhook
     });
 
@@ -846,7 +846,7 @@ export async function startDaemon(): Promise<void> {
     apiMachine.setRPCHandlers({
       spawnSession,
       stopSession,
-      requestShutdown: () => requestShutdown('happy-app')
+      requestShutdown: () => requestShutdown('happier-app')
     });
 
     // Connect to server
@@ -907,7 +907,7 @@ export async function startDaemon(): Promise<void> {
     });
 
 	    // Setup signal handlers
-	    const cleanupAndShutdown = async (source: 'happy-app' | 'happy-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
+		    const cleanupAndShutdown = async (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => {
 	      const exitCode = getDaemonShutdownExitCode(source);
 	      const shutdownWatchdog = setTimeout(async () => {
 	        logger.debug(`[DAEMON RUN] Shutdown timed out, forcing exit with code ${exitCode}`);

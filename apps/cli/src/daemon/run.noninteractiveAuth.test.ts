@@ -38,15 +38,15 @@ function runNode(args: string[], env: NodeJS.ProcessEnv, timeoutMs: number) {
 
 describe('daemon start-sync auth gating', () => {
   it('fails fast without creating a lock when started non-interactively with no credentials', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'happy-cli-home-'));
+    const home = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
     const entry = join(projectPath(), 'dist', 'index.mjs');
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      HAPPY_HOME_DIR: home,
+      HAPPIER_HOME_DIR: home,
       // Ensure we do not accidentally hit real infra
-      HAPPY_SERVER_URL: 'http://127.0.0.1:9',
-      HAPPY_WEBAPP_URL: 'http://127.0.0.1:9',
+      HAPPIER_SERVER_URL: 'http://127.0.0.1:9',
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:9',
       DEBUG: '1',
     };
 
@@ -59,4 +59,3 @@ describe('daemon start-sync auth gating', () => {
     }
   });
 });
-
