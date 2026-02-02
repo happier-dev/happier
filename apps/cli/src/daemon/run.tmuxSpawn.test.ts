@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
 describe('daemon tmux spawn config', () => {
-    const originalRuntimeOverride = process.env.HAPPY_CLI_SUBPROCESS_RUNTIME;
+    const originalRuntimeOverride = process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
     const originalPath = process.env.PATH;
 
     it('uses merged env and bun runtime when configured', async () => {
-        process.env.HAPPY_CLI_SUBPROCESS_RUNTIME = 'bun';
+        process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME = 'bun';
         process.env.PATH = '/bin';
 
         try {
@@ -29,9 +29,9 @@ describe('daemon tmux spawn config', () => {
             expect(cfg.commandTokens).toEqual(expect.arrayContaining(['--happy-terminal-mode', 'tmux']));
         } finally {
             if (originalRuntimeOverride === undefined) {
-                delete process.env.HAPPY_CLI_SUBPROCESS_RUNTIME;
+                delete process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
             } else {
-                process.env.HAPPY_CLI_SUBPROCESS_RUNTIME = originalRuntimeOverride;
+                process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME = originalRuntimeOverride;
             }
             if (originalPath === undefined) {
                 delete process.env.PATH;

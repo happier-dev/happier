@@ -4,8 +4,8 @@ import { getDaemonShutdownExitCode, getDaemonShutdownWatchdogTimeoutMs } from '.
 
 describe('daemon shutdown policy', () => {
   it('exits 0 for non-exception shutdown sources', () => {
-    expect(getDaemonShutdownExitCode('happy-app')).toBe(0);
-    expect(getDaemonShutdownExitCode('happy-cli')).toBe(0);
+    expect(getDaemonShutdownExitCode('happier-app')).toBe(0);
+    expect(getDaemonShutdownExitCode('happier-cli')).toBe(0);
     expect(getDaemonShutdownExitCode('os-signal')).toBe(0);
   });
 
@@ -17,4 +17,3 @@ describe('daemon shutdown policy', () => {
     expect(getDaemonShutdownWatchdogTimeoutMs()).toBeGreaterThanOrEqual(5_000);
   });
 });
-

@@ -113,7 +113,7 @@ async function doWebAuth(keypair: tweetnacl.BoxKeyPair): Promise<Credentials | n
     console.log('\nWeb Authentication\n');
 
     const webUrl = generateWebAuthUrl(keypair.publicKey);
-    const noOpenRaw = (process.env.HAPPY_NO_BROWSER_OPEN ?? '').toString().trim();
+    const noOpenRaw = (process.env.HAPPIER_NO_BROWSER_OPEN ?? '').toString().trim();
     const noOpen = Boolean(noOpenRaw) && noOpenRaw !== '0' && noOpenRaw.toLowerCase() !== 'false';
     if (!noOpen) {
         console.log('Opening your browser...');
@@ -127,7 +127,7 @@ async function doWebAuth(keypair: tweetnacl.BoxKeyPair): Promise<Credentials | n
             console.log('Could not open browser automatically.');
         }
     } else {
-        console.log('Browser opening is disabled (HAPPY_NO_BROWSER_OPEN is set).');
+        console.log('Browser opening is disabled (HAPPIER_NO_BROWSER_OPEN is set).');
         console.log('Open the URL below in the browser profile/account you want to authenticate.');
     }
 

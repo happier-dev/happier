@@ -82,7 +82,7 @@ export function registerPreviewEnvHandler(rpcHandlerManager: RpcHandlerManager):
     // This is the recommended way for the UI to preview what a spawned session will receive:
     // - Uses daemon process.env as the base
     // - Optionally applies profile-provided extraEnv with the same ${VAR} expansion semantics used for spawns
-    // - Applies daemon-controlled secret visibility policy (HAPPY_ENV_PREVIEW_SECRETS)
+    // - Applies daemon-controlled secret visibility policy (HAPPIER_ENV_PREVIEW_SECRETS)
     rpcHandlerManager.registerHandler<PreviewEnvRequest, PreviewEnvResponse>(RPC_METHODS.PREVIEW_ENV, async (data) => {
         const keys = Array.isArray(data?.keys) ? data.keys : [];
         const maxKeys = 200;
@@ -93,7 +93,7 @@ export function registerPreviewEnvHandler(rpcHandlerManager: RpcHandlerManager):
             }
         }
 
-        const policy = normalizeSecretsPolicy(process.env.HAPPY_ENV_PREVIEW_SECRETS);
+        const policy = normalizeSecretsPolicy(process.env.HAPPIER_ENV_PREVIEW_SECRETS);
         const sensitiveKeys = Array.isArray(data?.sensitiveKeys)
             ? data.sensitiveKeys.filter((k): k is string => typeof k === 'string' && isValidEnvVarKey(k))
             : [];
@@ -107,7 +107,7 @@ export function registerPreviewEnvHandler(rpcHandlerManager: RpcHandlerManager):
         const effectiveEnv: NodeJS.ProcessEnv = { ...process.env, ...expandedExtraEnv };
 
         const defaultSecretNameRegex = /TOKEN|KEY|SECRET|AUTH|PASS|PASSWORD|COOKIE/i;
-        const overrideRegexRaw = process.env.HAPPY_ENV_PREVIEW_SECRET_NAME_REGEX;
+        const overrideRegexRaw = process.env.HAPPIER_ENV_PREVIEW_SECRET_NAME_REGEX;
         const secretNameRegex = (() => {
             if (typeof overrideRegexRaw !== 'string') return defaultSecretNameRegex;
             const trimmed = overrideRegexRaw.trim();

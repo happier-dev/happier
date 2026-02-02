@@ -21,7 +21,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   controlPort: number;
   fileState: DaemonLocallyPersistedState;
   currentCliVersion: string;
-  requestShutdown: (source: 'happy-app' | 'happy-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
+  requestShutdown: (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
 }>): NodeJS.Timeout {
   const {
     pidToTrackedSession,
@@ -39,7 +39,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   // 2. Check if daemon needs update
   // 3. If outdated, restart with latest version
   // 4. Write heartbeat
-  const heartbeatIntervalMs = parseInt(process.env.HAPPY_DAEMON_HEARTBEAT_INTERVAL || '60000');
+  const heartbeatIntervalMs = parseInt(process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL || '60000');
   let heartbeatRunning = false;
 
   const intervalHandle = setInterval(async () => {

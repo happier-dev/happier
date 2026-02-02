@@ -149,11 +149,11 @@ export async function runKimi(opts: {
   }
 
   // Start Happier MCP server for `change_title` tool exposure (bridged to ACP via happier-mcp.mjs).
-  const happyServer = await startHappyServer(session);
+  const happierMcpServer = await startHappyServer(session);
 
-  const bridgeCommand = join(projectPath(), 'bin', 'happy-mcp.mjs');
+  const bridgeCommand = join(projectPath(), 'bin', 'happier-mcp.mjs');
   const mcpServers: Record<string, McpServerConfig> = {
-    happy: { command: bridgeCommand, args: ['--url', happyServer.url] },
+    happier: { command: bridgeCommand, args: ['--url', happierMcpServer.url] },
   };
 
   let abortRequestedCallback: (() => void | Promise<void>) | null = null;
@@ -257,7 +257,7 @@ export async function runKimi(opts: {
       clearInterval(keepAliveInterval);
       reconnectionHandle?.cancel();
       stopCaffeinate();
-      happyServer.stop();
+      happierMcpServer.stop();
       await runtime.reset();
       inkInstance?.unmount();
       process.exit(0);
@@ -367,7 +367,7 @@ export async function runKimi(opts: {
     clearInterval(keepAliveInterval);
     reconnectionHandle?.cancel();
     stopCaffeinate();
-    happyServer.stop();
+    happierMcpServer.stop();
     await runtime.reset();
     inkInstance?.unmount();
   }

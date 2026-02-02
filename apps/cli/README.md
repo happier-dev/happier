@@ -90,13 +90,13 @@ happier gemini project get          # Show current Google Cloud Project ID
 
 ## Environment Variables
 
-### Happy Configuration
+### Happier Configuration
 
-- `HAPPY_SERVER_URL` - Custom server URL (default: https://api.happier.dev)
-- `HAPPY_WEBAPP_URL` - Custom web app URL (default: https://app.happier.dev)
-- `HAPPY_HOME_DIR` - Custom home directory for Happier data (default: ~/.happy)
-- `HAPPY_DISABLE_CAFFEINATE` - Disable macOS sleep prevention (set to `true`, `1`, or `yes`)
-- `HAPPY_EXPERIMENTAL` - Enable experimental features (set to `true`, `1`, or `yes`)
+- `HAPPIER_SERVER_URL` - Custom server URL (default: https://api.happier.dev)
+- `HAPPIER_WEBAPP_URL` - Custom web app URL (default: https://app.happier.dev)
+- `HAPPIER_HOME_DIR` - Custom home directory for Happier data (default: ~/.happier)
+- `HAPPIER_DISABLE_CAFFEINATE` - Disable macOS sleep prevention (set to `true`, `1`, or `yes`)
+- `HAPPIER_EXPERIMENTAL` - Enable experimental features (set to `true`, `1`, or `yes`)
 
 ### Gemini Configuration
 

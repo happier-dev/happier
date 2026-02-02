@@ -3,7 +3,7 @@
  *
  * These tests spawn real processes and rely on `ps-list` classification.
  *
- * Enable with: `HAPPY_CLI_DAEMON_REATTACH_INTEGRATION=1`
+ * Enable with: `HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION=1`
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,13 +14,15 @@ import { spawn } from 'node:child_process';
 import type { Metadata } from '@/api/types';
 
 function shouldRunDaemonReattachIntegration(): boolean {
-  return process.env.HAPPY_CLI_DAEMON_REATTACH_INTEGRATION === '1';
+  return process.env.HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION === '1';
 }
 
 function spawnHappyLookingProcess(): { pid: number; kill: () => void } {
   const child = spawn(
     process.execPath,
-    ['-e', 'setInterval(() => {}, 1_000_000)', 'happy-cli', '--started-by', 'daemon'],
+    // Put the identifying strings early in the command line. On some platforms `ps` output can be
+    // truncated, which would otherwise make `ps-list` miss tail argv entries.
+    ['-e', '/* bin/happier.mjs --started-by daemon */ setInterval(() => {}, 1_000_000)'],
     { stdio: 'ignore' },
   );
   if (!child.pid) throw new Error('Failed to spawn test process');
@@ -40,14 +42,14 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
   'reattach (real) integration tests (opt-in)',
   { timeout: 20_000 },
   () => {
-    const originalHappyHomeDir = process.env.HAPPY_HOME_DIR;
+    const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
     const spawned: Array<() => void> = [];
     const tempHomes: string[] = [];
 
     beforeEach(() => {
-      const home = mkdtempSync(join(tmpdir(), 'happy-cli-daemon-reattach-test-'));
+      const home = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-reattach-test-'));
       tempHomes.push(home);
-      process.env.HAPPY_HOME_DIR = home;
+      process.env.HAPPIER_HOME_DIR = home;
       vi.resetModules();
     });
 
@@ -57,9 +59,9 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
         rmSync(home, { recursive: true, force: true });
       }
       if (originalHappyHomeDir === undefined) {
-        delete process.env.HAPPY_HOME_DIR;
+        delete process.env.HAPPIER_HOME_DIR;
       } else {
-        process.env.HAPPY_HOME_DIR = originalHappyHomeDir;
+        process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
       }
       vi.resetModules();
     });
@@ -87,7 +89,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
         path: '/tmp',
         host: 'test-host',
         homeDir: '/tmp',
-        happyHomeDir: process.env.HAPPY_HOME_DIR!,
+        happyHomeDir: process.env.HAPPIER_HOME_DIR!,
         happyLibDir: '/tmp',
         happyToolsDir: '/tmp',
         hostPid: p.pid,
@@ -152,4 +154,3 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
     });
   },
 );
-

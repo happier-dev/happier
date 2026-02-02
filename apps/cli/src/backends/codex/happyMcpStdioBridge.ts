@@ -2,10 +2,10 @@
  * Happier MCP STDIO Bridge
  *
  * Minimal STDIO MCP server exposing a single tool `change_title`.
- * On invocation it forwards the tool call to an existing Happy HTTP MCP server
+ * On invocation it forwards the tool call to an existing Happier HTTP MCP server
  * using the StreamableHTTPClientTransport.
  *
- * Configure the target HTTP MCP URL via env var `HAPPY_HTTP_MCP_URL` or
+ * Configure the target HTTP MCP URL via env var `HAPPIER_HTTP_MCP_URL` or
  * via CLI flag `--url <http://127.0.0.1:PORT>`.
  *
  * Note: This process must not print to stdout as it would break MCP STDIO.
@@ -32,12 +32,12 @@ function parseArgs(argv: string[]): { url: string | null } {
 async function main() {
   // Resolve target HTTP MCP URL
   const { url: urlFromArgs } = parseArgs(process.argv.slice(2));
-  const baseUrl = urlFromArgs || process.env.HAPPY_HTTP_MCP_URL || '';
+  const baseUrl = urlFromArgs || process.env.HAPPIER_HTTP_MCP_URL || '';
 
   if (!baseUrl) {
     // Write to stderr; never stdout.
     process.stderr.write(
-      '[happy-mcp] Missing target URL. Set HAPPY_HTTP_MCP_URL or pass --url <http://127.0.0.1:PORT>\n'
+      '[happier-mcp] Missing target URL. Set HAPPIER_HTTP_MCP_URL or pass --url <http://127.0.0.1:PORT>\n'
     );
     process.exit(2);
   }
@@ -47,7 +47,7 @@ async function main() {
   async function ensureHttpClient(): Promise<Client> {
     if (httpClient) return httpClient;
     const client = new Client(
-      { name: 'happy-stdio-bridge', version: '1.0.0' },
+      { name: 'happier-stdio-bridge', version: '1.0.0' },
       { capabilities: {} }
     );
 
@@ -98,7 +98,7 @@ async function main() {
 // Start and surface fatal errors to stderr only
 main().catch((err) => {
   try {
-    process.stderr.write(`[happy-mcp] Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.stderr.write(`[happier-mcp] Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
   } finally {
     process.exit(1);
   }

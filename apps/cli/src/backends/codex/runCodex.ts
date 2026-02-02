@@ -331,7 +331,7 @@ export async function runCodex(opts: {
     }
 
     const useCodexAcp = isExperimentalCodexAcpEnabled();
-    let happyServer: { url: string; stop: () => void } | null = null;
+    let happierMcpServer: { url: string; stop: () => void } | null = null;
     let client: CodexMcpClient | null = null;
     let codexAcpRuntime: ReturnType<typeof createCodexAcpRuntime> | null = null;
 
@@ -410,7 +410,7 @@ export async function runCodex(opts: {
             stopCaffeinate();
 
             // Stop Happier MCP server
-            happyServer?.stop();
+            happierMcpServer?.stop();
 
             logger.debug('[Codex] Session termination complete, exiting');
             process.exit(0);
@@ -463,14 +463,14 @@ export async function runCodex(opts: {
     //
 
     // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
-    happyServer = await startHappyServer(session);
+    happierMcpServer = await startHappyServer(session);
     const directory = process.cwd();
-    const bridgeScript = join(projectPath(), 'bin', 'happy-mcp.mjs');
+    const bridgeScript = join(projectPath(), 'bin', 'happier-mcp.mjs');
     // Use process.execPath (bun or node) as command to support both runtimes
     const mcpServers = {
-        happy: {
+        happier: {
             command: process.execPath,
-            args: [bridgeScript, '--url', happyServer!.url]
+            args: [bridgeScript, '--url', happierMcpServer!.url]
         }
     };
 
@@ -489,9 +489,9 @@ export async function runCodex(opts: {
         }
 
         const envOverride = (() => {
-            const v = typeof process.env.HAPPY_CODEX_RESUME_MCP_SERVER_BIN === 'string'
-                ? process.env.HAPPY_CODEX_RESUME_MCP_SERVER_BIN.trim()
-                : (typeof process.env.HAPPY_CODEX_RESUME_BIN === 'string' ? process.env.HAPPY_CODEX_RESUME_BIN.trim() : '');
+            const v = typeof process.env.HAPPIER_CODEX_RESUME_MCP_SERVER_BIN === 'string'
+                ? process.env.HAPPIER_CODEX_RESUME_MCP_SERVER_BIN.trim()
+                : (typeof process.env.HAPPIER_CODEX_RESUME_BIN === 'string' ? process.env.HAPPIER_CODEX_RESUME_BIN.trim() : '');
             return v;
         })();
         if (envOverride && existsSync(envOverride)) {
@@ -509,7 +509,7 @@ export async function runCodex(opts: {
 
 	        throw new Error(
 	            `Codex resume MCP server is not installed.\n` +
-	            `Install it from the Happier app (Machine details → Codex resume), or set HAPPY_CODEX_RESUME_MCP_SERVER_BIN.\n` +
+	            `Install it from the Happier app (Machine details → Codex resume), or set HAPPIER_CODEX_RESUME_MCP_SERVER_BIN.\n` +
 	            `Expected: ${defaultNew}`,
 	        );
 	    })();
@@ -1052,8 +1052,8 @@ export async function runCodex(opts: {
             codexAcpRuntime = null;
         }
         // Stop Happier MCP server
-        logger.debug('[codex]: happyServer.stop');
-        happyServer?.stop();
+        logger.debug('[codex]: happierMcpServer.stop');
+        happierMcpServer?.stop();
 
         // Clean up ink UI
         if (process.stdin.isTTY) {

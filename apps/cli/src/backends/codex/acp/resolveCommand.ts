@@ -9,12 +9,12 @@ import { configuration } from '@/configuration';
  * Codex ACP is provided by the optional `codex-acp` capability install.
  */
 export function resolveCodexAcpCommand(): string {
-  const envOverride = typeof process.env.HAPPY_CODEX_ACP_BIN === 'string'
-    ? process.env.HAPPY_CODEX_ACP_BIN.trim()
+  const envOverride = typeof process.env.HAPPIER_CODEX_ACP_BIN === 'string'
+    ? process.env.HAPPIER_CODEX_ACP_BIN.trim()
     : '';
   if (envOverride) {
     if (!existsSync(envOverride)) {
-      throw new Error(`Codex ACP is enabled but HAPPY_CODEX_ACP_BIN does not exist: ${envOverride}`);
+      throw new Error(`Codex ACP is enabled but HAPPIER_CODEX_ACP_BIN does not exist: ${envOverride}`);
     }
     return envOverride;
   }
@@ -28,4 +28,3 @@ export function resolveCodexAcpCommand(): string {
   // Last-resort: rely on PATH (useful for local installs while developing).
   return 'codex-acp';
 }
-

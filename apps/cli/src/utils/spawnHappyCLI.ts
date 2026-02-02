@@ -57,7 +57,7 @@ import { existsSync } from 'node:fs';
 import { isBun } from './runtime';
 
 function getSubprocessRuntime(): 'node' | 'bun' {
-  const override = process.env.HAPPY_CLI_SUBPROCESS_RUNTIME;
+  const override = process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
   if (override === 'node' || override === 'bun') return override;
   return isBun() ? 'bun' : 'node';
 }

@@ -46,12 +46,12 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
       };
     }
 
-    const envOverride = typeof process.env.HAPPY_CODEX_ACP_BIN === 'string' ? process.env.HAPPY_CODEX_ACP_BIN.trim() : '';
+    const envOverride = typeof process.env.HAPPIER_CODEX_ACP_BIN === 'string' ? process.env.HAPPIER_CODEX_ACP_BIN.trim() : '';
     if (envOverride) {
       if (!existsSync(envOverride)) {
         return {
           ok: false,
-          errorMessage: `Codex ACP is enabled, but HAPPY_CODEX_ACP_BIN does not exist: ${envOverride}`,
+          errorMessage: `Codex ACP is enabled, but HAPPIER_CODEX_ACP_BIN does not exist: ${envOverride}`,
         };
       }
       return { ok: true };
@@ -69,7 +69,7 @@ export const codexDaemonSpawnHooks: DaemonSpawnHooks = {
   },
 
   buildExtraEnvForChild: ({ experimentalCodexResume, experimentalCodexAcp }) => ({
-    ...(experimentalCodexResume === true ? { HAPPY_EXPERIMENTAL_CODEX_RESUME: '1' } : {}),
-    ...(experimentalCodexAcp === true ? { HAPPY_EXPERIMENTAL_CODEX_ACP: '1' } : {}),
+    ...(experimentalCodexResume === true ? { HAPPIER_EXPERIMENTAL_CODEX_RESUME: '1' } : {}),
+    ...(experimentalCodexAcp === true ? { HAPPIER_EXPERIMENTAL_CODEX_ACP: '1' } : {}),
   }),
 };

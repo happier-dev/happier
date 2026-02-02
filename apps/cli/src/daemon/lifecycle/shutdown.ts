@@ -1,6 +1,6 @@
 import { logger } from '@/ui/logger';
 
-export type DaemonShutdownSource = 'happy-app' | 'happy-cli' | 'os-signal' | 'exception';
+export type DaemonShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 
 export type DaemonShutdownRequest = {
   source: DaemonShutdownSource;
@@ -58,4 +58,3 @@ export function createDaemonShutdownController(): {
 
   return { requestShutdown: requestShutdown!, resolvesWhenShutdownRequested };
 }
-

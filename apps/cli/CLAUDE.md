@@ -181,11 +181,11 @@ User interface components.
 
 ## Starting the Daemon
 ```bash
-# From the happy-cli directory:
+# From the `apps/cli` directory:
 ./bin/happier.mjs daemon start
 
 # With custom server URL (for local development):
-HAPPY_SERVER_URL=http://localhost:3005 ./bin/happier.mjs daemon start
+HAPPIER_SERVER_URL=http://localhost:3005 ./bin/happier.mjs daemon start
 
 # Stop the daemon:
 ./bin/happier.mjs daemon stop
@@ -195,7 +195,7 @@ HAPPY_SERVER_URL=http://localhost:3005 ./bin/happier.mjs daemon start
 ```
 
 ## Daemon Logs
-- Daemon logs are stored in `~/.happy-dev/logs/` (or `$HAPPY_HOME_DIR/logs/`)
+- Daemon logs are stored in `~/.happier-dev/logs/` (or `$HAPPIER_HOME_DIR/logs/`)
 - Named with format: `YYYY-MM-DD-HH-MM-SS-daemon.log`
 
 # Session Forking `claude` and sdk behavior

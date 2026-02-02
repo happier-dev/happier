@@ -5,20 +5,20 @@ import { join } from 'node:path';
 
 describe('logger.debugLargeJson', () => {
     const originalDebug = process.env.DEBUG;
-    const originalHappyHomeDir = process.env.HAPPY_HOME_DIR;
+    const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
     let tempDir: string;
 
     beforeEach(() => {
-        tempDir = mkdtempSync(join(tmpdir(), 'happy-cli-logger-test-'));
-        process.env.HAPPY_HOME_DIR = tempDir;
+        tempDir = mkdtempSync(join(tmpdir(), 'happier-cli-logger-test-'));
+        process.env.HAPPIER_HOME_DIR = tempDir;
         delete process.env.DEBUG;
         vi.resetModules();
     });
 
     afterEach(() => {
         rmSync(tempDir, { recursive: true, force: true });
-        if (originalHappyHomeDir === undefined) delete process.env.HAPPY_HOME_DIR;
-        else process.env.HAPPY_HOME_DIR = originalHappyHomeDir;
+        if (originalHappyHomeDir === undefined) delete process.env.HAPPIER_HOME_DIR;
+        else process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
 
         if (originalDebug === undefined) delete process.env.DEBUG;
         else process.env.DEBUG = originalDebug;

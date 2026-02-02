@@ -1,6 +1,6 @@
-const DEFAULT_ACP_PROBE_TIMEOUT_MS = 8_000;
-
 import type { CatalogAgentId } from '@/backends/types';
+
+const DEFAULT_ACP_PROBE_TIMEOUT_MS = 8_000;
 
 function parseTimeoutMs(raw: string | undefined): number | null {
     if (!raw) return null;
@@ -10,10 +10,10 @@ function parseTimeoutMs(raw: string | undefined): number | null {
 }
 
 export function resolveAcpProbeTimeoutMs(agentName: CatalogAgentId): number {
-    const perAgent = parseTimeoutMs(process.env[`HAPPY_ACP_PROBE_TIMEOUT_${agentName.toUpperCase()}_MS`]);
+    const perAgent = parseTimeoutMs(process.env[`HAPPIER_ACP_PROBE_TIMEOUT_${agentName.toUpperCase()}_MS`]);
     if (typeof perAgent === 'number') return perAgent;
 
-    const global = parseTimeoutMs(process.env.HAPPY_ACP_PROBE_TIMEOUT_MS);
+    const global = parseTimeoutMs(process.env.HAPPIER_ACP_PROBE_TIMEOUT_MS);
     if (typeof global === 'number') return global;
 
     return DEFAULT_ACP_PROBE_TIMEOUT_MS;

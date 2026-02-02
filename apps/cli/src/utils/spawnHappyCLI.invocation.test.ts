@@ -1,10 +1,10 @@
 /**
- * Tests for building happy-cli subprocess invocations across runtimes (node/bun).
+ * Tests for building Happier CLI subprocess invocations across runtimes (node/bun).
  */
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 
-describe('happy-cli subprocess invocation', () => {
-    const originalRuntimeOverride = process.env.HAPPY_CLI_SUBPROCESS_RUNTIME;
+describe('happier-cli subprocess invocation', () => {
+    const originalRuntimeOverride = process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
 
     beforeEach(() => {
         vi.resetModules();
@@ -12,14 +12,14 @@ describe('happy-cli subprocess invocation', () => {
 
     afterEach(() => {
         if (originalRuntimeOverride === undefined) {
-            delete process.env.HAPPY_CLI_SUBPROCESS_RUNTIME;
+            delete process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
         } else {
-            process.env.HAPPY_CLI_SUBPROCESS_RUNTIME = originalRuntimeOverride;
+            process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME = originalRuntimeOverride;
         }
     });
 
     it('builds a node invocation by default', async () => {
-        process.env.HAPPY_CLI_SUBPROCESS_RUNTIME = 'node';
+        process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME = 'node';
         const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
 
         const inv = mod.buildHappyCliSubprocessInvocation(['--version']);
@@ -34,8 +34,8 @@ describe('happy-cli subprocess invocation', () => {
         );
     });
 
-    it('builds a bun invocation when HAPPY_CLI_SUBPROCESS_RUNTIME=bun', async () => {
-        process.env.HAPPY_CLI_SUBPROCESS_RUNTIME = 'bun';
+    it('builds a bun invocation when HAPPIER_CLI_SUBPROCESS_RUNTIME=bun', async () => {
+        process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME = 'bun';
         const mod = (await import('@/utils/spawnHappyCLI')) as typeof import('@/utils/spawnHappyCLI');
         const inv = mod.buildHappyCliSubprocessInvocation(['--version']);
         expect(inv.runtime).toBe('bun');

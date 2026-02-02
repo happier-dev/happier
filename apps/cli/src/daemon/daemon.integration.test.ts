@@ -10,8 +10,8 @@
  * and the daemon will not work properly!
  * 
  * The integration test environment uses .env.integration-test which sets:
- * - HAPPY_HOME_DIR=~/.happy-dev-test (DIFFERENT from dev's ~/.happy-dev!)
- * - HAPPY_SERVER_URL=http://localhost:3005 (local dev server)
+ * - HAPPIER_HOME_DIR=~/.happier-dev-test (DIFFERENT from dev's ~/.happier-dev!)
+ * - HAPPIER_SERVER_URL=http://localhost:3005 (local dev server)
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -62,7 +62,7 @@ function isProcessAlive(pid: number): boolean {
 // Check if dev server is running and properly configured
 async function isServerHealthy(): Promise<boolean> {
   try {
-    const configuredServerUrl = process.env.HAPPY_SERVER_URL || 'http://localhost:3005';
+    const configuredServerUrl = process.env.HAPPIER_SERVER_URL || 'http://localhost:3005';
     const healthUrl = new URL('/health', configuredServerUrl);
     // Avoid IPv6/localhost resolution issues in some CI/container environments.
     if (healthUrl.hostname === 'localhost') healthUrl.hostname = '127.0.0.1';
@@ -80,7 +80,7 @@ async function isServerHealthy(): Promise<boolean> {
     const testCredentials = existsSync(join(configuration.happyHomeDir, 'access.key'));
     if (!testCredentials) {
       console.log('[TEST] No test credentials found in', configuration.happyHomeDir);
-      console.log('[TEST] Run "happier auth login" with HAPPY_HOME_DIR=~/.happy-dev-test first');
+      console.log('[TEST] Run "happier auth login" with HAPPIER_HOME_DIR=~/.happier-dev-test first');
       return false;
     }
     
@@ -497,7 +497,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
       console.log(`[TEST] Changed package.json version to ${testVersion}`);
 
       // The daemon should automatically detect the version mismatch and restart itself.
-      const heartbeatMs = parseInt(process.env.HAPPY_DAEMON_HEARTBEAT_INTERVAL || '30000');
+      const heartbeatMs = parseInt(process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL || '30000');
       await waitFor(async () => {
         const finalState = await readDaemonState();
         return !!(finalState && finalState.startedWithCliVersion === testVersion && finalState.pid && finalState.pid !== initialPid);

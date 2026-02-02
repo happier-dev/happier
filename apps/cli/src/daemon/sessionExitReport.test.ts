@@ -56,12 +56,12 @@ describe('writeSessionExitReport', () => {
     });
   });
 
-  it('defaults to HAPPY_HOME_DIR/logs/session-exit', async () => {
+  it('defaults to HAPPIER_HOME_DIR/logs/session-exit', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happy-home-dir-'));
-    vi.stubEnv('HAPPY_HOME_DIR', dir);
+    vi.stubEnv('HAPPIER_HOME_DIR', dir);
 
     try {
-      // Ensure Configuration picks up the test HAPPY_HOME_DIR.
+      // Ensure Configuration picks up the test HAPPIER_HOME_DIR.
       vi.resetModules();
       const { writeSessionExitReportSync } = await import('./sessionExitReport');
 

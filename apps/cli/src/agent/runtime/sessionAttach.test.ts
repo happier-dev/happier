@@ -7,7 +7,7 @@ describe('readSessionAttachFromEnv', () => {
     const { join } = await import('node:path');
 
     const dir = await mkdtemp(join(tmpdir(), 'happy-attach-'));
-    process.env.HAPPY_HOME_DIR = dir;
+    process.env.HAPPIER_HOME_DIR = dir;
 
     vi.resetModules();
 
@@ -25,7 +25,7 @@ describe('readSessionAttachFromEnv', () => {
     };
 
     await writeFile(filePath, JSON.stringify(payload), { mode: 0o600 });
-    process.env.HAPPY_SESSION_ATTACH_FILE = filePath;
+    process.env.HAPPIER_SESSION_ATTACH_FILE = filePath;
 
     const res = await readSessionAttachFromEnv();
     expect(res?.encryptionVariant).toBe('dataKey');
@@ -35,4 +35,3 @@ describe('readSessionAttachFromEnv', () => {
     await expect(stat(filePath)).rejects.toBeTruthy();
   });
 });
-

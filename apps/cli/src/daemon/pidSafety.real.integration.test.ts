@@ -3,7 +3,7 @@
  *
  * These tests spawn real processes and rely on `ps-list` classification.
  *
- * Enable with: `HAPPY_CLI_DAEMON_REATTACH_INTEGRATION=1`
+ * Enable with: `HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION=1`
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,16 +13,18 @@ import { findHappyProcessByPid } from './doctor';
 import { hashProcessCommand } from './sessionRegistry';
 
 function shouldRunDaemonReattachIntegration(): boolean {
-  return process.env.HAPPY_CLI_DAEMON_REATTACH_INTEGRATION === '1';
+  return process.env.HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION === '1';
 }
 
 function spawnHappyLookingProcess(): { pid: number; kill: () => void } {
   // Important: We need `ps-list` to classify this as a Happy session process.
-  // `doctor.classifyHappyProcess` considers a process "happy" if cmd includes "happy-cli",
+  // `doctor.classifyHappyProcess` considers a process "happy" if cmd includes "bin/happier.mjs",
   // and marks it as daemon-spawned-session if cmd includes "--started-by daemon".
   const child = spawn(
     process.execPath,
-    ['-e', 'setInterval(() => {}, 1_000_000)', 'happy-cli', '--started-by', 'daemon'],
+    // Put the identifying strings early in the command line. On some platforms `ps` output can be
+    // truncated, which would otherwise make `ps-list` miss tail argv entries.
+    ['-e', '/* bin/happier.mjs --started-by daemon */ setInterval(() => {}, 1_000_000)'],
     { stdio: 'ignore' },
   );
   if (!child.pid) throw new Error('Failed to spawn test process');
@@ -80,4 +82,3 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())('pidSafety (real) integra
     await expect(isPidSafeHappySessionProcess({ pid: p.pid, expectedProcessCommandHash: wrong })).resolves.toBe(false);
   });
 });
-

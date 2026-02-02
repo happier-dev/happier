@@ -101,7 +101,7 @@ export async function installCodexAcp(installSpecOverride?: string): Promise<
     const installSpecRaw = typeof installSpecOverride === 'string' ? installSpecOverride.trim() : '';
     const installSpec =
         installSpecRaw ||
-        (typeof process.env.HAPPY_CODEX_ACP_INSTALL_SPEC === 'string' ? process.env.HAPPY_CODEX_ACP_INSTALL_SPEC.trim() : '') ||
+        (typeof process.env.HAPPIER_CODEX_ACP_INSTALL_SPEC === 'string' ? process.env.HAPPIER_CODEX_ACP_INSTALL_SPEC.trim() : '') ||
         DEFAULT_CODEX_ACP_INSTALL_SPEC;
 
     const result = await installNpmDepToPrefix({
