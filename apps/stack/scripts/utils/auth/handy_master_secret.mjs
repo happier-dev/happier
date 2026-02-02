@@ -1,9 +1,7 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { parseEnvToObject } from '../env/dotenv.mjs';
 import { resolveStackEnvPath } from '../paths/paths.mjs';
-import { getLegacyHappyBaseDir, isLegacyAuthSourceName } from './sources.mjs';
 import { getEnvValue } from '../env/values.mjs';
 import { readTextIfExists } from '../fs/ops.mjs';
 import { stackExistsSync } from '../stack/stacks.mjs';
@@ -11,24 +9,8 @@ import { stackExistsSync } from '../stack/stacks.mjs';
 export async function resolveHandyMasterSecretFromStack({
   stackName,
   requireStackExists = false,
-  allowLegacyAuthSource = true,
-  allowLegacyMainFallback = true,
 } = {}) {
   const name = String(stackName ?? '').trim() || 'main';
-
-  if (isLegacyAuthSourceName(name)) {
-    if (!allowLegacyAuthSource) {
-      throw new Error(
-        '[auth] legacy auth source is disabled in sandbox mode.\n' +
-          'Reason: it reads from ~/.happy (global user state).\n' +
-          'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
-      );
-    }
-    const baseDir = getLegacyHappyBaseDir();
-    const legacySecretPath = join(baseDir, 'server-light', 'handy-master-secret.txt');
-    const secret = await readTextIfExists(legacySecretPath);
-    return secret ? { secret, source: legacySecretPath } : { secret: null, source: null };
-  }
 
   if (requireStackExists && !stackExistsSync(name)) {
     throw new Error(`[auth] cannot copy auth: source stack "${name}" does not exist`);
@@ -51,17 +33,10 @@ export async function resolveHandyMasterSecretFromStack({
     if (secret) return { secret, source: secretFile };
   }
 
-  const dataDir = getEnvValue(env, 'HAPPY_SERVER_LIGHT_DATA_DIR') || join(sourceBaseDir, 'server-light');
+  const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR') || join(sourceBaseDir, 'server-light');
   const secretPath = join(dataDir, 'handy-master-secret.txt');
   const secret = await readTextIfExists(secretPath);
   if (secret) return { secret, source: secretPath };
-
-  // Last-resort legacy: if main has never been migrated to stack dirs.
-  if (name === 'main' && allowLegacyMainFallback) {
-    const legacy = join(homedir(), '.happy', 'server-light', 'handy-master-secret.txt');
-    const legacySecret = await readTextIfExists(legacy);
-    if (legacySecret) return { secret: legacySecret, source: legacy };
-  }
 
   return { secret: null, source: null };
 }

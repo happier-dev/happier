@@ -25,7 +25,7 @@ import { withDetachedWorktree } from './utils/review/detached_worktree.mjs';
 
 const VALID_TARGETS = ['ui', 'cli', 'server'];
 const DEFAULT_TARGETS = VALID_TARGETS;
-const VALID_COMPONENTS = ['happy', 'happy-cli', 'happy-server'];
+const VALID_COMPONENTS = ['happier-ui', 'happier-cli', 'happier-server'];
 const VALID_REVIEWERS = ['coderabbit', 'codex', 'augment'];
 const VALID_DEPTHS = ['deep', 'normal'];
 const DEFAULT_REVIEW_MAX_FILES = 50;
@@ -79,17 +79,17 @@ function stackRemoteFallbackFromEnv(env) {
 
 function targetFromLegacyComponent(component) {
   const c = String(component ?? '').trim();
-  if (c === 'happy') return 'ui';
-  if (c === 'happy-cli') return 'cli';
-  if (c === 'happy-server' || c === 'happy-server-light') return 'server';
+  if (c === 'happier-ui') return 'ui';
+  if (c === 'happier-cli') return 'cli';
+  if (c === 'happier-server' || c === 'happier-server-light') return 'server';
   return null;
 }
 
 function legacyComponentFromTarget(target) {
   const t = String(target ?? '').trim();
-  if (t === 'ui') return 'happy';
-  if (t === 'cli') return 'happy-cli';
-  if (t === 'server') return 'happy-server';
+  if (t === 'ui') return 'happier-ui';
+  if (t === 'cli') return 'happier-cli';
+  if (t === 'server') return 'happier-server';
   return null;
 }
 
@@ -154,13 +154,13 @@ function printReviewOperatorGuidance() {
 
 function codexScopePathForComponent(component) {
   switch (component) {
-    case 'happy':
-      return 'expo-app';
-    case 'happy-cli':
-      return 'cli';
-    case 'happy-server-light':
-    case 'happy-server':
-      return 'server';
+    case 'happier-ui':
+      return 'apps/ui';
+    case 'happier-cli':
+      return 'apps/cli';
+    case 'happier-server-light':
+    case 'happier-server':
+      return 'apps/server';
     default:
       return null;
   }
@@ -493,7 +493,7 @@ async function main() {
       `[review] multiple monorepo roots detected across selected component dirs:\n` +
         roots.map((r) => `- ${r}`).join('\n') +
         `\n\n` +
-        `Fix: ensure all monorepo components (happy/happy-cli/happy-server(-light)) point at the same worktree.\n` +
+        `Fix: ensure all monorepo components (happier-ui/happier-cli/happier-server(-light)) point at the same worktree.\n` +
         `- Stack mode: use \`hstack stack wt <stack> -- use <owner/branch|/abs/path>\`\n` +
         `- One-shot: pass \`--repo=<owner/branch|/abs/path>\` to the stack command you're running`
     );

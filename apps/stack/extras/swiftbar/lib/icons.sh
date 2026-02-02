@@ -19,7 +19,7 @@ get_menu_icon_b64() {
     return
   fi
 
-  local cache_dir="$HAPPY_HOME_DIR/swiftbar"
+  local cache_dir="$HAPPIER_HOME_DIR/swiftbar"
   local cache_png="$cache_dir/hstack-icon.png"
   local cache_b64="$cache_dir/hstack-icon.b64"
   local cache_meta="$cache_dir/hstack-icon.meta"
@@ -57,7 +57,7 @@ icon_b64_for_file() {
     return
   fi
 
-  local cache_dir="$HAPPY_HOME_DIR/swiftbar/icons"
+  local cache_dir="$HAPPIER_HOME_DIR/swiftbar/icons"
   local cache_png="$cache_dir/${cache_key}-${size}.png"
   local cache_b64="$cache_dir/${cache_key}-${size}.b64"
   local cache_meta="$cache_dir/${cache_key}-${size}.meta"

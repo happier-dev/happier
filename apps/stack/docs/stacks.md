@@ -306,7 +306,7 @@ hstack stack daemon <stack> stop  --identity=account-a
 ```
 
 - For the **main** stack, use `<stack>=main` and the default `<port>=3005` (unless you changed it).
-- If you use Tailscale Serve, `HAPPY_WEBAPP_URL` should be your HTTPS URL (what you get from `hstack tailscale url`).
+- If you use Tailscale Serve, `HAPPIER_WEBAPP_URL` should be your HTTPS URL (what you get from `hstack tailscale url`).
 - Logs live under:
   - default identity: `~/.happier/stacks/<stack>/cli/logs/`
   - named identities: `~/.happier/stacks/<stack>/cli-identities/<identity>/logs/`

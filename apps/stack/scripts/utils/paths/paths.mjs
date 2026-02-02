@@ -21,7 +21,7 @@ const PRIMARY_HOME_DIR = join(homedir(), '.happier-stack');
 // - packages/app    (Happier UI)
 // - packages/cli    (CLI + daemon)
 // - packages/server (server)
-const HAPPY_MONOREPO_COMPONENTS = new Set(['happy', 'happy-cli', 'happy-server', 'happy-server-light']);
+const HAPPY_MONOREPO_COMPONENTS = new Set(['happier-ui', 'happier-cli', 'happier-server', 'happier-server-light']);
 
 const HAPPY_MONOREPO_LAYOUTS = {
   apps: {
@@ -33,11 +33,11 @@ const HAPPY_MONOREPO_LAYOUTS = {
       ['apps', 'server', 'package.json'],
     ],
     subdirByComponent: {
-      happy: 'apps/ui',
-      'happy-cli': 'apps/cli',
-      'happy-server': 'apps/server',
+      'happier-ui': 'apps/ui',
+      'happier-cli': 'apps/cli',
+      'happier-server': 'apps/server',
       // Server flavors share a single server package in the monorepo.
-      'happy-server-light': 'apps/server',
+      'happier-server-light': 'apps/server',
     },
   },
   packages: {
@@ -48,10 +48,10 @@ const HAPPY_MONOREPO_LAYOUTS = {
       ['packages', 'server', 'package.json'],
     ],
     subdirByComponent: {
-      happy: 'packages/app',
-      'happy-cli': 'packages/cli',
-      'happy-server': 'packages/server',
-      'happy-server-light': 'packages/server',
+      'happier-ui': 'packages/app',
+      'happier-cli': 'packages/cli',
+      'happier-server': 'packages/server',
+      'happier-server-light': 'packages/server',
     },
   },
 };

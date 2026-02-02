@@ -41,19 +41,19 @@ export function assertServerPrismaProviderMatches({ serverComponentName, serverD
   const provider = detectPrismaProvider(schemaText);
   if (!provider) return;
 
-  // Unified happy-server flavors:
+  // Unified happier-server flavors:
   // - full: prisma/schema.prisma (postgresql)
   // - light: prisma/sqlite/schema.prisma (sqlite) (legacy: prisma/schema.sqlite.prisma)
-  if (serverComponentName === 'happy-server-light') {
+  if (serverComponentName === 'happier-server-light') {
     for (const sqliteSchemaPath of sqliteSchemaPaths) {
       try {
         const sqliteSchemaText = readFileSync(sqliteSchemaPath, 'utf-8');
         const sqliteProvider = detectPrismaProvider(sqliteSchemaText);
         if (sqliteProvider && sqliteProvider !== 'sqlite') {
           throw new Error(
-            `[server] happy-server-light expects Prisma datasource provider \"sqlite\", but found \"${sqliteProvider}\" in:\n` +
+            `[server] happier-server-light expects Prisma datasource provider \"sqlite\", but found \"${sqliteProvider}\" in:\n` +
               `- ${sqliteSchemaPath}\n` +
-              `Fix: point happy-server-light at a checkout that includes sqlite support, or switch server flavor to happy-server.`
+              `Fix: point happier-server-light at a checkout that includes sqlite support, or switch server flavor to happier-server.`
           );
         }
         if (sqliteProvider === 'sqlite') {
@@ -67,20 +67,20 @@ export function assertServerPrismaProviderMatches({ serverComponentName, serverD
 
     if (provider !== 'sqlite') {
       throw new Error(
-        `[server] happy-server-light expects Prisma datasource provider \"sqlite\", but found \"${provider}\" in:\n` +
+        `[server] happier-server-light expects Prisma datasource provider \"sqlite\", but found \"${provider}\" in:\n` +
           `- ${schemaPath}\n` +
-          `This usually means you're pointing happy-server-light at a postgres-only happy-server checkout/PR.\n` +
-          `Fix: either switch server flavor to happy-server, or use a checkout that supports the light flavor (e.g. one that contains prisma/sqlite/schema.prisma or prisma/schema.sqlite.prisma).`
+          `This usually means you're pointing happier-server-light at a postgres-only happier-server checkout/PR.\n` +
+          `Fix: either switch server flavor to happier-server, or use a checkout that supports the light flavor (e.g. one that contains prisma/sqlite/schema.prisma or prisma/schema.sqlite.prisma).`
       );
     }
     return;
   }
 
-  if (serverComponentName === 'happy-server' && provider === 'sqlite') {
+  if (serverComponentName === 'happier-server' && provider === 'sqlite') {
     throw new Error(
-      `[server] happy-server expects Prisma datasource provider \"postgresql\", but found \"sqlite\" in:\n` +
+      `[server] happier-server expects Prisma datasource provider \"postgresql\", but found \"sqlite\" in:\n` +
         `- ${schemaPath}\n` +
-        `Fix: either switch server flavor to happy-server-light, or point happy-server at the full-server checkout.`
+        `Fix: either switch server flavor to happier-server-light, or point happier-server at the full-server checkout.`
     );
   }
 }

@@ -21,7 +21,7 @@ function runNode(args, { cwd, env }) {
 test('hstack stack new pins HAPPIER_STACK_REPO_DIR from --repo path', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-monorepo-spec-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-monorepo-spec-'));
 
   const workspaceDir = join(tmp, 'workspace');
   const storageDir = join(tmp, 'storage');
@@ -57,7 +57,7 @@ test('hstack stack new pins HAPPIER_STACK_REPO_DIR from --repo path', async () =
   };
 
   const res = await runNode(
-    [join(rootDir, 'scripts', 'stack.mjs'), 'new', stackName, `--repo=${monoRoot}`, '--server=happy-server-light', '--no-copy-auth', '--json'],
+    [join(rootDir, 'scripts', 'stack.mjs'), 'new', stackName, `--repo=${monoRoot}`, '--server=happier-server-light', '--no-copy-auth', '--json'],
     { cwd: rootDir, env },
   );
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);

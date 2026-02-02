@@ -159,12 +159,12 @@ async function main() {
   }
 
   const rootDir = getRootDir(import.meta.url);
-  const happyAppDir = getComponentDir(rootDir, 'happy');
-  const happyRepoDir = getComponentRepoDir(rootDir, 'happy');
-  await requireDir('happy', happyRepoDir);
+  const happyAppDir = getComponentDir(rootDir, 'happier-ui');
+  const happyRepoDir = getComponentRepoDir(rootDir, 'happier-ui');
+  await requireDir('happier-ui', happyRepoDir);
 
   // Ensure repo deps exist so app.config.js can be evaluated (plugins import @expo/config-plugins, etc).
-  await ensureDepsInstalled(happyRepoDir, 'happy');
+  await ensureDepsInstalled(happyRepoDir, 'happier-ui');
 
   // Passthrough args after "--" (for any subcommand).
   const sepIdx = argv.indexOf('--');

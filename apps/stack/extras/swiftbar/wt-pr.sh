@@ -7,8 +7,8 @@ set -euo pipefail
 #   ./wt-pr.sh <component> [stackName]
 #
 # Examples:
-#   ./wt-pr.sh happy
-#   ./wt-pr.sh happy-cli exp1
+#   ./wt-pr.sh happier-ui
+#   ./wt-pr.sh happier-cli exp1
 #
 # Notes:
 # - Uses an AppleScript prompt so it works well from SwiftBar without needing Terminal input.
@@ -45,7 +45,7 @@ if [[ -z "$COMPONENT" ]]; then
   COMPONENT="$(osascript <<'APPLESCRIPT'
 tell application "System Events"
   activate
-  set theChoice to choose from list {"happy", "happy-cli", "happy-server-light", "happy-server"} with title "hstack — Component" with prompt "Choose component:" default items {"happy"}
+  set theChoice to choose from list {"happier-ui", "happier-cli", "happier-server-light", "happier-server"} with title "hstack — Component" with prompt "Choose component:" default items {"happier-ui"}
   if theChoice is false then
     return ""
   end if

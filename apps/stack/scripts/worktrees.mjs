@@ -40,7 +40,7 @@ import { listAllStackNames } from './utils/stack/stacks.mjs';
 import { parseDotenv } from './utils/env/dotenv.mjs';
 import { bold, cyan, dim, green } from './utils/ui/ansi.mjs';
 
-const DEFAULT_REPO_COMPONENT = 'happy';
+const DEFAULT_REPO_COMPONENT = 'happier-ui';
 const REPO_DIR_ENV_KEY = 'HAPPIER_STACK_REPO_DIR';
 
 function getActiveStackName() {
@@ -1937,7 +1937,7 @@ async function main() {
     'cursor',
     'archive',
   ]);
-  const legacyComponents = new Set(['happy', 'happy-cli', 'happy-server-light', 'happy-server']);
+  const legacyComponents = new Set(['happier-ui', 'happier-cli', 'happier-server-light', 'happier-server']);
   const effectiveArgv = (() => {
     if (!commandsNeedingComponent.has(cmd)) return argv;
     const pos = argv.filter((a) => !a.startsWith('--'));

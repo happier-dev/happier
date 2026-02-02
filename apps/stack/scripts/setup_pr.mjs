@@ -594,8 +594,8 @@ async function main() {
         const cliHomeDir =
           (mergedEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim() ||
           join(baseDir, 'cli');
-        const cliDir = getComponentDir(rootDir, 'happy-cli', mergedEnv);
-        const cliBin = join(cliDir, 'bin', 'happy.mjs');
+        const cliDir = getComponentDir(rootDir, 'happier-cli', mergedEnv);
+        const cliBin = join(cliDir, 'bin', 'happier.mjs');
 
         const runtimeStatePath = getStackRuntimeStatePath(stackName);
         const st = await readStackRuntimeStateFile(runtimeStatePath);

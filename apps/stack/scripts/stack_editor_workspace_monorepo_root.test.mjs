@@ -10,7 +10,7 @@ import { writeStackCodeWorkspace } from './utils/stack/editor_workspace.mjs';
 test('stack code workspace groups monorepo components to the monorepo root', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-workspace-mono-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-workspace-mono-'));
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
@@ -35,7 +35,7 @@ test('stack code workspace groups monorepo components to the monorepo root', asy
     await writeFile(
       envPath,
       [
-        'HAPPIER_STACK_SERVER_COMPONENT=happy-server',
+        'HAPPIER_STACK_SERVER_COMPONENT=happier-server',
         `HAPPIER_STACK_REPO_DIR=${monoRoot}`,
         '',
       ].join('\n'),

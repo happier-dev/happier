@@ -27,7 +27,7 @@ test('resolveServerUiEnv returns empty when UI build dir is missing', () => {
   );
 });
 
-test('resolveServerUiEnv sets both canonical and legacy env keys when enabled', () => {
+test('resolveServerUiEnv sets both full and light env keys when enabled', () => {
   assert.deepEqual(
     resolveServerUiEnv({
       serveUi: true,
@@ -36,11 +36,10 @@ test('resolveServerUiEnv sets both canonical and legacy env keys when enabled', 
       uiBuildDirExists: true,
     }),
     {
-      HAPPY_SERVER_UI_DIR: '/tmp/ui',
-      HAPPY_SERVER_UI_PREFIX: '/ui',
-      HAPPY_SERVER_LIGHT_UI_DIR: '/tmp/ui',
-      HAPPY_SERVER_LIGHT_UI_PREFIX: '/ui',
+      HAPPIER_SERVER_UI_DIR: '/tmp/ui',
+      HAPPIER_SERVER_UI_PREFIX: '/ui',
+      HAPPIER_SERVER_LIGHT_UI_DIR: '/tmp/ui',
+      HAPPIER_SERVER_LIGHT_UI_PREFIX: '/ui',
     }
   );
 });
-

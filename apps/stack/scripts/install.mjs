@@ -21,7 +21,7 @@ import { createStepPrinter } from './utils/cli/progress.mjs';
  * Install/setup the local stack:
  * - ensure the Happier monorepo exists (optionally clone if missing)
  * - install dependencies where needed (yarn)
- * - build happy-cli (optional) and install `happier`/`hstack` shims under `<homeDir>/bin`
+ * - build happier-cli (optional) and install `happier`/`hstack` shims under `<homeDir>/bin`
  * - build the web UI bundle (so `run` can serve it)
  * - optional macOS autostart (LaunchAgent)
  */
@@ -103,7 +103,7 @@ async function ensureGitBranchCheckedOut({ repoDir, branch, label }) {
     } catch {
       throw new Error(
         `[local] ${label}: expected branch "${b}" to exist in ${repoDir}.\n` +
-          `[local] Fix: use --forks for happy-server-light (sqlite), or use --server=happy-server with --upstream.`
+          `[local] Fix: use --forks for happier-server-light (sqlite), or use --server=happier-server with --upstream.`
       );
     }
   }
@@ -206,10 +206,10 @@ async function interactiveWizard({ rootDir, defaults }) {
     const serverMode = await promptSelect(rl, {
       title: `${bold('Server flavor')}\n${dim('Pick the backend this stack should run. You can switch later with `hstack srv use ...`.')}`,
       options: [
-        { label: `${cyan('happy-server-light')} only (${green('recommended')})`, value: 'happy-server-light' },
-        { label: `${cyan('happy-server')} only — full server (Docker-managed infra)`, value: 'happy-server' },
+        { label: `${cyan('happier-server-light')} only (${green('recommended')})`, value: 'happier-server-light' },
+        { label: `${cyan('happier-server')} only — full server (Docker-managed infra)`, value: 'happier-server' },
       ],
-      defaultIndex: defaults.serverComponentName === 'happy-server' ? 1 : 0,
+      defaultIndex: defaults.serverComponentName === 'happier-server' ? 1 : 0,
     });
 
     // Setup/bootstrap is expected to be able to bring up a working workspace from scratch,
@@ -221,7 +221,7 @@ async function interactiveWizard({ rootDir, defaults }) {
       ? await promptSelect(rl, {
           title: isSandboxed()
             ? `${bold('Autostart')}\n${dim('Sandbox mode: this is global OS state; normally disabled in sandbox.')}`
-            : `${bold('Autostart')}\n${dim('Start Happy automatically at login?')}\n${dim(
+            : `${bold('Autostart')}\n${dim('Start Happier automatically at login?')}\n${dim(
                 process.platform === 'darwin' ? 'macOS: launchd LaunchAgent' : 'Linux: systemd --user service'
               )}`,
           options: [
@@ -282,7 +282,7 @@ async function main() {
       },
       text: [
         '[bootstrap] usage:',
-        '  hstack bootstrap [--forks|--upstream] [--server=happy-server|happy-server-light|both] [--json]',
+        '  hstack bootstrap [--forks|--upstream] [--server=happier-server|happier-server-light|both] [--json]',
         '  hstack bootstrap --interactive',
         '  hstack bootstrap --no-clone',
       ].join('\n'),
@@ -339,14 +339,14 @@ async function main() {
       await ensureCliBuilt(cliDir, { buildCli, quiet: false, env: process.env });
       return;
     }
-    steps.start('build happy-cli');
+    steps.start('build happier-cli');
     try {
       await ensureCliBuilt(cliDir, { buildCli, quiet: true, env: process.env });
-      steps.stop('✓', 'build happy-cli');
+      steps.stop('✓', 'build happier-cli');
     } catch (e) {
-      steps.stop('x', 'build happy-cli');
+      steps.stop('x', 'build happier-cli');
       // eslint-disable-next-line no-console
-      console.error('[bootstrap] happy-cli build failed. Re-running with full logs...');
+      console.error('[bootstrap] happier-cli build failed. Re-running with full logs...');
       await ensureCliBuilt(cliDir, { buildCli: true, quiet: false, env: process.env });
       throw e;
     }
@@ -397,7 +397,7 @@ async function main() {
   // Repo roots (clone locations)
   //
   // Happier-only: everything lives in a single monorepo checkout.
-  const uiRepoDir = getComponentRepoDir(rootDir, 'happy');
+  const uiRepoDir = getComponentRepoDir(rootDir, 'happier-ui');
 
   // Ensure UI exists first (monorepo anchor).
   await ensureComponentPresent({
@@ -412,9 +412,9 @@ async function main() {
   await ensureGitBranchCheckedOut({ repoDir: uiRepoDir, branch: 'main', label: 'monorepo' });
 
   // Package dirs (where we run installs/builds). Recompute after cloning UI.
-  const uiDir = getComponentDir(rootDir, 'happy');
-  const cliDir = getComponentDir(rootDir, 'happy-cli');
-  const serverFullDir = getComponentDir(rootDir, 'happy-server');
+  const uiDir = getComponentDir(rootDir, 'happier-ui');
+  const cliDir = getComponentDir(rootDir, 'happier-cli');
+  const serverFullDir = getComponentDir(rootDir, 'happier-server');
   const cliRepoDir = uiRepoDir;
   const serverFullRepoDir = uiRepoDir;
 
@@ -437,14 +437,14 @@ async function main() {
   // Install deps
   const skipUiDeps = flags.has('--no-ui-deps') || (process.env.HAPPIER_STACK_INSTALL_NO_UI_DEPS ?? '').trim() === '1';
   const skipCliDeps = flags.has('--no-cli-deps') || (process.env.HAPPIER_STACK_INSTALL_NO_CLI_DEPS ?? '').trim() === '1';
-  if (serverComponentName === 'both' || serverComponentName === 'happy-server-light' || serverComponentName === 'happy-server') {
-    await ensureDepsInstalledMaybeVerbose(serverFullDir, 'happy-server');
+  if (serverComponentName === 'both' || serverComponentName === 'happier-server-light' || serverComponentName === 'happier-server') {
+    await ensureDepsInstalledMaybeVerbose(serverFullDir, 'happier-server');
   }
   if (!skipUiDeps) {
-    await ensureDepsInstalledMaybeVerbose(uiDirFinal, 'happy');
+    await ensureDepsInstalledMaybeVerbose(uiDirFinal, 'happier-ui');
   }
   if (!skipCliDeps) {
-    await ensureDepsInstalledMaybeVerbose(cliDirFinal, 'happy-cli');
+    await ensureDepsInstalledMaybeVerbose(cliDirFinal, 'happier-cli');
   }
 
   // CLI build + link

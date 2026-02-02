@@ -8,15 +8,15 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { bold, cyan, dim, green } from './utils/ui/ansi.mjs';
 
 const FLAVORS = [
-  { label: `happy-server-light (${green('recommended')}) — simplest local install (serves UI)`, value: 'happy-server-light' },
-  { label: `happy-server — full server (Docker-managed infra)`, value: 'happy-server' },
+  { label: `happier-server-light (${green('recommended')}) — simplest local install (serves UI)`, value: 'happier-server-light' },
+  { label: `happier-server — full server (Docker-managed infra)`, value: 'happier-server' },
 ];
 
 function normalizeFlavor(raw) {
   const v = (raw ?? '').trim().toLowerCase();
   if (!v) return '';
-  if (v === 'light' || v === 'server-light' || v === 'happy-server-light') return 'happy-server-light';
-  if (v === 'server' || v === 'full' || v === 'happy-server') return 'happy-server';
+  if (v === 'light' || v === 'server-light' || v === 'happier-server-light' || v === 'happy-server-light') return 'happier-server-light';
+  if (v === 'server' || v === 'full' || v === 'happier-server' || v === 'happy-server') return 'happier-server';
   return raw.trim();
 }
 
@@ -26,9 +26,9 @@ async function cmdUse({ rootDir, argv }) {
   const flavorRaw = positionals[1] ?? '';
   const flavor = normalizeFlavor(flavorRaw);
   if (!flavor) {
-    throw new Error('[server-flavor] usage: hstack srv use <happy-server-light|happy-server> [--json]');
+    throw new Error('[server-flavor] usage: hstack srv use <happier-server-light|happier-server> [--json]');
   }
-  if (!['happy-server-light', 'happy-server'].includes(flavor)) {
+  if (!['happier-server-light', 'happier-server'].includes(flavor)) {
     throw new Error(`[server-flavor] unknown flavor: ${flavor}`);
   }
 
@@ -76,7 +76,7 @@ async function cmdUseInteractive({ rootDir, argv }) {
 async function cmdStatus({ argv }) {
   const { flags } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
-  const flavor = process.env.HAPPIER_STACK_SERVER_COMPONENT?.trim() || 'happy-server-light';
+  const flavor = process.env.HAPPIER_STACK_SERVER_COMPONENT?.trim() || 'happier-server-light';
   printResult({ json, data: { flavor }, text: `[server-flavor] current: ${flavor}` });
 }
 
@@ -95,7 +95,7 @@ async function main() {
       text: [
         '[server-flavor] usage:',
         '  hstack srv status [--json]',
-        '  hstack srv use <happy-server-light|happy-server> [--json]',
+        '  hstack srv use <happier-server-light|happier-server> [--json]',
         '  hstack srv use --interactive [--json]',
         '',
         'notes:',

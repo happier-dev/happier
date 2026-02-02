@@ -50,7 +50,7 @@ ensure_launchctl_cache() {
 }
 
 check_launchagent_status() {
-  local label="${1:-com.happy.stacks}"
+  local label="${1:-com.happier.stacks}"
   local plist="${2:-$HOME/Library/LaunchAgents/${label}.plist}"
   if [[ ! -f "$plist" ]]; then
     echo "not_installed"

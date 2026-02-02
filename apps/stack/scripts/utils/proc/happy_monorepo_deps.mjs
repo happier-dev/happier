@@ -21,8 +21,8 @@ export async function ensureHappyMonorepoNestedDepsInstalled({
   }
 
   const candidates = [
-    { subdir: join('apps', 'cli'), label: 'happy-cli (monorepo)' },
-    { subdir: join('apps', 'server'), label: 'happy-server (monorepo)' },
+    { subdir: join('apps', 'cli'), label: 'happier-cli (monorepo)' },
+    { subdir: join('apps', 'server'), label: 'happier-server (monorepo)' },
   ];
 
   const ensured = [];

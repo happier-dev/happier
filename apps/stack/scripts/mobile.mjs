@@ -72,28 +72,28 @@ async function main() {
   }
 
   const rootDir = getRootDir(import.meta.url);
-  const happyDir = getComponentDir(rootDir, 'happy');
-  await requireDir('happy', happyDir);
-  await ensureDepsInstalled(happyDir, 'happy');
+  const uiRepoDir = getComponentDir(rootDir, 'happier-ui');
+  await requireDir('happier-ui', uiRepoDir);
+  await ensureDepsInstalled(uiRepoDir, 'happier-ui');
 
   // Happy monorepo layouts (historical):
   // - legacy: <happyDir>/expo-app (split-repo era)
   // - current: <happyDir>/apps/ui (monorepo packages/)
   //
   // `hstack mobile` should operate on the Expo project root, not the monorepo root.
-  const packagesAppDir = join(happyDir, 'apps', 'ui');
-  const legacyExpoAppDir = join(happyDir, 'expo-app');
+  const packagesAppDir = join(uiRepoDir, 'apps', 'ui');
+  const legacyExpoAppDir = join(uiRepoDir, 'expo-app');
   const uiDir = existsSync(join(packagesAppDir, 'app.config.js'))
     ? packagesAppDir
     : existsSync(join(legacyExpoAppDir, 'package.json'))
       ? legacyExpoAppDir
-      : happyDir;
+      : uiRepoDir;
 
   async function readXcdeviceList() {
     if (process.platform !== 'darwin') {
       return [];
     }
-    const raw = await runCapture('xcrun', ['xcdevice', 'list'], { cwd: happyDir, env: process.env });
+    const raw = await runCapture('xcrun', ['xcdevice', 'list'], { cwd: uiRepoDir, env: process.env });
     const start = raw.indexOf('[');
     const jsonText = start >= 0 ? raw.slice(start) : raw;
     const parsed = JSON.parse(jsonText);

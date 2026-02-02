@@ -6,7 +6,7 @@ import { resolveCommandPath } from './utils/proc/commands.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getHappyStacksHomeDir, getRootDir, getWorkspaceDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { killPortListeners } from './utils/net/ports.mjs';
 import { getServerComponentName } from './utils/server/server.mjs';
-import { fetchHappyHealth } from './utils/server/server.mjs';
+import { fetchHappierHealth } from './utils/server/server.mjs';
 import { daemonStatusSummary } from './daemon.mjs';
 import { tailscaleServeStatus } from './tailscale.mjs';
 import { homedir } from 'node:os';
@@ -49,7 +49,7 @@ async function fetchHealth(url) {
   };
 
   // Prefer /health when available, but fall back to / (matches waitForServerReady).
-  const healthRaw = await fetchHappyHealth(url);
+  const healthRaw = await fetchHappierHealth(url);
   const health = { ok: healthRaw.ok, status: healthRaw.status, body: healthRaw.text ? healthRaw.text.trim() : null };
   if (health.ok) {
     return health;
@@ -67,19 +67,19 @@ async function main() {
   const fix = flags.has('--fix');
   const json = wantsJson(argv, { flags });
 
-  if (wantsHelp(argv, { flags })) {
-    printResult({
-      json,
-      data: { flags: ['--fix', '--server=happy-server|happy-server-light'], json: true },
-      text: [
-        '',
-        banner('doctor', { subtitle: 'Diagnose common local setup failure modes.' }),
-        '',
-        sectionTitle('Usage'),
-        bullets([
-          `${dim('recommended:')} ${cmd('hstack doctor')} ${dim('[--fix] [--json]')}`,
-          `${dim('direct:')} ${cmd('node scripts/doctor.mjs')} ${dim('[--fix] [--server=happy-server|happy-server-light] [--json]')}`,
-        ]),
+	  if (wantsHelp(argv, { flags })) {
+	    printResult({
+	      json,
+	      data: { flags: ['--fix', '--server=happier-server|happier-server-light'], json: true },
+	      text: [
+	        '',
+	        banner('doctor', { subtitle: 'Diagnose common local setup failure modes.' }),
+	        '',
+	        sectionTitle('Usage'),
+	        bullets([
+	          `${dim('recommended:')} ${cmd('hstack doctor')} ${dim('[--fix] [--json]')}`,
+	          `${dim('direct:')} ${cmd('node scripts/doctor.mjs')} ${dim('[--fix] [--server=happier-server|happier-server-light] [--json]')}`,
+	        ]),
         '',
         sectionTitle('Notes'),
         bullets([
@@ -117,14 +117,14 @@ async function main() {
     ? process.env.HAPPIER_STACK_UI_BUILD_DIR.trim()
     : join(autostart.baseDir, 'ui');
 
-  const serverComponentName = getServerComponentName({ kv: argsKv });
-  if (serverComponentName === 'both') {
-    throw new Error(`[doctor] --server=both is not supported (pick one: happy-server-light or happy-server)`);
-  }
+	  const serverComponentName = getServerComponentName({ kv: argsKv });
+	  if (serverComponentName === 'both') {
+	    throw new Error(`[doctor] --server=both is not supported (pick one: happier-server-light or happier-server)`);
+	  }
 
-  const serverDir = getComponentDir(rootDir, serverComponentName);
-  const cliDir = getComponentDir(rootDir, 'happy-cli');
-  const cliBin = join(cliDir, 'bin', 'happy.mjs');
+	  const serverDir = getComponentDir(rootDir, serverComponentName);
+	  const cliDir = getComponentDir(rootDir, 'happier-cli');
+	  const cliBin = join(cliDir, 'bin', 'happier.mjs');
 
   assertServerComponentDirMatches({ rootDir, serverComponentName, serverDir });
 

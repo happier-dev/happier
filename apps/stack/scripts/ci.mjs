@@ -55,7 +55,7 @@ async function cmdAct({ argv }) {
   const invokedCwd = getInvokedCwd(process.env);
   const happyRoot = findHappyMonorepoRoot(invokedCwd);
   if (!happyRoot) {
-    throw new Error('[ci] could not find Happy monorepo root from cwd; run from inside the happy worktree (monorepo root)');
+    throw new Error('[ci] could not find Happier monorepo root from cwd; run from inside the happier worktree (monorepo root)');
   }
 
   const runner = join(happyRoot, 'scripts', 'ci', 'run-act-tests.sh');

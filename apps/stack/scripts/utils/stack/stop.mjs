@@ -12,8 +12,8 @@ import { coercePort } from '../server/port.mjs';
 
 function resolveServerComponentFromStackEnv(env) {
   const v =
-    (env.HAPPIER_STACK_SERVER_COMPONENT ?? '').toString().trim() || 'happy-server-light';
-  return v === 'happy-server' ? 'happy-server' : 'happy-server-light';
+    (env.HAPPIER_STACK_SERVER_COMPONENT ?? '').toString().trim() || 'happier-server-light';
+  return v === 'happier-server' ? 'happier-server' : 'happier-server-light';
 }
 
 async function daemonControlPost({ httpPort, path, body = {} }) {
@@ -37,7 +37,7 @@ async function daemonControlPost({ httpPort, path, body = {} }) {
 }
 
 async function stopDaemonTrackedSessions({ cliHomeDir, json }) {
-  // Read daemon state file written by happy-cli; needed to call control server (/list, /stop-session).
+  // Read daemon state file written by happier-cli; needed to call control server (/list, /stop-session).
   const statePath = join(cliHomeDir, 'daemon.state.json');
   if (!existsSync(statePath)) {
     return { ok: true, skipped: true, reason: 'missing_state', stoppedSessionIds: [] };
@@ -135,10 +135,10 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
 
   const serverComponent = resolveServerComponentFromStackEnv(env);
   const port = coercePort(env.HAPPIER_STACK_SERVER_PORT);
-  const backendPort = coercePort(env.HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT);
+  const backendPort = coercePort(env.HAPPIER_STACK_SERVER_BACKEND_PORT);
   const cliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(baseDir, 'cli')).toString();
-  const cliDir = getComponentDir(rootDir, 'happy-cli', env);
-  const cliBin = join(cliDir, 'bin', 'happy.mjs');
+  const cliDir = getComponentDir(rootDir, 'happier-cli', env);
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
   const envPath = (env.HAPPIER_STACK_ENV_FILE ?? '').toString();
 
   // Preferred: stop stack-started processes (by PID) recorded in stack.runtime.json.
@@ -216,14 +216,14 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
   void port;
 
   const managed = (env.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0';
-  if (!noDocker && serverComponent === 'happy-server' && managed) {
+  if (!noDocker && serverComponent === 'happier-server' && managed) {
     try {
       actions.infra = await stopHappyServerManagedInfra({ stackName, baseDir, removeVolumes: false });
     } catch (e) {
       actions.errors.push({ step: 'infra', error: e instanceof Error ? e.message : String(e) });
     }
   } else {
-    actions.infra = { ok: true, skipped: true, reason: noDocker ? 'no_docker' : 'not_managed_or_not_happy_server' };
+    actions.infra = { ok: true, skipped: true, reason: noDocker ? 'no_docker' : 'not_managed_or_not_happier_server' };
   }
 
   // Last resort: sweep any remaining processes that still carry this stack env file in their environment.

@@ -9,12 +9,12 @@ export function getCliHomeDirFromEnvOrDefault({ stackBaseDir, env }) {
 }
 
 export function getServerLightDataDirFromEnvOrDefault({ stackBaseDir, env }) {
-  const fromEnv = (env?.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').trim();
+  const fromEnv = (env?.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').trim();
   return fromEnv || join(stackBaseDir, 'server-light');
 }
 
 export function resolveCliHomeDir(env = process.env) {
-  const fromExplicit = (env.HAPPY_HOME_DIR ?? '').trim();
+  const fromExplicit = (env.HAPPIER_HOME_DIR ?? '').trim();
   if (fromExplicit) {
     return expandHome(fromExplicit);
   }

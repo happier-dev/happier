@@ -49,7 +49,7 @@ async function resolveExpoWebappUrlForAuth({ rootDir, stackName, timeoutMs }) {
       const { envPath } = resolveStackEnvPath(stackName);
       const stackEnv = await readEnvObjectFromFile(envPath);
       const merged = { ...process.env, ...stackEnv };
-      return resolve(getComponentDir(rootDir, 'happy', merged));
+      return resolve(getComponentDir(rootDir, 'happier-ui', merged));
     } catch {
       return '';
     }
@@ -217,7 +217,7 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
         try {
           const { envPath } = resolveStackEnvPath(stackName);
           const stackEnv = await readEnvObjectFromFile(envPath);
-          const uiDir = getComponentDir(rootDir, 'happy', { ...process.env, ...stackEnv });
+          const uiDir = getComponentDir(rootDir, 'happier-ui', { ...process.env, ...stackEnv });
           const symlinked = uiDir ? await detectSymlinkedNodeModules({ worktreeDir: uiDir }) : false;
           if (symlinked) {
             hint =
@@ -300,7 +300,7 @@ export async function resolveStackWebappUrlForAuth({ rootDir, stackName, env = p
     );
     const parsed = JSON.parse(String(raw ?? '').trim());
     const cmd = typeof parsed?.cmd === 'string' ? parsed.cmd : '';
-    const url = extractEnvVar(cmd, 'HAPPY_WEBAPP_URL');
+    const url = extractEnvVar(cmd, 'HAPPIER_WEBAPP_URL');
     return url ? await preferStackLocalhostUrl(url, { stackName }) : '';
   } catch {
     return '';

@@ -225,7 +225,7 @@ export async function ensureDepsInstalled(dir, label, { quiet = false, env: envI
 }
 
 export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: envIn = process.env } = {}) {
-  await ensureDepsInstalled(cliDir, 'happy-cli', { quiet, env: envIn });
+  await ensureDepsInstalled(cliDir, 'happier-cli', { quiet, env: envIn });
   if (!buildCli) {
     return { built: false, reason: 'disabled' };
   }
@@ -238,7 +238,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
   const modeRaw = (process.env.HAPPIER_STACK_CLI_BUILD_MODE ?? 'auto').trim().toLowerCase();
   const mode = modeRaw === 'always' || modeRaw === 'auto' || modeRaw === 'never' ? modeRaw : 'auto';
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-  const buildStatePath = resolveBuildStatePath({ label: 'happy-cli', dir: cliDir });
+  const buildStatePath = resolveBuildStatePath({ label: 'happier-cli', dir: cliDir });
   const gitSig = await computeGitWorktreeSignature(cliDir);
   const prev = await readJsonIfExists(buildStatePath);
 
@@ -265,17 +265,17 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
 
   if (!quiet) {
     // eslint-disable-next-line no-console
-    console.log('[local] building happy-cli...');
+    console.log('[local] building happier-cli...');
   }
   const pm = await getComponentPm(cliDir, envIn);
   await run(pm.cmd, ['build'], { cwd: cliDir, env: envIn, stdio: quiet ? 'ignore' : 'inherit' });
 
-  // Sanity check: happy-cli daemon entrypoint must exist after a successful build.
+  // Sanity check: happier-cli daemon entrypoint must exist after a successful build.
   // Without this, watch-based rebuilds can restart the daemon into a MODULE_NOT_FOUND crash,
   // which looks like the UI "dies out of nowhere" even though the root cause is missing build output.
   if (!(await pathExists(distEntrypoint))) {
     throw new Error(
-      `[local] happy-cli build finished but did not produce expected entrypoint.\n` +
+      `[local] happier-cli build finished but did not produce expected entrypoint.\n` +
         `Expected: ${distEntrypoint}\n` +
         `Fix: run the component build directly and inspect its output:\n` +
         `  cd "${cliDir}" && ${pm.cmd} build`
@@ -286,7 +286,7 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
   const nowSig = gitSig ?? (await computeGitWorktreeSignature(cliDir));
   if (nowSig) {
     await writeJsonAtomic(buildStatePath, {
-      label: 'happy-cli',
+      label: 'happier-cli',
       dir: resolve(cliDir),
       signature: nowSig.signature,
       head: nowSig.head,

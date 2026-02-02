@@ -118,8 +118,8 @@ swiftbar_repo_key_from_path() {
   local workspace
   workspace="$(resolve_workspace_dir)"
   if [[ "$p" == "${workspace}/main"* || "$p" == "${workspace}/dev"* || "$p" == "${workspace}/pr/"* || "$p" == "${workspace}/local/"* || "$p" == "${workspace}/tmp/"* ]]; then
-    # Kept as a stable identifier for older renderers; effectively "the monorepo".
-    echo "happy"
+    # Kept as a stable identifier for renderers; effectively "the monorepo".
+    echo "happier"
     return
   fi
 
@@ -367,7 +367,7 @@ resolve_stacks_storage_root() {
     return
   fi
 
-  # In sandbox mode, avoid falling back to the user's real ~/.happy/stacks.
+  # In sandbox mode, avoid falling back to the user's real ~/.happier/stacks.
   if swiftbar_is_sandboxed; then
     echo "${HAPPIER_STACK_STORAGE_DIR:-${HAPPIER_STACK_SANDBOX_DIR%/}/storage}"
     return
@@ -687,7 +687,7 @@ resolve_main_server_component() {
     return
   fi
 
-  echo "happy-server-light"
+  echo "happier-server-light"
 }
 
 resolve_menubar_mode() {

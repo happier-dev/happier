@@ -23,7 +23,7 @@ async function main() {
         '',
         'notes:',
         '  - This runs the monorepo CLI component (apps/cli) with stack env defaults.',
-        '  - It auto-fills HAPPY_HOME_DIR / HAPPY_SERVER_URL / HAPPY_WEBAPP_URL when missing.',
+        '  - It auto-fills HAPPIER_HOME_DIR / HAPPIER_SERVER_URL / HAPPIER_WEBAPP_URL when missing.',
       ].join('\n'),
     });
     return;
@@ -39,7 +39,7 @@ async function main() {
 
   const cliHomeDir = resolveCliHomeDir();
 
-  const cliDir = getComponentDir(rootDir, 'happy-cli');
+  const cliDir = getComponentDir(rootDir, 'happier-cli');
   const entrypoint = join(cliDir, 'dist', 'index.mjs');
   if (!existsSync(entrypoint)) {
     console.error(`[happier] missing CLI build at: ${entrypoint}`);
@@ -48,9 +48,9 @@ async function main() {
   }
 
   const env = { ...process.env };
-  env.HAPPY_HOME_DIR = env.HAPPY_HOME_DIR || cliHomeDir;
-  env.HAPPY_SERVER_URL = env.HAPPY_SERVER_URL || internalServerUrl;
-  env.HAPPY_WEBAPP_URL = env.HAPPY_WEBAPP_URL || publicServerUrl;
+  env.HAPPIER_HOME_DIR = env.HAPPIER_HOME_DIR || cliHomeDir;
+  env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
+  env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
 
   const res = spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', entrypoint, ...argv], {
     stdio: 'inherit',
@@ -74,4 +74,3 @@ main().catch((err) => {
   }
   process.exit(1);
 });
-

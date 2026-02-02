@@ -14,11 +14,11 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
  * - installs `happier`/`hstack` shims under `<homeDir>/bin` (default: `~/.happier-stack/bin`) (recommended over `npm link`)
  *
  * Env:
- * - HAPPIER_STACK_CLI_BUILD=0 to skip building happy-cli
+ * - HAPPIER_STACK_CLI_BUILD=0 to skip building happier-cli
  * - HAPPIER_STACK_NPM_LINK=0 to skip shim installation
  *
  * Flags:
- * - --no-build: skip building happy-cli
+ * - --no-build: skip building happier-cli
  * - --no-link: skip shim installation
  */
 
@@ -40,7 +40,7 @@ async function main() {
   }
 
   const rootDir = getRootDir(import.meta.url);
-  const cliDir = getComponentDir(rootDir, 'happy-cli');
+  const cliDir = getComponentDir(rootDir, 'happier-cli');
 
   const buildCli = !flags.has('--no-build') && (process.env.HAPPIER_STACK_CLI_BUILD ?? '1') !== '0';
   const npmLinkCli = !flags.has('--no-link') && (process.env.HAPPIER_STACK_NPM_LINK ?? '1') !== '0';

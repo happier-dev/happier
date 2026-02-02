@@ -9,7 +9,7 @@ import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
 import { getCanonicalHomeDir } from './utils/env/config.mjs';
 import { ensureEnvLocalUpdated } from './utils/env/env_local.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
-import { waitForHappyHealthOk } from './utils/server/server.mjs';
+import { waitForHappierHealthOk } from './utils/server/server.mjs';
 import { tailscaleServeEnable, tailscaleServeHttpsUrlForInternalServerUrl } from './tailscale.mjs';
 import { getRuntimeDir } from './utils/paths/runtime.mjs';
 import { homedir } from 'node:os';
@@ -311,10 +311,6 @@ function getMainStacksAccessKeyPath() {
   return join(cliHomeDir, 'access.key');
 }
 
-function getLegacyHappyAccessKeyPath() {
-  return join(homedir(), '.happy', 'cli', 'access.key');
-}
-
 function getDevAuthStackAccessKeyPath(stackName = 'dev-auth') {
   const { baseDir, envPath } = resolveStackEnvPath(stackName);
   if (!existsSync(envPath)) return null;
@@ -324,16 +320,12 @@ function getDevAuthStackAccessKeyPath(stackName = 'dev-auth') {
 function detectAuthSources() {
   const devKeyPath = getDevAuthKeyPath();
   const mainAccessKeyPath = getMainStacksAccessKeyPath();
-  const legacyAccessKeyPath = getLegacyHappyAccessKeyPath();
   const devAuthAccessKeyPath = getDevAuthStackAccessKeyPath('dev-auth');
-  const allowLegacy = !isSandboxed() || sandboxAllowsGlobalSideEffects();
   return {
     devKeyPath,
     hasDevKey: existsSync(devKeyPath),
     mainAccessKeyPath,
     hasMainAccessKey: existsSync(mainAccessKeyPath),
-    legacyAccessKeyPath,
-    hasLegacyAccessKey: allowLegacy && existsSync(legacyAccessKeyPath),
     devAuthAccessKeyPath,
     hasDevAuthAccessKey: Boolean(devAuthAccessKeyPath && existsSync(devAuthAccessKeyPath)),
   };
@@ -526,7 +518,7 @@ async function cmdSetup({ rootDir, argv }) {
 	        profiles: ['selfhost', 'dev'],
 	        flags: [
 	          '--profile=selfhost|dev',
-	          '--server=happy-server-light|happy-server',
+	          '--server=happier-server-light|happier-server',
 	          '--server-flavor=light|full',
 	          '--happy-repo=<owner/repo|url>        # override the monorepo clone source',
 	          '--workspace-dir=/absolute/path   # dev profile only',
@@ -542,19 +534,19 @@ async function cmdSetup({ rootDir, argv }) {
           '--json',
         ],
       },
-      text: [
-        '[setup] usage:',
-        '  hstack setup',
-        '  hstack setup --profile=selfhost',
-        '  hstack setup --profile=dev',
-        '  hstack setup --profile=dev --workspace-dir=~/Development/happy',
-        '  hstack setup --happy-repo=happier-dev/happier',
-        '  hstack tools setup-pr --repo=<pr-url|number>',
-        '  hstack setup --auth',
-        '  hstack setup --no-auth',
-        '',
+	      text: [
+	        '[setup] usage:',
+	        '  hstack setup',
+	        '  hstack setup --profile=selfhost',
+	        '  hstack setup --profile=dev',
+	        '  hstack setup --profile=dev --workspace-dir=~/Development/happier',
+	        '  hstack setup --happy-repo=happier-dev/happier',
+	        '  hstack tools setup-pr --repo=<pr-url|number>',
+	        '  hstack setup --auth',
+	        '  hstack setup --no-auth',
+	        '',
 	        'notes:',
-	        '  - selfhost profile is a guided installer for running Happy locally (optionally with Tailscale + autostart).',
+	        '  - selfhost profile is a guided installer for running Happier locally (optionally with Tailscale + autostart).',
 	        '  - dev profile prepares a development workspace (bootstrap wizard + optional dev tooling).',
 	        '  - for PR review, use `hstack tools review-pr` / `hstack tools setup-pr`.',
 	        '  - server selection: use --server=... or the shorthand --server-flavor=light|full',
@@ -570,7 +562,7 @@ async function cmdSetup({ rootDir, argv }) {
       return await promptSelect(rl, {
         title: bold(`✨ ${cyan('hstack')} setup ✨\n\nWhat is your goal?`),
         options: [
-          { label: `${cyan('Self-host')}: use Happy on this machine`, value: 'selfhost' },
+          { label: `${cyan('Self-host')}: use Happier on this machine`, value: 'selfhost' },
           { label: `${cyan('Development')}: worktrees + stacks + contributor workflows`, value: 'dev' },
         ],
         defaultIndex: 0,
@@ -630,10 +622,10 @@ async function cmdSetup({ rootDir, argv }) {
       '',
       bold(header),
       profile === 'selfhost'
-        ? dim('Run Happy locally (optionally with Tailscale + autostart).')
+        ? dim('Run Happier locally (optionally with Tailscale + autostart).')
         : dim('Prepare a contributor workspace (repo + worktrees + stacks).'),
       '',
-      bold('How Happy runs locally:'),
+      bold('How Happier runs locally:'),
       profile === 'selfhost'
         ? [
             `- ${cyan('server')}: stores sessions + serves the API`,
@@ -653,10 +645,12 @@ async function cmdSetup({ rootDir, argv }) {
         ? [
             `- ${cyan('init')}: set up hstack home + shims`,
             `- ${cyan('bootstrap')}: clone/install the repo`,
-            `- ${cyan('start')}: start Happy now (recommended)`,
+            `- ${cyan('start')}: start Happier now (recommended)`,
             `- ${cyan('login')}: guided login (recommended)`,
             '',
-            dim(`Tip: ${cyan('happy-server-light')} is the simplest local install (no Docker). ${cyan('happy-server')} needs Docker (Postgres/Redis/Minio).`),
+            dim(
+              `Tip: ${cyan('happier-server-light')} is the simplest local install (no Docker). ${cyan('happier-server')} needs Docker (Postgres/Redis/Minio).`,
+            ),
           ]
         : [
             `- ${cyan('workspace')}: choose where the repo + worktrees live`,
@@ -686,49 +680,49 @@ async function cmdSetup({ rootDir, argv }) {
 	  // `--server=...` always wins when both are specified.
 	  const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
 	  if (!kv.get('--server') && serverFlavorFromArg) {
-	    if (serverFlavorFromArg === 'light') kv.set('--server', 'happy-server-light');
-	    else if (serverFlavorFromArg === 'full') kv.set('--server', 'happy-server');
+	    if (serverFlavorFromArg === 'light') kv.set('--server', 'happier-server-light');
+	    else if (serverFlavorFromArg === 'full') kv.set('--server', 'happier-server');
 	    else throw new Error(`[setup] invalid --server-flavor=${serverFlavorFromArg} (expected: light|full)`);
 	  }
 
 	  const serverFromArg = normalizeServerComponent(kv.get('--server'));
-	  let serverComponent = serverFromArg || normalizeServerComponent(process.env.HAPPIER_STACK_SERVER_COMPONENT) || 'happy-server-light';
+	  let serverComponent = serverFromArg || normalizeServerComponent(process.env.HAPPIER_STACK_SERVER_COMPONENT) || 'happier-server-light';
   if (profile === 'selfhost' && interactive && !serverFromArg) {
     const docker = await detectDockerSupport();
     if (!docker.installed) {
-      serverComponent = 'happy-server-light';
+      serverComponent = 'happier-server-light';
       // eslint-disable-next-line no-console
-      console.log(`${green('✓')} Server: ${cyan('happy-server-light')} ${dim('(Docker not detected; simplest local install)')}`);
+      console.log(`${green('✓')} Server: ${cyan('happier-server-light')} ${dim('(Docker not detected; simplest local install)')}`);
     } else if (!docker.running) {
-      serverComponent = 'happy-server-light';
+      serverComponent = 'happier-server-light';
       // eslint-disable-next-line no-console
       console.log(
-        `${green('✓')} Server: ${cyan('happy-server-light')} ${dim('(Docker detected but not running; using simplest option)')}`
+        `${green('✓')} Server: ${cyan('happier-server-light')} ${dim('(Docker detected but not running; using simplest option)')}`
       );
       // eslint-disable-next-line no-console
-      console.log(dim(`Tip: start Docker Desktop, then re-run setup if you want ${cyan('happy-server')} (full server).`));
+      console.log(dim(`Tip: start Docker Desktop, then re-run setup if you want ${cyan('happier-server')} (full server).`));
     } else {
       serverComponent = await withRl(async (rl) => {
         const picked = await promptSelect(rl, {
           title: `${bold('Server flavor')}\n${dim('Pick the backend you want to run locally. You can switch later.')}`,
           options: [
-            { label: `happy-server-light (${green('recommended')}) — simplest local install (SQLite)`, value: 'happy-server-light' },
-            { label: `happy-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happy-server' },
+            { label: `happier-server-light (${green('recommended')}) — simplest local install (SQLite)`, value: 'happier-server-light' },
+            { label: `happier-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happier-server' },
           ],
-          defaultIndex: serverComponent === 'happy-server' ? 1 : 0,
+          defaultIndex: serverComponent === 'happier-server' ? 1 : 0,
         });
         return picked;
       });
     }
   }
   // If the user explicitly requested full server, enforce Docker availability.
-  if (profile === 'selfhost' && serverFromArg === 'happy-server') {
+  if (profile === 'selfhost' && serverFromArg === 'happier-server') {
     const docker = await detectDockerSupport();
     if (!docker.installed || !docker.running) {
       throw new Error(
-        `[setup] --server=happy-server requires Docker (Postgres/Redis/Minio).\n` +
+        `[setup] --server=happier-server requires Docker (Postgres/Redis/Minio).\n` +
           `Docker is ${!docker.installed ? 'not installed' : 'not running'}.\n` +
-          `Fix: use --server=happy-server-light (simplest), or start Docker and retry.`
+          `Fix: use --server=happier-server-light (simplest), or start Docker and retry.`
       );
     }
   }
@@ -829,7 +823,7 @@ async function cmdSetup({ rootDir, argv }) {
       } else {
         tailscaleWanted = await withRl(async (rl) => {
           const v = await promptSelect(rl, {
-            title: `${bold('Remote access')}\n${dim('Optional: use Tailscale Serve to get an HTTPS URL for Happy (secure, recommended for phone access).')}`,
+            title: `${bold('Remote access')}\n${dim('Optional: use Tailscale Serve to get an HTTPS URL for Happier (secure, recommended for phone access).')}`,
             options: [
               { label: `yes (${green('recommended for phone')}) — enable Tailscale Serve`, value: true },
               { label: 'no (default)', value: false },
@@ -863,7 +857,7 @@ async function cmdSetup({ rootDir, argv }) {
             const v = await promptSelect(rl, {
               title:
                 `${bold('Autostart')}\n` +
-                `${dim('Optional: start Happy automatically at login.')}` +
+                `${dim('Optional: start Happier automatically at login.')}` +
                 (detail ? `\n${dim(detail)}` : ''),
               options: [
                 { label: 'yes', value: true },
@@ -961,7 +955,7 @@ async function cmdSetup({ rootDir, argv }) {
 
     const lines = [];
     if (profile === 'selfhost') {
-      if (serverComponent === 'happy-server') {
+      if (serverComponent === 'happier-server') {
         lines.push(
           preflight.docker.installed && preflight.docker.running
             ? `${green('✓')} Docker: running`
@@ -1212,7 +1206,7 @@ async function cmdSetup({ rootDir, argv }) {
       await spawnDetachedNodeScript({ rootDir, rel: 'scripts/run.mjs', args: [] });
     }
 
-    const ready = await waitForHappyHealthOk(internalServerUrl, { timeoutMs: 90_000 });
+    const ready = await waitForHappierHealthOk(internalServerUrl, { timeoutMs: 90_000 });
     if (!ready) {
       // eslint-disable-next-line no-console
       console.log(`[setup] started, but server did not become healthy yet: ${internalServerUrl}`);
@@ -1227,7 +1221,7 @@ async function cmdSetup({ rootDir, argv }) {
       }
     }
 
-    // 8) Optional: auth login (runs interactive browser flow via happy-cli).
+    // 8) Optional: auth login (runs interactive browser flow via happier-cli).
     if (authWanted) {
       const cliHomeDir = mainCliHomeDirForEnvPath(resolveStackEnvPath('main').envPath);
       const accessKey = join(cliHomeDir, 'access.key');
@@ -1264,7 +1258,7 @@ async function cmdSetup({ rootDir, argv }) {
   }
   if (profile === 'selfhost' && authWanted && !startNow) {
     // eslint-disable-next-line no-console
-    console.log('[setup] auth: skipped because Happy was not started. When ready:');
+    console.log('[setup] auth: skipped because Happier was not started. When ready:');
     // eslint-disable-next-line no-console
     console.log('  hstack start');
     // eslint-disable-next-line no-console
@@ -1279,7 +1273,7 @@ async function cmdSetup({ rootDir, argv }) {
     console.log(green('✓ Setup complete'));
     // Keep this minimal for first-time users. Setup already started + opened the UI.
     // eslint-disable-next-line no-console
-    console.log(dim('Happy is ready. If you need help later, run:'));
+    console.log(dim('Happier is ready. If you need help later, run:'));
     // eslint-disable-next-line no-console
     console.log(`  ${yellow('hstack doctor')}`);
     // eslint-disable-next-line no-console

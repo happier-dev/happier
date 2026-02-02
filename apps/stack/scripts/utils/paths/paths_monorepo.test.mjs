@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { getComponentDir, getComponentRepoDir } from './paths.mjs';
 
 async function withTempRoot(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-paths-monorepo-'));
+  const dir = await mkdtemp(join(tmpdir(), 'happier-stacks-paths-monorepo-'));
   t.after(async () => {
     await rm(dir, { recursive: true, force: true });
   });
@@ -30,10 +30,10 @@ test('getComponentDir derives monorepo component package dirs from workspace/mai
   const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
 
   const monoRoot = await writeHappyMonorepoStub({ rootDir });
-  assert.equal(getComponentDir(rootDir, 'happy', env), join(monoRoot, 'apps', 'ui'));
-  assert.equal(getComponentDir(rootDir, 'happy-cli', env), join(monoRoot, 'apps', 'cli'));
-  assert.equal(getComponentDir(rootDir, 'happy-server', env), join(monoRoot, 'apps', 'server'));
-  assert.equal(getComponentDir(rootDir, 'happy-server-light', env), join(monoRoot, 'apps', 'server'));
+  assert.equal(getComponentDir(rootDir, 'happier-ui', env), join(monoRoot, 'apps', 'ui'));
+  assert.equal(getComponentDir(rootDir, 'happier-cli', env), join(monoRoot, 'apps', 'cli'));
+  assert.equal(getComponentDir(rootDir, 'happier-server', env), join(monoRoot, 'apps', 'server'));
+  assert.equal(getComponentDir(rootDir, 'happier-server-light', env), join(monoRoot, 'apps', 'server'));
 });
 
 test('getComponentRepoDir returns the shared monorepo root for monorepo components', async (t) => {
@@ -41,10 +41,10 @@ test('getComponentRepoDir returns the shared monorepo root for monorepo componen
   const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
 
   const monoRoot = await writeHappyMonorepoStub({ rootDir });
-  assert.equal(getComponentRepoDir(rootDir, 'happy', env), monoRoot);
-  assert.equal(getComponentRepoDir(rootDir, 'happy-cli', env), monoRoot);
-  assert.equal(getComponentRepoDir(rootDir, 'happy-server', env), monoRoot);
-  assert.equal(getComponentRepoDir(rootDir, 'happy-server-light', env), monoRoot);
+  assert.equal(getComponentRepoDir(rootDir, 'happier-ui', env), monoRoot);
+  assert.equal(getComponentRepoDir(rootDir, 'happier-cli', env), monoRoot);
+  assert.equal(getComponentRepoDir(rootDir, 'happier-server', env), monoRoot);
+  assert.equal(getComponentRepoDir(rootDir, 'happier-server-light', env), monoRoot);
 });
 
 test('getComponentDir normalizes HAPPIER_STACK_REPO_DIR that points inside the monorepo', async (t) => {
@@ -54,5 +54,5 @@ test('getComponentDir normalizes HAPPIER_STACK_REPO_DIR that points inside the m
   const monoRoot = await writeHappyMonorepoStub({ rootDir });
 
   env.HAPPIER_STACK_REPO_DIR = join(monoRoot, 'apps', 'cli', 'src');
-  assert.equal(getComponentDir(rootDir, 'happy-cli', env), join(monoRoot, 'apps', 'cli'));
+  assert.equal(getComponentDir(rootDir, 'happier-cli', env), join(monoRoot, 'apps', 'cli'));
 });

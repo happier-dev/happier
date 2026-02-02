@@ -7,10 +7,10 @@ import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded } from
 import { startLocalDaemonWithAuth } from '../../daemon.mjs';
 
 export async function ensureDevCliReady({ cliDir, buildCli }) {
-  await ensureDepsInstalled(cliDir, 'happy-cli');
+  await ensureDepsInstalled(cliDir, 'happier-cli');
   const res = await ensureCliBuilt(cliDir, { buildCli });
 
-  // Fail closed: dev mode must never start the daemon without a usable happy-cli build output.
+  // Fail closed: dev mode must never start the daemon without a usable happier-cli build output.
   // Even if the user disabled CLI builds globally (or build mode is "never"), missing dist will
   // cause an immediate MODULE_NOT_FOUND crash when spawning the daemon.
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
@@ -19,7 +19,7 @@ export async function ensureDevCliReady({ cliDir, buildCli }) {
     await ensureCliBuilt(cliDir, { buildCli: true });
     if (!existsSync(distEntrypoint)) {
       throw new Error(
-        `[local] happy-cli build output is missing.\n` +
+        `[local] happier-cli build output is missing.\n` +
           `Expected: ${distEntrypoint}\n` +
           `Fix: run the component build directly and inspect its output:\n` +
           `  cd "${cliDir}" && yarn build`
@@ -124,7 +124,7 @@ export function watchHappyCliAndRestartDaemon({
       inFlight = true;
       try {
         // eslint-disable-next-line no-console
-        console.log('[local] watch: happy-cli changed → rebuilding + restarting daemon...');
+        console.log('[local] watch: happier-cli changed → rebuilding + restarting daemon...');
         try {
           await ensureCliBuilt(cliDir, { buildCli });
         } catch (e) {
@@ -134,7 +134,7 @@ export function watchHappyCliAndRestartDaemon({
           //   and we must NOT crash the parent dev process. Keep watching for the next change.
           const msg = e instanceof Error ? e.stack || e.message : String(e);
           // eslint-disable-next-line no-console
-          console.error('[local] watch: happy-cli rebuild failed; keeping daemon running (will retry on next change).');
+          console.error('[local] watch: happier-cli rebuild failed; keeping daemon running (will retry on next change).');
           // eslint-disable-next-line no-console
           console.error(msg);
           return;
@@ -142,7 +142,7 @@ export function watchHappyCliAndRestartDaemon({
         const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
         if (!existsSync(distEntrypoint)) {
           console.warn(
-            `[local] watch: happy-cli build did not produce ${distEntrypoint}; refusing to restart daemon to avoid downtime.`
+            `[local] watch: happier-cli build did not produce ${distEntrypoint}; refusing to restart daemon to avoid downtime.`
           );
           return;
         }

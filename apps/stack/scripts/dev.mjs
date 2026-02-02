@@ -3,7 +3,7 @@ import { parseArgs } from './utils/cli/args.mjs';
 import { killProcessTree } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
 import { killPortListeners } from './utils/net/ports.mjs';
-import { getServerComponentName, isHappyServerRunning } from './utils/server/server.mjs';
+import { getServerComponentName, isHappierServerRunning } from './utils/server/server.mjs';
 import { requireDir } from './utils/proc/pm.mjs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -31,10 +31,10 @@ import { cmd, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
 import { isSandboxed } from './utils/env/sandbox.mjs';
 
-/**
- * Dev mode stack:
- * - happy-server-light
- * - happy-cli daemon
+ /**
+  * Dev mode stack:
+ * - happier-server-light
+ * - happier-cli daemon
  * - Expo web dev server (watch/reload)
  */
 
@@ -46,11 +46,11 @@ async function main() {
     printResult({
       json,
       data: {
-        flags: [
-          '--server=happy-server|happy-server-light',
-          '--server-flavor=light|full',
-          '--no-ui',
-          '--no-daemon',
+	        flags: [
+	          '--server=happier-server|happier-server-light',
+	          '--server-flavor=light|full',
+	          '--no-ui',
+	          '--no-daemon',
           '--restart',
           '--watch',
           '--no-watch',
@@ -63,13 +63,13 @@ async function main() {
         ],
         json: true,
       },
-      text: [
-        '[dev] usage:',
-        '  hstack dev [--server=happy-server|happy-server-light] [--server-flavor=light|full] [--restart] [--json]',
-        '  hstack dev --watch         # rebuild/restart happy-cli daemon on file changes (TTY default)',
-        '  hstack dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
-        '  hstack dev --no-browser    # do not open the UI in your browser automatically',
-        '  hstack dev --mobile        # also start Expo dev-client Metro for mobile',
+	      text: [
+	        '[dev] usage:',
+	        '  hstack dev [--server=happier-server|happier-server-light] [--server-flavor=light|full] [--restart] [--json]',
+	        '  hstack dev --watch         # rebuild/restart happier-cli daemon on file changes (TTY default)',
+	        '  hstack dev --no-watch      # disable watch mode (always disabled in non-interactive mode)',
+	        '  hstack dev --no-browser    # do not open the UI in your browser automatically',
+	        '  hstack dev --mobile        # also start Expo dev-client Metro for mobile',
         '  hstack dev --expo-tailscale # forward Expo to Tailscale interface for remote access',
         '  hstack dev --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
         '  note: --json prints the resolved config (dry-run) and exits.',
@@ -95,12 +95,12 @@ async function main() {
   // we use that checkout even if you never ran `hstack wt use`.
   //
   // In sandbox mode this would break isolation by pointing at your "real" checkout, so we disable it.
-  if (!isSandboxed()) {
-    const inferred = inferComponentFromCwd({
-      rootDir,
-      invokedCwd: getInvokedCwd(process.env),
-      components: ['happy', 'happy-cli', 'happy-server-light', 'happy-server'],
-    });
+	  if (!isSandboxed()) {
+	    const inferred = inferComponentFromCwd({
+	      rootDir,
+	      invokedCwd: getInvokedCwd(process.env),
+	      components: ['happier-ui', 'happier-cli', 'happier-server-light', 'happier-server'],
+	    });
     if (inferred) {
       // Stack env should win. Only infer from CWD when the repo dir isn't already configured.
       if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
@@ -111,17 +111,17 @@ async function main() {
 
   // Convenience alias: allow `--server-flavor=light|full` for parity with `stack pr` and `tools setup-pr`.
   // `--server=...` always wins when both are specified.
-  const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
-  if (!kv.get('--server') && serverFlavorFromArg) {
-    if (serverFlavorFromArg === 'light') kv.set('--server', 'happy-server-light');
-    else if (serverFlavorFromArg === 'full') kv.set('--server', 'happy-server');
-    else throw new Error(`[dev] invalid --server-flavor=${serverFlavorFromArg} (expected: light|full)`);
-  }
+	  const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
+	  if (!kv.get('--server') && serverFlavorFromArg) {
+	    if (serverFlavorFromArg === 'light') kv.set('--server', 'happier-server-light');
+	    else if (serverFlavorFromArg === 'full') kv.set('--server', 'happier-server');
+	    else throw new Error(`[dev] invalid --server-flavor=${serverFlavorFromArg} (expected: light|full)`);
+	  }
 
-  const serverComponentName = getServerComponentName({ kv });
-  if (serverComponentName === 'both') {
-    throw new Error(`[local] --server=both is not supported for dev (pick one: happy-server-light or happy-server)`);
-  }
+	  const serverComponentName = getServerComponentName({ kv });
+	  if (serverComponentName === 'both') {
+	    throw new Error(`[local] --server=both is not supported for dev (pick one: happier-server-light or happier-server)`);
+	  }
 
   const startUi = !flags.has('--no-ui');
   const startDaemon = !flags.has('--no-daemon');
@@ -129,11 +129,11 @@ async function main() {
   const noBrowser = flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
 
-  const serverDir = getComponentDir(rootDir, serverComponentName);
-  const uiDir = getComponentDir(rootDir, 'happy');
-  const cliDir = getComponentDir(rootDir, 'happy-cli');
+	  const serverDir = getComponentDir(rootDir, serverComponentName);
+	  const uiDir = getComponentDir(rootDir, 'happier-ui');
+	  const cliDir = getComponentDir(rootDir, 'happier-cli');
 
-  const cliBin = join(cliDir, 'bin', 'happy.mjs');
+	  const cliBin = join(cliDir, 'bin', 'happier.mjs');
   const autostart = getDefaultAutostartPaths();
   const baseEnv = { ...process.env };
   const stackCtx = resolveStackContext({ env: baseEnv, autostart });
@@ -191,23 +191,23 @@ async function main() {
   assertServerPrismaProviderMatches({ serverComponentName, serverDir });
 
   await requireDir(serverComponentName, serverDir);
-  await requireDir('happy', uiDir);
-  await requireDir('happy-cli', cliDir);
+  await requireDir('happier-ui', uiDir);
+  await requireDir('happier-cli', cliDir);
 
   const children = [];
   let shuttingDown = false;
 
-  // Ensure happy-cli is install+build ready before starting the daemon.
+  // Ensure happier-cli is install+build ready before starting the daemon.
   // Worktrees often don't have dist/ built yet, which causes MODULE_NOT_FOUND on dist/index.mjs.
   const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
   await ensureDevCliReady({ cliDir, buildCli });
 
-  // Watch mode (interactive only by default): rebuild happy-cli and restart daemon when code changes.
+  // Watch mode (interactive only by default): rebuild happier-cli and restart daemon when code changes.
   const watchEnabled =
     flags.has('--watch') || (!flags.has('--no-watch') && Boolean(process.stdin.isTTY && process.stdout.isTTY));
   const watchers = [];
 
-  const serverAlreadyRunning = await isHappyServerRunning(internalServerUrl);
+  const serverAlreadyRunning = await isHappierServerRunning(internalServerUrl);
   const daemonAlreadyRunning = startDaemon ? isDaemonRunning(cliHomeDir) : false;
 
   // Expo dev server state (worktree-scoped): single Expo process per stack/worktree.
@@ -272,13 +272,13 @@ async function main() {
   }
   console.log('');
   console.log(sectionTitle('Terminal usage'));
-  console.log(dim(`To run ${cyan('happy')} against this stack (and have sessions appear in the UI), export:`));
-  console.log(cmd(`export HAPPY_SERVER_URL="${internalServerUrl}"`));
-  console.log(cmd(`export HAPPY_HOME_DIR="${cliHomeDir}"`));
-  console.log(cmd(`export HAPPY_WEBAPP_URL="${publicServerUrl}"`));
+  console.log(dim(`To run ${cyan('happier')} against this stack (and have sessions appear in the UI), export:`));
+  console.log(cmd(`export HAPPIER_SERVER_URL="${internalServerUrl}"`));
+  console.log(cmd(`export HAPPIER_HOME_DIR="${cliHomeDir}"`));
+  console.log(cmd(`export HAPPIER_WEBAPP_URL="${publicServerUrl}"`));
 
   // Reliability before daemon start:
-  // - Ensure schema exists (server-light: prisma migrate deploy; happy-server: migrate deploy if tables missing)
+  // - Ensure schema exists (server-light: prisma migrate deploy; happier-server: migrate deploy if tables missing)
   // - Auto-seed from main only when needed (non-main + non-interactive default, and only if missing creds or 0 accounts)
   const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
   const accountProbe = await getAccountCountForServerComponent({
@@ -331,7 +331,7 @@ async function main() {
       if (!startUi) {
         throw new Error(
           `[local] auth: interactive login requires the web UI.\n` +
-            `Re-run without --no-ui, or set HAPPY_WEBAPP_URL to a reachable Happy UI for this stack.`
+            `Re-run without --no-ui, or set HAPPIER_WEBAPP_URL to a reachable Happier UI for this stack.`
         );
       }
       if (expoResEarly) return;
@@ -431,7 +431,7 @@ async function main() {
     isShuttingDown: () => shuttingDown,
   });
   if (serverWatcher) watchers.push(serverWatcher);
-  if (watchEnabled && stackMode && serverComponentName === 'happy-server' && !serverWatcher) {
+  if (watchEnabled && stackMode && serverComponentName === 'happier-server' && !serverWatcher) {
     console.warn(
       `[local] watch: server restart is disabled because the running server PID is unknown.\n` +
         `[local] watch: fix: re-run with --restart so hstack can (re)spawn the server and track its PID.`

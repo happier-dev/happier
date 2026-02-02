@@ -48,7 +48,7 @@ function findGitRoot(startDir, stopAtDir) {
 function resolveHappyMonorepoComponentFromPath({ monorepoRoot, absPath }) {
   const root = resolve(monorepoRoot);
   const abs = resolve(absPath);
-  const components = ['happy', 'happy-cli', 'happy-server'];
+  const components = ['happier-ui', 'happier-cli', 'happier-server'];
   for (const component of components) {
     const subdir = happyMonorepoSubdirForComponent(component, { monorepoRoot: root });
     if (!subdir) continue;
@@ -73,14 +73,14 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
   const workspaceDir = getWorkspaceDir(rootDir);
 
   // Monorepo-aware inference:
-  // If we're inside a happy monorepo checkout/worktree, infer which "logical component"
+  // If we're inside a Happier monorepo checkout/worktree, infer which "logical component"
   // (packages/happy-*/ or legacy expo-app/cli/server) the user is working in and return that repo root.
   //
   // This enables workflows like:
-  // - running `hstack dev` from inside <repo>/apps/cli (should infer happy-cli)
-  // - running from inside <workspace>/pr/.../apps/cli (should infer happy-cli)
-  // - running from inside <workspace>/local/.../apps/cli (should infer happy-cli)
-  // - running from inside <workspace>/tmp/.../apps/cli (should infer happy-cli)
+  // - running `hstack dev` from inside <repo>/apps/cli (should infer happier-cli)
+  // - running from inside <workspace>/pr/.../apps/cli (should infer happier-cli)
+  // - running from inside <workspace>/local/.../apps/cli (should infer happier-cli)
+  // - running from inside <workspace>/tmp/.../apps/cli (should infer happier-cli)
   {
     const categoryRoots = WORKTREE_CATEGORIES.map((c) => resolve(getWorktreeCategoryRoot(rootDir, c, process.env)));
     const monorepoScopes = Array.from(
@@ -106,11 +106,11 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
         return null;
       }
 
-      // If we are inside the monorepo root but not inside a known package dir, default to `happy`
+      // If we are inside the monorepo root but not inside a known package dir, default to `happier-ui`
       // (the UI) when the caller allows it. This keeps legacy behavior where running from the
       // repo root still "belongs" to the UI component.
-      if (list.includes('happy')) {
-        return { component: 'happy', repoDir: repoRoot };
+      if (list.includes('happier-ui')) {
+        return { component: 'happier-ui', repoDir: repoRoot };
       }
       return null;
     }
@@ -122,7 +122,7 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
   if (repoRoot && isHappyMonorepoRoot(repoRoot)) {
     const inferred = resolveHappyMonorepoComponentFromPath({ monorepoRoot: repoRoot, absPath: abs });
     if (inferred && list.includes(inferred.component)) return inferred;
-    if (list.includes('happy')) return { component: 'happy', repoDir: repoRoot };
+    if (list.includes('happier-ui')) return { component: 'happier-ui', repoDir: repoRoot };
   }
 
   return null;

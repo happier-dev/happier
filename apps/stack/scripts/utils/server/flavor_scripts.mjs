@@ -48,7 +48,7 @@ export function resolveServerLightPrismaClientImport({ serverDir }) {
 
 export function resolvePrismaClientImportForServerComponent({ serverComponentName, serverComponent, serverDir }) {
   const name = serverComponentName ?? serverComponent;
-  if (name === 'happy-server-light') {
+  if (name === 'happier-server-light') {
     return resolveServerLightPrismaClientImport({ serverDir });
   }
   return '@prisma/client';
@@ -57,11 +57,11 @@ export function resolvePrismaClientImportForServerComponent({ serverComponentNam
 export function resolveServerDevScript({ serverComponentName, serverDir, prismaPush }) {
   const scripts = readScripts(serverDir);
 
-  if (serverComponentName === 'happy-server') {
+  if (serverComponentName === 'happier-server') {
     return 'start';
   }
 
-  if (serverComponentName === 'happy-server-light') {
+  if (serverComponentName === 'happier-server-light') {
     const unified = isUnifiedHappyServerLight({ serverDir });
     if (unified) {
       // Server-light now relies on deterministic migrations (not db push).
@@ -73,7 +73,7 @@ export function resolveServerDevScript({ serverComponentName, serverDir, prismaP
       return hasScript(scripts, 'start:light') ? 'start:light' : 'start';
     }
 
-    // Legacy behavior: prefer `dev` for older happy-server-light checkouts.
+    // Legacy behavior: prefer `dev` for older server-light checkouts.
     if (prismaPush) {
       return hasScript(scripts, 'dev') ? 'dev' : 'start';
     }
@@ -87,7 +87,7 @@ export function resolveServerDevScript({ serverComponentName, serverDir, prismaP
 export function resolveServerStartScript({ serverComponentName, serverDir }) {
   const scripts = readScripts(serverDir);
 
-  if (serverComponentName === 'happy-server-light') {
+  if (serverComponentName === 'happier-server-light') {
     const unified = isUnifiedHappyServerLight({ serverDir });
     if (unified && hasScript(scripts, 'start:light')) {
       return 'start:light';

@@ -113,10 +113,10 @@ export function resolveAuthSeedFromEnv(env) {
 }
 
 export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort = false }) {
-  await ensureDepsInstalled(serverDir, 'happy-server-light', { env });
+  await ensureDepsInstalled(serverDir, 'happier-server-light', { env });
 
-  const dataDir = (env?.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
-  const filesDir = (env?.HAPPY_SERVER_LIGHT_FILES_DIR ?? '').toString().trim() || (dataDir ? join(dataDir, 'files') : '');
+  const dataDir = (env?.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
+  const filesDir = (env?.HAPPIER_SERVER_LIGHT_FILES_DIR ?? '').toString().trim() || (dataDir ? join(dataDir, 'files') : '');
   if (dataDir) {
     try {
       await mkdir(dataDir, { recursive: true });
@@ -132,7 +132,7 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
     }
   }
 
-  const probe = async () => await probeAccountCount({ serverComponentName: 'happy-server-light', serverDir, env });
+  const probe = async () => await probeAccountCount({ serverComponentName: 'happier-server-light', serverDir, env });
   const schemaArgs = resolveServerLightPrismaSchemaArgs({ serverDir });
 
   const isUnified = schemaArgs.length > 0;
@@ -221,10 +221,10 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
 }
 
 export async function ensureHappyServerSchemaReady({ serverDir, env }) {
-  await ensureDepsInstalled(serverDir, 'happy-server', { env });
+  await ensureDepsInstalled(serverDir, 'happier-server', { env });
 
   try {
-    const accountCount = await probeAccountCount({ serverComponentName: 'happy-server', serverDir, env });
+    const accountCount = await probeAccountCount({ serverComponentName: 'happier-server', serverDir, env });
     return { ok: true, migrated: false, accountCount };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -233,13 +233,13 @@ export async function ensureHappyServerSchemaReady({ serverDir, env }) {
     }
     // If tables are missing, try migrations (safe for postgres). Then re-probe.
     await pmExecBin({ dir: serverDir, bin: 'prisma', args: ['migrate', 'deploy'], env });
-    const accountCount = await probeAccountCount({ serverComponentName: 'happy-server', serverDir, env });
+    const accountCount = await probeAccountCount({ serverComponentName: 'happier-server', serverDir, env });
     return { ok: true, migrated: true, accountCount };
   }
 }
 
 export async function getAccountCountForServerComponent({ serverComponentName, serverDir, env, bestEffort = false }) {
-  if (serverComponentName === 'happy-server-light') {
+  if (serverComponentName === 'happier-server-light') {
     try {
       const ready = await ensureServerLightSchemaReady({ serverDir, env, bestEffort });
       if (!ready?.ok) {
@@ -251,7 +251,7 @@ export async function getAccountCountForServerComponent({ serverComponentName, s
       return { ok: false, accountCount: null, error: e instanceof Error ? e.message : String(e) };
     }
   }
-  if (serverComponentName === 'happy-server') {
+  if (serverComponentName === 'happier-server') {
     try {
       const ready = await ensureHappyServerSchemaReady({ serverDir, env });
       return { ok: true, accountCount: Number.isFinite(ready.accountCount) ? ready.accountCount : 0 };

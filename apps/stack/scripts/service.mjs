@@ -270,8 +270,8 @@ async function postStartDiagnostics() {
   }
   const { publicServerUrl: publicUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort: port });
 
-  const cliDir = getComponentDir(rootDir, 'happy-cli');
-  const cliBin = join(cliDir, 'bin', 'happy.mjs');
+  const cliDir = getComponentDir(rootDir, 'happier-cli');
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
 
   const accessKey = join(cliHomeDir, 'access.key');
   const stateFile = join(cliHomeDir, 'daemon.state.json');

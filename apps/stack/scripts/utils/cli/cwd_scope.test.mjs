@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { inferComponentFromCwd } from './cwd_scope.mjs';
 
 async function withTempRoot(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cwd-scope-'));
+  const dir = await mkdtemp(join(tmpdir(), 'happier-stacks-cwd-scope-'));
   t.after(async () => {
     await rm(dir, { recursive: true, force: true });
   });
@@ -36,8 +36,8 @@ test('inferComponentFromCwd resolves the stable monorepo checkout under <workspa
   await writeFile(join(repoRoot, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
 
   const invokedCwd = join(repoRoot, 'apps', 'ui');
-  const inferred = inferComponentFromCwd({ rootDir, invokedCwd, components: ['happy', 'happy-cli'] });
-  assert.deepEqual(inferred, { component: 'happy', repoDir: repoRoot });
+  const inferred = inferComponentFromCwd({ rootDir, invokedCwd, components: ['happier-ui', 'happier-cli'] });
+  assert.deepEqual(inferred, { component: 'happier-ui', repoDir: repoRoot });
 });
 
 test('inferComponentFromCwd resolves happier monorepo subpackages under <workspace>/main', async (t) => {
@@ -65,12 +65,12 @@ test('inferComponentFromCwd resolves happier monorepo subpackages under <workspa
   const inferred = inferComponentFromCwd({
     rootDir,
     invokedCwd,
-    components: ['happy', 'happy-cli', 'happy-server'],
+    components: ['happier-ui', 'happier-cli', 'happier-server'],
   });
-  assert.deepEqual(inferred, { component: 'happy-cli', repoDir: monoRoot });
+  assert.deepEqual(inferred, { component: 'happier-cli', repoDir: monoRoot });
 });
 
-test('inferComponentFromCwd resolves happy monorepo worktree roots under <workspace>/pr', async (t) => {
+test('inferComponentFromCwd resolves happier monorepo worktree roots under <workspace>/pr', async (t) => {
   const rootDir = await withTempRoot(t);
   const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
   process.env.HAPPIER_STACK_WORKSPACE_DIR = rootDir;
@@ -92,8 +92,8 @@ test('inferComponentFromCwd resolves happy monorepo worktree roots under <worksp
   await writeFile(join(repoRoot, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
 
   const invokedCwd = join(repoRoot, 'apps', 'cli', 'nested');
-  const inferred = inferComponentFromCwd({ rootDir, invokedCwd, components: ['happy', 'happy-cli', 'happy-server'] });
-  assert.deepEqual(inferred, { component: 'happy-cli', repoDir: repoRoot });
+  const inferred = inferComponentFromCwd({ rootDir, invokedCwd, components: ['happier-ui', 'happier-cli', 'happier-server'] });
+  assert.deepEqual(inferred, { component: 'happier-cli', repoDir: repoRoot });
 });
 
 test('inferComponentFromCwd returns null outside known component roots', async (t) => {
@@ -110,6 +110,6 @@ test('inferComponentFromCwd returns null outside known component roots', async (
 
   const invokedCwd = join(rootDir, 'somewhere', 'else');
   await mkdir(invokedCwd, { recursive: true });
-  const inferred = inferComponentFromCwd({ rootDir, invokedCwd, components: ['happy'] });
+  const inferred = inferComponentFromCwd({ rootDir, invokedCwd, components: ['happier-ui'] });
   assert.equal(inferred, null);
 });

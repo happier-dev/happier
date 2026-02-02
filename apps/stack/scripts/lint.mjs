@@ -10,19 +10,19 @@ import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs'
 
 const VALID_TARGETS = ['ui', 'cli', 'server'];
 
-function targetFromLegacyComponent(component) {
+function targetFromComponent(component) {
   const c = String(component ?? '').trim();
-  if (c === 'happy') return 'ui';
-  if (c === 'happy-cli') return 'cli';
-  if (c === 'happy-server' || c === 'happy-server-light') return 'server';
+  if (c === 'happier-ui' || c === 'happy') return 'ui';
+  if (c === 'happier-cli' || c === 'happy-cli') return 'cli';
+  if (c === 'happier-server' || c === 'happier-server-light' || c === 'happy-server' || c === 'happy-server-light') return 'server';
   return null;
 }
 
-function legacyComponentFromTarget(target) {
+function componentFromTarget(target) {
   const t = String(target ?? '').trim();
-  if (t === 'ui') return 'happy';
-  if (t === 'cli') return 'happy-cli';
-  if (t === 'server') return 'happy-server';
+  if (t === 'ui') return 'happier-ui';
+  if (t === 'cli') return 'happier-cli';
+  if (t === 'server') return 'happier-server';
   return null;
 }
 
@@ -35,8 +35,7 @@ function normalizeTargetsOrThrow(rawTargets) {
       const lower = t.toLowerCase();
       if (lower === 'all') return 'all';
       if (VALID_TARGETS.includes(lower)) return lower;
-      const legacy = targetFromLegacyComponent(lower);
-      return legacy ?? null;
+      return targetFromComponent(lower) ?? null;
     })
     .filter(Boolean);
 
@@ -87,21 +86,21 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const inferredLegacy =
+  const inferredComponent =
     positionals.length === 0
       ? inferComponentFromCwd({
           rootDir,
           invokedCwd: getInvokedCwd(process.env),
-          components: ['happy', 'happy-cli', 'happy-server'],
+          components: ['happier-ui', 'happier-cli', 'happier-server', 'happier-server-light', 'happy', 'happy-cli', 'happy-server', 'happy-server-light'],
         })
       : null;
-  if (inferredLegacy) {
+  if (inferredComponent) {
     if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
-      process.env.HAPPIER_STACK_REPO_DIR = inferredLegacy.repoDir;
+      process.env.HAPPIER_STACK_REPO_DIR = inferredComponent.repoDir;
     }
   }
 
-  const inferredTarget = inferredLegacy ? targetFromLegacyComponent(inferredLegacy.component) : null;
+  const inferredTarget = inferredComponent ? targetFromComponent(inferredComponent.component) : null;
   const requested = normalizeTargetsOrThrow(positionals.length ? positionals : inferredTarget ? [inferredTarget] : ['all']);
   const wantAll = requested.includes('all');
   const targets = wantAll ? VALID_TARGETS : requested;
@@ -113,7 +112,7 @@ async function main() {
       continue;
     }
 
-    const component = legacyComponentFromTarget(target);
+    const component = componentFromTarget(target);
     const dir = getComponentDir(rootDir, component);
     if (!(await pathExists(dir))) {
       results.push({ target, ok: false, skipped: false, dir, error: `missing target dir: ${dir}` });

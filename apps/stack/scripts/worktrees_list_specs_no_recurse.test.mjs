@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { listWorktreeSpecs } from './utils/git/worktrees.mjs';
 
 test('listWorktreeSpecs does not recurse into worktree roots', async () => {
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-list-wt-specs-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-list-wt-specs-'));
   try {
     const workspaceDir = join(tmp, 'workspace');
     const env = { ...process.env, HAPPIER_STACK_WORKSPACE_DIR: workspaceDir, HAPPIER_STACK_OWNER: 'test' };
@@ -23,7 +23,7 @@ test('listWorktreeSpecs does not recurse into worktree roots', async () => {
     await mkdir(nested, { recursive: true });
     await writeFile(join(nested, '.git'), 'gitdir: dummy\n', 'utf-8');
 
-    const specs = await listWorktreeSpecs({ rootDir, component: 'happy', env });
+    const specs = await listWorktreeSpecs({ rootDir, component: 'happier-ui', env });
     assert.ok(specs.includes('tmp/mono-wt'), specs.join('\n'));
     assert.ok(!specs.includes('tmp/mono-wt/nested'), specs.join('\n'));
   } finally {

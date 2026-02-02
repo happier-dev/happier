@@ -6,8 +6,8 @@ import { join } from 'node:path';
 
 import { getComponentDir } from './paths.mjs';
 
-test('getComponentDir prefers happy-server for happy-server-light when unified schema exists', async (t) => {
-  const rootDir = await mkdtemp(join(tmpdir(), 'happy-stacks-paths-server-flavors-'));
+test('getComponentDir prefers happier-server for happier-server-light when unified schema exists', async (t) => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'happier-stack-paths-server-flavors-'));
   t.after(async () => {
     await rm(rootDir, { recursive: true, force: true });
   });
@@ -26,11 +26,11 @@ test('getComponentDir prefers happy-server for happy-server-light when unified s
   await mkdir(join(serverDir, 'prisma', 'sqlite'), { recursive: true });
   await writeFile(join(serverDir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
 
-  assert.equal(getComponentDir(rootDir, 'happy-server-light', env), serverDir);
+  assert.equal(getComponentDir(rootDir, 'happier-server-light', env), serverDir);
 });
 
-test('getComponentDir resolves happy-server-light to the monorepo server package dir', async (t) => {
-  const rootDir = await mkdtemp(join(tmpdir(), 'happy-stacks-paths-server-flavors-'));
+test('getComponentDir resolves happier-server-light to the monorepo server package dir', async (t) => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'happier-stack-paths-server-flavors-'));
   t.after(async () => {
     await rm(rootDir, { recursive: true, force: true });
   });
@@ -44,5 +44,5 @@ test('getComponentDir resolves happy-server-light to the monorepo server package
   await writeFile(join(repoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(repoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(repoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-  assert.equal(getComponentDir(rootDir, 'happy-server-light', env), serverDir);
+  assert.equal(getComponentDir(rootDir, 'happier-server-light', env), serverDir);
 });

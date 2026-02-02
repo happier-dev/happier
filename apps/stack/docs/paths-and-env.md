@@ -105,7 +105,7 @@ Even when home config exists, we also load:
 
 - `<cliRootDir>/.env` (non-overriding fallback)
 
-This exists so repo-local dev settings (example: `HAPPY_CODEX_BIN`) can work without forcing everyone to duplicate them into `~/.happier-stack/env.local`.
+This exists so repo-local dev settings (example: `HAPPIER_CODEX_ACP_BIN`) can work without forcing everyone to duplicate them into `~/.happier-stack/env.local`.
 
 Notes:
 - This is a **fallback only** (`override: false`): it won’t stomp on values already provided by the environment or home config.

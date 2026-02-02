@@ -36,27 +36,27 @@ test('assertServerPrismaProviderMatches accepts unified light flavor (prisma/sql
   const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
   try {
     await writeSchemas({ dir, schemaPrisma: PG_SCHEMA, schemaSqlitePrisma: SQLITE_SCHEMA });
-    assert.doesNotThrow(() => assertServerPrismaProviderMatches({ serverComponentName: 'happy-server-light', serverDir: dir }));
+    assert.doesNotThrow(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server-light', serverDir: dir }));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test('assertServerPrismaProviderMatches rejects happy-server-light when only postgres schema exists', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
+test('assertServerPrismaProviderMatches rejects happier-server-light when only postgres schema exists', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
   try {
     await writeSchemas({ dir, schemaPrisma: PG_SCHEMA, schemaSqlitePrisma: null });
-    assert.throws(() => assertServerPrismaProviderMatches({ serverComponentName: 'happy-server-light', serverDir: dir }));
+    assert.throws(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server-light', serverDir: dir }));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
 
-test('assertServerPrismaProviderMatches rejects happy-server when schema.prisma is sqlite', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
+test('assertServerPrismaProviderMatches rejects happier-server when schema.prisma is sqlite', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
   try {
     await writeSchemas({ dir, schemaPrisma: SQLITE_SCHEMA, schemaSqlitePrisma: null });
-    assert.throws(() => assertServerPrismaProviderMatches({ serverComponentName: 'happy-server', serverDir: dir }));
+    assert.throws(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server', serverDir: dir }));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

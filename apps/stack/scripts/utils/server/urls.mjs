@@ -26,7 +26,7 @@ function stackEnvExplicitlySetsWebappUrl({ env, stackName }) {
       resolveStackEnvPath(stackName).envPath;
     if (!envPath || !existsSync(envPath)) return false;
     const raw = readFileSync(envPath, 'utf-8');
-    return /^HAPPY_WEBAPP_URL=/m.test(raw);
+    return /^HAPPIER_WEBAPP_URL=/m.test(raw);
   } catch {
     return false;
   }
@@ -56,9 +56,9 @@ export function getWebappUrlEnvOverride({ env = process.env, stackName = null } 
     (env.HAPPIER_STACK_STACK ?? '').toString().trim() ||
     getStackName(env);
 
-  let envWebappUrl = (env.HAPPY_WEBAPP_URL ?? '').toString().trim() || '';
+  let envWebappUrl = (env.HAPPIER_WEBAPP_URL ?? '').toString().trim() || '';
 
-  // Safety: for non-main stacks, ignore a global HAPPY_WEBAPP_URL unless it was explicitly set in the stack env file.
+  // Safety: for non-main stacks, ignore a global HAPPIER_WEBAPP_URL unless it was explicitly set in the stack env file.
   if (name !== 'main' && envWebappUrl && !stackEnvExplicitlySetsWebappUrl({ env, stackName: name })) {
     envWebappUrl = '';
   }

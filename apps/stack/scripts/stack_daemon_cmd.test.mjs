@@ -39,9 +39,9 @@ import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 const args = process.argv.slice(2);
-const home = process.env.HAPPY_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
+const home = process.env.HAPPIER_HOME_DIR || process.env.HAPPIER_STACK_CLI_HOME_DIR;
 if (!home) {
-  console.error('missing HAPPY_HOME_DIR');
+  console.error('missing HAPPIER_HOME_DIR');
   process.exit(2);
 }
 const log = join(home, 'stub-daemon.log');
@@ -99,7 +99,7 @@ append('other:' + sub);
 process.exit(0);
 `;
 
-  await writeFile(join(cliDir, 'bin', 'happy.mjs'), script.trimStart(), 'utf-8');
+  await writeFile(join(cliDir, 'bin', 'happier.mjs'), script.trimStart(), 'utf-8');
   return cliDir;
 }
 
@@ -115,7 +115,7 @@ async function ensureMinimalHappierMonorepo({ monoRoot }) {
 test('hstack stack daemon <name> restart restarts only the daemon', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-daemon-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-daemon-'));
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
@@ -309,10 +309,10 @@ test('hstack stack daemon <name> start/stop with --identity uses an isolated cli
   await rm(tmp, { recursive: true, force: true });
 });
 
-test('hstack stack auth <name> login --identity=<name> --print prints identity-scoped HAPPY_HOME_DIR', async () => {
+test('hstack stack auth <name> login --identity=<name> --print prints identity-scoped HAPPIER_HOME_DIR', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-auth-identity-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-auth-identity-'));
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
@@ -371,7 +371,7 @@ test('hstack stack auth <name> login --identity=<name> --print prints identity-s
   const parsed = JSON.parse(res.stdout.trim());
   assert.equal(parsed?.cliIdentity, identity);
   assert.ok(
-    parsed?.cmd?.includes(`HAPPY_HOME_DIR="${join(storageDir, stackName, 'cli-identities', identity)}"`),
+    parsed?.cmd?.includes(`HAPPIER_HOME_DIR="${join(storageDir, stackName, 'cli-identities', identity)}"`),
     `expected printed cmd to include identity home dir\n${parsed?.cmd}`
   );
   assert.ok(
