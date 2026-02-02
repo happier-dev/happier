@@ -14,9 +14,10 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
-import { ensureDepsInstalled, pmExecBin } from './utils/proc/pm.mjs';
+import { run, runCapture } from './utils/proc/proc.mjs';
+import { applyStackCacheEnv, ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
-import { resolvePrismaClientImportForServerComponent, resolveServerLightPrismaMigrateDeployArgs } from './utils/server/flavor_scripts.mjs';
+import { resolvePrismaClientImportForServerComponent } from './utils/server/flavor_scripts.mjs';
 import { clearDevAuthKey, readDevAuthKey, writeDevAuthKey } from './utils/auth/dev_key.mjs';
 import { getExpoStatePaths, isStateProcessRunning } from './utils/expo/expo.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
@@ -268,25 +269,259 @@ function resolveServerComponentFromEnv(env) {
   return v === 'happier-server' ? 'happier-server' : 'happier-server-light';
 }
 
-function resolveDatabaseUrlForStackOrThrow({ env, stackName, baseDir, serverComponent, label }) {
+function resolvePostgresDatabaseUrlFromEnvOrThrow({ env, stackName, label }) {
   const v = (env.DATABASE_URL ?? '').toString().trim();
-  if (v) {
-    if (serverComponent === 'happier-server') {
-      const lower = v.toLowerCase();
-      const ok = lower.startsWith('postgresql://') || lower.startsWith('postgres://');
-      if (!ok) {
-        throw new Error(
-          `[auth] invalid DATABASE_URL for ${label || `stack "${stackName}"`}: expected postgresql://... (got ${JSON.stringify(v)})`
-        );
+  if (!v) throw new Error(`[auth] missing DATABASE_URL for ${label || `stack "${stackName}"`}`);
+  const lower = v.toLowerCase();
+  const ok = lower.startsWith('postgresql://') || lower.startsWith('postgres://');
+  if (!ok) {
+    throw new Error(
+      `[auth] invalid DATABASE_URL for ${label || `stack "${stackName}"`}: expected postgresql://... (got ${JSON.stringify(v)})`
+    );
+  }
+  return v;
+}
+
+function resolveLightDirsForStack({ env, baseDir }) {
+  const dataDir = (env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').toString().trim() || join(baseDir, 'server-light');
+  const filesDir = (env.HAPPIER_SERVER_LIGHT_FILES_DIR ?? env.HAPPY_SERVER_LIGHT_FILES_DIR ?? '').toString().trim() || join(dataDir, 'files');
+  const dbDir = (env.HAPPIER_SERVER_LIGHT_DB_DIR ?? env.HAPPY_SERVER_LIGHT_DB_DIR ?? '').toString().trim() || join(dataDir, 'pglite');
+  return { dataDir, filesDir, dbDir };
+}
+
+async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet = false }) {
+  // IMPORTANT: envIn is often parsed from a stack env file (so it does not include PATH).
+  // Start from the current process env so we can spawn Yarn reliably, then overlay stack-specific vars.
+  const env = { ...process.env, ...(envIn && typeof envIn === 'object' ? envIn : {}) };
+  const { dataDir, filesDir, dbDir } = resolveLightDirsForStack({ env, baseDir });
+  env.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
+  env.HAPPIER_SERVER_LIGHT_FILES_DIR = filesDir;
+  env.HAPPIER_SERVER_LIGHT_DB_DIR = dbDir;
+  env.HAPPY_SERVER_LIGHT_DATA_DIR = env.HAPPY_SERVER_LIGHT_DATA_DIR ?? dataDir;
+  env.HAPPY_SERVER_LIGHT_FILES_DIR = env.HAPPY_SERVER_LIGHT_FILES_DIR ?? filesDir;
+  env.HAPPY_SERVER_LIGHT_DB_DIR = env.HAPPY_SERVER_LIGHT_DB_DIR ?? dbDir;
+
+  // This script spins a temporary pglite socket and runs prisma migrate deploy against prisma/schema.prisma.
+  // It is idempotent and safe to re-run when the server is not currently holding the pglite DB open.
+  const envWithCache = await applyStackCacheEnv(env);
+  await run('yarn', ['-s', 'migrate:light:deploy'], { cwd: serverDir, env: envWithCache, stdio: quiet ? 'ignore' : 'inherit' });
+  return { dataDir, filesDir, dbDir };
+}
+
+async function listAccountsFromPglite({ cwd, dbDir }) {
+  const script = `
+process.on('uncaughtException', (e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});
+process.on('unhandledRejection', (e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});
+const { PGlite } = await import('@electric-sql/pglite');
+const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
+const { PrismaClient } = await import('@prisma/client');
+const pglite = new PGlite(${JSON.stringify(dbDir)});
+await pglite.waitReady;
+const server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+await server.start();
+try {
+  const raw = server.getServerConn();
+  const url = (() => {
+    try { return new URL(raw); } catch { return new URL(\`postgresql://postgres@\${raw}/postgres?sslmode=disable\`); }
+  })();
+  url.searchParams.set('connection_limit', '1');
+  process.env.DATABASE_URL = url.toString();
+  const db = new PrismaClient();
+  try {
+    const accounts = await db.account.findMany({ select: { id: true, publicKey: true } });
+    console.log(JSON.stringify(accounts));
+  } finally {
+    await db.$disconnect();
+  }
+} finally {
+  await server.stop();
+  await pglite.close();
+}
+`.trim();
+
+  const { stdout } = await runNodeCapture({
+    cwd,
+    env: process.env,
+    args: ['--input-type=module', '-e', script],
+  });
+  return stdout.trim() ? JSON.parse(stdout.trim()) : [];
+}
+
+async function insertAccountsIntoPglite({ cwd, dbDir, accounts, force }) {
+  const script = `
+process.on('uncaughtException', (e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});
+process.on('unhandledRejection', (e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});
+const { PGlite } = await import('@electric-sql/pglite');
+const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
+const { PrismaClient } = await import('@prisma/client');
+import fs from 'node:fs';
+const FORCE = ${force ? 'true' : 'false'};
+const raw = fs.readFileSync(0, 'utf8').trim();
+const accounts = raw ? JSON.parse(raw) : [];
+const pglite = new PGlite(${JSON.stringify(dbDir)});
+await pglite.waitReady;
+const server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+await server.start();
+try {
+  const rawConn = server.getServerConn();
+  const url = (() => {
+    try { return new URL(rawConn); } catch { return new URL(\`postgresql://postgres@\${rawConn}/postgres?sslmode=disable\`); }
+  })();
+  url.searchParams.set('connection_limit', '1');
+  process.env.DATABASE_URL = url.toString();
+  const db = new PrismaClient();
+  try {
+    let insertedCount = 0;
+    for (const a of accounts) {
+      // eslint-disable-next-line no-await-in-loop
+      try {
+        await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
+        insertedCount += 1;
+      } catch (e) {
+        if (e && typeof e === 'object' && 'code' in e && e.code === 'P2002') {
+          const existing = await db.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
+          if (existing?.id && existing.id !== a.id) {
+            if (!FORCE) {
+              throw new Error(
+                \`account publicKey conflict: target already has publicKey for id=\${existing.id}, but seed wants id=\${a.id}. Re-run with --force to replace the conflicting account row.\`
+              );
+            }
+            await db.account.delete({ where: { publicKey: a.publicKey } });
+            await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
+            insertedCount += 1;
+            continue;
+          }
+        }
+        throw e;
       }
     }
-    return v;
+    console.log(JSON.stringify({ sourceCount: accounts.length, insertedCount }));
+  } finally {
+    await db.$disconnect();
   }
-  if (serverComponent === 'happier-server-light') {
-    const dataDir = (env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').toString().trim() || join(baseDir, 'server-light');
-    return `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+} finally {
+  await server.stop();
+  await pglite.close();
+}
+`.trim();
+
+  const { stdout } = await runNodeCapture({
+    cwd,
+    env: process.env,
+    args: ['--input-type=module', '-e', script],
+    stdin: JSON.stringify(accounts),
+  });
+  const res = stdout.trim() ? JSON.parse(stdout.trim()) : { sourceCount: accounts.length, insertedCount: 0 };
+  return {
+    ok: true,
+    sourceCount: Number(res.sourceCount ?? accounts.length) || 0,
+    insertedCount: Number(res.insertedCount ?? 0) || 0,
+  };
+}
+
+async function listAccountsFromPostgres({ cwd, clientImport, databaseUrl }) {
+  const script = `
+process.on('uncaughtException', (e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});
+process.on('unhandledRejection', (e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});
+const mod = await import(${JSON.stringify(clientImport)});
+const PrismaClient = mod?.PrismaClient ?? mod?.default?.PrismaClient;
+if (!PrismaClient) throw new Error('Failed to load PrismaClient for DB seed (source).');
+const db = new PrismaClient();
+try {
+  const accounts = await db.account.findMany({ select: { id: true, publicKey: true } });
+  console.log(JSON.stringify(accounts));
+} finally {
+  await db.$disconnect();
+}
+`.trim();
+
+  const { stdout } = await runNodeCapture({
+    cwd,
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+    args: ['--input-type=module', '-e', script],
+  });
+  return stdout.trim() ? JSON.parse(stdout.trim()) : [];
+}
+
+async function insertAccountsIntoPostgres({ cwd, clientImport, databaseUrl, accounts, force }) {
+  const script = `
+process.on('uncaughtException', (e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});
+process.on('unhandledRejection', (e) => {
+  console.error(e instanceof Error ? e.message : String(e));
+  process.exit(1);
+});
+const mod = await import(${JSON.stringify(clientImport)});
+const PrismaClient = mod?.PrismaClient ?? mod?.default?.PrismaClient;
+if (!PrismaClient) throw new Error('Failed to load PrismaClient for DB seed (target).');
+import fs from 'node:fs';
+const FORCE = ${force ? 'true' : 'false'};
+const raw = fs.readFileSync(0, 'utf8').trim();
+const accounts = raw ? JSON.parse(raw) : [];
+const db = new PrismaClient();
+try {
+  let insertedCount = 0;
+  for (const a of accounts) {
+    // eslint-disable-next-line no-await-in-loop
+    try {
+      await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
+      insertedCount += 1;
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'P2002') {
+        const existing = await db.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
+        if (existing?.id && existing.id !== a.id) {
+          if (!FORCE) {
+            throw new Error(
+              \`account publicKey conflict: target already has publicKey for id=\${existing.id}, but seed wants id=\${a.id}. Re-run with --force to replace the conflicting account row.\`
+            );
+          }
+          await db.account.delete({ where: { publicKey: a.publicKey } });
+          await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
+          insertedCount += 1;
+          continue;
+        }
+      }
+      throw e;
+    }
   }
-  throw new Error(`[auth] missing DATABASE_URL for ${label || `stack "${stackName}"`}`);
+  console.log(JSON.stringify({ sourceCount: accounts.length, insertedCount }));
+} finally {
+  await db.$disconnect();
+}
+`.trim();
+
+  const { stdout } = await runNodeCapture({
+    cwd,
+    env: { ...process.env, DATABASE_URL: databaseUrl },
+    args: ['--input-type=module', '-e', script],
+    stdin: JSON.stringify(accounts),
+  });
+  const res = stdout.trim() ? JSON.parse(stdout.trim()) : { sourceCount: accounts.length, insertedCount: 0 };
+  return {
+    ok: true,
+    sourceCount: Number(res.sourceCount ?? accounts.length) || 0,
+    insertedCount: Number(res.insertedCount ?? 0) || 0,
+  };
 }
 
 function resolveServerComponentDir({ rootDir, serverComponent }) {
@@ -631,99 +866,103 @@ async function cmdCopyFrom({ argv, json }) {
     await ensureDepsInstalled(serverDirForPrisma, serverComponent, { quiet: json }).catch(() => {});
 
     const fromServerComponent = resolveServerComponentFromEnv(sourceEnv);
-    const fromDatabaseUrl = resolveDatabaseUrlForStackOrThrow({
-      env: sourceEnv,
-      stackName: fromStackName,
-      baseDir: sourceBaseDir,
-      serverComponent: fromServerComponent,
-      label: `source stack "${fromStackName}"`,
-    });
     const targetEnv = process.env;
     const targetServerComponent = resolveServerComponentFromEnv(targetEnv);
-    let targetDatabaseUrl;
-    try {
-      targetDatabaseUrl = resolveDatabaseUrlForStackOrThrow({
-        env: targetEnv,
-        stackName,
-        baseDir: targetBaseDir,
-        serverComponent: targetServerComponent,
-        label: `target stack "${stackName}"`,
-      });
-    } catch (e) {
-      // For full server stacks, allow `copy-from --with-infra` to bring up Docker infra just-in-time
-      // so we can seed DB accounts reliably.
-      const managed = (targetEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0';
-      if (targetServerComponent === 'happier-server' && withInfra && managed) {
-        const { port } = getInternalServerUrlCompat();
-        const publicServerUrl = await preferStackLocalhostUrl(`http://localhost:${port}`, { stackName });
-        const envPath = resolveStackEnvPath(stackName).envPath;
-        const infra = await ensureHappyServerManagedInfra({
-          stackName,
-          baseDir: targetBaseDir,
-          serverPort: port,
-          publicServerUrl,
-          envPath,
-          env: targetEnv,
-          quiet: json,
-          // Auth seeding only needs Postgres; don't block on Minio bucket init.
-          skipMinioInit: true,
-        });
-        targetDatabaseUrl = infra?.env?.DATABASE_URL ?? '';
-      } else {
-        throw e;
-      }
-    }
-    if (!targetDatabaseUrl) {
-      throw new Error(
-        `[auth] missing DATABASE_URL for target stack "${stackName}". ` +
-          (targetServerComponent === 'happier-server' ? `If this is a managed infra stack, re-run with --with-infra.` : '')
-      );
-    }
 
-    const runSeed = async () => {
-      const seeded = await seedAccountsFromSourceDbToTargetDb({
-        rootDir,
-        fromStackName,
-        fromServerComponent,
-        fromDatabaseUrl,
-        targetStackName: stackName,
-        targetServerComponent,
-        targetDatabaseUrl,
-        force,
+    const sourceCwd = resolveServerComponentDir({ rootDir, serverComponent: fromServerComponent });
+    const targetCwd = resolveServerComponentDir({ rootDir, serverComponent: targetServerComponent });
+    const sourceClientImport = resolvePrismaClientImportForServerComponent({
+      serverComponentName: fromServerComponent,
+      serverDir: sourceCwd,
+    });
+    const targetClientImport = resolvePrismaClientImportForServerComponent({
+      serverComponentName: targetServerComponent,
+      serverDir: targetCwd,
+    });
+
+    // 1) Read Account rows from the source DB.
+    const accounts = await (async () => {
+      if (fromServerComponent === 'happier-server-light') {
+        const { dbDir } = await ensureLightMigrationsApplied({ serverDir: sourceCwd, baseDir: sourceBaseDir, envIn: sourceEnv, quiet: json });
+        return await listAccountsFromPglite({ cwd: sourceCwd, dbDir });
+      }
+      const fromDatabaseUrl = resolvePostgresDatabaseUrlFromEnvOrThrow({
+        env: sourceEnv,
+        stackName: fromStackName,
+        label: `source stack "${fromStackName}"`,
       });
-      copied.dbAccounts = { sourceCount: seeded.sourceCount, insertedCount: seeded.insertedCount };
-      copied.db = true;
-      copied.dbError = null;
+      return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: fromDatabaseUrl });
+    })();
+
+    // 2) Insert Account rows into the target DB.
+    const runInsert = async () => {
+      if (targetServerComponent === 'happier-server-light') {
+        const { dbDir } = await ensureLightMigrationsApplied({ serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json });
+        return await insertAccountsIntoPglite({ cwd: targetCwd, dbDir, accounts, force });
+      }
+
+      let targetDatabaseUrl;
+      try {
+        targetDatabaseUrl = resolvePostgresDatabaseUrlFromEnvOrThrow({
+          env: targetEnv,
+          stackName,
+          label: `target stack "${stackName}"`,
+        });
+      } catch (e) {
+        // For full server stacks, allow `copy-from --with-infra` to bring up Docker infra just-in-time
+        // so we can seed DB accounts reliably.
+        const managed = (targetEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0';
+        if (targetServerComponent === 'happier-server' && withInfra && managed) {
+          const { port } = getInternalServerUrlCompat();
+          const publicServerUrl = await preferStackLocalhostUrl(`http://localhost:${port}`, { stackName });
+          const envPath = resolveStackEnvPath(stackName).envPath;
+          const infra = await ensureHappyServerManagedInfra({
+            stackName,
+            baseDir: targetBaseDir,
+            serverPort: port,
+            publicServerUrl,
+            envPath,
+            env: targetEnv,
+            quiet: json,
+            // Auth seeding only needs Postgres; don't block on Minio bucket init.
+            skipMinioInit: true,
+          });
+          targetDatabaseUrl = infra?.env?.DATABASE_URL ?? '';
+        } else {
+          throw e;
+        }
+      }
+      if (!targetDatabaseUrl) {
+        throw new Error(
+          `[auth] missing DATABASE_URL for target stack "${stackName}". ` +
+            (targetServerComponent === 'happier-server' ? `If this is a managed infra stack, re-run with --with-infra.` : '')
+        );
+      }
+
+      return await insertAccountsIntoPostgres({ cwd: targetCwd, clientImport: targetClientImport, databaseUrl: targetDatabaseUrl, accounts, force });
     };
 
-    try {
-      await runSeed();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      // If the target DB exists but hasn't had schema applied yet, Prisma will report missing tables.
-      // Fix it best-effort by applying schema, then retry seeding once.
-      const looksLikeMissingTable = msg.toLowerCase().includes('does not exist') || msg.toLowerCase().includes('no such table');
-      if (looksLikeMissingTable) {
-        if (serverComponent === 'happier-server-light') {
-          await pmExecBin({
-            dir: serverDirForPrisma,
-            bin: 'prisma',
-            args: resolveServerLightPrismaMigrateDeployArgs({ serverDir: serverDirForPrisma }),
-            env: { ...process.env, DATABASE_URL: targetDatabaseUrl },
-            quiet: json,
-          }).catch(() => {});
-        } else if (serverComponent === 'happier-server') {
-          await applyHappyServerMigrations({
-            serverDir: serverDirForPrisma,
-            env: { ...process.env, DATABASE_URL: targetDatabaseUrl },
-            quiet: json,
-          }).catch(() => {});
+    const res = await (async () => {
+      try {
+        return await runInsert();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const looksLikeMissingTable = msg.toLowerCase().includes('does not exist') || msg.toLowerCase().includes('no such table');
+        if (!looksLikeMissingTable) throw e;
+
+        // Best-effort: apply schema, then retry once.
+        if (targetServerComponent === 'happier-server-light') {
+          await ensureLightMigrationsApplied({ serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json }).catch(() => {});
+        } else if (targetServerComponent === 'happier-server') {
+          await applyHappyServerMigrations({ serverDir: targetCwd, env: targetEnv, quiet: json }).catch(() => {});
         }
-        await runSeed();
-      } else {
-        throw e;
+        return await runInsert();
       }
-    }
+    })();
+
+    copied.dbAccounts = { sourceCount: res.sourceCount, insertedCount: res.insertedCount };
+    copied.db = true;
+    copied.dbError = null;
   } catch (err) {
     copied.db = false;
     copied.dbAccounts = null;

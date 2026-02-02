@@ -29,9 +29,8 @@ export async function importPrismaClientFromGeneratedSqlite({ dir }) {
 }
 
 export async function importPrismaClientForHappyServerLight({ serverDir }) {
-  if (isUnifiedHappyServerLight({ serverDir })) {
-    return await importPrismaClientFromGeneratedSqlite({ dir: serverDir });
-  }
+  // Current Happier light flavor (PG_Light via embedded PGlite) uses the standard Prisma client.
+  // Legacy SQLite-era generated clients are not used by default.
+  void isUnifiedHappyServerLight;
   return await importPrismaClientFromNodeModules({ dir: serverDir });
 }
-

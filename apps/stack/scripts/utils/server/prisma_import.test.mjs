@@ -44,7 +44,7 @@ test('importPrismaClientFromGeneratedSqlite imports PrismaClient from generated/
   }
 });
 
-test('importPrismaClientForHappyServerLight prefers generated sqlite client when prisma/sqlite/schema.prisma exists', async () => {
+test('importPrismaClientForHappyServerLight uses node_modules Prisma client even if legacy sqlite artifacts exist', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hs-prisma-import-'));
   try {
     await writeJson(join(dir, 'package.json'), { type: 'module' });
@@ -54,7 +54,7 @@ test('importPrismaClientForHappyServerLight prefers generated sqlite client when
     await mkdir(join(dir, 'generated', 'sqlite-client'), { recursive: true });
     await writeFile(join(dir, 'generated', 'sqlite-client', 'index.js'), 'export class PrismaClient {}\n', 'utf-8');
 
-    // Also create a node_modules PrismaClient, but unified should prefer generated.
+    // Also create a node_modules PrismaClient; the light flavor should use it.
     await mkdir(join(dir, 'node_modules', '@prisma', 'client'), { recursive: true });
     await writeJson(join(dir, 'node_modules', '@prisma', 'client', 'package.json'), { name: '@prisma/client', type: 'module', main: './index.js' });
     await writeFile(join(dir, 'node_modules', '@prisma', 'client', 'index.js'), 'export class PrismaClient { static which = "node_modules"; }\n', 'utf-8');
@@ -62,8 +62,7 @@ test('importPrismaClientForHappyServerLight prefers generated sqlite client when
     const PrismaClient = await importPrismaClientForHappyServerLight({ serverDir: dir });
     assert.equal(typeof PrismaClient, 'function');
     assert.equal(PrismaClient.name, 'PrismaClient');
-    // If we imported node_modules we'd have this static property.
-    assert.equal(PrismaClient.which, undefined);
+    assert.equal(PrismaClient.which, 'node_modules');
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

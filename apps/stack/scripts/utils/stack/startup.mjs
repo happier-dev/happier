@@ -1,79 +1,97 @@
-import { runCapture } from '../proc/proc.mjs';
+import { run, runCapture } from '../proc/proc.mjs';
 import { ensureDepsInstalled, pmExecBin } from '../proc/pm.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import { resolvePrismaClientImportForServerComponent, resolveServerLightPrismaMigrateDeployArgs, resolveServerLightPrismaSchemaArgs } from '../server/flavor_scripts.mjs';
+import { resolvePrismaClientImportForServerComponent } from '../server/flavor_scripts.mjs';
 
 function looksLikeMissingTableError(msg) {
   const s = String(msg ?? '').toLowerCase();
   return s.includes('does not exist') || s.includes('no such table');
 }
 
-function looksLikeAlreadyExistsError(msg) {
-  const s = String(msg ?? '').toLowerCase();
-  return s.includes('already exists') || s.includes('duplicate') || s.includes('constraint failed');
-}
-
-function looksLikeDatabaseLockedError(msg) {
-  const s = String(msg ?? '').toLowerCase();
-  return s.includes('database is locked') || s.includes('sqlite database error');
-}
-
-function looksLikeMissingGeneratedSqliteClientError(err) {
-  const code = err && typeof err === 'object' ? err.code : '';
-  if (code !== 'ERR_MODULE_NOT_FOUND') return false;
-  const msg = err instanceof Error ? err.message : String(err ?? '');
-  return msg.includes('/generated/sqlite-client/') || msg.includes('\\generated\\sqlite-client\\');
-}
-
-async function findSqliteBaselineMigrationDir({ serverDir }) {
-  try {
-    // Unified monorepo server-light migrations live under prisma/sqlite/migrations.
-    // For legacy schema.sqlite.prisma setups, migrations use the default prisma/migrations folder.
-    const migrationsDir = existsSync(join(serverDir, 'prisma', 'sqlite', 'schema.prisma'))
-      ? join(serverDir, 'prisma', 'sqlite', 'migrations')
-      : join(serverDir, 'prisma', 'migrations');
-    const { readdir } = await import('node:fs/promises');
-    const entries = await readdir(migrationsDir, { withFileTypes: true });
-    const dirs = entries
-      .filter((e) => e.isDirectory())
-      .map((e) => e.name)
-      .sort();
-    return dirs[0] || null;
-  } catch {
-    return null;
-  }
-}
-
 async function probeAccountCount({ serverComponentName, serverDir, env }) {
-  const clientImport = resolvePrismaClientImportForServerComponent({ serverComponentName, serverDir });
-  const probe = `
-	let db;
-	try {
-	  const { PrismaClient } = await import(${JSON.stringify(clientImport)});
-	  db = new PrismaClient();
-	  const accountCount = await db.account.count();
-	  console.log(JSON.stringify({ accountCount }));
-	} catch (e) {
-	  console.log(
-	    JSON.stringify({
-	      error: {
-	        name: e?.name,
-	        message: e?.message,
-	        code: e?.code,
-	      },
-	    })
-	  );
-	} finally {
-	  try {
-	    await db?.$disconnect();
-	  } catch {
-	    // ignore
-	  }
-	}
-	`.trim();
+  const probe =
+    serverComponentName === 'happier-server-light'
+      ? `
+		let db;
+	  let pglite;
+	  let server;
+		try {
+	    const { PGlite } = await import('@electric-sql/pglite');
+	    const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
+	    const { PrismaClient } = await import('@prisma/client');
+	    const dbDir = (process.env.HAPPY_SERVER_LIGHT_DB_DIR ?? process.env.HAPPIER_SERVER_LIGHT_DB_DIR ?? '').toString().trim();
+	    if (!dbDir) throw new Error('Missing HAPPY_SERVER_LIGHT_DB_DIR/HAPPIER_SERVER_LIGHT_DB_DIR for pglite probe');
+	    pglite = new PGlite(dbDir);
+	    await pglite.waitReady;
+	    server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+	    await server.start();
+	    const raw = server.getServerConn();
+	    const url = (() => {
+	      try {
+	        return new URL(raw);
+	      } catch {
+	        return new URL(\`postgresql://postgres@\${raw}/postgres?sslmode=disable\`);
+	      }
+	    })();
+	    url.searchParams.set('connection_limit', '1');
+	    process.env.DATABASE_URL = url.toString();
+		  db = new PrismaClient();
+		  const accountCount = await db.account.count();
+		  console.log(JSON.stringify({ accountCount }));
+		} catch (e) {
+		  console.log(
+		    JSON.stringify({
+		      error: {
+		        name: e?.name,
+		        message: e?.message,
+		        code: e?.code,
+		      },
+		    })
+		  );
+		} finally {
+		  try {
+		    await db?.$disconnect();
+		  } catch {
+		    // ignore
+		  }
+	    try {
+	      await server?.stop();
+	    } catch {}
+	    try {
+	      await pglite?.close();
+	    } catch {}
+		}
+		`.trim()
+      : `
+	 	let db;
+		try {
+		  const { PrismaClient } = await import(${JSON.stringify(
+	      resolvePrismaClientImportForServerComponent({ serverComponentName, serverDir })
+	    )});
+		  db = new PrismaClient();
+		  const accountCount = await db.account.count();
+		  console.log(JSON.stringify({ accountCount }));
+		} catch (e) {
+		  console.log(
+		    JSON.stringify({
+		      error: {
+		        name: e?.name,
+		        message: e?.message,
+		        code: e?.code,
+		      },
+		    })
+		  );
+		} finally {
+		  try {
+		    await db?.$disconnect();
+		  } catch {
+		    // ignore
+		  }
+		}
+		`.trim();
 
   const out = await runCapture(process.execPath, ['--input-type=module', '-e', probe], { cwd: serverDir, env, timeoutMs: 15_000 });
   const parsed = out.trim() ? JSON.parse(out.trim()) : {};
@@ -117,6 +135,9 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
 
   const dataDir = (env?.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
   const filesDir = (env?.HAPPIER_SERVER_LIGHT_FILES_DIR ?? '').toString().trim() || (dataDir ? join(dataDir, 'files') : '');
+  const dbDir =
+    (env?.HAPPIER_SERVER_LIGHT_DB_DIR ?? env?.HAPPY_SERVER_LIGHT_DB_DIR ?? '').toString().trim() ||
+    (dataDir ? join(dataDir, 'pglite') : '');
   if (dataDir) {
     try {
       await mkdir(dataDir, { recursive: true });
@@ -131,87 +152,38 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
       // best-effort
     }
   }
+  if (dbDir) {
+    try {
+      await mkdir(dbDir, { recursive: true });
+      env.HAPPIER_SERVER_LIGHT_DB_DIR = env.HAPPIER_SERVER_LIGHT_DB_DIR ?? dbDir;
+      env.HAPPY_SERVER_LIGHT_DB_DIR = env.HAPPY_SERVER_LIGHT_DB_DIR ?? dbDir;
+    } catch {
+      // best-effort
+    }
+  }
 
   const probe = async () => await probeAccountCount({ serverComponentName: 'happier-server-light', serverDir, env });
-  const schemaArgs = resolveServerLightPrismaSchemaArgs({ serverDir });
-
-  const isUnified = schemaArgs.length > 0;
-
-  // Unified server-light (monorepo): ensure deterministic migrations are applied (idempotent).
-  // Legacy server-light (single schema.prisma with db push): do NOT run `prisma migrate deploy`,
-  // because it commonly fails with P3005 when the DB was created by `prisma db push` and no migrations exist.
+  // Current light flavor uses embedded Postgres via PGlite.
+  // Apply migrations via the server package script (it spins a temporary pglite socket and runs prisma migrate deploy).
   //
   // IMPORTANT:
-  // In dev/start flows the server process may already be running and holding the SQLite DB open.
-  // Running `prisma migrate deploy` concurrently will fail with "database is locked".
-  // When bestEffort=true (used for auth seeding heuristics), skip migrations and only probe.
-  if (isUnified && !bestEffort) {
-    try {
-      await pmExecBin({ dir: serverDir, bin: 'prisma', args: resolveServerLightPrismaMigrateDeployArgs({ serverDir }), env });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (looksLikeDatabaseLockedError(msg) && bestEffort) {
-        return { ok: false, migrated: true, accountCount: null, error: msg };
-      }
-      // If the SQLite DB was created before migrations existed (historical db push era),
-      // `migrate deploy` can fail because tables already exist. Best-effort: baseline-resolve
-      // the first migration, then retry deploy.
-      if (looksLikeAlreadyExistsError(msg)) {
-        const baseline = await findSqliteBaselineMigrationDir({ serverDir });
-        if (baseline) {
-          await pmExecBin({
-            dir: serverDir,
-            bin: 'prisma',
-            args: ['migrate', 'resolve', ...schemaArgs, '--applied', baseline],
-            env,
-          }).catch(() => {});
-          await pmExecBin({ dir: serverDir, bin: 'prisma', args: resolveServerLightPrismaMigrateDeployArgs({ serverDir }), env });
-        } else {
-          throw e;
-        }
-      } else {
-        throw e;
-      }
-    }
+  // If the server is already running, it may hold the pglite DB open (single-connection).
+  // When bestEffort=true (used for heuristics), skip migrations and only probe.
+  if (!bestEffort) {
+    await run('yarn', ['-s', 'migrate:light:deploy'], { cwd: serverDir, env });
   }
 
   // 2) Probe account count (used for auth seeding heuristics).
   try {
     const accountCount = await probe();
-    return { ok: true, migrated: isUnified, accountCount };
+    return { ok: true, migrated: true, accountCount };
   } catch (e) {
-    if (looksLikeMissingGeneratedSqliteClientError(e)) {
-      await pmExecBin({ dir: serverDir, bin: 'prisma', args: ['generate', ...schemaArgs], env });
-      try {
-        const accountCount = await probe();
-        return { ok: true, migrated: isUnified, accountCount };
-      } catch (e2) {
-        const msg = e2 instanceof Error ? e2.message : String(e2);
-        if (bestEffort && looksLikeDatabaseLockedError(msg)) {
-          return { ok: false, migrated: isUnified, accountCount: null, error: msg };
-        }
-        throw e2;
-      }
-    }
     const msg = e instanceof Error ? e.message : String(e);
-    if (bestEffort && looksLikeDatabaseLockedError(msg)) {
-      return { ok: false, migrated: isUnified, accountCount: null, error: msg };
-    }
     if (looksLikeMissingTableError(msg)) {
-      if (isUnified) {
-        // Tables still missing after migrate deploy (or probe without migrations); fail closed unless best-effort.
-        if (bestEffort) {
-          return { ok: false, migrated: true, accountCount: null, error: 'sqlite schema not ready (missing tables)' };
-        }
-        throw new Error(`[server-light] sqlite schema not ready after prisma migrate deploy (missing tables).`);
+      if (bestEffort) {
+        return { ok: false, migrated: true, accountCount: null, error: 'server-light schema not ready (missing tables)' };
       }
-      // Legacy server-light: schema is typically applied via `prisma db push` in the component's dev/start scripts.
-      // Best-effort: don't fail the whole stack startup just because we can't probe here.
-      return { ok: true, migrated: false, accountCount: 0 };
-    }
-    if (!isUnified) {
-      // Legacy server-light: probing is best-effort (don't make stack dev fail closed here).
-      return { ok: true, migrated: false, accountCount: 0 };
+      throw new Error(`[server-light] schema not ready after migrate:light:deploy (missing tables).`);
     }
     if (bestEffort) {
       return { ok: false, migrated: true, accountCount: null, error: msg };

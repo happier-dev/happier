@@ -122,8 +122,8 @@ Choose which backend flavor a stack runs with:
 
 ```bash
 hstack srv status
-hstack srv use happy-server-light
-hstack srv use happy-server
+hstack srv use happier-server-light
+hstack srv use happier-server
 hstack srv use --interactive
 ```
 

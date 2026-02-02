@@ -19,6 +19,7 @@ Tip: most commands support `--help` and `--json`.
 - Run: `hstack start` / `hstack dev`
 - Stop: `hstack stop`
 - Diagnose: `hstack where`, `hstack doctor`, `hstack logs`
+- Contribute: `hstack contrib status|ensure-dev|sync|extract|pr`
 
 Common run flags (root commands):
 
@@ -71,7 +72,7 @@ PR stacks:
 
 Create worktrees (defaults to an upstream-based local worktree):
 
-- `hstack wt new <slug> [--from=upstream|origin] [--base=<ref>] [--use]`
+- `hstack wt new local/<slug> [--from=upstream|origin] [--base=<ref>] [--use]`
 
 PR worktrees:
 
@@ -104,6 +105,17 @@ See: `/docs/hstack/auth`.
 
 ---
 
+## Contributor workflows (`contrib`)
+
+These commands help you work with a long-lived `dev/` checkout while still producing clean PR branches:
+
+- Ensure `dev/` exists: `hstack contrib ensure-dev`
+- Sync `dev/`: `hstack contrib sync`
+- Extract a feature branch: `hstack contrib extract <name> --mode=reset|stack [--push] [--open]`
+- Print/open PR URL: `hstack contrib pr <branch> [--open]`
+
+---
+
 ## Maintainer tools
 
 hstack includes “maintainer tools” as subcommands (setup-pr, review-pr, import, review, edison):
@@ -117,4 +129,3 @@ hstack includes “maintainer tools” as subcommands (setup-pr, review-pr, impo
 - `hstack monorepo port --help`
 
 See: `/docs/hstack/monorepo-port`.
-

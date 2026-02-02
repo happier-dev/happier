@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
 
 import { ensureServerLightSchemaReady } from './startup.mjs';
 
@@ -11,8 +11,14 @@ async function writeJson(path, obj) {
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
 }
 
-test('ensureServerLightSchemaReady does not run prisma migrate deploy for legacy happy-server-light checkouts', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'hs-startup-sqlite-legacy-'));
+async function writeEsmPkg({ dir, name, body }) {
+  await mkdir(dir, { recursive: true });
+  await writeJson(join(dir, 'package.json'), { name, type: 'module', main: './index.js' });
+  await writeFile(join(dir, 'index.js'), body.trim() + '\n', 'utf-8');
+}
+
+test('ensureServerLightSchemaReady bestEffort=true skips migrate:light:deploy', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-startup-light-best-effort-'));
   t.after(async () => {
     await rm(root, { recursive: true, force: true });
   });
@@ -26,28 +32,43 @@ test('ensureServerLightSchemaReady does not run prisma migrate deploy for legacy
   await mkdir(join(serverDir, 'node_modules'), { recursive: true });
   await writeFile(join(serverDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
 
-  // Legacy checkout: no prisma/sqlite/schema.prisma and no prisma/schema.sqlite.prisma.
-  // Provide a minimal node_modules @prisma/client so probeAccountCount can succeed.
-  await mkdir(join(serverDir, 'node_modules', '@prisma', 'client'), { recursive: true });
-  await writeJson(join(serverDir, 'node_modules', '@prisma', 'client', 'package.json'), {
-    name: '@prisma/client',
-    type: 'module',
-    main: './index.js',
+  // Stub deps used by the pglite probe (node runs with cwd=serverDir).
+  await writeEsmPkg({
+    dir: join(serverDir, 'node_modules', '@electric-sql', 'pglite'),
+    name: '@electric-sql/pglite',
+    body: `
+export class PGlite {
+  constructor(_dir) { this.waitReady = Promise.resolve(); }
+  async close() {}
+}
+`.trim(),
   });
-  await writeFile(
-    join(serverDir, 'node_modules', '@prisma', 'client', 'index.js'),
-    [
-      'export class PrismaClient {',
-      '  constructor() { this.account = { count: async () => 0 }; }',
-      '  async $disconnect() {}',
-      '}',
-    ].join('\n') + '\n',
-    'utf-8'
-  );
+  await writeEsmPkg({
+    dir: join(serverDir, 'node_modules', '@electric-sql', 'pglite-socket'),
+    name: '@electric-sql/pglite-socket',
+    body: `
+export class PGLiteSocketServer {
+  constructor(_opts) {}
+  async start() {}
+  getServerConn() { return '127.0.0.1:54323'; }
+  async stop() {}
+}
+`.trim(),
+  });
+  await writeEsmPkg({
+    dir: join(serverDir, 'node_modules', '@prisma', 'client'),
+    name: '@prisma/client',
+    body: `
+export class PrismaClient {
+  constructor() { this.account = { count: async () => 0 }; }
+  async $disconnect() {}
+}
+`.trim(),
+  });
 
-  const marker = join(root, 'called-prisma.txt');
+  const marker = join(root, 'called-migrate-light-deploy.txt');
 
-  // Provide a stub `yarn` so ensureYarnReady + pmExecBin are controllable.
+  // Provide a stub `yarn` in PATH so migrate:light:deploy can be observed.
   const binDir = join(root, 'bin');
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
@@ -56,16 +77,9 @@ test('ensureServerLightSchemaReady does not run prisma migrate deploy for legacy
     [
       '#!/usr/bin/env node',
       "const fs = require('node:fs');",
-      "const path = require('node:path');",
-      "const args = process.argv.slice(2);",
-      // ensureYarnReady calls: yarn --version
+      'const args = process.argv.slice(2);',
       "if (args.includes('--version')) { console.log('1.22.22'); process.exit(0); }",
-      // pmExecBin calls: yarn run prisma ...
-      "if (args[0] === 'run' && args[1] === 'prisma') {",
-      `  fs.writeFileSync(${JSON.stringify(marker)}, args.join(' ') + '\\n', 'utf-8');`,
-      '  process.exit(0);',
-      '}',
-      "console.log('ok');",
+      `if (args[0] === '-s' && args[1] === 'migrate:light:deploy') { fs.writeFileSync(${JSON.stringify(marker)}, 'ok\\n', 'utf-8'); process.exit(0); }`,
       'process.exit(0);',
     ].join('\n') + '\n',
     'utf-8'
@@ -75,14 +89,15 @@ test('ensureServerLightSchemaReady does not run prisma migrate deploy for legacy
   const env = {
     ...process.env,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    DATABASE_URL: `file:${join(root, 'happy-server-light.sqlite')}`,
+    HAPPIER_SERVER_LIGHT_DATA_DIR: join(root, 'data'),
+    HAPPIER_SERVER_LIGHT_FILES_DIR: join(root, 'data', 'files'),
+    HAPPIER_SERVER_LIGHT_DB_DIR: join(root, 'data', 'pglite'),
   };
 
-  const res = await ensureServerLightSchemaReady({ serverDir, env });
+  const res = await ensureServerLightSchemaReady({ serverDir, env, bestEffort: true });
   assert.equal(res.ok, true);
-  assert.equal(res.migrated, false);
+  assert.equal(res.migrated, true);
   assert.equal(res.accountCount, 0);
-
-  assert.equal(existsSync(marker), false, `expected no prisma migrate deploy call, but saw: ${marker}`);
+  assert.equal(existsSync(marker), false, `expected bestEffort to skip migrate:light:deploy (${marker})`);
 });
 

@@ -36,13 +36,6 @@ test('hstack stack new defaults to HAPPIER_STACK_REPO_DIR when happier monorepo 
   await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-  // Monorepo server-light support: sqlite schema lives under prisma/sqlite/.
-  await mkdir(join(monoRoot, 'apps', 'server', 'prisma', 'sqlite'), { recursive: true });
-  await writeFile(
-    join(monoRoot, 'apps', 'server', 'prisma', 'sqlite', 'schema.prisma'),
-    'datasource db { provider = "sqlite" }\n',
-    'utf-8'
-  );
 
   const env = {
     ...process.env,

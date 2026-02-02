@@ -281,12 +281,12 @@ async function main() {
     serverEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR?.trim()
       ? baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR.trim()
       : join(dataDir, 'files');
-    serverEnv.DATABASE_URL = baseEnv.DATABASE_URL?.trim()
-      ? baseEnv.DATABASE_URL.trim()
-      : `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+    serverEnv.HAPPIER_SERVER_LIGHT_DB_DIR = baseEnv.HAPPIER_SERVER_LIGHT_DB_DIR?.trim()
+      ? baseEnv.HAPPIER_SERVER_LIGHT_DB_DIR.trim()
+      : join(dataDir, 'pglite');
 
     // Reliability: ensure DB schema exists before daemon hits /v1/machines (health checks don't cover DB readiness).
-    // If the server is already running and we are not restarting, do NOT run migrations here (SQLite can lock).
+    // If the server is already running and we are not restarting, skip migrations/probes (pglite is single-connection).
     const acct = await getAccountCountForServerComponent({
       serverComponentName,
       serverDir,
