@@ -1,0 +1,23 @@
+{
+  "name": "@happier-dev/tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --no-file-parallelism -c vitest.core.config.ts",
+    "test:stress": "vitest run --no-file-parallelism -c vitest.stress.config.ts",
+    "test:providers": "vitest run --no-file-parallelism -c vitest.providers.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@happier-dev/protocol": "0.0.0",
+    "socket.io-client": "^4.8.1",
+    "tweetnacl": "^1.0.3",
+    "privacy-kit": "^0.0.25"
+  },
+  "devDependencies": {
+    "@types/node": ">=20",
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
