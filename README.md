@@ -13,7 +13,7 @@
 
 Make sure to star the repo and [subscribe to the announcements channel](https://github.com/happier-dev/happier/discussions/categories/announcements) to be informed as soon as it's out.
 
-You can also [join the Discord](https://discord.gg/y7KwpakY) channel to ask any question or report any issue that you might have.
+You can also [join the Discord](https://discord.gg/y7KwpakY) channel to ask any questions or report any issues that you might have.
 
 This project exists because we needed it ourselves - and we want it to evolve through real feedback. We aim to keep the community welcoming, and contributor-friendly, whether you’re signaling an issue or proposing a larger idea.
 
