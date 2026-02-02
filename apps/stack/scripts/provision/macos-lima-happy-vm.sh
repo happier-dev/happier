@@ -179,7 +179,7 @@ Next steps:
   limactl shell ${VM_NAME}
 
 Inside the VM:
-  curl -fsSL https://raw.githubusercontent.com/leeroybrun/happier-dev/main/apps/stack/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \\
+  curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \\
     && chmod +x /tmp/linux-ubuntu-review-pr.sh \\
     && /tmp/linux-ubuntu-review-pr.sh
 

@@ -56,7 +56,7 @@ pick_raw_base() {
   # Try canonical upstream first, then common fork path.
   local candidates=(
     "https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack"
-    "https://raw.githubusercontent.com/leeroybrun/happier-dev/main/apps/stack"
+    "https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack"
   )
   local c
   for c in "${candidates[@]}"; do

@@ -1,5 +1,8 @@
 import { createInterface } from 'node:readline/promises';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { listWorktreeSpecs } from '../git/worktrees.mjs';
+import { getDevRepoDir } from '../paths/paths.mjs';
 import { bold, cyan, dim, green } from '../ui/ansi.mjs';
 
 export function isTty() {
@@ -59,12 +62,18 @@ export async function promptSelect(rl, { title, options, defaultIndex = 0 }) {
   return options[idx].value;
 }
 
-export async function promptWorktreeSource({ rl, rootDir, component, stackName, createRemote = 'upstream', deps = {} }) {
+export async function promptWorktreeSource({ rl, rootDir, component, stackName, createRemote = 'upstream', env = process.env, deps = {} }) {
   const promptFn = deps.prompt ?? prompt;
   const promptSelectFn = deps.promptSelect ?? promptSelect;
   const listWorktreeSpecsFn = deps.listWorktreeSpecs ?? listWorktreeSpecs;
 
+  const devDir = getDevRepoDir(rootDir, env);
+  const hasDev = Boolean(devDir && existsSync(join(devDir, '.git')));
+
   const baseOptions = [{ label: `default (${dim('repo checkout')})`, value: 'default' }];
+  if (hasDev) {
+    baseOptions.push({ label: `dev (${dim('dev checkout')})`, value: 'dev' });
+  }
   baseOptions.push({ label: `pick existing worktree`, value: 'pick' });
   baseOptions.push({ label: `create new worktree (${cyan(createRemote)}; ${green('recommended for PRs')})`, value: 'create' });
 
@@ -73,14 +82,23 @@ export async function promptWorktreeSource({ rl, rootDir, component, stackName, 
   if (kind === 'default') {
     return 'default';
   }
+  if (kind === 'dev') {
+    return 'dev';
+  }
   if (kind === 'pick') {
     const specs = await listWorktreeSpecsFn({ rootDir, component });
-    if (!specs.length) {
+    const all = [
+      ...(hasDev ? [{ label: `dev (${dim('dev checkout')})`, value: 'dev' }] : []),
+      ...specs.map((s) => ({ label: s, value: s })),
+    ];
+    if (!all.length) {
+      // eslint-disable-next-line no-console
+      console.log(dim(`[wizard] no worktrees found (using default repo checkout)`));
       return 'default';
     }
     const picked = await promptSelectFn(rl, {
       title: `${bold(`Available ${cyan('repo')} worktrees`)}\n${dim('Tip: use `hstack wt new ... --use` to create more worktrees.')}`,
-      options: specs.map((s) => ({ label: s, value: s })),
+      options: all,
       defaultIndex: 0,
     });
     return picked;

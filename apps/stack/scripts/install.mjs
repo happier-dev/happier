@@ -28,7 +28,7 @@ import { createStepPrinter } from './utils/cli/progress.mjs';
 
 // Happier monorepo repo URL defaults.
 // This should point at a repo that contains at least: apps/ui, apps/cli, apps/server.
-const DEFAULT_MONOREPO_REPO_URL = 'https://github.com/leeroybrun/happier-dev.git';
+const DEFAULT_MONOREPO_REPO_URL = 'https://github.com/happier-dev/happier.git';
 
 const DEFAULT_FORK_REPOS = {
   monorepo: DEFAULT_MONOREPO_REPO_URL,
@@ -43,10 +43,10 @@ function repoUrlsFromOwners({ forkOwner, upstreamOwner }) {
   const up = (name) => `https://github.com/${upstreamOwner}/${name}.git`;
   return {
     forks: {
-      monorepo: fork('happier-dev'),
+      monorepo: fork('happier'),
     },
     upstream: {
-      monorepo: up('happier-dev'),
+      monorepo: up('happier'),
     },
   };
 }
@@ -356,8 +356,8 @@ async function main() {
   const defaultRepoSource = resolveRepoSource({ flags });
   const defaults = {
     repoSource: defaultRepoSource,
-    forkOwner: 'happier-dev',
-    upstreamOwner: 'leeroybrun',
+    forkOwner: process.env.GITHUB_USER || process.env.USER || 'your-github-username',
+    upstreamOwner: 'happier-dev',
     serverComponentName: getServerComponentName({ kv }),
     allowClone: !flags.has('--no-clone') && ((process.env.HAPPIER_STACK_CLONE_MISSING ?? '1') !== '0' || flags.has('--clone')),
     enableAutostart: (!sandboxed || allowGlobal) && (flags.has('--autostart') || (process.env.HAPPIER_STACK_AUTOSTART ?? '0') === '1'),

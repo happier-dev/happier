@@ -21,7 +21,7 @@ test('swiftbar utils: sums process metrics (cpu + mem)', async () => {
   const rootDir = process.cwd();
   const bashScript = [
     `set -euo pipefail`,
-    `source "${rootDir}/apps/stack/extras/swiftbar/lib/utils.sh"`,
+    `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
     `out="$(swiftbar_sum_metrics_cpu_mem "1.5|100|00:01" "2.25|50|00:02" "" "-")"`,
     `echo "$out"`,
   ].join('\n');
@@ -39,7 +39,7 @@ test('swiftbar utils: derives worktree spec from path', async () => {
   const bashScript = [
     `set -euo pipefail`,
     `export HAPPIER_STACK_WORKSPACE_DIR="/x"`,
-    `source "${rootDir}/apps/stack/extras/swiftbar/lib/utils.sh"`,
+    `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
     `echo "$(swiftbar_worktree_spec_from_path "/x/main" "happier")"`,
     `echo "$(swiftbar_worktree_spec_from_path "/x/pr/foo" "happier")"`,
     `v="$(swiftbar_worktree_spec_from_path "/x/other/place" "happier")"`,
@@ -60,7 +60,7 @@ test('swiftbar utils: finds git root by walking up from nested package dir', asy
 
   const bashScript = [
     `set -euo pipefail`,
-    `source "${rootDir}/apps/stack/extras/swiftbar/lib/utils.sh"`,
+    `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
     `echo "$(swiftbar_find_git_root_upwards "${pkgDir}")"`,
   ].join('\n');
   const res = await run('bash', ['-lc', bashScript], { cwd: rootDir, env: process.env });
@@ -75,7 +75,7 @@ test('swiftbar utils: derives repo key from component dir path', async () => {
   const bashScript = [
     `set -euo pipefail`,
     `export HAPPIER_STACK_WORKSPACE_DIR="/x"`,
-    `source "${rootDir}/apps/stack/extras/swiftbar/lib/utils.sh"`,
+    `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
     `echo "$(swiftbar_repo_key_from_path "/x/main/apps/ui")"`,
     `echo "$(swiftbar_repo_key_from_path "/x/pr/foo/apps/ui")"`,
     `echo "$(swiftbar_repo_key_from_path "/x/other/place")"`,

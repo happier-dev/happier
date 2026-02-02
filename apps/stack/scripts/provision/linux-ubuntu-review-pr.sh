@@ -4,7 +4,7 @@ set -euo pipefail
 # Provision an Ubuntu VM for running hstack (Happier Stack) in an isolated Linux environment.
 #
 # Intended usage (inside a Lima VM):
-#   curl -fsSL https://raw.githubusercontent.com/leeroybrun/happier-dev/main/apps/stack/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \
+#   curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \
 #     && chmod +x /tmp/linux-ubuntu-review-pr.sh \
 #     && /tmp/linux-ubuntu-review-pr.sh
 #

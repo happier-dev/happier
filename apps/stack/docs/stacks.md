@@ -43,7 +43,7 @@ Example (most common):
 
 ```bash
 hstack stack pr pr123 \
-  --repo=https://github.com/leeroybrun/happier-dev/pull/123 \
+  --repo=https://github.com/happier-dev/happier/pull/123 \
   --seed-auth --copy-auth-from=dev-auth --link-auth \
   --dev
 ```

@@ -97,7 +97,7 @@ Use `--category=tmp` for truly throwaway worktrees.
 Create a worktree at the PR head ref:
 
 ```bash
-hstack wt pr https://github.com/leeroybrun/happier-dev/pull/123 --use
+hstack wt pr https://github.com/happier-dev/happier/pull/123 --use
 
 # or just the PR number (remote defaults to upstream)
 hstack wt pr 123 --use

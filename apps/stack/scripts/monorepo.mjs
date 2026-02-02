@@ -246,7 +246,7 @@ async function resolvePortScratchDir(targetRepoRoot, rel) {
 async function ensureClonedHappyMonorepo({ targetPath, repoUrl }) {
   const dest = String(targetPath ?? '').trim();
   if (!dest) throw new Error('[monorepo] clone-target: missing --target=<dir>');
-  const url = String(repoUrl ?? '').trim() || 'https://github.com/leeroybrun/happier-dev.git';
+  const url = String(repoUrl ?? '').trim() || 'https://github.com/happier-dev/happier.git';
 
   const exists = await pathExists(dest);
   if (exists) {
@@ -292,7 +292,7 @@ async function resolveOrCloneTargetRepoRoot({ targetInput, targetArg, flags, kv,
     }
     const targetRepo = String(kv?.get?.('--target-repo') ?? '').trim();
     const spin = progress?.spinner?.(`Cloning target monorepo into ${hint}`);
-    const cloned = await ensureClonedHappyMonorepo({ targetPath: hint, repoUrl: targetRepo || 'https://github.com/leeroybrun/happier-dev.git' });
+    const cloned = await ensureClonedHappyMonorepo({ targetPath: hint, repoUrl: targetRepo || 'https://github.com/happier-dev/happier.git' });
     spin?.succeed?.(`Cloned target monorepo (${hint})`);
     const clonedRoot = await resolveGitRoot(cloned);
     if (!clonedRoot || !isHappyMonorepoRoot(clonedRoot)) {
@@ -1573,7 +1573,7 @@ async function cmdPortGuide({ kv, flags, json }) {
           throw new Error(`[monorepo] invalid target (expected an existing Happier monorepo checkout): ${targetInput}`);
         }
       }
-      const repoUrl = (kv.get('--target-repo') ?? '').trim() || 'https://github.com/leeroybrun/happier-dev.git';
+      const repoUrl = (kv.get('--target-repo') ?? '').trim() || 'https://github.com/happier-dev/happier.git';
       // eslint-disable-next-line no-console
       console.log(dim(`[monorepo] cloning target monorepo -> ${targetInput}`));
       await ensureClonedHappyMonorepo({ targetPath: targetInput, repoUrl });
