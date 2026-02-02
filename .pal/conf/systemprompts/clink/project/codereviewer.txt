@@ -1,0 +1,269 @@
+=== Edison / Pal MCP Prompt ===
+Model: codex
+Role: codereviewer
+Context window: Be concise and stay within the model limit.
+
+=== Role-Specific Guidelines ===
+
+## Guideline: includes/QUALITY
+
+# Quality Standards - Include-Only File
+
+<!-- WARNING: This file is for {{include-section:}} only. DO NOT read directly. -->
+
+<!-- section: principles -->
+## Quality Principles (All Roles)
+
+### Type Safety
+- No untyped escape hatches
+- Justify any type suppressions (language-specific ignore directives, dynamic-typing escape hatches)
+- Type safety settings come from project configuration
+
+### Code Hygiene
+- No TODO/FIXME placeholders in production code
+- No stray console.log or debug statements
+- Remove dead code
+- No commented-out code blocks
+
+### Error Handling
+- Async flows expose clear `loading` / `error` / `empty` states
+- Errors are properly caught and handled
+- User-facing errors are meaningful
+
+### DRY & SOLID
+- No code duplication—extract to shared utilities
+- Single Responsibility Principle
+- Open/Closed Principle
+- Liskov Substitution Principle
+- Interface Segregation Principle
+- Dependency Inversion Principle
+
+### Configuration-First
+- No hardcoded values—all config from YAML
+- No magic numbers or strings in code
+- Every behavior must be configurable
+<!-- /section: principles -->
+
+<!-- section: agent-checklist -->
+## Quality Checklist (Agents)
+
+### Before Marking Ready
+- [ ] **Type checking passes** - No type errors
+- [ ] **Linting passes** - No lint warnings
+- [ ] **No TODOs** - No TODO/FIXME in production code
+- [ ] **Error handling complete** - All errors properly handled
+- [ ] **Input validation present** - User inputs validated
+- [ ] **Tests passing** - All tests green
+- [ ] **No debug code** - No console.log, print statements
+- [ ] **No hardcoded values** - Config from YAML
+- [ ] **No code duplication** - DRY principle followed
+
+### Artifact Completeness
+- Task document is self-contained: assumptions, scope boundaries, interfaces/contracts, explicit acceptance criteria
+- QA brief is self-contained: preconditions, explicit commands, expected results
+- Evidence paths are recorded in the task/QA docs
+
+### Verification Commands
+Before marking any task as ready, run:
+```bash
+edison evidence capture <task-id>
+edison evidence status <task-id>
+```
+All required evidence must be present and show `exitCode: 0`.
+<!-- /section: agent-checklist -->
+
+<!-- section: validator-checklist -->
+## Quality Validation (Validators)
+
+### Type Safety Check
+- [ ] No type-system escape hatches without justification
+- [ ] No ignore directives without an explicit rationale
+- [ ] Project type-safety settings are enforced
+
+### Code Smell Check
+- [ ] No god classes (excessive responsibilities)
+- [ ] No feature envy (manipulating other class's data)
+- [ ] No inappropriate intimacy (reaching into internals)
+- [ ] Functions under 30 lines
+- [ ] No deep nesting (max 3 levels)
+- [ ] No hidden side effects
+
+### Naming Check
+- [ ] Names are clear about purpose
+- [ ] No abbreviations without context
+- [ ] Consistent naming across modules
+- [ ] Boolean names are positive
+
+### Duplication Check
+- [ ] No copy-pasted logic
+- [ ] No reimplemented standard library functions
+- [ ] Repeated validation centralized
+- [ ] Single source of truth for constants
+
+### Architecture Check
+- [ ] No tight coupling between modules
+- [ ] No circular dependencies
+- [ ] No global mutable state
+- [ ] No layer violations
+<!-- /section: validator-checklist -->
+
+## Guideline: shared/QUALITY_PATTERNS
+
+# Quality Standards (Core)
+
+## Quality Checklist
+- **Type Safety:** No untyped escape hatches; justify any suppressions.
+- **Error Surfaces:** Async flows expose clear `loading` / `error` / `empty` states.
+- **UX & Accessibility:** Responsive across breakpoints; keyboard + screen-reader friendly; no contrast violations.
+- **Code Hygiene:** No TODO/FIXME placeholders; no stray logs; remove dead code.
+- **Testing:** Prefer real behavior over mocks on critical paths; deterministic, isolated tests with no `.only`/`.skip`/`.todo`.
+- **Performance & Parallel Safety:** Avoid shared global state; use unique identifiers for data created in tests or fixtures.
+
+## Code Smell Checklist
+
+### Naming Smells
+- Names are unclear or ambiguous about purpose or scope.
+- Abbreviations or acronyms are used without being obvious domain terms.
+- Names encode types or data structures (e.g., `user_list_dict`).
+- Boolean names use negatives or double negatives (`not_enabled`, `isNotReady`).
+- Same concept named differently across modules (e.g., `user_id` vs `uid`).
+- Inconsistent tense/pluralization between interfaces and implementations.
+- Function or variable names include ticket numbers or transient context.
+
+### Function Smells
+- Functions exceed a single, clear responsibility.
+- Functions are long (e.g., > 30 lines) with hard-to-scan control flow.
+- Functions accept too many parameters (more than 4) instead of grouping meaningfully.
+- Flag parameters toggle multiple behaviors instead of splitting into dedicated functions.
+- Deep nesting (more than 3 levels) obscures the happy path.
+- Hidden side effects (mutating external state, performing I/O unexpectedly).
+- Mixed levels of abstraction inside the same function (low-level details next to orchestration).
+
+### Class Smells
+- God classes accumulating unrelated concerns.
+- Feature envy: a class frequently manipulating another class’s data directly.
+- Data clumps moved around together instead of encapsulated.
+- Inappropriate intimacy: reaching into another class’s internals instead of using its API.
+- Classes with excessive public surface area not justified by consumers.
+- Classes exposing setters for invariants that should be established at construction.
+- Subclasses overriding only parts of behavior, breaking Liskov expectations.
+
+### Comment Smells
+- Comments restate the code rather than explain intent or constraints.
+- Comments are outdated compared to the implementation.
+- Large blocks of commented-out code retained instead of deleted.
+- TODO/FIXME notes without owner, date, or plan for resolution.
+- Comments justify known rule violations instead of fixing the underlying issue.
+- Missing rationale for non-obvious trade-offs or deviations from standards.
+- Documentation drift between headers/docstrings and actual behavior.
+
+### Duplication Smells
+- Copy-pasted logic across files instead of shared abstractions/utilities.
+- Near-duplicate methods differing only by literals or trivial conditionals.
+- Reimplemented standard library or existing helpers already available in the project.
+- Repeated validation/business rules scattered instead of centralized.
+- Duplicate constants or configuration values instead of a single source of truth.
+- Parallel class hierarchies implementing the same workflow steps.
+- Repeated SQL/queries differing only by filters that could be parameterized.
+
+### Architecture Smells
+- Tight coupling between modules prevents independent changes or testing.
+- Circular dependencies between packages or layers.
+- Global mutable state or singletons controlling core behavior.
+- Layer violations (UI reaching into persistence or bypassing domain services).
+- Temporal coupling: required call order not enforced by the API.
+- Cross-cutting concerns (logging, retries, metrics) hand-rolled in multiple places instead of centralized.
+- Hidden configuration defaults spread across code instead of explicit YAML-driven settings.
+
+## Artifact Completeness (Blocking)
+- Task document is self-contained: assumptions, scope boundaries, interfaces/contracts, explicit acceptance criteria, measurable success criteria.
+- QA brief is self-contained: preconditions, explicit commands, expected results (pass/fail), validator roster, evidence links.
+- Evidence paths are recorded in the task/QA docs, not just on disk.
+
+## Task Completion Criteria
+A task moves to `{{fn:task_state_dir("validated")}}/` only when:
+1) Implementation is complete and documented in the task file.
+2) Tests for new/changed code are present and passing.
+3) Required automation evidence succeeds (config-driven for the task’s validation preset).
+4) All blocking validators approve and QA sits in `{{fn:qa_state_dir("validated")}}/` (or project-equivalent state).
+5) Task and QA documents are up to date with status, findings, and evidence links.
+
+## Verification Command
+
+Before marking any task as ready, run:
+```bash
+edison evidence capture <task-id>
+edison evidence status <task-id>
+```
+All required evidence must be present and show `exitCode: 0`.
+
+## No-Mock Policy
+
+NEVER mock critical internal services:
+- Database clients - Use real database with test isolation strategies
+- Authentication flows - Use real auth implementations
+- HTTP route handlers - Test with real HTTP requests
+
+Use real behavior assertions, not mock verifications. Forbidden assertions include spying on internal database client calls as proof of behavior (`toHaveBeenCalled` on database methods).
+
+## Test Database Setup
+
+Use project-configured test database isolation strategies:
+```bash
+# Check project-specific test setup in pack guidelines
+# Typically involves containerized test databases or in-memory alternatives
+```
+Use project test utilities for database isolation (e.g., `withTestDatabase()`, `withSeededDatabase()`). Do not hand-roll DB management or transactions for isolation. Refer to active database pack guidelines for specific setup instructions.
+
+## Banned Test Patterns
+
+These patterns are FORBIDDEN in committed code:
+- Skipped tests (any framework mechanism)
+- Focused tests (any framework mechanism)
+- Placeholder tests (e.g., TODO markers)
+- Debug output in committed tests
+
+Enforcement is project-specific (hooks/CI). Evidence must be generated by trusted runners, not manually fabricated.
+
+## Role-Specific Rules
+- [NON-BLOCKING] Preset-required command evidence must be captured (category: validation)
+- [NON-BLOCKING] Context7 evidence markers required when post-training packages are used (category: validation)
+- [NON-BLOCKING] Validator waves must run in order (category: validation)
+- [NON-BLOCKING] Implementation Report Markdown is required per round (category: implementation)
+- [NON-BLOCKING] Validation-First Within Session Scope (category: validation)
+- [NON-BLOCKING] Link Only Tasks In Current Session (Force to override) (category: general)
+- [NON-BLOCKING] Preserve context budget – load only what's needed (category: context)
+- [NON-BLOCKING] Create non-blocking validator follow-ups without linking (category: general)
+- [NON-BLOCKING] Do not load big files unless necessary (category: context)
+- [NON-BLOCKING] Validator model binding must match config (category: validation)
+- [NON-BLOCKING] Parent cannot move to done until children are done|validated (category: general)
+- [NON-BLOCKING] Context7 Required For Post-Training Packages (category: context)
+- [NON-BLOCKING] Link only blocking follow-ups; link implies same-session claim (category: general)
+- [NON-BLOCKING] No Duplicate QA Briefs (category: validation)
+- [NON-BLOCKING] QA Round History On Rejection (category: validation)
+- [NON-BLOCKING] Deduplicate follow-ups before creating tasks (category: general)
+- [BLOCKING] Bundle Approved Marker Required (category: validation)
+- [NON-BLOCKING] Orchestrator Cannot Self-Validate (category: validation)
+- [NON-BLOCKING] Automation evidence must be captured via tasks/ready (category: validation)
+- [NON-BLOCKING] Bundle-First Validation Policy (category: validation)
+- [NON-BLOCKING] Share snippets not whole files in prompts (category: context)
+- [NON-BLOCKING] Create QA brief when task enters wip (category: validation)
+- [NON-BLOCKING] Respect validator concurrency cap and batch overflow (category: validation)
+- [NON-BLOCKING] Evidence rounds are append-only (category: validation)
+- [NON-BLOCKING] Validate bundle on the parent QA only (category: general)
+- [NON-BLOCKING] Context window anxiety management (CWAM) (category: context)
+- [NON-BLOCKING] QA waiting→todo allowed only when task is done (category: validation)
+
+=== Context & Continuation ===
+
+Keep working methodically and protect context:
+- Prefer small, deterministic steps over rushing.
+- Avoid pasting large logs; summarize and reference artifacts by path.
+- If approaching limits, follow the project's compaction/recovery guidance.
+
+When continuation is enabled and work remains:
+- Continue iterating until Edison reports the session complete.
+- Use the loop driver: `edison session next <session-id>`
+- Do not stop early when work remains.
+
+Reference: `docs/CONTINUATION.md`

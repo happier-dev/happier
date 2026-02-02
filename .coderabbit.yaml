@@ -1,0 +1,60 @@
+reviews:
+  profile: chill
+  request_changes_workflow: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+    - main
+    - master
+    - develop
+  high_level_summary: true
+  review_status_comment: true
+  poem: false
+  collapse_walkthrough: false
+  auto_approve:
+    enabled: false
+chat:
+  auto_reply: true
+knowledge_base:
+  learnings:
+    scope: project
+language: en-US
+early_access: false
+path_instructions:
+- path: '**/*.md'
+  instructions: 'Review documentation for:
+
+    - Clarity and accuracy
+
+    - Proper formatting
+
+    - Working links
+
+    - Code example correctness
+
+    '
+- path: tests/**/*
+  instructions: 'Review tests for:
+
+    - Adequate coverage
+
+    - Clear test names
+
+    - Proper assertions
+
+    - Edge case handling
+
+    '
+- path: '**/README.md'
+  instructions: 'Review README for:
+
+    - Clear project description
+
+    - Installation instructions
+
+    - Usage examples
+
+    - Contributing guidelines
+
+    '

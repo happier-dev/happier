@@ -1,0 +1,84 @@
+---
+id: RULE.DELEGATION.MOST_WORK
+title: Delegate the majority of work
+category: delegation
+blocking: false
+contexts: []
+origins:
+- core
+source:
+  file: guidelines/orchestrators/DELEGATION.md
+---
+
+# Delegate the majority of work
+
+## Body
+Default to delegation:
+- Orchestrator should delegate most non-trivial implementation to specialized agents.
+- Only implement directly when truly trivial or explicitly required by policy/config.
+
+Reference: `guidelines/orchestrators/DELEGATION.md`
+
+---
+id: RULE.DELEGATION.NO_REDELEGATION
+title: Sub-agents must not re-delegate
+category: delegation
+blocking: false
+contexts: []
+origins:
+- core
+source:
+  file: guidelines/orchestrators/DELEGATION.md
+---
+
+# Sub-agents must not re-delegate
+
+## Body
+Sub-agents are implementers, not orchestrators:
+- Sub-agents must not delegate to other agents/models.
+- If work needs splitting, return to the orchestrator with a proposed split.
+
+Reference: `guidelines/orchestrators/DELEGATION.md`
+
+---
+id: RULE.DELEGATION.PARALLELIZE_WHEN_RELEVANT
+title: Orchestrator should parallelize via tasks/split for non-trivial tasks
+category: delegation
+blocking: false
+contexts: []
+origins:
+- core
+source:
+  file: guidelines/orchestrators/DELEGATION.md
+---
+
+# Orchestrator should parallelize via tasks/split for non-trivial tasks
+
+## Body
+Parallelize when it improves throughput:
+- Split work into independent slices (API/UI/DB/tests) when coupling is low.
+- Respect the configured concurrency cap; batch overflow instead of over-assigning.
+
+---
+id: RULE.DELEGATION.PRIORITY_CHAIN
+title: Delegation Decision Priority Chain
+category: delegation
+blocking: false
+contexts:
+- guidance
+- delegation
+origins:
+- core
+source:
+  file: guidelines/orchestrators/DELEGATION.md
+---
+
+# Delegation Decision Priority Chain
+
+## Body
+Make delegation decisions deterministically using the configured priority chain:
+- User instruction → file pattern rules → task type rules → sub-agent defaults → tie-breakers.
+- Do not “shop” for models after selection; take the first deterministic match.
+- Stop and escalate if routing is ambiguous or config is missing.
+
+Reference: `guidelines/orchestrators/DELEGATION.md`
