@@ -7,7 +7,7 @@ A “stack” is just:
 - a dedicated **server port**
 - isolated directories for **UI build output**, **CLI home**, and **logs**
 - a repo checkout pin (point at a specific worktree/checkout)
-- (when using `happy-server`) isolated **infra** (Postgres/Redis/Minio) managed per-stack
+- (when using `happier-server`) isolated **infra** (Postgres/Redis/Minio) managed per-stack
 
 Stacks are configured via a plain env file stored under:
 
@@ -20,7 +20,7 @@ Stacks are configured via a plain env file stored under:
 Non-interactive:
 
 ```bash
-hstack stack new exp1 --port=3010 --server=happy-server-light
+hstack stack new exp1 --port=3010 --server=happier-server-light
 ```
 
 Auto-pick a port:
@@ -53,7 +53,15 @@ Notes:
 - `--remote` (default `upstream`) controls which Git remote is used to fetch `refs/pull/<n>/head`.
 - `--seed-auth` uses `hstack stack auth <stack> copy-from <source>` under the hood, which also best-effort seeds DB Account rows (avoids FK errors like Prisma `P2003`).
 - `--link-auth` symlinks auth files instead of copying them (keeps credentials in sync, but reduces isolation).
- - For full-server stacks (`happy-server`), seeding may require Docker infra to be running.
+- For full-server stacks (`happier-server`), seeding may require Docker infra to be running.
+
+## Auth seeding (recommended: dev-auth)
+
+Create the `dev-auth` seed stack once, authenticate once, then reuse it when creating new stacks:
+
+```bash
+hstack auth seed
+```
 
 Interactive wizard (TTY only):
 
@@ -63,11 +71,11 @@ hstack stack new --interactive
 
 The wizard lets you:
 
-- pick the server type (`happy-server-light` or `happy-server`)
+- pick the server type (`happier-server-light` or `happier-server`)
 - pick or create a repo worktree for the Happier monorepo
 - choose which Git remote to base newly-created worktrees on (defaults to `upstream`)
 
-When creating `--server=happy-server` stacks, hstack will also reserve additional ports and persist
+When creating `--server=happier-server` stacks, hstack will also reserve additional ports and persist
 the stack-scoped infra config in the stack env file (so restarts are stable):
 
 - `HAPPIER_STACK_PG_PORT`
@@ -112,12 +120,12 @@ hstack stack edit exp1 --interactive
 
 ## Switch server flavor for a stack
 
-You can change `happy-server-light` vs `happy-server` for an existing stack without re-running the full edit wizard:
+You can change `happier-server-light` vs `happier-server` for an existing stack without re-running the full edit wizard:
 
 ```bash
 hstack stack srv exp1 -- status
-hstack stack srv exp1 -- use happy-server-light
-hstack stack srv exp1 -- use happy-server
+hstack stack srv exp1 -- use happier-server-light
+hstack stack srv exp1 -- use happier-server
 hstack stack srv exp1 -- use --interactive
 ```
 
@@ -195,9 +203,9 @@ Implementation notes:
 When creating a stack you can point the stack at a repo worktree:
 
 ```bash
-hstack stack new exp3 \\
+  hstack stack new exp3 \\
   --repo=local/my-feature \\
-  --server=happy-server
+  --server=happier-server
 ```
 
 Worktree specs are interpreted relative to the workspace:

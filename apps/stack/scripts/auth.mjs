@@ -92,6 +92,27 @@ function resolveServerComponentForCurrentStack() {
   );
 }
 
+async function cmdSeed({ argv, json }) {
+  const rootDir = getRootDir(import.meta.url);
+  const positionals = argv.filter((a) => !a.startsWith('--'));
+  const name = (positionals[1] ?? '').trim() || 'dev-auth';
+
+  // Forward to the stack subcommand that implements the full "seed stack" workflow.
+  const passthrough = argv.slice(1).filter((a) => a !== name);
+  const child = spawn(
+    process.execPath,
+    [join(rootDir, 'scripts', 'stack.mjs'), 'create-dev-auth-seed', name, ...passthrough],
+    { cwd: rootDir, env: process.env, stdio: 'inherit' }
+  );
+  await new Promise((resolve) => child.on('exit', resolve));
+
+  if (json) {
+    printResult({ json, data: { ok: child.exitCode === 0, exitCode: child.exitCode, name } });
+  } else if (child.exitCode && child.exitCode !== 0) {
+    process.exit(child.exitCode);
+  }
+}
+
 async function cmdDevKey({ argv, json }) {
   const { flags, kv } = parseArgs(argv);
 
@@ -966,7 +987,7 @@ async function main() {
   if (wantsHelp(argv, { flags }) || cmd === 'help') {
     printResult({
       json,
-      data: { commands: ['status', 'login', 'copy-from', 'dev-key'], stackScoped: 'hstack stack auth <name> status|login|copy-from' },
+      data: { commands: ['status', 'login', 'seed', 'copy-from', 'dev-key'], stackScoped: 'hstack stack auth <name> status|login|copy-from' },
       text: [
         '',
         banner('auth', { subtitle: 'Login and auth seeding helpers for hstack.' }),
@@ -975,6 +996,7 @@ async function main() {
         bullets([
           `${dim('status:')} ${cmdFmt('hstack auth status')} ${dim('[--json]')}`,
           `${dim('login:')}  ${cmdFmt('hstack auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
+          `${dim('seed stack:')} ${cmdFmt('hstack auth seed')} ${dim('[name=dev-auth] [--login|--no-login] [--server=...] [--skip-default-seed] [--non-interactive] [--json]')}`,
           `${dim('seed:')}   ${cmdFmt('hstack auth copy-from <sourceStack|legacy> --all')} ${dim('[--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]')}`,
           `${dim('dev key:')} ${cmdFmt('hstack auth dev-key')} ${dim('[--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]')}`,
         ]),
@@ -1002,6 +1024,10 @@ async function main() {
   }
   if (cmd === 'login') {
     await cmdLogin({ argv, json });
+    return;
+  }
+  if (cmd === 'seed') {
+    await cmdSeed({ argv, json });
     return;
   }
   if (cmd === 'copy-from') {

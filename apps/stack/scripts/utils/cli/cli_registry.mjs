@@ -240,8 +240,8 @@ export function gethstackRegistry() {
       name: 'auth',
       kind: 'node',
       scriptRelPath: 'scripts/auth.mjs',
-      rootUsage: 'hstack auth status|login [--json]',
-      description: 'CLI auth helper',
+      rootUsage: 'hstack auth status|login|seed|copy-from|dev-key [--json]',
+      description: 'Auth helpers (login + dev-auth seeding)',
     },
     {
       name: 'happier',
