@@ -75,7 +75,7 @@ export async function userRoutes(app: Fastify) {
         const { query } = request.query;
 
         const username =
-            process.env.HAPPY_SERVER_FLAVOR === 'light'
+            process.env.HAPPIER_SERVER_FLAVOR === 'light'
                 ? { startsWith: query }
                 : { startsWith: query, mode: 'insensitive' as const };
 

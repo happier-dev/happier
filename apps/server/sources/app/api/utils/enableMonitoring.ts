@@ -30,14 +30,14 @@ export function enableMonitoring(app: Fastify) {
             reply.send({
                 status: 'ok',
                 timestamp: new Date().toISOString(),
-                service: 'happy-server'
+                service: 'happier-server'
             });
         } catch (error) {
             log({ module: 'health', level: 'error' }, `Health check failed: ${error}`);
             reply.code(503).send({
                 status: 'error',
                 timestamp: new Date().toISOString(),
-                service: 'happy-server',
+                service: 'happier-server',
                 error: 'Database connectivity failed'
             });
         }
