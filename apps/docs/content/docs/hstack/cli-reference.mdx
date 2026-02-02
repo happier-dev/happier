@@ -37,7 +37,7 @@ Common run flags (root commands):
 
 Lifecycle:
 
-- Create: `hstack stack new <name> [--interactive]`
+- Create: `hstack stack new <name> [--interactive] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>]`
 - Edit: `hstack stack edit <name> --interactive`
 - List/info: `hstack stack list`, `hstack stack info <name>`
 - Run: `hstack stack dev <name>`, `hstack stack start <name>`
@@ -64,7 +64,7 @@ Stack-scoped app CLI (runs the Happier CLI/daemon in stack context):
 
 PR stacks:
 
-- `hstack stack pr <name> --repo=<pr-url|number> [--dev|--start] [--server-flavor=light|full]`
+- `hstack stack pr <name> --repo=<pr-url|number> [--dev|--start] [--server-flavor=light|full] [--db-provider=...] [--database-url=...]`
 
 ---
 
