@@ -6,7 +6,7 @@ import { homedir as defaultHomedir } from 'node:os';
 export type LightEnv = NodeJS.ProcessEnv;
 
 export function resolveLightDataDir(env: LightEnv, opts?: { homedir?: string }): string {
-    const fromEnv = env.HAPPY_SERVER_LIGHT_DATA_DIR?.trim();
+    const fromEnv = (env.HAPPY_SERVER_LIGHT_DATA_DIR ?? env.HAPPIER_SERVER_LIGHT_DATA_DIR)?.trim();
     if (fromEnv) {
         return fromEnv;
     }
@@ -15,7 +15,7 @@ export function resolveLightDataDir(env: LightEnv, opts?: { homedir?: string }):
 }
 
 export function resolveLightFilesDir(env: LightEnv, dataDir: string): string {
-    const fromEnv = env.HAPPY_SERVER_LIGHT_FILES_DIR?.trim();
+    const fromEnv = (env.HAPPY_SERVER_LIGHT_FILES_DIR ?? env.HAPPIER_SERVER_LIGHT_FILES_DIR)?.trim();
     if (fromEnv) {
         return fromEnv;
     }
@@ -23,7 +23,7 @@ export function resolveLightFilesDir(env: LightEnv, dataDir: string): string {
 }
 
 export function resolveLightDatabaseDir(env: LightEnv, dataDir: string): string {
-    const fromEnv = env.HAPPY_SERVER_LIGHT_DB_DIR?.trim();
+    const fromEnv = (env.HAPPY_SERVER_LIGHT_DB_DIR ?? env.HAPPIER_SERVER_LIGHT_DB_DIR)?.trim();
     if (fromEnv) {
         return fromEnv;
     }
@@ -48,6 +48,9 @@ export function applyLightDefaultEnv(env: LightEnv, opts?: { homedir?: string })
     env.HAPPY_SERVER_LIGHT_DATA_DIR = dataDir;
     env.HAPPY_SERVER_LIGHT_FILES_DIR = filesDir;
     env.HAPPY_SERVER_LIGHT_DB_DIR = dbDir;
+    env.HAPPIER_SERVER_LIGHT_DATA_DIR ??= dataDir;
+    env.HAPPIER_SERVER_LIGHT_FILES_DIR ??= filesDir;
+    env.HAPPIER_SERVER_LIGHT_DB_DIR ??= dbDir;
 
     env.PUBLIC_URL = resolveLightPublicUrl(env);
 }

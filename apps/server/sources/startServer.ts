@@ -41,6 +41,7 @@ function shouldEnableRedisAdapterFromEnv(env: NodeJS.ProcessEnv, flavor: ServerF
 
 export async function startServer(flavor: ServerFlavor): Promise<void> {
     process.env.HAPPY_SERVER_FLAVOR = flavor;
+    process.env.HAPPIER_SERVER_FLAVOR = flavor;
     const role = getServerRoleFromEnv(process.env);
     const shouldEnableRedisAdapter = shouldEnableRedisAdapterFromEnv(process.env, flavor);
 
