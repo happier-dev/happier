@@ -7,8 +7,29 @@
 
 import psList from 'ps-list';
 import spawn from 'cross-spawn';
+import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 export type HappyProcessInfo = { pid: number; command: string; type: string };
+
+async function getProcessInfoByPidProcfs(pid: number): Promise<{ pid: number; name?: string; cmd?: string } | null> {
+  // Prefer /proc on Linux: it's faster and avoids races/parsing issues from repeated `ps` calls.
+  if (process.platform !== 'linux') return null;
+  try {
+    const raw = await readFile(`/proc/${pid}/cmdline`);
+    if (!raw || raw.length === 0) return null;
+    const parts = raw
+      .toString('utf8')
+      .split('\u0000')
+      .filter(Boolean);
+    if (parts.length === 0) return null;
+    const cmd = parts.join(' ');
+    const name = path.basename(parts[0] ?? '');
+    return { pid, name, cmd };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Find all Happier CLI processes (including current process)
@@ -72,6 +93,10 @@ export async function findAllHappyProcesses(): Promise<HappyProcessInfo[]> {
 }
 
 export async function findHappyProcessByPid(pid: number): Promise<HappyProcessInfo | null> {
+  const procfs = await getProcessInfoByPidProcfs(pid);
+  if (procfs) {
+    return classifyHappyProcess(procfs);
+  }
   const all = await findAllHappyProcesses();
   return all.find((p) => p.pid === pid) ?? null;
 }

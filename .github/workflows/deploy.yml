@@ -103,6 +103,7 @@ jobs:
         env:
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
+          DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
           HAPPIER_UI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_UI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_UI_DEPLOY_WEBHOOKS || secrets.HAPPIER_UI_DEPLOY_WEBHOOKS }}
           HAPPIER_WEBSITE_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS || secrets.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS }}
           HAPPIER_DOCS_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS || secrets.HAPPIER_DOCS_DEPLOY_WEBHOOKS }}
@@ -118,23 +119,36 @@ jobs:
             exit 1
           fi
 
+          if [ -z "${DEPLOY_WEBHOOK_URL:-}" ]; then
+            echo "Missing DEPLOY_WEBHOOK_URL (expected a base URL like 'https://ci.example.com/api/deploy/')." >&2
+            exit 1
+          fi
+          DEPLOY_WEBHOOK_URL="${DEPLOY_WEBHOOK_URL%/}"
+
           trigger_hooks() {
             local label="$1"
             local hooks="$2"
 
             if [ -z "${hooks:-}" ]; then
               echo "No webhook URLs configured for '${label}' in environment '${{ steps.target.outputs.environment }}'." >&2
-              echo "Expected an environment variable/secret with newline-separated URLs." >&2
+              echo "Expected an environment variable/secret with newline-separated webhook IDs (or full URLs)." >&2
               return 1
             fi
 
             echo "Triggering deploy hook(s) for '${label}'..."
 
             local triggered=0
-            while IFS= read -r url; do
-              url="$(echo "$url" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-              if [ -z "$url" ] || [ "${url#\#}" != "$url" ]; then
+            while IFS= read -r hook; do
+              hook="$(echo "$hook" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+              if [ -z "$hook" ] || [ "${hook#\#}" != "$hook" ]; then
                 continue
+              fi
+
+              local url=""
+              if [[ "$hook" =~ ^https?:// ]]; then
+                url="$hook"
+              else
+                url="${DEPLOY_WEBHOOK_URL}/${hook}"
               fi
 
               triggered=$((triggered + 1))
@@ -150,7 +164,7 @@ jobs:
             done <<< "$hooks"
 
             if [ "$triggered" -eq 0 ]; then
-              echo "No valid webhook URLs found for '${label}' (empty/comment-only list)." >&2
+              echo "No valid webhook IDs/URLs found for '${label}' (empty/comment-only list)." >&2
               return 1
             fi
 

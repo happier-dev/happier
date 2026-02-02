@@ -1,4 +1,4 @@
-name: CLI Smoke Test
+name: CI — CLI Smoke Test
 
 on:
   push:

@@ -1,4 +1,4 @@
-name: Promote Website (deploy branch)
+name: PROMOTE — Website (deploy branch)
 
 on:
   workflow_dispatch:

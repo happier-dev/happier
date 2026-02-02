@@ -1,4 +1,4 @@
-name: Release (dev → main)
+name: RELEASE — Dev → Main
 
 on:
   workflow_dispatch:

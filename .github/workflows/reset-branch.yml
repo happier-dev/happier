@@ -1,4 +1,4 @@
-name: Reset Branch (main ↔ dev)
+name: MAINT — Reset Branch (main ↔ dev)
 
 on:
   workflow_dispatch:

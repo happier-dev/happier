@@ -21,7 +21,7 @@ Notes:
 
 When `dev` is stable and you want to ship:
 
-1. Run the **Release (dev → main)** workflow.
+1. Run the **RELEASE — Dev → Main** workflow.
 2. The workflow runs the repo test suite and typecheck, builds the website/docs (if enabled), and runs a CLI smoke test (if enabled).
 3. If checks pass, it promotes `dev` → `main` using a fast-forward (no merge commit). If `main` has diverged, it can optionally perform a guarded reset.
 4. Optionally bumps versions on `main`, promotes deploy branches for the selected environment, and (optionally) publishes the CLI.
@@ -32,10 +32,33 @@ Deploy branches typically include `deploy/<env>/ui`, `deploy/<env>/server`, `dep
 
 Pushes to `deploy/<env>/*` are intended to trigger deployment automation (for example, calling a protected deploy hook behind Cloudflare Access). How deployments are performed is intentionally decoupled from how code is promoted into deploy branches.
 
+In this repo, the deploy hook is implemented by the **DEPLOY — Deploy Branch** workflow:
+
+- Trigger: pushes to `deploy/<env>/<component>` (or a manual workflow dispatch).
+- Action: sends `POST` requests to one or more configured deploy webhook URLs for that component.
+- Auth: adds Cloudflare Access service-token headers (`CF-Access-Client-Id` / `CF-Access-Client-Secret`).
+- Server deploy order: API first, then worker.
+
+Configuration (recommended as GitHub *Environment* secrets/vars for `production` / `preview`):
+
+- `CF_WEBHOOK_DEPLOY_CLIENT_ID`, `CF_WEBHOOK_DEPLOY_CLIENT_SECRET`
+- `DEPLOY_WEBHOOK_URL`: base URL (e.g. `https://ci.leecloud.ch/api/deploy/`)
+- Newline-separated webhook URL lists:
+  - `HAPPIER_UI_DEPLOY_WEBHOOKS`
+  - `HAPPIER_WEBSITE_DEPLOY_WEBHOOKS`
+  - `HAPPIER_DOCS_DEPLOY_WEBHOOKS`
+  - `HAPPIER_SERVER_API_DEPLOY_WEBHOOKS`
+  - `HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS`
+  - `HAPPIER_CLI_DEPLOY_WEBHOOKS`
+
+The `HAPPIER_*_DEPLOY_WEBHOOKS` values can be either:
+- webhook IDs (recommended), which will be called as `${DEPLOY_WEBHOOK_URL}/{id}`
+- full `https://…` URLs (supported for backwards compatibility)
+
 If you only need to move branches (no deploy/publish):
 
-- Use **Promote Branch (fast-forward or reset)** to move `source` → `target` in a safe, explicit way.
-- Use **Promote main from dev** as a shortcut wrapper for `dev` → `main`.
+- Use **PROMOTE — Branch (fast-forward or reset)** to move `source` → `target` in a safe, explicit way.
+- Use **PROMOTE — Main from Dev** as a shortcut wrapper for `dev` → `main`.
 
 ## Why fast-forward?
 
@@ -50,6 +73,6 @@ The reset option exists for rare cases where you intentionally want `main` to ma
 
 For the server, database migrations should be automated as part of the deployment runtime:
 
-- Prefer running `prisma migrate deploy` as part of the API service startup / entrypoint (or an explicit pre-deploy hook in your platform).
-- Do **not** run migrations from the worker (run them once).
+- Run `prisma migrate deploy` at container startup (entrypoint) or via an explicit platform “pre-deploy” hook.
+- Running migrations from *both* API and worker is acceptable as long as you expect contention and handle it (Prisma uses a DB lock to serialize migrations; the non-holder should wait/retry).
 - Avoid running migrations at image build-time (Dockerfile), since migrations require a live DB connection.

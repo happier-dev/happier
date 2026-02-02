@@ -56,6 +56,7 @@ Build targets:
 Key notes:
 - The server defaults to port `3005` (set `PORT` explicitly in container environments).
 - The image includes FFmpeg and Python for media processing.
+- The server entrypoint (`apps/server/scripts/run-server.sh`) runs `prisma migrate deploy` on startup by default (set `RUN_MIGRATIONS=0` to disable). On Postgres, it retries on advisory-lock contention.
 
 ## Kubernetes manifests
 Example manifests live in `apps/server/deploy`:

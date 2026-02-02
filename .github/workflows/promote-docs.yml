@@ -1,4 +1,4 @@
-name: Promote Docs (deploy branch)
+name: PROMOTE — Docs (deploy branch)
 
 on:
   workflow_dispatch:

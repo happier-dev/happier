@@ -1,4 +1,4 @@
-name: Expo App TypeScript typecheck
+name: CI — Expo Typecheck
 
 on:
     pull_request:

@@ -1,4 +1,4 @@
-name: Promote main from dev
+name: PROMOTE — Main from Dev
 
 on:
   workflow_dispatch:
