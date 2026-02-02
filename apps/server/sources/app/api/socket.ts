@@ -18,13 +18,18 @@ import { getRedisClient } from "@/storage/redis";
 import { randomUUID } from "node:crypto";
 
 export function startSocket(app: Fastify) {
+    const serverFlavor = (process.env.HAPPIER_SERVER_FLAVOR ?? process.env.HAPPY_SERVER_FLAVOR ?? '').trim();
+    const adapter = (process.env.HAPPIER_SOCKET_REDIS_ADAPTER ?? process.env.HAPPY_SOCKET_REDIS_ADAPTER ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
     const shouldEnableRedisAdapter =
-        process.env.HAPPY_SERVER_FLAVOR !== 'light' &&
-        (process.env.HAPPY_SOCKET_REDIS_ADAPTER === 'true' || process.env.HAPPY_SOCKET_REDIS_ADAPTER === '1') &&
+        serverFlavor !== 'light' &&
+        (adapter === 'true' || adapter === '1') &&
         typeof process.env.REDIS_URL === 'string' &&
         process.env.REDIS_URL.trim().length > 0;
 
-    const instanceId = process.env.HAPPY_INSTANCE_ID?.trim() || randomUUID();
+    const instanceId = process.env.HAPPIER_INSTANCE_ID?.trim() || process.env.HAPPY_INSTANCE_ID?.trim() || randomUUID();
 
     const io = new Server(app.server, {
         cors: {
