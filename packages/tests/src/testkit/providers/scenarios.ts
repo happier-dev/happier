@@ -180,7 +180,7 @@ export const opencodeScenarios: ProviderScenario[] = [
     id: 'permission_surface_outside_workspace',
     title: 'permissions: editing outside workspace surfaces a permission-request trace',
     tier: 'extended',
-    yolo: true,
+    yolo: false,
     prompt: ({ workspaceDir }) => {
       const outsidePath = join(tmpdir(), `happy-e2e-outside-${randomUUID()}.txt`);
       return [

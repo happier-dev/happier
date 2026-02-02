@@ -7,13 +7,14 @@ import { spawnSync } from 'node:child_process';
 import { createRunDirs } from '../runDir';
 import { startServerLight, type StartedServer } from '../process/serverLight';
 import { createTestAuth } from '../auth';
-import { createSessionWithCiphertexts } from '../sessions';
+import { createSessionWithCiphertexts, fetchSessionV2 } from '../sessions';
 import { envFlag } from '../env';
 import { writeTestManifest } from '../manifest';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
-import { encryptLegacyBase64, encodeBase64 } from '../messageCrypto';
+import { decryptLegacyBase64, encryptLegacyBase64, encodeBase64 } from '../messageCrypto';
 import { sleep } from '../timing';
+import { createUserScopedSocketCollector } from '../socketClient';
 
 import type { ProviderContractMatrixResult, ProviderScenario, ProviderUnderTest } from './types';
 import { opencodeScenarios } from './scenarios';
@@ -275,6 +276,19 @@ async function runOneScenario(params: {
     // Give the CLI time to boot and connect.
     await sleep(2_000);
 
+    // If YOLO is disabled for this scenario, auto-approve any permission requests
+    // by watching session agentState.requests and sending `${sessionId}:permission` RPC calls.
+    const approvedPermissionIds = new Set<string>();
+    const uiSocket = !yolo ? createUserScopedSocketCollector(server.baseUrl, auth.token) : null;
+    if (uiSocket) {
+      uiSocket.connect();
+      // best-effort; do not fail early on connect issues (provider will fail anyway)
+      const startedConnectAt = Date.now();
+      while (!uiSocket.isConnected() && Date.now() - startedConnectAt < 10_000) {
+        await sleep(50);
+      }
+    }
+
     const promptLocalId = randomUUID();
     const promptText = scenario.prompt({ workspaceDir });
     const prompt = {
@@ -299,6 +313,28 @@ async function runOneScenario(params: {
     let traceRaw = '';
     let traceEvents: ToolTraceEventV1[] = [];
     while (Date.now() - startedWaitAt < maxWaitMs) {
+      if (uiSocket) {
+        try {
+          const snap = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
+          const state = snap.agentState ? (decryptLegacyBase64(snap.agentState, secret) as any) : null;
+          const requests = state && typeof state === 'object' ? (state as any).requests : null;
+          if (requests && typeof requests === 'object') {
+            for (const [id] of Object.entries(requests)) {
+              if (typeof id !== 'string' || id.length === 0) continue;
+              if (approvedPermissionIds.has(id)) continue;
+              const paramsCiphertext = encryptLegacyBase64({ id, approved: true, decision: 'approved' }, secret);
+              // Best-effort: if method isn't registered yet, ignore and retry.
+              const res = await uiSocket.rpcCall<any>(`${sessionId}:permission`, paramsCiphertext);
+              if (res && typeof res === 'object' && res.ok === true) {
+                approvedPermissionIds.add(id);
+              }
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       if (existsSync(traceFile)) {
         traceRaw = await readFileText(traceFile).catch(() => '');
         traceEvents = readJsonlEvents(traceRaw);
@@ -352,6 +388,7 @@ async function runOneScenario(params: {
     if (scenario.verify) {
       await scenario.verify({ workspaceDir, fixtures, traceEvents });
     }
+    uiSocket?.close();
   } finally {
     await proc.stop();
   }
