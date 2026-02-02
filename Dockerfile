@@ -52,12 +52,17 @@ RUN test -f "apps/website/index.${WEBSITE_VARIANT}.html" && cp "apps/website/ind
 RUN yarn workspace @happier-dev/website build
 
 FROM nginx:alpine AS website
+RUN apk add --no-cache curl
 COPY --from=website-builder /repo/apps/website/dist /usr/share/nginx/html
 RUN rm /etc/nginx/conf.d/default.conf
 RUN echo 'server { \
     listen 80; \
     server_name _; \
     root /usr/share/nginx/html; \
+    \
+    location = /health { \
+        return 200 "ok\n"; \
+    } \
     \
     location /assets/ { \
         try_files $uri =404; \
@@ -92,10 +97,15 @@ RUN yarn workspace @happier-dev/app postinstall:real
 RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist
 
 FROM nginx:alpine AS webapp
+RUN apk add --no-cache curl
 COPY --from=webapp-builder /repo/apps/ui/dist /usr/share/nginx/html
 RUN rm /etc/nginx/conf.d/default.conf
 RUN echo 'server { \
     listen 80; \
+    \
+    location = /health { \
+        return 200 "ok\n"; \
+    } \
     \
     location /_expo/ { \
         root   /usr/share/nginx/html; \
@@ -148,7 +158,7 @@ RUN yarn workspace docs postinstall:real && yarn workspace docs build
 
 FROM node:${NODE_VERSION}-alpine AS docs
 WORKDIR /repo
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat curl
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
@@ -170,7 +180,7 @@ RUN yarn workspace @happier-dev/server build
 
 FROM node:${NODE_VERSION} AS server
 WORKDIR /repo
-RUN apt-get update && apt-get install -y python3 ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y python3 ffmpeg curl && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV PORT=3005
 ENV RUN_MIGRATIONS=1
