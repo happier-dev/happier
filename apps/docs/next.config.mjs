@@ -12,10 +12,21 @@ const config = {
   turbopack: {
     root: repoRoot,
   },
+  async redirects() {
+    return [
+      // Historical: docs used to live under /docs. Keep old URLs working.
+      { source: '/docs', destination: '/', permanent: true },
+      { source: '/docs/:path*', destination: '/:path*', permanent: true },
+    ];
+  },
   async rewrites() {
     return [
       {
         source: '/docs/:path*.mdx',
+        destination: '/llms.mdx/docs/:path*',
+      },
+      {
+        source: '/:path*.mdx',
         destination: '/llms.mdx/docs/:path*',
       },
     ];

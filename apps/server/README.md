@@ -49,14 +49,17 @@ That said, Happier Server is open source and self-hostable if you prefer running
 
 Happier Server supports two flavors that share the same API + internal logic. The only difference is which infrastructure backends are used for storage.
 
-- **full** (default, recommended for production): Postgres + optional Redis (for multi-replica Socket.IO) + S3/Minio-compatible public file storage.
-- **light** (recommended for self-hosting/testing): embedded Postgres via PGlite (no external Postgres/Redis required) + local public file storage served by the server under `GET /files/*`.
+- **full** (default, recommended for production): Postgres (default) or MySQL 8+ + optional Redis (for multi-replica Socket.IO) + S3/Minio-compatible public file storage.
+- **light** (recommended for self-hosting/testing): embedded Postgres via PGlite (default) or SQLite + local public file storage served by the server under `GET /files/*`.
 
 ## Required environment (full flavor)
 
 The full flavor expects these env vars to be set:
 
-- `DATABASE_URL` (Postgres), for example: `postgresql://user:pass@db.example.com:5432/happy?sslmode=require`
+- `HAPPIER_DB_PROVIDER` (optional, defaults to `postgres`). Supported: `postgres`, `mysql`.
+- `DATABASE_URL`, for example:
+  - Postgres: `postgresql://user:pass@db.example.com:5432/happy?sslmode=require`
+  - MySQL 8+: `mysql://user:pass@db.example.com:3306/happy`
 - `HANDY_MASTER_SECRET` (used to derive auth/encryption secrets)
 - Public file storage (S3/Minio):
   - `S3_HOST`
@@ -75,6 +78,7 @@ Optional (recommended for multi-core / multi-replica):
 
 ```bash
 # Required: DB
+# HAPPIER_DB_PROVIDER=postgres  # default
 DATABASE_URL=postgresql://happy:happy@127.0.0.1:5432/happy?sslmode=require
 HANDY_MASTER_SECRET=change-me-to-a-long-random-string
 
@@ -111,6 +115,10 @@ METRICS_PORT=9090
 # Optional: where light flavor stores its local data (DB + files + secrets).
 # If unset, defaults to ~/.happy/server-light
 HAPPIER_SERVER_LIGHT_DATA_DIR=/var/lib/happy/server-light
+
+# Optional: DB provider for light flavor (defaults to embedded Postgres via pglite)
+# HAPPIER_DB_PROVIDER=pglite
+# HAPPIER_DB_PROVIDER=sqlite
 
 # Optional: ports
 PORT=3005
@@ -280,29 +288,30 @@ Notes:
 - `yarn dev:light` runs `prisma migrate deploy` against the embedded Postgres database before starting.
 - If you want a clean slate for local dev/testing, delete the light data dir (default: `~/.happy/server-light`) or point the light flavor at a fresh dir via `HAPPIER_SERVER_LIGHT_DATA_DIR=/tmp/happy-server-light`.
 
-### Prisma schema (full vs light)
+### Prisma schema (providers)
 
-- `prisma/schema.prisma` is the single source of truth.
-- Both **full** and **light** use the same schema and the same migration history:
+- `prisma/schema.prisma` is the single source of truth for the data model.
+- Provider-specific schemas are generated from it via `yarn schema:sync`:
+  - SQLite: `prisma/sqlite/schema.prisma`
+  - MySQL: `prisma/mysql/schema.prisma`
+
+Migrations are provider-specific:
+
+- Postgres (and embedded Postgres via PGlite):
   - migrations: `prisma/migrations/*`
+  - deploy: `yarn prisma migrate deploy` (or `yarn migrate:light:deploy` for embedded PGlite)
+- SQLite:
+  - migrations: `prisma/sqlite/migrations/*`
+  - deploy: `yarn migrate:sqlite:deploy` (expects `DATABASE_URL=file:...`)
+- MySQL 8+:
+  - migrations: `prisma/mysql/migrations/*`
+  - deploy: `yarn migrate:mysql:deploy`
 
-The full (Postgres) flavor uses migrations:
+Light flavor note (SQLite vs PGlite):
 
-- Dev migrations: `yarn migrate` / `yarn migrate:reset` (uses `.env.dev`)
-  - Applies/creates migrations under `prisma/migrations/*`
-
-The light (PGlite) flavor uses the same migrations:
-
-- Apply checked-in migrations (recommended for self-hosting upgrades): `yarn migrate:light:deploy`
-  - Applies migrations under `prisma/migrations/*` to the embedded Postgres database.
-
-Light flavor note (SQLite → PGlite):
-
-- Older versions of Happy Server used SQLite for the light flavor.
-- Current versions use embedded Postgres via PGlite for better compatibility with production Postgres and a single shared Prisma schema.
-- There is currently **no built-in automatic migration** from the old SQLite database to PGlite.
-  - Before upgrading, back up your previous light data directory (including any SQLite DB files).
-  - After upgrading, run `yarn migrate:light:deploy` and validate the server starts with `yarn start:light`.
+- The default light DB is embedded Postgres (PGlite) for closer compatibility with production Postgres.
+- SQLite is supported as an alternative light DB by setting `HAPPIER_DB_PROVIDER=sqlite`.
+- There is no built-in automatic migration between SQLite and PGlite databases; treat them as separate backends and migrate data explicitly if needed.
 
 ### Schema changes (developer workflow)
 
