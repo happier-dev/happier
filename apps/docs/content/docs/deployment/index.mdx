@@ -20,8 +20,8 @@ This section describes how to deploy **your own Happier Server** (the sync backe
 
 Happier Server supports two “flavors” that share the same API + internal logic; the difference is which storage backends are used:
 
-- **Full**: external Postgres + S3/Minio-compatible storage; optional Redis for multi-replica realtime.
-- **Light**: embedded Postgres (PGlite) stored on disk; local file storage served by the server at `GET /files/*`.
+- **Full**: external Postgres (default) or MySQL 8+ + S3/Minio-compatible storage; optional Redis for multi-replica realtime.
+- **Light**: embedded Postgres (PGlite, default) or SQLite stored on disk; local file storage served by the server at `GET /files/*`.
 
 If you’re deploying a shared server for multiple users/devices, you likely want **full**. If you want the easiest single-node setup, start with **light**.
 

@@ -17,35 +17,69 @@ docker build -t happier-server --target server .
 docker build -t happier-server-worker --target server-worker .
 ```
 
+### Optional: build only selected DB providers
+
+By default, the server image includes generated Prisma clients for all supported DB providers.
+
+If you want a smaller, provider-specific image, you can limit which Prisma clients are generated at build time:
+
+```bash
+# Build with only Postgres (includes pglite support since it uses the Postgres client)
+docker build -t happier-server --target server \
+  --build-arg HAPPIER_BUILD_DB_PROVIDERS='postgres' \
+  .
+
+# Build with Postgres + MySQL (no SQLite client)
+docker build -t happier-server --target server \
+  --build-arg HAPPIER_BUILD_DB_PROVIDERS='postgres|mysql' \
+  .
+```
+
+Notes:
+
+- `pglite` uses the Postgres Prisma client; include `postgres` (or `pglite`) to run the light flavor default.
+- If you build without `mysql` (or `sqlite`) and later run with `HAPPIER_DB_PROVIDER=mysql` (or `sqlite`), the server will fail at startup with a clear error telling you to rebuild with the missing provider included.
+
 ## Full vs light flavor
 
 Happier Server supports two “flavors” that share the same API + internal logic. The difference is which storage backends are used.
 
 ### Full flavor (recommended for production)
 
-Use this if you want a production setup: external Postgres, S3/Minio-compatible storage for public files, and optional Redis for multi-replica Socket.IO.
+Use this if you want a production setup: an external database, S3/Minio-compatible storage for public files, and optional Redis for multi-replica Socket.IO.
 
 **You will need:**
 
-- Postgres (`DATABASE_URL`)
+- A database (`DATABASE_URL`)
 - S3/Minio-compatible storage (the `S3_*` env vars)
 - A stable secret (`HANDY_MASTER_SECRET`)
 - Optional: Redis for scaling realtime across multiple API replicas (`REDIS_URL` + `HAPPIER_SOCKET_REDIS_ADAPTER=1`)
 
 ### Light flavor (single-node / testing)
 
-Use this if you want the simplest self-hosted setup: embedded Postgres via PGlite (stored on disk) and local file storage served by the server at `GET /files/*`.
+Use this if you want the simplest self-hosted setup: a single-node DB stored on disk (embedded Postgres via PGlite by default, or SQLite) and local file storage served by the server at `GET /files/*`.
 
 **You will need:**
 
 - Persistent disk for the light data directory (DB + files + persisted secrets)
 - Optional `HANDY_MASTER_SECRET` for a stable secret (otherwise one is generated and persisted)
 
+## Database providers
+
+The DB provider is selected via:
+
+- `HAPPIER_DB_PROVIDER` (preferred) or `HAPPY_DB_PROVIDER`
+
+Supported values:
+
+- Full flavor: `postgres` (default), `mysql` (MySQL 8+)
+- Light flavor: `pglite` (default), `sqlite`
+
 ## Quick start (single container)
 
 This is useful for quick experiments. For production, prefer Docker Compose (next section) or set a restart policy and use an env file.
 
-### Full flavor
+### Full flavor (Postgres)
 
 ```bash
 docker run --rm -p 3005:3005 \
@@ -62,9 +96,27 @@ docker run --rm -p 3005:3005 \
   happier-server
 ```
 
+### Full flavor (MySQL 8+)
+
+```bash
+docker run --rm -p 3005:3005 \
+  -e PORT=3005 \
+  -e HAPPIER_DB_PROVIDER=mysql \
+  -e DATABASE_URL='mysql://user:pass@db:3306/happier' \
+  -e HANDY_MASTER_SECRET='change-me-to-a-long-random-string' \
+  -e S3_HOST='minio' \
+  -e S3_PORT='9000' \
+  -e S3_USE_SSL='false' \
+  -e S3_BUCKET='happier-public' \
+  -e S3_PUBLIC_URL='https://files.example.com/happier-public' \
+  -e S3_ACCESS_KEY='...' \
+  -e S3_SECRET_KEY='...' \
+  happier-server
+```
+
 Production note: remove `--rm` and add `--restart unless-stopped` (or your platform’s equivalent), and prefer `--env-file` over long `-e ...` lists.
 
-### Light flavor
+### Light flavor (PGlite, default)
 
 The default `server` image starts the **full** flavor. To run light in Docker, override the command and run the light migrations:
 
@@ -75,6 +127,18 @@ docker run --rm -p 3005:3005 \
   -v happier-server-light:/data/server-light \
   happier-server \
   sh -lc 'yarn --cwd apps/server migrate:light:deploy && yarn --cwd apps/server start:light'
+```
+
+### Light flavor (SQLite)
+
+```bash
+docker run --rm -p 3005:3005 \
+  -e PORT=3005 \
+  -e HAPPIER_DB_PROVIDER=sqlite \
+  -e HAPPIER_SERVER_LIGHT_DATA_DIR=/data/server-light \
+  -v happier-server-light:/data/server-light \
+  happier-server \
+  sh -lc 'yarn --cwd apps/server migrate:sqlite:deploy && HAPPIER_DB_PROVIDER=sqlite yarn --cwd apps/server start:light'
 ```
 
 ## Recommended: Docker Compose
@@ -136,6 +200,95 @@ volumes:
   minio:
 ```
 
+### Full flavor (single process, MySQL 8+)
+
+This example uses MySQL 8+ + Minio.
+
+```yaml
+services:
+  db:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: happier
+      MYSQL_ROOT_PASSWORD: change-me
+    volumes:
+      - mysqldata:/var/lib/mysql
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  server:
+    build:
+      context: .
+      target: server
+    ports:
+      - "3005:3005"
+    environment:
+      PORT: "3005"
+      HAPPIER_DB_PROVIDER: mysql
+      DATABASE_URL: mysql://root:change-me@db:3306/happier
+      HANDY_MASTER_SECRET: change-me-to-a-long-random-string
+      S3_HOST: minio
+      S3_PORT: "9000"
+      S3_USE_SSL: "false"
+      S3_BUCKET: happier-public
+      S3_PUBLIC_URL: https://files.example.com/happier-public
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+    depends_on:
+      - db
+      - minio
+
+volumes:
+  mysqldata:
+  minio:
+```
+
+### Light flavor (Compose, PGlite or SQLite)
+
+The light flavor runs a single process and stores everything on disk.
+
+```yaml
+services:
+  server:
+    build:
+      context: .
+      target: server
+    ports:
+      - "3005:3005"
+    environment:
+      PORT: "3005"
+      HAPPIER_SERVER_LIGHT_DATA_DIR: /data/server-light
+      # default: embedded Postgres via PGlite
+      # HAPPIER_DB_PROVIDER: pglite
+      # alternative:
+      # HAPPIER_DB_PROVIDER: sqlite
+    volumes:
+      - happier-server-light:/data/server-light
+    command: >
+      sh -lc '
+        if [ "${HAPPIER_DB_PROVIDER:-pglite}" = "sqlite" ]; then
+          yarn --cwd apps/server migrate:sqlite:deploy &&
+          HAPPIER_DB_PROVIDER=sqlite yarn --cwd apps/server start:light;
+        else
+          yarn --cwd apps/server migrate:light:deploy &&
+          yarn --cwd apps/server start:light;
+        fi
+      '
+
+volumes:
+  happier-server-light:
+```
+
 ### Full flavor (API + worker)
 
 If you split roles, run:
@@ -182,8 +335,16 @@ services:
 
 The `server` Docker target runs DB migrations by default before starting:
 
-- Disable with `RUN_MIGRATIONS=0`
-- In multi-replica setups, it’s OK if more than one replica tries to migrate at startup (the DB will serialize via locks)
+- Full flavor:
+  - Provider is selected by `HAPPIER_DB_PROVIDER` (default `postgres`).
+  - The container runs `prisma migrate deploy` against the matching schema on startup.
+- Light flavor:
+  - The default image entrypoint starts full flavor, so for light you run migrations explicitly in your overridden command (examples above).
+
+Notes:
+
+- Disable auto-migrations in full flavor with `RUN_MIGRATIONS=0`.
+- In Postgres multi-replica setups, it’s OK if more than one replica tries to migrate at startup (the DB serializes via locks).
 
 ## Reverse proxy checklist
 
@@ -191,3 +352,25 @@ The `server` Docker target runs DB migrations by default before starting:
 - Forward WebSocket upgrade headers.
 - Increase timeouts for long-lived connections.
 - Keep secrets in your deployment platform (env vars), not in git.
+
+## Development notes (contributors)
+
+If you are developing Happier Server itself (not just deploying it), keep in mind:
+
+- There are two runtime flavors: **full** (`yarn --cwd apps/server start`) and **light** (`yarn --cwd apps/server start:light`).
+- The DB provider is selected via `HAPPIER_DB_PROVIDER`:
+  - Full: `postgres` (default) or `mysql`
+  - Light: `pglite` (default) or `sqlite`
+- Prisma model source of truth: `apps/server/prisma/schema.prisma`.
+- Provider schemas are generated from it:
+  - `yarn --cwd apps/server schema:sync` (and tests enforce `schema:sync:check`)
+- Migrations are provider-specific:
+  - Postgres/PGlite: `apps/server/prisma/migrations/*`
+  - SQLite: `apps/server/prisma/sqlite/migrations/*`
+  - MySQL: `apps/server/prisma/mysql/migrations/*`
+
+When you change the data model, make sure you:
+
+1. Update `apps/server/prisma/schema.prisma`
+2. Run `yarn --cwd apps/server schema:sync`
+3. Create migrations for each supported provider (at least Postgres + MySQL; and SQLite if you want light/sqlite supported for that change)
