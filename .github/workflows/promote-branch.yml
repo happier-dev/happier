@@ -1,4 +1,4 @@
-name: Promote Branch (fast-forward or reset)
+name: PROMOTE — Branch (fast-forward or reset)
 
 on:
   workflow_dispatch:

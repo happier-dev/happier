@@ -1,4 +1,4 @@
-name: Release CLI (npm publish)
+name: RELEASE — CLI (npm publish)
 
 on:
   workflow_dispatch:

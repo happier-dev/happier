@@ -1,4 +1,4 @@
-name: Deploy production (tag + fast-forward)
+name: DEPLOY — Production (tag + fast-forward)
 
 on:
   workflow_dispatch:
@@ -132,4 +132,3 @@ jobs:
           echo "- Previous: ${{ steps.version.outputs.last_tag }}" >> "${GITHUB_STEP_SUMMARY}"
           echo "- New tag:  ${{ steps.version.outputs.new_tag }}" >> "${GITHUB_STEP_SUMMARY}"
           echo "- Production branch: ${PROD_BRANCH}" >> "${GITHUB_STEP_SUMMARY}"
-

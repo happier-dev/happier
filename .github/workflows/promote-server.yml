@@ -1,4 +1,4 @@
-name: Promote Server (deploy branch)
+name: PROMOTE — Server (deploy branch)
 
 on:
   workflow_dispatch:
