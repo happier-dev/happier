@@ -1,0 +1,72 @@
+---
+title: Setup
+description: Install hstack, choose a workspace, and initialize main/dev checkouts.
+---
+
+## Prerequisites
+
+- Node.js
+- Yarn
+- Docker (recommended if you plan to use `happier-server` full flavor)
+- Tailscale (optional, but recommended for phone/remote access)
+
+## Install and initialize
+
+hstack can be run either:
+
+- as an installed CLI (recommended once published), or
+- via `npx` (good for one-off setup), or
+- from a local checkout (maintainers / when the npm package isn’t published yet).
+
+### Guided setup (recommended)
+
+Development profile (recommended for contributors):
+
+```bash
+hstack setup --profile=dev
+```
+
+Self-host profile (stable / production-ish):
+
+```bash
+hstack setup --profile=selfhost
+```
+
+### Choose a workspace directory
+
+The workspace is where hstack stores:
+
+- `main/` (stable checkout; treat as read-only)
+- `dev/` (dev branch checkout for development)
+- categorized worktrees:
+  - `pr/…`
+  - `local/<owner>/…`
+  - `tmp/<owner>/…`
+
+You can set it explicitly:
+
+```bash
+hstack setup --profile=dev --workspace-dir=~/Documents/Development/happier
+```
+
+Or by env var:
+
+```bash
+export HAPPIER_STACK_WORKSPACE_DIR=~/Documents/Development/happier
+```
+
+## Developing hstack itself (local CLI root)
+
+When you’re iterating on the hstack source code inside the monorepo, you can point the installed shim at your local checkout:
+
+```bash
+export HAPPIER_STACK_CLI_ROOT_DIR=~/Documents/Development/happier/dev/apps/stack
+hstack help
+```
+
+To confirm what hstack is actually using on your machine, run:
+
+```bash
+hstack where
+```
+

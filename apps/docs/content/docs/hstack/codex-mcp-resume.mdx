@@ -1,0 +1,134 @@
+---
+title: Codex MCP resume (experimental)
+description: Notes for integrating a Codex MCP server that can resume sessions from rollout JSONL.
+---
+
+# Codex MCP resume (experimental) — Happier integration spec
+
+This document describes how to integrate an **experimental** Codex MCP server fork
+that can **resume sessions from rollout JSONL** after restarts/crashes.
+
+## Goals
+
+- Allow Happier to use a Codex MCP server that supports **resume-from-rollout**.
+- Keep the feature **opt-in** and **safe by default** (pinned versions, clear UI).
+- Avoid requiring users to replace their global `codex` install.
+
+## Non-goals
+
+- Replacing OpenAI’s `@openai/codex` installation for general CLI usage.
+- Auto-updating to “latest” without user opt-in.
+
+## Key facts (implementation reality)
+
+- `codex-mcp-server` is **not** a thin wrapper around a user-installed `codex` binary.
+  It embeds Codex core and runs threads internally.
+- Therefore, when Happier uses this MCP server, the “engine” for those sessions is
+  the forked Codex Rust core shipped with the MCP server build.
+
+## Distribution model (recommended)
+
+Ship the MCP server as an npm package that bundles native binaries:
+
+- **npm package**: `@leeroy/codex-mcp-resume`
+- **binary launcher**: `npx -y @leeroy/codex-mcp-resume@<pinned-version>`
+- **native payload**: `vendor/<targetTriple>/codex-mcp-server/codex-mcp-server[.exe]`
+
+This mirrors how upstream Codex ships platform binaries via npm.
+
+## Versioning + updates
+
+### Pinned by Happier (default)
+
+- Happier pins an exact semver (example): `0.84.0-resume.123.a1`
+- Happier invokes:
+  - `npx -y @leeroy/codex-mcp-resume@0.84.0-resume.123.a1`
+
+**Update path**: users get new MCP builds when they update Happier (or when Happier updates the pin).
+
+### Optional “auto-update experimental tools” (opt-in)
+
+If you want faster iteration:
+
+- Happier uses `@latest` or a dedicated dist-tag (e.g. `resume`)
+- This should be opt-in, clearly labeled “may break”.
+
+## Happier-side feature flag / settings
+
+### Setting name (proposed)
+
+- **Config**: `experimental.codexMcpResume = true|false`
+- **Env override** (optional): `HAPPIER_EXPERIMENTAL_CODEX_RESUME=1`
+
+### UX (proposed)
+
+- Settings → Experimental → “Use Codex MCP resume fork”
+- Subtext: “Runs a separate MCP server shipped by Happier; may differ from your global Codex install.”
+
+## Process + wiring
+
+### 1) Resolve the MCP server command
+
+When feature enabled, Happier should register an MCP server entry equivalent to:
+
+```toml
+[mcp_servers.codex_resume]
+command = "npx"
+args = ["-y", "@leeroy/codex-mcp-resume@0.84.0-resume.123.a1"]
+```
+
+Notes:
+- The MCP server is stdio-based; Happier should spawn it and speak MCP JSON-RPC over stdin/stdout.
+- Use `-y` to make it non-interactive.
+- Ensure Happier’s environment does **not** leak secrets in logs.
+
+### 2) Decide the Codex “home” used for sessions
+
+Session restoration depends on reading rollout JSONL files.
+
+Two viable modes:
+
+- **Shared home (recommended for seamless resume)**:
+  - Run with the user’s default Codex home (usually `~/.codex`), so the MCP server sees the same rollouts.
+- **App-managed home (more isolated)**:
+  - Provide a separate home (e.g. `~/.happier/codex`) but then “resume existing Codex sessions” won’t work unless you import/migrate.
+
+If you need an explicit home, pass env vars when spawning the MCP server:
+
+- `CODEX_HOME=<path>`
+
+### 3) Tool usage from Happier
+
+Happier should call MCP tools:
+
+- **Start new session**: `tools/call name="codex"` with desired config (model, cwd, approval_policy/sandbox, etc).
+- **Continue session**: `tools/call name="codex-reply"` with `{ threadId, prompt }`.
+
+The forked MCP server handles:
+
+- in-memory threads normally
+- on restart/crash: “resume thread” by reading rollout history
+
+### 4) Concurrency expectations
+
+Happier may issue multiple `codex-reply` calls concurrently (UI retries, double-submit, etc).
+The MCP server should serialize per-thread reply/resume to avoid event-stream races.
+
+## CI + publishing requirements (for maintainers)
+
+The fork’s CI should:
+
+- build `codex-mcp-server` for macOS/Linux/Windows (arm64 + x64 where relevant)
+- pack those into an npm tarball
+- publish via npm trusted publishing (OIDC)
+
+## What Happier devs need to implement (checklist)
+
+- Add a feature flag + settings surface (opt-in).
+- Add MCP server registry entry for `codex_resume` (command: `npx`, args pinned).
+- Decide and document which Codex home dir is used (shared vs isolated).
+- Route Codex session creation + reply calls through the selected MCP server.
+- Add telemetry/logging that records:
+  - selected MCP server (default vs resume fork)
+  - package version (pinned version string)
+  - threadId for correlation (no prompt contents)

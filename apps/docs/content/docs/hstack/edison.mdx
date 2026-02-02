@@ -1,0 +1,291 @@
+---
+title: Edison (tasks, QA, validation)
+description: How we use Edison with hstack while keeping isolation via stacks + worktrees.
+---
+
+## Edison in hstack
+
+This doc explains how we use **Edison** with **hstack** for task/QA/evidence/validation, while keeping isolation strictly enforced via **stacks + repo worktrees**.
+
+If you only remember one thing:
+
+- use `hstack edison ...` (wrapper), not `edison ...`
+- always run Edison actions in a named stack unless you have a very good reason not to
+
+---
+
+## What Edison is (in one sentence)
+
+Edison is a **task + QA + evidence + validation workflow layer** with generated role prompts and trusted evidence capture.
+
+Edison is **not** responsible for isolation in this repo; isolation is provided by **hstack**.
+
+---
+
+## Isolation model in this repo
+
+- **Repo worktrees** live under `<workspace>/{dev,pr,local,tmp}/...`
+- **Stacks** live under `~/.happier/stacks/<stack>/...` and each stack has its own ports/db/cli-home/etc.
+- Edison worktrees are **disabled** for this project (to avoid conflicting with hstack worktrees)
+
+Practical implications:
+
+- Do **not** edit the stable checkout (typically `<workspace>/main`).
+- Do all implementation work in `<workspace>/dev` or a worktree under `<workspace>/{pr,local,tmp}/...`.
+- Run evidence/validation in the correct stack context.
+
+---
+
+## The one correct entrypoint: `hstack edison`
+
+Do not run `edison ...` directly in this repo.
+
+Use:
+
+- `hstack edison -- <edison args...>`
+- `hstack edison --stack=<stack> -- <edison args...>` (recommended)
+
+Why this wrapper is mandatory:
+
+- Loads the correct stack env (`HAPPIER_STACK_STACK` + `HAPPIER_STACK_ENV_FILE`)
+- Enforces fail-closed guardrails (right stack + right repo worktree)
+- Makes evidence capture deterministic (fingerprints the actual repo checkout the stack uses)
+
+Reference:
+
+- `apps/stack/.edison/guidelines/**`
+
+---
+
+## Sessions (important)
+
+Edison “sessions” still exist, but in this repo they are **not** tied to Edison-created git worktrees (hstack owns worktrees).
+
+Treat sessions as:
+
+- ownership/coordination (“who is working on what right now”)
+- optional grouping for task/QA state
+
+When a command requires a session, pass it explicitly (or set the session env var for your shell).
+
+### Commands that typically require a session vs not
+
+This repo’s policy is that sessions are for **ownership**, not isolation.
+
+- Usually requires a session (ownership/lifecycle):
+  - `hstack edison -- task claim <task-id> --session <session-id>`
+  - `hstack edison -- task done <task-id> --session <session-id>`
+- Usually does not require a session:
+  - evidence capture: `hstack edison --stack=<stack> -- evidence capture <task-id>`
+  - validation: `hstack edison --stack=<stack> -- qa validate <task-id> --execute --preset <preset>`
+
+Note: exact session semantics come from Edison itself; if you’re unsure, run `hstack edison -- --help`.
+
+---
+
+## Task model (hstack)
+
+We keep a strict structure so stacks/worktrees are never “forgotten”.
+
+- **Parent task** (`hs_kind: parent`)
+  - planning umbrella (not claimable)
+- **Track task** (`hs_kind: track`)
+  - owns exactly one stack (`stack: <name>`)
+  - declares track (`track: upstream|fork|integration`) and scope (`components: [...]`)
+- **Component task** (`hs_kind: component`)
+  - child of a track task
+  - targets exactly one area (`component: ...`)
+
+Note: “component” here means a **service/package scope** in the monorepo (apps/ui, apps/server, packages/*), not a separate git repo.
+
+---
+
+## Planning a feature (recommended workflow)
+
+### 1) Read the project “planning slash command”
+
+```bash
+hstack edison -- read START_PLAN_FEATURE --type start
+```
+
+### 2) Create a parent task
+
+```bash
+hstack edison -- task new --id <id> --slug <slug>
+```
+
+Then edit the created file under `.project/tasks/...` and set the mandatory frontmatter:
+
+- `hs_kind: parent`
+- `components: [...]`
+
+### 3) Scaffold everything (preferred)
+
+Use the hstack wrapper scaffold helper:
+
+```bash
+hstack edison task:scaffold <parent-task-id> --mode=upstream|fork|both --yes
+```
+
+This is intended to be idempotent and will best-effort:
+
+- create track + component subtasks
+- create stacks for tracks
+- create repo worktrees
+- pin stacks to those worktrees
+
+---
+
+## Recommended flow (implementation)
+
+1) Create or choose a stack for the work:
+
+```bash
+hstack stack new exp1
+hstack stack wt exp1 -- use dev
+```
+
+2) Use the wrapper for Edison work:
+
+```bash
+hstack edison --stack=exp1 -- <edison args...>
+```
+
+3) Capture evidence and validate:
+
+```bash
+hstack edison --stack=exp1 -- evidence capture <task-id>
+hstack edison --stack=exp1 -- qa validate <task-id> --execute --preset <preset>
+```
+
+Note: hstack may enforce a preset policy for `qa validate --execute`.
+
+---
+
+## Evidence and validation details
+
+### Evidence capture
+
+Evidence should be captured via Edison (snapshot-based and staleness-aware):
+
+```bash
+hstack edison --stack=<stack> -- evidence capture <task-id> --preset <preset>
+```
+
+To inspect evidence:
+
+```bash
+hstack edison --stack=<stack> -- evidence status <task-id> --preset <preset>
+hstack edison --stack=<stack> -- evidence show <task-id> --command <command-name>
+```
+
+### Validation presets (policy)
+
+This repo typically requires an explicit preset when executing validations:
+
+```bash
+hstack edison --stack=<stack> -- qa validate <task-id> --execute --preset <preset>
+```
+
+Presets and policy live under `apps/stack/.edison/config/`.
+
+---
+
+## Where Edison stores things
+
+In this repo, Edison config is shipped with hstack under:
+
+- `apps/stack/.edison/`
+  - `config/` (project config)
+  - `start/` (role prompts / slash commands)
+  - `templates/` (task/QA templates)
+  - `packs/` (project-specific logic)
+  - `validators/` (validator overlays/presets)
+
+Generated content (do not edit by hand):
+
+- `apps/stack/.edison/_generated/`
+
+Local task/QA state (gitignored):
+
+- `.project/**`
+
+Key directories under `.project/` (convention):
+
+- `.project/tasks/{todo,wip,done,validated,blocked}/...`
+- `.project/qa/...`
+
+---
+
+## Customization points (where to change behavior safely)
+
+- Project configuration: `apps/stack/.edison/config/`
+- Project templates (task/QA scaffolding): `apps/stack/.edison/templates/`
+- Project pack logic (guards/policies): `apps/stack/.edison/packs/`
+- Guidelines and role prompts: `apps/stack/.edison/guidelines/` and `apps/stack/.edison/start/`
+
+---
+
+## Evidence + validation (how to do it correctly)
+
+Recommended: always run Edison evidence/validation **stack-scoped**:
+
+```bash
+hstack edison --stack=dev -- evidence capture <task-id>
+hstack edison --stack=dev -- qa validate <task-id> --execute
+```
+
+This makes evidence deterministic because hstack pins the repo checkout used by the stack.
+
+---
+
+## Operational commands you’ll use a lot
+
+- List stack state: `hstack stack list`, `hstack stack info <stack>`
+- Ensure the stack is pinned to the right checkout: `hstack stack wt <stack> -- use <spec>`
+- Open a task file quickly (editor): open `.project/tasks/.../<id>.md`
+
+---
+
+## Common failure modes (and what to do)
+
+### “Wrong stack” / “wrong repo checkout”
+
+Fix by pinning the stack to the intended checkout:
+
+```bash
+hstack stack wt <stack> -- use dev
+```
+
+Then re-run the Edison command with `--stack=<stack>`.
+
+### “Validation refused (preset required)”
+
+Follow the printed message and rerun with an explicit preset:
+
+```bash
+hstack edison --stack=<stack> -- qa validate <task-id> --execute --preset <preset>
+```
+
+---
+
+## Quick “start here” for an LLM
+
+1. Identify the stack you should use (never use `main` for risky work):
+
+```bash
+hstack stack list
+hstack stack info dev
+```
+
+2. Make sure the stack points at the correct checkout/worktree:
+
+```bash
+hstack stack wt dev -- use dev
+```
+
+3. Use the wrapper for any Edison work:
+
+```bash
+hstack edison --stack=dev -- <edison args...>
+```

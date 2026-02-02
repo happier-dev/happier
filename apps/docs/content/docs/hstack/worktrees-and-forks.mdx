@@ -1,0 +1,296 @@
+---
+title: Worktrees and forks
+description: Create clean upstream PR worktrees while keeping fork-only patches isolated.
+---
+
+# Worktrees + forks (hstack)
+
+This repo is designed to run the **Happier** stack locally, while still making it easy to:
+
+- keep using **your fork** day-to-day
+- create **clean upstream PR branches** quickly (without carrying fork-only patches)
+
+hstack is monorepo-first: UI/CLI/server all live in the same Happier git repo.
+
+---
+
+## Key idea: keep stable checkouts stable
+
+- Keep a stable checkout at `<workspace>/main` (treat as read-only).
+- Do all development work in `<workspace>/dev` or worktrees under `<workspace>/{pr,local,tmp}/...`.
+- Point stacks at a repo checkout via **`HAPPIER_STACK_REPO_DIR`**.
+  - Managed by `hstack wt use ...` and `hstack stack wt ...`.
+
+---
+
+## Workspace layout
+
+Default paths (see `hstack where` for your actual values):
+
+- Stable checkout: `<workspace>/main`
+- Dev checkout: `<workspace>/dev` (created by `hstack setup --profile=dev`)
+- Worktrees:
+  - PRs: `<workspace>/pr/...`
+  - locals: `<workspace>/local/<owner>/...`
+  - tmp: `<workspace>/tmp/<owner>/...`
+
+Inside the monorepo:
+
+- `apps/ui` (UI)
+- `apps/cli` (CLI + daemon)
+- `apps/server` (server; light/full flavors)
+
+---
+
+## Spec grammar (what you can pass to `--repo` / `wt use`)
+
+These tokens/specs are accepted anywhere a “repo/worktree” is expected:
+
+- `main` / `default` → `<workspace>/main`
+- `dev` → `<workspace>/dev`
+- `active` → current active repo (your shell env / env.local)
+- `pr/<...>` → `<workspace>/pr/<...>`
+- `local/<...>` → `<workspace>/local/<owner>/<...>` (owner is your local username)
+- `tmp/<...>` → `<workspace>/tmp/<owner>/<...>`
+- absolute path to a Happier monorepo checkout/worktree
+
+Examples:
+
+```bash
+hstack wt use dev
+hstack wt use pr/123-fix-thing
+hstack stack wt exp1 -- use local/my-feature
+hstack stack typecheck exp1 --repo=/abs/path/to/checkout
+```
+
+---
+
+## Fork workflow (upstream vs origin)
+
+Conventions:
+
+- `upstream`: the canonical Happier repo (`happier-dev/happier`)
+- `origin`: your fork (where you push branches)
+
+The “upstream-first” flow is:
+
+1. Create a worktree based on upstream (clean history)
+2. Push your feature branch to origin
+3. Open a PR into upstream/dev
+
+---
+
+## Choosing which checkout hstack runs
+
+hstack selects the active repo checkout using:
+
+- `HAPPIER_STACK_REPO_DIR` (absolute path to the monorepo root)
+
+Recommended ways to set it:
+
+```bash
+# Switch the active checkout for non-stack commands:
+hstack wt use dev
+
+# Switch the repo for a specific stack env:
+hstack stack wt exp1 -- use dev
+```
+
+One-shot overrides (does not edit any env files):
+
+```bash
+hstack stack typecheck exp1 --repo=pr/123-fix-thing
+hstack stack build exp1 --repo=/absolute/path/to/checkout
+```
+
+---
+
+## Creating worktrees (`wt new`)
+
+Create a new worktree (defaults to local category, based on upstream):
+
+```bash
+hstack wt new my-feature --use
+```
+
+Throwaway worktree:
+
+```bash
+hstack wt new tmp/scratch --use
+```
+
+Push the active worktree branch to your fork:
+
+```bash
+hstack wt push active --remote=origin
+```
+
+Notes:
+
+- `--from=upstream|origin` controls which remote is used as the base.
+- The default base branch is `dev` (configurable via `HAPPIER_STACK_DEV_BRANCH`).
+
+---
+
+## Testing a GitHub PR locally (`wt pr`)
+
+Create a worktree at the PR head ref:
+
+```bash
+hstack wt pr https://github.com/happier-dev/happier/pull/123 --use
+
+# or just the PR number (remote defaults to upstream)
+hstack wt pr 123 --use
+```
+
+Update when the PR changes:
+
+```bash
+hstack wt pr 123 --update --stash
+```
+
+Notes:
+
+- `--update` fails closed if the PR was force-pushed and the update is not a fast-forward; re-run with `--force`.
+- `--stash` keeps your uncommitted changes safe during updates.
+
+### Testing a PR inside a stack (recommended)
+
+Prefer `hstack stack pr` for maintainable PR stacks:
+
+```bash
+hstack stack pr pr123 --repo=123 --dev --reuse
+```
+
+---
+
+## Workflow helpers
+
+### `wt status`
+
+```bash
+hstack wt status active
+hstack wt status dev
+```
+
+### `wt list`
+
+```bash
+hstack wt list
+```
+
+This includes `main/`, `dev/`, and any categorized worktrees under `pr/`, `local/`, `tmp/`.
+
+### `wt sync` / `wt sync-all`
+
+Sync remote refs into local mirror branches (useful before creating new worktrees):
+
+```bash
+hstack wt sync --remote=upstream
+hstack wt sync-all --remote=upstream
+```
+
+### `wt update`
+
+Update a worktree from its base (fails closed on conflicts unless you opt into `--force`):
+
+```bash
+hstack wt update pr/123-fix-thing
+hstack wt update pr/123-fix-thing --stash
+hstack wt update pr/123-fix-thing --force
+```
+
+Stash behavior:
+
+- `--stash`: auto-stash then pop back if the update was clean
+- `--stash-keep`: auto-stash but keep it (you apply it manually later)
+
+### `wt update-all`
+
+```bash
+hstack wt update-all
+```
+
+Dry-run:
+
+```bash
+hstack wt update-all --dry-run
+```
+
+### `wt git`
+
+Run git in a resolved worktree:
+
+```bash
+hstack wt git pr/123-fix-thing -- status
+hstack wt git dev -- checkout -b feature/foo
+```
+
+### `wt shell`
+
+Open a “real” interactive shell in a worktree:
+
+```bash
+hstack wt shell dev
+```
+
+### Editors (`wt code` / `wt cursor`)
+
+```bash
+hstack wt cursor dev
+hstack wt code pr/123-fix-thing
+```
+
+### `wt duplicate`
+
+Duplicate a worktree (useful for “same base, different experiment”):
+
+```bash
+hstack wt duplicate active tmp/try-alt --use
+```
+
+### `wt archive`
+
+Archive and remove a worktree directory (and optionally delete the branch):
+
+```bash
+hstack wt archive pr/123-fix-thing --dry-run
+hstack wt archive pr/123-fix-thing
+```
+
+Use `--detach-stacks` to unpin stacks that were pointing at that worktree.
+
+---
+
+## Interactive and JSON modes
+
+Most commands support:
+
+- `--interactive` / `-i` (TTY-only wizards where supported)
+- `--json` (machine-readable output)
+
+Examples:
+
+```bash
+hstack wt use --interactive
+hstack wt pr 123 --json
+hstack wt list --json
+```
+
+---
+
+## Switching server flavor (light vs full)
+
+Choose which backend flavor a stack runs with:
+
+```bash
+hstack srv status
+hstack srv use happier-server-light
+hstack srv use happier-server
+hstack srv use --interactive
+```
+
+Notes:
+
+- This selects a runtime flavor (light/full). It does **not** select a different git repo.
+- Both flavors come from the same monorepo server code (`apps/server`).

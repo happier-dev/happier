@@ -1,0 +1,120 @@
+---
+title: CLI reference (high-signal)
+description: The commands you’ll use most, with the important flags and patterns.
+---
+
+This is a concise reference. For conceptual docs, see:
+
+- `/docs/hstack/development`
+- `/docs/hstack/stacks`
+- `/docs/hstack/worktrees-and-forks`
+
+Tip: most commands support `--help` and `--json`.
+
+---
+
+## Core
+
+- Setup: `hstack setup --profile=dev|selfhost`
+- Run: `hstack start` / `hstack dev`
+- Stop: `hstack stop`
+- Diagnose: `hstack where`, `hstack doctor`, `hstack logs`
+
+Common run flags (root commands):
+
+- `--server=happier-server|happier-server-light`
+- `--restart`
+- `--no-ui`, `--no-daemon`
+- `--no-browser`
+- `--mobile`
+- `--expo-tailscale`
+- `--bind=loopback|lan` (aliases: `--loopback`, `--lan`)
+
+---
+
+## Stacks
+
+Lifecycle:
+
+- Create: `hstack stack new <name> [--interactive]`
+- Edit: `hstack stack edit <name> --interactive`
+- List/info: `hstack stack list`, `hstack stack info <name>`
+- Run: `hstack stack dev <name>`, `hstack stack start <name>`
+- Stop: `hstack stack stop <name>`
+- Build UI: `hstack stack build <name>`
+- Diagnose: `hstack stack doctor <name>`
+
+Pin a stack to a worktree/checkout:
+
+- `hstack stack wt <name> -- use <spec>`
+
+Server flavor:
+
+- `hstack stack srv <name> -- use happier-server-light|happier-server`
+
+Auth:
+
+- `hstack auth seed` (create the `dev-auth` seed stack)
+- `hstack stack auth <name> status|login|copy-from`
+
+Stack-scoped app CLI (runs the Happier CLI/daemon in stack context):
+
+- `hstack stack happier <name> -- <args...>`
+
+PR stacks:
+
+- `hstack stack pr <name> --repo=<pr-url|number> [--dev|--start] [--server-flavor=light|full]`
+
+---
+
+## Worktrees (`wt`)
+
+Create worktrees (defaults to an upstream-based local worktree):
+
+- `hstack wt new <slug> [--from=upstream|origin] [--base=<ref>] [--use]`
+
+PR worktrees:
+
+- `hstack wt pr <pr-url|number> [--use] [--update] [--stash]`
+
+Select the active repo checkout:
+
+- `hstack wt use <spec>`
+
+Status/list/update:
+
+- `hstack wt status <spec>`
+- `hstack wt list`
+- `hstack wt update <spec>`
+- `hstack wt update-all`
+
+Push:
+
+- `hstack wt push <spec|active> --remote=origin`
+
+---
+
+## Auth
+
+- `hstack auth seed`
+- `hstack auth copy-from <seed> --all --except=main,dev-auth`
+- `hstack auth dev-key --print`
+
+See: `/docs/hstack/auth`.
+
+---
+
+## Maintainer tools
+
+hstack includes “maintainer tools” as subcommands (setup-pr, review-pr, import, review, edison):
+
+- `hstack tools --help`
+
+---
+
+## Monorepo porting
+
+- `hstack monorepo port --help`
+
+See: `/docs/hstack/monorepo-port`.
+
