@@ -111,6 +111,10 @@ jobs:
           HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS }}
           HAPPIER_CLI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_CLI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_CLI_DEPLOY_WEBHOOKS || secrets.HAPPIER_CLI_DEPLOY_WEBHOOKS }}
           COMPONENT: ${{ steps.target.outputs.component }}
+          ENVIRONMENT: ${{ steps.target.outputs.environment }}
+          REF_NAME: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
 
@@ -124,6 +128,15 @@ jobs:
             exit 1
           fi
           DEPLOY_WEBHOOK_URL="${DEPLOY_WEBHOOK_URL%/}"
+
+          # Dokploy's deploy webhook is designed to be called by a Git provider webhook.
+          # If we call it directly from CI, we need to include a minimal push payload
+          # and headers so it can extract the branch and validate "Branch Not Match".
+          BRANCH_NAME="${REF_NAME:-}"
+          if [ -z "${BRANCH_NAME:-}" ] || [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
+            BRANCH_NAME="deploy/${ENVIRONMENT}/${COMPONENT}"
+          fi
+          REF="refs/heads/${BRANCH_NAME}"
 
           trigger_hooks() {
             local label="$1"
@@ -151,6 +164,33 @@ jobs:
                 url="${DEPLOY_WEBHOOK_URL}/${hook}"
               fi
 
+              local delivery_id=""
+              delivery_id="$(python3 - <<'PY'
+import uuid
+print(str(uuid.uuid4()))
+PY
+)"
+              local payload=""
+              payload="$(REF="$REF" SHA="$SHA" REPOSITORY="$REPOSITORY" python3 - <<'PY'
+import json, os
+ref = os.environ.get('REF', '')
+sha = os.environ.get('SHA', '')
+repo = os.environ.get('REPOSITORY', '')
+owner, name = (repo.split('/', 1) + [''])[:2] if repo else ('', '')
+print(json.dumps({
+  "ref": ref,
+  "before": "0" * 40,
+  "after": sha,
+  "repository": {
+    "full_name": repo,
+    "name": name,
+    "owner": {"name": owner},
+    "default_branch": "main",
+  },
+}))
+PY
+)"
+
               triggered=$((triggered + 1))
               echo "POST ${url}"
               curl -fsS -X POST \
@@ -158,8 +198,14 @@ jobs:
                 --retry-all-errors \
                 --connect-timeout 10 \
                 --max-time 60 \
+                --location \
+                --post301 --post302 --post303 \
                 -H "CF-Access-Client-Id: ${CF_WEBHOOK_DEPLOY_CLIENT_ID}" \
                 -H "CF-Access-Client-Secret: ${CF_WEBHOOK_DEPLOY_CLIENT_SECRET}" \
+                -H "Content-Type: application/json" \
+                -H "X-GitHub-Event: push" \
+                -H "X-GitHub-Delivery: ${delivery_id}" \
+                --data "${payload}" \
                 "${url}"
             done <<< "$hooks"
 
