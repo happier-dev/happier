@@ -28,6 +28,10 @@ import { createStepPrinter } from './utils/cli/progress.mjs';
 
 // Happier monorepo repo URL defaults.
 // This should point at a repo that contains at least: apps/ui, apps/cli, apps/server.
+//
+// Stack is Happier-first. Contributors typically:
+// - clone the canonical repo as `upstream`
+// - use their fork as `origin`
 const DEFAULT_MONOREPO_REPO_URL = 'https://github.com/happier-dev/happier.git';
 
 const DEFAULT_FORK_REPOS = {
@@ -408,8 +412,10 @@ async function main() {
     quiet: quietUi,
     runMaybeVerbose,
   });
-  // IMPORTANT: main checkout must always be on branch "main", even if the GitHub default branch becomes "dev".
-  await ensureGitBranchCheckedOut({ repoDir: uiRepoDir, branch: 'main', label: 'monorepo' });
+  // IMPORTANT: the workspace "main" checkout must always be on the stable branch,
+  // even if the GitHub default branch becomes "dev".
+  const stableBranch = (process.env.HAPPIER_STACK_STABLE_BRANCH ?? '').trim() || 'main';
+  await ensureGitBranchCheckedOut({ repoDir: uiRepoDir, branch: stableBranch, label: 'monorepo' });
 
   // Package dirs (where we run installs/builds). Recompute after cloning UI.
   const uiDir = getComponentDir(rootDir, 'happier-ui');

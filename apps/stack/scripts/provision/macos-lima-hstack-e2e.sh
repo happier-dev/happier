@@ -53,9 +53,7 @@ pick_raw_base() {
     echo "${HSTACK_RAW_BASE}"
     return 0
   fi
-  # Try canonical upstream first, then common fork path.
   local candidates=(
-    "https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack"
     "https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack"
   )
   local c

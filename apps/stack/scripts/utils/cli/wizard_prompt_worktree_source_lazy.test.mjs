@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import { promptWorktreeSource } from './wizard.mjs';
 
@@ -56,4 +59,38 @@ test('promptWorktreeSource lists worktrees when user selects "pick"', async () =
 
   assert.equal(res, 'pr/456');
   assert.equal(listed, 1);
+});
+
+test('promptWorktreeSource offers dev when dev checkout exists (even with no category worktrees)', async () => {
+  const workspaceDir = await mkdtemp(join(tmpdir(), 'hstack-wizard-'));
+  await mkdir(join(workspaceDir, 'dev'), { recursive: true });
+  const devGitFile = join(workspaceDir, 'dev', '.git');
+  await writeFile(devGitFile, 'gitdir: /tmp/fake', { encoding: 'utf8' });
+
+  const listWorktreeSpecs = async () => [];
+
+  let selectCount = 0;
+  const promptSelect = async (_rl, { title, options }) => {
+    selectCount++;
+    if (selectCount === 1) {
+      assert.ok(title.startsWith('Select '));
+      return 'pick';
+    }
+    assert.ok(title.startsWith('Available '));
+    assert.ok(options.some((o) => o.value === 'dev'));
+    return 'dev';
+  };
+  const prompt = async () => '';
+
+  const res = await promptWorktreeSource({
+    rl: {},
+    rootDir: '/tmp',
+    component: 'happier-ui',
+    stackName: 'exp1',
+    createRemote: 'upstream',
+    env: { ...process.env, HAPPIER_STACK_WORKSPACE_DIR: workspaceDir },
+    deps: { listWorktreeSpecs, promptSelect, prompt },
+  });
+
+  assert.equal(res, 'dev');
 });

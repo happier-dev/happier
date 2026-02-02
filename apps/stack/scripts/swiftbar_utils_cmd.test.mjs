@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function run(cmd, args, { cwd, env } = {}) {
   return new Promise((resolve, reject) => {
@@ -18,7 +19,8 @@ function run(cmd, args, { cwd, env } = {}) {
 }
 
 test('swiftbar utils: sums process metrics (cpu + mem)', async () => {
-  const rootDir = process.cwd();
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
   const bashScript = [
     `set -euo pipefail`,
     `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
@@ -35,7 +37,8 @@ test('swiftbar utils: sums process metrics (cpu + mem)', async () => {
 });
 
 test('swiftbar utils: derives worktree spec from path', async () => {
-  const rootDir = process.cwd();
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
   const bashScript = [
     `set -euo pipefail`,
     `export HAPPIER_STACK_WORKSPACE_DIR="/x"`,
@@ -51,7 +54,8 @@ test('swiftbar utils: derives worktree spec from path', async () => {
 });
 
 test('swiftbar utils: finds git root by walking up from nested package dir', async () => {
-  const rootDir = process.cwd();
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-swiftbar-utils-'));
   const repoRoot = join(tmp, 'repo');
   const pkgDir = join(repoRoot, 'apps', 'ui');
@@ -71,7 +75,8 @@ test('swiftbar utils: finds git root by walking up from nested package dir', asy
 });
 
 test('swiftbar utils: derives repo key from component dir path', async () => {
-  const rootDir = process.cwd();
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
   const bashScript = [
     `set -euo pipefail`,
     `export HAPPIER_STACK_WORKSPACE_DIR="/x"`,

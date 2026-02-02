@@ -17,7 +17,7 @@ import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
 import { applyStackCacheEnv, ensureDepsInstalled } from './utils/proc/pm.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
-import { resolvePrismaClientImportForServerComponent } from './utils/server/flavor_scripts.mjs';
+import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForServerComponent } from './utils/server/flavor_scripts.mjs';
 import { clearDevAuthKey, readDevAuthKey, writeDevAuthKey } from './utils/auth/dev_key.mjs';
 import { getExpoStatePaths, isStateProcessRunning } from './utils/expo/expo.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
@@ -282,11 +282,46 @@ function resolvePostgresDatabaseUrlFromEnvOrThrow({ env, stackName, label }) {
   return v;
 }
 
+function resolveDatabaseUrlFromEnvOrThrow({ env, stackName, label, provider }) {
+  const v = (env.DATABASE_URL ?? '').toString().trim();
+  if (!v) throw new Error(`[auth] missing DATABASE_URL for ${label || `stack "${stackName}"`}`);
+  const lower = v.toLowerCase();
+  const p = String(provider ?? '').trim().toLowerCase();
+  if (p === 'mysql') {
+    const ok = lower.startsWith('mysql://') || lower.startsWith('mysqls://') || lower.startsWith('mariadb://');
+    if (!ok) {
+      throw new Error(
+        `[auth] invalid DATABASE_URL for ${label || `stack "${stackName}"`}: expected mysql://... (got ${JSON.stringify(v)})`
+      );
+    }
+    return v;
+  }
+  // Default: postgres (also covers pglite socket URLs).
+  return resolvePostgresDatabaseUrlFromEnvOrThrow({ env, stackName, label });
+}
+
 function resolveLightDirsForStack({ env, baseDir }) {
   const dataDir = (env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').toString().trim() || join(baseDir, 'server-light');
   const filesDir = (env.HAPPIER_SERVER_LIGHT_FILES_DIR ?? env.HAPPY_SERVER_LIGHT_FILES_DIR ?? '').toString().trim() || join(dataDir, 'files');
   const dbDir = (env.HAPPIER_SERVER_LIGHT_DB_DIR ?? env.HAPPY_SERVER_LIGHT_DB_DIR ?? '').toString().trim() || join(dataDir, 'pglite');
   return { dataDir, filesDir, dbDir };
+}
+
+function resolveDbProviderForLightFromEnv(env) {
+  const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
+  if (raw === 'sqlite') return 'sqlite';
+  // Default for light flavor (embedded Postgres via pglite).
+  return 'pglite';
+}
+
+function resolveDbProviderForFullFromEnv(env) {
+  const raw = (env.HAPPIER_DB_PROVIDER ?? env.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
+  if (raw === 'mysql') return 'mysql';
+  return 'postgres';
+}
+
+function resolveSqliteDatabaseUrlForLight({ dataDir }) {
+  return `file:${join(dataDir, 'happier-server-light.sqlite')}`;
 }
 
 async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet = false }) {
@@ -301,10 +336,17 @@ async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet =
   env.HAPPY_SERVER_LIGHT_FILES_DIR = env.HAPPY_SERVER_LIGHT_FILES_DIR ?? filesDir;
   env.HAPPY_SERVER_LIGHT_DB_DIR = env.HAPPY_SERVER_LIGHT_DB_DIR ?? dbDir;
 
-  // This script spins a temporary pglite socket and runs prisma migrate deploy against prisma/schema.prisma.
-  // It is idempotent and safe to re-run when the server is not currently holding the pglite DB open.
+  const provider = resolveDbProviderForLightFromEnv(env);
+  env.HAPPIER_DB_PROVIDER = env.HAPPIER_DB_PROVIDER ?? provider;
+
+  // Migration step:
+  // - pglite: spins a temporary pglite socket and runs prisma migrate deploy against prisma/schema.prisma
+  // - sqlite: runs migrate:sqlite:deploy against prisma/sqlite/schema.prisma
+  //
+  // Both are idempotent and safe to re-run when the light DB is not held open.
   const envWithCache = await applyStackCacheEnv(env);
-  await run('yarn', ['-s', 'migrate:light:deploy'], { cwd: serverDir, env: envWithCache, stdio: quiet ? 'ignore' : 'inherit' });
+  const migrateScript = provider === 'sqlite' ? 'migrate:sqlite:deploy' : 'migrate:light:deploy';
+  await run('yarn', ['-s', migrateScript], { cwd: serverDir, env: envWithCache, stdio: quiet ? 'ignore' : 'inherit' });
   return { dataDir, filesDir, dbDir };
 }
 
@@ -381,36 +423,47 @@ try {
   })();
   url.searchParams.set('connection_limit', '1');
   process.env.DATABASE_URL = url.toString();
-  const db = new PrismaClient();
-  try {
-    let insertedCount = 0;
-    for (const a of accounts) {
-      // eslint-disable-next-line no-await-in-loop
-      try {
-        await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
-        insertedCount += 1;
-      } catch (e) {
-        if (e && typeof e === 'object' && 'code' in e && e.code === 'P2002') {
-          const existing = await db.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
-          if (existing?.id && existing.id !== a.id) {
-            if (!FORCE) {
-              throw new Error(
-                \`account publicKey conflict: target already has publicKey for id=\${existing.id}, but seed wants id=\${a.id}. Re-run with --force to replace the conflicting account row.\`
-              );
-            }
-            await db.account.delete({ where: { publicKey: a.publicKey } });
-            await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
-            insertedCount += 1;
-            continue;
-          }
-        }
-        throw e;
-      }
-    }
-    console.log(JSON.stringify({ sourceCount: accounts.length, insertedCount }));
-  } finally {
-    await db.$disconnect();
-  }
+	const db = new PrismaClient();
+	try {
+	  let insertedCount = 0;
+	  for (const a of accounts) {
+	    // eslint-disable-next-line no-await-in-loop
+	    try {
+	      await db.account.upsert({
+	        where: { id: a.id },
+	        update: { publicKey: a.publicKey },
+	        create: { id: a.id, publicKey: a.publicKey },
+	      });
+	      insertedCount += 1;
+	    } catch (e) {
+	      // Prisma unique constraint violation (most commonly: publicKey already exists on another id).
+	      if (e && typeof e === 'object' && 'code' in e && e.code === 'P2002') {
+	        const existing = await db.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
+	        if (existing?.id && existing.id !== a.id) {
+	          if (!FORCE) {
+	            throw new Error(
+	              \`account publicKey conflict: target already has publicKey for id=\${existing.id}, but seed wants id=\${a.id}. Re-run with --force to replace the conflicting account row.\`
+	            );
+	          }
+	          await db.account.delete({ where: { publicKey: a.publicKey } });
+	          await db.account.upsert({
+	            where: { id: a.id },
+	            update: { publicKey: a.publicKey },
+	            create: { id: a.id, publicKey: a.publicKey },
+	          });
+	          insertedCount += 1;
+	          continue;
+	        }
+	        // If we can't attribute the constraint to a publicKey conflict, treat it as "already seeded".
+	        continue;
+	      }
+	      throw e;
+	    }
+	  }
+	  console.log(JSON.stringify({ sourceCount: accounts.length, insertedCount }));
+	} finally {
+	  await db.$disconnect();
+	}
 } finally {
   await server.stop();
   await pglite.close();
@@ -478,36 +531,47 @@ import fs from 'node:fs';
 const FORCE = ${force ? 'true' : 'false'};
 const raw = fs.readFileSync(0, 'utf8').trim();
 const accounts = raw ? JSON.parse(raw) : [];
-const db = new PrismaClient();
-try {
-  let insertedCount = 0;
-  for (const a of accounts) {
-    // eslint-disable-next-line no-await-in-loop
-    try {
-      await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
-      insertedCount += 1;
-    } catch (e) {
-      if (e && typeof e === 'object' && 'code' in e && e.code === 'P2002') {
-        const existing = await db.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
-        if (existing?.id && existing.id !== a.id) {
-          if (!FORCE) {
-            throw new Error(
-              \`account publicKey conflict: target already has publicKey for id=\${existing.id}, but seed wants id=\${a.id}. Re-run with --force to replace the conflicting account row.\`
-            );
-          }
-          await db.account.delete({ where: { publicKey: a.publicKey } });
-          await db.account.create({ data: { id: a.id, publicKey: a.publicKey } });
-          insertedCount += 1;
-          continue;
-        }
-      }
-      throw e;
-    }
-  }
-  console.log(JSON.stringify({ sourceCount: accounts.length, insertedCount }));
-} finally {
-  await db.$disconnect();
-}
+	const db = new PrismaClient();
+	try {
+	  let insertedCount = 0;
+	  for (const a of accounts) {
+	    // eslint-disable-next-line no-await-in-loop
+	    try {
+	      await db.account.upsert({
+	        where: { id: a.id },
+	        update: { publicKey: a.publicKey },
+	        create: { id: a.id, publicKey: a.publicKey },
+	      });
+	      insertedCount += 1;
+	    } catch (e) {
+	      // Prisma unique constraint violation (most commonly: publicKey already exists on another id).
+	      if (e && typeof e === 'object' && 'code' in e && e.code === 'P2002') {
+	        const existing = await db.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
+	        if (existing?.id && existing.id !== a.id) {
+	          if (!FORCE) {
+	            throw new Error(
+	              \`account publicKey conflict: target already has publicKey for id=\${existing.id}, but seed wants id=\${a.id}. Re-run with --force to replace the conflicting account row.\`
+	            );
+	          }
+	          await db.account.delete({ where: { publicKey: a.publicKey } });
+	          await db.account.upsert({
+	            where: { id: a.id },
+	            update: { publicKey: a.publicKey },
+	            create: { id: a.id, publicKey: a.publicKey },
+	          });
+	          insertedCount += 1;
+	          continue;
+	        }
+	        // If we can't attribute the constraint to a publicKey conflict, treat it as "already seeded".
+	        continue;
+	      }
+	      throw e;
+	    }
+	  }
+	  console.log(JSON.stringify({ sourceCount: accounts.length, insertedCount }));
+	} finally {
+	  await db.$disconnect();
+	}
 `.trim();
 
   const { stdout } = await runNodeCapture({
@@ -869,50 +933,81 @@ async function cmdCopyFrom({ argv, json }) {
     const targetEnv = process.env;
     const targetServerComponent = resolveServerComponentFromEnv(targetEnv);
 
-    const sourceCwd = resolveServerComponentDir({ rootDir, serverComponent: fromServerComponent });
-    const targetCwd = resolveServerComponentDir({ rootDir, serverComponent: targetServerComponent });
-    const sourceClientImport = resolvePrismaClientImportForServerComponent({
-      serverComponentName: fromServerComponent,
-      serverDir: sourceCwd,
-    });
-    const targetClientImport = resolvePrismaClientImportForServerComponent({
-      serverComponentName: targetServerComponent,
-      serverDir: targetCwd,
-    });
+	    const sourceCwd = resolveServerComponentDir({ rootDir, serverComponent: fromServerComponent });
+	    const targetCwd = resolveServerComponentDir({ rootDir, serverComponent: targetServerComponent });
+	    const sourceDbProvider =
+	      fromServerComponent === 'happier-server-light'
+	        ? resolveDbProviderForLightFromEnv(sourceEnv)
+	        : resolveDbProviderForFullFromEnv(sourceEnv);
+	    const targetDbProvider =
+	      targetServerComponent === 'happier-server-light'
+	        ? resolveDbProviderForLightFromEnv(targetEnv)
+	        : resolveDbProviderForFullFromEnv(targetEnv);
+
+	    const sourceClientImport =
+	      fromServerComponent === 'happier-server-light'
+	        ? sourceDbProvider === 'sqlite'
+	          ? resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: 'sqlite' })
+	          : resolvePrismaClientImportForServerComponent({ serverComponentName: fromServerComponent, serverDir: sourceCwd })
+	        : resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: sourceDbProvider });
+	    const targetClientImport =
+	      targetServerComponent === 'happier-server-light'
+	        ? targetDbProvider === 'sqlite'
+	          ? resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: 'sqlite' })
+	          : resolvePrismaClientImportForServerComponent({ serverComponentName: targetServerComponent, serverDir: targetCwd })
+	        : resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: targetDbProvider });
 
     // 1) Read Account rows from the source DB.
-    const accounts = await (async () => {
-      if (fromServerComponent === 'happier-server-light') {
-        const { dbDir } = await ensureLightMigrationsApplied({ serverDir: sourceCwd, baseDir: sourceBaseDir, envIn: sourceEnv, quiet: json });
-        return await listAccountsFromPglite({ cwd: sourceCwd, dbDir });
-      }
-      const fromDatabaseUrl = resolvePostgresDatabaseUrlFromEnvOrThrow({
-        env: sourceEnv,
-        stackName: fromStackName,
-        label: `source stack "${fromStackName}"`,
-      });
-      return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: fromDatabaseUrl });
-    })();
+	    const accounts = await (async () => {
+	      if (fromServerComponent === 'happier-server-light') {
+	        const lightProvider = resolveDbProviderForLightFromEnv(sourceEnv);
+	        const { dataDir, dbDir } = await ensureLightMigrationsApplied({ serverDir: sourceCwd, baseDir: sourceBaseDir, envIn: sourceEnv, quiet: json });
+	        if (lightProvider === 'sqlite') {
+	          const url = resolveSqliteDatabaseUrlForLight({ dataDir });
+	          return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: url });
+	        }
+	        return await listAccountsFromPglite({ cwd: sourceCwd, dbDir });
+	      }
+	      const fromDatabaseUrl = resolveDatabaseUrlFromEnvOrThrow({
+	        env: sourceEnv,
+	        stackName: fromStackName,
+	        label: `source stack "${fromStackName}"`,
+	        provider: sourceDbProvider,
+	      });
+	      return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: fromDatabaseUrl });
+	    })();
 
     // 2) Insert Account rows into the target DB.
     const runInsert = async () => {
-      if (targetServerComponent === 'happier-server-light') {
-        const { dbDir } = await ensureLightMigrationsApplied({ serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json });
-        return await insertAccountsIntoPglite({ cwd: targetCwd, dbDir, accounts, force });
-      }
+	      if (targetServerComponent === 'happier-server-light') {
+	        const lightProvider = resolveDbProviderForLightFromEnv(targetEnv);
+	        const { dataDir, dbDir } = await ensureLightMigrationsApplied({ serverDir: targetCwd, baseDir: targetBaseDir, envIn: targetEnv, quiet: json });
+	        if (lightProvider === 'sqlite') {
+	          const url = resolveSqliteDatabaseUrlForLight({ dataDir });
+	          return await insertAccountsIntoPostgres({
+	            cwd: targetCwd,
+	            clientImport: targetClientImport,
+	            databaseUrl: url,
+	            accounts,
+	            force,
+	          });
+	        }
+	        return await insertAccountsIntoPglite({ cwd: targetCwd, dbDir, accounts, force });
+	      }
 
       let targetDatabaseUrl;
       try {
-        targetDatabaseUrl = resolvePostgresDatabaseUrlFromEnvOrThrow({
-          env: targetEnv,
-          stackName,
-          label: `target stack "${stackName}"`,
-        });
-      } catch (e) {
+	        targetDatabaseUrl = resolveDatabaseUrlFromEnvOrThrow({
+	          env: targetEnv,
+	          stackName,
+	          label: `target stack "${stackName}"`,
+	          provider: targetDbProvider,
+	        });
+	      } catch (e) {
         // For full server stacks, allow `copy-from --with-infra` to bring up Docker infra just-in-time
         // so we can seed DB accounts reliably.
         const managed = (targetEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0';
-        if (targetServerComponent === 'happier-server' && withInfra && managed) {
+	        if (targetServerComponent === 'happier-server' && targetDbProvider === 'postgres' && withInfra && managed) {
           const { port } = getInternalServerUrlCompat();
           const publicServerUrl = await preferStackLocalhostUrl(`http://localhost:${port}`, { stackName });
           const envPath = resolveStackEnvPath(stackName).envPath;
@@ -927,11 +1022,11 @@ async function cmdCopyFrom({ argv, json }) {
             // Auth seeding only needs Postgres; don't block on Minio bucket init.
             skipMinioInit: true,
           });
-          targetDatabaseUrl = infra?.env?.DATABASE_URL ?? '';
-        } else {
-          throw e;
-        }
-      }
+	          targetDatabaseUrl = infra?.env?.DATABASE_URL ?? '';
+	        } else {
+	          throw e;
+	        }
+	      }
       if (!targetDatabaseUrl) {
         throw new Error(
           `[auth] missing DATABASE_URL for target stack "${stackName}". ` +

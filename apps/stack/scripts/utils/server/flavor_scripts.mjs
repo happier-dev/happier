@@ -77,6 +77,26 @@ export function resolvePrismaClientImportForServerComponent({ serverComponentNam
   return '@prisma/client';
 }
 
+function resolveGeneratedClientEntrypoint({ serverDir, provider }) {
+  const p = String(provider ?? '').trim().toLowerCase();
+  if (p === 'sqlite') {
+    return join(serverDir, 'generated', 'sqlite-client', 'index.js');
+  }
+  if (p === 'mysql') {
+    return join(serverDir, 'generated', 'mysql-client', 'index.js');
+  }
+  return '';
+}
+
+export function resolvePrismaClientImportForDbProvider({ serverDir, provider }) {
+  const entry = resolveGeneratedClientEntrypoint({ serverDir, provider });
+  if (entry && existsSync(entry)) {
+    return pathToFileURL(entry).href;
+  }
+  // postgres + pglite share the default Prisma client.
+  return '@prisma/client';
+}
+
 export function resolveServerDevScript({ serverComponentName, serverDir, prismaPush }) {
   const scripts = readScripts(serverDir);
 

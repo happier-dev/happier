@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function run(cmd, args, { cwd, env } = {}) {
   return new Promise((resolve, reject) => {
@@ -18,7 +19,8 @@ function run(cmd, args, { cwd, env } = {}) {
 }
 
 test('swiftbar git cache treats monorepo package dirs as git repos', async () => {
-  const rootDir = process.cwd();
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-swiftbar-git-'));
 
   const repoRoot = join(tmp, 'repo');
