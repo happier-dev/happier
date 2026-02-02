@@ -1,0 +1,60 @@
+---
+title: Debugging (inspect + env knobs)
+description: "Where to look when something is “weird”: effective paths, pinned repo, ports, logs, and key env knobs."
+---
+
+## Inspect what hstack is actually using
+
+```bash
+hstack where
+hstack where --json
+```
+
+Common follow-ups:
+
+```bash
+hstack stack info exp1
+hstack stack info exp1 --json
+```
+
+---
+
+## Inspect stack health
+
+```bash
+hstack stack doctor exp1
+```
+
+Logs:
+
+```bash
+hstack logs
+hstack logs:tail
+hstack stack service exp1 logs
+hstack stack service exp1 tail
+```
+
+---
+
+## High-signal env knobs
+
+Paths:
+
+- `HAPPIER_STACK_HOME_DIR`
+- `HAPPIER_STACK_RUNTIME_DIR`
+- `HAPPIER_STACK_WORKSPACE_DIR`
+- `HAPPIER_STACK_REPO_DIR`
+- `HAPPIER_STACK_CLI_ROOT_DIR`
+
+Run behavior:
+
+- `HAPPIER_STACK_NO_BROWSER=1`
+- `HAPPIER_STACK_CLI_BUILD_MODE=auto|always|never`
+- `HAPPIER_STACK_CLI_BUILD=0`
+
+Auth seeding:
+
+- `HAPPIER_STACK_AUTH_SEED_FROM=dev-auth`
+- `HAPPIER_STACK_AUTO_AUTH_SEED=1`
+
+See also `/docs/hstack/paths-and-env` for precedence and where env files live.

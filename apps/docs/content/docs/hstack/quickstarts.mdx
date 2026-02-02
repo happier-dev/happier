@@ -1,0 +1,121 @@
+---
+title: Quickstarts
+description: Common flows (feature work, PR testing, server changes) using stacks + worktrees.
+---
+
+This page is the “copy/paste” companion to `/docs/hstack/development`.
+
+If you’re new, read `/docs/hstack/setup` and `/docs/hstack/worktrees-and-forks` first.
+
+---
+
+## 1) Typical feature work (recommended)
+
+Create a worktree based on upstream (clean PR history):
+
+```bash
+hstack wt new my-feature --from=upstream --use
+```
+
+Create an isolated stack and pin it to the active worktree:
+
+```bash
+hstack stack new exp1
+hstack stack wt exp1 -- use active
+```
+
+Run the stack in dev mode:
+
+```bash
+hstack stack dev exp1
+```
+
+Push the branch to your fork:
+
+```bash
+hstack wt push active --remote=origin
+```
+
+---
+
+## 2) Use the canonical `dev/` checkout
+
+If you’re working directly on the `dev` branch (common for maintainers):
+
+```bash
+hstack stack new dev
+hstack stack wt dev -- use dev
+hstack stack dev dev
+```
+
+---
+
+## 3) Develop server changes (full server)
+
+Create a full-server stack:
+
+```bash
+hstack stack new full1 --server=happier-server
+```
+
+Then run dev:
+
+```bash
+hstack stack dev full1
+```
+
+Notes:
+
+- This uses Docker-managed Postgres/Redis/Minio for the stack.
+- If you don’t want Docker-managed infra, configure `DATABASE_URL`/`REDIS_URL`/`S3_*` in the stack env file and re-run.
+
+---
+
+## 4) Test an upstream PR locally
+
+Create a PR worktree:
+
+```bash
+hstack wt pr 123 --use
+```
+
+Create a PR stack that pins to it:
+
+```bash
+hstack stack pr pr123 --repo=123 --dev
+```
+
+If you have a `dev-auth` seed stack, you can seed and link/copy auth:
+
+```bash
+hstack stack pr pr123 --repo=123 --dev --seed-auth --copy-auth-from=dev-auth --link-auth
+```
+
+---
+
+## 5) Port legacy split-repo commits into the monorepo
+
+If you have changes that live in a legacy split-repo layout (old UI/CLI/server repos), use:
+
+- `/docs/hstack/monorepo-port`
+
+---
+
+## 6) One-shot validation on a worktree
+
+For quick checks against your current checkout (non-stack-scoped):
+
+```bash
+hstack typecheck all
+hstack lint all
+hstack test all
+```
+
+For stack-scoped validation (recommended when debugging runtime issues):
+
+```bash
+hstack stack typecheck exp1 all
+hstack stack lint exp1 all
+hstack stack test exp1 all
+```
+

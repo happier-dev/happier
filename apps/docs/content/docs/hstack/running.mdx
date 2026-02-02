@@ -1,0 +1,101 @@
+---
+title: Running (dev vs start)
+description: How hstack starts server/daemon/UI, browser auto-open, watch mode, and safe restarts.
+---
+
+## `start` vs `dev`
+
+- `hstack start` / `hstack stack start <name>`: production-like (prefer built UI; fewer watchers)
+- `hstack dev` / `hstack stack dev <name>`: development (watch mode, faster iteration)
+
+If you’re unsure, use `hstack stack dev <stack>`.
+
+---
+
+## Browser origin isolation (important)
+
+When you run multiple stacks, browser state (cookies/localStorage) can collide if you always use `http://localhost:...`.
+
+hstack prefers stack-specific origins for non-main stacks when it matters (so stacks don’t fight over browser auth/session state).
+
+Tip: if you see “auth looks wrong” between stacks, check:
+
+- which stack you’re using (`hstack stack info <name>`)
+- which UI URL you opened (use the one printed by hstack)
+
+---
+
+## Browser auto-open (`--no-browser`)
+
+In interactive runs, `hstack dev` / `hstack start` may auto-open the UI in your browser.
+
+- Disable: `--no-browser`
+- Global disable: `HAPPIER_STACK_NO_BROWSER=1`
+
+---
+
+## Watch mode (hot-reload-ish)
+
+In interactive TTY runs, `hstack dev` enables watch mode by default:
+
+- `happier-cli` changes → rebuild + restart the daemon
+- some long-lived processes can be restarted safely when hstack knows they are stack-owned
+
+Control flags:
+
+- Force enable: `hstack dev --watch`
+- Disable: `hstack dev --no-watch`
+
+If hstack prints that a restart is disabled because the PID is unknown, re-run with `--restart` so hstack can spawn and track the process.
+
+---
+
+## Safe restarts
+
+Both `hstack start` and `hstack dev` support `--restart`:
+
+```bash
+hstack dev --restart
+hstack start --restart
+```
+
+For a named stack:
+
+```bash
+hstack stack dev exp1 -- --restart
+hstack stack start exp1 -- --restart
+```
+
+---
+
+## Stopping stacks safely
+
+Stop a single stack:
+
+```bash
+hstack stack stop exp1
+```
+
+Stop multiple stacks:
+
+```bash
+hstack stop --except-stacks=main --yes
+```
+
+Useful flags:
+
+- `--aggressive`: stop additional daemon-tracked sessions (still stack-owned)
+- `--sweep-owned`: final sweep for processes that still carry the stack env in their process env
+- `--no-docker`: skip Docker-managed infra shutdown
+
+---
+
+## CLI build behavior (happier-cli)
+
+When running stacks, hstack may ensure the CLI is built when needed (so the daemon can start).
+
+Controls:
+
+- `HAPPIER_STACK_CLI_BUILD_MODE=auto|always|never`
+- `HAPPIER_STACK_CLI_BUILD=0` (hard-disable)
+

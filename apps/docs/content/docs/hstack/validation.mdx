@@ -1,0 +1,57 @@
+---
+title: Validation (typecheck, lint, test)
+description: Run checks on the active checkout or stack-scoped (recommended).
+---
+
+Most hstack commands support `--help` and `--json`.
+
+---
+
+## Validate the active checkout (non-stack)
+
+```bash
+hstack typecheck all
+hstack lint all
+hstack test all
+```
+
+Target a specific area:
+
+```bash
+hstack typecheck ui
+hstack typecheck cli
+hstack typecheck server
+```
+
+---
+
+## Validate inside a stack (recommended)
+
+Stack-scoped validation applies that stack’s env (ports, server URLs, DB config, CLI home, etc).
+
+```bash
+hstack stack typecheck exp1 all
+hstack stack lint exp1 all
+hstack stack test exp1 all
+```
+
+Target a specific area:
+
+```bash
+hstack stack typecheck exp1 ui
+hstack stack lint exp1 cli
+hstack stack test exp1 server
+```
+
+---
+
+## CI-oriented checks
+
+hstack also provides a `ci` command for standardized runs:
+
+```bash
+hstack ci --help
+```
+
+Use this when you want a repeatable “policy” run (and to align with what maintainers will run).
+

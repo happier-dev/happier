@@ -2,6 +2,7 @@
   "title": "Documentation",
   "pages": [
     "index",
+    "hstack",
     "getting-started",
     "deployment",
     "architecture",

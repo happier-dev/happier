@@ -1,0 +1,103 @@
+---
+title: Auth (dev-auth seeding)
+description: Create a dev-auth seed stack once, then reuse it for new stacks without re-login.
+---
+
+## Why auth seeding exists
+
+Most workflows are easier if you authenticate once and then reuse that identity across stacks:
+
+- you don’t need to re-login every time you create a new stack
+- PR stacks can be created/reused quickly (`hstack stack pr … --seed-auth`)
+
+hstack’s recommended pattern is a dedicated seed stack called `dev-auth`.
+
+Auth seeding is best-effort and intentionally does **not** copy entire databases between stacks; it focuses on:
+
+- credentials/config files that the UI/CLI expect
+- minimal DB rows when needed (so stacks start cleanly)
+
+---
+
+## Create the seed stack (recommended)
+
+```bash
+hstack auth seed
+```
+
+This runs the full guided flow to:
+
+- create the `dev-auth` stack (as a fresh identity)
+- guide you through UI login so the seed is immediately usable
+- optionally persist defaults so future stacks can reuse it automatically
+
+If you want a non-interactive run (for scripting), check:
+
+```bash
+hstack auth seed --help
+```
+
+---
+
+## Make it the default seed (recommended)
+
+If you want new stacks to auto-seed when they look uninitialized, set these in your home overrides:
+
+- `HAPPIER_STACK_AUTH_SEED_FROM=dev-auth`
+- `HAPPIER_STACK_AUTO_AUTH_SEED=1`
+
+Typically these live in:
+
+- `~/.happier-stack/env.local`
+
+See `/docs/hstack/paths-and-env` for env file precedence.
+
+---
+
+## Use the seed for a specific stack
+
+To seed auth into a stack:
+
+```bash
+hstack stack auth <stack> copy-from dev-auth
+```
+
+If you prefer to keep the credentials in sync (less isolation, more convenience), you can symlink auth files:
+
+```bash
+hstack stack auth <stack> copy-from dev-auth --link
+```
+
+Copy vs link:
+
+- `copy` (default): more isolation, safer for tests
+- `link`: more convenience (keeps credentials in sync), but stacks share auth state
+
+---
+
+## Seed many stacks at once
+
+```bash
+hstack auth copy-from dev-auth --all --except=main,dev-auth
+```
+
+For full-server stacks (`happier-server`), seeding may require Docker infra to be running.
+
+---
+
+## Store the UI dev key (optional)
+
+Some UI automation flows need a local “dev key” stored on your machine:
+
+```bash
+hstack auth dev-key --set "<key>"
+hstack auth dev-key --print
+```
+
+Tip: `--print` is what you want when logging in from the UI or handing a key to an agent.
+
+Help:
+
+```bash
+hstack auth --help
+```

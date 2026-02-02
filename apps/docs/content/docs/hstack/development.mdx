@@ -1,0 +1,364 @@
+---
+title: Development workflow
+description: The “one-stop” guide to develop Happier locally with hstack (worktrees + stacks + dev-auth).
+---
+
+This document is intended to be sufficient for **humans and LLMs** to work safely and repeatably in the Happier monorepo.
+
+If you’re brand new, read these first:
+
+- Worktrees + forks: `/docs/hstack/worktrees-and-forks`
+- Stacks: `/docs/hstack/stacks`
+- Paths/env precedence: `/docs/hstack/paths-and-env`
+- Quickstarts (copy/paste flows): `/docs/hstack/quickstarts`
+- Running (dev vs start): `/docs/hstack/running`
+- Validation (typecheck/lint/test): `/docs/hstack/validation`
+- CLI reference: `/docs/hstack/cli-reference`
+- Debugging: `/docs/hstack/debugging`
+- Troubleshooting: `/docs/hstack/troubleshooting`
+
+---
+
+## Core concepts (the mental model)
+
+### Monorepo
+
+hstack is **monorepo-first**: UI/CLI/server all live in the same Happier git repo.
+
+Current layout:
+
+- `apps/ui` (UI)
+- `apps/cli` (CLI + daemon)
+- `apps/server` (server; light + full flavors)
+- `apps/stack` (this tool)
+
+### Workspace checkouts (where code lives)
+
+Your workspace contains:
+
+- `main/` — stable checkout (treat as read-only)
+- `dev/` — the canonical development checkout (dev branch)
+- categorized worktrees:
+  - `pr/<...>` — PR checkouts (`hstack wt pr ...`)
+  - `local/<owner>/<...>` — feature worktrees
+  - `tmp/<owner>/<...>` — throwaway worktrees
+
+### Worktrees (where you implement)
+
+**Never** develop directly in `main/`. Treat it as “launcher defaults”.
+
+All implementation work should happen in:
+
+- `dev/`, or
+- a worktree under `local/`, `tmp/`, or `pr/`.
+
+### Stacks (how you test safely)
+
+A **stack** is an isolated runtime environment (ports + dirs + DB + CLI home), stored under:
+
+```
+~/.happier/stacks/<stack>/...
+```
+
+Each stack is configured by:
+
+```
+~/.happier/stacks/<stack>/env
+```
+
+Stacks are how you test changes without mutating your “main” environment.
+
+### Server flavor (which backend you’re running)
+
+Each stack runs exactly one server flavor:
+
+- `happier-server-light` (recommended) — simplest local install (SQLite)
+- `happier-server` (full) — Docker-managed Postgres/Redis/Minio
+
+See: `/docs/hstack/server-flavors`.
+
+---
+
+## Non‑negotiables (discipline that keeps stacks safe)
+
+- **Use `hstack` as the entrypoint**
+  - Don’t run raw `yarn dev`, `expo`, `docker compose`, etc. when you intend stack-scoped behavior.
+  - hstack needs stack-scoped env + runtime bookkeeping to keep things isolated.
+- **Develop in worktrees**
+  - Use `dev/` or `hstack wt ...` worktrees; don’t edit `main/`.
+- **Test in non-`main` stacks**
+  - Prefer `hstack stack <stack> dev|start|test|typecheck|lint` so you don’t mutate the default stack.
+- **Don’t kill global daemons**
+  - Multiple stack daemons are expected (one per stack).
+  - Stop stacks explicitly: `hstack stop` or `hstack stack stop <name>`.
+
+---
+
+## Quickstarts (common development flows)
+
+### 1) Typical feature work (UI + CLI + server changes in one worktree)
+
+Create a worktree based on upstream (recommended for clean PR history):
+
+```bash
+hstack wt new my-feature --from=upstream --use
+```
+
+Create an isolated stack and point it at the active worktree:
+
+```bash
+hstack stack new exp1
+hstack stack wt exp1 -- use active
+```
+
+Run dev mode:
+
+```bash
+hstack stack dev exp1
+```
+
+Validate:
+
+```bash
+hstack stack typecheck exp1
+hstack stack lint exp1
+hstack stack test exp1
+```
+
+### 2) Use the canonical `dev/` checkout instead of a feature worktree
+
+Create a dev stack and pin it to `dev/`:
+
+```bash
+hstack stack new dev
+hstack stack wt dev -- use dev
+hstack stack dev dev
+```
+
+### 3) Testing an upstream PR locally (recommended)
+
+Create a PR worktree:
+
+```bash
+hstack wt pr 123 --use
+```
+
+Create an isolated PR stack (idempotent updates supported):
+
+```bash
+hstack stack pr pr123 --repo=123 --dev
+```
+
+If you already have a `dev-auth` seed stack, add:
+
+```bash
+hstack stack pr pr123 --repo=123 --dev --seed-auth --copy-auth-from=dev-auth --link-auth
+```
+
+---
+
+## PR workflow (dev branch targeting)
+
+Happier uses:
+
+- `main` as the stable branch
+- `dev` as the contribution branch (PR base)
+
+Recommended flow:
+
+1. Base your worktree on `upstream/dev`
+2. Push to your fork (`origin`)
+3. Open a PR **into `upstream/dev`**
+
+hstack helps keep this clean by defaulting new worktrees to upstream-based histories and by encouraging `origin` pushes.
+
+See: `/docs/hstack/worktrees-and-forks`.
+
+---
+
+## `start` vs `dev`
+
+- `hstack start` / `hstack stack start <name>`: “production-like” behavior (built UI, fewer watch processes)
+- `hstack dev` / `hstack stack dev <name>`: development (watchers, dev servers, faster iteration)
+
+If you’re unsure, use `hstack stack dev <stack>`.
+
+---
+
+## Developer-only: set up `dev-auth` once (recommended)
+
+Create the seed stack and do the guided login:
+
+```bash
+hstack auth seed
+```
+
+Then new stacks can reuse the same auth:
+
+```bash
+hstack stack auth <stack> copy-from dev-auth
+```
+
+See: `/docs/hstack/auth`.
+
+---
+
+## Process isolation (why stops/restarts are safe)
+
+Stacks track runtime ownership in a per-stack runtime state file:
+
+```
+~/.happier/stacks/<stack>/stack.runtime.json
+```
+
+hstack uses this to:
+
+- stop only stack-owned processes
+- reuse ephemeral ports on restart when appropriate
+- avoid killing by port globally
+
+---
+
+## “Upstream-first” worktree workflow (recommended)
+
+The goal is:
+
+- keep your fork’s long-lived branches clean and stable
+- create upstream-targeting PR branches quickly
+- avoid mixing “fork-only” changes into upstream PRs
+
+Suggested pattern:
+
+1) Create a worktree based on `upstream/dev`:
+
+```bash
+hstack wt new local/my-feature --from=upstream --base=upstream/dev --use
+```
+
+2) Develop and validate inside an isolated stack:
+
+```bash
+hstack stack new exp1
+hstack stack wt exp1 -- use active
+hstack stack dev exp1
+```
+
+3) Push the branch to your fork and open a PR into `upstream/dev`:
+
+```bash
+hstack wt push active --remote=origin
+```
+
+If you need to keep a fork-only “distribution patch” (rare), keep it on a separate branch and do not merge it into your upstream PR worktrees.
+
+---
+
+## Watch mode + hot-reload-ish iteration
+
+hstack’s `dev` mode is the default for development because it:
+
+- starts the server in a dev-friendly mode
+- starts the UI dev server (Expo/Next, depending on the app)
+- restarts processes safely using stack-owned runtime state
+
+When switching flags (e.g. enabling mobile), it’s usually better to restart the stack using hstack rather than restarting individual processes.
+
+---
+
+## Validation commands (typecheck / lint / test)
+
+Prefer stack-scoped validation so the environment matches what you’re actually running:
+
+```bash
+hstack stack typecheck exp1
+hstack stack lint exp1
+hstack stack test exp1
+```
+
+For the active checkout (non-stack), you can also run:
+
+```bash
+hstack typecheck
+hstack lint
+hstack test
+```
+
+---
+
+## CLI reference (high-signal)
+
+Core:
+
+- Setup: `hstack setup --profile=dev|selfhost`
+- Run: `hstack start` / `hstack dev`
+- Stop: `hstack stop`
+- Diagnostics: `hstack where`, `hstack doctor`
+
+Stacks:
+
+- Create/list/info: `hstack stack new`, `hstack stack list`, `hstack stack info`
+- Run: `hstack stack dev <name>`, `hstack stack start <name>`
+- Switch repo: `hstack stack wt <name> -- use <spec>`
+- Switch server: `hstack stack srv <name> -- use happier-server-light|happier-server`
+- Auth: `hstack stack auth <name> status|login|copy-from`
+- PR stacks: `hstack stack pr <name> --repo=<pr>`
+
+Worktrees:
+
+- Create/use: `hstack wt new <slug> --use`
+- PR checkout: `hstack wt pr <pr> --use`
+- List/status/update: `hstack wt list`, `hstack wt status`, `hstack wt update`, `hstack wt update-all`
+- Push: `hstack wt push active --remote=origin`
+
+Auth seeding:
+
+- Seed stack: `hstack auth seed`
+- Bulk seed: `hstack auth copy-from dev-auth --all --except=main,dev-auth`
+- Dev key: `hstack auth dev-key`
+
+---
+
+## Useful environment knobs (high-signal)
+
+Paths:
+
+- `HAPPIER_STACK_WORKSPACE_DIR` (workspace root)
+- `HAPPIER_STACK_REPO_DIR` (active checkout; usually managed by `hstack wt use`)
+- `HAPPIER_STACK_CLI_ROOT_DIR` (run hstack from a local checkout)
+
+Auth:
+
+- `HAPPIER_STACK_AUTH_SEED_FROM` (default auth source for new stacks; commonly `dev-auth`)
+- `HAPPIER_STACK_AUTH_MODE` (`copy` vs `link`)
+
+Server selection:
+
+- `HAPPIER_STACK_SERVER_COMPONENT` (`happier-server-light` vs `happier-server`)
+
+---
+
+## Troubleshooting (high-signal)
+
+### “What is hstack actually using?”
+
+```bash
+hstack where
+hstack stack info <name>
+```
+
+### “Why is this stack using the wrong checkout?”
+
+Check the pinned repo:
+
+```bash
+hstack stack info <name>
+cat ~/.happier/stacks/<name>/env | rg HAPPIER_STACK_REPO_DIR
+```
+
+Fix by repointing:
+
+```bash
+hstack stack wt <name> -- use dev
+# or:
+hstack stack wt <name> -- use pr/123-fix-thing
+```

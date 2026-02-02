@@ -1,0 +1,88 @@
+---
+title: Troubleshooting
+description: High-signal fixes for common local issues (auth, ports, wrong checkout, unhealthy stacks).
+---
+
+## “No machine” / auth required
+
+Most “auth is broken” symptoms are one of:
+
+- you opened the wrong stack URL (browser origin collision)
+- the stack did not get seeded auth (non-main stacks)
+- the stack is pointed at an unexpected repo checkout
+
+Check:
+
+```bash
+hstack where
+hstack stack info <stack>
+```
+
+Fix auth seeding:
+
+```bash
+hstack auth seed
+hstack stack auth <stack> copy-from dev-auth
+```
+
+---
+
+## “This stack is using the wrong checkout”
+
+Check the pinned repo:
+
+```bash
+hstack stack info <stack>
+cat ~/.happier/stacks/<stack>/env | rg HAPPIER_STACK_REPO_DIR
+```
+
+Repoint:
+
+```bash
+hstack stack wt <stack> -- use dev
+# or:
+hstack stack wt <stack> -- use pr/123-some-pr
+```
+
+---
+
+## Port collisions
+
+If hstack refuses to start because a pinned port is in use:
+
+- stop the stack: `hstack stack stop <stack>`
+- or unpin ports (then re-run start/dev):
+  - use `hstack stack edit <stack> --interactive`, or
+  - `hstack stack audit --fix-ports`
+
+---
+
+## Stack is unhealthy / can’t reach server
+
+```bash
+hstack stack doctor <stack>
+hstack logs:tail
+```
+
+If you’re using full server (`happier-server`), verify Docker:
+
+```bash
+docker ps
+```
+
+---
+
+## “I changed something but nothing updates”
+
+In dev mode, prefer running with `--restart` at least once (so hstack owns the PIDs and can restart safely):
+
+```bash
+hstack stack dev <stack> -- --restart
+```
+
+If you’re running `hstack dev` outside stack mode, do:
+
+```bash
+hstack dev --restart
+```
+

@@ -1,0 +1,28 @@
+{
+  "title": "hstack (local stack)",
+  "pages": [
+    "index",
+    "setup",
+    "development",
+    "quickstarts",
+    "running",
+    "validation",
+    "cli-reference",
+    "debugging",
+    "troubleshooting",
+    "auth",
+    "stacks",
+    "worktrees-and-forks",
+    "server-flavors",
+    "remote-access",
+    "paths-and-env",
+    "menubar",
+    "mobile-ios",
+    "tauri",
+    "isolated-linux-vm",
+    "edison",
+    "forking-and-branding",
+    "monorepo-port",
+    "codex-mcp-resume"
+  ]
+}
