@@ -52,7 +52,7 @@ Current OpenCode scenario ids:
 - `search_known_token` (extended)
 - `glob_list_files` (extended)
 - `edit_write_file_and_cat` (extended)
-- `permission_surface_outside_workspace` (extended)
+- `permission_surface_outside_workspace` (extended, runs with YOLO off + auto-approvals)
 
 ### What the harness does (high level)
 
