@@ -142,7 +142,7 @@ test('ensureDepsInstalled prefers yarn when component is inside the Happy monore
       HAPPIER_STACK_ENV_FILE: null,
     },
     async () => {
-      await ensureDepsInstalled(componentDir, 'happy-server', { quiet: true });
+      await ensureDepsInstalled(componentDir, 'happier-server', { quiet: true });
       const out = await readFile(outputPath, 'utf-8');
       assert.ok(out.includes('install') || out.includes('--version'));
     }

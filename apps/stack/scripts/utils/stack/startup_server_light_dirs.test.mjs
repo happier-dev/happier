@@ -48,9 +48,9 @@ test('ensureServerLightSchemaReady creates stack sqlite data dirs before probing
   const env = {
     ...process.env,
     PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    HAPPY_SERVER_LIGHT_DATA_DIR: dataDir,
-    HAPPY_SERVER_LIGHT_FILES_DIR: filesDir,
-    DATABASE_URL: `file:${join(dataDir, 'happy-server-light.sqlite')}`,
+    HAPPIER_SERVER_LIGHT_DATA_DIR: dataDir,
+    HAPPIER_SERVER_LIGHT_FILES_DIR: filesDir,
+    DATABASE_URL: `file:${join(dataDir, 'happier-server-light.sqlite')}`,
   };
 
   assert.equal(existsSync(dataDir), false);
@@ -61,4 +61,3 @@ test('ensureServerLightSchemaReady creates stack sqlite data dirs before probing
   assert.equal(existsSync(dataDir), true);
   assert.equal(existsSync(filesDir), true);
 });
-

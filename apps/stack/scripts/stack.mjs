@@ -47,7 +47,6 @@ import { openUrlInBrowser } from './utils/ui/browser.mjs';
 import { bold, cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { copyFileIfMissing, linkFileIfMissing, writeSecretFileIfMissing } from './utils/auth/files.mjs';
-import { getLegacyHappyBaseDir, isLegacyAuthSourceName } from './utils/auth/sources.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
 import { getHomeEnvLocalPath } from './utils/env/config.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
@@ -162,22 +161,20 @@ async function copyAuthFromStackIntoNewStack({
   const { secret, source } = await resolveHandyMasterSecretFromStack({
     stackName: fromStackName,
     requireStackExists: requireSourceStackExists,
-    allowLegacyAuthSource: !isSandboxed() || sandboxAllowsGlobalSideEffects(),
-    allowLegacyMainFallback: !isSandboxed() || sandboxAllowsGlobalSideEffects(),
   });
 
   const copied = { secret: false, accessKey: false, settings: false, sourceStack: fromStackName };
 
   if (secret) {
-    if (serverComponent === 'happy-server-light') {
-      const dataDir = stackEnv.HAPPY_SERVER_LIGHT_DATA_DIR;
+    if (serverComponent === 'happier-server-light') {
+      const dataDir = stackEnv.HAPPIER_SERVER_LIGHT_DATA_DIR;
       const target = join(dataDir, 'handy-master-secret.txt');
       const sourcePath = source && !String(source).includes('(HANDY_MASTER_SECRET)') ? String(source) : '';
       copied.secret =
         linkMode && sourcePath && existsSync(sourcePath)
           ? await linkFileIfMissing({ from: sourcePath, to: target })
           : await writeSecretFileIfMissing({ path: target, secret });
-    } else if (serverComponent === 'happy-server') {
+    } else if (serverComponent === 'happier-server') {
       const target = stackEnv.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE;
       if (target) {
         const sourcePath = source && !String(source).includes('(HANDY_MASTER_SECRET)') ? String(source) : '';
@@ -189,18 +186,10 @@ async function copyAuthFromStackIntoNewStack({
     }
   }
 
-  const legacy = isLegacyAuthSourceName(fromStackName);
-  if (legacy && isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
-    throw new Error(
-      '[stack] auth copy-from: legacy auth source is disabled in sandbox mode.\n' +
-        'Reason: it reads from ~/.happy (global user state).\n' +
-        'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
-    );
-  }
-  const sourceBaseDir = legacy ? getLegacyHappyBaseDir() : resolveStackEnvPath(fromStackName).baseDir;
-  const sourceEnvRaw = legacy ? '' : await readExistingEnv(resolveStackEnvPath(fromStackName).envPath);
+  const { baseDir: sourceBaseDir, envPath: sourceEnvPath } = resolveStackEnvPath(fromStackName);
+  const sourceEnvRaw = await readExistingEnv(sourceEnvPath);
   const sourceEnv = parseEnvToObject(sourceEnvRaw);
-  const sourceCli = legacy ? join(sourceBaseDir, 'cli') : getCliHomeDirFromEnvOrDefault({ stackBaseDir: sourceBaseDir, env: sourceEnv });
+  const sourceCli = getCliHomeDirFromEnvOrDefault({ stackBaseDir: sourceBaseDir, env: sourceEnv });
   const targetCli = stackEnv.HAPPIER_STACK_CLI_HOME_DIR;
 
   if (linkMode) {
@@ -358,7 +347,7 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
       env[`HAPPIER_STACK_${suffix}`] = String(n);
     };
     applyPort('SERVER_PORT', ports.server);
-    applyPort('HAPPY_SERVER_BACKEND_PORT', ports.backend);
+    applyPort('SERVER_BACKEND_PORT', ports.backend);
     applyPort('PG_PORT', ports.pg);
     applyPort('REDIS_PORT', ports.redis);
     applyPort('MINIO_PORT', ports.minio);
@@ -411,21 +400,21 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   }
 
   stackName = config.stackName?.trim() ? config.stackName.trim() : '';
-  if (!stackName) {
-    throw new Error(
-      '[stack] usage: hstack stack new <name> [--port=NNN] [--server=happy-server|happy-server-light] ' +
-        '[--repo=<owner/...>|<path>|default] [--remote=<name>] ' +
-        '[--copy-auth-from=<stack|legacy>] [--link-auth] [--no-copy-auth] [--interactive] [--force-port]'
-    );
-  }
+	  if (!stackName) {
+	    throw new Error(
+	      '[stack] usage: hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] ' +
+	        '[--repo=<owner/...>|<path>|default] [--remote=<name>] ' +
+	        '[--copy-auth-from=<stack>] [--link-auth] [--no-copy-auth] [--interactive] [--force-port]'
+	    );
+	  }
   if (stackName === 'main') {
     throw new Error('[stack] stack name \"main\" is reserved (use the default stack without creating it)');
   }
 
-  const serverComponent = (config.serverComponent || 'happy-server-light').trim();
-  if (serverComponent !== 'happy-server-light' && serverComponent !== 'happy-server') {
-    throw new Error(`[stack] invalid server component: ${serverComponent}`);
-  }
+	  const serverComponent = (config.serverComponent || 'happier-server-light').trim();
+	  if (serverComponent !== 'happier-server-light' && serverComponent !== 'happier-server') {
+	    throw new Error(`[stack] invalid server component: ${serverComponent}`);
+	  }
 
   const baseDir = resolveStackEnvPath(stackName).baseDir;
   const uiBuildDir = join(baseDir, 'ui');
@@ -477,18 +466,18 @@ async function cmdNew({ rootDir, argv, emit = true }) {
 
   // Server-light storage isolation: ensure non-main stacks have their own sqlite + local files dir by default.
   // (This prevents a dev stack from mutating main stack's DB when schema changes.)
-  if (serverComponent === 'happy-server-light') {
+  if (serverComponent === 'happier-server-light') {
     const dataDir = join(baseDir, 'server-light');
-    stackEnv.HAPPY_SERVER_LIGHT_DATA_DIR = dataDir;
-    stackEnv.HAPPY_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-    stackEnv.DATABASE_URL = `file:${join(dataDir, 'happy-server-light.sqlite')}`;
+    stackEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
+    stackEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+    stackEnv.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
   }
-  if (serverComponent === 'happy-server') {
+  if (serverComponent === 'happier-server') {
     // Persist stable infra credentials in the stack env (ports are ephemeral unless explicitly pinned).
     const pgUser = 'handy';
     const pgPassword = randomToken(24);
     const pgDb = 'handy';
-    const s3Bucket = sanitizeDnsLabel(`happy-${stackName}`, { fallback: 'happy' });
+    const s3Bucket = sanitizeDnsLabel(`happier-${stackName}`, { fallback: 'happier' });
     const s3AccessKey = randomToken(12);
     const s3SecretKey = randomToken(24);
 
@@ -496,7 +485,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     stackEnv.HAPPIER_STACK_PG_USER = pgUser;
     stackEnv.HAPPIER_STACK_PG_PASSWORD = pgPassword;
     stackEnv.HAPPIER_STACK_PG_DATABASE = pgDb;
-    stackEnv.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE = join(baseDir, 'happy-server', 'handy-master-secret.txt');
+    stackEnv.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE = join(baseDir, 'happier-server', 'handy-master-secret.txt');
     stackEnv.S3_ACCESS_KEY = s3AccessKey;
     stackEnv.S3_SECRET_KEY = s3SecretKey;
     stackEnv.S3_BUCKET = s3Bucket;
@@ -518,16 +507,16 @@ async function cmdNew({ rootDir, argv, emit = true }) {
       const databaseUrl = `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`;
       const s3PublicUrl = `http://127.0.0.1:${minioPort}/${s3Bucket}`;
 
-      stackEnv.HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT = String(backendPort);
+      stackEnv.HAPPIER_STACK_SERVER_BACKEND_PORT = String(backendPort);
       stackEnv.HAPPIER_STACK_PG_PORT = String(pgPort);
       stackEnv.HAPPIER_STACK_REDIS_PORT = String(redisPort);
       stackEnv.HAPPIER_STACK_MINIO_PORT = String(minioPort);
       stackEnv.HAPPIER_STACK_MINIO_CONSOLE_PORT = String(minioConsolePort);
 
-      // Vars consumed by happy-server:
-      stackEnv.DATABASE_URL = databaseUrl;
-      stackEnv.REDIS_URL = `redis://127.0.0.1:${redisPort}`;
-      stackEnv.S3_HOST = '127.0.0.1';
+	      // Vars consumed by happier-server:
+	      stackEnv.DATABASE_URL = databaseUrl;
+	      stackEnv.REDIS_URL = `redis://127.0.0.1:${redisPort}`;
+	      stackEnv.S3_HOST = '127.0.0.1';
       stackEnv.S3_PORT = String(minioPort);
       stackEnv.S3_USE_SSL = 'false';
       stackEnv.S3_PUBLIC_URL = s3PublicUrl;
@@ -540,12 +529,12 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   if (config.repo) {
     let resolved = '';
     if (typeof config.repo === 'object' && config.repo.create) {
-      const uiPkgDir = await createWorktree({
-        rootDir,
-        component: 'happy',
-        slug: config.repo.slug,
-        remoteName: config.repo.remote || stackEnv.HAPPIER_STACK_STACK_REMOTE,
-      });
+	      const uiPkgDir = await createWorktree({
+	        rootDir,
+	        component: 'happier-ui',
+	        slug: config.repo.slug,
+	        remoteName: config.repo.remote || stackEnv.HAPPIER_STACK_STACK_REMOTE,
+	      });
       resolved = uiPkgDir ? coerceHappyMonorepoRootFromPath(uiPkgDir) || uiPkgDir : '';
     } else {
       const spec = String(config.repo ?? '').trim();
@@ -553,12 +542,12 @@ async function cmdNew({ rootDir, argv, emit = true }) {
         resolved = String(defaultRepoEnv.HAPPIER_STACK_REPO_DIR ?? '').trim();
       } else if (spec === 'active') {
         resolved = getRepoDir(rootDir, process.env);
-      } else {
-        const dir = resolveComponentSpecToDir({ rootDir, component: 'happy', spec });
-        const abs = dir ? resolve(rootDir, dir) : isAbsolute(spec) ? spec : resolve(getWorkspaceDir(rootDir), spec);
-        resolved = coerceHappyMonorepoRootFromPath(abs) || abs;
-      }
-    }
+	      } else {
+	        const dir = resolveComponentSpecToDir({ rootDir, component: 'happier-ui', spec });
+	        const abs = dir ? resolve(rootDir, dir) : isAbsolute(spec) ? spec : resolve(getWorkspaceDir(rootDir), spec);
+	        resolved = coerceHappyMonorepoRootFromPath(abs) || abs;
+	      }
+	    }
 
     if (!resolved || !existsSync(resolved)) {
       throw new Error(
@@ -654,7 +643,7 @@ async function cmdEdit({ rootDir, argv }) {
     port = null;
   }
 
-  const serverComponent = (config.serverComponent || existingEnv.HAPPIER_STACK_SERVER_COMPONENT || 'happy-server-light').trim();
+  const serverComponent = (config.serverComponent || existingEnv.HAPPIER_STACK_SERVER_COMPONENT || 'happier-server-light').trim();
 
   const next = {
     HAPPIER_STACK_STACK: stackName,
@@ -674,20 +663,20 @@ async function cmdEdit({ rootDir, argv }) {
     next.HAPPIER_STACK_SERVER_PORT = String(port);
   }
 
-  if (serverComponent === 'happy-server-light') {
+  if (serverComponent === 'happier-server-light') {
     const dataDir = join(baseDir, 'server-light');
-    next.HAPPY_SERVER_LIGHT_DATA_DIR = dataDir;
-    next.HAPPY_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-    next.DATABASE_URL = `file:${join(dataDir, 'happy-server-light.sqlite')}`;
+    next.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
+    next.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+    next.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
   }
-  if (serverComponent === 'happy-server') {
+  if (serverComponent === 'happier-server') {
     // Persist stable infra credentials. Ports are ephemeral unless explicitly pinned.
     const pgUser = (existingEnv.HAPPIER_STACK_PG_USER ?? 'handy').trim() || 'handy';
     const pgPassword = (existingEnv.HAPPIER_STACK_PG_PASSWORD ?? '').trim() || randomToken(24);
     const pgDb = (existingEnv.HAPPIER_STACK_PG_DATABASE ?? 'handy').trim() || 'handy';
     const s3Bucket =
-      (existingEnv.S3_BUCKET ?? sanitizeDnsLabel(`happy-${stackName}`, { fallback: 'happy' })).trim() ||
-      sanitizeDnsLabel(`happy-${stackName}`, { fallback: 'happy' });
+      (existingEnv.S3_BUCKET ?? sanitizeDnsLabel(`happier-${stackName}`, { fallback: 'happier' })).trim() ||
+      sanitizeDnsLabel(`happier-${stackName}`, { fallback: 'happier' });
     const s3AccessKey = (existingEnv.S3_ACCESS_KEY ?? '').trim() || randomToken(12);
     const s3SecretKey = (existingEnv.S3_SECRET_KEY ?? '').trim() || randomToken(24);
 
@@ -696,7 +685,7 @@ async function cmdEdit({ rootDir, argv }) {
     next.HAPPIER_STACK_PG_PASSWORD = pgPassword;
     next.HAPPIER_STACK_PG_DATABASE = pgDb;
     next.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE =
-      (existingEnv.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? '').trim() || join(baseDir, 'happy-server', 'handy-master-secret.txt');
+      (existingEnv.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? '').trim() || join(baseDir, 'happier-server', 'handy-master-secret.txt');
     next.S3_ACCESS_KEY = s3AccessKey;
     next.S3_SECRET_KEY = s3SecretKey;
     next.S3_BUCKET = s3Bucket;
@@ -705,8 +694,8 @@ async function cmdEdit({ rootDir, argv }) {
       // If user pinned the server port, keep ports + derived URLs stable as well.
       const reservedPorts = await collectReservedStackPorts({ excludeStackName: stackName });
       reservedPorts.add(port);
-      const backendPort = existingEnv.HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT?.trim()
-        ? Number(existingEnv.HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT.trim())
+      const backendPort = existingEnv.HAPPIER_STACK_SERVER_BACKEND_PORT?.trim()
+        ? Number(existingEnv.HAPPIER_STACK_SERVER_BACKEND_PORT.trim())
         : await pickNextFreePort(port + 10, { reservedPorts });
       reservedPorts.add(backendPort);
       const pgPort = existingEnv.HAPPIER_STACK_PG_PORT?.trim()
@@ -728,7 +717,7 @@ async function cmdEdit({ rootDir, argv }) {
       const databaseUrl = `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`;
       const s3PublicUrl = `http://127.0.0.1:${minioPort}/${s3Bucket}`;
 
-      next.HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT = String(backendPort);
+      next.HAPPIER_STACK_SERVER_BACKEND_PORT = String(backendPort);
       next.HAPPIER_STACK_PG_PORT = String(pgPort);
       next.HAPPIER_STACK_REDIS_PORT = String(redisPort);
       next.HAPPIER_STACK_MINIO_PORT = String(minioPort);
@@ -749,7 +738,7 @@ async function cmdEdit({ rootDir, argv }) {
     if (typeof config.repo === 'object' && config.repo.create) {
       const uiPkgDir = await createWorktree({
         rootDir,
-        component: 'happy',
+        component: 'happier-ui',
         slug: config.repo.slug,
         remoteName: config.repo.remote || next.HAPPIER_STACK_STACK_REMOTE,
       });
@@ -761,7 +750,7 @@ async function cmdEdit({ rootDir, argv }) {
       } else if (spec === 'active') {
         resolved = getRepoDir(rootDir, process.env);
       } else {
-        const dir = resolveComponentSpecToDir({ rootDir, component: 'happy', spec });
+        const dir = resolveComponentSpecToDir({ rootDir, component: 'happier-ui', spec });
         const abs = dir ? resolve(rootDir, dir) : isAbsolute(spec) ? spec : resolve(getWorkspaceDir(rootDir), spec);
         resolved = coerceHappyMonorepoRootFromPath(abs) || abs;
       }
@@ -796,9 +785,9 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
       const wantsJson = args.includes('--json');
       const pinnedServerPort = Boolean((stackEnv.HAPPIER_STACK_SERVER_PORT ?? '').trim());
       const serverComponent =
-        (stackEnv.HAPPIER_STACK_SERVER_COMPONENT ?? '').toString().trim() || 'happy-server-light';
+        (stackEnv.HAPPIER_STACK_SERVER_COMPONENT ?? '').toString().trim() || 'happier-server-light';
       const managedInfra =
-        serverComponent === 'happy-server'
+        serverComponent === 'happier-server'
           ? ((stackEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0')
           : false;
 
@@ -920,13 +909,13 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
         const canReuse =
           candidatePorts &&
           candidatePorts.server &&
-          (serverComponent !== 'happy-server' || candidatePorts.backend) &&
+          (serverComponent !== 'happier-server' || candidatePorts.backend) &&
           (!managedInfra ||
             (candidatePorts.pg && candidatePorts.redis && candidatePorts.minio && candidatePorts.minioConsole));
 
         if (canReuse) {
           ports.server = candidatePorts.server;
-          if (serverComponent === 'happy-server') {
+          if (serverComponent === 'happier-server') {
             ports.backend = candidatePorts.backend;
             if (managedInfra) {
               ports.pg = candidatePorts.pg;
@@ -989,7 +978,7 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
           ports.server = await pickNextFreeTcpPort(startPort, { reservedPorts: reserved });
           reserved.add(ports.server);
 
-          if (serverComponent === 'happy-server') {
+          if (serverComponent === 'happier-server') {
             ports.backend = await pickNextFreeTcpPort(ports.server + 10, { reservedPorts: reserved });
             reserved.add(ports.backend);
             if (managedInfra) {
@@ -1014,9 +1003,9 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
           ...env,
           HAPPIER_STACK_EPHEMERAL_PORTS: '1',
           HAPPIER_STACK_SERVER_PORT: String(ports.server),
-          ...(serverComponent === 'happy-server' && ports.backend
+          ...(serverComponent === 'happier-server' && ports.backend
             ? {
-                HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT: String(ports.backend),
+                HAPPIER_STACK_SERVER_BACKEND_PORT: String(ports.backend),
               }
             : {}),
           ...(managedInfra && ports.pg
@@ -1272,7 +1261,7 @@ function resolveTransientRepoOverrides({ rootDir, kv }) {
   } else if (raw === 'active') {
     resolved = getRepoDir(rootDir, process.env);
   } else {
-    const dir = resolveComponentSpecToDir({ rootDir, component: 'happy', spec: raw });
+    const dir = resolveComponentSpecToDir({ rootDir, component: 'happier-ui', spec: raw });
     const abs = dir ? resolve(rootDir, dir) : isAbsolute(raw) ? raw : resolve(getWorkspaceDir(rootDir), raw);
     resolved = coerceHappyMonorepoRootFromPath(abs) || abs;
   }
@@ -1410,7 +1399,7 @@ async function cmdAudit({ rootDir, argv }) {
 
   const report = [];
   const ports = new Map(); // port -> [stackName]
-  const otherWorkspaceRoot = join(getHappyStacksHomeDir(), 'workspace');
+    const otherWorkspaceRoot = join(getHappyStacksHomeDir(), 'workspace');
 
   for (const stackName of stacks) {
     const resolved = resolveStackEnvPath(stackName);
@@ -1424,7 +1413,7 @@ async function cmdAudit({ rootDir, argv }) {
     if (!raw.trim() && wantsEnvRepair && (stackName !== 'main' || fixMain)) {
       const serverComponent =
         getEnvValue(env, 'HAPPIER_STACK_SERVER_COMPONENT') ||
-        'happy-server-light';
+        'happier-server-light';
       const expectedUi = join(baseDir, 'ui');
       const expectedCli = join(baseDir, 'cli');
       // Port strategy: main is pinned by convention; non-main stacks default to ephemeral ports.
@@ -1443,11 +1432,11 @@ async function cmdAudit({ rootDir, argv }) {
         nextEnv.HAPPIER_STACK_SERVER_PORT = String(port);
       }
 
-      if (serverComponent === 'happy-server-light') {
+      if (serverComponent === 'happier-server-light') {
         const dataDir = join(baseDir, 'server-light');
-        nextEnv.HAPPY_SERVER_LIGHT_DATA_DIR = dataDir;
-        nextEnv.HAPPY_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-        nextEnv.DATABASE_URL = `file:${join(dataDir, 'happy-server-light.sqlite')}`;
+        nextEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
+        nextEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
+        nextEnv.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
       }
 
       await writeStackEnv({ stackName, env: nextEnv });
@@ -1458,19 +1447,19 @@ async function cmdAudit({ rootDir, argv }) {
     // Optional: unpin ports for non-main stacks (ephemeral port model).
     if (unpinPorts && stackName !== 'main' && !unpinPortsExcept.has(stackName) && raw.trim()) {
       const serverComponentTmp =
-        getEnvValue(env, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happy-server-light';
+        getEnvValue(env, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happier-server-light';
       const remove = [
         // Always remove pinned public server port.
         'HAPPIER_STACK_SERVER_PORT',
-        // Happy-server gateway/backend ports.
-        'HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT',
+        // Happier-server gateway/backend ports.
+        'HAPPIER_STACK_SERVER_BACKEND_PORT',
         // Managed infra ports.
         'HAPPIER_STACK_PG_PORT',
         'HAPPIER_STACK_REDIS_PORT',
         'HAPPIER_STACK_MINIO_PORT',
         'HAPPIER_STACK_MINIO_CONSOLE_PORT',
       ];
-      if (serverComponentTmp === 'happy-server') {
+      if (serverComponentTmp === 'happier-server') {
         // These are derived from the ports above; safe to re-compute at start time.
         remove.push('DATABASE_URL', 'REDIS_URL', 'S3_PORT', 'S3_PUBLIC_URL');
       }
@@ -1479,7 +1468,7 @@ async function cmdAudit({ rootDir, argv }) {
       env = parseEnvToObject(raw);
     }
 
-    const serverComponent = getEnvValue(env, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happy-server-light';
+    const serverComponent = getEnvValue(env, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happier-server-light';
     const portRaw = getEnvValue(env, 'HAPPIER_STACK_SERVER_PORT');
     const port = portRaw ? Number(portRaw) : null;
     if (Number.isFinite(port) && port > 0) {
@@ -1529,20 +1518,20 @@ async function cmdAudit({ rootDir, argv }) {
     }
 
     // Server-light DB/files isolation.
-    const isServerLight = serverComponent === 'happy-server-light';
+    const isServerLight = serverComponent === 'happier-server-light';
     if (isServerLight) {
-      const dataDir = getEnvValue(env, 'HAPPY_SERVER_LIGHT_DATA_DIR');
-      const filesDir = getEnvValue(env, 'HAPPY_SERVER_LIGHT_FILES_DIR');
+      const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR');
+      const filesDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_FILES_DIR');
       const dbUrl = getEnvValue(env, 'DATABASE_URL');
       const expectedDataDir = join(baseDir, 'server-light');
       const expectedFilesDir = join(expectedDataDir, 'files');
-      const expectedDbUrl = `file:${join(expectedDataDir, 'happy-server-light.sqlite')}`;
+      const expectedDbUrl = `file:${join(expectedDataDir, 'happier-server-light.sqlite')}`;
 
-      if (!dataDir) issues.push({ code: 'missing_server_light_data_dir', message: `missing HAPPY_SERVER_LIGHT_DATA_DIR (expected ${expectedDataDir})` });
-      if (!filesDir) issues.push({ code: 'missing_server_light_files_dir', message: `missing HAPPY_SERVER_LIGHT_FILES_DIR (expected ${expectedFilesDir})` });
+      if (!dataDir) issues.push({ code: 'missing_server_light_data_dir', message: `missing HAPPIER_SERVER_LIGHT_DATA_DIR (expected ${expectedDataDir})` });
+      if (!filesDir) issues.push({ code: 'missing_server_light_files_dir', message: `missing HAPPIER_SERVER_LIGHT_FILES_DIR (expected ${expectedFilesDir})` });
       if (!dbUrl) issues.push({ code: 'missing_database_url', message: `missing DATABASE_URL (expected ${expectedDbUrl})` });
-      if (dataDir && dataDir !== expectedDataDir) issues.push({ code: 'server_light_data_dir_mismatch', message: `HAPPY_SERVER_LIGHT_DATA_DIR=${dataDir} (expected ${expectedDataDir})` });
-      if (filesDir && filesDir !== expectedFilesDir) issues.push({ code: 'server_light_files_dir_mismatch', message: `HAPPY_SERVER_LIGHT_FILES_DIR=${filesDir} (expected ${expectedFilesDir})` });
+      if (dataDir && dataDir !== expectedDataDir) issues.push({ code: 'server_light_data_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir} (expected ${expectedDataDir})` });
+      if (filesDir && filesDir !== expectedFilesDir) issues.push({ code: 'server_light_files_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_FILES_DIR=${filesDir} (expected ${expectedFilesDir})` });
       if (dbUrl && dbUrl !== expectedDbUrl) issues.push({ code: 'database_url_mismatch', message: `DATABASE_URL=${dbUrl} (expected ${expectedDbUrl})` });
 
     }
@@ -1570,14 +1559,14 @@ async function cmdAudit({ rootDir, argv }) {
 
       // Server-light storage isolation.
       if (isServerLight) {
-        const dataDir = getEnvValue(env, 'HAPPY_SERVER_LIGHT_DATA_DIR');
-        const filesDir = getEnvValue(env, 'HAPPY_SERVER_LIGHT_FILES_DIR');
+        const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR');
+        const filesDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_FILES_DIR');
         const dbUrl = getEnvValue(env, 'DATABASE_URL');
         const expectedDataDir = join(baseDir, 'server-light');
         const expectedFilesDir = join(expectedDataDir, 'files');
-        const expectedDbUrl = `file:${join(expectedDataDir, 'happy-server-light.sqlite')}`;
-        if (!dataDir || (fixPaths && dataDir !== expectedDataDir)) updates.push({ key: 'HAPPY_SERVER_LIGHT_DATA_DIR', value: expectedDataDir });
-        if (!filesDir || (fixPaths && filesDir !== expectedFilesDir)) updates.push({ key: 'HAPPY_SERVER_LIGHT_FILES_DIR', value: expectedFilesDir });
+        const expectedDbUrl = `file:${join(expectedDataDir, 'happier-server-light.sqlite')}`;
+        if (!dataDir || (fixPaths && dataDir !== expectedDataDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_DATA_DIR', value: expectedDataDir });
+        if (!filesDir || (fixPaths && filesDir !== expectedFilesDir)) updates.push({ key: 'HAPPIER_SERVER_LIGHT_FILES_DIR', value: expectedFilesDir });
         if (!dbUrl || (fixPaths && dbUrl !== expectedDbUrl)) updates.push({ key: 'DATABASE_URL', value: expectedDbUrl });
       }
 
@@ -1660,7 +1649,7 @@ async function cmdAudit({ rootDir, argv }) {
         const env = parseEnvToObject(raw);
 
         const serverComponent =
-          getEnvValue(env, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happy-server-light';
+          getEnvValue(env, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happier-server-light';
         const portRaw = getEnvValue(env, 'HAPPIER_STACK_SERVER_PORT');
         const currentPort = portRaw ? Number(portRaw) : NaN;
         if (Number.isFinite(currentPort) && currentPort > 0) {
@@ -1683,7 +1672,7 @@ async function cmdAudit({ rootDir, argv }) {
         planned.add(newServerPort);
         updates.push({ key: 'HAPPIER_STACK_SERVER_PORT', value: String(newServerPort) });
 
-        if (serverComponent === 'happy-server') {
+        if (serverComponent === 'happier-server') {
           planned.add(newServerPort);
           const backendPort = await pickNextFreePort(newServerPort + 10, { reservedPorts: planned });
           planned.add(backendPort);
@@ -1696,7 +1685,7 @@ async function cmdAudit({ rootDir, argv }) {
           const minioConsolePort = await pickNextFreePort(minioPort + 1, { reservedPorts: planned });
           planned.add(minioConsolePort);
 
-          updates.push({ key: 'HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT', value: String(backendPort) });
+          updates.push({ key: 'HAPPIER_STACK_SERVER_BACKEND_PORT', value: String(backendPort) });
           updates.push({ key: 'HAPPIER_STACK_PG_PORT', value: String(pgPort) });
           updates.push({ key: 'HAPPIER_STACK_REDIS_PORT', value: String(redisPort) });
           updates.push({ key: 'HAPPIER_STACK_MINIO_PORT', value: String(minioPort) });
@@ -1719,7 +1708,7 @@ async function cmdAudit({ rootDir, argv }) {
           updates.push({ key: 'DATABASE_URL', value: databaseUrl });
           updates.push({ key: 'REDIS_URL', value: `redis://127.0.0.1:${redisPort}` });
           updates.push({ key: 'S3_PORT', value: String(minioPort) });
-          const bucket = getEnvValue(env, 'S3_BUCKET') || sanitizeDnsLabel(`happy-${stackName}`, { fallback: 'happy' });
+          const bucket = getEnvValue(env, 'S3_BUCKET') || sanitizeDnsLabel(`happier-${stackName}`, { fallback: 'happier' });
           updates.push({ key: 'S3_PUBLIC_URL', value: `http://127.0.0.1:${minioPort}/${bucket}` });
         }
 
@@ -1795,7 +1784,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const name = (positionals[1] ?? '').trim() || 'dev-auth';
-  const serverComponent = (kv.get('--server') ?? '').trim() || 'happy-server-light';
+  const serverComponent = (kv.get('--server') ?? '').trim() || 'happier-server-light';
   const interactive = !flags.has('--non-interactive') && (flags.has('--interactive') || isTty());
   const bindMode = resolveBindModeFromArgs({ flags, kv });
   const skipDefaultSeed =
@@ -1907,12 +1896,12 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
               applyBindModeToEnv(env, bindMode);
             }
             const resolvedServerDir = getComponentDir(rootDir, serverComponent, env);
-            const resolvedCliDir = getComponentDir(rootDir, 'happy-cli', env);
-            const resolvedUiDir = getComponentDir(rootDir, 'happy', env);
+            const resolvedCliDir = getComponentDir(rootDir, 'happier-cli', env);
+            const resolvedUiDir = getComponentDir(rootDir, 'happier-ui', env);
 
             await requireDir(serverComponent, resolvedServerDir);
-            await requireDir('happy-cli', resolvedCliDir);
-            await requireDir('happy', resolvedUiDir);
+            await requireDir('happier-cli', resolvedCliDir);
+            await requireDir('happier-ui', resolvedUiDir);
 
             let serverProc = null;
             let uiProc = null;
@@ -1939,7 +1928,7 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
               serverProc = started.serverProc;
               steps.stop('✓', 'start temporary server');
 
-              // Start Expo (web) so /terminal/connect exists for happy-cli web auth.
+              // Start Expo (web) so /terminal/connect exists for happier-cli web auth.
               steps.start('start temporary UI');
               const uiRes = await ensureDevExpoServer({
                 startUi: true,
@@ -2133,8 +2122,8 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
 function parseServerComponentFromEnv(env) {
   const v =
     (env.HAPPIER_STACK_SERVER_COMPONENT ?? '').toString().trim() ||
-    'happy-server-light';
-  return v === 'happy-server' ? 'happy-server' : 'happy-server-light';
+    'happier-server-light';
+  return v === 'happier-server' ? 'happier-server' : 'happier-server-light';
 }
 
 async function readStackEnvObject(stackName) {
@@ -2323,7 +2312,7 @@ async function cmdDuplicate({ rootDir, argv }) {
 
   let nextRepoDir = fromRepoDir;
   if (duplicateWorktrees && isWorktreePath({ rootDir, dir: fromRepoDir, env: fromEnv })) {
-    const spec = worktreeSpecFromDir({ rootDir, component: 'happy', dir: fromRepoDir, env: fromEnv });
+    const spec = worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: fromRepoDir, env: fromEnv });
     if (spec) {
       // Duplicate into a disposable tmp worktree by default. This avoids collisions and keeps
       // the new stack isolated even if the source worktree is later archived/deleted.
@@ -2333,7 +2322,7 @@ async function cmdDuplicate({ rootDir, argv }) {
       const remoteName = 'upstream';
       const created = await createWorktreeFromBaseWorktree({
         rootDir,
-        component: 'happy',
+        component: 'happier-ui',
         slug,
         baseWorktreeSpec: spec,
         remoteName,
@@ -2421,14 +2410,14 @@ async function cmdPrStack({ rootDir, argv }) {
   const { flags, kv } = parseArgs(argv0);
   const json = wantsJson(argv0, { flags });
 
-  if (wantsHelp(argv0, { flags })) {
-    printResult({
-      json,
-      data: {
-        usage:
-          'hstack stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--server=happy-server|happy-server-light] [--remote=upstream] [--deps=none|link|install|link-or-install] [--seed-auth] [--copy-auth-from=<stack>] [--with-infra] [--auth-force] [--dev|--start] [--background] [--mobile] [--expo-tailscale] [--json] [-- <stack dev/start args...>]',
-      },
-      text: [
+	  if (wantsHelp(argv0, { flags })) {
+	    printResult({
+	      json,
+	      data: {
+	        usage:
+	          'hstack stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--server=happier-server|happier-server-light] [--remote=upstream] [--deps=none|link|install|link-or-install] [--seed-auth] [--copy-auth-from=<stack>] [--with-infra] [--auth-force] [--dev|--start] [--background] [--mobile] [--expo-tailscale] [--json] [-- <stack dev/start args...>]',
+	      },
+	      text: [
         '[stack] usage:',
         '  hstack stack pr <name> --repo=<pr-url|number> [--dev|--start]',
         '    [--seed-auth] [--copy-auth-from=<stack>] [--link-auth] [--with-infra] [--auth-force]',
@@ -2447,17 +2436,14 @@ async function cmdPrStack({ rootDir, argv }) {
         '  # Use numeric PR refs (remote defaults to upstream)',
         '  hstack stack pr pr123 --repo=123 --seed-auth --copy-auth-from=dev-auth --dev',
         '',
-        '  # Reuse an existing non-stacks Happy install for auth seeding',
-        '  (deprecated) legacy ~/.happy is not supported for reliable seeding',
-        '',
-        'notes:',
-        '  - This composes existing commands: `hstack stack new`, `hstack stack wt ...`, and `hstack stack auth ...`',
-        '  - For auth seeding, pass `--seed-auth` and optionally `--copy-auth-from=dev-auth` (or legacy/main)',
-        '  - `--link-auth` symlinks auth files instead of copying (keeps credentials in sync, but reduces isolation)',
-      ].join('\n'),
-    });
-    return;
-  }
+	        'notes:',
+	        '  - This composes existing commands: `hstack stack new`, `hstack stack wt ...`, and `hstack stack auth ...`',
+	        '  - For auth seeding, pass `--seed-auth` and optionally `--copy-auth-from=dev-auth` (or main)',
+	        '  - `--link-auth` symlinks auth files instead of copying (keeps credentials in sync, but reduces isolation)',
+	      ].join('\n'),
+	    });
+	    return;
+	  }
 
   const positionals = argv0.filter((a) => !a.startsWith('--'));
   const stackName = (positionals[1] ?? '').trim();
@@ -2496,15 +2482,15 @@ async function cmdPrStack({ rootDir, argv }) {
 
   const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
   const serverFromArg = (kv.get('--server') ?? '').trim();
-  const serverComponent =
-    serverFlavorFromArg === 'full'
-      ? 'happy-server'
-      : serverFlavorFromArg === 'light'
-        ? 'happy-server-light'
-        : (serverFromArg || 'happy-server-light').trim();
-  if (serverComponent !== 'happy-server' && serverComponent !== 'happy-server-light') {
-    throw new Error(`[stack] pr: invalid --server: ${serverFromArg || serverComponent}`);
-  }
+	  const serverComponent =
+	    serverFlavorFromArg === 'full'
+	      ? 'happier-server'
+	      : serverFlavorFromArg === 'light'
+	        ? 'happier-server-light'
+	        : (serverFromArg || 'happier-server-light').trim();
+	  if (serverComponent !== 'happier-server' && serverComponent !== 'happier-server-light') {
+	    throw new Error(`[stack] pr: invalid --server: ${serverFromArg || serverComponent}`);
+	  }
 
   const wantsDev = flags.has('--dev') || flags.has('--start-dev');
   const wantsStart = flags.has('--start') || flags.has('--prod');
@@ -2525,20 +2511,17 @@ async function cmdPrStack({ rootDir, argv }) {
     (process.env.HAPPIER_STACK_AUTH_LINK ?? '').toString().trim() === '1' ||
     (process.env.HAPPIER_STACK_AUTH_MODE ?? '').toString().trim() === 'link';
 
-  const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY) && !json;
+	  const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY) && !json;
 
-  const mainAccessKeyPath = join(resolveStackEnvPath('main').baseDir, 'cli', 'access.key');
-  const legacyAccessKeyPath = join(getLegacyHappyBaseDir(), 'cli', 'access.key');
-  const devAuthAccessKeyPath = join(resolveStackEnvPath('dev-auth').baseDir, 'cli', 'access.key');
+	  const mainAccessKeyPath = join(resolveStackEnvPath('main').baseDir, 'cli', 'access.key');
+	  const devAuthAccessKeyPath = join(resolveStackEnvPath('dev-auth').baseDir, 'cli', 'access.key');
 
-  const hasMainAccessKey = existsSync(mainAccessKeyPath);
-  const allowGlobal = sandboxAllowsGlobalSideEffects();
-  const hasLegacyAccessKey = (!isSandboxed() || allowGlobal) && existsSync(legacyAccessKeyPath);
-  const hasDevAuthAccessKey = existsSync(devAuthAccessKeyPath) && existsSync(resolveStackEnvPath('dev-auth').envPath);
+	  const hasMainAccessKey = existsSync(mainAccessKeyPath);
+	  const hasDevAuthAccessKey = existsSync(devAuthAccessKeyPath) && existsSync(resolveStackEnvPath('dev-auth').envPath);
 
-  const inferredSeedFromEnv = resolveAuthSeedFromEnv(process.env);
-  const inferredSeedFromAvailability = hasDevAuthAccessKey ? 'dev-auth' : hasMainAccessKey ? 'main' : hasLegacyAccessKey ? 'legacy' : 'main';
-  const defaultAuthFrom = authFromFlag || inferredSeedFromEnv || inferredSeedFromAvailability;
+	  const inferredSeedFromEnv = resolveAuthSeedFromEnv(process.env);
+	  const inferredSeedFromAvailability = hasDevAuthAccessKey ? 'dev-auth' : hasMainAccessKey ? 'main' : 'main';
+	  const defaultAuthFrom = authFromFlag || inferredSeedFromEnv || inferredSeedFromAvailability;
 
   // Default behavior for stack pr:
   // - if user explicitly flags --seed-auth/--no-seed-auth, obey
@@ -2570,23 +2553,20 @@ async function cmdPrStack({ rootDir, argv }) {
     }
   }
 
-  if (seedAuth && !authFromFlag && isInteractive) {
-    const options = [];
-    if (hasDevAuthAccessKey) {
-      options.push({ label: 'dev-auth (recommended) — use your dedicated dev auth seed stack', value: 'dev-auth' });
-    }
-    if (hasMainAccessKey) {
-      options.push({ label: 'main — use hstack main credentials', value: 'main' });
-    }
-    if (hasLegacyAccessKey) {
-      options.push({ label: 'legacy — use ~/.happy credentials (best-effort)', value: 'legacy' });
-    }
-    options.push({ label: 'skip seeding (manual login)', value: 'skip' });
+	  if (seedAuth && !authFromFlag && isInteractive) {
+	    const options = [];
+	    if (hasDevAuthAccessKey) {
+	      options.push({ label: 'dev-auth (recommended) — use your dedicated dev auth seed stack', value: 'dev-auth' });
+	    }
+	    if (hasMainAccessKey) {
+	      options.push({ label: 'main — use hstack main credentials', value: 'main' });
+	    }
+	    options.push({ label: 'skip seeding (manual login)', value: 'skip' });
 
-    const defaultIdx = Math.max(
-      0,
-      options.findIndex((o) => o.value === (hasDevAuthAccessKey ? 'dev-auth' : hasMainAccessKey ? 'main' : hasLegacyAccessKey ? 'legacy' : 'skip'))
-    );
+	    const defaultIdx = Math.max(
+	      0,
+	      options.findIndex((o) => o.value === (hasDevAuthAccessKey ? 'dev-auth' : hasMainAccessKey ? 'main' : 'skip'))
+	    );
     const picked = await withRl(async (rl) => {
       return await promptSelect(rl, {
         title: 'Which auth source should this PR stack use?',
@@ -2644,7 +2624,7 @@ async function cmdPrStack({ rootDir, argv }) {
   }
 
   // 2) Checkout PR worktrees and pin them to the stack env file.
-  const prSpecs = [{ component: 'happy', pr: prRepo }];
+  const prSpecs = [{ component: 'happier-ui', pr: prRepo }];
 
   const worktrees = [];
   const stackEnvPath = resolveStackEnvPath(stackName).envPath;
@@ -2820,7 +2800,7 @@ async function cmdInfoInternal({ rootDir, stackName }) {
   const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
 
   const serverComponent =
-    getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happy-server-light';
+    getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happier-server-light';
 
   const stackRemote =
     getEnvValueAny(stackEnv, ['HAPPIER_STACK_STACK_REMOTE']) || 'upstream';
@@ -2855,11 +2835,11 @@ async function cmdInfoInternal({ rootDir, stackName }) {
   const repoDir =
     getEnvValueAny(stackEnv, ['HAPPIER_STACK_REPO_DIR']) ||
     resolveDefaultRepoEnv({ rootDir }).HAPPIER_STACK_REPO_DIR;
-  const repoWorktreeSpec = repoDir ? (worktreeSpecFromDir({ rootDir, component: 'happy', dir: repoDir }) || null) : null;
+  const repoWorktreeSpec = repoDir ? (worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: repoDir }) || null) : null;
   const dirs = {
     repoDir,
-    uiDir: getComponentDir(rootDir, 'happy', { ...process.env, ...stackEnv }),
-    cliDir: getComponentDir(rootDir, 'happy-cli', { ...process.env, ...stackEnv }),
+    uiDir: getComponentDir(rootDir, 'happier-ui', { ...process.env, ...stackEnv }),
+    cliDir: getComponentDir(rootDir, 'happier-cli', { ...process.env, ...stackEnv }),
     serverDir: getComponentDir(rootDir, serverComponent, { ...process.env, ...stackEnv }),
   };
 
@@ -2943,7 +2923,7 @@ async function cmdStackDaemon({ rootDir, stackName, argv, json }) {
       json,
       data: { ok: true, stackName, commands: ['start', 'stop', 'restart', 'status'], flags: ['--identity=<name>'] },
       text: [
-        banner('stack daemon', { subtitle: `Manage the happy-cli daemon for stack ${cyan(stackName || 'main')}.` }),
+        banner('stack daemon', { subtitle: `Manage the happier-cli daemon for stack ${cyan(stackName || 'main')}.` }),
         '',
         sectionTitle('usage:'),
         `  ${cyan('hstack stack daemon')} <name> status [--identity=<name>] [--json]`,
@@ -2976,8 +2956,8 @@ async function cmdStackDaemon({ rootDir, stackName, argv, json }) {
   const res = await withStackEnv({
     stackName,
     fn: async ({ env }) => {
-      const cliDir = getComponentDir(rootDir, 'happy-cli', env);
-      const cliBin = join(cliDir, 'bin', 'happy.mjs');
+      const cliDir = getComponentDir(rootDir, 'happier-cli', env);
+      const cliBin = join(cliDir, 'bin', 'happier.mjs');
       const baseCliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ??
         join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString();
       const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity });
@@ -3238,7 +3218,7 @@ async function main() {
       },
       text: [
         '[stack] usage:',
-        '  hstack stack new <name> [--port=NNN] [--server=happy-server|happy-server-light] [--repo=default|<owner/...>|<path>] [--interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
+        '  hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] [--repo=default|<owner/...>|<path>] [--interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
         '  hstack stack edit <name> --interactive [--json]',
         '  hstack stack list [--json]',
         '  hstack stack audit [--fix] [--fix-main] [--fix-ports] [--fix-workspace] [--fix-paths] [--unpin-ports] [--unpin-ports-except=stack1,stack2] [--json]',
@@ -3246,7 +3226,7 @@ async function main() {
         '  hstack stack duplicate <from> <to> [--duplicate-worktrees] [--deps=none|link|install|link-or-install] [--json]',
         '  hstack stack info <name> [--json]',
         '  hstack stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--dev|--start] [--json] [-- ...]',
-        '  hstack stack create-dev-auth-seed [name] [--server=happy-server|happy-server-light] [--login|--no-login] [--skip-default-seed] [--non-interactive] [--json]',
+        '  hstack stack create-dev-auth-seed [name] [--server=happier-server|happier-server-light] [--login|--no-login] [--skip-default-seed] [--non-interactive] [--json]',
         '  hstack stack daemon <name> start|stop|restart|status [--json]',
         '  hstack stack happier <name> [-- ...]',
         '  hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
@@ -3260,7 +3240,7 @@ async function main() {
         '  hstack stack test <name> [component...] [--json]',
         '  hstack stack doctor <name> [-- ...]',
         '  hstack stack mobile <name> [-- ...]',
-        '  hstack stack mobile:install <name> [--name="Happy (exp1)"] [--device=...] [--json]',
+        '  hstack stack mobile:install <name> [--name="Happier (exp1)"] [--device=...] [--json]',
         '  hstack stack mobile-dev-client <name> --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]',
         '  hstack stack resume <name> <sessionId...> [--json]',
         '  hstack stack stop <name> [--aggressive] [--sweep-owned] [--no-docker] [--json]',
@@ -3426,14 +3406,14 @@ async function main() {
     // - `hstack stack happier <name> --identity=account-a -- <happier-cli args...>`
     // - (no passthrough args) `hstack stack happier <name> --identity=account-a`
     //
-    // Implementation detail: we set HAPPY_HOME_DIR (highest precedence) so anything that uses
+    // Implementation detail: we set HAPPIER_HOME_DIR (highest precedence) so anything that uses
     // the CLI home dir (credentials, daemon control, logs, etc.) uses the selected identity.
     const sepIdx = passthrough.indexOf('--');
     const wrapperArgs = sepIdx === -1 ? passthrough : passthrough.slice(0, sepIdx);
     const forwardedArgsRaw = sepIdx === -1 ? passthrough : passthrough.slice(sepIdx + 1);
 
     // If there is no explicit `--`, treat `--identity=...` tokens as wrapper flags (since there are no
-    // unambiguous happy-cli args to separate).
+    // unambiguous happier-cli args to separate).
     const { kv } = parseArgs(wrapperArgs);
     const identityRaw = (kv.get('--identity') ?? '').toString().trim();
     const identity = identityRaw ? parseCliIdentityOrThrow(identityRaw) : null;
@@ -3447,7 +3427,7 @@ async function main() {
       stackName,
       fn: async ({ env }) => {
         // NOTE: resolve cli home using the *stack env* we just loaded, not the outer process env.
-        // If identity is set, prefer our explicit HAPPY_HOME_DIR override.
+        // If identity is set, prefer our explicit HAPPIER_HOME_DIR override.
         const baseCliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString();
         const cliHomeDirForIdentity = identity
           ? resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity })
@@ -3456,8 +3436,8 @@ async function main() {
           ? {
               ...env,
               HAPPIER_STACK_CLI_IDENTITY: identity,
-              // Highest-precedence signal for happy-cli: identity-scoped home dir.
-              HAPPY_HOME_DIR: cliHomeDirForIdentity,
+              // Highest-precedence signal for happier-cli: identity-scoped home dir.
+              HAPPIER_HOME_DIR: cliHomeDirForIdentity,
               // Keep stack helpers consistent too (some scripts use *_CLI_HOME_DIR).
               HAPPIER_STACK_CLI_HOME_DIR: cliHomeDirForIdentity,
             }
@@ -3603,12 +3583,12 @@ async function main() {
     const out = await withStackEnv({
       stackName,
       fn: async ({ env }) => {
-        // IMPORTANT: use the stack's pinned happy-cli checkout if set.
+        // IMPORTANT: use the stack's pinned happier-cli checkout if set.
         // Do not read component dirs from this process's `process.env` (withStackEnv does not mutate it).
-        const cliDir = getComponentDir(rootDir, 'happy-cli', env);
-        const happyBin = join(cliDir, 'bin', 'happy.mjs');
-        // Run stack-scoped happy-cli and ask the stack daemon to resume these sessions.
-        return await run(process.execPath, [happyBin, 'daemon', 'resume', ...sessionIds], { cwd: rootDir, env });
+        const cliDir = getComponentDir(rootDir, 'happier-cli', env);
+        const happierBin = join(cliDir, 'bin', 'happier.mjs');
+        // Run stack-scoped happier-cli and ask the stack daemon to resume these sessions.
+        return await run(process.execPath, [happierBin, 'daemon', 'resume', ...sessionIds], { cwd: rootDir, env });
       },
     });
     if (json) printResult({ json, data: { ok: true, resumed: sessionIds, out } });

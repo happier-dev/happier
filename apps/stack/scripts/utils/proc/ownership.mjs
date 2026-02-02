@@ -76,7 +76,7 @@ export async function isPidOwnedByStack(pid, { stackName, envPath, cliHomeDir } 
 
   // Fallback: CLI home dir binding (useful for daemon-related processes).
   if (ch) {
-    if (line.includes(`HAPPY_HOME_DIR=${ch}`) || line.includes(`HAPPIER_STACK_CLI_HOME_DIR=${ch}`)) {
+    if (line.includes(`HAPPIER_HOME_DIR=${ch}`) || line.includes(`HAPPIER_STACK_CLI_HOME_DIR=${ch}`)) {
       return true;
     }
   }

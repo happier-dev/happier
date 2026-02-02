@@ -4,7 +4,7 @@ import { pathExists } from './utils/fs/fs.mjs';
 import { killProcessTree, runCapture, spawnProc } from './utils/proc/proc.mjs';
 import { getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/paths/paths.mjs';
 import { killPortListeners } from './utils/net/ports.mjs';
-import { getServerComponentName, isHappyServerRunning, waitForServerReady } from './utils/server/server.mjs';
+import { getServerComponentName, isHappierServerRunning, waitForServerReady } from './utils/server/server.mjs';
 import { ensureCliBuilt, ensureDepsInstalled, pmExecBin, pmSpawnScript, requireDir } from './utils/proc/pm.mjs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -33,8 +33,8 @@ import { isSandboxed } from './utils/env/sandbox.mjs';
 
 /**
  * Run the local stack in "production-like" mode:
- * - server (happy-server-light by default)
- * - happy-cli daemon
+ * - server (happier-server-light by default)
+ * - happier-cli daemon
  * - optionally serve prebuilt UI (via server or gateway)
  *
  * Optional: Expo dev-client Metro for mobile reviewers (`--mobile`).
@@ -49,7 +49,7 @@ async function main() {
       json,
       data: {
         flags: [
-          '--server=happy-server|happy-server-light',
+          '--server=happier-server|happier-server-light',
           '--server-flavor=light|full',
           '--no-ui',
           '--no-daemon',
@@ -65,7 +65,7 @@ async function main() {
       },
       text: [
         '[start] usage:',
-        '  hstack start [--server=happy-server|happy-server-light] [--server-flavor=light|full] [--restart] [--json]',
+        '  hstack start [--server=happier-server|happier-server-light] [--server-flavor=light|full] [--restart] [--json]',
         '  hstack start --mobile        # also start Expo dev-client Metro for mobile',
         '  hstack start --expo-tailscale # forward Expo to Tailscale interface for remote access',
         '  hstack start --bind=loopback  # prefer localhost-only URLs (not reachable from phones)',
@@ -94,7 +94,7 @@ async function main() {
     const inferred = inferComponentFromCwd({
       rootDir,
       invokedCwd: getInvokedCwd(process.env),
-      components: ['happy', 'happy-cli', 'happy-server-light', 'happy-server'],
+      components: ['happier-ui', 'happier-cli', 'happier-server-light', 'happier-server'],
     });
     if (inferred) {
       // Stack env should win. Only infer from CWD when the repo dir isn't already configured.
@@ -117,14 +117,14 @@ async function main() {
   // `--server=...` always wins when both are specified.
   const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
   if (!kv.get('--server') && serverFlavorFromArg) {
-    if (serverFlavorFromArg === 'light') kv.set('--server', 'happy-server-light');
-    else if (serverFlavorFromArg === 'full') kv.set('--server', 'happy-server');
+    if (serverFlavorFromArg === 'light') kv.set('--server', 'happier-server-light');
+    else if (serverFlavorFromArg === 'full') kv.set('--server', 'happier-server');
     else throw new Error(`[start] invalid --server-flavor=${serverFlavorFromArg} (expected: light|full)`);
   }
 
   const serverComponentName = getServerComponentName({ kv });
   if (serverComponentName === 'both') {
-    throw new Error(`[local] --server=both is not supported for run (pick one: happy-server-light or happy-server)`);
+    throw new Error(`[local] --server=both is not supported for run (pick one: happier-server-light or happier-server)`);
   }
 
   const startDaemon = !flags.has('--no-daemon') && (process.env.HAPPIER_STACK_DAEMON ?? '1') !== '0';
@@ -142,10 +142,10 @@ async function main() {
   const enableTailscaleServe = (process.env.HAPPIER_STACK_TAILSCALE_SERVE ?? '0') === '1';
 
   const serverDir = getComponentDir(rootDir, serverComponentName);
-  const cliDir = getComponentDir(rootDir, 'happy-cli');
-  const uiDir = getComponentDir(rootDir, 'happy');
+  const cliDir = getComponentDir(rootDir, 'happier-cli');
+  const uiDir = getComponentDir(rootDir, 'happier-ui');
 
-  const cliBin = join(cliDir, 'bin', 'happy.mjs');
+  const cliBin = join(cliDir, 'bin', 'happier.mjs');
 
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
     ? process.env.HAPPIER_STACK_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
@@ -181,20 +181,20 @@ async function main() {
   assertServerPrismaProviderMatches({ serverComponentName, serverDir });
 
   await requireDir(serverComponentName, serverDir);
-  await requireDir('happy-cli', cliDir);
+  await requireDir('happier-cli', cliDir);
   if (startMobile) {
-    await requireDir('happy', uiDir);
+    await requireDir('happier-ui', uiDir);
   }
 
   const uiBuildDirExists = await pathExists(uiBuildDir);
   if (serveUi && !uiBuildDirExists) {
-    if (serverComponentName === 'happy-server-light') {
+    if (serverComponentName === 'happier-server-light') {
       throw new Error(
         `[local] UI build directory not found at ${uiBuildDir}. ` +
           `Run: ${cmd('hstack build')}`
       );
     }
-    // For happy-server, UI serving is optional.
+    // For happier-server, UI serving is optional.
     console.log(`${yellow('!')} UI build directory not found at ${uiBuildDir}; UI serving will be disabled`);
   }
 
@@ -204,14 +204,14 @@ async function main() {
   const stackCtx = resolveStackContext({ env: baseEnv, autostart });
   const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
 
-  // Ensure happy-cli is install+build ready before starting the daemon.
+  // Ensure happier-cli is install+build ready before starting the daemon.
   const buildCli = (baseEnv.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
   await ensureCliBuilt(cliDir, { buildCli });
 
   // Ensure server deps exist before any Prisma/docker work.
   await ensureDepsInstalled(serverDir, serverComponentName);
   if (startMobile) {
-    await ensureDepsInstalled(uiDir, 'happy');
+    await ensureDepsInstalled(uiDir, 'happier-ui');
   }
 
   // Public URL automation:
@@ -231,7 +231,7 @@ async function main() {
     publicServerUrl = resolvedUrls.publicServerUrl;
   }
 
-  const serverAlreadyRunning = await isHappyServerRunning(internalServerUrl);
+  const serverAlreadyRunning = await isHappierServerRunning(internalServerUrl);
   const daemonAlreadyRunning = startDaemon ? isDaemonRunning(cliHomeDir) : false;
   if (!restart && serverAlreadyRunning && (!startDaemon || daemonAlreadyRunning)) {
     console.log(
@@ -272,18 +272,18 @@ async function main() {
     ...resolveServerUiEnv({ serveUi, uiBuildDir, uiPrefix, uiBuildDirExists }),
   };
   let serverLightAccountCount = null;
-  let happyServerAccountCount = null;
-  if (serverComponentName === 'happy-server-light') {
-    const dataDir = baseEnv.HAPPY_SERVER_LIGHT_DATA_DIR?.trim()
-      ? baseEnv.HAPPY_SERVER_LIGHT_DATA_DIR.trim()
+  let happierServerAccountCount = null;
+  if (serverComponentName === 'happier-server-light') {
+    const dataDir = baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR?.trim()
+      ? baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR.trim()
       : join(autostart.baseDir, 'server-light');
-    serverEnv.HAPPY_SERVER_LIGHT_DATA_DIR = dataDir;
-    serverEnv.HAPPY_SERVER_LIGHT_FILES_DIR = baseEnv.HAPPY_SERVER_LIGHT_FILES_DIR?.trim()
-      ? baseEnv.HAPPY_SERVER_LIGHT_FILES_DIR.trim()
+    serverEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
+    serverEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR?.trim()
+      ? baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR.trim()
       : join(dataDir, 'files');
     serverEnv.DATABASE_URL = baseEnv.DATABASE_URL?.trim()
       ? baseEnv.DATABASE_URL.trim()
-      : `file:${join(dataDir, 'happy-server-light.sqlite')}`;
+      : `file:${join(dataDir, 'happier-server-light.sqlite')}`;
 
     // Reliability: ensure DB schema exists before daemon hits /v1/machines (health checks don't cover DB readiness).
     // If the server is already running and we are not restarting, do NOT run migrations here (SQLite can lock).
@@ -296,7 +296,7 @@ async function main() {
     serverLightAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
   }
   let effectiveInternalServerUrl = internalServerUrl;
-  if (serverComponentName === 'happy-server') {
+  if (serverComponentName === 'happier-server') {
     const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
     if (managed) {
       const envPath = baseEnv.HAPPIER_STACK_ENV_FILE ?? '';
@@ -310,11 +310,11 @@ async function main() {
       });
 
       // Backend runs on a separate port; gateway owns the public port.
-      const backendPortRaw = (baseEnv.HAPPIER_STACK_HAPPY_SERVER_BACKEND_PORT ?? '').trim();
+      const backendPortRaw = (baseEnv.HAPPIER_STACK_SERVER_BACKEND_PORT ?? '').trim();
       const backendPort = backendPortRaw ? Number(backendPortRaw) : serverPort + 10;
       const backendUrl = `http://127.0.0.1:${backendPort}`;
       if (!stackMode) {
-        await killPortListeners(backendPort, { label: 'happy-server-backend' });
+        await killPortListeners(backendPort, { label: 'happier-server-backend' });
       }
 
       const backendEnv = { ...serverEnv, ...infra.env, PORT: String(backendPort) };
@@ -329,14 +329,14 @@ async function main() {
         env: backendEnv,
         bestEffort: true,
       });
-      happyServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
+      happierServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
 
       const backend = await pmSpawnScript({ label: 'server', dir: serverDir, script: 'start', env: backendEnv });
       children.push(backend);
       if (stackMode && runtimeStatePath) {
         await recordStackRuntimeUpdate(runtimeStatePath, {
           ports: { server: serverPort, backend: backendPort },
-          processes: { happyServerBackendPid: backend.pid },
+          processes: { happierServerBackendPid: backend.pid },
         }).catch(() => {});
       }
       await waitForServerReady(backendUrl);
@@ -366,8 +366,8 @@ async function main() {
     }
   }
 
-  // Default server start (happy-server-light, or happy-server without managed infra).
-  if (!(serverComponentName === 'happy-server' && (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0')) {
+  // Default server start (happier-server-light, or happier-server without managed infra).
+  if (!(serverComponentName === 'happier-server' && (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0')) {
     if (!serverAlreadyRunning || restart) {
       const server = await pmSpawnScript({ label: 'server', dir: serverDir, script: serverStartScript, env: serverEnv });
       children.push(server);
@@ -409,10 +409,10 @@ async function main() {
 
     console.log('');
     console.log(sectionTitle('Terminal usage'));
-    console.log(dim(`To run ${cyan('happy')} against this stack (and have sessions appear in the UI), export:`));
-    console.log(cmd(`export HAPPY_SERVER_URL="${effectiveInternalServerUrl}"`));
-    console.log(cmd(`export HAPPY_HOME_DIR="${cliHomeDir}"`));
-    console.log(cmd(`export HAPPY_WEBAPP_URL="${publicServerUrl}"`));
+    console.log(dim(`To run ${cyan('happier')} against this stack (and have sessions appear in the UI), export:`));
+    console.log(cmd(`export HAPPIER_SERVER_URL="${effectiveInternalServerUrl}"`));
+    console.log(cmd(`export HAPPIER_HOME_DIR="${cliHomeDir}"`));
+    console.log(cmd(`export HAPPIER_WEBAPP_URL="${publicServerUrl}"`));
 
     // Auto-open UI (interactive only) using the stack-scoped hostname when applicable.
     const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -438,29 +438,29 @@ async function main() {
         throw new Error(formatDaemonAuthRequiredError({ stackName: autostart.stackName, cliHomeDir }));
       }
     } else {
-    const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
-    if (serverComponentName === 'happy-server' && happyServerAccountCount == null) {
-      const acct = await getAccountCountForServerComponent({
-        serverComponentName,
-        serverDir,
-        env: serverEnv,
-        bestEffort: true,
+      const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+      if (serverComponentName === 'happier-server' && happierServerAccountCount == null) {
+        const acct = await getAccountCountForServerComponent({
+          serverComponentName,
+          serverDir,
+          env: serverEnv,
+          bestEffort: true,
+        });
+        happierServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
+      }
+      const accountCount =
+        serverComponentName === 'happier-server-light' ? serverLightAccountCount : happierServerAccountCount;
+      const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: baseEnv, stackName: autostart.stackName, isInteractive });
+      await maybeRunInteractiveStackAuthSetup({
+        rootDir,
+        env: baseEnv,
+        stackName: autostart.stackName,
+        cliHomeDir,
+        accountCount,
+        isInteractive,
+        autoSeedEnabled,
       });
-      happyServerAccountCount = typeof acct.accountCount === 'number' ? acct.accountCount : null;
-    }
-    const accountCount =
-      serverComponentName === 'happy-server-light' ? serverLightAccountCount : happyServerAccountCount;
-    const autoSeedEnabled = resolveAutoCopyFromMainEnabled({ env: baseEnv, stackName: autostart.stackName, isInteractive });
-    await maybeRunInteractiveStackAuthSetup({
-      rootDir,
-      env: baseEnv,
-      stackName: autostart.stackName,
-      cliHomeDir,
-      accountCount,
-      isInteractive,
-      autoSeedEnabled,
-    });
-    await prepareDaemonAuthSeedIfNeeded({
+      await prepareDaemonAuthSeedIfNeeded({
       rootDir,
       env: baseEnv,
       stackName: autostart.stackName,

@@ -1078,21 +1078,21 @@ async function cmdPortRun({ argv, flags, kv, json, silent = false }) {
       path: (kv.get('--from-happy') ?? '').trim(),
       ref: (kv.get('--from-happy-ref') ?? '').trim(),
       base: (kv.get('--from-happy-base') ?? '').trim(),
-      subdir: happyMonorepoSubdirForComponent('happy', { monorepoRoot: targetRepoRoot }) || 'expo-app',
+      subdir: happyMonorepoSubdirForComponent('happier-ui', { monorepoRoot: targetRepoRoot }) || 'apps/ui',
     },
     {
       label: 'from-happy-cli',
       path: (kv.get('--from-happy-cli') ?? '').trim(),
       ref: (kv.get('--from-happy-cli-ref') ?? '').trim(),
       base: (kv.get('--from-happy-cli-base') ?? '').trim(),
-      subdir: happyMonorepoSubdirForComponent('happy-cli', { monorepoRoot: targetRepoRoot }) || 'cli',
+      subdir: happyMonorepoSubdirForComponent('happier-cli', { monorepoRoot: targetRepoRoot }) || 'apps/cli',
     },
     {
       label: 'from-happy-server',
       path: (kv.get('--from-happy-server') ?? '').trim(),
       ref: (kv.get('--from-happy-server-ref') ?? '').trim(),
       base: (kv.get('--from-happy-server-base') ?? '').trim(),
-      subdir: happyMonorepoSubdirForComponent('happy-server', { monorepoRoot: targetRepoRoot }) || 'server',
+      subdir: happyMonorepoSubdirForComponent('happier-server', { monorepoRoot: targetRepoRoot }) || 'apps/server',
     },
   ].filter((s) => s.path);
 

@@ -184,8 +184,8 @@ function applySandboxDirIfRequested(argv) {
       delete process.env[k];
       continue;
     }
-    // Also clear unprefixed Happy vars; sandbox commands should compute these from stack state.
-    if (k === 'HAPPY_HOME_DIR' || k === 'HAPPY_SERVER_URL' || k === 'HAPPY_WEBAPP_URL') {
+    // Also clear unprefixed Happier vars; sandbox commands should compute these from stack state.
+    if (k === 'HAPPIER_HOME_DIR' || k === 'HAPPIER_SERVER_URL' || k === 'HAPPIER_WEBAPP_URL') {
       delete process.env[k];
     }
   }

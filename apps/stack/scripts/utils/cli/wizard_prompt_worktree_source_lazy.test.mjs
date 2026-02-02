@@ -16,7 +16,7 @@ test('promptWorktreeSource does not list worktrees unless user selects "pick"', 
   const res = await promptWorktreeSource({
     rl: {},
     rootDir: '/tmp',
-    component: 'happy',
+    component: 'happier-ui',
     stackName: 'exp1',
     createRemote: 'upstream',
     deps: { listWorktreeSpecs, promptSelect, prompt },
@@ -48,7 +48,7 @@ test('promptWorktreeSource lists worktrees when user selects "pick"', async () =
   const res = await promptWorktreeSource({
     rl: {},
     rootDir: '/tmp',
-    component: 'happy',
+    component: 'happier-ui',
     stackName: 'exp1',
     createRemote: 'upstream',
     deps: { listWorktreeSpecs, promptSelect, prompt },

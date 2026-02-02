@@ -36,9 +36,9 @@ async function writeStubHappyCli({ cliDir, message }) {
       `  message: ${JSON.stringify(message)},`,
       `  stack: process.env.HAPPIER_STACK_STACK || null,`,
       `  envFile: process.env.HAPPIER_STACK_ENV_FILE || null,`,
-      `  homeDir: process.env.HAPPY_HOME_DIR || null,`,
-      `  serverUrl: process.env.HAPPY_SERVER_URL || null,`,
-      `  webappUrl: process.env.HAPPY_WEBAPP_URL || null,`,
+      `  homeDir: process.env.HAPPIER_HOME_DIR || null,`,
+      `  serverUrl: process.env.HAPPIER_SERVER_URL || null,`,
+      `  webappUrl: process.env.HAPPIER_WEBAPP_URL || null,`,
       `}));`,
     ].join('\n'),
     'utf-8'
@@ -63,7 +63,7 @@ async function writeFailingStubHappyCli({ cliDir, errorMessage }) {
 test('hstack stack happier <name> runs CLI under that stack env', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-stack-happy-'));
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
@@ -107,10 +107,10 @@ test('hstack stack happier <name> runs CLI under that stack env', async () => {
   assert.equal(out.serverUrl, 'http://127.0.0.1:3999');
 });
 
-test('hstack stack happier <name> --identity=<name> uses identity-scoped HAPPY_HOME_DIR', async () => {
+test('hstack stack happier <name> --identity=<name> uses identity-scoped HAPPIER_HOME_DIR', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-happy-identity-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-stack-happy-identity-'));
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');

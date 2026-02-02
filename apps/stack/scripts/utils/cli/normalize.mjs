@@ -9,8 +9,8 @@ export function normalizeProfile(raw) {
 export function normalizeServerComponent(raw) {
   const v = (raw ?? '').trim().toLowerCase();
   if (!v) return '';
-  if (v === 'light' || v === 'server-light' || v === 'happy-server-light') return 'happy-server-light';
-  if (v === 'server' || v === 'full' || v === 'happy-server') return 'happy-server';
+  // Prefer Happier component IDs; accept legacy Happy IDs for backward compatibility.
+  if (v === 'light' || v === 'server-light' || v === 'happier-server-light' || v === 'happy-server-light') return 'happier-server-light';
+  if (v === 'server' || v === 'full' || v === 'happier-server' || v === 'happy-server') return 'happier-server';
   return '';
 }
-

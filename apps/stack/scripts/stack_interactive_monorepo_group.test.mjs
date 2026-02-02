@@ -11,10 +11,10 @@ function mkRl() {
   return { question: async () => '' };
 }
 
-test('interactive stack new in monorepo mode does not prompt for happy-server-light worktree', async () => {
+test('interactive stack new in monorepo mode does not prompt for happier-server-light worktree', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-interactive-new-mono-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-interactive-new-mono-'));
 
   const prevWorkspace = process.env.HAPPIER_STACK_WORKSPACE_DIR;
   const prevOwner = process.env.HAPPIER_STACK_OWNER;
@@ -39,7 +39,7 @@ test('interactive stack new in monorepo mode does not prompt for happy-server-li
       defaults: {
         stackName: 'exp-mono-int',
         port: 1,
-        serverComponent: 'happy-server-light',
+        serverComponent: 'happier-server-light',
         createRemote: 'upstream',
         repo: null,
       },
@@ -53,13 +53,13 @@ test('interactive stack new in monorepo mode does not prompt for happy-server-li
         },
         promptWorktreeSource: async ({ component }) => {
           prompted.push(component);
-          if (component === 'happy') return 'tmp/mono-wt';
+          if (component === 'happier-ui') return 'tmp/mono-wt';
           throw new Error(`unexpected promptWorktreeSource call: ${component}`);
         },
       },
     });
 
-    assert.deepEqual(prompted, ['happy']);
+    assert.deepEqual(prompted, ['happier-ui']);
     assert.equal(out.repo, 'tmp/mono-wt');
   } finally {
     if (prevWorkspace == null) {

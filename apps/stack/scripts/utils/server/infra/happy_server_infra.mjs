@@ -26,11 +26,11 @@ async function ensureTextFile({ path, generate }) {
 }
 
 function composeProjectName(stackName) {
-  return sanitizeDnsLabel(`happy-stacks-${stackName}-happy-server`, { fallback: 'happy-stacks-happy-server' });
+  return sanitizeDnsLabel(`happier-stacks-${stackName}-happier-server`, { fallback: 'happier-stacks-happier-server' });
 }
 
 export async function stopHappyServerManagedInfra({ stackName, baseDir, removeVolumes = false }) {
-  const infraDir = join(baseDir, 'happy-server', 'infra');
+  const infraDir = join(baseDir, 'happier-server', 'infra');
   const composePath = join(infraDir, 'docker-compose.yml');
   if (!existsSync(composePath)) {
     return { ok: true, skipped: true, reason: 'missing_compose', composePath };
@@ -133,7 +133,7 @@ async function ensureDockerCompose() {
   } catch (e) {
     const msg = e?.message ? String(e.message) : String(e);
     throw new Error(
-      `[infra] docker compose is required for managed happy-server stacks.\n` +
+      `[infra] docker compose is required for managed happier-server stacks.\n` +
         `Fix: install Docker Desktop and ensure \`docker compose\` works.\n` +
         `Details: ${msg}`
     );
@@ -279,7 +279,7 @@ export async function ensureHappyServerManagedInfra({
 }) {
   await ensureDockerCompose();
 
-  const infraDir = join(baseDir, 'happy-server', 'infra');
+  const infraDir = join(baseDir, 'happier-server', 'infra');
   await mkdir(infraDir, { recursive: true });
 
   const existingEnv = envPath ? await readEnvObject(envPath) : {};
@@ -314,13 +314,13 @@ export async function ensureHappyServerManagedInfra({
   const pgDb = (existingEnv.HAPPIER_STACK_PG_DATABASE ?? env.HAPPIER_STACK_PG_DATABASE ?? 'handy').trim() || 'handy';
 
   const s3Bucket =
-    (existingEnv.S3_BUCKET ?? env.S3_BUCKET ?? '').trim() || sanitizeDnsLabel(`happy-${stackName}`, { fallback: 'happy' });
+    (existingEnv.S3_BUCKET ?? env.S3_BUCKET ?? '').trim() || sanitizeDnsLabel(`happier-${stackName}`, { fallback: 'happier' });
   const s3AccessKey = (existingEnv.S3_ACCESS_KEY ?? env.S3_ACCESS_KEY ?? '').trim() || randomToken(12);
   const s3SecretKey = (existingEnv.S3_SECRET_KEY ?? env.S3_SECRET_KEY ?? '').trim() || randomToken(24);
 
   const secretFile = (existingEnv.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? env.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? '').trim()
     ? (existingEnv.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? env.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE).trim()
-    : join(baseDir, 'happy-server', 'handy-master-secret.txt');
+    : join(baseDir, 'happier-server', 'handy-master-secret.txt');
   const handyMasterSecret = (existingEnv.HANDY_MASTER_SECRET ?? env.HANDY_MASTER_SECRET ?? '').trim()
     ? (existingEnv.HANDY_MASTER_SECRET ?? env.HANDY_MASTER_SECRET).trim()
     : await ensureTextFile({ path: secretFile, generate: () => randomToken(32) });
@@ -367,7 +367,7 @@ export async function ensureHappyServerManagedInfra({
               { key: 'HAPPIER_STACK_REDIS_PORT', value: String(redisPort) },
               { key: 'HAPPIER_STACK_MINIO_PORT', value: String(minioPort) },
               { key: 'HAPPIER_STACK_MINIO_CONSOLE_PORT', value: String(minioConsolePort) },
-              // Vars consumed by happy-server:
+              // Vars consumed by happier-server:
               { key: 'DATABASE_URL', value: databaseUrl },
               { key: 'REDIS_URL', value: redisUrl },
               { key: 'S3_HOST', value: s3Host },

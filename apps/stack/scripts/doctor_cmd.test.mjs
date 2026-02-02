@@ -18,13 +18,13 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-async function writeStubHappyCli({ dir }) {
+async function writeStubHappierCli({ dir }) {
   await mkdir(join(dir, 'bin'), { recursive: true });
   await mkdir(join(dir, 'dist'), { recursive: true });
 
   // `scripts/doctor.mjs` runs: node <cliBin> daemon status
   await writeFile(
-    join(dir, 'bin', 'happy.mjs'),
+    join(dir, 'bin', 'happier.mjs'),
     [
       `if (process.argv.includes('daemon') && process.argv.includes('status')) {`,
       `  console.log('Daemon is running');`,
@@ -43,7 +43,7 @@ test('doctor does not crash in non-json mode (kv helper not shadowed)', async ()
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
 
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-doctor-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-doctor-'));
   const monoRoot = join(tmp, 'workspace', 'happier');
   const stubServer = join(monoRoot, 'apps', 'server');
   const stubCli = join(monoRoot, 'apps', 'cli');
@@ -53,7 +53,7 @@ test('doctor does not crash in non-json mode (kv helper not shadowed)', async ()
   await writeFile(join(monoRoot, 'apps', 'ui', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(monoRoot, 'apps', 'cli', 'package.json'), '{}\n', 'utf-8');
   await writeFile(join(monoRoot, 'apps', 'server', 'package.json'), '{}\n', 'utf-8');
-  await writeStubHappyCli({ dir: stubCli });
+  await writeStubHappierCli({ dir: stubCli });
 
   const env = {
     ...process.env,

@@ -18,10 +18,10 @@ function runNode(args, { cwd, env }) {
   });
 }
 
-test('hstack stack new defaults to happy-server-light with a single monorepo repo dir', async () => {
+test('hstack stack new defaults to happier-server-light with a single monorepo repo dir', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-stack-server-flavors-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-server-flavors-'));
 
   const workspaceDir = join(tmp, 'workspace');
   const storageDir = join(tmp, 'storage');
@@ -53,7 +53,7 @@ test('hstack stack new defaults to happy-server-light with a single monorepo rep
   const envPath = join(storageDir, stackName, 'env');
   const contents = await readFile(envPath, 'utf-8');
   assert.ok(contents.includes(`HAPPIER_STACK_REPO_DIR=${monoRoot}\n`), contents);
-  assert.ok(contents.includes('HAPPIER_STACK_SERVER_COMPONENT=happy-server-light\n'), contents);
+  assert.ok(contents.includes('HAPPIER_STACK_SERVER_COMPONENT=happier-server-light\n'), contents);
   assert.ok(!contents.includes('HAPPIER_STACK_COMPONENT_DIR_'), contents);
 
   await rm(tmp, { recursive: true, force: true });

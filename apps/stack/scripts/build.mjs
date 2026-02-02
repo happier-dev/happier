@@ -14,8 +14,8 @@ import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs'
 /**
  * Build a lightweight static web UI bundle (no Expo dev server).
  *
- * Output directory default: ~/.happy/stacks/main/ui (legacy: ~/.happy/local/ui)
- * Server will serve it at / when HAPPY_SERVER_UI_DIR is set.
+ * Output directory default: ~/.happier/stacks/main/ui (legacy: ~/.happier/local/ui)
+ * Server will serve it at / when HAPPIER_SERVER_UI_DIR is set.
  * (Legacy /ui paths are redirected to /.)
  */
 
@@ -33,20 +33,20 @@ async function main() {
         '  node scripts/build.mjs [--tauri|--no-tauri] [--no-ui] [--json]',
         '',
         'note:',
-        '  If run from inside the Happy UI checkout/worktree, the build uses that checkout.',
+        '  If run from inside the Happier UI checkout/worktree, the build uses that checkout.',
       ].join('\n'),
     });
     return;
   }
   const rootDir = getRootDir(import.meta.url);
 
-  // If invoked from inside the Happy UI checkout/worktree, prefer that directory without requiring `hstack wt use ...`.
+  // If invoked from inside the Happier UI checkout/worktree, prefer that directory without requiring `hstack wt use ...`.
   const inferred = inferComponentFromCwd({
     rootDir,
     invokedCwd: getInvokedCwd(process.env),
-    components: ['happy'],
+    components: ['happier-ui', 'happy'],
   });
-  if (inferred?.component === 'happy') {
+  if (inferred?.component === 'happier-ui' || inferred?.component === 'happy') {
     if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
       process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
     }
@@ -82,10 +82,10 @@ async function main() {
     return;
   }
 
-  const uiDir = getComponentDir(rootDir, 'happy');
-  await requireDir('happy', uiDir);
+  const uiDir = getComponentDir(rootDir, 'happier-ui');
+  await requireDir('happier-ui', uiDir);
 
-  await ensureDepsInstalled(uiDir, 'happy');
+  await ensureDepsInstalled(uiDir, 'happier-ui');
 
   // Clean output to avoid stale assets.
   await rm(outDir, { recursive: true, force: true });
@@ -113,7 +113,7 @@ async function main() {
     });
     await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir: paths.tmpDir });
     const args = ['export', '--platform', 'web', '--output-dir', outDir, ...(wantsExpoClearCache({ env }) ? ['-c'] : [])];
-    await expoExec({ dir: uiDir, args, env, ensureDepsLabel: 'happy' });
+    await expoExec({ dir: uiDir, args, env, ensureDepsLabel: 'happier-ui' });
   }
 
   if (json) {

@@ -92,7 +92,7 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
   assert.ok(gitStat.isDirectory(), 'expected archived .git to be a directory (detached repo)');
 
   const meta = await readFile(join(archivedDir, 'ARCHIVE_META.txt'), 'utf-8');
-  assert.ok(meta.includes('component=happy'), `expected component in ARCHIVE_META.txt\n${meta}`);
+  assert.ok(meta.includes('component=happier-ui'), `expected component in ARCHIVE_META.txt\n${meta}`);
   assert.ok(meta.includes('ref=pr/test-archive'), `expected ref in ARCHIVE_META.txt\n${meta}`);
 
   const afterStatus = await runOk('git', ['status', '--porcelain'], { cwd: archivedDir, env: baseEnv });

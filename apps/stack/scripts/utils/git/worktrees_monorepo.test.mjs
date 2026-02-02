@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { worktreeSpecFromDir } from './worktrees.mjs';
 
 async function withTempRoot(t) {
-  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-worktrees-monorepo-'));
+  const dir = await mkdtemp(join(tmpdir(), 'happier-stack-worktrees-monorepo-'));
   t.after(async () => {
     await rm(dir, { recursive: true, force: true });
   });
@@ -32,15 +32,15 @@ test('worktreeSpecFromDir normalizes monorepo package dirs to the worktree spec'
   await writeHappyMonorepoStub({ rootDir, worktreeRoot: wtRoot });
 
   assert.equal(
-    worktreeSpecFromDir({ rootDir, component: 'happy', dir: join(wtRoot, 'apps', 'ui'), env }),
+    worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: join(wtRoot, 'apps', 'ui'), env }),
     'pr/123-fix-monorepo'
   );
   assert.equal(
-    worktreeSpecFromDir({ rootDir, component: 'happy-cli', dir: join(wtRoot, 'apps', 'cli'), env }),
+    worktreeSpecFromDir({ rootDir, component: 'happier-cli', dir: join(wtRoot, 'apps', 'cli'), env }),
     'pr/123-fix-monorepo'
   );
   assert.equal(
-    worktreeSpecFromDir({ rootDir, component: 'happy-server', dir: join(wtRoot, 'apps', 'server'), env }),
+    worktreeSpecFromDir({ rootDir, component: 'happier-server', dir: join(wtRoot, 'apps', 'server'), env }),
     'pr/123-fix-monorepo'
   );
 });

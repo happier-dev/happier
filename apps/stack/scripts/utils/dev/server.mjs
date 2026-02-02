@@ -55,18 +55,18 @@ export async function startDevServer({
     METRICS_ENABLED: baseEnv.METRICS_ENABLED ?? 'false',
   };
 
-  if (serverComponentName === 'happy-server-light') {
-    const dataDir = baseEnv.HAPPY_SERVER_LIGHT_DATA_DIR?.trim()
-      ? baseEnv.HAPPY_SERVER_LIGHT_DATA_DIR.trim()
+  if (serverComponentName === 'happier-server-light') {
+    const dataDir = baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR?.trim()
+      ? baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR.trim()
       : join(autostart.baseDir, 'server-light');
-    serverEnv.HAPPY_SERVER_LIGHT_DATA_DIR = dataDir;
-    serverEnv.HAPPY_SERVER_LIGHT_FILES_DIR = baseEnv.HAPPY_SERVER_LIGHT_FILES_DIR?.trim()
-      ? baseEnv.HAPPY_SERVER_LIGHT_FILES_DIR.trim()
+    serverEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
+    serverEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR?.trim()
+      ? baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR.trim()
       : join(dataDir, 'files');
-    serverEnv.DATABASE_URL = baseEnv.DATABASE_URL?.trim() ? baseEnv.DATABASE_URL.trim() : `file:${join(dataDir, 'happy-server-light.sqlite')}`;
+    serverEnv.DATABASE_URL = baseEnv.DATABASE_URL?.trim() ? baseEnv.DATABASE_URL.trim() : `file:${join(dataDir, 'happier-server-light.sqlite')}`;
   }
 
-  if (serverComponentName === 'happy-server') {
+  if (serverComponentName === 'happier-server') {
     const managed = (baseEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1') !== '0';
     if (managed) {
       const infra = await ensureHappyServerManagedInfra({
@@ -149,8 +149,8 @@ export function watchDevServerAndRestart({
 }) {
   if (!enabled) return null;
 
-  // Only watch full server by default; happy-server-light already has a good upstream dev loop.
-  if (serverComponentName !== 'happy-server') return null;
+  // Only watch full server by default; server-light already has a good upstream dev loop.
+  if (serverComponentName !== 'happier-server') return null;
 
   return watchDebounced({
     paths: [resolve(serverDir)],

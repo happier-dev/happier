@@ -150,15 +150,15 @@ async function daemonEnvMatches({ pid, cliHomeDir, internalServerUrl, publicServ
   const web = String(publicServerUrl ?? '').trim();
 
   // Must be for the same stack home dir.
-  if (home && !line.includes(`HAPPY_HOME_DIR=${home}`)) {
+  if (home && !line.includes(`HAPPIER_HOME_DIR=${home}`)) {
     return false;
   }
   // If we have a desired server URL, require it (prevents ephemeral port mismatches).
-  if (server && !line.includes(`HAPPY_SERVER_URL=${server}`)) {
+  if (server && !line.includes(`HAPPIER_SERVER_URL=${server}`)) {
     return false;
   }
   // Public URL mismatch is less fatal, but prefer it stable too when provided.
-  if (web && !line.includes(`HAPPY_WEBAPP_URL=${web}`)) {
+  if (web && !line.includes(`HAPPIER_WEBAPP_URL=${web}`)) {
     return false;
   }
   return true;
@@ -175,10 +175,10 @@ function getLatestDaemonLogPath(homeDir) {
   }
 }
 
-function resolveHappyCliDistEntrypoint(cliBin) {
+function resolveHappierCliDistEntrypoint(cliBin) {
   const bin = String(cliBin ?? '').trim();
   if (!bin) return null;
-  // In component checkouts/worktrees we launch via <cliDir>/bin/happy.mjs, which expects dist output.
+  // In component checkouts/worktrees we launch via <cliDir>/bin/happier.mjs, which expects dist output.
   // Use this to protect restarts from bricking the running daemon if dist disappears mid-build.
   try {
     const binDir = dirname(bin);
@@ -188,8 +188,8 @@ function resolveHappyCliDistEntrypoint(cliBin) {
   }
 }
 
-async function ensureHappyCliDistExists({ cliBin }) {
-  const distEntrypoint = resolveHappyCliDistEntrypoint(cliBin);
+async function ensureHappierCliDistExists({ cliBin }) {
+  const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
   if (!distEntrypoint) return { ok: false, distEntrypoint: null, built: false, reason: 'unknown_cli_bin' };
   const cliDir = join(dirname(cliBin), '..');
 
@@ -207,7 +207,7 @@ async function ensureHappyCliDistExists({ cliBin }) {
     buildRes = await ensureCliBuilt(cliDir, { buildCli: true });
     if (buildRes?.built) {
       // eslint-disable-next-line no-console
-      console.warn(`[local] happy-cli: rebuilt (${cliDir})`);
+      console.warn(`[local] happier-cli: rebuilt (${cliDir})`);
     }
   } catch (e) {
     return { ok: false, distEntrypoint, built: false, reason: String(e?.message ?? e) };
@@ -418,17 +418,17 @@ async function waitForCredentialsFile({ path, timeoutMs, isShuttingDown }) {
 export function getDaemonEnv({ baseEnv, cliHomeDir, internalServerUrl, publicServerUrl }) {
   return {
     ...baseEnv,
-    HAPPY_SERVER_URL: internalServerUrl,
-    HAPPY_WEBAPP_URL: publicServerUrl,
-    HAPPY_HOME_DIR: cliHomeDir,
+    HAPPIER_SERVER_URL: internalServerUrl,
+    HAPPIER_WEBAPP_URL: publicServerUrl,
+    HAPPIER_HOME_DIR: cliHomeDir,
   };
 }
 
 export async function stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir }) {
   const env = {
     ...process.env,
-    HAPPY_SERVER_URL: internalServerUrl,
-    HAPPY_HOME_DIR: cliHomeDir,
+    HAPPIER_SERVER_URL: internalServerUrl,
+    HAPPIER_HOME_DIR: cliHomeDir,
   };
 
   try {
@@ -467,13 +467,13 @@ export async function startLocalDaemonWithAuth({
   const baseEnv = { ...env };
   const daemonEnv = getDaemonEnv({ baseEnv, cliHomeDir, internalServerUrl, publicServerUrl });
 
-  const distEntrypoint = resolveHappyCliDistEntrypoint(cliBin);
-  const distCheck = await ensureHappyCliDistExists({ cliBin });
+  const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
+  const distCheck = await ensureHappierCliDistExists({ cliBin });
   if (!distCheck.ok) {
     throw new Error(
-      `[local] happy-cli dist entrypoint is missing (${distEntrypoint}).\n` +
+      `[local] happier-cli dist entrypoint is missing (${distEntrypoint}).\n` +
         `[local] Refusing to start/restart daemon because it would crash with MODULE_NOT_FOUND.\n` +
-        `[local] Fix: rebuild happy-cli in the active checkout/worktree.\n` +
+        `[local] Fix: rebuild happier-cli in the active checkout/worktree.\n` +
         (distCheck.reason ? `[local] Detail: ${distCheck.reason}\n` : '')
     );
   }
@@ -487,15 +487,15 @@ export async function startLocalDaemonWithAuth({
 
   const existing = checkDaemonState(cliHomeDir);
   // If the daemon is already running and we're restarting it, refuse to stop it unless the
-  // happy-cli dist entrypoint exists. Otherwise a rebuild (rm -rf dist) can brick the stack.
+  // happier-cli dist entrypoint exists. Otherwise a rebuild (rm -rf dist) can brick the stack.
   if (
     distEntrypoint &&
     !existsSync(distEntrypoint) &&
     (existing.status === 'running' || existing.status === 'starting')
   ) {
     console.warn(
-      `[local] happy-cli dist entrypoint is missing (${distEntrypoint}).\n` +
-        `[local] Refusing to restart daemon to avoid downtime. Rebuild happy-cli first.`
+      `[local] happier-cli dist entrypoint is missing (${distEntrypoint}).\n` +
+        `[local] Refusing to restart daemon to avoid downtime. Rebuild happier-cli first.`
     );
     return;
   }

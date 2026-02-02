@@ -104,7 +104,7 @@ if (hasHomeConfig) {
 }
 
 // If no explicit env file is set, and we're on the default "main" stack, prefer the stack-scoped env file
-// if it exists: ~/.happy/stacks/main/env
+// if it exists: ~/.happier/stacks/main/env
 (() => {
   const stacksEnv = (process.env.HAPPIER_STACK_ENV_FILE ?? '').trim();
   if (stacksEnv) {
@@ -125,7 +125,7 @@ if (hasHomeConfig) {
 // 3) Load explicit env file overlay (stack env, or any caller-provided env file) last (highest precedence).
 //
 // IMPORTANT:
-// Stack env files intentionally include some non-prefixed keys (e.g. DATABASE_URL, HAPPY_SERVER_LIGHT_DATA_DIR)
+// Stack env files intentionally include some non-prefixed keys (e.g. DATABASE_URL, HAPPIER_SERVER_LIGHT_DATA_DIR)
 // that must apply for true per-stack isolation. Do not filter by prefix here.
 {
   const stacksEnv = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '';

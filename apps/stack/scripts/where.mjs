@@ -59,7 +59,7 @@ async function main() {
   const { homeEnv, homeLocal } = getHomeEnvPaths();
   const updateCachePath = join(homeDir, 'cache', 'update.json');
 
-  const packageNames = ['happy', 'happy-cli', 'happy-server'];
+  const packageNames = ['happier-ui', 'happier-cli', 'happier-server'];
   const packageDirs = Object.fromEntries(packageNames.map((name) => [name, getComponentDir(rootDir, name)]));
 
   printResult({

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage:
-#   ./set-server-flavor.sh main|<stackName> happy-server|happy-server-light
+#   ./set-server-flavor.sh main|<stackName> happier-server|happier-server-light
 #
 # For main:
 #   - updates env.local via `hstack srv use ...`
@@ -16,10 +16,10 @@ STACK="${1:-}"
 FLAVOR="${2:-}"
 
 if [[ -z "$STACK" ]] || [[ -z "$FLAVOR" ]]; then
-  echo "usage: $0 <main|stackName> <happy-server|happy-server-light>" >&2
+  echo "usage: $0 <main|stackName> <happier-server|happier-server-light>" >&2
   exit 2
 fi
-if [[ "$FLAVOR" != "happy-server" && "$FLAVOR" != "happy-server-light" ]]; then
+if [[ "$FLAVOR" != "happier-server" && "$FLAVOR" != "happier-server-light" ]]; then
   echo "invalid flavor: $FLAVOR" >&2
   exit 2
 fi

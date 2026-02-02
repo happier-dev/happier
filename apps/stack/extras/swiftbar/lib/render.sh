@@ -73,7 +73,7 @@ render_component_server() {
   local server_pid="$6"
   local server_metrics="$7"
   local tailscale_url="$8"  # main only (optional)
-  local launch_label="${9:-}" # optional (com.happy.stacks[.<stack>])
+  local launch_label="${9:-}" # optional (com.happier.stacks[.<stack>])
 
   local level="red"
   [[ "$server_status" == "running" ]] && level="green"
@@ -158,10 +158,10 @@ render_component_server() {
   local helper="$hstack_ROOT_DIR/extras/swiftbar/set-server-flavor.sh"
   if [[ -n "$hstack_BIN" ]]; then
     print_sep "$p2"
-    if [[ "$server_component" == "happy-server" ]]; then
-      print_item "$p2" "Switch to happy-server-light (restart if service installed) | bash=$helper param1=$stack_name param2=happy-server-light dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    if [[ "$server_component" == "happier-server" ]]; then
+      print_item "$p2" "Switch to happier-server-light (restart if service installed) | bash=$helper param1=$stack_name param2=happier-server-light dir=$hstack_ROOT_DIR terminal=false refresh=true"
     else
-      print_item "$p2" "Switch to happy-server (restart if service installed) | bash=$helper param1=$stack_name param2=happy-server dir=$hstack_ROOT_DIR terminal=false refresh=true"
+      print_item "$p2" "Switch to happier-server (restart if service installed) | bash=$helper param1=$stack_name param2=happier-server dir=$hstack_ROOT_DIR terminal=false refresh=true"
     fi
     if [[ "$stack_name" == "main" ]]; then
       print_item "$p2" "Show flavor status | bash=$hstack_TERM param1=srv param2=-- param3=status dir=$hstack_ROOT_DIR terminal=false refresh=true"
@@ -584,7 +584,7 @@ render_component_repo() {
 
     print_sep "$p2"
     if [[ "$context" == "stack" && -n "$stack_name" ]]; then
-      if [[ "$mono_repo" == "1" && "$component" != "happy-server-light" ]]; then
+      if [[ "$mono_repo" == "1" && "$component" != "happier-server-light" ]]; then
         # Monorepo stacks: avoid per-component worktree switching (it can create version skew/confusion).
         # Prefer selecting a single monorepo worktree (repoKey) and letting hstack derive the rest.
         print_item "$p2" "Select monorepo worktree (interactive) | bash=$hstack_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=$repo_key param7=--interactive dir=$hstack_ROOT_DIR terminal=false refresh=true"
@@ -592,7 +592,7 @@ render_component_repo() {
         print_item "$p2" "Switch stack worktree (interactive) | bash=$hstack_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=$component param7=--interactive dir=$hstack_ROOT_DIR terminal=false refresh=true"
       fi
       print_item "$p2" "New worktree (interactive) | bash=$hstack_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=new param6=--interactive dir=$hstack_ROOT_DIR terminal=false refresh=true"
-      if [[ "$mono_repo" == "1" && "$component" != "happy-server-light" ]]; then
+      if [[ "$mono_repo" == "1" && "$component" != "happier-server-light" ]]; then
         print_item "$p2" "List worktrees (terminal) | bash=$hstack_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=list param6=$repo_key dir=$hstack_ROOT_DIR terminal=false"
       else
         print_item "$p2" "List worktrees (terminal) | bash=$hstack_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=list param6=$component dir=$hstack_ROOT_DIR terminal=false"
@@ -616,7 +616,7 @@ render_component_repo() {
     print_sep "$p2"
     if [[ "$context" == "stack" && -n "$stack_name" ]]; then
       local open_component="$component"
-      if [[ "$mono_repo" == "1" && "$component" != "happy-server-light" ]]; then
+      if [[ "$mono_repo" == "1" && "$component" != "happier-server-light" ]]; then
         open_component="$repo_key"
       fi
       print_item "$p2" "Shell (active, new window) | bash=$hstack_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=shell param6=$open_component param7=active param8=--new-window dir=$hstack_ROOT_DIR terminal=false"
@@ -689,10 +689,10 @@ render_component_repo() {
         if [[ -n "$spec" ]]; then
           if [[ "$context" == "stack" && -n "$stack_name" ]]; then
             local wt_component="$component"
-            if [[ "$mono_repo" == "1" && "$component" != "happy-server-light" ]]; then
+            if [[ "$mono_repo" == "1" && "$component" != "happier-server-light" ]]; then
               wt_component="$repo_key"
             fi
-            if [[ "$mono_repo" != "1" || "$component" == "happy-server-light" ]]; then
+            if [[ "$mono_repo" != "1" || "$component" == "happier-server-light" ]]; then
               print_item "${p3}--" "Use in stack | bash=$hstack_BIN param1=stack param2=wt param3=$stack_name param4=-- param5=use param6=$wt_component param7=$spec dir=$hstack_ROOT_DIR terminal=false refresh=true"
             fi
             print_item "${p3}--" "Shell (new window) | bash=$hstack_TERM param1=stack param2=wt param3=$stack_name param4=-- param5=shell param6=$wt_component param7=$spec param8=--new-window dir=$hstack_ROOT_DIR terminal=false"
@@ -764,9 +764,9 @@ render_components_menu() {
   local shared_repo_root=""
   if [[ -n "$env_file" && -f "$env_file" ]]; then
     local dir_h dir_c dir_s
-    dir_h="$(resolve_component_dir_from_env_file "$env_file" "happy")"
-    dir_c="$(resolve_component_dir_from_env_file "$env_file" "happy-cli")"
-    dir_s="$(resolve_component_dir_from_env_file "$env_file" "happy-server")"
+    dir_h="$(resolve_component_dir_from_env_file "$env_file" "happier-ui")"
+    dir_c="$(resolve_component_dir_from_env_file "$env_file" "happier-cli")"
+    dir_s="$(resolve_component_dir_from_env_file "$env_file" "happier-server")"
     local root_h root_c root_s
     root_h="$(swiftbar_find_git_root_upwards "$dir_h" 2>/dev/null || true)"
     root_c="$(swiftbar_find_git_root_upwards "$dir_c" 2>/dev/null || true)"
@@ -775,7 +775,7 @@ render_components_menu() {
       shared_repo_root="$root_h"
     fi
   fi
-  for c in happy happy-cli happy-server-light happy-server; do
+  for c in happier-ui happier-cli happier-server-light happier-server; do
     render_component_repo "$p2" "$c" "$context" "$stack_name" "$env_file" "$shared_repo_root"
     print_sep "$p2"
   done
@@ -903,18 +903,18 @@ render_stack_info() {
   [[ -n "$env_file" ]] && print_item "$p2" "Env: $(shorten_path "$env_file" 52)"
   [[ -n "$tailscale_url" ]] && print_item "$p2" "Tailscale: $(shorten_text "$tailscale_url" 52)"
 
-  # Monorepo hint: if happy + happy-cli + happy-server all share the same git root, show it once here.
+  # Monorepo hint: if happier-ui + happier-cli + happier-server all share the same git root, show it once here.
   if [[ -n "$env_file" && -f "$env_file" ]]; then
     local dir_h dir_c dir_s
-    dir_h="$(resolve_component_dir_from_env_file "$env_file" "happy")"
-    dir_c="$(resolve_component_dir_from_env_file "$env_file" "happy-cli")"
-    dir_s="$(resolve_component_dir_from_env_file "$env_file" "happy-server")"
+    dir_h="$(resolve_component_dir_from_env_file "$env_file" "happier-ui")"
+    dir_c="$(resolve_component_dir_from_env_file "$env_file" "happier-cli")"
+    dir_s="$(resolve_component_dir_from_env_file "$env_file" "happier-server")"
     local root_h root_c root_s
     root_h="$(swiftbar_find_git_root_upwards "$dir_h" 2>/dev/null || true)"
     root_c="$(swiftbar_find_git_root_upwards "$dir_c" 2>/dev/null || true)"
     root_s="$(swiftbar_find_git_root_upwards "$dir_s" 2>/dev/null || true)"
     if [[ -n "$root_h" && "$root_h" == "$root_c" && "$root_h" == "$root_s" ]]; then
-      print_item "$p2" "Happy monorepo: $(shorten_path "$root_h" 52) | color=$GRAY"
+      print_item "$p2" "Happier monorepo: $(shorten_path "$root_h" 52) | color=$GRAY"
     fi
   fi
 

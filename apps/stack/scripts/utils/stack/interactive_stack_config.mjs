@@ -33,8 +33,8 @@ export async function interactiveNew({ rootDir, rl, defaults, deps = {} }) {
     out.serverComponent = await promptSelectFn(rl, {
       title: `${bold('Server flavor')}\n${dim('Pick the backend this stack should run. You can switch later with `stack srv`.')}`,
       options: [
-        { label: `happy-server-light (${green('recommended')}) — simplest local install (SQLite)`, value: 'happy-server-light' },
-        { label: `happy-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happy-server' },
+        { label: `happier-server-light (${green('recommended')}) — simplest local install (SQLite)`, value: 'happier-server-light' },
+        { label: `happier-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happier-server' },
       ],
       defaultIndex: 0,
     });
@@ -66,7 +66,7 @@ export async function interactiveNew({ rootDir, rl, defaults, deps = {} }) {
     out.repo = await promptWorktreeSourceFn({
       rl,
       rootDir,
-      component: 'happy',
+      component: 'happier-ui',
       stackName: out.stackName,
       createRemote: out.createRemote,
     });
@@ -86,10 +86,10 @@ export async function interactiveEdit({ rootDir, rl, stackName, existingEnv, def
   out.serverComponent = await promptSelectFn(rl, {
     title: `${bold('Server flavor')}\n${dim('Pick the backend this stack should run. You can switch again later.')}`,
     options: [
-      { label: `happy-server-light (${green('recommended')}) — simplest local install (SQLite)`, value: 'happy-server-light' },
-      { label: `happy-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happy-server' },
+      { label: `happier-server-light (${green('recommended')}) — simplest local install (SQLite)`, value: 'happier-server-light' },
+      { label: `happier-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happier-server' },
     ],
-    defaultIndex: (currentServer || 'happy-server-light') === 'happy-server' ? 1 : 0,
+    defaultIndex: (currentServer || 'happier-server-light') === 'happier-server' ? 1 : 0,
   });
 
   const currentPort = existingEnv.HAPPIER_STACK_SERVER_PORT ?? '';
@@ -113,7 +113,7 @@ export async function interactiveEdit({ rootDir, rl, stackName, existingEnv, def
   out.repo = await promptWorktreeSourceFn({
     rl,
     rootDir,
-    component: 'happy',
+    component: 'happier-ui',
     stackName,
     createRemote: out.createRemote,
   });

@@ -20,7 +20,7 @@ function usage() {
     '  hstack migrate light-to-server --from-stack=<name> --to-stack=<name> [--include-files] [--force] [--json]',
     '',
     'Notes:',
-    '- This migrates chat data from happy-server-light (SQLite) to happy-server (Postgres).',
+    '- This migrates chat data from happier-server-light (SQLite) to happier-server (Postgres).',
     '- It preserves IDs, so existing session URLs keep working on the new server.',
     '- If --include-files is set, it mirrors server-light local files into Minio (S3) in the target stack.',
   ].join('\n');
@@ -61,19 +61,19 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
   const fromEnv = await readEnvObject(from.envPath);
   const toEnv = await readEnvObject(to.envPath);
 
-  const fromFlavor = getEnvValue(fromEnv, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happy-server-light';
-  const toFlavor = getEnvValue(toEnv, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happy-server-light';
+  const fromFlavor = getEnvValue(fromEnv, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happier-server-light';
+  const toFlavor = getEnvValue(toEnv, 'HAPPIER_STACK_SERVER_COMPONENT') || 'happier-server-light';
 
-  if (fromFlavor !== 'happy-server-light') {
-    throw new Error(`[migrate] from-stack must use happy-server-light (got: ${fromFlavor})`);
+  if (fromFlavor !== 'happier-server-light') {
+    throw new Error(`[migrate] from-stack must use happier-server-light (got: ${fromFlavor})`);
   }
-  if (toFlavor !== 'happy-server') {
-    throw new Error(`[migrate] to-stack must use happy-server (got: ${toFlavor})`);
+  if (toFlavor !== 'happier-server') {
+    throw new Error(`[migrate] to-stack must use happier-server (got: ${toFlavor})`);
   }
 
-  const fromDataDir = getEnvValue(fromEnv, 'HAPPY_SERVER_LIGHT_DATA_DIR') || join(from.baseDir, 'server-light');
-  const fromFilesDir = getEnvValue(fromEnv, 'HAPPY_SERVER_LIGHT_FILES_DIR') || join(fromDataDir, 'files');
-  const fromDbUrl = getEnvValue(fromEnv, 'DATABASE_URL') || `file:${join(fromDataDir, 'happy-server-light.sqlite')}`;
+  const fromDataDir = getEnvValue(fromEnv, 'HAPPIER_SERVER_LIGHT_DATA_DIR') || join(from.baseDir, 'server-light');
+  const fromFilesDir = getEnvValue(fromEnv, 'HAPPIER_SERVER_LIGHT_FILES_DIR') || join(fromDataDir, 'files');
+  const fromDbUrl = getEnvValue(fromEnv, 'DATABASE_URL') || `file:${join(fromDataDir, 'happier-server-light.sqlite')}`;
   const fromParsed = parseFileDatabaseUrl(fromDbUrl);
   if (!fromParsed?.path) {
     throw new Error(`[migrate] from-stack DATABASE_URL must be file:... (got: ${fromDbUrl})`);
@@ -93,7 +93,7 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
 
   // Ensure target secret is the same as source so auth tokens remain valid after migration.
   const sourceSecretPath = join(fromDataDir, 'handy-master-secret.txt');
-  const targetSecretPath = getEnvValue(toEnv, 'HAPPIER_STACK_HANDY_MASTER_SECRET_FILE') || join(to.baseDir, 'happy-server', 'handy-master-secret.txt');
+  const targetSecretPath = getEnvValue(toEnv, 'HAPPIER_STACK_HANDY_MASTER_SECRET_FILE') || join(to.baseDir, 'happier-server', 'handy-master-secret.txt');
   await ensureTargetSecretMatchesSource({ sourceSecretPath, targetSecretPath });
   await ensureEnvFileUpdated({
     envPath: to.envPath,
@@ -101,11 +101,11 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
   });
 
   // Resolve component dirs (prefer stack-pinned dirs).
-  const lightDir = getComponentDir(rootDir, 'happy-server-light', fromEnv);
-  const fullDir = getComponentDir(rootDir, 'happy-server', toEnv);
+  const lightDir = getComponentDir(rootDir, 'happier-server-light', fromEnv);
+  const fullDir = getComponentDir(rootDir, 'happier-server', toEnv);
 
-  await ensureDepsInstalled(lightDir, 'happy-server-light');
-  await ensureDepsInstalled(fullDir, 'happy-server');
+  await ensureDepsInstalled(lightDir, 'happier-server-light');
+  await ensureDepsInstalled(fullDir, 'happier-server');
 
   // Bring up infra and ensure env vars are present.
   const infra = await ensureHappyServerManagedInfra({
@@ -124,7 +124,7 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
   // Copy sqlite DB to a snapshot so migration is consistent even if the source server is running.
   const snapshotDir = join(to.baseDir, 'migrations');
   await mkdir(snapshotDir, { recursive: true });
-  const snapshotPath = join(snapshotDir, `happy-server-light.${basename(fromParsed.path)}.${Date.now()}.sqlite`);
+  const snapshotPath = join(snapshotDir, `happier-server-light.${basename(fromParsed.path)}.${Date.now()}.sqlite`);
   await copyFile(fromParsed.path, snapshotPath);
   const snapshotDbUrl = `file:${snapshotPath}`;
 
@@ -194,8 +194,8 @@ async function migrateLightToServer({ rootDir, fromStack, toStack, includeFiles,
 
     if (includeFiles) {
       // Mirror server-light local files (public/*) into Minio bucket root.
-      // This assumes server-light stored public files under HAPPY_SERVER_LIGHT_FILES_DIR/public/...
-      // (Matches happy-server Minio object keys).
+      // This assumes server-light stored public files under HAPPIER_SERVER_LIGHT_FILES_DIR/public/...
+      // (Matches happier-server Minio object keys).
       const { composePath, projectName } = infra;
       await runCapture('docker', [
         'compose',

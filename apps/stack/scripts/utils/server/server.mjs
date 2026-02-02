@@ -3,13 +3,13 @@ import { setTimeout as delay } from 'node:timers/promises';
 export function getServerComponentName({ kv } = {}) {
   const fromArgRaw = kv?.get('--server')?.trim() ? kv.get('--server').trim() : '';
   const fromEnvRaw = process.env.HAPPIER_STACK_SERVER_COMPONENT?.trim() ? process.env.HAPPIER_STACK_SERVER_COMPONENT.trim() : '';
-  const raw = fromArgRaw || fromEnvRaw || 'happy-server-light';
+  const raw = fromArgRaw || fromEnvRaw || 'happier-server-light';
   const v = raw.toLowerCase();
-  if (v === 'light' || v === 'server-light' || v === 'happy-server-light') {
-    return 'happy-server-light';
+  if (v === 'light' || v === 'server-light' || v === 'happier-server-light' || v === 'happy-server-light') {
+    return 'happier-server-light';
   }
-  if (v === 'server' || v === 'full' || v === 'happy-server') {
-    return 'happy-server';
+  if (v === 'server' || v === 'full' || v === 'happier-server' || v === 'happy-server') {
+    return 'happier-server';
   }
   if (v === 'both') {
     return 'both';
@@ -18,7 +18,7 @@ export function getServerComponentName({ kv } = {}) {
   return raw;
 }
 
-export async function fetchHappyHealth(baseUrl) {
+export async function fetchHappierHealth(baseUrl) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 1500);
   try {
@@ -39,14 +39,14 @@ export async function fetchHappyHealth(baseUrl) {
   }
 }
 
-export async function isHappyServerRunning(baseUrl) {
-  const health = await fetchHappyHealth(baseUrl);
+export async function isHappierServerRunning(baseUrl) {
+  const health = await fetchHappierHealth(baseUrl);
   if (!health.ok) return false;
-  // Both happy-server and happy-server-light use `service: 'happy-server'` today.
+  // Both happier-server and happier-server-light use `service: 'happier-server'` today.
   // Treat any ok health response as "running" to avoid duplicate spawns.
   const svc = typeof health.json?.service === 'string' ? health.json.service : '';
   const status = typeof health.json?.status === 'string' ? health.json.status : '';
-  if (svc && svc !== 'happy-server') {
+  if (svc && svc !== 'happier-server') {
     return false;
   }
   if (status && status !== 'ok') {
@@ -55,11 +55,11 @@ export async function isHappyServerRunning(baseUrl) {
   return true;
 }
 
-export async function waitForHappyHealthOk(baseUrl, { timeoutMs = 60_000, intervalMs = 300 } = {}) {
+export async function waitForHappierHealthOk(baseUrl, { timeoutMs = 60_000, intervalMs = 300 } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     // eslint-disable-next-line no-await-in-loop
-    const health = await fetchHappyHealth(baseUrl);
+    const health = await fetchHappierHealth(baseUrl);
     if (health.ok) return true;
     // eslint-disable-next-line no-await-in-loop
     await delay(intervalMs);

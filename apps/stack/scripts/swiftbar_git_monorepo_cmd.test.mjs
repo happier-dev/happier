@@ -19,7 +19,7 @@ function run(cmd, args, { cwd, env } = {}) {
 
 test('swiftbar git cache treats monorepo package dirs as git repos', async () => {
   const rootDir = process.cwd();
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-swiftbar-git-'));
+  const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-swiftbar-git-'));
 
   const repoRoot = join(tmp, 'repo');
   await mkdir(repoRoot, { recursive: true });
@@ -35,7 +35,7 @@ test('swiftbar git cache treats monorepo package dirs as git repos', async () =>
     { cwd: repoRoot }
   );
 
-  const stacksHome = join(tmp, 'happy-stacks-home');
+  const stacksHome = join(tmp, 'happier-stack-home');
   const env = {
     ...process.env,
     HAPPIER_STACK_HOME_DIR: stacksHome,
@@ -44,11 +44,11 @@ test('swiftbar git cache treats monorepo package dirs as git repos', async () =>
 
   const bashScript = [
     `set -euo pipefail`,
-    `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
-    `source "${rootDir}/extras/swiftbar/lib/git.sh"`,
+    `source "${rootDir}/apps/stack/extras/swiftbar/lib/utils.sh"`,
+    `source "${rootDir}/apps/stack/extras/swiftbar/lib/git.sh"`,
     `active_dir="${repoRoot}/apps/ui"`,
-    `git_cache_refresh_one main main happy "$active_dir" >/dev/null 2>&1 || true`,
-    `key="$(git_cache_key main main happy "$active_dir")"`,
+    `git_cache_refresh_one main main happier "$active_dir" >/dev/null 2>&1 || true`,
+    `key="$(git_cache_key main main happier "$active_dir")"`,
     `IFS=$'\\t' read -r meta info wts <<<"$(git_cache_paths "$key")"`,
     `if [[ ! -f "$info" ]]; then echo "missing-info"; exit 2; fi`,
     `head -n 1 "$info"`,

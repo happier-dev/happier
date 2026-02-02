@@ -53,7 +53,7 @@ If you want faster iteration:
 ### Setting name (proposed)
 
 - **Config**: `experimental.codexMcpResume = true|false`
-- **Env override** (optional): `HAPPY_EXPERIMENTAL_CODEX_MCP_RESUME=1`
+- **Env override** (optional): `HAPPIER_EXPERIMENTAL_CODEX_RESUME=1`
 
 ### UX (proposed)
 
@@ -127,4 +127,3 @@ The fork’s CI should:
   - selected MCP server (default vs resume fork)
   - package version (pinned version string)
   - threadId for correlation (no prompt contents)
-

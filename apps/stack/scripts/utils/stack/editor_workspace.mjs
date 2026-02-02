@@ -63,7 +63,7 @@ export async function writeStackCodeWorkspace({
   const stackEnv = await readEnvObjectFromFile(envPath);
 
   const serverComponent =
-    getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happy-server-light';
+    getEnvValueAny(stackEnv, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happier-server-light';
 
   const folders = [];
   if (includeStackDir) {
@@ -79,8 +79,8 @@ export async function writeStackCodeWorkspace({
 
   // Optional convenience: include service subfolders for easier IDE scoping.
   if (includeAllComponents) {
-    const uiDir = getComponentDir(rootDir, 'happy', stackEnv);
-    const cliDir = getComponentDir(rootDir, 'happy-cli', stackEnv);
+    const uiDir = getComponentDir(rootDir, 'happier-ui', stackEnv);
+    const cliDir = getComponentDir(rootDir, 'happier-cli', stackEnv);
     const serverDir = getComponentDir(rootDir, serverComponent, stackEnv);
     folders.push({ name: 'ui', path: uiDir });
     folders.push({ name: 'cli', path: cliDir });

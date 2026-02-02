@@ -67,11 +67,11 @@ test('swiftbar: monorepo stacks do not offer per-component worktree switching', 
     `export hstack_BIN="/bin/echo"`,
     `export hstack_TERM="/bin/echo"`,
     `export hstack_ROOT_DIR="${rootDir}"`,
-    `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
-    `source "${rootDir}/extras/swiftbar/lib/icons.sh"`,
-    `source "${rootDir}/extras/swiftbar/lib/git.sh"`,
-    `source "${rootDir}/extras/swiftbar/lib/render.sh"`,
-    `render_component_repo "" "happy-cli" "stack" "exp1" "${envFile}" "${monorepoRoot}"`,
+    `source "${rootDir}/apps/stack/extras/swiftbar/lib/utils.sh"`,
+    `source "${rootDir}/apps/stack/extras/swiftbar/lib/icons.sh"`,
+    `source "${rootDir}/apps/stack/extras/swiftbar/lib/git.sh"`,
+    `source "${rootDir}/apps/stack/extras/swiftbar/lib/render.sh"`,
+    `render_component_repo "" "happier-cli" "stack" "exp1" "${envFile}" "${monorepoRoot}"`,
   ].join('\n');
 
   const res = await run('bash', ['-lc', bashScript], { cwd: rootDir, env: process.env });

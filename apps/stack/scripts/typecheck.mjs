@@ -12,17 +12,17 @@ const VALID_TARGETS = ['ui', 'cli', 'server'];
 
 function targetFromLegacyComponent(component) {
   const c = String(component ?? '').trim();
-  if (c === 'happy') return 'ui';
-  if (c === 'happy-cli') return 'cli';
-  if (c === 'happy-server' || c === 'happy-server-light') return 'server';
+  if (c === 'happier-ui') return 'ui';
+  if (c === 'happier-cli') return 'cli';
+  if (c === 'happier-server' || c === 'happier-server-light') return 'server';
   return null;
 }
 
 function legacyComponentFromTarget(target) {
   const t = String(target ?? '').trim();
-  if (t === 'ui') return 'happy';
-  if (t === 'cli') return 'happy-cli';
-  if (t === 'server') return 'happy-server';
+  if (t === 'ui') return 'happier-ui';
+  if (t === 'cli') return 'happier-cli';
+  if (t === 'server') return 'happier-server';
   return null;
 }
 
@@ -92,7 +92,7 @@ async function main() {
       ? inferComponentFromCwd({
           rootDir,
           invokedCwd: getInvokedCwd(process.env),
-          components: ['happy', 'happy-cli', 'happy-server'],
+          components: ['happier-ui', 'happier-cli', 'happier-server'],
         })
       : null;
   if (inferredLegacy) {

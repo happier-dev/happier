@@ -213,7 +213,7 @@ function formatRepoRef({ rootDir, dir }) {
   const defaultDir = resolve(getRepoDir(rootDir, { ...process.env, HAPPIER_STACK_REPO_DIR: '' }));
   if (abs === defaultDir) return 'main';
 
-  const spec = worktreeSpecFromDir({ rootDir, component: 'happy', dir: abs, env: process.env });
+  const spec = worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: abs, env: process.env });
   if (spec) return spec;
   return abs;
 }
@@ -225,7 +225,7 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const runtime = await readStackRuntimeStateFile(runtimePath);
 
   const serverComponent =
-    getEnvValueAny(env, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happy-server-light';
+    getEnvValueAny(env, ['HAPPIER_STACK_SERVER_COMPONENT']) || 'happier-server-light';
 
   const ports = runtime?.ports && typeof runtime.ports === 'object' ? runtime.ports : {};
   const expo = runtime?.expo && typeof runtime.expo === 'object' ? runtime.expo : {};
@@ -269,8 +269,8 @@ async function buildStackSummaryLines({ rootDir, stackName }) {
   const repoRoot = getRepoDir(rootDir, env);
   lines.push(`  ${padRight('repo', 16)} ${formatRepoRef({ rootDir, dir: repoRoot })}`);
   // Service subdirs (best-effort; shown relative to repo when possible).
-  const uiDir = getComponentDir(rootDir, 'happy', env);
-  const cliDir = getComponentDir(rootDir, 'happy-cli', env);
+  const uiDir = getComponentDir(rootDir, 'happier-ui', env);
+  const cliDir = getComponentDir(rootDir, 'happier-cli', env);
   const serverDir = getComponentDir(rootDir, serverComponent, env);
   const relOrAbs = (absPath) => {
     const p = resolve(String(absPath ?? '').trim());

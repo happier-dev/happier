@@ -5,7 +5,7 @@ import { getComponentDir, getDefaultAutostartPaths, getRootDir, getStackName, re
 import { listAllStackNames } from './utils/stack/stacks.mjs';
 import { resolvePublicServerUrl } from './tailscale.mjs';
 import { getInternalServerUrl, getPublicServerUrlEnvOverride, getWebappUrlEnvOverride } from './utils/server/urls.mjs';
-import { fetchHappyHealth } from './utils/server/server.mjs';
+import { fetchHappierHealth } from './utils/server/server.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -22,8 +22,6 @@ import { getExpoStatePaths, isStateProcessRunning } from './utils/expo/expo.mjs'
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
 import { printAuthLoginInstructions } from './utils/auth/login_ux.mjs';
 import { copyFileIfMissing, linkFileIfMissing, removeFileOrSymlinkIfExists, writeSecretFileIfMissing } from './utils/auth/files.mjs';
-import { getLegacyHappyBaseDir, isLegacyAuthSourceName } from './utils/auth/sources.mjs';
-import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
 import { resolveHandyMasterSecretFromStack } from './utils/auth/handy_master_secret.mjs';
 import { ensureDir, readTextIfExists } from './utils/fs/ops.mjs';
 import { stackExistsSync } from './utils/stack/stacks.mjs';
@@ -46,7 +44,7 @@ function getInternalServerUrlCompat() {
 async function resolveWebappUrlFromRunningExpo({ rootDir, stackName }) {
   try {
     const baseDir = resolveStackEnvPath(stackName).baseDir;
-    const uiDir = getComponentDir(rootDir, 'happy');
+    const uiDir = getComponentDir(rootDir, 'happier-ui');
     const uiPaths = getExpoStatePaths({
       baseDir,
       kind: 'expo-dev',
@@ -89,8 +87,8 @@ function authCopyFromSeedSuggestion(stackName) {
 
 function resolveServerComponentForCurrentStack() {
   return (
-    (process.env.HAPPIER_STACK_SERVER_COMPONENT ?? 'happy-server-light').trim() ||
-    'happy-server-light'
+    (process.env.HAPPIER_STACK_SERVER_COMPONENT ?? 'happier-server-light').trim() ||
+    'happier-server-light'
   );
 }
 
@@ -245,14 +243,14 @@ async function runNodeCapture({ cwd, env, args, stdin }) {
 }
 
 function resolveServerComponentFromEnv(env) {
-  const v = (env.HAPPIER_STACK_SERVER_COMPONENT ?? 'happy-server-light').trim() || 'happy-server-light';
-  return v === 'happy-server' ? 'happy-server' : 'happy-server-light';
+  const v = (env.HAPPIER_STACK_SERVER_COMPONENT ?? 'happier-server-light').trim() || 'happier-server-light';
+  return v === 'happier-server' ? 'happier-server' : 'happier-server-light';
 }
 
 function resolveDatabaseUrlForStackOrThrow({ env, stackName, baseDir, serverComponent, label }) {
   const v = (env.DATABASE_URL ?? '').toString().trim();
   if (v) {
-    if (serverComponent === 'happy-server') {
+    if (serverComponent === 'happier-server') {
       const lower = v.toLowerCase();
       const ok = lower.startsWith('postgresql://') || lower.startsWith('postgres://');
       if (!ok) {
@@ -263,15 +261,15 @@ function resolveDatabaseUrlForStackOrThrow({ env, stackName, baseDir, serverComp
     }
     return v;
   }
-  if (serverComponent === 'happy-server-light') {
-    const dataDir = (env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').toString().trim() || join(baseDir, 'server-light');
-    return `file:${join(dataDir, 'happy-server-light.sqlite')}`;
+  if (serverComponent === 'happier-server-light') {
+    const dataDir = (env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').toString().trim() || join(baseDir, 'server-light');
+    return `file:${join(dataDir, 'happier-server-light.sqlite')}`;
   }
   throw new Error(`[auth] missing DATABASE_URL for ${label || `stack "${stackName}"`}`);
 }
 
 function resolveServerComponentDir({ rootDir, serverComponent }) {
-  return getComponentDir(rootDir, serverComponent === 'happy-server' ? 'happy-server' : 'happy-server-light');
+  return getComponentDir(rootDir, serverComponent === 'happier-server' ? 'happier-server' : 'happier-server-light');
 }
 
 async function seedAccountsFromSourceDbToTargetDb({
@@ -414,22 +412,14 @@ async function cmdCopyFrom({ argv, json }) {
   const fromStackName = (positionals[1] ?? '').trim();
   if (!fromStackName) {
     throw new Error(
-      '[auth] usage: hstack stack auth <name> copy-from <sourceStack|legacy> [--force] [--with-infra] [--json]  OR  hstack auth copy-from <sourceStack|legacy> --all [--except=main,dev-auth] [--force] [--with-infra] [--json]\n' +
+      '[auth] usage: hstack stack auth <name> copy-from <sourceStack> [--force] [--with-infra] [--json]  OR  hstack auth copy-from <sourceStack> --all [--except=main,dev-auth] [--force] [--with-infra] [--json]\n' +
         'notes:\n' +
-        '  - sourceStack can be a stack name (e.g. main, dev-auth)\n' +
-        '  - legacy uses ~/.happy/{cli,server-light} as a source (best-effort)'
+        '  - sourceStack can be a stack name (e.g. main, dev-auth)'
     );
   }
 
   const { flags, kv } = parseArgs(argv);
   const all = flags.has('--all');
-  if (isLegacyAuthSourceName(fromStackName) && isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
-    throw new Error(
-      '[auth] legacy auth source is disabled in sandbox mode.\n' +
-        'Reason: it reads from ~/.happy (global user state).\n' +
-        'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
-    );
-  }
   const force =
     flags.has('--force') ||
     flags.has('--overwrite') ||
@@ -550,23 +540,12 @@ async function cmdCopyFrom({ argv, json }) {
   const targetBaseDir = getDefaultAutostartPaths().baseDir;
   const targetCli = resolveCliHomeDir();
   const targetServerLightDataDir =
-    (process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').trim() || join(targetBaseDir, 'server-light');
+    (process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').trim() || join(targetBaseDir, 'server-light');
   const targetSecretFile =
-    (process.env.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? '').trim() || join(targetBaseDir, 'happy-server', 'handy-master-secret.txt');
-
-  const isLegacySource = isLegacyAuthSourceName(fromStackName);
-  if (isLegacySource && isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
-    throw new Error(
-      '[auth] legacy auth source is disabled in sandbox mode.\n' +
-        'Reason: it reads from ~/.happy (global user state).\n' +
-        'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
-    );
-  }
+    (process.env.HAPPIER_STACK_HANDY_MASTER_SECRET_FILE ?? '').trim() || join(targetBaseDir, 'happier-server', 'handy-master-secret.txt');
   const { secret, source } = await resolveHandyMasterSecretFromStack({
     stackName: fromStackName,
-    requireStackExists: !isLegacySource,
-    allowLegacyAuthSource: !isSandboxed() || sandboxAllowsGlobalSideEffects(),
-    allowLegacyMainFallback: !isSandboxed() || sandboxAllowsGlobalSideEffects(),
+    requireStackExists: true,
   });
 
   const copied = {
@@ -581,7 +560,7 @@ async function cmdCopyFrom({ argv, json }) {
   };
 
   if (secret) {
-    if (serverComponent === 'happy-server-light') {
+    if (serverComponent === 'happier-server-light') {
       const target = join(targetServerLightDataDir, 'handy-master-secret.txt');
       const sourcePath = source && !String(source).includes('(HANDY_MASTER_SECRET)') ? String(source) : '';
       if (linkMode && sourcePath && existsSync(sourcePath)) {
@@ -589,7 +568,7 @@ async function cmdCopyFrom({ argv, json }) {
       } else {
         copied.secret = await writeSecretFileIfMissing({ path: target, secret, force });
       }
-    } else if (serverComponent === 'happy-server') {
+    } else if (serverComponent === 'happier-server') {
       const sourcePath = source && !String(source).includes('(HANDY_MASTER_SECRET)') ? String(source) : '';
       if (linkMode && sourcePath && existsSync(sourcePath)) {
         copied.secret = await linkFileIfMissing({ from: sourcePath, to: targetSecretFile, force });
@@ -599,12 +578,10 @@ async function cmdCopyFrom({ argv, json }) {
     }
   }
 
-  const sourceBaseDir = isLegacySource ? getLegacyHappyBaseDir() : resolveStackEnvPath(fromStackName).baseDir;
-  const sourceEnvRaw = isLegacySource ? '' : await readTextIfExists(resolveStackEnvPath(fromStackName).envPath);
+  const sourceBaseDir = resolveStackEnvPath(fromStackName).baseDir;
+  const sourceEnvRaw = await readTextIfExists(resolveStackEnvPath(fromStackName).envPath);
   const sourceEnv = sourceEnvRaw ? parseEnvToObject(sourceEnvRaw) : {};
-  const sourceCli = isLegacySource
-    ? join(sourceBaseDir, 'cli')
-    : getCliHomeDirFromEnvOrDefault({ stackBaseDir: sourceBaseDir, env: sourceEnv });
+  const sourceCli = getCliHomeDirFromEnvOrDefault({ stackBaseDir: sourceBaseDir, env: sourceEnv });
 
   if (linkMode) {
     copied.accessKey = await linkFileIfMissing({ from: join(sourceCli, 'access.key'), to: join(targetCli, 'access.key'), force });
@@ -632,7 +609,7 @@ async function cmdCopyFrom({ argv, json }) {
     // IMPORTANT: when running with --json, keep stdout clean (no yarn/prisma chatter).
     await ensureDepsInstalled(serverDirForPrisma, serverComponent, { quiet: json }).catch(() => {});
 
-    const fromServerComponent = isLegacySource ? 'happy-server-light' : resolveServerComponentFromEnv(sourceEnv);
+    const fromServerComponent = resolveServerComponentFromEnv(sourceEnv);
     const fromDatabaseUrl = resolveDatabaseUrlForStackOrThrow({
       env: sourceEnv,
       stackName: fromStackName,
@@ -655,7 +632,7 @@ async function cmdCopyFrom({ argv, json }) {
       // For full server stacks, allow `copy-from --with-infra` to bring up Docker infra just-in-time
       // so we can seed DB accounts reliably.
       const managed = (targetEnv.HAPPIER_STACK_MANAGED_INFRA ?? '1').toString().trim() !== '0';
-      if (targetServerComponent === 'happy-server' && withInfra && managed) {
+      if (targetServerComponent === 'happier-server' && withInfra && managed) {
         const { port } = getInternalServerUrlCompat();
         const publicServerUrl = await preferStackLocalhostUrl(`http://localhost:${port}`, { stackName });
         const envPath = resolveStackEnvPath(stackName).envPath;
@@ -678,7 +655,7 @@ async function cmdCopyFrom({ argv, json }) {
     if (!targetDatabaseUrl) {
       throw new Error(
         `[auth] missing DATABASE_URL for target stack "${stackName}". ` +
-          (targetServerComponent === 'happy-server' ? `If this is a managed infra stack, re-run with --with-infra.` : '')
+          (targetServerComponent === 'happier-server' ? `If this is a managed infra stack, re-run with --with-infra.` : '')
       );
     }
 
@@ -706,7 +683,7 @@ async function cmdCopyFrom({ argv, json }) {
       // Fix it best-effort by applying schema, then retry seeding once.
       const looksLikeMissingTable = msg.toLowerCase().includes('does not exist') || msg.toLowerCase().includes('no such table');
       if (looksLikeMissingTable) {
-        if (serverComponent === 'happy-server-light') {
+        if (serverComponent === 'happier-server-light') {
           await pmExecBin({
             dir: serverDirForPrisma,
             bin: 'prisma',
@@ -714,7 +691,7 @@ async function cmdCopyFrom({ argv, json }) {
             env: { ...process.env, DATABASE_URL: targetDatabaseUrl },
             quiet: json,
           }).catch(() => {});
-        } else if (serverComponent === 'happy-server') {
+        } else if (serverComponent === 'happier-server') {
           await applyHappyServerMigrations({
             serverDir: serverDirForPrisma,
             env: { ...process.env, DATABASE_URL: targetDatabaseUrl },
@@ -785,7 +762,7 @@ async function cmdStatus({ json }) {
   };
 
   const daemon = checkDaemonState(cliHomeDir);
-  const healthRaw = await fetchHappyHealth(internalServerUrl);
+  const healthRaw = await fetchHappierHealth(internalServerUrl);
   const health = {
     ok: Boolean(healthRaw.ok),
     status: healthRaw.status,
@@ -801,7 +778,7 @@ async function cmdStatus({ json }) {
     auth,
     daemon,
     serverHealth: health,
-    cliBin: join(getComponentDir(rootDir, 'happy-cli'), 'bin', 'happy.mjs'),
+    cliBin: join(getComponentDir(rootDir, 'happier-cli'), 'bin', 'happier.mjs'),
   };
 
   if (json) {
@@ -871,7 +848,7 @@ async function cmdLogin({ argv, json }) {
 
   const identity = parseCliIdentityOrThrow((kv.get('--identity') ?? '').trim());
   const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: resolveCliHomeDir(), identity });
-  const cliBin = join(getComponentDir(rootDir, 'happy-cli'), 'bin', 'happy.mjs');
+  const cliBin = join(getComponentDir(rootDir, 'happier-cli'), 'bin', 'happier.mjs');
 
   const force = !argv.includes('--no-force');
   const wantPrint = argv.includes('--print');
@@ -892,18 +869,18 @@ async function cmdLogin({ argv, json }) {
 
   const env = {
     ...process.env,
-    HAPPY_HOME_DIR: cliHomeDir,
-    HAPPY_SERVER_URL: internalServerUrl,
-    HAPPY_WEBAPP_URL: webappUrl,
-    ...(noOpen ? { HAPPY_NO_BROWSER_OPEN: '1' } : {}),
+    HAPPIER_HOME_DIR: cliHomeDir,
+    HAPPIER_SERVER_URL: internalServerUrl,
+    HAPPIER_WEBAPP_URL: webappUrl,
+    ...(noOpen ? { HAPPIER_NO_BROWSER_OPEN: '1' } : {}),
   };
 
   if (wantPrint) {
     const cmd =
-      `HAPPY_HOME_DIR="${cliHomeDir}" ` +
-      `HAPPY_SERVER_URL="${internalServerUrl}" ` +
-      `HAPPY_WEBAPP_URL="${webappUrl}" ` +
-      (noOpen ? `HAPPY_NO_BROWSER_OPEN="1" ` : '') +
+      `HAPPIER_HOME_DIR="${cliHomeDir}" ` +
+      `HAPPIER_SERVER_URL="${internalServerUrl}" ` +
+      `HAPPIER_WEBAPP_URL="${webappUrl}" ` +
+      (noOpen ? `HAPPIER_NO_BROWSER_OPEN="1" ` : '') +
       `node "${cliBin}" auth login` +
       (nodeArgs.includes('--force') ? ' --force' : '') +
       (noOpen ? ' --no-open' : '');

@@ -26,7 +26,7 @@ LIB_DIR="$hstack_ROOT_DIR/extras/swiftbar/lib"
 # shellcheck source=/dev/null
 source "$LIB_DIR/git.sh"
 
-components=(happy happy-cli happy-server-light happy-server)
+components=(happier-ui happier-cli happier-server-light happier-server)
 
 refresh_one() {
   local context="$1"

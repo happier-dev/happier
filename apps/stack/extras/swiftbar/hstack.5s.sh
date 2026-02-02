@@ -113,12 +113,12 @@ ensure_launchctl_cache
 if [[ -z "$MAIN_ENV_FILE" ]]; then
   MAIN_ENV_FILE="$(resolve_stack_env_file main)"
 fi
-HAPPY_HOME_DIR="$(resolve_stack_base_dir main "$MAIN_ENV_FILE")"
+HAPPIER_HOME_DIR="$(resolve_stack_base_dir main "$MAIN_ENV_FILE")"
 CLI_HOME_DIR="$(resolve_stack_cli_home_dir main "$MAIN_ENV_FILE")"
-LOGS_DIR="$HAPPY_HOME_DIR/logs"
+LOGS_DIR="$HAPPIER_HOME_DIR/logs"
 MAIN_LABEL="$(resolve_stack_label main)"
 
-MAIN_COLLECT="$(collect_stack_status "$MAIN_PORT" "$CLI_HOME_DIR" "$MAIN_LABEL" "$HAPPY_HOME_DIR")"
+MAIN_COLLECT="$(collect_stack_status "$MAIN_PORT" "$CLI_HOME_DIR" "$MAIN_LABEL" "$HAPPIER_HOME_DIR")"
 IFS=$'\t' read -r MAIN_LEVEL MAIN_SERVER_STATUS MAIN_SERVER_PID MAIN_SERVER_METRICS MAIN_DAEMON_STATUS MAIN_DAEMON_PID MAIN_DAEMON_METRICS MAIN_DAEMON_UPTIME MAIN_LAST_HEARTBEAT MAIN_LAUNCHAGENT_STATUS MAIN_AUTOSTART_PID MAIN_AUTOSTART_METRICS <<<"$MAIN_COLLECT"
 for v in MAIN_SERVER_PID MAIN_SERVER_METRICS MAIN_DAEMON_PID MAIN_DAEMON_METRICS MAIN_DAEMON_UPTIME MAIN_LAST_HEARTBEAT MAIN_AUTOSTART_PID MAIN_AUTOSTART_METRICS; do
   if [[ "${!v}" == "-" ]]; then
@@ -163,7 +163,7 @@ echo "---"
 echo "Main stack"
 echo "---"
 export MAIN_LEVEL="$MAIN_LEVEL"
-render_stack_info "" "main" "$MAIN_PORT" "$MAIN_SERVER_COMPONENT" "$HAPPY_HOME_DIR" "$CLI_HOME_DIR" "$MAIN_LABEL" "$MAIN_ENV_FILE" "$TAILSCALE_URL" "$MAIN_SERVER_METRICS" "$MAIN_DAEMON_METRICS" "$MAIN_AUTOSTART_METRICS"
+render_stack_info "" "main" "$MAIN_PORT" "$MAIN_SERVER_COMPONENT" "$HAPPIER_HOME_DIR" "$CLI_HOME_DIR" "$MAIN_LABEL" "$MAIN_ENV_FILE" "$TAILSCALE_URL" "$MAIN_SERVER_METRICS" "$MAIN_DAEMON_METRICS" "$MAIN_AUTOSTART_METRICS"
 render_component_server "" "main" "$MAIN_PORT" "$MAIN_SERVER_COMPONENT" "$MAIN_SERVER_STATUS" "$MAIN_SERVER_PID" "$MAIN_SERVER_METRICS" "$TAILSCALE_URL" "$MAIN_LABEL"
 render_component_daemon "" "$MAIN_DAEMON_STATUS" "$MAIN_DAEMON_PID" "$MAIN_DAEMON_METRICS" "$MAIN_DAEMON_UPTIME" "$MAIN_LAST_HEARTBEAT" "$CLI_HOME_DIR/daemon.state.json" "main"
 render_component_autostart "" "main" "$MAIN_LABEL" "$MAIN_LAUNCHAGENT_STATUS" "$MAIN_AUTOSTART_PID" "$MAIN_AUTOSTART_METRICS" "$LOGS_DIR"
@@ -221,7 +221,7 @@ else
       port="$(resolve_stack_server_port "$s" "$env_file")"
 
       server_component="$(dotenv_get "$env_file" "HAPPIER_STACK_SERVER_COMPONENT")"
-      [[ -n "$server_component" ]] || server_component="happy-server-light"
+      [[ -n "$server_component" ]] || server_component="happier-server-light"
 
       base_dir="$(resolve_stack_base_dir "$s" "$env_file")"
       cli_home_dir="$(resolve_stack_cli_home_dir "$s" "$env_file")"
@@ -270,7 +270,7 @@ else
   else
     echo "--Setup (guided) | bash=$hstack_TERM param1=setup dir=$hstack_ROOT_DIR terminal=false refresh=true"
     echo "--Bootstrap (clone/install) | bash=$hstack_TERM param1=bootstrap dir=$hstack_ROOT_DIR terminal=false refresh=true"
-    echo "--CLI link (install happy wrapper) | bash=$hstack_TERM param1=cli:link dir=$hstack_ROOT_DIR terminal=false refresh=true"
+    echo "--CLI link (install happier wrapper) | bash=$hstack_TERM param1=cli:link dir=$hstack_ROOT_DIR terminal=false refresh=true"
     echo "--Mobile dev helper | bash=$hstack_TERM param1=mobile dir=$hstack_ROOT_DIR terminal=false"
   fi
 fi

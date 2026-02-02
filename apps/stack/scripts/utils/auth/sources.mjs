@@ -1,17 +1,7 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 
 import { resolveStackEnvPath } from '../paths/paths.mjs';
-
-export function isLegacyAuthSourceName(name) {
-  const s = String(name ?? '').trim().toLowerCase();
-  return s === 'legacy' || s === 'system' || s === 'local-install';
-}
-
-export function getLegacyHappyBaseDir() {
-  return join(homedir(), '.happy');
-}
 
 export function stackHasAccessKey(stackName) {
   try {
@@ -35,4 +25,3 @@ export function detectSeedableAuthSources() {
   if (stackHasAccessKey('main')) out.push('main');
   return out;
 }
-
