@@ -3,6 +3,11 @@ name: RELEASE — Dev → Main
 on:
   workflow_dispatch:
     inputs:
+      run_checks:
+        description: "Run release checks (tests/typecheck/builds/CLI smoke). Disable if you already validated this SHA."
+        required: true
+        default: true
+        type: boolean
       environment:
         description: "Deploy environment (deploy/<env>/*)"
         required: true
@@ -168,6 +173,7 @@ jobs:
           token: ${{ steps.app_token.outputs.token }}
 
       - name: Setup Node
+        if: inputs.run_checks
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -175,32 +181,35 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
+        if: inputs.run_checks
         run: |
           corepack enable
           corepack prepare yarn@1.22.22 --activate
 
       - name: Install dependencies
+        if: inputs.run_checks
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Test + typecheck
+        if: inputs.run_checks
         run: |
           set -euo pipefail
           yarn test
           yarn typecheck
 
       - name: Build website
-        if: inputs.build_website
+        if: inputs.run_checks && inputs.build_website
         run: yarn website:build
 
       - name: Build docs
-        if: inputs.build_docs
+        if: inputs.run_checks && inputs.build_docs
         run: yarn docs:build
 
       - name: CLI smoke test (Linux)
-        if: inputs.cli_smoke_linux
+        if: inputs.run_checks && inputs.cli_smoke_linux
         run: |
           set -euo pipefail
           yarn workspace @happier-dev/cli build
@@ -261,6 +270,7 @@ jobs:
           {
             echo "## Release plan (dev → main)"
             echo ""
+            echo "- run_checks: \`${{ inputs.run_checks }}\`"
             echo "- environment: \`${{ inputs.environment }}\`"
             echo "- promote_mode: \`${{ inputs.promote_mode }}\`"
             echo "- dry_run: \`${{ inputs.dry_run }}\`"
