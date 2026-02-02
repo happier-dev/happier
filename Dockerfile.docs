@@ -26,7 +26,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY apps/docs ./apps/docs
-RUN yarn workspace docs build
+RUN yarn workspace docs postinstall:real && yarn workspace docs build
 
 # Stage 3: runtime
 FROM node:22-alpine AS runner

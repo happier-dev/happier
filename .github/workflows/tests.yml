@@ -87,9 +87,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      HAPPY_CLI_TMUX_INTEGRATION: "1"
-      HAPPY_CLI_DAEMON_REATTACH_INTEGRATION: "1"
-      HAPPY_NO_BROWSER_OPEN: "1"
+      HAPPIER_CLI_TMUX_INTEGRATION: "1"
+      HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION: "1"
+      HAPPIER_NO_BROWSER_OPEN: "1"
       TMPDIR: /tmp
     steps:
       - name: Checkout
@@ -164,14 +164,15 @@ jobs:
     timeout-minutes: 35
     env:
       PORT: "3005"
-      HAPPY_SERVER_URL: http://localhost:3005
-      HAPPY_WEBAPP_URL: http://localhost:3005
+      HAPPIER_SERVER_URL: http://localhost:3005
+      HAPPIER_WEBAPP_URL: http://localhost:3005
+      HAPPIER_HOME_DIR: /tmp/happier-dev-test
       DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: "true"
-      HAPPY_SERVER_LIGHT_DATA_DIR: /tmp/happy-server-light
-      DATABASE_URL: file:///tmp/happy-server-light/happy-server-light.sqlite
+      HAPPIER_SERVER_LIGHT_DATA_DIR: /tmp/happier-server-light
+      DATABASE_URL: file:///tmp/happier-server-light/happier-server-light.sqlite
       # Fall back to a deterministic non-secret for forks / untrusted PRs (no access to repo secrets).
-      HANDY_MASTER_SECRET: ${{ secrets.CI_MASTER_SECRET != '' && secrets.CI_MASTER_SECRET || 'happy-ci-master-secret-not-a-real-secret' }}
-      HAPPY_NO_BROWSER_OPEN: "1"
+      HANDY_MASTER_SECRET: ${{ secrets.CI_MASTER_SECRET != '' && secrets.CI_MASTER_SECRET || 'happier-ci-master-secret-not-a-real-secret' }}
+      HAPPIER_NO_BROWSER_OPEN: "1"
       TMPDIR: /tmp
     steps:
       - name: Checkout
@@ -291,11 +292,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          mkdir -p "${HAPPY_SERVER_LIGHT_DATA_DIR}"
+          mkdir -p "${HAPPIER_SERVER_LIGHT_DATA_DIR}"
 
-          nohup yarn --cwd apps/server start:light > "/tmp/happy-server-light.log" 2>&1 &
-          SERVER_PID=$!
-          echo "${SERVER_PID}" > "/tmp/happy-server-light.pid"
+          nohup yarn --cwd apps/server start:light > "/tmp/happier-server-light.log" 2>&1 &
+          SERVER_PID="$(jobs -p | tail -n 1 || true)"
+          if [ -z "${SERVER_PID}" ]; then
+            echo "Failed to start server process"
+            tail -n 200 "/tmp/happier-server-light.log" || true
+            exit 1
+          fi
+          echo "${SERVER_PID}" > "/tmp/happier-server-light.pid"
 
           cleanup() {
             if [ -n "${SERVER_PID:-}" ]; then
@@ -317,7 +323,7 @@ jobs:
 
           if ! curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
             echo "Server failed to become healthy within timeout"
-            tail -n 200 "/tmp/happy-server-light.log" || true
+            tail -n 200 "/tmp/happier-server-light.log" || true
             exit 1
           fi
 
@@ -334,7 +340,7 @@ jobs:
           const signature = nacl.sign.detached(challenge, keyPair.secretKey);
           const encode64 = (bytes) => Buffer.from(bytes).toString("base64");
 
-          const serverUrl = process.env.HAPPY_SERVER_URL || "http://127.0.0.1:3005";
+          const serverUrl = process.env.HAPPIER_SERVER_URL || "http://127.0.0.1:3005";
           const url = new URL("/v1/auth", serverUrl);
           if (url.hostname === "localhost") url.hostname = "127.0.0.1";
 
@@ -358,11 +364,11 @@ jobs:
             process.exit(1);
           }
 
-          const happyHomeDir = path.join(os.homedir(), ".happy-dev-test");
-          fs.mkdirSync(happyHomeDir, { recursive: true });
+          const happierHomeDir = process.env.HAPPIER_HOME_DIR || path.join(os.homedir(), ".happier-dev-test");
+          fs.mkdirSync(happierHomeDir, { recursive: true });
           const secret = Buffer.alloc(32, 7).toString("base64");
           fs.writeFileSync(
-            path.join(happyHomeDir, "access.key"),
+            path.join(happierHomeDir, "access.key"),
             JSON.stringify({ token: data.token, secret }, null, 2),
             { mode: 0o600 },
           );
@@ -373,12 +379,12 @@ jobs:
 
       - name: Dump server logs (on failure)
         if: failure()
-        run: tail -n 300 "/tmp/happy-server-light.log" || true
+        run: tail -n 300 "/tmp/happier-server-light.log" || true
 
       - name: Dump daemon logs (on failure)
         if: failure()
         run: |
-          LOG_DIR="$HOME/.happy-dev-test/logs"
+          LOG_DIR="${HAPPIER_HOME_DIR:-$HOME/.happier-dev-test}/logs"
           ls -la "$LOG_DIR" || true
           ls -1t "$LOG_DIR"/*-daemon.log 2>/dev/null | head -n 8 | while read -r f; do
             echo "=== tail: $f ==="

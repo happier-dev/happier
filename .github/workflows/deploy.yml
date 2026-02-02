@@ -1,0 +1,182 @@
+name: DEPLOY — Deploy Branch
+
+on:
+  push:
+    branches:
+      - "deploy/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (used for Environment-scoped vars/secrets)"
+        required: true
+        type: choice
+        default: production
+        options:
+          - production
+          - preview
+      component:
+        description: "Component to deploy (triggers the matching webhook list)"
+        required: true
+        type: choice
+        options:
+          - ui
+          - server
+          - website
+          - docs
+          - cli
+      confirm:
+        description: "Type exactly: deploy <environment> <component>"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ startsWith(github.ref_name, 'deploy/') && github.ref_name || format('{0}/{1}', inputs.environment, inputs.component) }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'deploy/production/') || startsWith(github.ref_name, 'deploy/preview/')
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (startsWith(github.ref_name, 'deploy/production/') && 'production' || 'preview') }}
+    steps:
+      - name: Resolve target (env + component)
+        id: target
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_ENV: ${{ inputs.environment }}
+          INPUT_COMPONENT: ${{ inputs.component }}
+          INPUT_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            env_name="$INPUT_ENV"
+            component="$INPUT_COMPONENT"
+            expected="deploy ${env_name} ${component}"
+            if [ "$INPUT_CONFIRM" != "$expected" ]; then
+              echo "Confirmation mismatch." >&2
+              echo "Expected: $expected" >&2
+              echo "Got:      $INPUT_CONFIRM" >&2
+              exit 1
+            fi
+          else
+            # Expected: deploy/<env>/<component>
+            IFS='/' read -r pfx env_name component rest <<<"$REF_NAME"
+            if [ "$pfx" != "deploy" ] || [ -z "${env_name:-}" ] || [ -z "${component:-}" ]; then
+              echo "Unexpected ref name: $REF_NAME" >&2
+              exit 1
+            fi
+          fi
+
+          case "$env_name" in
+            production|preview) ;;
+            *)
+              echo "Unsupported environment: $env_name" >&2
+              exit 1
+              ;;
+          esac
+
+          case "$component" in
+            ui|server|website|docs|cli) ;;
+            *)
+              echo "Unsupported component: $component" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "environment=$env_name" >> "$GITHUB_OUTPUT"
+          echo "component=$component" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Deploy trigger"
+            echo ""
+            echo "- ref: \`$REF_NAME\`"
+            echo "- environment: \`$env_name\`"
+            echo "- component: \`$component\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Trigger deploy webhook(s)
+        env:
+          CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
+          CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
+          HAPPIER_UI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_UI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_UI_DEPLOY_WEBHOOKS || secrets.HAPPIER_UI_DEPLOY_WEBHOOKS }}
+          HAPPIER_WEBSITE_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS || secrets.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS }}
+          HAPPIER_DOCS_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS || secrets.HAPPIER_DOCS_DEPLOY_WEBHOOKS }}
+          HAPPIER_SERVER_API_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS }}
+          HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS }}
+          HAPPIER_CLI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_CLI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_CLI_DEPLOY_WEBHOOKS || secrets.HAPPIER_CLI_DEPLOY_WEBHOOKS }}
+          COMPONENT: ${{ steps.target.outputs.component }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${CF_WEBHOOK_DEPLOY_CLIENT_ID:-}" ] || [ -z "${CF_WEBHOOK_DEPLOY_CLIENT_SECRET:-}" ]; then
+            echo "Missing Cloudflare Access service token secrets (CF_WEBHOOK_DEPLOY_CLIENT_ID/CF_WEBHOOK_DEPLOY_CLIENT_SECRET)." >&2
+            exit 1
+          fi
+
+          trigger_hooks() {
+            local label="$1"
+            local hooks="$2"
+
+            if [ -z "${hooks:-}" ]; then
+              echo "No webhook URLs configured for '${label}' in environment '${{ steps.target.outputs.environment }}'." >&2
+              echo "Expected an environment variable/secret with newline-separated URLs." >&2
+              return 1
+            fi
+
+            echo "Triggering deploy hook(s) for '${label}'..."
+
+            local triggered=0
+            while IFS= read -r url; do
+              url="$(echo "$url" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+              if [ -z "$url" ] || [ "${url#\#}" != "$url" ]; then
+                continue
+              fi
+
+              triggered=$((triggered + 1))
+              echo "POST ${url}"
+              curl -fsS -X POST \
+                --retry 3 \
+                --retry-all-errors \
+                --connect-timeout 10 \
+                --max-time 60 \
+                -H "CF-Access-Client-Id: ${CF_WEBHOOK_DEPLOY_CLIENT_ID}" \
+                -H "CF-Access-Client-Secret: ${CF_WEBHOOK_DEPLOY_CLIENT_SECRET}" \
+                "${url}"
+            done <<< "$hooks"
+
+            if [ "$triggered" -eq 0 ]; then
+              echo "No valid webhook URLs found for '${label}' (empty/comment-only list)." >&2
+              return 1
+            fi
+
+            echo "Triggered ${triggered} webhook(s) for '${label}'."
+          }
+
+          case "$COMPONENT" in
+            ui)
+              trigger_hooks "ui" "${HAPPIER_UI_DEPLOY_WEBHOOKS:-}"
+              ;;
+            website)
+              trigger_hooks "website" "${HAPPIER_WEBSITE_DEPLOY_WEBHOOKS:-}"
+              ;;
+            docs)
+              trigger_hooks "docs" "${HAPPIER_DOCS_DEPLOY_WEBHOOKS:-}"
+              ;;
+            server)
+              # Enforce order: API first, then worker.
+              trigger_hooks "server api" "${HAPPIER_SERVER_API_DEPLOY_WEBHOOKS:-}"
+              trigger_hooks "server worker" "${HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS:-}"
+              ;;
+            cli)
+              trigger_hooks "cli" "${HAPPIER_CLI_DEPLOY_WEBHOOKS:-}"
+              ;;
+            *)
+              echo "Unsupported component: $COMPONENT" >&2
+              exit 1
+              ;;
+          esac

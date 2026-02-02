@@ -80,7 +80,7 @@ flowchart TD
 
 ```mermaid
 graph LR
-    subgraph "~/.happy"
+    subgraph "~/.happier"
         direction TB
         settings["settings.json<br/><i>profile, onboarding</i>"]
         access["access.key<br/><i>encryption keys</i>"]
@@ -90,26 +90,26 @@ graph LR
 
     subgraph "Environment Overrides"
         direction TB
-        E1[HAPPY_HOME_DIR]
-        E2[HAPPY_SERVER_URL]
-        E3[HAPPY_WEBAPP_URL]
-        E4[HAPPY_VARIANT]
-        E5[HAPPY_EXPERIMENTAL]
-        E6[HAPPY_DISABLE_CAFFEINATE]
+        E1[HAPPIER_HOME_DIR]
+        E2[HAPPIER_SERVER_URL]
+        E3[HAPPIER_WEBAPP_URL]
+        E4[HAPPIER_VARIANT]
+        E5[HAPPIER_EXPERIMENTAL]
+        E6[HAPPIER_DISABLE_CAFFEINATE]
     end
 
     E1 -.-> settings & access & daemon & logs
 ```
 
-Local state lives under `~/.happy` (or `HAPPY_HOME_DIR`):
+Local state lives under `~/.happier` (or `HAPPIER_HOME_DIR`):
 - `settings.json`: onboarding and profile settings (validated/migrated).
 - `access.key`: local key material for encryption/auth.
 - `daemon.state.json`: daemon PID + control port + version.
 - `logs/`: CLI/daemon logs.
 
 Configuration lives in `src/configuration.ts`:
-- `HAPPY_SERVER_URL` and `HAPPY_WEBAPP_URL` override defaults.
-- `HAPPY_VARIANT`, `HAPPY_EXPERIMENTAL`, `HAPPY_DISABLE_CAFFEINATE` control behavior.
+- `HAPPIER_SERVER_URL` and `HAPPIER_WEBAPP_URL` override defaults.
+- `HAPPIER_VARIANT`, `HAPPIER_EXPERIMENTAL`, `HAPPIER_DISABLE_CAFFEINATE` control behavior.
 
 ## API client architecture
 

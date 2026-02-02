@@ -28,6 +28,10 @@ When `dev` is stable and you want to ship:
 
 Deploy branches typically include `deploy/<env>/ui`, `deploy/<env>/server`, `deploy/<env>/website`, and `deploy/<env>/docs` (depending on what changed and which options you select).
 
+## Deploy branches → production infrastructure
+
+Pushes to `deploy/<env>/*` are intended to trigger deployment automation (for example, calling a protected deploy hook behind Cloudflare Access). How deployments are performed is intentionally decoupled from how code is promoted into deploy branches.
+
 If you only need to move branches (no deploy/publish):
 
 - Use **Promote Branch (fast-forward or reset)** to move `source` → `target` in a safe, explicit way.
@@ -41,3 +45,11 @@ Fast-forwarding `main` to `dev` is the safest “no merge commit” promotion:
 - It fails if branches diverged (so you can decide what to do next).
 
 The reset option exists for rare cases where you intentionally want `main` to match `dev` exactly.
+
+## Database migrations (server)
+
+For the server, database migrations should be automated as part of the deployment runtime:
+
+- Prefer running `prisma migrate deploy` as part of the API service startup / entrypoint (or an explicit pre-deploy hook in your platform).
+- Do **not** run migrations from the worker (run them once).
+- Avoid running migrations at image build-time (Dockerfile), since migrations require a live DB connection.
