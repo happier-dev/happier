@@ -30,12 +30,41 @@ Key env vars (stored in the stack env file):
 - `HAPPIER_SERVER_LIGHT_DATA_DIR`
 - `HAPPIER_SERVER_LIGHT_FILES_DIR`
 - `HAPPIER_SERVER_LIGHT_DB_DIR`
+- `HAPPIER_DB_PROVIDER` (optional; defaults to `pglite` for light stacks)
+
+Optional DB providers (light):
+
+- `pglite` (default)
+- `sqlite` (supported, but not the default)
 
 ### `happier-server` (full server)
 
 - Docker-managed infra per stack (Postgres + Redis + Minio/S3)
 - Closer to “production-like” behavior
 - Useful when you need Redis/S3 semantics or want to reproduce full-server-only issues
+
+Optional DB providers (full):
+
+- `postgres` (default; Docker-managed per stack)
+- `mysql` (supported, but requires an explicit `DATABASE_URL`; hstack does not provision MySQL)
+
+## Choosing a DB provider (power users)
+
+You can select a DB provider **without changing the interactive wizard**:
+
+```bash
+# Light stacks (default is pglite)
+hstack stack new exp-light --server=happier-server-light --db-provider=pglite
+hstack stack new exp-sqlite --server=happier-server-light --db-provider=sqlite
+
+# Full stacks (default is postgres)
+hstack stack new exp-full --server=happier-server --db-provider=postgres
+
+# MySQL requires an explicit DATABASE_URL
+hstack stack new exp-mysql --server=happier-server --db-provider=mysql --database-url=mysql://user:pass@127.0.0.1:3306/happier
+```
+
+Under the hood, this sets `HAPPIER_DB_PROVIDER` in the stack env file. For `mysql`, you must also provide `DATABASE_URL`.
 
 ## Full server infra (no AWS required)
 
@@ -148,4 +177,4 @@ There are two separate concepts:
 
 ## SQLite note
 
-SQLite is **not** used by `happier-server-light` today (it is PG_Light via embedded PGlite). SQLite may be reintroduced later as an additional light flavor, but it is not part of the current default stack.
+SQLite is supported as an **optional** light DB provider (`--db-provider=sqlite`), but the default remains PG_Light via embedded PGlite.

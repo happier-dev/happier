@@ -34,6 +34,22 @@ Auto-pick a port:
 hstack stack new exp2
 ```
 
+Power users: choose a DB provider without extra prompts:
+
+```bash
+# Light flavor (default): embedded Postgres via pglite (PG_Light)
+hstack stack new exp-light --server=happier-server-light --db-provider=pglite
+
+# Light flavor (optional): SQLite
+hstack stack new exp-sqlite --server=happier-server-light --db-provider=sqlite
+
+# Full server (default): Postgres (Docker-managed per stack)
+hstack stack new exp-full --server=happier-server --db-provider=postgres
+
+# Full server (optional): MySQL (requires an explicit DATABASE_URL; hstack does not provision MySQL)
+hstack stack new exp-mysql --server=happier-server --db-provider=mysql --database-url=mysql://user:pass@127.0.0.1:3306/happier
+```
+
 ## Create a PR test stack (copy/paste friendly)
 
 If you want maintainers to be able to try your PR quickly, you can give them a single command that:
@@ -59,6 +75,9 @@ Notes:
 - `--seed-auth` uses `hstack stack auth <stack> copy-from <source>` under the hood, which also best-effort seeds DB Account rows (avoids FK errors like Prisma `P2003`).
 - `--link-auth` symlinks auth files instead of copying them (keeps credentials in sync, but reduces isolation).
 - For full-server stacks (`happier-server`), seeding may require Docker infra to be running.
+- DB provider flags are forwarded to the underlying `hstack stack new` call:
+  - `--db-provider=...`
+  - `--database-url=...` (full server only)
 
 ## Auth seeding (recommended: dev-auth)
 
