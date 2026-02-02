@@ -5,6 +5,9 @@
         "build:packages": "yarn workspace @happier-dev/agents build && yarn workspace @happier-dev/protocol build",
         "ci:act": "bash scripts/ci/run-act-tests.sh",
         "test": "yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test && yarn workspace @happier-dev/server test",
+        "test:e2e": "yarn workspace @happier-dev/tests test",
+        "test:stress": "yarn workspace @happier-dev/tests test:stress",
+        "test:providers": "yarn workspace @happier-dev/tests test:providers",
         "typecheck": "yarn workspace @happier-dev/app typecheck && yarn workspace @happier-dev/cli typecheck && yarn workspace @happier-dev/server typecheck",
         "ui": "yarn workspace @happier-dev/app start",
         "ui:web": "yarn workspace @happier-dev/app web",
@@ -33,7 +36,8 @@
             "apps/website",
             "apps/docs",
             "packages/agents",
-            "packages/protocol"
+            "packages/protocol",
+            "packages/tests"
         ],
         "nohoist": [
             "**/zod",
