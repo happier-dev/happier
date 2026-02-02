@@ -31,9 +31,11 @@ export function getServerRoleFromEnv(env: NodeJS.ProcessEnv): ServerRole {
 }
 
 function shouldEnableRedisAdapterFromEnv(env: NodeJS.ProcessEnv, flavor: ServerFlavor): boolean {
+    const adapter =
+        (env.HAPPIER_SOCKET_REDIS_ADAPTER ?? env.HAPPY_SOCKET_REDIS_ADAPTER ?? '').toString().trim().toLowerCase();
     return (
         flavor !== 'light' &&
-        (env.HAPPY_SOCKET_REDIS_ADAPTER === 'true' || env.HAPPY_SOCKET_REDIS_ADAPTER === '1') &&
+        (adapter === 'true' || adapter === '1') &&
         typeof env.REDIS_URL === 'string' &&
         env.REDIS_URL.trim().length > 0
     );
@@ -99,7 +101,7 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     if (role === 'worker') {
         if (!shouldEnableRedisAdapter) {
             throw new Error(
-                "SERVER_ROLE=worker requires Redis adapter enabled (set REDIS_URL and HAPPY_SOCKET_REDIS_ADAPTER=1) so worker pushes can fan out to connected API sockets",
+                "SERVER_ROLE=worker requires Redis adapter enabled (set REDIS_URL and HAPPIER_SOCKET_REDIS_ADAPTER=1) so worker pushes can fan out to connected API sockets",
             );
         }
         // Create an emitter-only Socket.IO server wired to the Redis adapter, so background jobs can publish

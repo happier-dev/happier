@@ -69,7 +69,7 @@ The full flavor expects these env vars to be set:
 
 Optional (recommended for multi-core / multi-replica):
 
-- `REDIS_URL` + `HAPPY_SOCKET_REDIS_ADAPTER=1`
+- `REDIS_URL` + `HAPPIER_SOCKET_REDIS_ADAPTER=1`
 
 ### Example `.env` (full flavor, production)
 
@@ -90,7 +90,7 @@ S3_SECRET_KEY=minioadmin
 # Optional: enable multi-replica Socket.IO fanout + cluster RPC routing
 # (required if you run more than one API replica)
 REDIS_URL=redis://127.0.0.1:6379
-HAPPY_SOCKET_REDIS_ADAPTER=1
+HAPPIER_SOCKET_REDIS_ADAPTER=1
 
 # Optional: process role when scaling (unset => "all")
 # SERVER_ROLE=api
@@ -102,7 +102,7 @@ METRICS_ENABLED=true
 METRICS_PORT=9090
 
 # Optional: instance id for logs/registry
-# HAPPY_INSTANCE_ID=api-1
+# HAPPIER_INSTANCE_ID=api-1
 ```
 
 ### Example `.env` (light flavor, self-hosting)
@@ -110,7 +110,7 @@ METRICS_PORT=9090
 ```bash
 # Optional: where light flavor stores its local data (DB + files + secrets).
 # If unset, defaults to ~/.happy/server-light
-HAPPY_SERVER_LIGHT_DATA_DIR=/var/lib/happy/server-light
+HAPPIER_SERVER_LIGHT_DATA_DIR=/var/lib/happy/server-light
 
 # Optional: ports
 PORT=3005
@@ -153,11 +153,11 @@ Recommended production topology:
 When running more than one API process/replica, enable the Socket.IO Redis Streams adapter:
 
 - `REDIS_URL=redis://...`
-- `HAPPY_SOCKET_REDIS_ADAPTER=1`
+- `HAPPIER_SOCKET_REDIS_ADAPTER=1`
 
 To explicitly disable it (single-process mode / light flavor), leave it unset or set:
 
-- `HAPPY_SOCKET_REDIS_ADAPTER=0`
+- `HAPPIER_SOCKET_REDIS_ADAPTER=0`
 
 This enables:
 
@@ -180,11 +180,11 @@ For a quick local production-like test (requires Redis):
 
 ```bash
 # Worker (no HTTP server; publishes events via Redis adapter; runs background loops)
-SERVER_ROLE=worker HAPPY_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 METRICS_PORT=0 yarn start
+SERVER_ROLE=worker HAPPIER_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 METRICS_PORT=0 yarn start
 
 # API replicas (different PORTs on the same host; put a load balancer in front in real deployments)
-SERVER_ROLE=api HAPPY_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 PORT=3005 METRICS_PORT=0 yarn start
-SERVER_ROLE=api HAPPY_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 PORT=3006 METRICS_PORT=0 yarn start
+SERVER_ROLE=api HAPPIER_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 PORT=3005 METRICS_PORT=0 yarn start
+SERVER_ROLE=api HAPPIER_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 PORT=3006 METRICS_PORT=0 yarn start
 ```
 
 ### Sticky sessions (required for websocket load balancing)
@@ -207,7 +207,7 @@ Prisma pooling is typically configured via the database connection string / driv
 
 ### Operational tips
 
-- Set `HAPPY_INSTANCE_ID` to something stable per process/pod for debugging (for example, Kubernetes `metadata.uid`). If unset, it is generated automatically at runtime.
+- Set `HAPPIER_INSTANCE_ID` to something stable per process/pod for debugging (for example, Kubernetes `metadata.uid`). If unset, it is generated automatically at runtime.
 - If you run API + worker processes on the same host, ensure their `PORT`/`METRICS_PORT` values do not conflict.
 - To disable the metrics server (for example in some local multi-process setups), set `METRICS_ENABLED=false`. To avoid conflicts while keeping it enabled, set `METRICS_PORT=0` (random free port) or choose distinct ports per process.
 
@@ -278,7 +278,7 @@ curl http://127.0.0.1:3005/health
 Notes:
 
 - `yarn dev:light` runs `prisma migrate deploy` against the embedded Postgres database before starting.
-- If you want a clean slate for local dev/testing, delete the light data dir (default: `~/.happy/server-light`) or point the light flavor at a fresh dir via `HAPPY_SERVER_LIGHT_DATA_DIR=/tmp/happy-server-light`.
+- If you want a clean slate for local dev/testing, delete the light data dir (default: `~/.happy/server-light`) or point the light flavor at a fresh dir via `HAPPIER_SERVER_LIGHT_DATA_DIR=/tmp/happy-server-light`.
 
 ### Prisma schema (full vs light)
 
