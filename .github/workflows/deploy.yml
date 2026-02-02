@@ -137,6 +137,7 @@ jobs:
             BRANCH_NAME="deploy/${ENVIRONMENT}/${COMPONENT}"
           fi
           REF="refs/heads/${BRANCH_NAME}"
+          echo "Dokploy webhook ref: ${REF}"
 
           trigger_hooks() {
             local label="$1"
