@@ -190,8 +190,6 @@ jobs:
                 --retry-all-errors \
                 --connect-timeout 10 \
                 --max-time 60 \
-                --location \
-                --post301 --post302 --post303 \
                 -H "CF-Access-Client-Id: ${CF_WEBHOOK_DEPLOY_CLIENT_ID}" \
                 -H "CF-Access-Client-Secret: ${CF_WEBHOOK_DEPLOY_CLIENT_SECRET}" \
                 -H "Content-Type: application/json" \
