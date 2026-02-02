@@ -1,7 +1,5 @@
 export type LightMigrateDeployPlan = {
     dataDir: string;
-    prismaSchemaPath: string;
-    schemaGenerateArgs: string[];
     prismaDeployArgs: string[];
 };
 
@@ -15,11 +13,8 @@ export function requireLightDataDir(env: NodeJS.ProcessEnv): string {
 
 export function buildLightMigrateDeployPlan(env: NodeJS.ProcessEnv): LightMigrateDeployPlan {
     const dataDir = requireLightDataDir(env);
-    const prismaSchemaPath = 'prisma/sqlite/schema.prisma';
     return {
         dataDir,
-        prismaSchemaPath,
-        schemaGenerateArgs: ['-s', 'schema:sqlite', '--quiet'],
-        prismaDeployArgs: ['-s', 'prisma', 'migrate', 'deploy', '--schema', prismaSchemaPath],
+        prismaDeployArgs: ['-s', 'migrate:light:deploy'],
     };
 }

@@ -16,12 +16,15 @@ interface MachineCacheEntry {
     lastUpdateSent: number;
     pendingUpdate: number | null;
     userId: string;
+    active: boolean;
 }
 
 class ActivityCache {
     private sessionCache = new Map<string, SessionCacheEntry>();
     private machineCache = new Map<string, MachineCacheEntry>();
     private batchTimer: NodeJS.Timeout | null = null;
+    private dbFlushEnabled = false;
+    private nextCleanupAt = 0;
     
     // Cache TTL (30 seconds)
     private readonly CACHE_TTL = 30 * 1000;
@@ -31,10 +34,9 @@ class ActivityCache {
     
     // Batch update interval (5 seconds)
     private readonly BATCH_INTERVAL = 5 * 1000;
+    private readonly CLEANUP_INTERVAL = 5 * 60 * 1000;
 
-    constructor() {
-        this.startBatchTimer();
-    }
+    constructor() {}
 
     private startBatchTimer(): void {
         if (this.batchTimer) {
@@ -48,8 +50,21 @@ class ActivityCache {
         }, this.BATCH_INTERVAL);
     }
 
+    enableDbFlush(): void {
+        if (this.dbFlushEnabled) return;
+        this.dbFlushEnabled = true;
+        this.startBatchTimer();
+    }
+
+    private maybeCleanup(now: number): void {
+        if (this.nextCleanupAt && now < this.nextCleanupAt) return;
+        this.cleanup();
+        this.nextCleanupAt = now + this.CLEANUP_INTERVAL;
+    }
+
     async isSessionValid(sessionId: string, userId: string): Promise<boolean> {
         const now = Date.now();
+        this.maybeCleanup(now);
         const cacheKey = `${sessionId}:${userId}`;
         const cached = this.sessionCache.get(cacheKey);
         
@@ -86,6 +101,7 @@ class ActivityCache {
 
     async isMachineValid(machineId: string, userId: string): Promise<boolean> {
         const now = Date.now();
+        this.maybeCleanup(now);
         const cached = this.machineCache.get(machineId);
         
         // Check cache first
@@ -113,7 +129,8 @@ class ActivityCache {
                     validUntil: now + this.CACHE_TTL,
                     lastUpdateSent: machine.lastActiveAt?.getTime() || 0,
                     pendingUpdate: null,
-                    userId
+                    userId,
+                    active: machine.active
                 });
                 return true;
             }
@@ -126,6 +143,7 @@ class ActivityCache {
     }
 
     queueSessionUpdate(sessionId: string, userId: string, timestamp: number): boolean {
+        this.maybeCleanup(Date.now());
         const cacheKey = `${sessionId}:${userId}`;
         const cached = this.sessionCache.get(cacheKey);
         if (!cached) {
@@ -144,11 +162,20 @@ class ActivityCache {
     }
 
     queueMachineUpdate(machineId: string, timestamp: number): boolean {
+        this.maybeCleanup(Date.now());
         const cached = this.machineCache.get(machineId);
         if (!cached) {
             return false; // Should validate first
         }
         
+        // If the machine is currently marked inactive, force a DB write to flip it back to active
+        // even if `lastActiveAt` is already recent (e.g. after a restart or previously-buggy writes).
+        if (!cached.active) {
+            cached.pendingUpdate = timestamp;
+            cached.active = true;
+            return true;
+        }
+
         // Only queue if time difference is significant
         const timeDiff = Math.abs(timestamp - cached.lastUpdateSent);
         if (timeDiff > this.UPDATE_THRESHOLD) {
@@ -158,6 +185,22 @@ class ActivityCache {
         
         databaseUpdatesSkippedCounter.inc({ type: 'machine' });
         return false; // No update needed
+    }
+
+    markSessionUpdateSent(sessionId: string, userId: string, timestamp: number): void {
+        const cacheKey = `${sessionId}:${userId}`;
+        const cached = this.sessionCache.get(cacheKey);
+        if (!cached) return;
+        cached.lastUpdateSent = timestamp;
+        cached.pendingUpdate = null;
+    }
+
+    markMachineUpdateSent(machineId: string, timestamp: number): void {
+        const cached = this.machineCache.get(machineId);
+        if (!cached) return;
+        cached.lastUpdateSent = timestamp;
+        cached.pendingUpdate = null;
+        cached.active = true;
     }
 
     private async flushPendingUpdates(): Promise<void> {
@@ -181,6 +224,7 @@ class ActivityCache {
                     timestamp: entry.pendingUpdate, 
                     userId: entry.userId 
                 });
+                entry.active = true;
                 entry.lastUpdateSent = entry.pendingUpdate;
                 entry.pendingUpdate = null;
             }
@@ -213,7 +257,7 @@ class ActivityCache {
                                 id: update.id
                             }
                         },
-                        data: { lastActiveAt: new Date(update.timestamp) }
+                        data: { lastActiveAt: new Date(update.timestamp), active: true }
                     })
                 ));
                 
@@ -248,16 +292,13 @@ class ActivityCache {
         }
         
         // Flush any remaining updates
-        this.flushPendingUpdates().catch(error => {
-            log({ module: 'session-cache', level: 'error' }, `Error flushing final updates: ${error}`);
-        });
+        if (this.dbFlushEnabled) {
+            this.flushPendingUpdates().catch(error => {
+                log({ module: 'session-cache', level: 'error' }, `Error flushing final updates: ${error}`);
+            });
+        }
     }
 }
 
 // Global instance
 export const activityCache = new ActivityCache();
-
-// Cleanup every 5 minutes
-setInterval(() => {
-    activityCache.cleanup();
-}, 5 * 60 * 1000);

@@ -37,7 +37,12 @@ export function connectRoutes(app: Fastify) {
                 (req as any).rawBody = bodyStr;
                 done(null, json);
             } catch (err: any) {
-                log({ module: 'content-parser', level: 'error' }, `JSON parse error on ${req.method} ${req.url}: ${err.message}, body: "${body}"`);
+                // Never log raw bodies (they can contain credentials, tokens, or PII).
+                const bodyLen = typeof body === 'string' ? body.length : -1;
+                log(
+                    { module: 'content-parser', level: 'error', method: req.method, url: req.url, bodyLen },
+                    `JSON parse error: ${err.message}`
+                );
                 err.statusCode = 400;
                 done(err, undefined);
             }

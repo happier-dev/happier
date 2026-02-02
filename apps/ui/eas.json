@@ -4,8 +4,10 @@
     "appVersionSource": "remote"
   },
   "build": {
-    "base": "expo-app",
+    "base": {},
     "development": {
+      "extends": "base",
+      "environment": "development",
       "autoIncrement": true,
       "developmentClient": true,
       "distribution": "internal",
@@ -15,6 +17,8 @@
       }
     },
     "development-store": {
+      "extends": "base",
+      "environment": "development",
       "autoIncrement": true,
       "developmentClient": true,
       "distribution": "store",
@@ -24,6 +28,8 @@
       }
     },
     "preview": {
+      "extends": "base",
+      "environment": "preview",
       "autoIncrement": true,
       "distribution": "internal",
       "channel": "preview",
@@ -32,6 +38,8 @@
       }
     },
     "preview-store": {
+      "extends": "base",
+      "environment": "preview",
       "autoIncrement": true,
       "distribution": "store",
       "channel": "preview",
@@ -40,6 +48,8 @@
       }
     },
     "production": {
+      "extends": "base",
+      "environment": "production",
       "autoIncrement": true,
       "channel": "production",
       "env": {

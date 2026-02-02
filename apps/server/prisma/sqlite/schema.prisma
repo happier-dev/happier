@@ -28,6 +28,10 @@ model Account {
     /// Ed25519 signature binding contentPublicKey to publicKey
     contentPublicKeySig Bytes?
     seq             Int         @default(0)
+    /// Minimum cursor a client must have for `/v2/changes?after=...` to be considered reliable.
+    /// When we prune orphaned AccountChange rows (e.g. for deleted sessions), we bump this floor so
+    /// very old clients are forced to do a snapshot rebuild instead of missing deletion signals.
+    changesFloor     Int        @default(0)
     feedSeq         BigInt      @default(0)
     createdAt       DateTime    @default(now())
     updatedAt       DateTime    @updatedAt
@@ -63,6 +67,24 @@ model Account {
     PublicSessionShares    PublicSessionShare[]       @relation("PublicSessionShares")
     PublicShareAccessLogs  PublicShareAccessLog[]     @relation("PublicShareAccessLogs")
     PublicShareBlockedUsers PublicShareBlockedUser[]  @relation("PublicShareBlockedUsers")
+    AccountChanges         AccountChange[]
+}
+
+model AccountChange {
+    accountId String
+    kind      String
+    entityId  String
+
+    /// Account-scoped monotonic cursor (from Account.seq).
+    /// Each row update should get a unique new cursor value for pagination safety.
+    cursor    Int
+    changedAt DateTime @default(now())
+    hint      Json?
+
+    account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@id([accountId, kind, entityId])
+    @@index([accountId, cursor])
 }
 
 model TerminalAuthRequest {

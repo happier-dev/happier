@@ -7,7 +7,15 @@ export type Tx = TransactionClient;
 const symbol = Symbol();
 
 export function afterTx(tx: Tx, callback: () => void) {
-    let callbacks = (tx as any)[symbol] as (() => void)[];
+    // Golden rule:
+    // - Do NOT emit socket updates inside a DB transaction.
+    // - Instead, schedule them with afterTx so they only fire after commit.
+    //
+    // `afterTx` is only valid for transactions created via `inTx()`.
+    const callbacks = (tx as any)[symbol] as (() => void)[] | undefined;
+    if (!callbacks) {
+        throw new Error('afterTx(tx, ...) called outside inTx() transaction');
+    }
     callbacks.push(callback);
 }
 

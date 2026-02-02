@@ -1,11 +1,11 @@
 import { websocketEventsCounter } from "@/app/monitoring/metrics2";
 import { buildNewArtifactUpdate, buildUpdateArtifactUpdate, buildDeleteArtifactUpdate, eventRouter } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
-import { allocateUserSeq } from "@/storage/seq";
 import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { Socket } from "socket.io";
 import * as privacyKit from "privacy-kit";
+import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";
 
 export function artifactUpdateHandler(userId: string, socket: Socket) {
     // Read artifact with full body
@@ -81,170 +81,85 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
 
             // Validate input
             if (!artifactId) {
-                if (callback) {
-                    callback({ result: 'error', message: 'Invalid parameters' });
-                }
+                callback?.({ result: 'error', message: 'Invalid parameters' });
                 return;
             }
 
             // At least one update must be provided
             if (!header && !body) {
-                if (callback) {
-                    callback({ result: 'error', message: 'No updates provided' });
-                }
+                callback?.({ result: 'error', message: 'No updates provided' });
                 return;
             }
 
             // Validate header structure if provided
             if (header && (typeof header.data !== 'string' || typeof header.expectedVersion !== 'number')) {
-                if (callback) {
-                    callback({ result: 'error', message: 'Invalid header parameters' });
-                }
+                callback?.({ result: 'error', message: 'Invalid header parameters' });
                 return;
             }
 
             // Validate body structure if provided
             if (body && (typeof body.data !== 'string' || typeof body.expectedVersion !== 'number')) {
-                if (callback) {
-                    callback({ result: 'error', message: 'Invalid body parameters' });
-                }
+                callback?.({ result: 'error', message: 'Invalid body parameters' });
                 return;
             }
 
-            // Get current artifact
-            const currentArtifact = await db.artifact.findFirst({
-                where: {
-                    id: artifactId,
-                    accountId: userId
-                }
+            const result = await updateArtifact({
+                actorUserId: userId,
+                artifactId,
+                header: header ? { bytes: privacyKit.decodeBase64(header.data), expectedVersion: header.expectedVersion } : undefined,
+                body: body ? { bytes: privacyKit.decodeBase64(body.data), expectedVersion: body.expectedVersion } : undefined,
             });
 
-            if (!currentArtifact) {
-                if (callback) {
-                    callback({ result: 'error', message: 'Artifact not found' });
+            if (!result.ok) {
+                if (result.error === 'not-found') {
+                    callback?.({ result: 'error', message: 'Artifact not found' });
+                    return;
                 }
-                return;
-            }
 
-            // Check for version mismatches
-            const headerMismatch = header && currentArtifact.headerVersion !== header.expectedVersion;
-            const bodyMismatch = body && currentArtifact.bodyVersion !== body.expectedVersion;
-
-            if (headerMismatch || bodyMismatch) {
-                const response: any = { result: 'version-mismatch' };
-                
-                if (headerMismatch) {
-                    response.header = {
-                        currentVersion: currentArtifact.headerVersion,
-                        currentData: privacyKit.encodeBase64(currentArtifact.header)
-                    };
-                }
-                
-                if (bodyMismatch) {
-                    response.body = {
-                        currentVersion: currentArtifact.bodyVersion,
-                        currentData: privacyKit.encodeBase64(currentArtifact.body)
-                    };
-                }
-                
-                callback(response);
-                return;
-            }
-
-            // Build update data
-            const updateData: any = {
-                updatedAt: new Date(),
-                seq: currentArtifact.seq + 1
-            };
-
-            let headerUpdate: { value: string; version: number } | undefined;
-            let bodyUpdate: { value: string; version: number } | undefined;
-
-            if (header) {
-                updateData.header = privacyKit.decodeBase64(header.data);
-                updateData.headerVersion = header.expectedVersion + 1;
-                headerUpdate = {
-                    value: header.data,
-                    version: header.expectedVersion + 1
-                };
-            }
-
-            if (body) {
-                updateData.body = privacyKit.decodeBase64(body.data);
-                updateData.bodyVersion = body.expectedVersion + 1;
-                bodyUpdate = {
-                    value: body.data,
-                    version: body.expectedVersion + 1
-                };
-            }
-
-            // Perform atomic update with version check
-            const { count } = await db.artifact.updateMany({
-                where: {
-                    id: artifactId,
-                    accountId: userId,
-                    ...(header && { headerVersion: header.expectedVersion }),
-                    ...(body && { bodyVersion: body.expectedVersion })
-                },
-                data: updateData
-            });
-
-            if (count === 0) {
-                // Re-fetch current version
-                const current = await db.artifact.findFirst({
-                    where: {
-                        id: artifactId,
-                        accountId: userId
+                if (result.error === 'version-mismatch') {
+                    const response: any = { result: 'version-mismatch' };
+                    if (header && result.current) {
+                        response.header = {
+                            currentVersion: result.current.headerVersion,
+                            currentData: Buffer.from(result.current.header).toString('base64'),
+                        };
                     }
-                });
+                    if (body && result.current) {
+                        response.body = {
+                            currentVersion: result.current.bodyVersion,
+                            currentData: Buffer.from(result.current.body).toString('base64'),
+                        };
+                    }
+                    callback?.(response);
+                    return;
+                }
 
-                const response: any = { result: 'version-mismatch' };
-                
-                if (header && current) {
-                    response.header = {
-                        currentVersion: current.headerVersion,
-                        currentData: privacyKit.encodeBase64(current.header)
-                    };
-                }
-                
-                if (body && current) {
-                    response.body = {
-                        currentVersion: current.bodyVersion,
-                        currentData: privacyKit.encodeBase64(current.body)
-                    };
-                }
-                
-                callback(response);
+                callback?.({ result: 'error', message: 'Internal error' });
                 return;
             }
 
-            // Emit update event
-            const updSeq = await allocateUserSeq(userId);
-            const updatePayload = buildUpdateArtifactUpdate(artifactId, updSeq, randomKeyNaked(12), headerUpdate, bodyUpdate);
+            const headerUpdate = header && result.header
+                ? { value: header.data, version: result.header.version }
+                : undefined;
+            const bodyUpdate = body && result.body
+                ? { value: body.data, version: result.body.version }
+                : undefined;
+
+            const updatePayload = buildUpdateArtifactUpdate(artifactId, result.cursor, randomKeyNaked(12), headerUpdate, bodyUpdate);
             eventRouter.emitUpdate({
                 userId,
                 payload: updatePayload,
                 recipientFilter: { type: 'user-scoped-only' }
             });
 
-            // Send success response
             const response: any = { result: 'success' };
-            
             if (headerUpdate) {
-                response.header = {
-                    version: headerUpdate.version,
-                    data: header!.data
-                };
+                response.header = { version: headerUpdate.version, data: header!.data };
             }
-            
             if (bodyUpdate) {
-                response.body = {
-                    version: bodyUpdate.version,
-                    data: body!.data
-                };
+                response.body = { version: bodyUpdate.version, data: body!.data };
             }
-            
-            callback(response);
+            callback?.(response);
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in artifact-update: ${error}`);
             if (callback) {
@@ -274,71 +189,44 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
             }
 
             // Check if artifact already exists
-            const existingArtifact = await db.artifact.findUnique({
-                where: { id }
+            const result = await createArtifact({
+                actorUserId: userId,
+                artifactId: id,
+                header: privacyKit.decodeBase64(header),
+                body: privacyKit.decodeBase64(body),
+                dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
             });
 
-            if (existingArtifact) {
-                // If exists for another account, return error
-                if (existingArtifact.accountId !== userId) {
-                    if (callback) {
-                        callback({ result: 'error', message: 'Artifact with this ID already exists for another account' });
-                    }
+            if (!result.ok) {
+                if (result.error === 'conflict') {
+                    // Avoid revealing whether an artifact ID is already owned by another account.
+                    callback?.({ result: 'error', message: 'Artifact already exists' });
                     return;
                 }
-
-                // If exists for same account, return existing (idempotent)
-                callback({
-                    result: 'success',
-                    artifact: {
-                        id: existingArtifact.id,
-                        header: privacyKit.encodeBase64(existingArtifact.header),
-                        headerVersion: existingArtifact.headerVersion,
-                        body: privacyKit.encodeBase64(existingArtifact.body),
-                        bodyVersion: existingArtifact.bodyVersion,
-                        seq: existingArtifact.seq,
-                        createdAt: existingArtifact.createdAt.getTime(),
-                        updatedAt: existingArtifact.updatedAt.getTime()
-                    }
-                });
+                callback?.({ result: 'error', message: 'Internal error' });
                 return;
             }
 
-            // Create new artifact
-            const artifact = await db.artifact.create({
-                data: {
-                    id,
-                    accountId: userId,
-                    header: privacyKit.decodeBase64(header),
-                    headerVersion: 1,
-                    body: privacyKit.decodeBase64(body),
-                    bodyVersion: 1,
-                    dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
-                    seq: 0
-                }
-            });
+            if (result.didWrite) {
+                const newArtifactPayload = buildNewArtifactUpdate(result.artifact, result.cursor, randomKeyNaked(12));
+                eventRouter.emitUpdate({
+                    userId,
+                    payload: newArtifactPayload,
+                    recipientFilter: { type: 'user-scoped-only' }
+                });
+            }
 
-            // Emit new-artifact event
-            const updSeq = await allocateUserSeq(userId);
-            const newArtifactPayload = buildNewArtifactUpdate(artifact, updSeq, randomKeyNaked(12));
-            eventRouter.emitUpdate({
-                userId,
-                payload: newArtifactPayload,
-                recipientFilter: { type: 'user-scoped-only' }
-            });
-
-            // Return created artifact
-            callback({
+            callback?.({
                 result: 'success',
                 artifact: {
-                    id: artifact.id,
-                    header: privacyKit.encodeBase64(artifact.header),
-                    headerVersion: artifact.headerVersion,
-                    body: privacyKit.encodeBase64(artifact.body),
-                    bodyVersion: artifact.bodyVersion,
-                    seq: artifact.seq,
-                    createdAt: artifact.createdAt.getTime(),
-                    updatedAt: artifact.updatedAt.getTime()
+                    id: result.artifact.id,
+                    header: Buffer.from(result.artifact.header).toString('base64'),
+                    headerVersion: result.artifact.headerVersion,
+                    body: Buffer.from(result.artifact.body).toString('base64'),
+                    bodyVersion: result.artifact.bodyVersion,
+                    seq: result.artifact.seq,
+                    createdAt: result.artifact.createdAt.getTime(),
+                    updatedAt: result.artifact.updatedAt.getTime()
                 }
             });
         } catch (error) {
@@ -366,37 +254,24 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 return;
             }
 
-            // Check if artifact exists and belongs to user
-            const artifact = await db.artifact.findFirst({
-                where: {
-                    id: artifactId,
-                    accountId: userId
+            const result = await deleteArtifact({ actorUserId: userId, artifactId });
+            if (!result.ok) {
+                if (result.error === 'not-found') {
+                    callback?.({ result: 'error', message: 'Artifact not found' });
+                    return;
                 }
-            });
-
-            if (!artifact) {
-                if (callback) {
-                    callback({ result: 'error', message: 'Artifact not found' });
-                }
+                callback?.({ result: 'error', message: 'Internal error' });
                 return;
             }
 
-            // Delete artifact
-            await db.artifact.delete({
-                where: { id: artifactId }
-            });
-
-            // Emit delete-artifact event
-            const updSeq = await allocateUserSeq(userId);
-            const deletePayload = buildDeleteArtifactUpdate(artifactId, updSeq, randomKeyNaked(12));
+            const deletePayload = buildDeleteArtifactUpdate(artifactId, result.cursor, randomKeyNaked(12));
             eventRouter.emitUpdate({
                 userId,
                 payload: deletePayload,
                 recipientFilter: { type: 'user-scoped-only' }
             });
 
-            // Send success response
-            callback({ result: 'success' });
+            callback?.({ result: 'success' });
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in artifact-delete: ${error}`);
             if (callback) {

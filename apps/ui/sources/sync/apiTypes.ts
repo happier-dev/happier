@@ -1,7 +1,6 @@
 import { z } from 'zod';
-import { GitHubProfileSchema, ImageRefSchema } from './profile';
-import { RelationshipStatusSchema, UserProfileSchema } from './friendTypes';
-import { FeedBodySchema } from './feedTypes';
+import { ChangeEntrySchema, ChangesResponseSchema } from '@happier-dev/protocol/changes';
+import { EphemeralUpdateSchema, type EphemeralUpdate, UpdateBodySchema, UpdateContainerSchema } from '@happier-dev/protocol/updates';
 
 //
 // Encrypted message
@@ -24,7 +23,18 @@ export const ApiSessionMessagesResponseSchema = z.object({
     messages: z.array(ApiMessageSchema),
     hasMore: z.boolean().optional(),
     nextBeforeSeq: z.number().nullable().optional(),
+    nextAfterSeq: z.number().nullable().optional(),
 });
+
+//
+// /v2/changes
+//
+
+export const ApiChangeEntrySchema = ChangeEntrySchema;
+export type ApiChangeEntry = z.infer<typeof ApiChangeEntrySchema>;
+
+export const ApiChangesResponseSchema = ChangesResponseSchema;
+export type ApiChangesResponse = z.infer<typeof ApiChangesResponseSchema>;
 
 export type ApiSessionMessagesResponse = z.infer<typeof ApiSessionMessagesResponseSchema>;
 
@@ -32,250 +42,23 @@ export type ApiSessionMessagesResponse = z.infer<typeof ApiSessionMessagesRespon
 // Updates
 //
 
-export const ApiUpdateNewMessageSchema = z.object({
-    t: z.literal('new-message'),
-    sid: z.string(), // Session ID
-    message: ApiMessageSchema
-});
-
-export const ApiUpdateNewSessionSchema = z.object({
-    t: z.literal('new-session'),
-    id: z.string(), // Session ID
-    createdAt: z.number(),
-    updatedAt: z.number(),
-});
-
-export const ApiDeleteSessionSchema = z.object({
-    t: z.literal('delete-session'),
-    sid: z.string(), // Session ID
-});
-
-export const ApiUpdateSessionStateSchema = z.object({
-    t: z.literal('update-session'),
-    id: z.string(),
-    agentState: z.object({
-        version: z.number(),
-        value: z.string()
-    }).nullish(),
-    metadata: z.object({
-        version: z.number(),
-        value: z.string()
-    }).nullish(),
-});
-
-export const ApiUpdateAccountSchema = z.object({
-    t: z.literal('update-account'),
-    id: z.string(),
-    settings: z.object({
-        value: z.string().nullish(),
-        version: z.number()
-    }).nullish(),
-    firstName: z.string().nullish(),
-    lastName: z.string().nullish(),
-    avatar: ImageRefSchema.nullish(),
-    github: GitHubProfileSchema.nullish(),
-});
-
-export const ApiUpdateMachineStateSchema = z.object({
-    t: z.literal('update-machine'),
-    machineId: z.string(),  // Changed from 'id' to 'machineId' for clarity
-    metadata: z.object({
-        version: z.number(),
-        value: z.string() // Encrypted, client decrypts
-    }).nullish(),
-    daemonState: z.object({
-        version: z.number(),
-        value: z.string() // Encrypted, client decrypts
-    }).nullish(),
-    active: z.boolean().optional(),
-    activeAt: z.number().optional()
-});
-
-// Artifact update schemas
-export const ApiNewArtifactSchema = z.object({
-    t: z.literal('new-artifact'),
-    artifactId: z.string(),
-    header: z.string(),
-    headerVersion: z.number(),
-    body: z.string().optional(),
-    bodyVersion: z.number().optional(),
-    dataEncryptionKey: z.string(),
-    seq: z.number(),
-    createdAt: z.number(),
-    updatedAt: z.number()
-});
-
-export const ApiUpdateArtifactSchema = z.object({
-    t: z.literal('update-artifact'),
-    artifactId: z.string(),
-    header: z.object({
-        value: z.string(),
-        version: z.number()
-    }).optional(),
-    body: z.object({
-        value: z.string(),
-        version: z.number()
-    }).optional()
-});
-
-export const ApiDeleteArtifactSchema = z.object({
-    t: z.literal('delete-artifact'),
-    artifactId: z.string()
-});
-
-// Relationship update schema
-export const ApiRelationshipUpdatedSchema = z.object({
-    t: z.literal('relationship-updated'),
-    fromUserId: z.string(),
-    toUserId: z.string(),
-    status: RelationshipStatusSchema,
-    action: z.enum(['created', 'updated', 'deleted']),
-    fromUser: UserProfileSchema.optional(),
-    toUser: UserProfileSchema.optional(),
-    timestamp: z.number()
-});
-
-// Feed update schema
-export const ApiNewFeedPostSchema = z.object({
-    t: z.literal('new-feed-post'),
-    id: z.string(),
-    body: FeedBodySchema,
-    cursor: z.string(),
-    createdAt: z.number(),
-    repeatKey: z.string().nullable()
-});
-
-// KV batch update schema for real-time KV updates
-export const ApiKvBatchUpdateSchema = z.object({
-    t: z.literal('kv-batch-update'),
-    changes: z.array(z.object({
-        key: z.string(),
-        value: z.string().nullable(),
-        version: z.number()
-    }))
-});
-
-// Session sharing event schemas
-export const ApiSessionSharedSchema = z.object({
-    t: z.literal('session-shared'),
-    sessionId: z.string(),
-});
-
-export const ApiSessionShareUpdatedSchema = z.object({
-    t: z.literal('session-share-updated'),
-    sessionId: z.string(),
-    shareId: z.string(),
-});
-
-export const ApiSessionShareRevokedSchema = z.object({
-    t: z.literal('session-share-revoked'),
-    sessionId: z.string(),
-    shareId: z.string(),
-});
-
-// Public share event schemas
-export const ApiPublicShareCreatedSchema = z.object({
-    t: z.literal('public-share-created'),
-    sessionId: z.string(),
-    publicShareId: z.string(),
-});
-
-export const ApiPublicShareUpdatedSchema = z.object({
-    t: z.literal('public-share-updated'),
-    sessionId: z.string(),
-    publicShareId: z.string(),
-});
-
-export const ApiPublicShareDeletedSchema = z.object({
-    t: z.literal('public-share-deleted'),
-    sessionId: z.string(),
-});
-
-export const ApiUpdateSchema = z.discriminatedUnion('t', [
-    ApiUpdateNewMessageSchema,
-    ApiUpdateNewSessionSchema,
-    ApiDeleteSessionSchema,
-    ApiUpdateSessionStateSchema,
-    ApiUpdateAccountSchema,
-    ApiUpdateMachineStateSchema,
-    ApiNewArtifactSchema,
-    ApiUpdateArtifactSchema,
-    ApiDeleteArtifactSchema,
-    ApiRelationshipUpdatedSchema,
-    ApiNewFeedPostSchema,
-    ApiKvBatchUpdateSchema,
-    ApiSessionSharedSchema,
-    ApiSessionShareUpdatedSchema,
-    ApiSessionShareRevokedSchema,
-    ApiPublicShareCreatedSchema,
-    ApiPublicShareUpdatedSchema,
-    ApiPublicShareDeletedSchema,
-]);
-
-export type ApiUpdateNewMessage = z.infer<typeof ApiUpdateNewMessageSchema>;
-export type ApiRelationshipUpdated = z.infer<typeof ApiRelationshipUpdatedSchema>;
-export type ApiKvBatchUpdate = z.infer<typeof ApiKvBatchUpdateSchema>;
+export const ApiUpdateSchema = UpdateBodySchema;
 export type ApiUpdate = z.infer<typeof ApiUpdateSchema>;
 
 //
 // API update container
 //
 
-export const ApiUpdateContainerSchema = z.object({
-    id: z.string(),
-    seq: z.number(),
-    body: ApiUpdateSchema,
-    createdAt: z.number(),
-});
-
+export const ApiUpdateContainerSchema = UpdateContainerSchema;
 export type ApiUpdateContainer = z.infer<typeof ApiUpdateContainerSchema>;
 
 //
 // Ephemeral update
 //
 
-export const ApiEphemeralActivityUpdateSchema = z.object({
-    type: z.literal('activity'),
-    id: z.string(),
-    active: z.boolean(),
-    activeAt: z.number(),
-    thinking: z.boolean(),
-});
-
-export const ApiEphemeralUsageUpdateSchema = z.object({
-    type: z.literal('usage'),
-    id: z.string(),
-    key: z.string(),
-    timestamp: z.number(),
-    tokens: z.object({
-        total: z.number(),
-        input: z.number(),
-        output: z.number(),
-        cache_creation: z.number(),
-        cache_read: z.number(),
-    }),
-    cost: z.object({
-        total: z.number(),
-        input: z.number(),
-        output: z.number(),
-    }),
-});
-
-export const ApiEphemeralMachineActivityUpdateSchema = z.object({
-    type: z.literal('machine-activity'),
-    id: z.string(), // machine id
-    active: z.boolean(),
-    activeAt: z.number(),
-});
-
-export const ApiEphemeralUpdateSchema = z.union([
-    ApiEphemeralActivityUpdateSchema,
-    ApiEphemeralUsageUpdateSchema,
-    ApiEphemeralMachineActivityUpdateSchema,
-]);
-
-export type ApiEphemeralActivityUpdate = z.infer<typeof ApiEphemeralActivityUpdateSchema>;
-export type ApiEphemeralUpdate = z.infer<typeof ApiEphemeralUpdateSchema>;
+export const ApiEphemeralUpdateSchema = EphemeralUpdateSchema;
+export type ApiEphemeralUpdate = EphemeralUpdate;
+export type ApiEphemeralActivityUpdate = Extract<ApiEphemeralUpdate, { type: 'activity' }>;
 
 // Machine metadata updates use Partial<MachineMetadata> from storageTypes
 // This matches how session metadata updates work

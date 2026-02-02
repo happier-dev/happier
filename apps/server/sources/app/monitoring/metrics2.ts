@@ -45,6 +45,40 @@ export const websocketEventsCounter = new Counter({
     registers: [register]
 });
 
+export const socketMessageAckCounter = new Counter({
+    name: 'socket_message_ack_total',
+    help: 'Total socket message acknowledgements by result',
+    labelNames: ['result', 'error'] as const,
+    registers: [register]
+});
+
+export const changesRequestsCounter = new Counter({
+    name: 'changes_requests_total',
+    help: 'Total /v2/changes requests by result',
+    labelNames: ['result'] as const,
+    registers: [register]
+});
+
+export const changesReturnedChangesCounter = new Counter({
+    name: 'changes_returned_changes_total',
+    help: 'Total number of changes entries returned by /v2/changes',
+    registers: [register]
+});
+
+export const catchupFollowupFetchesCounter = new Counter({
+    name: 'catchup_followup_fetches_total',
+    help: 'Total catch-up follow-up fetches by type',
+    labelNames: ['type'] as const,
+    registers: [register]
+});
+
+export const catchupFollowupReturnedCounter = new Counter({
+    name: 'catchup_followup_returned_total',
+    help: 'Total number of entities returned by catch-up follow-up fetches by type',
+    labelNames: ['type'] as const,
+    registers: [register]
+});
+
 export const httpRequestsCounter = new Counter({
     name: 'http_requests_total',
     help: 'Total number of HTTP requests',

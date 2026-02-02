@@ -4,6 +4,7 @@
  */
 
 import { io, Socket } from 'socket.io-client';
+import axios from 'axios';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from './types';
@@ -12,6 +13,8 @@ import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { fetchChanges } from './apiChanges';
+import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import { registerMachineRpcHandlers, type MachineRpcHandlers } from './machine/rpcHandlers';
@@ -20,6 +23,9 @@ export class ApiMachineClient {
     private socket!: Socket<ServerToDaemonEvents, DaemonToServerEvents>;
     private keepAliveInterval: NodeJS.Timeout | null = null;
     private rpcHandlerManager: RpcHandlerManager;
+    private hasConnectedOnce = false;
+    private accountIdPromise: Promise<string> | null = null;
+    private changesSyncInFlight: Promise<void> | null = null;
 
     constructor(
         private token: string,
@@ -136,6 +142,8 @@ export class ApiMachineClient {
 
         this.socket.on('connect', () => {
             logger.debug('[API MACHINE] Connected to server');
+            const isReconnect = this.hasConnectedOnce;
+            this.hasConnectedOnce = true;
 
             // Update daemon state to running
             // We need to override previous state because the daemon (this process)
@@ -151,6 +159,10 @@ export class ApiMachineClient {
 
             // Register all handlers
             this.rpcHandlerManager.onSocketConnect(this.socket);
+
+            // Catch up on coalesced account changes (optional). This is a safety net for reconnects:
+            // if we missed socket updates while disconnected, we can resync our machine state.
+            void this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' });
 
             // Start keep-alive
             this.startKeepAlive();
@@ -236,6 +248,139 @@ export class ApiMachineClient {
         if (this.socket) {
             this.socket.close();
             logger.debug('[API MACHINE] Socket closed');
+        }
+    }
+
+    private async getAccountId(): Promise<string | null> {
+        if (this.accountIdPromise) {
+            return await this.accountIdPromise.catch(() => null);
+        }
+
+        const p = (async () => {
+            const response = await axios.get(`${configuration.serverUrl}/v1/account/profile`, {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json',
+                },
+                timeout: 15_000,
+            });
+            const id = (response?.data as any)?.id;
+            if (typeof id !== 'string' || id.length === 0) {
+                throw new Error('Invalid /v1/account/profile response');
+            }
+            return id;
+        })();
+
+        this.accountIdPromise = p;
+        try {
+            return await p;
+        } catch {
+            this.accountIdPromise = null;
+            return null;
+        }
+    }
+
+    private async refreshMachineFromServer(): Promise<void> {
+        try {
+            const response = await axios.get(`${configuration.serverUrl}/v1/machines/${this.machine.id}`, {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json',
+                },
+                timeout: 15_000,
+                validateStatus: () => true,
+            });
+
+            if (response.status !== 200) {
+                return;
+            }
+
+            const raw = (response.data as any)?.machine;
+            if (!raw || typeof raw !== 'object') {
+                return;
+            }
+
+            const nextMetadata =
+                typeof raw.metadata === 'string'
+                    ? decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(raw.metadata))
+                    : null;
+            const nextMetadataVersion = typeof raw.metadataVersion === 'number' ? raw.metadataVersion : this.machine.metadataVersion;
+
+            const nextDaemonState =
+                typeof raw.daemonState === 'string'
+                    ? decrypt(this.machine.encryptionKey, this.machine.encryptionVariant, decodeBase64(raw.daemonState))
+                    : null;
+            const nextDaemonStateVersion = typeof raw.daemonStateVersion === 'number' ? raw.daemonStateVersion : this.machine.daemonStateVersion;
+
+            if (nextMetadataVersion > this.machine.metadataVersion) {
+                this.machine.metadata = nextMetadata;
+                this.machine.metadataVersion = nextMetadataVersion;
+            }
+            if (nextDaemonStateVersion > this.machine.daemonStateVersion) {
+                this.machine.daemonState = nextDaemonState;
+                this.machine.daemonStateVersion = nextDaemonStateVersion;
+            }
+        } catch (error) {
+            logger.debug('[API MACHINE] Failed to refresh machine snapshot', { error });
+        }
+    }
+
+    private async syncChangesOnConnect(opts: { reason: 'connect' | 'reconnect' }): Promise<void> {
+        const enabled = (() => {
+            const raw = process.env.HAPPY_ENABLE_V2_CHANGES;
+            if (!raw) return true;
+            return ['true', '1', 'yes'].includes(raw.toLowerCase());
+        })();
+        if (!enabled) {
+            return;
+        }
+
+        if (this.changesSyncInFlight) {
+            await this.changesSyncInFlight.catch(() => {});
+            return;
+        }
+
+        const p = (async () => {
+            const accountId = await this.getAccountId();
+            if (!accountId) return;
+
+            const CHANGES_PAGE_LIMIT = 200;
+            const after = await readLastChangesCursor(accountId);
+            const result = await fetchChanges({ token: this.token, after, limit: CHANGES_PAGE_LIMIT });
+
+            if (result.status === 'cursor-gone') {
+                await writeLastChangesCursor(accountId, result.currentCursor);
+                await this.refreshMachineFromServer();
+                return;
+            }
+            if (result.status !== 'ok') {
+                // Backwards compatibility: old servers may not support /v2/changes yet (e.g. 404).
+                // On reconnect, fall back to a snapshot refresh.
+                if (opts.reason === 'reconnect') {
+                    await this.refreshMachineFromServer();
+                }
+                return;
+            }
+
+            const changes = result.response.changes;
+            const nextCursor = result.response.nextCursor;
+
+            const hasRelevantMachineChange = changes.some(
+                (c) => c.kind === 'machine' && c.entityId === this.machine.id,
+            );
+
+            if (changes.length >= CHANGES_PAGE_LIMIT || hasRelevantMachineChange) {
+                await this.refreshMachineFromServer();
+            }
+
+            await writeLastChangesCursor(accountId, nextCursor);
+        })();
+
+        this.changesSyncInFlight = p;
+        try {
+            await p;
+        } finally {
+            this.changesSyncInFlight = null;
         }
     }
 }

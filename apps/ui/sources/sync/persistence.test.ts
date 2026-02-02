@@ -24,7 +24,20 @@ vi.mock('react-native-mmkv', () => {
     return { MMKV };
 });
 
-import { clearPersistence, loadNewSessionDraft, loadPendingSettings, savePendingSettings, loadSessionModelModes, saveSessionModelModes } from './persistence';
+import {
+    clearPersistence,
+    loadNewSessionDraft,
+    loadPendingSettings,
+    savePendingSettings,
+    loadSessionModelModes,
+    saveSessionModelModes,
+    loadSessionMaterializedMaxSeqById,
+    saveSessionMaterializedMaxSeqById,
+    loadChangesCursor,
+    saveChangesCursor,
+    loadLastChangesCursorByAccountId,
+    saveLastChangesCursorByAccountId,
+} from './persistence';
 
 describe('persistence', () => {
     beforeEach(() => {
@@ -47,6 +60,73 @@ describe('persistence', () => {
                 JSON.stringify({ abc: 'gemini-2.5-pro', bad: 'not-a-model' }),
             );
             expect(loadSessionModelModes()).toEqual({ abc: 'gemini-2.5-pro' });
+        });
+    });
+
+    describe('session materialized max seq', () => {
+        it('returns an empty object when nothing is persisted', () => {
+            expect(loadSessionMaterializedMaxSeqById()).toEqual({});
+        });
+
+        it('roundtrips session materialized max seq', () => {
+            saveSessionMaterializedMaxSeqById({ abc: 12 });
+            expect(loadSessionMaterializedMaxSeqById()).toEqual({ abc: 12 });
+        });
+
+        it('filters out invalid persisted values', () => {
+            store.set(
+                'session-materialized-max-seq-v1',
+                JSON.stringify({ ok: 5, neg: -1, nan: NaN, str: 'nope' }),
+            );
+            expect(loadSessionMaterializedMaxSeqById()).toEqual({ ok: 5 });
+        });
+    });
+
+    describe('last changes cursor', () => {
+        it('returns an empty object when nothing is persisted', () => {
+            expect(loadLastChangesCursorByAccountId()).toEqual({});
+        });
+
+        it('roundtrips last changes cursor', () => {
+            saveLastChangesCursorByAccountId({ a1: 5, a2: 9 });
+            expect(loadLastChangesCursorByAccountId()).toEqual({ a1: 5, a2: 9 });
+        });
+
+        it('filters out invalid persisted values', () => {
+            store.set(
+                'last-changes-cursor-by-account-id-v1',
+                JSON.stringify({ ok: 5, neg: -1, nan: NaN, str: 'nope' }),
+            );
+            expect(loadLastChangesCursorByAccountId()).toEqual({ ok: 5 });
+        });
+    });
+
+    describe('changes cursor (string)', () => {
+        it('returns null when no profile is persisted', () => {
+            expect(loadChangesCursor()).toBeNull();
+        });
+
+        it('roundtrips cursor per account id', () => {
+            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null, github: null }));
+            expect(loadChangesCursor()).toBeNull();
+
+            saveChangesCursor('123');
+            expect(loadChangesCursor()).toBe('123');
+        });
+
+        it('salvages cursor from the legacy numeric map', () => {
+            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null, github: null }));
+            store.set('last-changes-cursor-by-account-id-v1', JSON.stringify({ a1: 7 }));
+            expect(loadChangesCursor()).toBe('7');
+        });
+
+        it('clears the key when saving an empty cursor', () => {
+            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null, github: null }));
+            saveChangesCursor('9');
+            expect(loadChangesCursor()).toBe('9');
+
+            saveChangesCursor('');
+            expect(loadChangesCursor()).toBeNull();
         });
     });
 

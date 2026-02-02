@@ -1,57 +1,15 @@
-import { sessionAliveEventsCounter, websocketEventsCounter } from "@/app/monitoring/metrics2";
+import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCounter } from "@/app/monitoring/metrics2";
 import { activityCache } from "@/app/presence/sessionCache";
 import { buildNewMessageUpdate, buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
-import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
 import { db } from "@/storage/db";
-import { allocateSessionSeq, allocateUserSeq } from "@/storage/seq";
 import { AsyncLock } from "@/utils/lock";
 import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { Socket } from "socket.io";
+import { createSessionMessage, updateSessionAgentState, updateSessionMetadata } from "@/app/session/sessionWriteService";
+import { recordSessionAlive } from "@/app/presence/presenceRecorder";
 
 export function sessionUpdateHandler(userId: string, socket: Socket, connection: ClientConnection) {
-    const getSessionParticipantUserIds = async (sessionId: string): Promise<string[]> => {
-        const session = await db.session.findUnique({
-            where: { id: sessionId },
-            select: {
-                accountId: true,
-                shares: {
-                    select: {
-                        sharedWithUserId: true
-                    }
-                }
-            }
-        });
-        if (!session) {
-            return [];
-        }
-        const ids = new Set<string>();
-        ids.add(session.accountId);
-        for (const share of session.shares) {
-            ids.add(share.sharedWithUserId);
-        }
-        return Array.from(ids);
-    };
-
-    const emitUpdateToSessionParticipants = async (params: {
-        sessionId: string;
-        senderUserId: string;
-        skipSenderConnection?: ClientConnection;
-        buildPayload: (updateSeq: number, updateId: string) => any;
-    }): Promise<void> => {
-        const participantUserIds = await getSessionParticipantUserIds(params.sessionId);
-        await Promise.all(participantUserIds.map(async (participantUserId) => {
-            const updSeq = await allocateUserSeq(participantUserId);
-            const payload = params.buildPayload(updSeq, randomKeyNaked(12));
-            eventRouter.emitUpdate({
-                userId: participantUserId,
-                payload,
-                recipientFilter: { type: 'all-interested-in-session', sessionId: params.sessionId },
-                skipSenderConnection: participantUserId === params.senderUserId ? params.skipSenderConnection : undefined
-            });
-        }));
-    };
-
     socket.on('update-metadata', async (data: any, callback: (response: any) => void) => {
         try {
             const { sid, metadata, expectedVersion } = data;
@@ -64,57 +22,43 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 return;
             }
 
-            // Resolve session
-            const access = await checkSessionAccess(userId, sid);
-            if (!access || !requireAccessLevel(access, 'edit')) {
-                if (callback) {
-                    callback({ result: 'forbidden' });
-                }
-                return;
-            }
-            const session = await db.session.findUnique({
-                where: { id: sid }
-            });
-            if (!session) {
-                if (callback) {
-                    callback({ result: 'error' });
-                }
-                return;
-            }
-
-            // Check version
-            if (session.metadataVersion !== expectedVersion) {
-                callback({ result: 'version-mismatch', version: session.metadataVersion, metadata: session.metadata });
-                return null;
-            }
-
-            // Update metadata
-            const { count } = await db.session.updateMany({
-                where: { id: sid, metadataVersion: expectedVersion },
-                data: {
-                    metadata: metadata,
-                    metadataVersion: expectedVersion + 1
-                }
-            });
-            if (count === 0) {
-                callback({ result: 'version-mismatch', version: session.metadataVersion, metadata: session.metadata });
-                return null;
-            }
-
-            // Generate session metadata update
-            const metadataUpdate = {
-                value: metadata,
-                version: expectedVersion + 1
-            };
-            await emitUpdateToSessionParticipants({
+            const result = await updateSessionMetadata({
+                actorUserId: userId,
                 sessionId: sid,
-                senderUserId: userId,
-                skipSenderConnection: connection,
-                buildPayload: (updSeq, updId) => buildUpdateSessionUpdate(sid, updSeq, updId, metadataUpdate)
+                expectedVersion,
+                metadataCiphertext: metadata,
             });
 
-            // Send success response with new version via callback
-            callback({ result: 'success', version: expectedVersion + 1, metadata: metadata });
+            if (!result.ok) {
+                if (result.error === 'forbidden') {
+                    callback?.({ result: 'forbidden' });
+                    return;
+                }
+                if (result.error === 'version-mismatch') {
+                    if (!result.current) {
+                        log({ module: 'websocket', level: 'error' }, `update-metadata version-mismatch without current state (sid=${sid})`);
+                        callback?.({ result: 'error' });
+                        return;
+                    }
+                    callback?.({ result: 'version-mismatch', version: result.current.version, metadata: result.current.metadata });
+                    return;
+                }
+                callback?.({ result: 'error' });
+                return;
+            }
+
+            const metadataUpdate = { value: result.metadata, version: result.version };
+            await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+                const payload = buildUpdateSessionUpdate(sid, cursor, randomKeyNaked(12), metadataUpdate);
+                eventRouter.emitUpdate({
+                    userId: accountId,
+                    payload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
+                    skipSenderConnection: accountId === userId ? connection : undefined,
+                });
+            }));
+
+            callback?.({ result: 'success', version: result.version, metadata: result.metadata });
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in update-metadata: ${error}`);
             if (callback) {
@@ -135,53 +79,43 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 return;
             }
 
-            // Resolve session
-            const access = await checkSessionAccess(userId, sid);
-            if (!access || !requireAccessLevel(access, 'edit')) {
-                callback({ result: 'forbidden' });
-                return;
-            }
-            const session = await db.session.findUnique({
-                where: { id: sid }
-            });
-            if (!session) {
-                callback({ result: 'error' });
-                return;
-            }
-
-            // Check version
-            if (session.agentStateVersion !== expectedVersion) {
-                callback({ result: 'version-mismatch', version: session.agentStateVersion, agentState: session.agentState });
-                return null;
-            }
-
-            // Update agent state
-            const { count } = await db.session.updateMany({
-                where: { id: sid, agentStateVersion: expectedVersion },
-                data: {
-                    agentState: agentState,
-                    agentStateVersion: expectedVersion + 1
-                }
-            });
-            if (count === 0) {
-                callback({ result: 'version-mismatch', version: session.agentStateVersion, agentState: session.agentState });
-                return null;
-            }
-
-            // Generate session agent state update
-            const agentStateUpdate = {
-                value: agentState,
-                version: expectedVersion + 1
-            };
-            await emitUpdateToSessionParticipants({
+            const result = await updateSessionAgentState({
+                actorUserId: userId,
                 sessionId: sid,
-                senderUserId: userId,
-                skipSenderConnection: connection,
-                buildPayload: (updSeq, updId) => buildUpdateSessionUpdate(sid, updSeq, updId, undefined, agentStateUpdate)
+                expectedVersion,
+                agentStateCiphertext: agentState,
             });
 
-            // Send success response with new version via callback
-            callback({ result: 'success', version: expectedVersion + 1, agentState: agentState });
+            if (!result.ok) {
+                if (result.error === 'forbidden') {
+                    callback?.({ result: 'forbidden' });
+                    return;
+                }
+                if (result.error === 'version-mismatch') {
+                    if (!result.current) {
+                        log({ module: 'websocket', level: 'error' }, `update-state version-mismatch without current state (sid=${sid})`);
+                        callback?.({ result: 'error' });
+                        return;
+                    }
+                    callback?.({ result: 'version-mismatch', version: result.current.version, agentState: result.current.agentState });
+                    return;
+                }
+                callback?.({ result: 'error' });
+                return;
+            }
+
+            const agentStateUpdate = { value: result.agentState, version: result.version };
+            await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+                const payload = buildUpdateSessionUpdate(sid, cursor, randomKeyNaked(12), undefined, agentStateUpdate);
+                eventRouter.emitUpdate({
+                    userId: accountId,
+                    payload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
+                    skipSenderConnection: accountId === userId ? connection : undefined,
+                });
+            }));
+
+            callback?.({ result: 'success', version: result.version, agentState: result.agentState });
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in update-state: ${error}`);
             if (callback) {
@@ -221,7 +155,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             }
 
             // Queue database update (will only update if time difference is significant)
-            activityCache.queueSessionUpdate(sid, userId, t);
+            await recordSessionAlive({ accountId: userId, sessionId: sid, timestamp: t });
 
             // Emit session activity update
             const sessionActivity = buildSessionActivityEphemeral(sid, true, t, thinking || false);
@@ -236,65 +170,64 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
     });
 
     const receiveMessageLock = new AsyncLock();
-    socket.on('message', async (data: any) => {
+    socket.on('message', async (data: any, callback?: (response: any) => void) => {
         await receiveMessageLock.inLock(async () => {
+            const respond = (response: any) => {
+                if (typeof callback === 'function') {
+                    callback(response);
+                }
+            };
+
             try {
                 websocketEventsCounter.inc({ event_type: 'message' });
-                const { sid, message, localId } = data;
+                const sid = typeof data?.sid === 'string' ? data.sid : null;
+                const message = typeof data?.message === 'string' ? data.message : null;
+                const localId = typeof data?.localId === 'string' ? data.localId : null;
 
-                log({ module: 'websocket' }, `Received message from socket ${socket.id}: sessionId=${sid}, messageLength=${message.length} bytes, connectionType=${connection.connectionType}, connectionSessionId=${connection.connectionType === 'session-scoped' ? connection.sessionId : 'N/A'}`);
-
-                // Resolve session
-                const access = await checkSessionAccess(userId, sid);
-                if (!access || !requireAccessLevel(access, 'edit')) {
+                if (!sid || !message) {
+                    socketMessageAckCounter.inc({ result: 'error', error: 'invalid-params' });
+                    respond({ ok: false, error: 'invalid-params' });
                     return;
                 }
-                const session = await db.session.findUnique({
-                    where: { id: sid }
-                });
-                if (!session) {
-                    return;
-                }
-                let useLocalId = typeof localId === 'string' ? localId : null;
 
-                // Create encrypted message
-                const msgContent: PrismaJson.SessionMessageContent = {
-                    t: 'encrypted',
-                    c: message
-                };
+                log(
+                    { module: 'websocket' },
+                    `Received message from socket ${socket.id}: sessionId=${sid}, messageLength=${message.length} bytes, connectionType=${connection.connectionType}, connectionSessionId=${connection.connectionType === 'session-scoped' ? connection.sessionId : 'N/A'}`
+                );
 
-                // Resolve seq
-                const msgSeq = await allocateSessionSeq(sid);
-
-                // Check if message already exists
-                if (useLocalId) {
-                    const existing = await db.sessionMessage.findFirst({
-                        where: { sessionId: sid, localId: useLocalId }
-                    });
-                    if (existing) {
-                        return { msg: existing, update: null };
-                    }
-                }
-
-                // Create message
-                const msg = await db.sessionMessage.create({
-                    data: {
-                        sessionId: sid,
-                        seq: msgSeq,
-                        content: msgContent,
-                        localId: useLocalId
-                    }
-                });
-
-                // Emit new message update to relevant clients
-                await emitUpdateToSessionParticipants({
+                const result = await createSessionMessage({
+                    actorUserId: userId,
                     sessionId: sid,
-                    senderUserId: userId,
-                    skipSenderConnection: connection,
-                    buildPayload: (updSeq, updId) => buildNewMessageUpdate(msg, sid, updSeq, updId)
+                    ciphertext: message,
+                    localId,
                 });
+
+                if (!result.ok) {
+                    socketMessageAckCounter.inc({ result: 'error', error: result.error });
+                    respond({ ok: false, error: result.error });
+                    return;
+                }
+
+                socketMessageAckCounter.inc({ result: 'ok', error: 'none' });
+                respond({ ok: true, id: result.message.id, seq: result.message.seq, localId: result.message.localId });
+
+                if (result.didWrite === false) {
+                    return;
+                }
+
+                await Promise.all(result.participantCursors.map(async ({ accountId: participantUserId, cursor }) => {
+                    const payload = buildNewMessageUpdate(result.message, sid, cursor, randomKeyNaked(12));
+                    eventRouter.emitUpdate({
+                        userId: participantUserId,
+                        payload,
+                        recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
+                        skipSenderConnection: participantUserId === userId ? connection : undefined,
+                    });
+                }));
             } catch (error) {
                 log({ module: 'websocket', level: 'error' }, `Error in message handler: ${error}`);
+                socketMessageAckCounter.inc({ result: 'error', error: 'internal' });
+                respond({ ok: false, error: 'internal' });
             }
         });
     });

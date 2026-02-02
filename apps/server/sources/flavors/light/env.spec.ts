@@ -12,12 +12,15 @@ describe('light env helpers', () => {
             PUBLIC_URL: 'http://example.com/',
             HAPPY_SERVER_LIGHT_DATA_DIR: '/custom/data',
             HAPPY_SERVER_LIGHT_FILES_DIR: '/custom/files',
+            HAPPY_SERVER_LIGHT_DB_DIR: '/custom/db',
         };
 
         applyLightDefaultEnv(env, { homedir: '/home/ignored' });
 
         expect(env.HAPPY_SERVER_LIGHT_DATA_DIR).toBe('/custom/data');
         expect(env.HAPPY_SERVER_LIGHT_FILES_DIR).toBe('/custom/files');
+        expect(env.HAPPY_SERVER_LIGHT_DB_DIR).toBe('/custom/db');
+        // DATABASE_URL is not managed by the light env helpers anymore (pglite runtime assigns it).
         expect(env.DATABASE_URL).toBe('file:/custom.sqlite');
         expect(env.PUBLIC_URL).toBe('http://example.com');
     });
@@ -28,7 +31,8 @@ describe('light env helpers', () => {
 
         expect(env.HAPPY_SERVER_LIGHT_DATA_DIR).toBe('/home/test/.happy/server-light');
         expect(env.HAPPY_SERVER_LIGHT_FILES_DIR).toBe('/home/test/.happy/server-light/files');
-        expect(env.DATABASE_URL).toBe('file:///home/test/.happy/server-light/happy-server-light.sqlite');
+        expect(env.HAPPY_SERVER_LIGHT_DB_DIR).toBe('/home/test/.happy/server-light/pglite');
+        expect(env.DATABASE_URL).toBeUndefined();
         expect(env.PUBLIC_URL).toBe('http://localhost:4000');
     });
 

@@ -1,9 +1,10 @@
 import { db } from "@/storage/db";
 import { Context } from "@/context";
 import { log } from "@/utils/log";
-import { allocateUserSeq } from "@/storage/seq";
 import { buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { afterTx, inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 /**
  * Disconnects a GitHub account from a user profile.
@@ -34,7 +35,7 @@ export async function githubDisconnect(ctx: Context): Promise<void> {
     log({ module: 'github-disconnect' }, `Disconnecting GitHub account ${githubUserId} from user ${userId}`);
 
     // Step 2: Transaction for atomic database operations
-    await db.$transaction(async (tx) => {
+    await inTx(async (tx) => {
         // Clear GitHub connection and username from account (keep avatar)
         await tx.account.update({
             where: { id: userId },
@@ -48,19 +49,21 @@ export async function githubDisconnect(ctx: Context): Promise<void> {
         await tx.githubUser.delete({
             where: { id: githubUserId }
         });
-    });
 
-    // Step 3: Send update via socket (after transaction completes)
-    const updSeq = await allocateUserSeq(userId);
-    const updatePayload = buildUpdateAccountUpdate(userId, {
-        github: null,
-        username: null
-    }, updSeq, randomKeyNaked(12));
+        const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'account', entityId: 'self', hint: { github: false } });
 
-    eventRouter.emitUpdate({
-        userId,
-        payload: updatePayload,
-        recipientFilter: { type: 'user-scoped-only' }
+        afterTx(tx, () => {
+            const updatePayload = buildUpdateAccountUpdate(userId, {
+                github: null,
+                username: null
+            }, cursor, randomKeyNaked(12));
+
+            eventRouter.emitUpdate({
+                userId,
+                payload: updatePayload,
+                recipientFilter: { type: 'user-scoped-only' }
+            });
+        });
     });
 
     log({ module: 'github-disconnect' }, `GitHub account ${githubUserId} disconnected successfully from user ${userId}`);

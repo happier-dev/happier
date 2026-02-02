@@ -205,9 +205,9 @@ async function importMessageDeltas(
     });
 
     if (msg.role === 'user') {
-      params.session.sendUserTextMessage(msg.text, { localId, meta: { importedFrom: 'acp-history' } });
+      await params.session.sendUserTextMessageCommitted(msg.text, { localId, meta: { importedFrom: 'acp-history' } });
     } else {
-      params.session.sendAgentMessage(
+      await params.session.sendAgentMessageCommitted(
         params.provider,
         { type: 'message', message: msg.text },
         { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
@@ -251,9 +251,9 @@ async function importFullReplay(
         key: `${event.role}:${event.text}`,
       });
       if (event.role === 'user') {
-        params.session.sendUserTextMessage(event.text, { localId, meta: { importedFrom: 'acp-history' } });
+        await params.session.sendUserTextMessageCommitted(event.text, { localId, meta: { importedFrom: 'acp-history' } });
       } else {
-        params.session.sendAgentMessage(
+        await params.session.sendAgentMessageCommitted(
           params.provider,
           { type: 'message', message: event.text },
           { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
@@ -269,7 +269,7 @@ async function importFullReplay(
         index: i,
         key: `tool_call:${event.toolCallId}:${event.kind ?? ''}:${JSON.stringify(event.rawInput ?? null)}`,
       });
-      params.session.sendAgentMessage(
+      await params.session.sendAgentMessageCommitted(
         params.provider,
         {
           type: 'tool-call',
@@ -291,7 +291,7 @@ async function importFullReplay(
         key: `tool_result:${event.toolCallId}:${event.status ?? ''}:${JSON.stringify(event.rawOutput ?? event.content ?? null)}`,
       });
       const isError = event.status === 'error' || event.status === 'failed';
-      params.session.sendAgentMessage(
+      await params.session.sendAgentMessageCommitted(
         params.provider,
         {
           type: 'tool-result',

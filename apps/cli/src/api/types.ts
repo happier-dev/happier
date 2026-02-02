@@ -1,6 +1,22 @@
 import { z } from 'zod'
 import { UsageSchema } from '@/api/usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
+import {
+  EphemeralUpdateSchema,
+  MessageAckResponseSchema,
+  SessionBroadcastContainerSchema,
+  UpdateBodySchema as ProtocolUpdateBodySchema,
+  UpdateContainerSchema as ProtocolUpdateContainerSchema,
+  UpdateMetadataAckResponseSchema,
+  UpdateStateAckResponseSchema,
+  type EphemeralUpdate,
+  type MessageAckResponse,
+  type SessionBroadcastContainer,
+  type UpdateBody as ProtocolUpdateBody,
+  type UpdateContainer as ProtocolUpdateContainer,
+  type UpdateMetadataAckResponse,
+  type UpdateStateAckResponse,
+} from '@happier-dev/protocol/updates'
 
 /**
  * Permission mode values - includes both Claude and Codex modes
@@ -70,86 +86,30 @@ export const SessionMessageContentSchema = z.object({
 export type SessionMessageContent = z.infer<typeof SessionMessageContentSchema>
 
 /**
- * Update body for new messages
+ * Update events
  */
-export const UpdateBodySchema = z.object({
-  message: z.object({
-    id: z.string(),
-    seq: z.number(),
-    localId: z.string().nullish().optional(),
-    content: SessionMessageContentSchema
-  }),
-  sid: z.string(), // Session ID
-  t: z.literal('new-message')
-})
+export const UpdateBodySchema = ProtocolUpdateBodySchema
+export type UpdateBody = ProtocolUpdateBody
 
-export type UpdateBody = z.infer<typeof UpdateBodySchema>
+export const UpdateSchema = ProtocolUpdateContainerSchema
+export type Update = ProtocolUpdateContainer
 
-export const UpdateSessionBodySchema = z.object({
-  t: z.literal('update-session'),
-  // Server payloads historically used `sid`, but some deployments send `id`.
-  sid: z.string().optional(),
-  id: z.string().optional(),
-  metadata: z.object({
-    version: z.number(),
-    value: z.string()
-  }).nullish(),
-  agentState: z.object({
-    version: z.number(),
-    value: z.string()
-  }).nullish()
-}).superRefine((value, ctx) => {
-  if (!value.sid && !value.id) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Missing session id (sid/id)' })
-  }
-})
+export type UpdateMachineBody = Extract<Update['body'], { t: 'update-machine' }>
 
-export type UpdateSessionBody = z.infer<typeof UpdateSessionBodySchema>
-
-/**
- * Update body for machine updates
- */
-export const UpdateMachineBodySchema = z.object({
-  t: z.literal('update-machine'),
-  machineId: z.string(),
-  metadata: z.object({
-    version: z.number(),
-    value: z.string()
-  }).nullish(),
-  daemonState: z.object({
-    version: z.number(),
-    value: z.string()
-  }).nullish()
-})
-
-export type UpdateMachineBody = z.infer<typeof UpdateMachineBodySchema>
-
-/**
- * Update event from server
- */
-export const UpdateSchema = z.object({
-  id: z.string(),
-  seq: z.number(),
-  body: z.union([
-    UpdateBodySchema,
-    UpdateSessionBodySchema,
-    UpdateMachineBodySchema,
-  ]),
-  createdAt: z.number()
-})
-
-export type Update = z.infer<typeof UpdateSchema>
+export const SessionBroadcastSchema = SessionBroadcastContainerSchema
+export type SessionBroadcast = SessionBroadcastContainer
 
 /**
  * Socket events from server to client
  */
 export interface ServerToClientEvents {
   update: (data: Update) => void
+  session: (data: SessionBroadcast) => void
   [SOCKET_RPC_EVENTS.REQUEST]: (data: { method: string, params: string }, callback: (response: string) => void) => void
   [SOCKET_RPC_EVENTS.REGISTERED]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTERED]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.ERROR]: (data: { type: string, error: string }) => void
-  ephemeral: (data: { type: 'activity', id: string, active: boolean, activeAt: number, thinking: boolean }) => void
+  ephemeral: (data: EphemeralUpdate) => void
   auth: (data: { success: boolean, user: string }) => void
   error: (data: { message: string }) => void
 }
@@ -159,7 +119,10 @@ export interface ServerToClientEvents {
  * Socket events from client to server
  */
 export interface ClientToServerEvents {
-  message: (data: { sid: string, message: any, localId?: string | null }) => void
+  message: (
+    data: { sid: string, message: any, localId?: string | null },
+    cb?: (answer: MessageAckResponse) => void
+  ) => void
   'session-alive': (data: {
     sid: string;
     time: number;
@@ -167,28 +130,8 @@ export interface ClientToServerEvents {
     mode?: 'local' | 'remote';
   }) => void
   'session-end': (data: { sid: string, time: number }) => void,
-  'update-metadata': (data: { sid: string, expectedVersion: number, metadata: string }, cb: (answer: {
-    result: 'error'
-  } | {
-    result: 'version-mismatch'
-    version: number,
-    metadata: string
-  } | {
-    result: 'success',
-    version: number,
-    metadata: string
-  }) => void) => void,
-  'update-state': (data: { sid: string, expectedVersion: number, agentState: string | null }, cb: (answer: {
-    result: 'error'
-  } | {
-    result: 'version-mismatch'
-    version: number,
-    agentState: string | null
-  } | {
-    result: 'success',
-    version: number,
-    agentState: string | null
-  }) => void) => void,
+  'update-metadata': (data: { sid: string, expectedVersion: number, metadata: string }, cb: (answer: UpdateMetadataAckResponse) => void) => void,
+  'update-state': (data: { sid: string, expectedVersion: number, agentState: string | null }, cb: (answer: UpdateStateAckResponse) => void) => void,
   'ping': (callback: () => void) => void
   [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void
@@ -210,6 +153,13 @@ export interface ClientToServerEvents {
     }
   }) => void
 }
+
+export {
+  EphemeralUpdateSchema,
+  MessageAckResponseSchema,
+  UpdateMetadataAckResponseSchema,
+  UpdateStateAckResponseSchema,
+};
 
 /**
  * Session information

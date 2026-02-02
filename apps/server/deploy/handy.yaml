@@ -8,7 +8,8 @@ spec:
     rollingUpdate:
       maxUnavailable: 0
       maxSurge: 1
-  replicas: 1
+  # Scale API replicas to use more cores / handle more websocket clients.
+  replicas: 2
   selector:
     matchLabels:
       app: handy-server
@@ -26,11 +27,27 @@ spec:
         image: docker.korshakov.com/handy-server:{version}
         ports:
         - containerPort: 3005
+        - containerPort: 9090
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+          limits:
+            cpu: "2"
+            memory: "2Gi"
         env:
         - name: NODE_ENV
           value: production
         - name: PORT
           value: "3005"
+        - name: SERVER_ROLE
+          value: api
+        - name: HAPPY_SOCKET_REDIS_ADAPTER
+          value: "1"
+        - name: HAPPY_INSTANCE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
         - name: REDIS_URL
           value: redis://happy-redis:6379
         - name: S3_PUBLIC_URL
@@ -50,6 +67,76 @@ spec:
           httpGet:
             path: /health
             port: 3005
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: handy-worker
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  replicas: 1
+  selector:
+    matchLabels:
+      app: handy-worker
+  template:
+    metadata:
+      labels:
+        app: handy-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: handy-worker
+        image: docker.korshakov.com/handy-server:{version}
+        ports:
+        - containerPort: 9090
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "1"
+            memory: "1Gi"
+        env:
+        - name: NODE_ENV
+          value: production
+        - name: SERVER_ROLE
+          value: worker
+        - name: HAPPY_SOCKET_REDIS_ADAPTER
+          value: "1"
+        - name: HAPPY_INSTANCE_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: REDIS_URL
+          value: redis://happy-redis:6379
+        - name: S3_PUBLIC_URL
+          value: https://files.cluster-fluster.com/happy
+        envFrom:
+        - secretRef:
+            name: handy-secrets
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9090
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9090
           initialDelaySeconds: 5
           periodSeconds: 5
           timeoutSeconds: 3

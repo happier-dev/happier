@@ -1,4 +1,4 @@
-import { Socket } from "socket.io";
+import { Server, Socket } from "socket.io";
 import { log } from "@/utils/log";
 import { GitHubProfile } from "@/app/api/types";
 import { AccountProfile } from "@/types";
@@ -33,7 +33,9 @@ export type ClientConnection = SessionScopedConnection | UserScopedConnection | 
 export type RecipientFilter =
     | { type: 'all-interested-in-session'; sessionId: string }
     | { type: 'user-scoped-only' }
-    | { type: 'machine-scoped-only'; machineId: string }  // For update-machine: sends to user-scoped + only the specific machine
+    // Note: despite the name, this intentionally includes the user's `user-scoped:*` room as well as their per-account
+    // machine room. This avoids relying on the global `user:*` room for machine-daemon connections.
+    | { type: 'machine-scoped-only'; machineId: string }
     | { type: 'all-user-authenticated-connections' };
 
 // === UPDATE EVENT TYPES (Persistent) ===
@@ -246,6 +248,8 @@ export interface EphemeralPayload {
 
 class EventRouter {
     private userConnections = new Map<string, Set<ClientConnection>>();
+    private io: Server | null = null;
+    private warnedNoIo = false;
 
     // === CONNECTION MANAGEMENT ===
 
@@ -268,6 +272,16 @@ class EventRouter {
 
     getConnections(userId: string): Set<ClientConnection> | undefined {
         return this.userConnections.get(userId);
+    }
+
+    // === SOCKET.IO ADAPTER (ROOM-BASED FANOUT) ===
+
+    setIo(io: Server): void {
+        this.io = io;
+    }
+
+    clearIo(): void {
+        this.io = null;
     }
 
     // === EVENT EMISSION METHODS ===
@@ -350,6 +364,25 @@ class EventRouter {
         recipientFilter: RecipientFilter;
         skipSenderConnection?: ClientConnection;
     }): void {
+        if (this.io) {
+            const skipSocketId = params.skipSenderConnection?.socket?.id;
+            const emitter = this.getEmitterForFilter(params.userId, params.recipientFilter);
+            if (skipSocketId && typeof (emitter as any).except === "function") {
+                (emitter as any).except(skipSocketId).emit(params.eventName, params.payload);
+            } else {
+                emitter.emit(params.eventName, params.payload);
+            }
+            return;
+        }
+
+        if (process.env.HAPPY_SOCKET_ROOMS_ONLY === "1") {
+            throw new Error("EventRouter: Socket.IO server (io) is not initialized (HAPPY_SOCKET_ROOMS_ONLY=1)");
+        }
+        if (!this.warnedNoIo) {
+            this.warnedNoIo = true;
+            log({ module: 'websocket', level: 'warn' }, "EventRouter: io not initialized; falling back to in-memory routing (single-process only)");
+        }
+
         const connections = this.userConnections.get(params.userId);
         if (!connections) {
             log({ module: 'websocket', level: 'warn' }, `No connections found for user ${params.userId}`);
@@ -368,6 +401,31 @@ class EventRouter {
             }
 
             connection.socket.emit(params.eventName, params.payload);
+        }
+    }
+
+    private getEmitterForFilter(userId: string, filter: RecipientFilter): any {
+        if (!this.io) {
+            throw new Error("EventRouter.getEmitterForFilter called without io");
+        }
+
+        switch (filter.type) {
+            case "all-interested-in-session": {
+                // `update` containers are per-account (cursor + possibly recipient-specific data).
+                // Never emit them to the shared `session:${sessionId}` room. Use the per-account session room instead.
+                const rooms = [`session:${filter.sessionId}:${userId}`, `user-scoped:${userId}`];
+                return this.io.to(rooms);
+            }
+            case "user-scoped-only":
+                return this.io.to(`user-scoped:${userId}`);
+            case "machine-scoped-only": {
+                const rooms = [`machine:${filter.machineId}:${userId}`, `user-scoped:${userId}`];
+                return this.io.to(rooms);
+            }
+            case "all-user-authenticated-connections":
+                return this.io.to(`user:${userId}`);
+            default:
+                return this.io.to(`user:${userId}`);
         }
     }
 }
@@ -395,6 +453,8 @@ export function buildNewSessionUpdate(session: {
         body: {
             t: 'new-session',
             id: session.id,
+            // Compatibility: some clients use `sid` for sessionId.
+            sid: session.id,
             seq: session.seq,
             metadata: session.metadata,
             metadataVersion: session.metadataVersion,
@@ -424,6 +484,8 @@ export function buildNewMessageUpdate(message: {
         body: {
             t: 'new-message',
             sid: sessionId,
+            // Compatibility: some clients use `id` for sessionId.
+            id: sessionId,
             message: {
                 id: message.id,
                 seq: message.seq,
@@ -437,13 +499,21 @@ export function buildNewMessageUpdate(message: {
     };
 }
 
-export function buildUpdateSessionUpdate(sessionId: string, updateSeq: number, updateId: string, metadata?: { value: string; version: number }, agentState?: { value: string; version: number }): UpdatePayload {
+export function buildUpdateSessionUpdate(
+    sessionId: string,
+    updateSeq: number,
+    updateId: string,
+    metadata?: { value: string | null; version: number },
+    agentState?: { value: string | null; version: number },
+): UpdatePayload {
     return {
         id: updateId,
         seq: updateSeq,
         body: {
             t: 'update-session',
             id: sessionId,
+            // Compatibility: some clients use `sid` for sessionId.
+            sid: sessionId,
             metadata,
             agentState
         },
@@ -457,7 +527,9 @@ export function buildDeleteSessionUpdate(sessionId: string, updateSeq: number, u
         seq: updateSeq,
         body: {
             t: 'delete-session',
-            sid: sessionId
+            sid: sessionId,
+            // Compatibility: some clients use `id` for sessionId.
+            id: sessionId
         },
         createdAt: Date.now()
     };
@@ -696,6 +768,8 @@ export function buildSessionSharedUpdate(share: {
         body: {
             t: 'session-shared',
             sessionId: share.sessionId,
+            // Compatibility: some clients use `sid` for sessionId.
+            sid: share.sessionId,
             shareId: share.id,
             sharedBy: share.sharedByUser,
             accessLevel: share.accessLevel,
@@ -720,6 +794,8 @@ export function buildSessionShareUpdatedUpdate(
         body: {
             t: 'session-share-updated',
             sessionId,
+            // Compatibility: some clients use `sid` for sessionId.
+            sid: sessionId,
             shareId,
             accessLevel,
             updatedAt: updatedAt.getTime()
@@ -740,6 +816,8 @@ export function buildSessionShareRevokedUpdate(
         body: {
             t: 'session-share-revoked',
             sessionId,
+            // Compatibility: some clients use `sid` for sessionId.
+            sid: sessionId,
             shareId
         },
         createdAt: Date.now()
@@ -761,6 +839,8 @@ export function buildPublicShareCreatedUpdate(publicShare: {
         body: {
             t: 'public-share-created',
             sessionId: publicShare.sessionId,
+            // Compatibility: some clients use `sid` for sessionId.
+            sid: publicShare.sessionId,
             publicShareId: publicShare.id,
             token: publicShare.token,
             expiresAt: publicShare.expiresAt?.getTime() ?? null,
@@ -786,6 +866,8 @@ export function buildPublicShareUpdatedUpdate(publicShare: {
         body: {
             t: 'public-share-updated',
             sessionId: publicShare.sessionId,
+            // Compatibility: some clients use `sid` for sessionId.
+            sid: publicShare.sessionId,
             publicShareId: publicShare.id,
             expiresAt: publicShare.expiresAt?.getTime() ?? null,
             maxUses: publicShare.maxUses,
@@ -806,7 +888,9 @@ export function buildPublicShareDeletedUpdate(
         seq: updateSeq,
         body: {
             t: 'public-share-deleted',
-            sessionId
+            sessionId,
+            // Compatibility: some clients use `sid` for sessionId.
+            sid: sessionId
         },
         createdAt: Date.now()
     };

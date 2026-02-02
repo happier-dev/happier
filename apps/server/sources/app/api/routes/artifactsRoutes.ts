@@ -3,9 +3,9 @@ import { db } from "@/storage/db";
 import { Fastify } from "../types";
 import { z } from "zod";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
-import { allocateUserSeq } from "@/storage/seq";
 import { log } from "@/utils/log";
 import * as privacyKit from "privacy-kit";
+import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";
 
 export function artifactsRoutes(app: Fastify) {
     // GET /v1/artifacts - List all artifacts for the account
@@ -155,68 +155,45 @@ export function artifactsRoutes(app: Fastify) {
         const { id, header, body, dataEncryptionKey } = request.body;
 
         try {
-            // Check if artifact exists
-            const existingArtifact = await db.artifact.findUnique({
-                where: { id }
+            log({ module: 'api', artifactId: id, userId }, 'Creating artifact');
+            const result = await createArtifact({
+                actorUserId: userId,
+                artifactId: id,
+                header: privacyKit.decodeBase64(header),
+                body: privacyKit.decodeBase64(body),
+                dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
             });
 
-            if (existingArtifact) {
-                // If exists for another account, return conflict
-                if (existingArtifact.accountId !== userId) {
-                    return reply.code(409).send({ 
-                        error: 'Artifact with this ID already exists for another account' 
+            if (!result.ok) {
+                if (result.error === 'conflict') {
+                    return reply.code(409).send({
+                        error: 'Artifact with this ID already exists for another account'
                     });
                 }
-                
-                // If exists for same account, return existing (idempotent)
-                log({ module: 'api', artifactId: id, userId }, 'Found existing artifact');
-                return reply.send({
-                    id: existingArtifact.id,
-                    header: privacyKit.encodeBase64(existingArtifact.header),
-                    headerVersion: existingArtifact.headerVersion,
-                    body: privacyKit.encodeBase64(existingArtifact.body),
-                    bodyVersion: existingArtifact.bodyVersion,
-                    dataEncryptionKey: privacyKit.encodeBase64(existingArtifact.dataEncryptionKey),
-                    seq: existingArtifact.seq,
-                    createdAt: existingArtifact.createdAt.getTime(),
-                    updatedAt: existingArtifact.updatedAt.getTime()
-                });
+                return reply.code(500).send({ error: 'Failed to create artifact' });
             }
 
-            // Create new artifact
-            log({ module: 'api', artifactId: id, userId }, 'Creating new artifact');
-            const artifact = await db.artifact.create({
-                data: {
-                    id,
-                    accountId: userId,
-                    header: privacyKit.decodeBase64(header),
-                    headerVersion: 1,
-                    body: privacyKit.decodeBase64(body),
-                    bodyVersion: 1,
-                    dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
-                    seq: 0
-                }
-            });
-
-            // Emit new-artifact event
-            const updSeq = await allocateUserSeq(userId);
-            const newArtifactPayload = buildNewArtifactUpdate(artifact, updSeq, randomKeyNaked(12));
-            eventRouter.emitUpdate({
-                userId,
-                payload: newArtifactPayload,
-                recipientFilter: { type: 'user-scoped-only' }
-            });
+            if (result.didWrite) {
+                const newArtifactPayload = buildNewArtifactUpdate(result.artifact, result.cursor, randomKeyNaked(12));
+                eventRouter.emitUpdate({
+                    userId,
+                    payload: newArtifactPayload,
+                    recipientFilter: { type: 'user-scoped-only' }
+                });
+            } else {
+                log({ module: 'api', artifactId: id, userId }, 'Found existing artifact');
+            }
 
             return reply.send({
-                id: artifact.id,
-                header: privacyKit.encodeBase64(artifact.header),
-                headerVersion: artifact.headerVersion,
-                body: privacyKit.encodeBase64(artifact.body),
-                bodyVersion: artifact.bodyVersion,
-                dataEncryptionKey: privacyKit.encodeBase64(artifact.dataEncryptionKey),
-                seq: artifact.seq,
-                createdAt: artifact.createdAt.getTime(),
-                updatedAt: artifact.updatedAt.getTime()
+                id: result.artifact.id,
+                header: Buffer.from(result.artifact.header).toString('base64'),
+                headerVersion: result.artifact.headerVersion,
+                body: Buffer.from(result.artifact.body).toString('base64'),
+                bodyVersion: result.artifact.bodyVersion,
+                dataEncryptionKey: Buffer.from(result.artifact.dataEncryptionKey).toString('base64'),
+                seq: result.artifact.seq,
+                createdAt: result.artifact.createdAt.getTime(),
+                updatedAt: result.artifact.updatedAt.getTime()
             });
         } catch (error) {
             log({ module: 'api', level: 'error' }, `Failed to create artifact: ${error}`);
@@ -253,6 +230,9 @@ export function artifactsRoutes(app: Fastify) {
                         currentBody: z.string().optional()
                     })
                 ]),
+                400: z.object({
+                    error: z.literal('Invalid parameters')
+                }),
                 404: z.object({
                     error: z.literal('Artifact not found')
                 }),
@@ -267,77 +247,60 @@ export function artifactsRoutes(app: Fastify) {
         const { header, expectedHeaderVersion, body, expectedBodyVersion } = request.body;
 
         try {
-            // Get current artifact for version check
-            const currentArtifact = await db.artifact.findFirst({
-                where: {
-                    id,
-                    accountId: userId
+            if (header !== undefined && expectedHeaderVersion === undefined) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
+            if (body !== undefined && expectedBodyVersion === undefined) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
+
+            const headerParam = header !== undefined && expectedHeaderVersion !== undefined
+                ? { bytes: privacyKit.decodeBase64(header), expectedVersion: expectedHeaderVersion }
+                : undefined;
+            const bodyParam = body !== undefined && expectedBodyVersion !== undefined
+                ? { bytes: privacyKit.decodeBase64(body), expectedVersion: expectedBodyVersion }
+                : undefined;
+
+            if (!headerParam && !bodyParam) {
+                return reply.code(400).send({ error: 'Invalid parameters' });
+            }
+
+            const result = await updateArtifact({
+                actorUserId: userId,
+                artifactId: id,
+                header: headerParam,
+                body: bodyParam,
+            });
+
+            if (!result.ok) {
+                if (result.error === 'not-found') {
+                    return reply.code(404).send({ error: 'Artifact not found' });
                 }
-            });
-
-            if (!currentArtifact) {
-                return reply.code(404).send({ error: 'Artifact not found' });
+                if (result.error === 'version-mismatch') {
+                    return reply.send({
+                        success: false as const,
+                        error: 'version-mismatch' as const,
+                        ...(headerParam && result.current && {
+                            currentHeaderVersion: result.current.headerVersion,
+                            currentHeader: Buffer.from(result.current.header).toString('base64'),
+                        }),
+                        ...(bodyParam && result.current && {
+                            currentBodyVersion: result.current.bodyVersion,
+                            currentBody: Buffer.from(result.current.body).toString('base64'),
+                        }),
+                    });
+                }
+                return reply.code(500).send({ error: 'Failed to update artifact' });
             }
 
-            // Check version mismatches
-            const headerMismatch = header !== undefined && expectedHeaderVersion !== undefined && 
-                                   currentArtifact.headerVersion !== expectedHeaderVersion;
-            const bodyMismatch = body !== undefined && expectedBodyVersion !== undefined && 
-                                 currentArtifact.bodyVersion !== expectedBodyVersion;
+            const headerUpdate = headerParam && result.header
+                ? { value: header!, version: result.header.version }
+                : undefined;
+            const bodyUpdate = bodyParam && result.body
+                ? { value: body!, version: result.body.version }
+                : undefined;
 
-            if (headerMismatch || bodyMismatch) {
-                return reply.send({
-                    success: false,
-                    error: 'version-mismatch',
-                    ...(headerMismatch && {
-                        currentHeaderVersion: currentArtifact.headerVersion,
-                        currentHeader: privacyKit.encodeBase64(currentArtifact.header)
-                    }),
-                    ...(bodyMismatch && {
-                        currentBodyVersion: currentArtifact.bodyVersion,
-                        currentBody: privacyKit.encodeBase64(currentArtifact.body)
-                    })
-                });
-            }
-
-            // Build update data
-            const updateData: any = {
-                updatedAt: new Date()
-            };
-            
-            let headerUpdate: { value: string; version: number } | undefined;
-            let bodyUpdate: { value: string; version: number } | undefined;
-
-            if (header !== undefined && expectedHeaderVersion !== undefined) {
-                updateData.header = privacyKit.decodeBase64(header);
-                updateData.headerVersion = expectedHeaderVersion + 1;
-                headerUpdate = {
-                    value: header,
-                    version: expectedHeaderVersion + 1
-                };
-            }
-
-            if (body !== undefined && expectedBodyVersion !== undefined) {
-                updateData.body = privacyKit.decodeBase64(body);
-                updateData.bodyVersion = expectedBodyVersion + 1;
-                bodyUpdate = {
-                    value: body,
-                    version: expectedBodyVersion + 1
-                };
-            }
-
-            // Increment seq
-            updateData.seq = currentArtifact.seq + 1;
-
-            // Update artifact
-            await db.artifact.update({
-                where: { id },
-                data: updateData
-            });
-
-            // Emit update-artifact event
-            const updSeq = await allocateUserSeq(userId);
-            const updatePayload = buildUpdateArtifactUpdate(id, updSeq, randomKeyNaked(12), headerUpdate, bodyUpdate);
+            const updatePayload = buildUpdateArtifactUpdate(id, result.cursor, randomKeyNaked(12), headerUpdate, bodyUpdate);
             eventRouter.emitUpdate({
                 userId,
                 payload: updatePayload,
@@ -345,9 +308,9 @@ export function artifactsRoutes(app: Fastify) {
             });
 
             return reply.send({
-                success: true,
+                success: true as const,
                 ...(headerUpdate && { headerVersion: headerUpdate.version }),
-                ...(bodyUpdate && { bodyVersion: bodyUpdate.version })
+                ...(bodyUpdate && { bodyVersion: bodyUpdate.version }),
             });
         } catch (error) {
             log({ module: 'api', level: 'error' }, `Failed to update artifact: ${error}`);
@@ -379,26 +342,15 @@ export function artifactsRoutes(app: Fastify) {
         const { id } = request.params;
 
         try {
-            // Check if artifact exists and belongs to user
-            const artifact = await db.artifact.findFirst({
-                where: {
-                    id,
-                    accountId: userId
+            const result = await deleteArtifact({ actorUserId: userId, artifactId: id });
+            if (!result.ok) {
+                if (result.error === 'not-found') {
+                    return reply.code(404).send({ error: 'Artifact not found' });
                 }
-            });
-
-            if (!artifact) {
-                return reply.code(404).send({ error: 'Artifact not found' });
+                return reply.code(500).send({ error: 'Failed to delete artifact' });
             }
 
-            // Delete artifact
-            await db.artifact.delete({
-                where: { id }
-            });
-
-            // Emit delete-artifact event
-            const updSeq = await allocateUserSeq(userId);
-            const deletePayload = buildDeleteArtifactUpdate(id, updSeq, randomKeyNaked(12));
+            const deletePayload = buildDeleteArtifactUpdate(id, result.cursor, randomKeyNaked(12));
             eventRouter.emitUpdate({
                 userId,
                 payload: deletePayload,

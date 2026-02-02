@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir as defaultHomedir } from 'node:os';
-import { pathToFileURL } from 'node:url';
 
 export type LightEnv = NodeJS.ProcessEnv;
 
@@ -23,13 +22,12 @@ export function resolveLightFilesDir(env: LightEnv, dataDir: string): string {
     return join(dataDir, 'files');
 }
 
-export function resolveLightDatabaseUrl(env: LightEnv, dataDir: string): string {
-    const fromEnv = env.DATABASE_URL?.trim();
+export function resolveLightDatabaseDir(env: LightEnv, dataDir: string): string {
+    const fromEnv = env.HAPPY_SERVER_LIGHT_DB_DIR?.trim();
     if (fromEnv) {
         return fromEnv;
     }
-    const dbPath = join(dataDir, 'happy-server-light.sqlite');
-    return pathToFileURL(dbPath).toString();
+    return join(dataDir, 'pglite');
 }
 
 export function resolveLightPublicUrl(env: LightEnv): string {
@@ -45,11 +43,12 @@ export function resolveLightPublicUrl(env: LightEnv): string {
 export function applyLightDefaultEnv(env: LightEnv, opts?: { homedir?: string }): void {
     const dataDir = resolveLightDataDir(env, opts);
     const filesDir = resolveLightFilesDir(env, dataDir);
+    const dbDir = resolveLightDatabaseDir(env, dataDir);
 
     env.HAPPY_SERVER_LIGHT_DATA_DIR = dataDir;
     env.HAPPY_SERVER_LIGHT_FILES_DIR = filesDir;
+    env.HAPPY_SERVER_LIGHT_DB_DIR = dbDir;
 
-    env.DATABASE_URL = resolveLightDatabaseUrl(env, dataDir);
     env.PUBLIC_URL = resolveLightPublicUrl(env);
 }
 

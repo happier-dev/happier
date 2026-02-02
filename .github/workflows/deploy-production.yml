@@ -1,0 +1,135 @@
+name: Deploy production (tag + fast-forward)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "SemVer bump (creates a vX.Y.Z tag)"
+        type: choice
+        required: true
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+env:
+  MAIN_BRANCH: main
+  PROD_BRANCH: production
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main (full history + tags)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.MAIN_BRANCH }}
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch branches/tags
+        run: |
+          set -euo pipefail
+          git fetch origin "${MAIN_BRANCH}:${MAIN_BRANCH}" --tags --force
+          git fetch origin "${PROD_BRANCH}:${PROD_BRANCH}" --tags || true
+
+      - name: Compute next tag
+        id: version
+        run: |
+          set -euo pipefail
+
+          bump="${{ inputs.bump }}"
+
+          last_tag="$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+          if [ -z "${last_tag}" ]; then
+            last_tag="v0.0.0"
+          fi
+
+          ver="${last_tag#v}"
+          IFS='.' read -r major minor patch <<EOF
+          ${ver}
+          EOF
+
+          major="${major:-0}"
+          minor="${minor:-0}"
+          patch="${patch:-0}"
+
+          case "${bump}" in
+            major)
+              major="$((major + 1))"
+              minor="0"
+              patch="0"
+              ;;
+            minor)
+              minor="$((minor + 1))"
+              patch="0"
+              ;;
+            patch)
+              patch="$((patch + 1))"
+              ;;
+            *)
+              echo "Unknown bump: ${bump}" >&2
+              exit 1
+              ;;
+          esac
+
+          new_tag="v${major}.${minor}.${patch}"
+
+          if git rev-parse "${new_tag}" >/dev/null 2>&1; then
+            echo "Tag already exists: ${new_tag}" >&2
+            exit 1
+          fi
+
+          echo "last_tag=${last_tag}" >> "${GITHUB_OUTPUT}"
+          echo "new_tag=${new_tag}" >> "${GITHUB_OUTPUT}"
+
+      - name: Fast-forward production branch to main
+        run: |
+          set -euo pipefail
+
+          sha="$(git rev-parse "${MAIN_BRANCH}")"
+
+          if git show-ref --verify --quiet "refs/heads/${PROD_BRANCH}"; then
+            if ! git merge-base --is-ancestor "${PROD_BRANCH}" "${sha}"; then
+              echo "Refusing to update ${PROD_BRANCH}: it is not an ancestor of ${MAIN_BRANCH} (not a fast-forward)." >&2
+              echo "Fix: fast-forward ${PROD_BRANCH} from ${MAIN_BRANCH} or reset ${PROD_BRANCH} in a controlled way." >&2
+              exit 1
+            fi
+          else
+            echo "Branch ${PROD_BRANCH} does not exist locally; it will be created at ${MAIN_BRANCH}." >&2
+          fi
+
+          git push origin "${sha}:refs/heads/${PROD_BRANCH}"
+
+      - name: Create and push tag (triggers Dokploy)
+        run: |
+          set -euo pipefail
+
+          sha="$(git rev-parse "${MAIN_BRANCH}")"
+          new_tag="${{ steps.version.outputs.new_tag }}"
+
+          git tag -a "${new_tag}" -m "Release ${new_tag}" "${sha}"
+          git push origin "${new_tag}"
+
+      - name: Summary
+        run: |
+          set -euo pipefail
+          echo "Released ${{ steps.version.outputs.new_tag }} (from main) and fast-forwarded production." >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- Previous: ${{ steps.version.outputs.last_tag }}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- New tag:  ${{ steps.version.outputs.new_tag }}" >> "${GITHUB_STEP_SUMMARY}"
+          echo "- Production branch: ${PROD_BRANCH}" >> "${GITHUB_STEP_SUMMARY}"
+

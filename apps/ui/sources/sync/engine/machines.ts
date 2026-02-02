@@ -21,18 +21,19 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
     existingMachine: Machine | undefined;
     getMachineEncryption: (machineId: string) => MachineEncryption | null;
 }): Promise<Machine | null> {
-    const { machineUpdate, updateSeq, updateCreatedAt, existingMachine, getMachineEncryption } = params;
+    const { machineUpdate, updateCreatedAt, existingMachine, getMachineEncryption } = params;
 
     const machineId = machineUpdate.machineId; // Changed from .id to .machineId
 
     // Create or update machine with all required fields
     const updatedMachine: Machine = {
         id: machineId,
-        seq: updateSeq,
+        // IMPORTANT: socket UpdateContainer.seq is an account cursor, not the machine entity seq.
+        seq: existingMachine?.seq ?? 0,
         createdAt: existingMachine?.createdAt ?? updateCreatedAt,
         updatedAt: updateCreatedAt,
-        active: machineUpdate.active ?? true,
-        activeAt: machineUpdate.activeAt ?? updateCreatedAt,
+        active: machineUpdate.active ?? existingMachine?.active ?? false,
+        activeAt: machineUpdate.activeAt ?? existingMachine?.activeAt ?? updateCreatedAt,
         metadata: existingMachine?.metadata ?? null,
         metadataVersion: existingMachine?.metadataVersion ?? 0,
         daemonState: existingMachine?.daemonState ?? null,
@@ -49,24 +50,34 @@ export async function buildUpdatedMachineFromSocketUpdate(params: {
     // If metadata is provided, decrypt and update it
     const metadataUpdate = machineUpdate.metadata;
     if (metadataUpdate) {
-        try {
-            const metadata = await machineEncryption.decryptMetadata(metadataUpdate.version, metadataUpdate.value);
-            updatedMachine.metadata = metadata;
-            updatedMachine.metadataVersion = metadataUpdate.version;
-        } catch (error) {
-            console.error(`Failed to decrypt machine metadata for ${machineId}:`, error);
+        const existingVersion = existingMachine?.metadataVersion ?? 0;
+        if (typeof metadataUpdate.version === 'number' && metadataUpdate.version <= existingVersion) {
+            // Ignore stale/out-of-order update
+        } else {
+            try {
+                const metadata = await machineEncryption.decryptMetadata(metadataUpdate.version, metadataUpdate.value);
+                updatedMachine.metadata = metadata;
+                updatedMachine.metadataVersion = metadataUpdate.version;
+            } catch (error) {
+                console.error(`Failed to decrypt machine metadata for ${machineId}:`, error);
+            }
         }
     }
 
     // If daemonState is provided, decrypt and update it
     const daemonStateUpdate = machineUpdate.daemonState;
     if (daemonStateUpdate) {
-        try {
-            const daemonState = await machineEncryption.decryptDaemonState(daemonStateUpdate.version, daemonStateUpdate.value);
-            updatedMachine.daemonState = daemonState;
-            updatedMachine.daemonStateVersion = daemonStateUpdate.version;
-        } catch (error) {
-            console.error(`Failed to decrypt machine daemonState for ${machineId}:`, error);
+        const existingVersion = existingMachine?.daemonStateVersion ?? 0;
+        if (typeof daemonStateUpdate.version === 'number' && daemonStateUpdate.version <= existingVersion) {
+            // Ignore stale/out-of-order update
+        } else {
+            try {
+                const daemonState = await machineEncryption.decryptDaemonState(daemonStateUpdate.version, daemonStateUpdate.value);
+                updatedMachine.daemonState = daemonState;
+                updatedMachine.daemonStateVersion = daemonStateUpdate.version;
+            } catch (error) {
+                console.error(`Failed to decrypt machine daemonState for ${machineId}:`, error);
+            }
         }
     }
 

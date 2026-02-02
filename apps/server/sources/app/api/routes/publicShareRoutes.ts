@@ -6,8 +6,25 @@ import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { logPublicShareAccess, getIpAddress, getUserAgent } from "@/app/share/accessLogger";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { eventRouter, buildPublicShareCreatedUpdate, buildPublicShareUpdatedUpdate, buildPublicShareDeletedUpdate } from "@/app/events/eventRouter";
-import { allocateUserSeq } from "@/storage/seq";
 import { createHash } from "crypto";
+import { afterTx, inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { auth } from "@/app/auth/auth";
+
+async function getOptionalAuthenticatedUserId(request: any): Promise<string | null> {
+    const authHeader = request?.headers?.authorization;
+    if (!authHeader || typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) {
+        return null;
+    }
+
+    try {
+        const token = authHeader.substring(7);
+        const verified = await auth.verifyToken(token);
+        return verified?.userId ?? null;
+    } catch {
+        return null;
+    }
+}
 
 /**
  * Public session sharing API routes
@@ -49,67 +66,77 @@ export function publicShareRoutes(app: Fastify) {
             return reply.code(403).send({ error: 'Forbidden' });
         }
 
-        // Check if public share already exists
-        const existing = await db.publicSessionShare.findUnique({
-            where: { sessionId }
+        const result = await inTx(async (tx) => {
+            const existing = await tx.publicSessionShare.findUnique({
+                where: { sessionId }
+            });
+
+            let publicShare;
+            const isUpdate = !!existing;
+
+            if (existing) {
+                const shouldRotateToken = typeof token === 'string' && token.length > 0;
+                if (shouldRotateToken && !encryptedDataKey) {
+                    return { type: 'error' as const, error: 'encryptedDataKey required when rotating token' as const };
+                }
+                const nextTokenHash = shouldRotateToken ? createHash('sha256').update(token!, 'utf8').digest() : null;
+
+                publicShare = await tx.publicSessionShare.update({
+                    where: { sessionId },
+                    data: {
+                        ...(nextTokenHash ? { tokenHash: nextTokenHash } : {}),
+                        ...(encryptedDataKey ? { encryptedDataKey: new Uint8Array(Buffer.from(encryptedDataKey, 'base64')) } : {}),
+                        expiresAt: expiresAt ? new Date(expiresAt) : null,
+                        maxUses: maxUses ?? null,
+                        isConsentRequired: isConsentRequired ?? false,
+                        ...(nextTokenHash ? { useCount: 0 } : {}),
+                    }
+                });
+            } else {
+                if (!token) {
+                    return { type: 'error' as const, error: 'token required' as const };
+                }
+                if (!encryptedDataKey) {
+                    return { type: 'error' as const, error: 'encryptedDataKey required' as const };
+                }
+                const tokenHash = createHash('sha256').update(token, 'utf8').digest();
+
+                publicShare = await tx.publicSessionShare.create({
+                    data: {
+                        sessionId,
+                        createdByUserId: userId,
+                        tokenHash,
+                        encryptedDataKey: new Uint8Array(Buffer.from(encryptedDataKey, 'base64')),
+                        expiresAt: expiresAt ? new Date(expiresAt) : null,
+                        maxUses: maxUses ?? null,
+                        isConsentRequired: isConsentRequired ?? false
+                    }
+                });
+            }
+
+            const shareCursor = await markAccountChanged(tx, { accountId: userId, kind: 'share', entityId: sessionId });
+            const sessionCursor = await markAccountChanged(tx, { accountId: userId, kind: 'session', entityId: sessionId });
+            const cursor = Math.max(shareCursor, sessionCursor);
+
+            afterTx(tx, () => {
+                const updatePayload = isUpdate
+                    ? buildPublicShareUpdatedUpdate(publicShare, cursor, randomKeyNaked(12))
+                    : buildPublicShareCreatedUpdate({ ...publicShare, token: token! }, cursor, randomKeyNaked(12));
+
+                eventRouter.emitUpdate({
+                    userId: userId,
+                    payload: updatePayload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId }
+                });
+            });
+
+            return { type: 'ok' as const, publicShare };
         });
 
-        let publicShare;
-        const isUpdate = !!existing;
-
-        if (existing) {
-            const shouldRotateToken = typeof token === 'string' && token.length > 0;
-            if (shouldRotateToken && !encryptedDataKey) {
-                return reply.code(400).send({ error: 'encryptedDataKey required when rotating token' });
-            }
-            const nextTokenHash = shouldRotateToken ? createHash('sha256').update(token!, 'utf8').digest() : null;
-
-            // Update existing share (token is stored as a hash only; token itself is not persisted)
-            publicShare = await db.publicSessionShare.update({
-                where: { sessionId },
-                data: {
-                    ...(nextTokenHash ? { tokenHash: nextTokenHash } : {}),
-                    ...(encryptedDataKey ? { encryptedDataKey: new Uint8Array(Buffer.from(encryptedDataKey, 'base64')) } : {}),
-                    expiresAt: expiresAt ? new Date(expiresAt) : null,
-                    maxUses: maxUses ?? null,
-                    isConsentRequired: isConsentRequired ?? false,
-                    ...(nextTokenHash ? { useCount: 0 } : {}),
-                }
-            });
-        } else {
-            if (!token) {
-                return reply.code(400).send({ error: 'token required' });
-            }
-            if (!encryptedDataKey) {
-                return reply.code(400).send({ error: 'encryptedDataKey required' });
-            }
-            const tokenHash = createHash('sha256').update(token, 'utf8').digest();
-
-            // Create new share with client-provided token
-            publicShare = await db.publicSessionShare.create({
-                data: {
-                    sessionId,
-                    createdByUserId: userId,
-                    tokenHash,
-                    encryptedDataKey: new Uint8Array(Buffer.from(encryptedDataKey, 'base64')),
-                    expiresAt: expiresAt ? new Date(expiresAt) : null,
-                    maxUses: maxUses ?? null,
-                    isConsentRequired: isConsentRequired ?? false
-                }
-            });
+        if (result.type === 'error') {
+            return reply.code(400).send({ error: result.error });
         }
-
-        // Emit real-time update to session owner
-        const updateSeq = await allocateUserSeq(userId);
-        const updatePayload = isUpdate
-            ? buildPublicShareUpdatedUpdate(publicShare, updateSeq, randomKeyNaked(12))
-            : buildPublicShareCreatedUpdate({ ...publicShare, token: token! }, updateSeq, randomKeyNaked(12));
-
-        eventRouter.emitUpdate({
-            userId: userId,
-            payload: updatePayload,
-            recipientFilter: { type: 'all-interested-in-session', sessionId }
-        });
+        const publicShare = result.publicShare;
 
         return reply.send({
             publicShare: {
@@ -185,9 +212,7 @@ export function publicShareRoutes(app: Fastify) {
             return reply.code(403).send({ error: 'Forbidden' });
         }
 
-        // Use transaction to ensure consistent state
-        const deleted = await db.$transaction(async (tx) => {
-            // Check if share exists
+        const deleted = await inTx(async (tx) => {
             const existing = await tx.publicSessionShare.findUnique({
                 where: { sessionId }
             });
@@ -196,28 +221,33 @@ export function publicShareRoutes(app: Fastify) {
                 return false;
             }
 
-            // Delete public share
             await tx.publicSessionShare.delete({
                 where: { sessionId }
+            });
+
+            const shareCursor = await markAccountChanged(tx, { accountId: userId, kind: 'share', entityId: sessionId });
+            const sessionCursor = await markAccountChanged(tx, { accountId: userId, kind: 'session', entityId: sessionId });
+            const cursor = Math.max(shareCursor, sessionCursor);
+
+            afterTx(tx, () => {
+                const updatePayload = buildPublicShareDeletedUpdate(
+                    sessionId,
+                    cursor,
+                    randomKeyNaked(12)
+                );
+
+                eventRouter.emitUpdate({
+                    userId: userId,
+                    payload: updatePayload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId }
+                });
             });
 
             return true;
         });
 
-        // Emit real-time update to session owner (outside transaction)
-        if (deleted) {
-            const updateSeq = await allocateUserSeq(userId);
-            const updatePayload = buildPublicShareDeletedUpdate(
-                sessionId,
-                updateSeq,
-                randomKeyNaked(12)
-            );
-
-            eventRouter.emitUpdate({
-                userId: userId,
-                payload: updatePayload,
-                recipientFilter: { type: 'all-interested-in-session', sessionId }
-            });
+        if (!deleted) {
+            return reply.code(404).send({ error: 'Share not found' });
         }
 
         return reply.send({ success: true });
@@ -248,16 +278,9 @@ export function publicShareRoutes(app: Fastify) {
         const { consent } = request.query || {};
         const tokenHash = createHash('sha256').update(token, 'utf8').digest();
 
-        // Try to get user ID if authenticated
-        let userId: string | null = null;
-        if (request.headers.authorization) {
-            try {
-                await app.authenticate(request, reply);
-                userId = request.userId;
-            } catch {
-                // Not authenticated, continue as anonymous
-            }
-        }
+        // Optional auth: never call `app.authenticate()` here because it sends a reply on failure,
+        // which can cause "Reply was already sent" issues for public routes.
+        const userId = await getOptionalAuthenticatedUserId(request);
 
         // Use transaction to atomically check limits and increment use count
         const result = await db.$transaction(async (tx) => {
@@ -420,16 +443,9 @@ export function publicShareRoutes(app: Fastify) {
         const { consent } = request.query || {};
         const tokenHash = createHash('sha256').update(token, 'utf8').digest();
 
-        // Try to get user ID if authenticated
-        let userId: string | null = null;
-        if (request.headers.authorization) {
-            try {
-                await app.authenticate(request, reply);
-                userId = request.userId;
-            } catch {
-                // Not authenticated, continue as anonymous
-            }
-        }
+        // Optional auth: never call `app.authenticate()` here because it sends a reply on failure,
+        // which can cause "Reply was already sent" issues for public routes.
+        const userId = await getOptionalAuthenticatedUserId(request);
 
         const publicShare = await db.publicSessionShare.findUnique({
             where: { tokenHash },

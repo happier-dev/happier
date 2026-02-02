@@ -1,9 +1,9 @@
 import { Context } from "@/context";
 import { FeedBody, UserFeedItem } from "./types";
 import { afterTx, Tx } from "@/storage/inTx";
-import { allocateUserSeq } from "@/storage/seq";
 import { eventRouter, buildNewFeedPostUpdate } from "@/app/events/eventRouter";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 /**
  * Add a post to user's feed.
@@ -51,10 +51,11 @@ export async function feedPost(
         cursor: '0-' + item.counter.toString(10)
     };
 
+    const cursor = await markAccountChanged(tx, { accountId: ctx.uid, kind: 'feed', entityId: 'self', hint: { cursor: result.cursor } });
+
     // Emit socket event after transaction completes
     afterTx(tx, async () => {
-        const updateSeq = await allocateUserSeq(ctx.uid);
-        const updatePayload = buildNewFeedPostUpdate(result, updateSeq, randomKeyNaked(12));
+        const updatePayload = buildNewFeedPostUpdate(result, cursor, randomKeyNaked(12));
 
         eventRouter.emitUpdate({
             userId: ctx.uid,

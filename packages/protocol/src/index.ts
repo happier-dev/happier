@@ -12,6 +12,16 @@ export {
 export { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklists.js';
 export { SOCKET_RPC_EVENTS, type SocketRpcEvent } from './socketRpc.js';
 export {
+  ChangeEntrySchema,
+  ChangeKindSchema,
+  ChangesResponseSchema,
+  CursorGoneErrorSchema,
+  type ChangeEntry,
+  type ChangeKind,
+  type ChangesResponse,
+  type CursorGoneError,
+} from './changes.js';
+export {
   type CapabilitiesDescribeResponse,
   type CapabilitiesDetectRequest,
   type CapabilitiesDetectResponse,
@@ -23,3 +33,22 @@ export {
   type CapabilityId,
   type CapabilityKind,
 } from './capabilities.js';
+
+export {
+  EphemeralUpdateSchema,
+  MessageAckResponseSchema,
+  SessionBroadcastBodySchema,
+  SessionBroadcastContainerSchema,
+  UpdateBodySchema,
+  UpdateContainerSchema,
+  UpdateMetadataAckResponseSchema,
+  UpdateStateAckResponseSchema,
+  type EphemeralUpdate,
+  type MessageAckResponse,
+  type SessionBroadcastBody,
+  type SessionBroadcastContainer,
+  type UpdateBody,
+  type UpdateContainer,
+  type UpdateMetadataAckResponse,
+  type UpdateStateAckResponse,
+} from './updates.js';
