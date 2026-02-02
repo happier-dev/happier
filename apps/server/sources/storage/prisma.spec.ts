@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { RelationshipStatus, db, isPrismaErrorCode } from "./prisma";
+import { RelationshipStatus, db, getDbProviderFromEnv, isPrismaErrorCode } from "./prisma";
 
 function parseEnumValues(schemaText: string, enumName: string): string[] {
     const block = schemaText.match(new RegExp(`enum\\s+${enumName}\\s*\\{([\\s\\S]*?)\\}`, "m"));
@@ -40,5 +40,12 @@ describe("storage/prisma", () => {
         expect(isPrismaErrorCode({ code: "P2002" }, "P2034")).toBe(false);
         expect(isPrismaErrorCode(new Error("no code"), "P2034")).toBe(false);
         expect(isPrismaErrorCode(null, "P2034")).toBe(false);
+    });
+
+    it("parses DB provider from env with a fallback", () => {
+        expect(getDbProviderFromEnv({}, "postgres")).toBe("postgres");
+        expect(getDbProviderFromEnv({ HAPPY_DB_PROVIDER: "mysql" }, "postgres")).toBe("mysql");
+        expect(getDbProviderFromEnv({ HAPPIER_DB_PROVIDER: " sqlite " }, "postgres")).toBe("sqlite");
+        expect(getDbProviderFromEnv({ HAPPY_DB_PROVIDER: "nope" }, "postgres")).toBe("postgres");
     });
 });

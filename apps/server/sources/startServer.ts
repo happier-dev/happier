@@ -7,7 +7,7 @@ import { startTimeout } from '@/app/presence/timeout';
 import { initEncrypt } from '@/modules/encrypt';
 import { initGithub } from '@/modules/github';
 import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/files';
-import { db, initDbPostgres, initDbPglite, shutdownDbPglite } from '@/storage/db';
+import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres, initDbPglite, initDbSqlite, shutdownDbPglite } from '@/storage/db';
 import { log } from '@/utils/log';
 import { awaitShutdown, onShutdown } from '@/utils/shutdown';
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from '@/flavors/light/env';
@@ -19,6 +19,7 @@ import { eventRouter } from '@/app/events/eventRouter';
 import { startAccountChangeCleanupFromEnv } from '@/app/changes/accountChangeCleanup';
 import { shouldConsumePresenceFromRedis, shouldEnableLocalPresenceDbFlush } from '@/app/presence/presenceMode';
 import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
+import { join } from 'node:path';
 
 export type ServerFlavor = 'full' | 'light';
 export type ServerRole = 'all' | 'api' | 'worker';
@@ -46,21 +47,38 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     process.env.HAPPIER_SERVER_FLAVOR = flavor;
     const role = getServerRoleFromEnv(process.env);
     const shouldEnableRedisAdapter = shouldEnableRedisAdapterFromEnv(process.env, flavor);
+    const dbProvider = getDbProviderFromEnv(process.env, flavor === 'light' ? 'pglite' : 'postgres');
 
     if (flavor === 'light') {
         applyLightDefaultEnv(process.env);
         await ensureHandyMasterSecret(process.env);
-        await initDbPglite();
+        if (dbProvider === 'pglite') {
+            await initDbPglite();
+        } else if (dbProvider === 'sqlite') {
+            if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) {
+                const dataDir = process.env.HAPPY_SERVER_LIGHT_DATA_DIR!;
+                process.env.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+            }
+            await initDbSqlite();
+        } else {
+            throw new Error(`Unsupported HAPPY_DB_PROVIDER/HAPPIER_DB_PROVIDER for light flavor: ${dbProvider}`);
+        }
         initFilesLocalFromEnv(process.env);
     } else {
-        initDbPostgres();
+        if (dbProvider === 'postgres') {
+            initDbPostgres();
+        } else if (dbProvider === 'mysql') {
+            await initDbMysql();
+        } else {
+            throw new Error(`Unsupported HAPPY_DB_PROVIDER/HAPPIER_DB_PROVIDER for full flavor: ${dbProvider}`);
+        }
         initFilesS3FromEnv(process.env);
     }
 
     // Storage
     await db.$connect();
-    if (flavor === 'light') {
-        // In light mode, ensure Prisma disconnect happens before stopping the embedded pglite server.
+    if (dbProvider === 'pglite') {
+        // When using embedded pglite, ensure Prisma disconnect happens before stopping the socket server.
         onShutdown('db', async () => {
             await db.$disconnect();
             await shutdownDbPglite();

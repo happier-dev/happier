@@ -10,8 +10,11 @@ vi.mock("@/storage/db", () => ({
         $connect: vi.fn(async () => {}),
         $disconnect: vi.fn(async () => {}),
     },
+    getDbProviderFromEnv: (_env: any, fallback: any) => fallback,
     initDbPostgres: vi.fn(() => {}),
     initDbPglite: vi.fn(async () => {}),
+    initDbMysql: vi.fn(async () => {}),
+    initDbSqlite: vi.fn(async () => {}),
     shutdownDbPglite: vi.fn(async () => {}),
 }));
 

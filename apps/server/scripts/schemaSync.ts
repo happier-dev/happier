@@ -63,6 +63,25 @@ export function generateEnumsTsFromPostgres(postgresSchema: string): string {
 }
 
 export function generateSqliteSchemaFromPostgres(postgresSchema: string): string {
+    return generateProviderSchemaFromPostgres(postgresSchema, {
+        provider: "sqlite",
+        output: "../../generated/sqlite-client",
+        previewFeatures: ["metrics"],
+    });
+}
+
+export function generateMySqlSchemaFromPostgres(postgresSchema: string): string {
+    return generateProviderSchemaFromPostgres(postgresSchema, {
+        provider: "mysql",
+        output: "../../generated/mysql-client",
+        previewFeatures: ["metrics", "relationJoins"],
+    });
+}
+
+function generateProviderSchemaFromPostgres(
+    postgresSchema: string,
+    opts: { provider: "sqlite" | "mysql"; output: string; previewFeatures: string[] },
+): string {
     const schema = postgresSchema.replace(/\r\n/g, '\n');
 
     const datasource = /(^|\n)\s*datasource\s+db\s*{[\s\S]*?\n}\s*\n/m;
@@ -90,14 +109,14 @@ export function generateSqliteSchemaFromPostgres(postgresSchema: string): string
     const generatorClient = [
         'generator client {',
         '    provider        = "prisma-client-js"',
-        '    previewFeatures = ["metrics"]',
-        '    output          = "../../generated/sqlite-client"',
+        `    previewFeatures = [${opts.previewFeatures.map((v) => JSON.stringify(v)).join(", ")}]`,
+        `    output          = "${opts.output}"`,
         '}',
     ].join('\n');
 
     const datasourceDb = [
         'datasource db {',
-        '    provider = "sqlite"',
+        `    provider = "${opts.provider}"`,
         '    url      = env("DATABASE_URL")',
         '}',
     ].join('\n');
@@ -133,10 +152,12 @@ async function main(args: string[]): Promise<void> {
     const root = resolveRepoRoot();
     const masterPath = join(root, 'prisma', 'schema.prisma');
     const sqlitePath = join(root, 'prisma', 'sqlite', 'schema.prisma');
+    const mysqlPath = join(root, 'prisma', 'mysql', 'schema.prisma');
     const enumsTsPath = join(root, 'sources', 'storage', 'enums.generated.ts');
 
     const master = await readFile(masterPath, 'utf-8');
-    const generated = generateSqliteSchemaFromPostgres(master);
+    const generatedSqlite = generateSqliteSchemaFromPostgres(master);
+    const generatedMysql = generateMySqlSchemaFromPostgres(master);
     const enumsTs = generateEnumsTsFromPostgres(master);
 
     if (check) {
@@ -146,8 +167,20 @@ async function main(args: string[]): Promise<void> {
         } catch {
             // ignore
         }
-        if (normalizeSchemaText(existing) !== normalizeSchemaText(generated)) {
+        if (normalizeSchemaText(existing) !== normalizeSchemaText(generatedSqlite)) {
             console.error('[schema] prisma/sqlite/schema.prisma is out of date.');
+            console.error('[schema] Run: yarn schema:sync');
+            process.exit(1);
+        }
+
+        let existingMysql = '';
+        try {
+            existingMysql = await readFile(mysqlPath, 'utf-8');
+        } catch {
+            // ignore
+        }
+        if (normalizeSchemaText(existingMysql) !== normalizeSchemaText(generatedMysql)) {
+            console.error('[schema] prisma/mysql/schema.prisma is out of date.');
             console.error('[schema] Run: yarn schema:sync');
             process.exit(1);
         }
@@ -166,19 +199,23 @@ async function main(args: string[]): Promise<void> {
 
         if (!quiet) {
             console.log('[schema] prisma/sqlite/schema.prisma is up to date.');
+            console.log('[schema] prisma/mysql/schema.prisma is up to date.');
             console.log('[schema] sources/storage/enums.generated.ts is up to date.');
         }
         return;
     }
 
     if (!quiet) {
-        const wroteSchema = await writeIfChanged(sqlitePath, generated, normalizeSchemaText);
+        const wroteSqlite = await writeIfChanged(sqlitePath, generatedSqlite, normalizeSchemaText);
+        const wroteMysql = await writeIfChanged(mysqlPath, generatedMysql, normalizeSchemaText);
         const wroteEnums = await writeIfChanged(enumsTsPath, enumsTs, normalizeGeneratedTs);
-        if (wroteSchema) console.log('[schema] Wrote prisma/sqlite/schema.prisma');
+        if (wroteSqlite) console.log('[schema] Wrote prisma/sqlite/schema.prisma');
+        if (wroteMysql) console.log('[schema] Wrote prisma/mysql/schema.prisma');
         if (wroteEnums) console.log('[schema] Wrote sources/storage/enums.generated.ts');
-        if (!wroteSchema && !wroteEnums) console.log('[schema] No changes.');
+        if (!wroteSqlite && !wroteMysql && !wroteEnums) console.log('[schema] No changes.');
     } else {
-        await writeIfChanged(sqlitePath, generated, normalizeSchemaText);
+        await writeIfChanged(sqlitePath, generatedSqlite, normalizeSchemaText);
+        await writeIfChanged(mysqlPath, generatedMysql, normalizeSchemaText);
         await writeIfChanged(enumsTsPath, enumsTs, normalizeGeneratedTs);
     }
 }

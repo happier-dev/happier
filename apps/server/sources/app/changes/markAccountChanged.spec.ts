@@ -36,11 +36,13 @@ describe("markAccountChanged", () => {
                 accountId: "a1",
                 kind: "session",
                 entityId: "s1",
+                sessionId: "s1",
                 cursor: 7,
                 changedAt: expect.any(Date),
                 hint: { lastMessageSeq: 123 },
             },
             update: {
+                sessionId: "s1",
                 cursor: 7,
                 changedAt: expect.any(Date),
                 hint: { lastMessageSeq: 123 },
