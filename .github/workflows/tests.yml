@@ -159,7 +159,7 @@ jobs:
         run: yarn workspace @happier-dev/cli test
 
   cli-daemon-e2e:
-    name: CLI + Server (light/sqlite) E2E
+    name: CLI + Server (light/pglite) E2E
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -169,7 +169,6 @@ jobs:
       HAPPIER_HOME_DIR: /tmp/happier-dev-test
       DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: "true"
       HAPPIER_SERVER_LIGHT_DATA_DIR: /tmp/happier-server-light
-      DATABASE_URL: file:///tmp/happier-server-light/happier-server-light.sqlite
       # Fall back to a deterministic non-secret for forks / untrusted PRs (no access to repo secrets).
       HANDY_MASTER_SECRET: ${{ secrets.CI_MASTER_SECRET != '' && secrets.CI_MASTER_SECRET || 'happier-ci-master-secret-not-a-real-secret' }}
       HAPPIER_NO_BROWSER_OPEN: "1"
@@ -224,14 +223,14 @@ jobs:
           fi
           tmux -V
 
-      - name: Prepare SQLite schema (light)
+      - name: Prepare light DB (PGlite) + apply migrations
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
         run: |
           set -euo pipefail
           yarn install --frozen-lockfile --ignore-engines
-          yarn --cwd apps/server -s db:push:light
+          yarn --cwd apps/server -s migrate:light:deploy
 
       - name: Build CLI
         run: yarn workspace @happier-dev/cli build

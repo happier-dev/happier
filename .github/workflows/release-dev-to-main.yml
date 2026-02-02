@@ -204,11 +204,12 @@ jobs:
         run: |
           set -euo pipefail
           yarn workspace @happier-dev/cli build
-          yarn workspace @happier-dev/cli pack
+          rm -f /tmp/happier-dev-cli-*.tgz
+          (cd apps/cli && npm pack --silent --pack-destination /tmp)
 
-          PACKAGE_FILE="$(ls apps/cli/*.tgz | head -n 1)"
+          PACKAGE_FILE="$(ls /tmp/happier-dev-cli-*.tgz 2>/dev/null | head -n 1)"
           if [ -z "${PACKAGE_FILE:-}" ]; then
-            echo "Unable to find packed CLI tarball in apps/cli/*.tgz" >&2
+            echo "Unable to find packed CLI tarball in /tmp/happier-dev-cli-*.tgz" >&2
             exit 1
           fi
 

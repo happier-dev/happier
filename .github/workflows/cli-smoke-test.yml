@@ -41,11 +41,14 @@ jobs:
       run: yarn workspace @happier-dev/cli build
 
     - name: Pack package
-      run: yarn workspace @happier-dev/cli pack
+      run: |
+        set -euo pipefail
+        rm -f /tmp/happier-dev-cli-*.tgz
+        (cd apps/cli && npm pack --silent --pack-destination /tmp)
 
     - name: Install packed package globally
       run: |
-        PACKAGE_FILE=$(ls apps/cli/*.tgz)
+        PACKAGE_FILE=$(ls /tmp/happier-dev-cli-*.tgz | head -n 1)
         npm install -g "./$PACKAGE_FILE"
 
     - name: Test binary execution
@@ -104,7 +107,9 @@ jobs:
       run: yarn workspace @happier-dev/cli build
 
     - name: Pack package
-      run: yarn workspace @happier-dev/cli pack
+      run: |
+        cd apps/cli
+        npm pack
 
     - name: Install packed package globally
       shell: cmd
