@@ -46,7 +46,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "postinstall": "yarn --cwd ../agents -s build && yarn -s build",
+    "postinstall:real": "yarn --cwd ../agents -s build && yarn -s build",
+    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');const has=(p)=>{try{return fs.existsSync(p)}catch{return false}};if(!has('tsconfig.json')||!has('../agents/tsconfig.json'))process.exit(0);const yarn=process.platform==='win32'?'yarn.cmd':'yarn';const r=cp.spawnSync(yarn,['-s','postinstall:real'],{stdio:'inherit'});process.exit(r.status??1);\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

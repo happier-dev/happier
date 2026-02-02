@@ -208,8 +208,8 @@ The project includes a multi-stage Dockerfile:
 #### Environment Variables
 - CLI: Use `yarn dev:local-server` (NOT `yarn dev`) to load `.env.dev-local-server`
 - Server: Use `yarn dev` to start with proper env files
-- **Tell**: Wrong server URL = check `HAPPY_SERVER_URL` env var
-- **Tell**: Wrong home dir = check `HAPPY_HOME_DIR` (should be `~/.happy-dev` for local)
+- **Tell**: Wrong server URL = check `HAPPIER_SERVER_URL` env var
+- **Tell**: Wrong home dir = check `HAPPIER_HOME_DIR` (should be `~/.happier-dev` for local)
 
 ### Quick Diagnostic Commands
 

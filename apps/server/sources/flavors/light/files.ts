@@ -4,16 +4,16 @@ import { homedir } from 'node:os';
 import { resolveLightPublicUrl } from './env';
 
 /**
- * Lightweight file storage for happy-server "light" flavor.
+ * Lightweight file storage for happier-server "light" flavor.
  *
- * In production (full flavor), happy-server uses S3/Minio for public files.
+ * In production (full flavor), happier-server uses S3/Minio for public files.
  * In light flavor, we store files on disk and serve them via `GET /files/*`.
  */
 
 export function resolveLightPublicFilesDir(env: NodeJS.ProcessEnv): string {
-    return env.HAPPY_SERVER_LIGHT_FILES_DIR?.trim()
-        ? env.HAPPY_SERVER_LIGHT_FILES_DIR.trim()
-        : join(homedir(), '.happy', 'server-light', 'files');
+    return env.HAPPIER_SERVER_LIGHT_FILES_DIR?.trim()
+        ? env.HAPPIER_SERVER_LIGHT_FILES_DIR.trim()
+        : join(homedir(), '.happier', 'server-light', 'files');
 }
 
 export async function ensureLightFilesDir(env: NodeJS.ProcessEnv): Promise<void> {
