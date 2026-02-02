@@ -175,6 +175,8 @@ ENV NODE_ENV=production
 ENV PORT=3005
 ENV RUN_MIGRATIONS=1
 COPY --from=server-builder /repo/node_modules /repo/node_modules
+COPY --from=server-builder /repo/packages/agents /repo/packages/agents
+COPY --from=server-builder /repo/packages/protocol /repo/packages/protocol
 COPY --from=server-builder /repo/apps/server /repo/apps/server
 COPY --from=server-builder /repo/apps/server/scripts/run-server.sh /usr/local/bin/run-server
 RUN chmod +x /usr/local/bin/run-server
