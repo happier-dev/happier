@@ -9,6 +9,17 @@
   **End-to-end encrypted. Zero-knowledge. Built by developers, for developers.**
 </div>
 
+## Happier is not released, yet!
+
+Make sure to star the repo and [subscribe to the announcements channel](https://github.com/happier-dev/happier/discussions/categories/announcements) to be informed as soon as it's out.
+
+You can also [join the Discord](https://discord.gg/y7KwpakY) channel to ask any question or report any issue that you might have.
+
+This project exists because we needed it ourselves - and we want it to evolve through real feedback. We aim to keep the community welcoming, and contributor-friendly, whether you’re signaling an issue or proposing a larger idea.
+
+If something feels broken, missing, or awkward — **we really want to hear about it**.
+Happier grows through shared experience and collaboration.
+
 ## What is Happier?
 
 **Happier** is an open-source, end-to-end encrypted companion app for AI coding agents.
@@ -130,14 +141,7 @@ Happier acts as a secure bridge between your local development environment and y
 
 **Happier** is completely open-source. We built this because we wanted a more powerful, more social way to interact with AI agents - and we want to build it in the open, shaped by the people who actually use it.
 
-This project exists because we needed it ourselves - and we want it to evolve through real feedback. We aim to keep the community welcoming, and contributor-friendly, whether you’re signaling an issue or proposing a larger idea.
-
-We aim to keep the community:
-* welcoming,
-* newbie-friendly,
-* and contributor-friendly,
-
-whether you’re reporting a small bug or proposing a larger idea.
+This project exists because we needed it ourselves - and we want it to evolve through real feedback. We aim to keep the community welcoming, and contributor-friendly, whether you’re signaling an issue or proposing a larger idea. You are always welcome, whether you’re reporting a small bug or proposing a larger idea.
 
 What that means in practice:
 * **Open development** and transparent discussions
