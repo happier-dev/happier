@@ -381,6 +381,8 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     (process.env.HAPPIER_STACK_AUTH_LINK ?? '').toString().trim() === '1' ||
     (process.env.HAPPIER_STACK_AUTH_MODE ?? '').toString().trim() === 'link';
   const forcePort = flags.has('--force-port');
+  const dbProviderRaw = (kv.get('--db-provider') ?? kv.get('--db') ?? '').toString().trim().toLowerCase();
+  const databaseUrlOverride = (kv.get('--database-url') ?? '').toString().trim();
 
   // argv here is already "args after 'new'", so the first positional is the stack name.
   let stackName = stackNameFromArg(positionals, 0);
@@ -405,7 +407,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   if (!stackName) {
     throw new Error(
       '[stack] usage: hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] ' +
-        '[--repo=<owner/...>|<path>|default] [--remote=<name>] ' +
+        '[--repo=<owner/...>|<path>|default] [--remote=<name>] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>] ' +
         '[--copy-auth-from=<stack>] [--link-auth] [--no-copy-auth] [--interactive] [--non-interactive] [--force-port]'
     );
   }
@@ -416,6 +418,23 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   const serverComponent = (config.serverComponent || 'happier-server-light').trim();
   if (serverComponent !== 'happier-server-light' && serverComponent !== 'happier-server') {
     throw new Error(`[stack] invalid server component: ${serverComponent}`);
+  }
+  const effectiveDbProvider =
+    dbProviderRaw ||
+    (serverComponent === 'happier-server-light' ? 'pglite' : 'postgres');
+  if (serverComponent === 'happier-server-light' && effectiveDbProvider !== 'pglite' && effectiveDbProvider !== 'sqlite') {
+    throw new Error(`[stack] invalid --db-provider for happier-server-light: ${effectiveDbProvider} (supported: pglite, sqlite)`);
+  }
+  if (serverComponent === 'happier-server' && effectiveDbProvider !== 'postgres' && effectiveDbProvider !== 'mysql') {
+    throw new Error(`[stack] invalid --db-provider for happier-server: ${effectiveDbProvider} (supported: postgres, mysql)`);
+  }
+  if (serverComponent === 'happier-server' && effectiveDbProvider === 'mysql' && !databaseUrlOverride) {
+    throw new Error(
+      `[stack] mysql support requires an explicit DATABASE_URL.\n` +
+        `Fix:\n` +
+        `- re-run with: --database-url=mysql://...\n` +
+        `- or use the default: --db-provider=postgres\n`
+    );
   }
 
   const baseDir = resolveStackEnvPath(stackName).baseDir;
@@ -462,6 +481,18 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     HAPPIER_STACK_STACK_REMOTE: config.createRemote?.trim() ? config.createRemote.trim() : 'upstream',
     ...defaultRepoEnv,
   };
+  // Power user knob: override DB provider selection in the server (no extra prompts).
+  // Defaults remain flavor-based (light=pglite, full=postgres) when unset.
+  if (dbProviderRaw) {
+    stackEnv.HAPPIER_DB_PROVIDER = dbProviderRaw;
+  }
+  // Power user knob: override DATABASE_URL (required for mysql today, useful for external DBs).
+  if (databaseUrlOverride) {
+    if (serverComponent === 'happier-server-light') {
+      throw new Error('[stack] --database-url is not supported for happier-server-light');
+    }
+    stackEnv.DATABASE_URL = databaseUrlOverride;
+  }
   if (port != null) {
     stackEnv.HAPPIER_STACK_SERVER_PORT = String(port);
   }
@@ -472,7 +503,9 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     const dataDir = join(baseDir, 'server-light');
     stackEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
     stackEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = join(dataDir, 'files');
-    stackEnv.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
+    if (effectiveDbProvider !== 'sqlite') {
+      stackEnv.HAPPIER_SERVER_LIGHT_DB_DIR = join(dataDir, 'pglite');
+    }
   }
   if (serverComponent === 'happier-server') {
     // Persist stable infra credentials in the stack env (ports are ephemeral unless explicitly pinned).
@@ -492,37 +525,45 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     stackEnv.S3_SECRET_KEY = s3SecretKey;
     stackEnv.S3_BUCKET = s3Bucket;
 
-    // If user explicitly pinned the server port, also pin the rest of the ports + derived URLs for reproducibility.
-    if (port != null) {
-      const reservedPorts = await collectReservedStackPorts();
-      reservedPorts.add(port);
-      const backendPort = await pickNextFreePort(port + 10, { reservedPorts });
-      reservedPorts.add(backendPort);
-      const pgPort = await pickNextFreePort(port + 1000, { reservedPorts });
-      reservedPorts.add(pgPort);
-      const redisPort = await pickNextFreePort(pgPort + 1, { reservedPorts });
-      reservedPorts.add(redisPort);
-      const minioPort = await pickNextFreePort(redisPort + 1, { reservedPorts });
-      reservedPorts.add(minioPort);
-      const minioConsolePort = await pickNextFreePort(minioPort + 1, { reservedPorts });
+	    // If user explicitly pinned the server port, also pin the rest of the ports + derived URLs for reproducibility.
+	    if (port != null) {
+	      const reservedPorts = await collectReservedStackPorts();
+	      reservedPorts.add(port);
+	      const backendPort = await pickNextFreePort(port + 10, { reservedPorts });
+	      reservedPorts.add(backendPort);
+	      const wantsManagedPostgres = effectiveDbProvider === 'postgres' && !databaseUrlOverride;
+	      const baseInfraPort = port + 1000;
+	      const dbPort = wantsManagedPostgres ? await pickNextFreePort(baseInfraPort, { reservedPorts }) : null;
+	      if (dbPort != null) reservedPorts.add(dbPort);
+	      const redisBase = dbPort != null ? dbPort + 1 : baseInfraPort;
+	      const redisPort = await pickNextFreePort(redisBase, { reservedPorts });
+	      reservedPorts.add(redisPort);
+	      const minioPort = await pickNextFreePort(redisPort + 1, { reservedPorts });
+	      reservedPorts.add(minioPort);
+	      const minioConsolePort = await pickNextFreePort(minioPort + 1, { reservedPorts });
 
-      const databaseUrl = `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${pgPort}/${encodeURIComponent(pgDb)}`;
-      const s3PublicUrl = `http://127.0.0.1:${minioPort}/${s3Bucket}`;
+	      const s3PublicUrl = `http://127.0.0.1:${minioPort}/${s3Bucket}`;
 
-      stackEnv.HAPPIER_STACK_SERVER_BACKEND_PORT = String(backendPort);
-      stackEnv.HAPPIER_STACK_PG_PORT = String(pgPort);
-      stackEnv.HAPPIER_STACK_REDIS_PORT = String(redisPort);
-      stackEnv.HAPPIER_STACK_MINIO_PORT = String(minioPort);
-      stackEnv.HAPPIER_STACK_MINIO_CONSOLE_PORT = String(minioConsolePort);
+	      stackEnv.HAPPIER_STACK_SERVER_BACKEND_PORT = String(backendPort);
+	      if (dbPort != null) {
+	        stackEnv.HAPPIER_STACK_PG_PORT = String(dbPort);
+	      }
+	      stackEnv.HAPPIER_STACK_REDIS_PORT = String(redisPort);
+	      stackEnv.HAPPIER_STACK_MINIO_PORT = String(minioPort);
+	      stackEnv.HAPPIER_STACK_MINIO_CONSOLE_PORT = String(minioConsolePort);
 
 	      // Vars consumed by happier-server:
-	      stackEnv.DATABASE_URL = databaseUrl;
-	      stackEnv.REDIS_URL = `redis://127.0.0.1:${redisPort}`;
-	      stackEnv.S3_HOST = '127.0.0.1';
-      stackEnv.S3_PORT = String(minioPort);
-      stackEnv.S3_USE_SSL = 'false';
-      stackEnv.S3_PUBLIC_URL = s3PublicUrl;
-    }
+	      if (databaseUrlOverride) {
+	        stackEnv.DATABASE_URL = databaseUrlOverride;
+	      } else if (effectiveDbProvider === 'postgres' && dbPort != null) {
+	        stackEnv.DATABASE_URL = `postgresql://${encodeURIComponent(pgUser)}:${encodeURIComponent(pgPassword)}@127.0.0.1:${dbPort}/${encodeURIComponent(pgDb)}`;
+	      }
+		      stackEnv.REDIS_URL = `redis://127.0.0.1:${redisPort}`;
+		      stackEnv.S3_HOST = '127.0.0.1';
+	      stackEnv.S3_PORT = String(minioPort);
+	      stackEnv.S3_USE_SSL = 'false';
+	      stackEnv.S3_PUBLIC_URL = s3PublicUrl;
+	    }
   }
 
   // Pin the repo checkout/worktree for this stack (single monorepo).
@@ -1249,14 +1290,6 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
 }
 
 function resolveTransientRepoOverrides({ rootDir, kv }) {
-  const legacyFlags = ['--happy', '--happy-cli', '--happy-server-light', '--happy-server'];
-  for (const flag of legacyFlags) {
-    const v = (kv.get(flag) ?? '').toString().trim();
-    if (v) {
-      throw new Error(`[stack] ${flag} is no longer supported. Use --repo=<worktreeSpec|path> instead.`);
-    }
-  }
-
   const raw = (kv.get('--repo') ?? kv.get('--repo-dir') ?? '').toString().trim();
   if (!raw) return {};
 
@@ -2486,20 +2519,12 @@ async function cmdPrStack({ rootDir, argv }) {
 
   const remoteNameFromArg = (kv.get('--remote') ?? '').trim();
   const depsMode = (kv.get('--deps') ?? '').trim();
+  const dbProviderFromArg = (kv.get('--db-provider') ?? kv.get('--db') ?? '').toString().trim();
+  const databaseUrlFromArg = (kv.get('--database-url') ?? '').toString().trim();
 
   const prRepo = (kv.get('--repo') ?? kv.get('--pr') ?? '').trim();
-  const legacyHappy = (kv.get('--happy') ?? '').trim();
-  if (legacyHappy) {
-    throw new Error('[stack] pr: use --repo=<pr-url|number> (the old --happy flag has been removed)');
-  }
   if (!prRepo) {
     throw new Error('[stack] pr: missing PR input. Provide --repo=<pr-url|number>.');
-  }
-  for (const legacy of ['--happy-cli', '--happy-server', '--happy-server-light']) {
-    const v = (kv.get(legacy) ?? '').trim();
-    if (v) {
-      throw new Error(`[stack] pr: legacy split-repo flag is not supported anymore: ${legacy}\nFix: use --repo=<pr-url|number>`);
-    }
   }
 
   const serverFlavorFromArg = (kv.get('--server-flavor') ?? '').trim().toLowerCase();
@@ -2624,15 +2649,22 @@ async function cmdPrStack({ rootDir, argv }) {
 
   // 1) Create (or reuse) the stack.
   let created = null;
-  if (!stackExists) {
-    progress(`[stack] pr: creating stack "${stackName}" (server=${serverComponent})...`);
-    created = await cmdNew({
-      rootDir,
-      argv: [stackName, '--no-copy-auth', `--server=${serverComponent}`, ...(json ? ['--json'] : [])],
-      // Prevent cmdNew from printing in JSON mode (we’ll print the final combined object below).
-      emit: !json,
-    });
-  } else {
+	  if (!stackExists) {
+	    progress(`[stack] pr: creating stack "${stackName}" (server=${serverComponent})...`);
+	    created = await cmdNew({
+	      rootDir,
+	      argv: [
+	        stackName,
+	        '--no-copy-auth',
+	        `--server=${serverComponent}`,
+	        ...(dbProviderFromArg ? [`--db-provider=${dbProviderFromArg}`] : []),
+	        ...(databaseUrlFromArg ? [`--database-url=${databaseUrlFromArg}`] : []),
+	        ...(json ? ['--json'] : []),
+	      ],
+	      // Prevent cmdNew from printing in JSON mode (we’ll print the final combined object below).
+	      emit: !json,
+	    });
+	  } else {
     progress(`[stack] pr: reusing existing stack "${stackName}"...`);
     // Ensure requested server flavor is compatible with the existing stack.
     const existing = await cmdInfoInternal({ rootDir, stackName });
@@ -3240,7 +3272,7 @@ async function main() {
       },
       text: [
         '[stack] usage:',
-        '  hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] [--repo=default|dev|<owner/...>|<path>] [--interactive] [--non-interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
+        '  hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] [--repo=default|dev|<owner/...>|<path>] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>] [--interactive] [--non-interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
         '  hstack stack edit <name> --interactive [--json]',
         '  hstack stack list [--json]',
         '  hstack stack audit [--fix] [--fix-main] [--fix-ports] [--fix-workspace] [--fix-paths] [--unpin-ports] [--unpin-ports-except=stack1,stack2] [--json]',
@@ -3335,7 +3367,7 @@ async function main() {
               '  hstack stack wt <name> -- <wt args...>',
               '',
               'example:',
-              '  hstack stack wt exp1 -- use happy pr/123-fix-thing',
+	              '  hstack stack wt exp1 -- use happier pr/123-fix-thing',
             ]
           : cmd === 'srv'
             ? [
@@ -3534,7 +3566,7 @@ async function main() {
     return;
   }
   if (cmd === 'mobile-dev-client') {
-    // Stack-scoped wrapper so the dev-client can be built from the stack's active happy checkout/worktree.
+    // Stack-scoped wrapper so the dev-client can be built from the stack's active Happier checkout/worktree.
     await cmdRunScript({ rootDir, stackName, scriptPath: 'mobile_dev_client.mjs', args: passthrough });
     return;
   }

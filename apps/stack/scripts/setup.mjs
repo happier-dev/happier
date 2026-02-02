@@ -178,10 +178,10 @@ async function maybeConfigureForkRemoteForDevProfile({ rootDir, interactive }) {
   }
 }
 
-async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, tailscaleWanted, menubarMode, happyRepoUrl }) {
+async function ensureSetupConfigPersisted({ rootDir, profile, serverComponent, tailscaleWanted, menubarMode, happierRepoUrl }) {
   // Repo source here describes where we clone the Happier monorepo from (apps/ui + apps/cli + apps/server).
   const repoSourceForProfile = profile === 'selfhost' ? 'upstream' : null;
-  const monoRepo = String(happyRepoUrl ?? '').trim();
+  const monoRepo = String(happierRepoUrl ?? '').trim();
   const updates = [
     { key: 'HAPPIER_STACK_SERVER_COMPONENT', value: serverComponent },
     // Default for selfhost:
@@ -520,7 +520,7 @@ async function cmdSetup({ rootDir, argv }) {
 	          '--profile=selfhost|dev',
 	          '--server=happier-server-light|happier-server',
 	          '--server-flavor=light|full',
-	          '--happy-repo=<owner/repo|url>        # override the monorepo clone source',
+	          '--happier-repo=<owner/repo|url>     # override the monorepo clone source',
 	          '--workspace-dir=/absolute/path   # dev profile only',
 	          '--install-path',
 	          '--start-now',
@@ -540,7 +540,7 @@ async function cmdSetup({ rootDir, argv }) {
 	        '  hstack setup --profile=selfhost',
 	        '  hstack setup --profile=dev',
 	        '  hstack setup --profile=dev --workspace-dir=~/Development/happier',
-	        '  hstack setup --happy-repo=happier-dev/happier',
+	        '  hstack setup --happier-repo=happier-dev/happier',
 	        '  hstack tools setup-pr --repo=<pr-url|number>',
 	        '  hstack setup --auth',
 	        '  hstack setup --no-auth',
@@ -577,7 +577,7 @@ async function cmdSetup({ rootDir, argv }) {
   const quietUi = interactive && verbosity === 0 && !json;
 
   // Optional: override the monorepo clone source (UI + CLI + full server).
-  const happyRepoUrl = normalizeGithubRepoUrl(kv.get('--happy-repo'));
+  const happierRepoUrl = normalizeGithubRepoUrl(kv.get('--happier-repo'));
 
   function isInteractiveChildCommand({ rel, args }) {
     // If a child command needs to prompt the user, it must inherit stdin/stdout.
@@ -1044,32 +1044,32 @@ async function cmdSetup({ rootDir, argv }) {
   });
 
   // 2) Persist profile defaults to stack env (server flavor, repo source, tailscale preference, menubar mode).
-  await ensureSetupConfigPersisted({
-    rootDir,
-    profile,
-    serverComponent,
-    tailscaleWanted,
-    menubarMode,
-    happyRepoUrl,
-  });
+	  await ensureSetupConfigPersisted({
+	    rootDir,
+	    profile,
+	    serverComponent,
+	    tailscaleWanted,
+	    menubarMode,
+	    happierRepoUrl,
+	  });
 
   // Apply repo override to this process too (so the immediately-following install step sees it),
   // even if env.local was already loaded earlier in this process.
-  if (happyRepoUrl) {
-    process.env.HAPPIER_STACK_REPO_URL = happyRepoUrl;
-  }
+	  if (happierRepoUrl) {
+	    process.env.HAPPIER_STACK_REPO_URL = happierRepoUrl;
+	  }
 
   // 3) Bootstrap the monorepo.
   if (profile === 'dev') {
-    // Developer setup: keep the existing bootstrap wizard.
+    // Developer setup: use the bootstrap wizard when a TTY is available; otherwise run non-interactively.
     await runNodeScriptMaybeQuiet({
       label: 'bootstrap repo',
       rootDir,
       rel: 'scripts/install.mjs',
       // Dev setup: use Expo dev server, so exporting a production web bundle is wasted work.
       // Users can always run `hstack build` later if they want `hstack start` to serve a prebuilt UI.
-      args: ['--interactive', '--clone', '--no-ui-build'],
-      interactiveChild: true,
+      args: [...(interactive ? ['--interactive'] : []), '--clone', '--no-ui-build'],
+      interactiveChild: interactive,
     });
 
     if (interactive) {
