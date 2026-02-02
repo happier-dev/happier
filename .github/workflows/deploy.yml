@@ -104,6 +104,7 @@ jobs:
           CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
           CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
           DEPLOY_WEBHOOK_URL: ${{ vars.DEPLOY_WEBHOOK_URL != '' && vars.DEPLOY_WEBHOOK_URL || secrets.DEPLOY_WEBHOOK_URL }}
+          GH_TOKEN: ${{ github.token }}
           HAPPIER_UI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_UI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_UI_DEPLOY_WEBHOOKS || secrets.HAPPIER_UI_DEPLOY_WEBHOOKS }}
           HAPPIER_WEBSITE_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS || secrets.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS }}
           HAPPIER_DOCS_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS || secrets.HAPPIER_DOCS_DEPLOY_WEBHOOKS }}
@@ -128,6 +129,10 @@ jobs:
             exit 1
           fi
           DEPLOY_WEBHOOK_URL="${DEPLOY_WEBHOOK_URL%/}"
+          if ! [[ "${DEPLOY_WEBHOOK_URL}" =~ ^https?:// ]]; then
+            echo "DEPLOY_WEBHOOK_URL must start with http:// or https:// (got: ${DEPLOY_WEBHOOK_URL})." >&2
+            exit 1
+          fi
 
           # Dokploy's deploy webhook is designed to be called by a Git provider webhook.
           # If we call it directly from CI, we need to include a minimal push payload
@@ -137,7 +142,12 @@ jobs:
             BRANCH_NAME="deploy/${ENVIRONMENT}/${COMPONENT}"
           fi
           REF="refs/heads/${BRANCH_NAME}"
-          echo "Dokploy webhook ref: ${REF}"
+          AFTER_SHA="${SHA}"
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
+            echo "Resolving deploy branch SHA for workflow_dispatch..."
+            AFTER_SHA="$(gh api "repos/${REPOSITORY}/git/ref/heads/${BRANCH_NAME}" --jq '.object.sha')"
+          fi
+          echo "Dokploy webhook target: ref=${REF} after=${AFTER_SHA}"
 
           trigger_hooks() {
             local label="$1"
@@ -168,11 +178,14 @@ jobs:
               local delivery_id=""
               delivery_id="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
               local payload=""
-              payload="$(REF="$REF" SHA="$SHA" REPOSITORY="$REPOSITORY" python3 -c 'import json, os; ref=os.environ.get(\"REF\", \"\"); sha=os.environ.get(\"SHA\", \"\"); repo=os.environ.get(\"REPOSITORY\", \"\"); owner,name=((repo.split(\"/\",1)+[\"\"])[:2] if repo else (\"\",\"\")); print(json.dumps({\"ref\": ref, \"before\": \"0\"*40, \"after\": sha, \"repository\": {\"full_name\": repo, \"name\": name, \"owner\": {\"name\": owner}, \"default_branch\": \"main\"}}))')"
+              payload="$(REF="$REF" SHA="$AFTER_SHA" REPOSITORY="$REPOSITORY" python3 -c 'import json, os; ref=os.environ.get(\"REF\", \"\"); sha=os.environ.get(\"SHA\", \"\"); repo=os.environ.get(\"REPOSITORY\", \"\"); owner,name=((repo.split(\"/\",1)+[\"\"])[:2] if repo else (\"\",\"\")); print(json.dumps({\"ref\": ref, \"before\": \"0\"*40, \"after\": sha, \"repository\": {\"full_name\": repo, \"name\": name, \"owner\": {\"name\": owner}, \"default_branch\": \"main\"}}))')"
 
               triggered=$((triggered + 1))
               echo "POST ${url}"
-              curl -fsS -X POST \
+              echo "Request headers: Content-Type, X-GitHub-Event, X-GitHub-Delivery, CF-Access-Client-Id, CF-Access-Client-Secret"
+              echo "Request body: ${payload}"
+              resp_file="$(mktemp)"
+              http_code="$(curl -sS -X POST \
                 --retry 3 \
                 --retry-all-errors \
                 --connect-timeout 10 \
@@ -185,7 +198,21 @@ jobs:
                 -H "X-GitHub-Event: push" \
                 -H "X-GitHub-Delivery: ${delivery_id}" \
                 --data "${payload}" \
-                "${url}"
+                -o "${resp_file}" \
+                -w "%{http_code}" \
+                "${url}")"
+              echo "Response status: ${http_code}"
+              if [ -s "${resp_file}" ]; then
+                echo "Response body:"
+                cat "${resp_file}"
+              else
+                echo "Response body: <empty>"
+              fi
+              rm -f "${resp_file}"
+              if [ "${http_code}" -lt 200 ] || [ "${http_code}" -ge 300 ]; then
+                echo "Non-2xx response from deploy webhook for '${label}'." >&2
+                return 1
+              fi
             done <<< "$hooks"
 
             if [ "$triggered" -eq 0 ]; then
