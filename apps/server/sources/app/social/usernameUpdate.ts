@@ -1,8 +1,9 @@
 import { db } from "@/storage/db";
 import { Context } from "@/context";
-import { allocateUserSeq } from "@/storage/seq";
 import { buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { afterTx, inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 export async function usernameUpdate(ctx: Context, username: string): Promise<void> {
     const userId = ctx.uid;
@@ -18,17 +19,20 @@ export async function usernameUpdate(ctx: Context, username: string): Promise<vo
         throw new Error('Username is already taken');
     }
 
-    // Update username
-    await db.account.update({
-        where: { id: userId },
-        data: { username: username }
-    });
+    await inTx(async (tx) => {
+        await tx.account.update({
+            where: { id: userId },
+            data: { username: username }
+        });
 
-    // Send account update to all user connections
-    const updSeq = await allocateUserSeq(userId);
-    const updatePayload = buildUpdateAccountUpdate(userId, { username: username }, updSeq, randomKeyNaked(12));
-    eventRouter.emitUpdate({
-        userId, payload: updatePayload,
-        recipientFilter: { type: 'user-scoped-only' }
+        const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'account', entityId: 'self', hint: { username } });
+
+        afterTx(tx, () => {
+            const updatePayload = buildUpdateAccountUpdate(userId, { username: username }, cursor, randomKeyNaked(12));
+            eventRouter.emitUpdate({
+                userId, payload: updatePayload,
+                recipientFilter: { type: 'user-scoped-only' }
+            });
+        });
     });
 }

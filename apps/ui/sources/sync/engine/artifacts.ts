@@ -410,25 +410,33 @@ export async function decryptSocketNewArtifactUpdate(params: {
 
 export async function applySocketArtifactUpdate(params: {
     existingArtifact: DecryptedArtifact;
-    seq: number;
     createdAt: number;
     dataEncryptionKey: Uint8Array;
     header?: { version: number; value: string } | null;
     body?: { version: number; value: string } | null;
 }): Promise<DecryptedArtifact> {
-    const { existingArtifact, seq, createdAt, dataEncryptionKey, header, body } = params;
+    const { existingArtifact, createdAt, dataEncryptionKey, header, body } = params;
 
     const artifactEncryption = new ArtifactEncryption(dataEncryptionKey);
+
+    const existingHeaderVersion = existingArtifact.headerVersion ?? 0;
+    const existingBodyVersion = existingArtifact.bodyVersion ?? 0;
+
+    const shouldApplyHeader = !!header && header.version > existingHeaderVersion;
+    const shouldApplyBody = !!body && body.version > existingBodyVersion;
+
+    if (!shouldApplyHeader && !shouldApplyBody) {
+        return existingArtifact;
+    }
 
     // Update artifact with new data
     const updatedArtifact: DecryptedArtifact = {
         ...existingArtifact,
-        seq,
         updatedAt: createdAt,
     };
 
     // Decrypt and update header if provided
-    if (header) {
+    if (shouldApplyHeader && header) {
         const decryptedHeader = await artifactEncryption.decryptHeader(header.value);
         updatedArtifact.title = decryptedHeader?.title || null;
         updatedArtifact.sessions = decryptedHeader?.sessions;
@@ -437,7 +445,7 @@ export async function applySocketArtifactUpdate(params: {
     }
 
     // Decrypt and update body if provided
-    if (body) {
+    if (shouldApplyBody && body) {
         const decryptedBody = await artifactEncryption.decryptBody(body.value);
         updatedArtifact.body = decryptedBody?.body || null;
         updatedArtifact.bodyVersion = body.version;
@@ -504,7 +512,6 @@ export async function handleNewArtifactSocketUpdate(params: {
 
 export async function handleUpdateArtifactSocketUpdate(params: {
     artifactId: string;
-    seq: number;
     createdAt: number;
     header?: { version: number; value: string } | null;
     body?: { version: number; value: string } | null;
@@ -516,7 +523,6 @@ export async function handleUpdateArtifactSocketUpdate(params: {
 }): Promise<void> {
     const {
         artifactId,
-        seq,
         createdAt,
         header,
         body,
@@ -546,7 +552,6 @@ export async function handleUpdateArtifactSocketUpdate(params: {
 
         const updatedArtifact = await applySocketArtifactUpdate({
             existingArtifact,
-            seq,
             createdAt,
             dataEncryptionKey,
             header,

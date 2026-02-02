@@ -48,7 +48,7 @@ export default defineConfig({
             // `react-native-device-info` is native and pulls in RN internals.
             { find: 'react-native-device-info', replacement: resolve('./sources/dev/reactNativeDeviceInfoStub.ts') },
             // `@react-native/virtualized-lists` ships Flow sources (`import typeof`) that Node can't parse.
-            { find: '@react-native/virtualized-lists', replacement: resolve('./sources/dev/reactNativeVirtualizedListsStub.ts') },
+            { find: /^@react-native\/virtualized-lists(\/.*)?$/, replacement: resolve('./sources/dev/reactNativeVirtualizedListsStub.ts') },
             // Use libsodium-wrappers in tests instead of the RN native binding.
             { find: '@more-tech/react-native-libsodium', replacement: 'libsodium-wrappers' },
             // Use node-safe platform adapters in tests (avoid static expo-crypto imports).

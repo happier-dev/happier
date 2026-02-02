@@ -15,10 +15,10 @@ function createFakeSession() {
       calls.fetch += 1;
       return [];
     },
-    sendUserTextMessage(_text: string) {
+    async sendUserTextMessageCommitted(_text: string) {
       calls.sendUser += 1;
     },
-    sendAgentMessage() {
+    async sendAgentMessageCommitted() {
       calls.sendAgent += 1;
     },
     updateMetadata(_fn: unknown) {
@@ -78,4 +78,3 @@ describe('importAcpReplayHistoryV1', () => {
     expect(calls.updateMetadata).toBe(1);
   });
 });
-

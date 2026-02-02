@@ -13,6 +13,9 @@ const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undef
 const storageScope = isWebRuntime ? null : readStorageScopeFromEnv();
 const mmkv = storageScope ? new MMKV({ id: scopedStorageId('default', storageScope) }) : new MMKV();
 const NEW_SESSION_DRAFT_KEY = 'new-session-draft-v1';
+const SESSION_MATERIALIZED_MAX_SEQ_KEY = 'session-materialized-max-seq-v1';
+const LAST_CHANGES_CURSOR_BY_ACCOUNT_ID_KEY = 'last-changes-cursor-by-account-id-v1';
+const CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX = 'changes-cursor-by-account-id-v1:';
 
 export type NewSessionSessionType = 'simple' | 'worktree';
 export type NewSessionAgentType = AgentId;
@@ -446,6 +449,107 @@ export function loadSessionModelModes(): Record<string, ModelMode> {
 
 export function saveSessionModelModes(modes: Record<string, ModelMode>) {
     mmkv.set('session-model-modes', JSON.stringify(modes));
+}
+
+export function loadSessionMaterializedMaxSeqById(): Record<string, number> {
+    const raw = mmkv.getString(SESSION_MATERIALIZED_MAX_SEQ_KEY);
+    if (raw) {
+        try {
+            const parsed: unknown = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return {};
+            }
+
+            const result: Record<string, number> = {};
+            for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
+                if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+                    result[sessionId] = value;
+                }
+            }
+            return result;
+        } catch (e) {
+            console.error('Failed to parse session materialized max seq', e);
+            return {};
+        }
+    }
+    return {};
+}
+
+export function saveSessionMaterializedMaxSeqById(data: Record<string, number>) {
+    mmkv.set(SESSION_MATERIALIZED_MAX_SEQ_KEY, JSON.stringify(data));
+}
+
+export function loadChangesCursor(): string | null {
+    const accountId = loadProfile().id;
+    if (!accountId) return null;
+
+    const direct = mmkv.getString(`${CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX}${accountId}`);
+    if (typeof direct === 'string' && direct.length > 0) {
+        return direct;
+    }
+
+    // Legacy fallback: salvage from the old per-account numeric map.
+    const legacy = loadLastChangesCursorByAccountId()[accountId];
+    if (typeof legacy === 'number' && Number.isFinite(legacy) && legacy >= 0) {
+        return String(Math.floor(legacy));
+    }
+
+    return null;
+}
+
+export function saveChangesCursor(cursor: string): void {
+    const accountId = loadProfile().id;
+    if (!accountId) return;
+
+    const trimmed = typeof cursor === 'string' ? cursor.trim() : '';
+    if (!trimmed) {
+        mmkv.delete(`${CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX}${accountId}`);
+        const legacy = loadLastChangesCursorByAccountId();
+        if (Object.prototype.hasOwnProperty.call(legacy, accountId)) {
+            delete legacy[accountId];
+            saveLastChangesCursorByAccountId(legacy);
+        }
+        return;
+    }
+
+    // Store cursor as-is to support future BigInt/string cursors.
+    mmkv.set(`${CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX}${accountId}`, trimmed);
+
+    // Best-effort: keep legacy numeric map in sync for older code paths.
+    const asNumber = Number(trimmed);
+    if (Number.isFinite(asNumber) && asNumber >= 0) {
+        const legacy = loadLastChangesCursorByAccountId();
+        legacy[accountId] = Math.floor(asNumber);
+        saveLastChangesCursorByAccountId(legacy);
+    }
+}
+
+export function loadLastChangesCursorByAccountId(): Record<string, number> {
+    const raw = mmkv.getString(LAST_CHANGES_CURSOR_BY_ACCOUNT_ID_KEY);
+    if (raw) {
+        try {
+            const parsed: unknown = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return {};
+            }
+
+            const result: Record<string, number> = {};
+            for (const [accountId, value] of Object.entries(parsed as Record<string, unknown>)) {
+                if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+                    result[accountId] = value;
+                }
+            }
+            return result;
+        } catch (e) {
+            console.error('Failed to parse last changes cursor', e);
+            return {};
+        }
+    }
+    return {};
+}
+
+export function saveLastChangesCursorByAccountId(data: Record<string, number>) {
+    mmkv.set(LAST_CHANGES_CURSOR_BY_ACCOUNT_ID_KEY, JSON.stringify(data));
 }
 
 export function loadProfile(): Profile {

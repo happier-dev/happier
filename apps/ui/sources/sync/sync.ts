@@ -15,7 +15,14 @@ import { isRunningOnMac } from '@/utils/platform';
 import { NormalizedMessage, normalizeRawMessage, RawRecord } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './settings';
 import { Profile } from './profile';
-import { loadPendingSettings, savePendingSettings } from './persistence';
+import {
+    loadPendingSettings,
+    savePendingSettings,
+    loadSessionMaterializedMaxSeqById,
+    saveSessionMaterializedMaxSeqById,
+    loadChangesCursor,
+    saveChangesCursor,
+} from './persistence';
 import { initializeTracking, tracking } from '@/track';
 import { parseToken } from '@/utils/parseToken';
 import { RevenueCat } from './revenueCat';
@@ -36,6 +43,7 @@ import { computeNextReadStateV1 } from './readStateV1';
 import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './updateSessionMetadataWithRetry';
 import type { DecryptedArtifact } from './artifactTypes';
 import { getFriendsList, getUserProfile } from './apiFriends';
+import { kvBulkGet } from './apiKv';
 import { FeedItem } from './feedTypes';
 import { UserProfile } from './friendTypes';
 import { buildOutgoingMessageMeta } from './messageMeta';
@@ -48,6 +56,7 @@ import type { SavedSecret } from './settings';
 import { scheduleDebouncedPendingSettingsFlush } from './engine/pendingSettings';
 import { applySettingsLocalDelta, syncSettings as syncSettingsEngine } from './engine/settings';
 import { getOfferings as getOfferingsEngine, presentPaywall as presentPaywallEngine, purchaseProduct as purchaseProductEngine, syncPurchases as syncPurchasesEngine } from './engine/purchases';
+import { fetchChanges } from './apiChanges';
 import {
     createArtifactViaApi,
     fetchAndApplyArtifactsList,
@@ -61,10 +70,15 @@ import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSo
 import { fetchAndApplyProfile, handleUpdateAccountSocketUpdate, registerPushTokenIfAvailable } from './engine/account';
 import { buildMachineFromMachineActivityEphemeralUpdate, buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines } from './engine/machines';
 import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as fetchTodosEngine } from './engine/todos';
+import { planSyncActionsFromChanges } from './changesPlanner';
+import { applyPlannedChangeActions } from './changesApplier';
+import { runSocketReconnectCatchUpViaChanges } from './socketReconnectViaChanges';
+import { socketEmitWithAckFallback } from './engine/socketEmitWithAckFallback';
 import {
     buildUpdatedSessionFromSocketUpdate,
     fetchAndApplySessions,
     fetchAndApplyMessages,
+    fetchAndApplyNewerMessages,
     fetchAndApplyOlderMessages,
     fetchAndApplyPendingMessages as fetchAndApplyPendingMessagesEngine,
     handleDeleteSessionSocketUpdate,
@@ -82,6 +96,7 @@ import {
     handleEphemeralSocketUpdate,
     handleSocketReconnected,
     handleSocketUpdate,
+    parseUpdateContainer,
 } from './engine/socket';
 
 const SESSION_MESSAGES_PAGE_SIZE = 150;
@@ -89,6 +104,7 @@ const SESSION_MESSAGES_PAGE_SIZE = 150;
 class Sync {
     // Spawned agents (especially in spawn mode) can take noticeable time to connect.
     private static readonly SESSION_READY_TIMEOUT_MS = 10000;
+    private static readonly LONG_OFFLINE_SNAPSHOT_MS = 30 * 60 * 1000;
 
     encryption!: Encryption;
     serverID!: string;
@@ -117,11 +133,20 @@ class Sync {
     private friendsSync: InvalidateSync;
     private friendRequestsSync: InvalidateSync;
     private feedSync: InvalidateSync;
+    private pendingMessageCommitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private todosSync: InvalidateSync;
     private activityAccumulator: ActivityUpdateAccumulator;
     private pendingSettings: Partial<Settings> = loadPendingSettings();
     private pendingSettingsFlushTimer: ReturnType<typeof setTimeout> | null = null;
     private pendingSettingsDirty = false;
+    private sessionMaterializedMaxSeqById: Record<string, number> = loadSessionMaterializedMaxSeqById();
+    private sessionMaterializedMaxSeqFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    private sessionMaterializedMaxSeqDirty = false;
+    private changesCursor: string | null = loadChangesCursor();
+    private changesCursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    private changesCursorDirty = false;
+    private changesSyncInFlight: Promise<void> | null = null;
+    private lastSocketDisconnectedAtMs: number | null = null;
     revenueCatInitialized = false;
     private settingsSecretsKey: Uint8Array | null = null;
 
@@ -200,6 +225,12 @@ class Sync {
                         this.pendingSettingsFlushTimer = null;
                     }
                     savePendingSettings(this.pendingSettings);
+                } catch {
+                    // ignore
+                }
+                // Reliability: also flush per-session materialized message cursors.
+                try {
+                    this.flushSessionMaterializedMaxSeq();
                 } catch {
                     // ignore
                 }
@@ -425,30 +456,205 @@ class Sync {
             };
             const encryptedRawRecord = await encryption.encryptRawRecord(content);
 
-            // Add to messages - normalize the raw record
+            // Track this outbound user message in the local pending queue until it is committed.
+            // This prevents “ghost” optimistic transcript items when the send fails, and it lets the UI
+            // show a pending bubble while we await ACK / catch-up.
             const createdAt = nowServerMs();
-            const normalizedMessage = normalizeRawMessage(localId, localId, createdAt, content);
-            if (normalizedMessage) {
-                this.applyMessages(sessionId, [normalizedMessage]);
-            }
+            storage.getState().upsertPendingMessage(sessionId, {
+                id: localId,
+                localId,
+                createdAt,
+                updatedAt: createdAt,
+                text,
+                displayText,
+                rawRecord: content,
+            });
 
             const ready = await this.waitForAgentReady(sessionId);
             if (!ready) {
                 log.log(`Session ${sessionId} not ready after timeout, sending anyway`);
             }
 
-            // Send message with optional permission mode and source identifier
-            apiSocket.send('message', {
+            type MessageAck =
+                | { ok: true; id: string; seq: number; localId: string | null }
+                | { ok: false; error: string };
+
+            const payload = {
                 sid: sessionId,
                 message: encryptedRawRecord,
                 localId,
                 sentFrom,
                 permissionMode: permissionMode || 'default'
+            };
+
+            const ack = await socketEmitWithAckFallback<MessageAck>({
+                emitWithAck: (event, payload, opts) => apiSocket.emitWithAck<MessageAck>(event, payload, opts),
+                send: (event, payload) => apiSocket.send(event, payload),
+                event: 'message',
+                payload,
+                timeoutMs: 7_500,
+                onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
             });
+
+            if (!ack) return;
+
+            if (ack.ok !== true) {
+                storage.getState().removePendingMessage(sessionId, localId);
+                throw new Error(ack.error || 'Message send rejected');
+            }
+
+            // Message is committed. Remove from pending and insert into the canonical transcript
+            // (without waiting for broadcast updates, which can be missed on backgrounded devices).
+            storage.getState().removePendingMessage(sessionId, localId);
+            const committed = normalizeRawMessage(ack.id, localId, createdAt, content);
+            if (committed) {
+                this.applyMessages(sessionId, [committed]);
+            }
+            this.markSessionMaterializedMaxSeq(sessionId, ack.seq);
+
+            // If we miss the broadcast socket update, we still need to advance session.seq so
+            // catch-up (`afterSeq`) works correctly across reconnects.
+            const currentSession = storage.getState().sessions[sessionId];
+            if (currentSession) {
+                this.applySessions([
+                    {
+                        ...currentSession,
+                        updatedAt: nowServerMs(),
+                        seq: Math.max(currentSession.seq ?? 0, ack.seq),
+                    }
+                ]);
+            }
         } catch (e) {
             storage.getState().clearSessionOptimisticThinking(sessionId);
             throw e;
         }
+    }
+
+    private schedulePendingMessageCommitRetry(params: { sessionId: string; localId: string }): void {
+        const key = `${params.sessionId}:${params.localId}`;
+        if (this.pendingMessageCommitRetryTimers.has(key)) {
+            return;
+        }
+
+        const run = async (attempt: number): Promise<void> => {
+            const pendingState = storage.getState().sessionPending[params.sessionId];
+            const pending = pendingState?.messages?.find((m) => m.id === params.localId) ?? null;
+            if (!pending) {
+                const existing = this.pendingMessageCommitRetryTimers.get(key);
+                if (existing) {
+                    clearTimeout(existing);
+                }
+                this.pendingMessageCommitRetryTimers.delete(key);
+                return;
+            }
+
+                const sessionEncryption = this.encryption.getSessionEncryption(params.sessionId);
+                if (!sessionEncryption) {
+                    // If the session/encryption isn't available (e.g. session list was cleared or the app is mid-rehydrate),
+                    // don't leave this retry stuck. Ask for a sessions refresh and reschedule with backoff.
+                    void this.fetchSessions().catch(() => {
+                        // best-effort only
+                    });
+
+                    const nextAttempt = attempt + 1;
+                    if (nextAttempt >= 6) {
+                        const existing = this.pendingMessageCommitRetryTimers.get(key);
+                        if (existing) {
+                        clearTimeout(existing);
+                    }
+                    this.pendingMessageCommitRetryTimers.delete(key);
+                    return;
+                }
+
+                const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
+                const jitterMs = Math.floor(Math.random() * 250);
+                const timeout = setTimeout(() => {
+                    void run(nextAttempt);
+                }, baseDelayMs + jitterMs);
+                this.pendingMessageCommitRetryTimers.set(key, timeout);
+                return;
+            }
+
+            type MessageAck =
+                | { ok: true; id: string; seq: number; localId: string | null }
+                | { ok: false; error: string };
+
+            const encrypted = await sessionEncryption.encryptRawRecord(pending.rawRecord as RawRecord);
+            const payload = {
+                sid: params.sessionId,
+                message: encrypted,
+                localId: params.localId,
+                sentFrom: 'retry',
+                permissionMode: 'default',
+            };
+
+            const ack = await (async () => {
+                try {
+                    return await apiSocket.emitWithAck<MessageAck>('message', payload, { timeoutMs: 7_500 });
+                } catch {
+                    return null;
+                }
+            })();
+
+            if (ack && typeof ack === 'object' && ack.ok === true) {
+                storage.getState().removePendingMessage(params.sessionId, params.localId);
+                const committed = normalizeRawMessage(ack.id, params.localId, pending.createdAt, pending.rawRecord as RawRecord);
+                if (committed) {
+                    this.applyMessages(params.sessionId, [committed]);
+                }
+                this.markSessionMaterializedMaxSeq(params.sessionId, ack.seq);
+
+                const currentSession = storage.getState().sessions[params.sessionId];
+                if (currentSession) {
+                    this.applySessions([
+                        {
+                            ...currentSession,
+                            updatedAt: nowServerMs(),
+                            seq: Math.max(currentSession.seq ?? 0, ack.seq),
+                        }
+                    ]);
+                }
+
+                const existing = this.pendingMessageCommitRetryTimers.get(key);
+                if (existing) {
+                    clearTimeout(existing);
+                }
+                this.pendingMessageCommitRetryTimers.delete(key);
+                return;
+            }
+
+            if (ack && typeof ack === 'object' && ack.ok === false) {
+                storage.getState().removePendingMessage(params.sessionId, params.localId);
+                const existing = this.pendingMessageCommitRetryTimers.get(key);
+                if (existing) {
+                    clearTimeout(existing);
+                }
+                this.pendingMessageCommitRetryTimers.delete(key);
+                return;
+            }
+
+            const nextAttempt = attempt + 1;
+            if (nextAttempt >= 6) {
+                const existing = this.pendingMessageCommitRetryTimers.get(key);
+                if (existing) {
+                    clearTimeout(existing);
+                }
+                this.pendingMessageCommitRetryTimers.delete(key);
+                return;
+            }
+
+            const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
+            const jitterMs = Math.floor(Math.random() * 250);
+            const timeout = setTimeout(() => {
+                void run(nextAttempt);
+            }, baseDelayMs + jitterMs);
+            this.pendingMessageCommitRetryTimers.set(key, timeout);
+        };
+
+        const timeout = setTimeout(() => {
+            void run(0);
+        }, 1_000);
+        this.pendingMessageCommitRetryTimers.set(key, timeout);
     }
 
     async abortSession(sessionId: string): Promise<void> {
@@ -1003,6 +1209,46 @@ class Sync {
     }
 
     private fetchMessages = async (sessionId: string) => {
+        const session = storage.getState().sessions[sessionId] ?? null;
+        const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
+        // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
+        // not necessarily the last message seq that *this device has materialized*. Using it here can cause gaps.
+        const afterSeq = hasLoadedMessages ? (this.sessionMaterializedMaxSeqById[sessionId] ?? 0) : 0;
+
+        // If we already have a transcript snapshot, prefer incremental catch-up.
+        // This avoids refetching the latest page on every visibility ping.
+        if (afterSeq > 0) {
+            let cursor = afterSeq;
+            let pages = 0;
+            while (pages < 50) {
+                pages += 1;
+                const result = await fetchAndApplyNewerMessages({
+                    sessionId,
+                    afterSeq: cursor,
+                    limit: SESSION_MESSAGES_PAGE_SIZE,
+                    getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                    request: (path) => apiSocket.request(path),
+                    sessionReceivedMessages: this.sessionReceivedMessages,
+                    applyMessages: (sid, messages) => this.applyMessages(sid, messages),
+                    onMessagesPage: (page) => {
+                        this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
+                    },
+                    log,
+                });
+
+                const next = result.page.nextAfterSeq;
+                if (!next) {
+                    storage.getState().applyMessagesLoaded(sessionId);
+                    return;
+                }
+                cursor = next;
+            }
+
+            // If we hit the page cap, fall back to snapshot refresh for this session.
+            // This is a slow-path for extreme offline gaps.
+            log.log(`💬 fetchMessages hit catch-up page cap; falling back to snapshot refresh for session ${sessionId}`);
+        }
+
         await fetchAndApplyMessages({
             sessionId,
             getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
@@ -1090,22 +1336,184 @@ class Sync {
         // Subscribe to message updates
         apiSocket.onMessage('update', this.handleUpdate.bind(this));
         apiSocket.onMessage('ephemeral', this.handleEphemeralUpdate.bind(this));
+        // Broadcast-safe session events are optional hints; ignore by default.
+        apiSocket.onMessage('session', () => {});
+
+        apiSocket.onStatusChange((status) => {
+            if (status === 'disconnected') {
+                this.lastSocketDisconnectedAtMs = Date.now();
+            }
+        });
 
         // Subscribe to connection state changes
         apiSocket.onReconnected(() => {
-            handleSocketReconnected({
-                log,
-                invalidateSessions: () => this.sessionsSync.invalidate(),
-                invalidateMachines: () => this.machinesSync.invalidate(),
-                invalidateArtifacts: () => this.artifactsSync.invalidate(),
-                invalidateFriends: () => this.friendsSync.invalidate(),
-                invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
-                invalidateFeed: () => this.feedSync.invalidate(),
-                getSessionsData: () => storage.getState().sessionsData,
-                invalidateMessagesForSession: (sessionId) => this.messagesSync.get(sessionId)?.invalidate(),
-                invalidateGitStatusForSession: (sessionId) => gitStatusSync.invalidate(sessionId),
+            void this.handleSocketReconnectedViaChanges({
+                fallback: () => {
+                    handleSocketReconnected({
+                        log,
+                        invalidateSessions: () => this.sessionsSync.invalidate(),
+                        invalidateMachines: () => this.machinesSync.invalidate(),
+                        invalidateArtifacts: () => this.artifactsSync.invalidate(),
+                        invalidateFriends: () => this.friendsSync.invalidate(),
+                        invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
+                        invalidateFeed: () => this.feedSync.invalidate(),
+                        getLoadedSessionIdsForMessages: () => {
+                            const loadedSessionIds: string[] = []
+                            const sessions = storage.getState().sessionMessages
+                            for (const sessionId of Object.keys(sessions)) {
+                                if (sessions[sessionId]?.isLoaded === true) {
+                                    loadedSessionIds.push(sessionId)
+                                }
+                            }
+                            return loadedSessionIds
+                        },
+                        invalidateMessagesForSession: (sessionId) => this.messagesSync.get(sessionId)?.invalidate(),
+                        invalidateGitStatusForSession: (sessionId) => gitStatusSync.invalidate(sessionId),
+                    });
+                },
             });
         });
+    }
+
+    private getOrCreateMessagesSync(sessionId: string): InvalidateSync {
+        let ex = this.messagesSync.get(sessionId);
+        if (!ex) {
+            ex = new InvalidateSync(() => this.fetchMessages(sessionId));
+            this.messagesSync.set(sessionId, ex);
+        }
+        return ex;
+    }
+
+    private scheduleChangesCursorFlush(): void {
+        this.changesCursorDirty = true;
+        if (this.changesCursorFlushTimer) return;
+        this.changesCursorFlushTimer = setTimeout(() => {
+            this.changesCursorFlushTimer = null;
+            if (!this.changesCursorDirty) return;
+            this.changesCursorDirty = false;
+            if (this.changesCursor) {
+                saveChangesCursor(this.changesCursor);
+            }
+        }, 750);
+    }
+
+    private flushChangesCursorNow(): void {
+        if (this.changesCursorFlushTimer) {
+            clearTimeout(this.changesCursorFlushTimer);
+            this.changesCursorFlushTimer = null;
+        }
+        if (!this.changesCursorDirty) return;
+        this.changesCursorDirty = false;
+        if (this.changesCursor) {
+            saveChangesCursor(this.changesCursor);
+        }
+    }
+
+    private async handleSocketReconnectedViaChanges(opts: { fallback: () => void }): Promise<void> {
+        if (!this.credentials) {
+            opts.fallback();
+            return;
+        }
+
+        const accountId = storage.getState().profile?.id;
+        if (!accountId) {
+            opts.fallback();
+            return;
+        }
+
+        if (this.changesSyncInFlight) {
+            await this.changesSyncInFlight.catch(() => {});
+            return;
+        }
+
+        const p = (async () => {
+            const CHANGES_PAGE_LIMIT = 200;
+            const afterCursor = this.changesCursor ?? '0';
+
+            const offlineForMs = this.lastSocketDisconnectedAtMs ? (Date.now() - this.lastSocketDisconnectedAtMs) : 0;
+            const forceSnapshotRefresh = offlineForMs >= Sync.LONG_OFFLINE_SNAPSHOT_MS;
+
+            const catchUp = await runSocketReconnectCatchUpViaChanges({
+                credentials: this.credentials,
+                accountId,
+                afterCursor,
+                changesPageLimit: CHANGES_PAGE_LIMIT,
+                forceSnapshotRefresh,
+                fetchChanges,
+                snapshotRefresh: async () => {
+                    // Long-offline snapshot mode: rebuild core lists first, then catch up transcripts.
+                    await this.sessionsSync.invalidateAndAwait();
+
+                    // Catch up messages for sessions that have been materialized locally (avoid fetching full
+                    // transcripts for every session in the list).
+                    const sessionIdsToCatchUp = Array.from(this.messagesSync.keys());
+                    for (const sessionId of sessionIdsToCatchUp) {
+                        await this.getOrCreateMessagesSync(sessionId).invalidateAndAwait();
+                        gitStatusSync.invalidate(sessionId);
+                    }
+
+                    // Refresh artifacts/machines after sessions.
+                    await Promise.all([
+                        this.artifactsSync.invalidateAndAwait(),
+                        this.machinesSync.invalidateAndAwait(),
+                    ]);
+
+                    // Refresh kv-backed/UI lists last.
+                    await Promise.all([
+                        this.todosSync.invalidateAndAwait(),
+                        this.friendsSync.invalidateAndAwait(),
+                        this.friendRequestsSync.invalidateAndAwait(),
+                        this.feedSync.invalidateAndAwait(),
+                        this.settingsSync.invalidateAndAwait(),
+                        this.profileSync.invalidateAndAwait(),
+                    ]);
+                },
+                applyPlanned: async (planned) => {
+                    await applyPlannedChangeActions({
+                        planned,
+                        credentials: this.credentials,
+                        isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
+                        invalidate: {
+                            settings: () => this.settingsSync.invalidateAndAwait(),
+                            profile: () => this.profileSync.invalidateAndAwait(),
+                            machines: () => this.machinesSync.invalidateAndAwait(),
+                            artifacts: () => this.artifactsSync.invalidateAndAwait(),
+                            friends: () => this.friendsSync.invalidateAndAwait(),
+                            friendRequests: () => this.friendRequestsSync.invalidateAndAwait(),
+                            feed: () => this.feedSync.invalidateAndAwait(),
+                            sessions: () => this.sessionsSync.invalidateAndAwait(),
+                            todos: () => this.todosSync.invalidateAndAwait(),
+                        },
+                        invalidateMessagesForSession: (sessionId) => this.getOrCreateMessagesSync(sessionId).invalidateAndAwait(),
+                        invalidateGitStatusForSession: (sessionId) => gitStatusSync.invalidate(sessionId),
+                        applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
+                        kvBulkGet,
+                    });
+                },
+            });
+
+            if (catchUp.status === 'fallback') {
+                opts.fallback();
+                return;
+            }
+
+            if (catchUp.shouldPersistCursor) {
+                this.changesCursor = catchUp.nextCursor;
+                if (catchUp.flushCursorNow) {
+                    this.changesCursorDirty = true;
+                    this.flushChangesCursorNow();
+                } else {
+                    this.scheduleChangesCursorFlush();
+                }
+            }
+        })();
+
+        this.changesSyncInFlight = p;
+        try {
+            await p;
+        } finally {
+            this.changesSyncInFlight = null;
+        }
     }
 
     private handleUpdate = async (update: unknown) => {
@@ -1119,6 +1527,15 @@ class Sync {
             },
             applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages),
             onSessionVisible: (sessionId) => this.onSessionVisible(sessionId),
+            isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
+            getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
+            markSessionMaterializedMaxSeq: (sessionId, seq) => this.markSessionMaterializedMaxSeq(sessionId, seq),
+            invalidateMessagesForSession: (sessionId) => {
+                const ex = this.messagesSync.get(sessionId);
+                if (ex) {
+                    ex.invalidate();
+                }
+            },
             assumeUsers: (userIds) => this.assumeUsers(userIds),
             applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
             invalidateSessions: () => this.sessionsSync.invalidate(),
@@ -1181,6 +1598,11 @@ class Sync {
             return;
         }
 
+        const maxSeq = Math.max(...page.messages.map((m) => m.seq));
+        if (Number.isFinite(maxSeq)) {
+            this.markSessionMaterializedMaxSeq(sessionId, maxSeq);
+        }
+
         const supportsPagination = page.hasMore !== undefined || page.nextBeforeSeq !== undefined;
         if (supportsPagination) {
             this.sessionMessagesPaginationSupported.set(sessionId, true);
@@ -1223,6 +1645,34 @@ class Sync {
         storage.getState().applySessions(sessions);
         const newActive = storage.getState().getActiveSessions();
         this.applySessionDiff(active, newActive);
+    }
+
+    private markSessionMaterializedMaxSeq(sessionId: string, seq: number): void {
+        if (!sessionId) return;
+        if (typeof seq !== 'number' || !Number.isFinite(seq) || seq < 0) return;
+        const prev = this.sessionMaterializedMaxSeqById[sessionId] ?? 0;
+        if (seq <= prev) return;
+        this.sessionMaterializedMaxSeqById = { ...this.sessionMaterializedMaxSeqById, [sessionId]: seq };
+        this.sessionMaterializedMaxSeqDirty = true;
+        this.scheduleSessionMaterializedMaxSeqFlush();
+    }
+
+    private scheduleSessionMaterializedMaxSeqFlush(): void {
+        if (this.sessionMaterializedMaxSeqFlushTimer) return;
+        this.sessionMaterializedMaxSeqFlushTimer = setTimeout(() => {
+            this.sessionMaterializedMaxSeqFlushTimer = null;
+            this.flushSessionMaterializedMaxSeq();
+        }, 2_000);
+    }
+
+    private flushSessionMaterializedMaxSeq(): void {
+        if (this.sessionMaterializedMaxSeqFlushTimer) {
+            clearTimeout(this.sessionMaterializedMaxSeqFlushTimer);
+            this.sessionMaterializedMaxSeqFlushTimer = null;
+        }
+        if (!this.sessionMaterializedMaxSeqDirty) return;
+        this.sessionMaterializedMaxSeqDirty = false;
+        saveSessionMaterializedMaxSeqById(this.sessionMaterializedMaxSeqById);
     }
 
     private applySessionDiff = (active: Session[], newActive: Session[]) => {

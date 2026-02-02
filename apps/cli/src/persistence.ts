@@ -28,6 +28,11 @@ interface Settings {
   machineIdConfirmedByServer?: boolean
   daemonAutoStartWhenRunningHappy?: boolean
   chromeMode?: boolean
+  /**
+   * Per-account reconnect cursor for `/v2/changes`.
+   * Keyed by server account id (not machine id).
+   */
+  lastChangesCursorByAccountId?: Record<string, number>
 }
 
 const defaultSettings: Settings = {
@@ -287,6 +292,38 @@ export async function clearMachineId(): Promise<void> {
     ...settings,
     machineId: undefined
   }));
+}
+
+export async function readLastChangesCursor(accountId: string): Promise<number> {
+  if (!accountId) return 0;
+  const settings = await readSettings();
+  const cursor = settings.lastChangesCursorByAccountId?.[accountId];
+  return typeof cursor === 'number' && Number.isFinite(cursor) && cursor >= 0 ? cursor : 0;
+}
+
+export async function writeLastChangesCursor(accountId: string, cursor: number): Promise<void> {
+  if (!accountId) return;
+  if (!Number.isFinite(cursor) || cursor < 0) return;
+  const next = Math.floor(cursor);
+
+  await updateSettings((settings) => {
+    const currentMap = settings.lastChangesCursorByAccountId ?? {};
+    if (next === 0) {
+      if (!(accountId in currentMap)) return settings;
+      const copy = { ...currentMap };
+      delete copy[accountId];
+      return { ...settings, lastChangesCursorByAccountId: Object.keys(copy).length ? copy : undefined };
+    }
+
+    if (currentMap[accountId] === next) return settings;
+    return {
+      ...settings,
+      lastChangesCursorByAccountId: {
+        ...currentMap,
+        [accountId]: next,
+      },
+    };
+  });
 }
 
 /**

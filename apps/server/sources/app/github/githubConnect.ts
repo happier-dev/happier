@@ -4,10 +4,11 @@ import { encryptString } from "@/modules/encrypt";
 import { uploadImage } from "@/storage/uploadImage";
 import { separateName } from "@/utils/separateName";
 import { GitHubProfile } from "@/app/api/types";
-import { allocateUserSeq } from "@/storage/seq";
 import { buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { githubDisconnect } from "./githubDisconnect";
+import { afterTx, inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 /**
  * Connects a GitHub account to a user profile.
@@ -61,7 +62,7 @@ export async function githubConnect(
     const name = separateName(githubProfile.name);
 
     // Step 4: Start transaction for atomic database operations
-    await db.$transaction(async (tx) => {
+    await inTx(async (tx) => {
 
         // Upsert GitHub user record with encrypted token
         await tx.githubUser.upsert({
@@ -88,21 +89,23 @@ export async function githubConnect(
                 avatar: avatar
             }
         });
-    });
 
-    // Step 5: Send update via socket (after transaction completes)
-    const updSeq = await allocateUserSeq(userId);
-    const updatePayload = buildUpdateAccountUpdate(userId, {
-        github: githubProfile,
-        username: githubProfile.login,
-        firstName: name.firstName,
-        lastName: name.lastName,
-        avatar: avatar
-    }, updSeq, randomKeyNaked(12));
+        const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'account', entityId: 'self', hint: { github: true } });
 
-    eventRouter.emitUpdate({
-        userId,
-        payload: updatePayload,
-        recipientFilter: { type: 'user-scoped-only' }
+        afterTx(tx, () => {
+            const updatePayload = buildUpdateAccountUpdate(userId, {
+                github: githubProfile,
+                username: githubProfile.login,
+                firstName: name.firstName,
+                lastName: name.lastName,
+                avatar: avatar
+            }, cursor, randomKeyNaked(12));
+
+            eventRouter.emitUpdate({
+                userId,
+                payload: updatePayload,
+                recipientFilter: { type: 'user-scoped-only' }
+            });
+        });
     });
 }

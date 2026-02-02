@@ -49,15 +49,174 @@ That said, Happier Server is open source and self-hostable if you prefer running
 
 Happier Server supports two flavors that share the same API + internal logic. The only difference is which infrastructure backends are used for storage.
 
-- **full** (default, recommended for production): Postgres + Redis + S3/Minio-compatible public file storage.
-- **light** (recommended for self-hosting/testing): SQLite + local public file storage served by the server under `GET /files/*`.
+- **full** (default, recommended for production): Postgres + optional Redis (for multi-replica Socket.IO) + S3/Minio-compatible public file storage.
+- **light** (recommended for self-hosting/testing): embedded Postgres via PGlite (no external Postgres/Redis required) + local public file storage served by the server under `GET /files/*`.
+
+## Required environment (full flavor)
+
+The full flavor expects these env vars to be set:
+
+- `DATABASE_URL` (Postgres), for example: `postgresql://user:pass@db.example.com:5432/happy?sslmode=require`
+- `HANDY_MASTER_SECRET` (used to derive auth/encryption secrets)
+- Public file storage (S3/Minio):
+  - `S3_HOST`
+  - `S3_PORT` (optional)
+  - `S3_USE_SSL` (`true`/`false`, defaults to `true`)
+  - `S3_BUCKET`
+  - `S3_PUBLIC_URL` (base URL used to build file URLs)
+  - `S3_ACCESS_KEY`
+  - `S3_SECRET_KEY`
+
+Optional (recommended for multi-core / multi-replica):
+
+- `REDIS_URL` + `HAPPY_SOCKET_REDIS_ADAPTER=1`
+
+### Example `.env` (full flavor, production)
+
+```bash
+# Required: DB
+DATABASE_URL=postgresql://happy:happy@127.0.0.1:5432/happy?sslmode=require
+HANDY_MASTER_SECRET=change-me-to-a-long-random-string
+
+# Required: public file storage (S3 / Minio)
+S3_HOST=127.0.0.1
+S3_PORT=9000
+S3_USE_SSL=false
+S3_BUCKET=happy-public
+S3_PUBLIC_URL=http://127.0.0.1:9000/happy-public
+S3_ACCESS_KEY=minioadmin
+S3_SECRET_KEY=minioadmin
+
+# Optional: enable multi-replica Socket.IO fanout + cluster RPC routing
+# (required if you run more than one API replica)
+REDIS_URL=redis://127.0.0.1:6379
+HAPPY_SOCKET_REDIS_ADAPTER=1
+
+# Optional: process role when scaling (unset => "all")
+# SERVER_ROLE=api
+# SERVER_ROLE=worker
+
+# Optional: ports
+PORT=3005
+METRICS_ENABLED=true
+METRICS_PORT=9090
+
+# Optional: instance id for logs/registry
+# HAPPY_INSTANCE_ID=api-1
+```
+
+### Example `.env` (light flavor, self-hosting)
+
+```bash
+# Optional: where light flavor stores its local data (DB + files + secrets).
+# If unset, defaults to ~/.happy/server-light
+HAPPY_SERVER_LIGHT_DATA_DIR=/var/lib/happy/server-light
+
+# Optional: ports
+PORT=3005
+METRICS_PORT=9090
+
+# Optional: you can set this for a stable secret (otherwise light will generate+persist one).
+# HANDY_MASTER_SECRET=change-me-to-a-long-random-string
+```
+
+### TLS note (light flavor only)
+
+The light flavor runs an embedded Postgres-compatible server (`pglite-socket`) bound to `127.0.0.1` and **does not support TLS**. Happy Server automatically connects to it with `sslmode=disable`.
+
+This does **not** affect the full flavor. If your production Postgres requires TLS, keep using a normal `postgresql://...` `DATABASE_URL` (the server will not force-disable TLS for real Postgres URLs).
+
+Light DB version pairing note:
+
+- This repo is tested with `@electric-sql/pglite@0.3.15` + `@electric-sql/pglite-socket@0.0.20` (see `yarn.lock`).
+- If you change these versions, run `yarn --cwd packages/happy-server migrate:light:deploy` and `yarn --cwd packages/happy-server start:light` as a smoke check.
+
+## Production scaling (multi-core / multi-replica)
+
+Happy Server scales by running **multiple API processes** (one Node.js process uses one CPU core effectively for JS work). To scale safely with Socket.IO, you must use a shared adapter and a load balancer configuration that keeps long-lived websocket sessions stable.
+
+### Roles (API vs worker)
+
+The server can run in three modes:
+
+- `SERVER_ROLE` unset → **all** (default): runs API + realtime + background loops in a single process (simple deployments / dev).
+- `SERVER_ROLE=api`: runs HTTP + Socket.IO (accepts client connections) + metrics server.
+- `SERVER_ROLE=worker`: runs background loops (timeouts, DB metrics updater) and publishes realtime events via Redis adapter; does **not** accept client connections.
+
+Recommended production topology:
+
+- **N× API replicas** with `SERVER_ROLE=api`
+- **1× worker replica** with `SERVER_ROLE=worker`
+
+### Redis adapter (required when running >1 API)
+
+When running more than one API process/replica, enable the Socket.IO Redis Streams adapter:
+
+- `REDIS_URL=redis://...`
+- `HAPPY_SOCKET_REDIS_ADAPTER=1`
+
+To explicitly disable it (single-process mode / light flavor), leave it unset or set:
+
+- `HAPPY_SOCKET_REDIS_ADAPTER=0`
+
+This enables:
+
+- room-based fanout for `update` / `ephemeral` events
+- cluster-aware Socket.IO RPC routing (method registry stored in Redis)
+
+Presence stream (when Redis adapter is enabled):
+
+- `HAPPY_PRESENCE_STREAM_MAXLEN` (default: `100000`)
+  - uses Redis `XADD ... MAXLEN ~ N` trimming for the `presence:alive:v1` stream to prevent unbounded growth
+  - set to `0` to disable trimming (not recommended in production)
+
+Important:
+
+- When you run `SERVER_ROLE=api` with the Redis adapter enabled, durable presence is **published** by API processes but **consumed** (and written to the DB) by a `SERVER_ROLE=worker` process. If you do not run a worker replica, durable presence updates will not be persisted.
+
+### Example: multi-process on one host
+
+For a quick local production-like test (requires Redis):
+
+```bash
+# Worker (no HTTP server; publishes events via Redis adapter; runs background loops)
+SERVER_ROLE=worker HAPPY_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 METRICS_PORT=0 yarn start
+
+# API replicas (different PORTs on the same host; put a load balancer in front in real deployments)
+SERVER_ROLE=api HAPPY_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 PORT=3005 METRICS_PORT=0 yarn start
+SERVER_ROLE=api HAPPY_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 PORT=3006 METRICS_PORT=0 yarn start
+```
+
+### Sticky sessions (required for websocket load balancing)
+
+If you run multiple API replicas behind a load balancer/ingress, you must configure **sticky sessions** so a given websocket client keeps talking to the same API pod/process after the initial upgrade. Without stickiness, reconnects and long-poll fallbacks can flap between replicas and degrade realtime behavior.
+
+### DB connection pool sizing
+
+With multiple API processes, total Postgres connections become roughly:
+
+`(N_api + N_worker) × prisma_pool_size`
+
+To avoid exhausting Postgres connections:
+
+- pick a Postgres `max_connections` target (or pooler capacity),
+- budget connections per process,
+- keep per-process pools conservative (especially for websocket-heavy API processes).
+
+Prisma pooling is typically configured via the database connection string / driver settings. A common pattern is to append a per-process limit (for example `connection_limit=<n>`) to `DATABASE_URL`, or to point `DATABASE_URL` at a pooler (PgBouncer) and keep the app-side pool small.
+
+### Operational tips
+
+- Set `HAPPY_INSTANCE_ID` to something stable per process/pod for debugging (for example, Kubernetes `metadata.uid`). If unset, it is generated automatically at runtime.
+- If you run API + worker processes on the same host, ensure their `PORT`/`METRICS_PORT` values do not conflict.
+- To disable the metrics server (for example in some local multi-process setups), set `METRICS_ENABLED=false`. To avoid conflicts while keeping it enabled, set `METRICS_PORT=0` (random free port) or choose distinct ports per process.
 
 ### Choosing a flavor
 
 - **full**: run `yarn start` (uses `sources/main.ts` → `startServer('full')`)
 - **light**: run `yarn start:light` (uses `sources/main.light.ts` → `startServer('light')`)
 
-For local development, `yarn dev:light` is the easiest entrypoint for the light flavor (it creates the local dirs and runs `prisma migrate deploy` for the SQLite database before starting).
+For local development, `yarn dev:light` is the easiest entrypoint for the light flavor (it creates the local dirs and runs `prisma migrate deploy` against embedded Postgres (PGlite) before starting).
 
 ### Local development
 
@@ -99,14 +258,14 @@ Notes:
 - `yarn start` is production-style (it expects env vars already set in your environment).
 - Minio cleanup: `yarn s3:down`.
 
-#### Light flavor (SQLite + local files)
+#### Light flavor (PGlite + local files)
 
-*The light flavor does not require Docker.* It uses a local SQLite database file and serves public files from disk under `GET /files/*`.
+*The light flavor does not require Docker.* It uses an embedded Postgres database (PGlite) persisted on disk and serves public files from disk under `GET /files/*`.
 
 ```bash
 yarn install
 
-# Runs `prisma migrate deploy` for SQLite before starting
+# Runs `prisma migrate deploy` against embedded Postgres (PGlite) before starting
 PORT=3005 yarn dev:light
 ```
 
@@ -118,56 +277,41 @@ curl http://127.0.0.1:3005/health
 
 Notes:
 
-- `yarn dev:light` runs `prisma migrate deploy` against the SQLite database (using the checked-in migration history under `prisma/sqlite/migrations/*`).
-- If you are upgrading an existing light DB that was created before SQLite migrations existed, run `yarn migrate:light:resolve-baseline` once (after making a backup).
+- `yarn dev:light` runs `prisma migrate deploy` against the embedded Postgres database before starting.
 - If you want a clean slate for local dev/testing, delete the light data dir (default: `~/.happy/server-light`) or point the light flavor at a fresh dir via `HAPPY_SERVER_LIGHT_DATA_DIR=/tmp/happy-server-light`.
 
 ### Prisma schema (full vs light)
 
-- `prisma/schema.prisma` is the **source of truth** (the full flavor uses it directly).
-- `prisma/sqlite/schema.prisma` is **auto-generated** from `schema.prisma` (do not edit).
-- Regenerate with `yarn schema:sync` (or verify with `yarn schema:sync:check`).
-
-Migrations directories are flavor-specific:
-
-- **full (Postgres)** migrations: `prisma/migrations/*`
-- **light (SQLite)** migrations: `prisma/sqlite/migrations/*`
-
-Practical safety notes for the light flavor:
-
-- The light flavor uses Prisma Migrate (`migrate deploy`) to apply a deterministic, reviewable migration history.
-- Avoid destructive migrations for user data. Prefer an expand/contract approach (add + backfill + switch code) over drops.
-- Treat renames as potentially dangerous: if you only want to rename the Prisma Client API, prefer `@map` / `@@map` instead of renaming the underlying DB objects.
-- Review generated SQL carefully for the light flavor. SQLite has limited `ALTER TABLE` support, so some changes are implemented via table redefinition (create new table → copy data → drop old table).
-- Before upgrading a long-lived self-hosted light instance, back up the SQLite file (copy `~/.happy/server-light/happy-server-light.sqlite`) so you can roll back if needed.
+- `prisma/schema.prisma` is the single source of truth.
+- Both **full** and **light** use the same schema and the same migration history:
+  - migrations: `prisma/migrations/*`
 
 The full (Postgres) flavor uses migrations:
 
 - Dev migrations: `yarn migrate` / `yarn migrate:reset` (uses `.env.dev`)
   - Applies/creates migrations under `prisma/migrations/*`
 
-The light (SQLite) flavor uses migrations as well:
+The light (PGlite) flavor uses the same migrations:
 
 - Apply checked-in migrations (recommended for self-hosting upgrades): `yarn migrate:light:deploy`
-  - Applies migrations under `prisma/sqlite/migrations/*`
-- Create a new SQLite migration from schema changes (writes to `prisma/sqlite/migrations/*`): `yarn migrate:light:new -- --name <name>`
-  - Uses an isolated temp SQLite file so it never touches a user's real light database.
-  - For non-trivial changes (renames, type changes, making a column required, adding uniques), you may need to edit the generated `migration.sql` or use an expand/contract sequence instead of a single-step migration.
-- If you are upgrading an existing light database that was created before SQLite migrations existed, run the one-time baselining command (after making a backup): `yarn migrate:light:resolve-baseline`
-- `yarn db:push:light` is for fast local prototyping only. Prefer migrations for anything you want users to upgrade without surprises.
+  - Applies migrations under `prisma/migrations/*` to the embedded Postgres database.
+
+Light flavor note (SQLite → PGlite):
+
+- Older versions of Happy Server used SQLite for the light flavor.
+- Current versions use embedded Postgres via PGlite for better compatibility with production Postgres and a single shared Prisma schema.
+- There is currently **no built-in automatic migration** from the old SQLite database to PGlite.
+  - Before upgrading, back up your previous light data directory (including any SQLite DB files).
+  - After upgrading, run `yarn migrate:light:deploy` and validate the server starts with `yarn start:light`.
 
 ### Schema changes (developer workflow)
 
-When you change the data model, you must update both migration histories:
+When you change the data model:
 
 1. Edit `prisma/schema.prisma`
-2. Regenerate the SQLite schema and commit the result:
-   - `yarn schema:sync`
-3. Create/update the **full (Postgres)** migration:
+2. Create/update the migration:
    - `yarn migrate --name <name>` (writes to `prisma/migrations/*`)
-4. Create/update the **light (SQLite)** migration:
-   - `yarn migrate:light:new -- --name <name>` (writes to `prisma/sqlite/migrations/*`)
-5. Validate:
+3. Validate:
    - `yarn test`
    - Smoke test both flavors (`yarn dev` and `yarn dev:light`)
 
@@ -179,7 +323,7 @@ No-data-loss guidelines:
 Light defaults (when env vars are missing):
 
 - data dir: `~/.happy/server-light`
-- sqlite db: `~/.happy/server-light/happy-server-light.sqlite`
+- pglite db dir: `~/.happy/server-light/pglite`
 - public files: `~/.happy/server-light/files/*`
 - `HANDY_MASTER_SECRET` is generated (once) and persisted to `~/.happy/server-light/handy-master-secret.txt`
 

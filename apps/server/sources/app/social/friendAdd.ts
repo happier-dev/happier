@@ -5,6 +5,7 @@ import { relationshipSet } from "./relationshipSet";
 import { relationshipGet } from "./relationshipGet";
 import { sendFriendRequestNotification, sendFriendshipEstablishedNotification } from "./friendNotification";
 import { RelationshipStatus } from "@/storage/prisma";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 /**
  * Add a friend or accept a friend request.
@@ -51,6 +52,9 @@ export async function friendAdd(ctx: Context, uid: string): Promise<UserProfile 
             // Send friendship established notifications to both users
             await sendFriendshipEstablishedNotification(tx, currentUser.id, targetUser.id);
 
+            await markAccountChanged(tx, { accountId: currentUser.id, kind: 'friends', entityId: 'self' });
+            await markAccountChanged(tx, { accountId: targetUser.id, kind: 'friends', entityId: 'self' });
+
             // Return the target user profile
             return buildUserProfile(targetUser, RelationshipStatus.friend);
         }
@@ -67,6 +71,9 @@ export async function friendAdd(ctx: Context, uid: string): Promise<UserProfile 
 
             // Send friend request notification to the receiver
             await sendFriendRequestNotification(tx, targetUser.id, currentUser.id);
+
+            await markAccountChanged(tx, { accountId: currentUser.id, kind: 'friends', entityId: 'self' });
+            await markAccountChanged(tx, { accountId: targetUser.id, kind: 'friends', entityId: 'self' });
 
             // Return the target user profile
             return buildUserProfile(targetUser, RelationshipStatus.requested);

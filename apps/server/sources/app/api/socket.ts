@@ -12,8 +12,20 @@ import { sessionUpdateHandler } from "./socket/sessionUpdateHandler";
 import { machineUpdateHandler } from "./socket/machineUpdateHandler";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
+import { getSocketRooms } from "./socketRooms";
+import { createAdapter } from "@socket.io/redis-streams-adapter";
+import { getRedisClient } from "@/storage/redis";
+import { randomUUID } from "node:crypto";
 
 export function startSocket(app: Fastify) {
+    const shouldEnableRedisAdapter =
+        process.env.HAPPY_SERVER_FLAVOR !== 'light' &&
+        (process.env.HAPPY_SOCKET_REDIS_ADAPTER === 'true' || process.env.HAPPY_SOCKET_REDIS_ADAPTER === '1') &&
+        typeof process.env.REDIS_URL === 'string' &&
+        process.env.REDIS_URL.trim().length > 0;
+
+    const instanceId = process.env.HAPPY_INSTANCE_ID?.trim() || randomUUID();
+
     const io = new Server(app.server, {
         cors: {
             origin: "*",
@@ -21,6 +33,7 @@ export function startSocket(app: Fastify) {
             credentials: true,
             allowedHeaders: ["*"]
         },
+        ...(shouldEnableRedisAdapter ? { adapter: createAdapter(getRedisClient()) } : {}),
         transports: ['websocket', 'polling'],
         pingTimeout: 45000,
         pingInterval: 15000,
@@ -32,6 +45,7 @@ export function startSocket(app: Fastify) {
     });
 
     let rpcListeners = new Map<string, Map<string, Socket>>();
+    eventRouter.setIo(io);
     io.on("connection", async (socket) => {
         log({ module: 'websocket' }, `New connection attempt from socket: ${socket.id}`);
         const token = socket.handshake.auth.token as string;
@@ -100,6 +114,15 @@ export function startSocket(app: Fastify) {
         eventRouter.addConnection(userId, connection);
         incrementWebSocketConnection(connection.connectionType);
 
+        // Join Socket.IO rooms for multi-process fanout (Phase 5).
+        // Note: we keep the existing in-memory routing for now; rooms are a forward-compat hook.
+        socket.join(getSocketRooms({
+            userId,
+            clientType: metadata.clientType,
+            sessionId,
+            machineId,
+        }));
+
         // Broadcast daemon online status
         if (connection.connectionType === 'machine-scoped') {
             // Broadcast daemon online
@@ -137,7 +160,11 @@ export function startSocket(app: Fastify) {
             userRpcListeners = new Map<string, Socket>();
             rpcListeners.set(userId, userRpcListeners);
         }
-        rpcHandler(userId, socket, userRpcListeners, rpcListeners);
+        rpcHandler(userId, socket, userRpcListeners, rpcListeners, {
+            io,
+            // Cluster-aware RPC routing only works when a shared Socket.IO adapter is enabled.
+            redisRegistry: shouldEnableRedisAdapter ? { enabled: true, instanceId } : { enabled: false },
+        });
         usageHandler(userId, socket);
         sessionUpdateHandler(userId, socket, connection);
         pingHandler(socket);

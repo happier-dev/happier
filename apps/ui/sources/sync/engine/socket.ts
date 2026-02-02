@@ -1,4 +1,3 @@
-import { ApiEphemeralUpdateSchema, ApiUpdateContainerSchema, ApiUpdateSchema } from '../apiTypes';
 import type { ApiEphemeralActivityUpdate, ApiUpdateContainer } from '../apiTypes';
 import type { Encryption } from '../encryption/encryption';
 import type { NormalizedMessage } from '../typesRaw';
@@ -29,102 +28,11 @@ import {
     handleRelationshipUpdatedSocketUpdate,
     handleTodoKvBatchUpdate,
 } from './feed';
-
-export function parseUpdateContainer(update: unknown) {
-    const validatedUpdate = ApiUpdateContainerSchema.safeParse(update);
-    if (!validatedUpdate.success) {
-        // Compatibility fallback:
-        // Some servers may emit `update.body` (or the `ApiUpdate` itself) instead of the full container.
-        // We only attempt to recover sharing-related updates to avoid mis-applying core message/session updates.
-        if (update && typeof update === 'object') {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const maybeBody = (update as any).body ?? update;
-            const parsedBody = ApiUpdateSchema.safeParse(maybeBody);
-            if (parsedBody.success) {
-                const t = parsedBody.data.t;
-                if (
-                    t === 'session-shared' ||
-                    t === 'session-share-updated' ||
-                    t === 'session-share-revoked' ||
-                    t === 'public-share-created' ||
-                    t === 'public-share-updated' ||
-                    t === 'public-share-deleted'
-                ) {
-                    return {
-                        id: '',
-                        seq: 0,
-                        body: parsedBody.data,
-                        createdAt: Date.now(),
-                    } satisfies ApiUpdateContainer;
-                }
-            }
-        }
-
-        // Don’t crash on unknown/forward-compatible socket updates.
-        // In dev we still emit a warning to help catch schema drift.
-        // eslint-disable-next-line no-undef
-        if (typeof __DEV__ !== 'undefined' && __DEV__) {
-            console.warn('⚠️ Sync: Ignoring unrecognized update payload');
-        }
-        return null;
-    }
-    return validatedUpdate.data;
-}
-
-export function parseEphemeralUpdate(update: unknown) {
-    const validatedUpdate = ApiEphemeralUpdateSchema.safeParse(update);
-    if (!validatedUpdate.success) {
-        console.error('Invalid ephemeral update received:', update);
-        return null;
-    }
-    return validatedUpdate.data;
-}
-
-export function handleSocketReconnected(params: {
-    log: { log: (message: string) => void };
-    invalidateSessions: () => void;
-    invalidateMachines: () => void;
-    invalidateArtifacts: () => void;
-    invalidateFriends: () => void;
-    invalidateFriendRequests: () => void;
-    invalidateFeed: () => void;
-    getSessionsData: () => any;
-    invalidateMessagesForSession: (sessionId: string) => void;
-    invalidateGitStatusForSession: (sessionId: string) => void;
-}) {
-    const {
-        log,
-        invalidateSessions,
-        invalidateMachines,
-        invalidateArtifacts,
-        invalidateFriends,
-        invalidateFriendRequests,
-        invalidateFeed,
-        getSessionsData,
-        invalidateMessagesForSession,
-        invalidateGitStatusForSession,
-    } = params;
-
-    log.log('🔌 Socket reconnected');
-    invalidateSessions();
-    invalidateMachines();
-    log.log('🔌 Socket reconnected: Invalidating artifacts sync');
-    invalidateArtifacts();
-    invalidateFriends();
-    invalidateFriendRequests();
-    invalidateFeed();
-
-    const sessionsData = getSessionsData();
-    if (sessionsData) {
-        for (const item of sessionsData as any[]) {
-            if (typeof item !== 'string') {
-                invalidateMessagesForSession(item.id);
-                // Also invalidate git status on reconnection
-                invalidateGitStatusForSession(item.id);
-            }
-        }
-    }
-}
+import { normalizeRelationshipUpdatedUpdateBody } from './relationshipUpdate';
+import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
+import { FeedBodySchema } from '../feedTypes';
+export { handleSocketReconnected } from './socketReconnect';
+export { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 
 type ApplySessions = (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
 
@@ -136,6 +44,10 @@ export async function handleSocketUpdate(params: {
     fetchSessions: () => void;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onSessionVisible: (sessionId: string) => void;
+    isSessionMessagesLoaded: (sessionId: string) => boolean;
+    getSessionMaterializedMaxSeq: (sessionId: string) => number;
+    markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
+    invalidateMessagesForSession: (sessionId: string) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
     invalidateSessions: () => void;
@@ -154,6 +66,10 @@ export async function handleSocketUpdate(params: {
         fetchSessions,
         applyMessages,
         onSessionVisible,
+        isSessionMessagesLoaded,
+        getSessionMaterializedMaxSeq,
+        markSessionMaterializedMaxSeq,
+        invalidateMessagesForSession,
         assumeUsers,
         applyTodoSocketUpdates,
         invalidateSessions,
@@ -176,6 +92,10 @@ export async function handleSocketUpdate(params: {
         fetchSessions,
         applyMessages,
         onSessionVisible,
+        isSessionMessagesLoaded,
+        getSessionMaterializedMaxSeq,
+        markSessionMaterializedMaxSeq,
+        invalidateMessagesForSession,
         assumeUsers,
         applyTodoSocketUpdates,
         invalidateSessions,
@@ -196,6 +116,10 @@ export async function handleUpdateContainer(params: {
     fetchSessions: () => void;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
     onSessionVisible: (sessionId: string) => void;
+    isSessionMessagesLoaded: (sessionId: string) => boolean;
+    getSessionMaterializedMaxSeq: (sessionId: string) => number;
+    markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
+    invalidateMessagesForSession: (sessionId: string) => void;
     assumeUsers: (userIds: string[]) => Promise<void>;
     applyTodoSocketUpdates: (changes: any[]) => Promise<void>;
     invalidateSessions: () => void;
@@ -214,6 +138,10 @@ export async function handleUpdateContainer(params: {
         fetchSessions,
         applyMessages,
         onSessionVisible,
+        isSessionMessagesLoaded,
+        getSessionMaterializedMaxSeq,
+        markSessionMaterializedMaxSeq,
+        invalidateMessagesForSession,
         assumeUsers,
         applyTodoSocketUpdates,
         invalidateSessions,
@@ -235,7 +163,10 @@ export async function handleUpdateContainer(params: {
             applyMessages,
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
             invalidateGitStatus: (sessionId) => gitStatusSync.invalidate(sessionId),
-            onSessionVisible,
+            isSessionMessagesLoaded,
+            getSessionMaterializedMaxSeq,
+            markSessionMaterializedMaxSeq,
+            invalidateMessagesForSession,
         });
     } else if (updateData.body.t === 'new-session') {
         log.log('🆕 New session update received');
@@ -328,10 +259,18 @@ export async function handleUpdateContainer(params: {
         storage.getState().applyMachines([updatedMachine]);
     } else if (updateData.body.t === 'relationship-updated') {
         log.log('👥 Received relationship-updated update');
-        const relationshipUpdate = updateData.body;
+        const normalized = normalizeRelationshipUpdatedUpdateBody(updateData.body, {
+            currentUserId: storage.getState().profile?.id ?? null,
+        });
+        if (!normalized) {
+            invalidateFriends();
+            invalidateFriendRequests();
+            invalidateFeed();
+            return;
+        }
 
         handleRelationshipUpdatedSocketUpdate({
-            relationshipUpdate,
+            relationshipUpdate: normalized,
             applyRelationshipUpdate: (update) => storage.getState().applyRelationshipUpdate(update),
             invalidateFriends,
             invalidateFriendRequests,
@@ -364,7 +303,6 @@ export async function handleUpdateContainer(params: {
 
         await handleUpdateArtifactSocketUpdate({
             artifactId,
-            seq: updateData.seq,
             createdAt: updateData.createdAt,
             header: artifactUpdate.header,
             body: artifactUpdate.body,
@@ -388,8 +326,17 @@ export async function handleUpdateContainer(params: {
         log.log('📰 Received new-feed-post update');
         const feedUpdate = updateData.body;
 
+        const parsedBody = FeedBodySchema.safeParse((feedUpdate as any).body);
+        if (!parsedBody.success) {
+            invalidateFeed();
+            return;
+        }
+
         await handleNewFeedPostUpdate({
-            feedUpdate,
+            feedUpdate: {
+                ...feedUpdate,
+                body: parsedBody.data,
+            },
             assumeUsers,
             getUsers: () => storage.getState().users,
             applyFeedItems: (items) => storage.getState().applyFeedItems(items),

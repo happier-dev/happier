@@ -1,9 +1,9 @@
 import { db } from "@/storage/db";
 import { inTx, afterTx } from "@/storage/inTx";
-import { allocateUserSeq } from "@/storage/seq";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { eventRouter, buildKVBatchUpdateUpdate } from "@/app/events/eventRouter";
 import * as privacyKit from "privacy-kit";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 export interface KVMutation {
     key: string;
@@ -124,12 +124,15 @@ export async function kvMutate(
             }
         }
 
+        const uniqueKeys = Array.from(new Set(mutations.map((m) => m.key)));
+        const hint = uniqueKeys.length <= 50 ? { keys: uniqueKeys } : { full: true };
+        const cursor = await markAccountChanged(tx, { accountId: ctx.uid, kind: 'kv', entityId: 'self', hint });
+
         // Send single bundled notification for all changes
         afterTx(tx, async () => {
-            const updateSeq = await allocateUserSeq(ctx.uid);
             eventRouter.emitUpdate({
                 userId: ctx.uid,
-                payload: buildKVBatchUpdateUpdate(changes, updateSeq, randomKeyNaked(12)),
+                payload: buildKVBatchUpdateUpdate(changes, cursor, randomKeyNaked(12)),
                 recipientFilter: { type: 'user-scoped-only' }
             });
         });

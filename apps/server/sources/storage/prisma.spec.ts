@@ -25,16 +25,11 @@ describe("storage/prisma", () => {
         expect(() => (db as any).user).toThrow(/not initialized/i);
     });
 
-    it("RelationshipStatus matches prisma/schema.prisma and prisma/sqlite/schema.prisma", () => {
+    it("RelationshipStatus matches prisma/schema.prisma", () => {
         const root = join(process.cwd());
         const fullSchema = readFileSync(join(root, "prisma", "schema.prisma"), "utf-8");
-        const sqliteSchema = readFileSync(join(root, "prisma", "sqlite", "schema.prisma"), "utf-8");
 
         const fullValues = parseEnumValues(fullSchema, "RelationshipStatus");
-        const sqliteValues = parseEnumValues(sqliteSchema, "RelationshipStatus");
-
-        // sqlite schema is generated from full schema; these must stay identical.
-        expect(sqliteValues).toEqual(fullValues);
 
         const exportedValues = Object.values(RelationshipStatus);
         expect(exportedValues.sort()).toEqual([...new Set(fullValues)].sort());

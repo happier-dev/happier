@@ -24,15 +24,16 @@ async function main() {
 
     const dataDir = env.HAPPY_SERVER_LIGHT_DATA_DIR!;
     const filesDir = env.HAPPY_SERVER_LIGHT_FILES_DIR!;
+    const dbDir = env.HAPPY_SERVER_LIGHT_DB_DIR!;
     const plan = buildLightDevPlan();
 
-    // Ensure dirs exist so SQLite can create the DB file.
+    // Ensure dirs exist for light flavor.
     await mkdir(dataDir, { recursive: true });
     await mkdir(filesDir, { recursive: true });
+    await mkdir(dbDir, { recursive: true });
 
-    // Ensure sqlite schema is present, then apply migrations (idempotent).
-    await run('yarn', ['-s', 'schema:sync', '--quiet'], env);
-    await run('yarn', plan.prismaDeployArgs, env);
+    // Apply migrations (idempotent).
+    await run('yarn', plan.migrateDeployArgs, env);
 
     // Run the light flavor.
     await run('yarn', plan.startLightArgs, env);

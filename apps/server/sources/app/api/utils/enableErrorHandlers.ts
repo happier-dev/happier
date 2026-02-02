@@ -109,7 +109,14 @@ export function enableErrorHandlers(app: Fastify) {
             }
         }
 
-        log({ module: '404-handler' }, `404 - Method: ${request.method}, Path: ${request.url}, Headers: ${JSON.stringify(request.headers)}`);
+        // Never log full headers (Authorization/cookies/etc).
+        const userAgent = request.headers['user-agent'] || 'unknown';
+        const contentType = request.headers['content-type'] || 'unknown';
+        const hasAuthorization = typeof request.headers.authorization === 'string' && request.headers.authorization.length > 0;
+        log(
+            { module: '404-handler', method: request.method, path: request.url, userAgent, contentType, hasAuthorization },
+            '404 - Not found'
+        );
         return reply.code(404).send({ error: 'Not found', path: request.url, method: request.method });
     });
 

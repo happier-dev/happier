@@ -2,7 +2,7 @@ import { logger } from '@/ui/logger'
 import { EventEmitter } from 'node:events'
 import axios from 'axios';
 import { Socket } from 'socket.io-client'
-import { AgentState, ClientToServerEvents, MessageContent, Metadata, ServerToClientEvents, Session, Update, UserMessage, UserMessageSchema, Usage } from './types'
+import { AgentState, ClientToServerEvents, MessageContent, Metadata, ServerToClientEvents, Session, SessionMessageContentSchema, Update, UserMessage, UserMessageSchema, Usage } from './types'
 import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { configuration } from '@/configuration';
@@ -21,6 +21,8 @@ import type { CatalogAgentId } from '@/backends/types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { normalizeToolCallV2, normalizeToolResultV2 } from '@/agent/tools/normalization';
 import { calculateCost } from '@/utils/pricing';
+import { fetchChanges } from './apiChanges';
+import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
 
 /**
  * ACP (Agent Communication Protocol) message data types.
@@ -67,12 +69,18 @@ export class ApiSessionClient extends EventEmitter {
     private encryptionVariant: 'legacy' | 'dataKey';
     private disconnectedSendLogged = false;
     private readonly pendingMaterializedLocalIds = new Set<string>();
+    private readonly pendingCommitRetryAttemptsByLocalId = new Map<string, number>();
     private userSocketDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private closed = false;
     private snapshotSyncInFlight: Promise<void> | null = null;
     private readonly toolCallCanonicalNameByProviderAndId = new Map<string, { rawToolName: string; canonicalToolName: string }>();
     private readonly permissionToolCallRawInputByProviderAndId = new Map<string, unknown>();
     private readonly toolCallInputByProviderAndId = new Map<string, unknown>();
+    private readonly receivedMessageIds = new Set<string>();
+    private lastObservedMessageSeq = 0;
+    private hasConnectedOnce = false;
+    private changesSyncInFlight: Promise<void> | null = null;
+    private accountIdPromise: Promise<string> | null = null;
 
     private getToolCallNameKey(provider: string, callId: string): string {
         return `${provider}:${callId}`;
@@ -195,6 +203,10 @@ export class ApiSessionClient extends EventEmitter {
             this.disconnectedSendLogged = false;
             this.rpcHandlerManager.onSocketConnect(this.socket);
 
+            const isReconnect = this.hasConnectedOnce;
+            this.hasConnectedOnce = true;
+            void this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' });
+
             // Resumed sessions (inactive-session-resume) start with metadataVersion/agentStateVersion = -1.
             // If the user enqueued pending messages before this agent connected, the corresponding metadata
             // update happened "in the past" and won't be replayed over the socket. Syncing a snapshot here
@@ -222,6 +234,9 @@ export class ApiSessionClient extends EventEmitter {
         // Server events
         this.socket.on('update', (data: Update) => this.handleUpdate(data, { source: 'session-scoped' }));
         this.userSocket.on('update', (data: Update) => this.handleUpdate(data, { source: 'user-scoped' }));
+        // Broadcast-safe session events are optional hints; ignore unless explicitly used.
+        this.socket.on('session', () => {});
+        this.userSocket.on('session', () => {});
 
         // DEATH
         this.socket.on('error', (error) => {
@@ -321,7 +336,20 @@ export class ApiSessionClient extends EventEmitter {
 
             if (data.body.t === 'new-message') {
                 if (data.body.sid !== this.sessionId) return;
-                if (data.body.message.content.t !== 'encrypted') return;
+                const parsedContent = SessionMessageContentSchema.safeParse((data.body as any).message?.content);
+                if (!parsedContent.success) return;
+
+                const messageId = data.body.message.id;
+                if (typeof messageId === 'string' && messageId.length > 0) {
+                    if (this.receivedMessageIds.has(messageId)) {
+                        return;
+                    }
+                    this.receivedMessageIds.add(messageId);
+                }
+                const msgSeq = data.body.message.seq;
+                if (typeof msgSeq === 'number' && Number.isFinite(msgSeq)) {
+                    this.lastObservedMessageSeq = Math.max(this.lastObservedMessageSeq, msgSeq);
+                }
 
                 const localId = data.body.message.localId ?? null;
                 if (opts.source === 'user-scoped') {
@@ -334,7 +362,7 @@ export class ApiSessionClient extends EventEmitter {
                     this.maybeScheduleUserSocketDisconnect();
                 }
 
-                const body = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(data.body.message.content.c));
+                const body = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(parsedContent.data.c));
                 const bodyWithLocalId =
                     data.body.message.localId === undefined
                         ? body
@@ -366,7 +394,11 @@ export class ApiSessionClient extends EventEmitter {
                 const sid = (data.body as any).sid ?? (data.body as any).id;
                 if (sid !== this.sessionId) return;
                 if (data.body.metadata && data.body.metadata.version > this.metadataVersion) {
-                    this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(data.body.metadata.value));
+                    const nextMetadata = data.body.metadata.value;
+                    this.metadata =
+                        typeof nextMetadata === 'string'
+                            ? decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(nextMetadata))
+                            : null;
                     this.metadataVersion = data.body.metadata.version;
                     this.emit('metadata-updated');
                 }
@@ -387,6 +419,192 @@ export class ApiSessionClient extends EventEmitter {
             this.emit('message', data.body);
         } catch (error) {
             logger.debug('[SOCKET] [UPDATE] [ERROR] Error handling update', { error });
+        }
+    }
+
+    private async getAccountId(): Promise<string | null> {
+        if (this.accountIdPromise) {
+            try {
+                return await this.accountIdPromise;
+            } catch {
+                this.accountIdPromise = null;
+                return null;
+            }
+        }
+
+        const p = (async () => {
+            const response = await axios.get(`${configuration.serverUrl}/v1/account/profile`, {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json',
+                },
+                timeout: 15_000,
+            });
+            const id = (response?.data as any)?.id;
+            if (typeof id !== 'string' || id.length === 0) {
+                throw new Error('Invalid /v1/account/profile response');
+            }
+            return id;
+        })();
+
+        this.accountIdPromise = p;
+        try {
+            return await p;
+        } catch {
+            this.accountIdPromise = null;
+            return null;
+        }
+    }
+
+    private async catchUpSessionMessages(afterSeq: number): Promise<void> {
+        let cursor = Number.isFinite(afterSeq) && afterSeq >= 0 ? Math.floor(afterSeq) : 0;
+        for (let page = 0; page < 10; page++) {
+            const response = await axios.get(`${configuration.serverUrl}/v1/sessions/${this.sessionId}/messages`, {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json',
+                },
+                params: {
+                    afterSeq: cursor,
+                    limit: 200,
+                },
+                timeout: 15_000,
+            });
+
+            const messages = (response?.data as any)?.messages;
+            const nextAfterSeq = (response?.data as any)?.nextAfterSeq;
+            if (!Array.isArray(messages) || messages.length === 0) {
+                return;
+            }
+
+            for (const msg of messages) {
+                if (!msg || typeof msg !== 'object') continue;
+                const id = (msg as any).id;
+                const seq = (msg as any).seq;
+                const content = (msg as any).content;
+                if (typeof id !== 'string' || typeof seq !== 'number') continue;
+                if (!content || content.t !== 'encrypted' || typeof content.c !== 'string') continue;
+
+                const localId = typeof (msg as any).localId === 'string' ? (msg as any).localId : undefined;
+                const createdAt = typeof (msg as any).createdAt === 'number' ? (msg as any).createdAt : Date.now();
+
+                const update: Update = {
+                    id: `catchup-${id}`,
+                    seq: 0,
+                    createdAt,
+                    body: {
+                        t: 'new-message',
+                        sid: this.sessionId,
+                        message: {
+                            id,
+                            seq,
+                            ...(localId ? { localId } : {}),
+                            content,
+                        },
+                    },
+                } as Update;
+
+                this.handleUpdate(update, { source: 'session-scoped' });
+                cursor = Math.max(cursor, seq);
+            }
+
+            if (typeof nextAfterSeq === 'number' && Number.isFinite(nextAfterSeq) && nextAfterSeq > cursor) {
+                cursor = nextAfterSeq;
+                continue;
+            }
+            return;
+        }
+    }
+
+    private async syncChangesOnConnect(opts: { reason: 'connect' | 'reconnect' }): Promise<void> {
+        const enabled = (() => {
+            const raw = process.env.HAPPY_ENABLE_V2_CHANGES;
+            if (!raw) return true;
+            return ['true', '1', 'yes'].includes(raw.toLowerCase());
+        })();
+        if (!enabled) {
+            return;
+        }
+
+        if (this.closed) return;
+        if (this.changesSyncInFlight) {
+            await this.changesSyncInFlight.catch(() => {});
+            return;
+        }
+
+        const p = (async () => {
+            const accountId = await this.getAccountId();
+            if (!accountId) return;
+
+            const CHANGES_PAGE_LIMIT = 200;
+            const after = await readLastChangesCursor(accountId);
+            const result = await fetchChanges({ token: this.token, after, limit: CHANGES_PAGE_LIMIT });
+            if (result.status === 'cursor-gone') {
+                await writeLastChangesCursor(accountId, result.currentCursor);
+                // If the server indicates the cursor is invalid (future cursor or pruned floor),
+                // force a snapshot rebuild so we don't miss deletion signals.
+                if (opts.reason === 'reconnect') {
+                    try {
+                        await this.catchUpSessionMessages(this.lastObservedMessageSeq);
+                    } catch (error) {
+                        logger.debug('[API] Failed to catch up session messages after reconnect', { error });
+                    }
+                }
+                void this.syncSessionSnapshotFromServer({ reason: 'connect' });
+                return;
+            }
+            if (result.status !== 'ok') {
+                // Backwards compatibility: old servers may not support /v2/changes yet (e.g. 404).
+                // On reconnect, fall back to the snapshot-based convergence path.
+                if (opts.reason === 'reconnect') {
+                    try {
+                        await this.catchUpSessionMessages(this.lastObservedMessageSeq);
+                    } catch (error) {
+                        logger.debug('[API] Failed to catch up session messages after reconnect', { error });
+                    }
+                    void this.syncSessionSnapshotFromServer({ reason: 'connect' });
+                }
+                return;
+            }
+
+            const changes = result.response.changes;
+            const nextCursor = result.response.nextCursor;
+
+            const hasRelevantSessionChange = changes.some(
+                (c) => (c.kind === 'session' || c.kind === 'share') && c.entityId === this.sessionId,
+            );
+            if (changes.length >= CHANGES_PAGE_LIMIT) {
+                // Slow-path: too many coalesced changes. Snapshot sync gets us back to a known-good state;
+                // session transcript catch-up is only needed after reconnect.
+                if (opts.reason === 'reconnect') {
+                    try {
+                        await this.catchUpSessionMessages(this.lastObservedMessageSeq);
+                    } catch (error) {
+                        logger.debug('[API] Failed to catch up session messages after reconnect', { error });
+                    }
+                }
+                void this.syncSessionSnapshotFromServer({ reason: 'connect' });
+                await writeLastChangesCursor(accountId, nextCursor);
+                return;
+            }
+
+            if (hasRelevantSessionChange && opts.reason === 'reconnect') {
+                try {
+                    await this.catchUpSessionMessages(this.lastObservedMessageSeq);
+                } catch (error) {
+                    logger.debug('[API] Failed to catch up session messages after reconnect', { error });
+                }
+                void this.syncSessionSnapshotFromServer({ reason: 'connect' });
+            }
+
+            await writeLastChangesCursor(accountId, nextCursor);
+        })();
+
+        this.changesSyncInFlight = p;
+        try {
+            await p;
+        } finally {
+            this.changesSyncInFlight = null;
         }
     }
 
@@ -594,6 +812,139 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
+    private async commitEncryptedSessionMessage(
+        params: { encryptedMessage: string; localId: string; requireCommit: boolean },
+    ): Promise<void> {
+        const localId = params.localId;
+        if (localId.length === 0) {
+            if (params.requireCommit) {
+                throw new Error('localId is required');
+            }
+            return;
+        }
+
+        if (!this.socket.connected) {
+            if (params.requireCommit) {
+                throw new Error('Socket not connected');
+            }
+            this.pendingMaterializedLocalIds.add(localId);
+            this.socket.emit('message', {
+                sid: this.sessionId,
+                message: params.encryptedMessage,
+                localId,
+            });
+            this.scheduleMaterializationRecovery(localId);
+            this.scheduleCommitRetry({ encryptedMessage: params.encryptedMessage, localId });
+            return;
+        }
+
+        this.pendingMaterializedLocalIds.add(localId);
+
+        type MessageAck =
+            | { ok: true; id: string; seq: number; localId: string | null }
+            | { ok: false; error: string };
+
+        const ack: MessageAck | null = await (async () => {
+            try {
+                const raw = await this.socket
+                    .timeout(7_500)
+                    .emitWithAck('message', {
+                        sid: this.sessionId,
+                        message: params.encryptedMessage,
+                        localId,
+                    }) as unknown;
+
+                if (!raw || typeof raw !== 'object') return null;
+                const record = raw as any;
+                if (record.ok === true && typeof record.id === 'string' && typeof record.seq === 'number') {
+                    return { ok: true, id: record.id, seq: record.seq, localId: typeof record.localId === 'string' ? record.localId : null };
+                }
+                if (record.ok === false && typeof record.error === 'string') {
+                    return { ok: false, error: record.error };
+                }
+                return null;
+            } catch {
+                return null;
+            }
+        })();
+
+        if (ack && ack.ok === true) {
+            this.pendingCommitRetryAttemptsByLocalId.delete(localId);
+            this.pendingMaterializedLocalIds.delete(localId);
+            this.maybeScheduleUserSocketDisconnect();
+            await this.maybeClearPendingInFlight(localId);
+
+            const update: Update = {
+                id: `acked-${localId}`,
+                seq: 0,
+                createdAt: Date.now(),
+                body: {
+                    t: 'new-message',
+                    sid: this.sessionId,
+                    message: {
+                        id: ack.id,
+                        seq: ack.seq,
+                        localId: ack.localId ?? undefined,
+                        content: { t: 'encrypted', c: params.encryptedMessage },
+                    },
+                },
+            } as Update;
+
+            this.handleUpdate(update, { source: 'session-scoped' });
+            return;
+        }
+
+        if (ack && ack.ok === false) {
+            this.pendingCommitRetryAttemptsByLocalId.delete(localId);
+            this.pendingMaterializedLocalIds.delete(localId);
+            this.maybeScheduleUserSocketDisconnect();
+            if (params.requireCommit) {
+                throw new Error(ack.error);
+            }
+            return;
+        }
+
+        if (params.requireCommit) {
+            const recovered = await this.recoverMaterializedLocalId(localId, { maxWaitMs: 12_000 });
+            if (!recovered) {
+                throw new Error('Message commit not confirmed (ACK timed out and transcript recovery failed)');
+            }
+            return;
+        }
+
+        this.scheduleMaterializationRecovery(localId);
+        this.scheduleCommitRetry({ encryptedMessage: params.encryptedMessage, localId });
+    }
+
+    private scheduleCommitRetry(params: { encryptedMessage: string; localId: string }): void {
+        const localId = params.localId;
+        if (!localId) return;
+        if (!this.pendingMaterializedLocalIds.has(localId)) return;
+
+        const current = this.pendingCommitRetryAttemptsByLocalId.get(localId) ?? 0;
+        const next = current + 1;
+        if (next > 3) {
+            return;
+        }
+        this.pendingCommitRetryAttemptsByLocalId.set(localId, next);
+
+        const delayMs = 1_000 * next;
+        const timer = setTimeout(() => {
+            if (!this.pendingMaterializedLocalIds.has(localId)) {
+                this.pendingCommitRetryAttemptsByLocalId.delete(localId);
+                return;
+            }
+            void this.commitEncryptedSessionMessage({
+                encryptedMessage: params.encryptedMessage,
+                localId,
+                requireCommit: false,
+            }).catch(() => {
+                // Best-effort retry only.
+            });
+        }, delayMs);
+        timer.unref?.();
+    }
+
     /**
      * Send message to session
      * @param body - Message body (can be MessageContent or raw content for agent messages)
@@ -641,9 +992,9 @@ export class ApiSessionClient extends EventEmitter {
         this.logSendWhileDisconnected('Claude session message', { type: body.type });
 
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
-        this.socket.emit('message', {
-            sid: this.sessionId,
-            message: encrypted
+        const localId = randomUUID();
+        void this.commitEncryptedSessionMessage({ encryptedMessage: encrypted, localId, requireCommit: false }).catch((error) => {
+            logger.debug('[SOCKET] Failed to commit Claude session message (non-fatal)', { error });
         });
 
         // Track usage from assistant messages
@@ -725,10 +1076,10 @@ export class ApiSessionClient extends EventEmitter {
         this.logSendWhileDisconnected('Codex message', { type: normalizedBody?.type });
 
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
-        
-        this.socket.emit('message', {
-            sid: this.sessionId,
-            message: encrypted
+
+        const localId = randomUUID();
+        void this.commitEncryptedSessionMessage({ encryptedMessage: encrypted, localId, requireCommit: false }).catch((error) => {
+            logger.debug('[SOCKET] Failed to commit Codex message (non-fatal)', { error });
         });
     }
 
@@ -860,6 +1211,8 @@ export class ApiSessionClient extends EventEmitter {
             }
         };
 
+        const localId = typeof opts?.localId === 'string' && opts.localId.length > 0 ? opts.localId : randomUUID();
+
         if (
             normalizedBody.type === 'tool-call' ||
             normalizedBody.type === 'tool-result' ||
@@ -867,17 +1220,20 @@ export class ApiSessionClient extends EventEmitter {
             normalizedBody.type === 'file-edit' ||
             normalizedBody.type === 'terminal-output'
         ) {
-            recordAcpToolTraceEventIfNeeded({ sessionId: this.sessionId, provider, body: normalizedBody, localId: opts?.localId });
+            recordAcpToolTraceEventIfNeeded({
+                sessionId: this.sessionId,
+                provider,
+                body: normalizedBody,
+                localId,
+            });
         }
         
         logger.debug(`[SOCKET] Sending ACP message from ${provider}:`, { type: normalizedBody.type, hasMessage: 'message' in normalizedBody });
         this.logSendWhileDisconnected(`${provider} ACP message`, { type: normalizedBody.type });
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
 
-        this.socket.emit('message', {
-            sid: this.sessionId,
-            message: encrypted,
-            localId: opts?.localId,
+        void this.commitEncryptedSessionMessage({ encryptedMessage: encrypted, localId, requireCommit: false }).catch((error) => {
+            logger.debug('[SOCKET] Failed to commit agent message (non-fatal)', { error });
         });
     }
 
@@ -893,11 +1249,160 @@ export class ApiSessionClient extends EventEmitter {
 
         this.logSendWhileDisconnected('User text message', { length: text.length });
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
-        this.socket.emit('message', {
-            sid: this.sessionId,
-            message: encrypted,
-            localId: opts?.localId,
+        const localId = typeof opts?.localId === 'string' && opts.localId.length > 0 ? opts.localId : randomUUID();
+        void this.commitEncryptedSessionMessage({ encryptedMessage: encrypted, localId, requireCommit: false }).catch((error) => {
+            logger.debug('[SOCKET] Failed to commit user message (non-fatal)', { error });
         });
+    }
+
+    async sendUserTextMessageCommitted(
+        text: string,
+        opts: { localId: string; meta?: Record<string, unknown> },
+    ): Promise<void> {
+        const content: MessageContent = {
+            role: 'user',
+            content: { type: 'text', text },
+            meta: {
+                sentFrom: 'cli',
+                ...(opts?.meta && typeof opts.meta === 'object' ? opts.meta : {}),
+            },
+        };
+
+        const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
+        await this.commitEncryptedSessionMessage({ encryptedMessage: encrypted, localId: opts.localId, requireCommit: true });
+    }
+
+    async sendAgentMessageCommitted(
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; meta?: Record<string, unknown> },
+    ): Promise<void> {
+        // Reuse the existing sendAgentMessage logic by running it in “build-only” form.
+        // This duplicates a small part of sendAgentMessage’s behavior intentionally to keep the sync method signature.
+        const normalizedBody: ACPMessageData = (() => {
+            if (body.type === 'tool-call') {
+                const callId = body.callId;
+                const rawToolName = body.name;
+                const rawInputHint = this.permissionToolCallRawInputByProviderAndId.get(this.getToolCallNameKey(provider, callId));
+                const hintedRawInput = (() => {
+                    if (!rawInputHint) return body.input;
+                    if (!body.input || typeof body.input !== 'object' || Array.isArray(body.input)) return rawInputHint;
+                    if (typeof rawInputHint !== 'object' || Array.isArray(rawInputHint)) return body.input;
+                    return { ...(rawInputHint as Record<string, unknown>), ...(body.input as Record<string, unknown>) };
+                })();
+                const { canonicalToolName, input } = normalizeToolCallV2({
+                    protocol: 'acp',
+                    provider,
+                    toolName: rawToolName,
+                    rawInput: hintedRawInput,
+                    callId,
+                });
+                this.toolCallCanonicalNameByProviderAndId.set(this.getToolCallNameKey(provider, callId), { rawToolName, canonicalToolName });
+                this.toolCallInputByProviderAndId.set(this.getToolCallNameKey(provider, callId), input);
+                this.permissionToolCallRawInputByProviderAndId.delete(this.getToolCallNameKey(provider, callId));
+                return { ...body, name: canonicalToolName, input };
+            }
+
+            if (body.type === 'permission-request') {
+                const rawInputHint = this.extractPermissionToolCallRawInput(body.options);
+                const nextOptions = rawInputHint != null
+                    ? this.backfillPermissionRequestOptionsInput(body.options, rawInputHint)
+                    : body.options;
+                if (rawInputHint != null) {
+                    this.permissionToolCallRawInputByProviderAndId.set(this.getToolCallNameKey(provider, body.permissionId), rawInputHint);
+                }
+                let { canonicalToolName } = normalizeToolCallV2({
+                    protocol: 'acp',
+                    provider,
+                    toolName: body.toolName,
+                    rawInput: rawInputHint ?? nextOptions ?? {},
+                    callId: body.permissionId,
+                });
+                if (
+                    canonicalToolName === 'Write' &&
+                    typeof body.permissionId === 'string' &&
+                    body.permissionId.startsWith('write_todos')
+                ) {
+                    canonicalToolName = 'TodoWrite';
+                }
+                return { ...body, toolName: canonicalToolName, options: nextOptions };
+            }
+
+            if (body.type === 'tool-result') {
+                const callId = body.callId;
+                const key = this.getToolCallNameKey(provider, callId);
+                const mapping = this.toolCallCanonicalNameByProviderAndId.get(key);
+                const canonicalToolName = mapping?.canonicalToolName ?? 'Unknown';
+                const rawToolName = mapping?.rawToolName ?? 'unknown';
+
+                const output = normalizeToolResultV2({
+                    protocol: 'acp',
+                    provider,
+                    rawToolName,
+                    canonicalToolName,
+                    rawOutput: (body as any).output,
+                });
+
+                const maybePatchedOutput = (() => {
+                    if (canonicalToolName !== 'TodoWrite' && canonicalToolName !== 'TodoRead') return output;
+                    const outputRecord = output && typeof output === 'object' && !Array.isArray(output) ? (output as Record<string, unknown>) : null;
+                    if (!outputRecord) return output;
+                    const existingTodos = Array.isArray((outputRecord as any).todos) ? ((outputRecord as any).todos as unknown[]) : null;
+                    if (existingTodos && existingTodos.length > 0) return output;
+
+                    const input = this.toolCallInputByProviderAndId.get(key);
+                    const inputRecord = input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : null;
+                    const todos = inputRecord && Array.isArray((inputRecord as any).todos) ? ((inputRecord as any).todos as unknown[]) : null;
+                    if (!todos || todos.length === 0) return output;
+                    return { ...outputRecord, todos };
+                })();
+
+                this.toolCallInputByProviderAndId.delete(key);
+
+                if (typeof (body as any).isError === 'boolean') {
+                    return { ...(body as any), output: maybePatchedOutput } as ACPMessageData;
+                }
+                if (!maybePatchedOutput || typeof maybePatchedOutput !== 'object' || Array.isArray(maybePatchedOutput)) {
+                    return { ...(body as any), output: maybePatchedOutput } as ACPMessageData;
+                }
+
+                const record = maybePatchedOutput as Record<string, unknown>;
+                const status = typeof record.status === 'string' ? record.status : null;
+                const error = typeof record.error === 'string' ? record.error : null;
+                const isError = Boolean(error && error.length > 0) || status === 'failed' || status === 'cancelled' || status === 'error';
+                return isError
+                    ? ({ ...(body as any), output: record, isError: true } as ACPMessageData)
+                    : ({ ...(body as any), output: record } as ACPMessageData);
+            }
+
+            return body;
+        })();
+
+        const content = {
+            role: 'agent',
+            content: {
+                type: 'acp',
+                provider,
+                data: normalizedBody,
+            },
+            meta: {
+                sentFrom: 'cli',
+                ...(opts?.meta && typeof opts.meta === 'object' ? opts.meta : {}),
+            },
+        };
+
+        if (
+            normalizedBody.type === 'tool-call' ||
+            normalizedBody.type === 'tool-result' ||
+            normalizedBody.type === 'permission-request' ||
+            normalizedBody.type === 'file-edit' ||
+            normalizedBody.type === 'terminal-output'
+        ) {
+            recordAcpToolTraceEventIfNeeded({ sessionId: this.sessionId, provider, body: normalizedBody, localId: opts.localId });
+        }
+
+        const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
+        await this.commitEncryptedSessionMessage({ encryptedMessage: encrypted, localId: opts.localId, requireCommit: true });
     }
 
     async fetchRecentTranscriptTextItemsForAcpImport(opts?: { take?: number }): Promise<Array<{ role: 'user' | 'agent'; text: string }>> {
@@ -980,9 +1485,9 @@ export class ApiSessionClient extends EventEmitter {
 
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
 
-        this.socket.emit('message', {
-            sid: this.sessionId,
-            message: encrypted
+        const localId = randomUUID();
+        void this.commitEncryptedSessionMessage({ encryptedMessage: encrypted, localId, requireCommit: false }).catch((error) => {
+            logger.debug('[SOCKET] Failed to commit session event (non-fatal)', { error });
         });
     }
 
@@ -1124,6 +1629,7 @@ export class ApiSessionClient extends EventEmitter {
             this.userSocketDisconnectTimer = null;
         }
         this.pendingMaterializedLocalIds.clear();
+        this.pendingCommitRetryAttemptsByLocalId.clear();
         try {
             this.userSocket.close();
         } catch {
@@ -1271,8 +1777,8 @@ export class ApiSessionClient extends EventEmitter {
      * We claim the oldest queued item in encrypted session metadata, then emit it through
      * the normal transcript message pipeline (idempotent via (sessionId, localId)).
      *
-     * The inFlight marker is cleared only after we observe the materialized user message
-     * coming back from the server (to avoid losing messages on crashes between emit and persist).
+     * The inFlight marker is cleared only after we have evidence the message was persisted:
+     * either a post-commit server ACK, or transcript recovery (in case ACK/broadcast is missed).
      */
     async popPendingMessage(): Promise<boolean> {
         if (!this.socket.connected) {
@@ -1282,10 +1788,6 @@ export class ApiSessionClient extends EventEmitter {
             return false;
         }
         try {
-            // Start the user-scoped socket early so it has time to connect before we emit the materialized
-            // transcript message (otherwise we may miss the broadcast update and need transcript recovery).
-            this.kickUserSocketConnect();
-
             const inFlight = await this.metadataLock.inLock<{ localId: string; message: string; wasExistingInFlight: boolean } | null>(async () => {
                 let claimedInFlight: { localId: string; message: string; wasExistingInFlight: boolean } | null = null;
                 await backoff(async () => {
@@ -1339,11 +1841,47 @@ export class ApiSessionClient extends EventEmitter {
             // Materialize the pending item into the transcript via the normal message pipeline.
             // This is idempotent because SessionMessage has a unique (sessionId, localId) constraint.
             this.pendingMaterializedLocalIds.add(inFlightLocalId);
-            this.socket.emit('message', {
-                sid: this.sessionId,
-                message: inFlight.message,
-                localId: inFlightLocalId,
-            });
+            type MessageAck =
+                | { ok: true; id: string; seq: number; localId: string | null }
+                | { ok: false; error: string };
+
+            const ack = await this.socket
+                .timeout(7_500)
+                .emitWithAck('message', {
+                    sid: this.sessionId,
+                    message: inFlight.message,
+                    localId: inFlightLocalId,
+                }) as MessageAck;
+
+            if (ack && ack.ok === true) {
+                // We have a post-commit ACK from the server. We can safely clear the inFlight marker
+                // without waiting to observe the broadcast update, and we can inject a synthetic update
+                // so the agent processes the message immediately even if socket broadcasts are missed.
+                this.pendingMaterializedLocalIds.delete(inFlightLocalId);
+                this.maybeScheduleUserSocketDisconnect();
+                await this.maybeClearPendingInFlight(inFlightLocalId);
+
+                const update: Update = {
+                    id: `acked-${inFlightLocalId}`,
+                    seq: 0,
+                    createdAt: Date.now(),
+                    body: {
+                        t: 'new-message',
+                        sid: this.sessionId,
+                        message: {
+                            id: ack.id,
+                            seq: ack.seq,
+                            localId: ack.localId ?? undefined,
+                            content: { t: 'encrypted', c: inFlight.message },
+                        },
+                    },
+                } as Update;
+
+                this.handleUpdate(update, { source: 'session-scoped' });
+                return true;
+            }
+
+            // If the ACK fails or times out, fall back to the existing broadcast + transcript recovery path.
             this.scheduleMaterializationRecovery(inFlightLocalId);
 
             return true;

@@ -20,18 +20,9 @@ describe('buildLightMigrateDeployPlan', () => {
         expect(() => buildLightMigrateDeployPlan({})).toThrow(/HAPPY_SERVER_LIGHT_DATA_DIR/);
     });
 
-    it('returns the expected schema and migrate args for sqlite', () => {
+    it('returns the expected migrate args for pglite light', () => {
         const plan = buildLightMigrateDeployPlan({ HAPPY_SERVER_LIGHT_DATA_DIR: '/tmp/happy' });
         expect(plan.dataDir).toBe('/tmp/happy');
-        expect(plan.prismaSchemaPath).toBe('prisma/sqlite/schema.prisma');
-        expect(plan.schemaGenerateArgs).toEqual(['-s', 'schema:sqlite', '--quiet']);
-        expect(plan.prismaDeployArgs).toEqual([
-            '-s',
-            'prisma',
-            'migrate',
-            'deploy',
-            '--schema',
-            'prisma/sqlite/schema.prisma',
-        ]);
+        expect(plan.prismaDeployArgs).toEqual(['-s', 'migrate:light:deploy']);
     });
 });

@@ -78,6 +78,26 @@ describe('ApiSessionClient connection handling', () => {
         __resetToolTraceForTests();
     });
 
+    it('clears accountIdPromise on failure so later calls can retry', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const getSpy = vi
+            .spyOn(axios, 'get')
+            .mockRejectedValueOnce(new Error('temporary failure'))
+            .mockResolvedValueOnce({ data: { id: 'acc-1' } });
+
+        const client = new ApiSessionClient('token', mockSession);
+
+        const first = await (client as any).getAccountId();
+        expect(first).toBeNull();
+
+        const second = await (client as any).getAccountId();
+        expect(second).toBe('acc-1');
+
+        expect(getSpy).toHaveBeenCalledTimes(2);
+    });
+
     it('normalizes outbound ACP tool-call names and inputs to V2 canonical keys', () => {
         const client = new ApiSessionClient('fake-token', mockSession);
         client.sendAgentMessage('opencode', {
@@ -622,6 +642,7 @@ describe('ApiSessionClient connection handling', () => {
             expect.objectContaining({
                 sid: mockSession.id,
                 message: expect.any(String),
+                localId: expect.any(String),
             })
         );
     });
@@ -858,14 +879,15 @@ describe('ApiSessionClient connection handling', () => {
                 const axiosMod = await import('axios');
                 const axios = axiosMod.default as any;
                 vi.spyOn(axios, 'get').mockResolvedValueOnce({
+                    status: 200,
                     data: {
-                        sessions: [{
+                        session: {
                             id: mockSession.id,
                             metadataVersion: 5,
                             metadata: encryptedServerMetadata,
                             agentStateVersion: 0,
                             agentState: null,
-                        }],
+                        },
                     },
                 });
 
@@ -894,15 +916,16 @@ describe('ApiSessionClient connection handling', () => {
                 });
             });
 
-		    it('clears messageQueueV1 inFlight only after observing the materialized user message', async () => {
-			        const sessionSocket: any = {
-			            connected: true,
-			            connect: vi.fn(),
-			            on: vi.fn(),
-			            off: vi.fn(),
-			            disconnect: vi.fn(),
-			            emit: vi.fn(),
-			        };
+			    it('clears messageQueueV1 inFlight after server ACK (no broadcast required)', async () => {
+				        const sessionSocket: any = {
+				            connected: true,
+				            connect: vi.fn(),
+				            on: vi.fn(),
+				            off: vi.fn(),
+				            disconnect: vi.fn(),
+                            timeout: vi.fn().mockReturnThis(),
+				            emit: vi.fn(),
+				        };
 
 			        const userSocket: any = {
 			            connected: true,
@@ -913,54 +936,67 @@ describe('ApiSessionClient connection handling', () => {
 			            emit: vi.fn(),
 			        };
 
-		        const metadataBase = {
-		            ...mockSession.metadata,
-		            messageQueueV1: {
-		                v: 1,
-	                queue: [{
-	                    localId: 'local-p1',
-	                    message: 'encrypted-user-record',
-	                    createdAt: 1,
-	                    updatedAt: 1,
-	                }],
-	                inFlight: null,
-	            },
-	        };
+                        const plaintext = {
+                            role: 'user',
+                            content: { type: 'text', text: 'hello' },
+                        };
+                        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
 
-			        // Minimal emitWithAck mock for metadata claim + later clear
-			        const emitWithAck = vi.fn()
-		            // 1) claim succeeds
-		            .mockResolvedValueOnce({
-	                result: 'success',
-	                version: 1,
-	                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-	                    ...metadataBase,
-	                    messageQueueV1: {
-	                        v: 1,
-	                        queue: [],
-	                        inFlight: {
-	                            localId: 'local-p1',
-	                            message: 'encrypted-user-record',
-	                            createdAt: 1,
-	                            updatedAt: 1,
-	                            claimedAt: 100,
-	                        },
-	                    },
-	                })),
-	            })
-	            // 2) clear succeeds
-	            .mockResolvedValueOnce({
-	                result: 'success',
-	                version: 2,
-	                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-	                    ...metadataBase,
-	                    messageQueueV1: {
-	                        v: 1,
-	                        queue: [],
-	                        inFlight: null,
-	                    },
-	                })),
-		            });
+			        const metadataBase = {
+			            ...mockSession.metadata,
+			            messageQueueV1: {
+			                v: 1,
+		                queue: [{
+		                    localId: 'local-p1',
+		                    message: encrypted,
+		                    createdAt: 1,
+		                    updatedAt: 1,
+		                }],
+		                inFlight: null,
+		            },
+		        };
+
+				        // Minimal emitWithAck mock for metadata claim + message ACK + later clear
+				        const emitWithAck = vi.fn()
+				            // 1) claim succeeds
+				            .mockResolvedValueOnce({
+				                result: 'success',
+				                version: 1,
+				                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
+				                    ...metadataBase,
+				                    messageQueueV1: {
+				                        v: 1,
+				                        queue: [],
+				                        inFlight: {
+				                            localId: 'local-p1',
+				                            message: encrypted,
+				                            createdAt: 1,
+				                            updatedAt: 1,
+				                            claimedAt: 100,
+				                        },
+				                    },
+				                })),
+				            })
+                            // 2) message ACK succeeds
+                            .mockResolvedValueOnce({
+                                ok: true,
+                                id: 'msg-2',
+                                seq: 2,
+                                localId: 'local-p1',
+                            })
+				            // 2) clear succeeds
+				            .mockResolvedValueOnce({
+				                result: 'success',
+				                version: 2,
+				                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
+				                    ...metadataBase,
+				                    messageQueueV1: {
+				                        v: 1,
+				                        queue: [],
+				                        inFlight: null,
+				                    },
+				                })),
+			            });
 
 		        sessionSocket.emitWithAck = emitWithAck;
 
@@ -975,43 +1011,15 @@ describe('ApiSessionClient connection handling', () => {
 			            metadata: metadataBase,
 			        });
 
-		        const popped = await clientWithTwoSockets.popPendingMessage();
-		        expect(popped).toBe(true);
+			        const popped = await clientWithTwoSockets.popPendingMessage();
+			        expect(popped).toBe(true);
 
-		        // Should have emitted the transcript message but NOT yet cleared inFlight.
-		        expect(sessionSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'local-p1' }));
-		        expect(emitWithAck).toHaveBeenCalledTimes(1);
+			        expect(emitWithAck).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'local-p1' }));
 
-		        const userUpdateHandler = (userSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-		        expect(typeof userUpdateHandler).toBe('function');
-
-		        const plaintext = {
-		            role: 'user',
-		            content: { type: 'text', text: 'hello' },
-		        };
-		        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-		        // Simulate server broadcast of the materialized message with the same localId (arriving on user-scoped socket).
-		        userUpdateHandler({
-		            id: 'update-3',
-		            seq: 3,
-		            createdAt: Date.now(),
-		            body: {
-		                t: 'new-message',
-	                sid: mockSession.id,
-	                message: {
-	                    id: 'msg-2',
-	                    seq: 2,
-	                    localId: 'local-p1',
-	                    content: { t: 'encrypted', c: encrypted },
-	                },
-	            },
-	        } as any);
-
-	        // Allow queued async clear to run.
-	        await new Promise((r) => setTimeout(r, 0));
-		        expect(emitWithAck).toHaveBeenCalledTimes(2);
-		    });
+			        // Allow queued async clear to run.
+			        await new Promise((r) => setTimeout(r, 0));
+			        expect(emitWithAck).toHaveBeenCalledTimes(3);
+			    });
 
             it('recovers an already-inFlight queued message by fetching the transcript (no server echo required)', async () => {
                 const sessionSocket: any = {
@@ -1103,16 +1111,17 @@ describe('ApiSessionClient connection handling', () => {
                 expect(emitWithAck).toHaveBeenCalledTimes(1);
             });
 
-            it('syncs a server snapshot on connect for resumed sessions (metadataVersion=-1) so queued messages enqueued before attach can be popped', async () => {
-                const sessionSocket: any = {
-                    connected: true,
-                    connect: vi.fn(),
-                    on: vi.fn(),
-                    off: vi.fn(),
-                    disconnect: vi.fn(),
-                    close: vi.fn(),
-                    emit: vi.fn(),
-                };
+	            it('syncs a server snapshot on connect for resumed sessions (metadataVersion=-1) so queued messages enqueued before attach can be popped', async () => {
+	                const sessionSocket: any = {
+	                    connected: true,
+	                    connect: vi.fn(),
+	                    on: vi.fn(),
+	                    off: vi.fn(),
+	                    disconnect: vi.fn(),
+	                    close: vi.fn(),
+                        timeout: vi.fn().mockReturnThis(),
+	                    emit: vi.fn(),
+	                };
 
                 const userSocket: any = {
                     connected: false,
@@ -1129,60 +1138,97 @@ describe('ApiSessionClient connection handling', () => {
                     .mockImplementationOnce(() => sessionSocket)
                     .mockImplementationOnce(() => userSocket);
 
-                const serverMetadata = {
-                    ...mockSession.metadata,
-                    messageQueueV1: {
-                        v: 1,
-                        queue: [{
-                            localId: 'local-p1',
-                            message: 'encrypted-user-record',
-                            createdAt: 1,
-                            updatedAt: 1,
-                        }],
-                        inFlight: null,
-                    },
-                };
+	                const serverMetadata = {
+	                    ...mockSession.metadata,
+	                    messageQueueV1: {
+	                        v: 1,
+	                        queue: [{
+	                            localId: 'local-p1',
+	                            message: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
+                                    role: 'user',
+                                    content: { type: 'text', text: 'hello' },
+                                })),
+	                            createdAt: 1,
+	                            updatedAt: 1,
+	                        }],
+	                        inFlight: null,
+	                    },
+	                };
 
                 const axiosMod = await import('axios');
                 const axios = axiosMod.default as any;
-                vi.spyOn(axios, 'get').mockResolvedValueOnce({
-                    data: {
-                        sessions: [{
-                            id: mockSession.id,
-                            seq: 0,
-                            createdAt: Date.now(),
-                            updatedAt: Date.now(),
-                            active: true,
-                            activeAt: Date.now(),
-                            metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, serverMetadata)),
-                            metadataVersion: 10,
-                            agentState: null,
-                            agentStateVersion: 0,
-                            dataEncryptionKey: null,
-                            lastMessage: null,
-                        }],
-                    },
+                vi.spyOn(axios, 'get').mockImplementation(async (...args: any[]) => {
+                    const url = String(args[0] ?? '');
+                    if (url.endsWith('/v1/account/profile')) {
+                        return { status: 200, data: { id: 'account-1' } };
+                    }
+
+                    if (url.includes('/v2/changes')) {
+                        return { status: 200, data: { changes: [], nextCursor: 0 } };
+                    }
+
+                    return {
+                        status: 200,
+                        data: {
+                            sessions: [{
+                                id: mockSession.id,
+                                seq: 0,
+                                createdAt: Date.now(),
+                                updatedAt: Date.now(),
+                                active: true,
+                                activeAt: Date.now(),
+                                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, serverMetadata)),
+                                metadataVersion: 10,
+                                agentState: null,
+                                agentStateVersion: 0,
+                                dataEncryptionKey: null,
+                                lastMessage: null,
+                            }],
+                        },
+                    };
                 });
 
-                const emitWithAck = vi.fn().mockResolvedValueOnce({
-                    result: 'success',
-                    version: 11,
-                    metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                        ...serverMetadata,
-                        messageQueueV1: {
-                            v: 1,
-                            queue: [],
-                            inFlight: {
-                                localId: 'local-p1',
-                                message: 'encrypted-user-record',
-                                createdAt: 1,
-                                updatedAt: 1,
-                                claimedAt: 100,
-                            },
-                        },
-                    })),
-                });
-                sessionSocket.emitWithAck = emitWithAck;
+	                const emitWithAck = vi.fn()
+                        // 1) claim succeeds
+                        .mockResolvedValueOnce({
+                            result: 'success',
+                            version: 11,
+                            metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
+                                ...serverMetadata,
+                                messageQueueV1: {
+                                    v: 1,
+                                    queue: [],
+                                    inFlight: {
+                                        localId: 'local-p1',
+                                        message: (serverMetadata as any).messageQueueV1.queue[0].message,
+                                        createdAt: 1,
+                                        updatedAt: 1,
+                                        claimedAt: 100,
+                                    },
+                                },
+                            })),
+                        })
+                        // 2) message ACK succeeds
+                        .mockResolvedValueOnce({
+                            ok: true,
+                            id: 'msg-2',
+                            seq: 2,
+                            localId: 'local-p1',
+                        })
+                        // 3) clear succeeds
+                        .mockResolvedValueOnce({
+                            result: 'success',
+                            version: 12,
+                            metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
+                                ...serverMetadata,
+                                messageQueueV1: {
+                                    v: 1,
+                                    queue: [],
+                                    inFlight: null,
+                                },
+                            })),
+                        });
+	                sessionSocket.emitWithAck = emitWithAck;
 
                 const client = new ApiSessionClient('fake-token', {
                     ...mockSession,
@@ -1199,12 +1245,15 @@ describe('ApiSessionClient connection handling', () => {
                 // Allow snapshot sync to run.
                 await new Promise((r) => setTimeout(r, 0));
 
-                const popped = await client.popPendingMessage();
-                expect(popped).toBe(true);
+	                const popped = await client.popPendingMessage();
+	                expect(popped).toBe(true);
 
-                expect(sessionSocket.emit).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'local-p1' }));
-                expect(emitWithAck).toHaveBeenCalledTimes(1);
-            });
+                    expect(emitWithAck).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'local-p1' }));
+
+                    // Allow queued async clear to run.
+                    await new Promise((r) => setTimeout(r, 0));
+	                expect(emitWithAck).toHaveBeenCalledTimes(3);
+	            });
 
 	    afterEach(() => {
 	        consoleSpy.mockRestore();

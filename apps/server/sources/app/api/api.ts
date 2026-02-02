@@ -8,6 +8,7 @@ import { pushRoutes } from "./routes/pushRoutes";
 import { sessionRoutes } from "./routes/sessionRoutes";
 import { connectRoutes } from "./routes/connectRoutes";
 import { accountRoutes } from "./routes/accountRoutes";
+import { changesRoutes } from "./routes/changesRoutes";
 import { startSocket } from "./socket";
 import { machinesRoutes } from "./routes/machinesRoutes";
 import { devRoutes } from "./routes/devRoutes";
@@ -62,6 +63,7 @@ export async function startApi() {
     pushRoutes(typed);
     sessionRoutes(typed);
     accountRoutes(typed);
+    changesRoutes(typed);
     connectRoutes(typed);
     machinesRoutes(typed);
     artifactsRoutes(typed);

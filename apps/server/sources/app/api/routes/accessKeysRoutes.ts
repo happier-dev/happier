@@ -264,11 +264,14 @@ export function accessKeysRoutes(app: Fastify) {
                         }
                     }
                 });
+                if (!accessKey) {
+                    return reply.code(404).send({ error: 'Access key not found' });
+                }
                 return reply.code(200).send({
                     success: false,
                     error: 'version-mismatch',
-                    currentVersion: accessKey?.dataVersion || 0,
-                    currentData: accessKey?.data || ''
+                    currentVersion: accessKey.dataVersion,
+                    currentData: accessKey.data
                 });
             }
 

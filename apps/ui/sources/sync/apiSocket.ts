@@ -168,11 +168,15 @@ class ApiSocket {
         return true;
     }
 
-    async emitWithAck<T = any>(event: string, data: any): Promise<T> {
+    async emitWithAck<T = any>(event: string, data: any, opts?: { timeoutMs?: number }): Promise<T> {
         if (!this.socket) {
             throw new Error('Socket not connected');
         }
-        return await this.socket.emitWithAck(event, data);
+        const timeoutMs = opts?.timeoutMs;
+        if (typeof timeoutMs === 'number' && timeoutMs > 0) {
+            return await this.socket.timeout(timeoutMs).emitWithAck(event, data) as T;
+        }
+        return await this.socket.emitWithAck(event, data) as T;
     }
 
     //

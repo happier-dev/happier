@@ -92,7 +92,8 @@
     "doctor": "node scripts/env-wrapper.cjs stable doctor",
     "// ==== Development Linking ====": "",
     "link:dev": "node scripts/link-dev.cjs",
-    "unlink:dev": "node scripts/link-dev.cjs unlink"
+    "unlink:dev": "node scripts/link-dev.cjs unlink",
+    "prepack": "node scripts/bundleWorkspaceDeps.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.8.0",
@@ -123,11 +124,11 @@
     "tar": "^7.5.2",
     "tmp": "^0.2.5",
     "tweetnacl": "^1.0.3",
-    "zod": "3.25.76"
+    "zod": "3.25.76",
+    "@happier-dev/agents": "0.0.0",
+    "@happier-dev/protocol": "0.0.0"
   },
   "devDependencies": {
-    "@happier-dev/agents": "0.0.0",
-    "@happier-dev/protocol": "0.0.0",
     "@eslint/compat": "^1",
     "@types/node": ">=20",
     "cross-env": "^10.1.0",

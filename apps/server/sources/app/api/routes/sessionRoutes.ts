@@ -1,14 +1,17 @@
-import { eventRouter, buildNewSessionUpdate } from "@/app/events/eventRouter";
+import { eventRouter, buildNewMessageUpdate, buildNewSessionUpdate, buildUpdateSessionUpdate } from "@/app/events/eventRouter";
 import { type Fastify } from "../types";
 import { db } from "@/storage/db";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
-import { allocateUserSeq } from "@/storage/seq";
 import { sessionDelete } from "@/app/session/sessionDelete";
 import { checkSessionAccess } from "@/app/share/accessControl";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
+import { inTx, afterTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { createSessionMessage, patchSession } from "@/app/session/sessionWriteService";
+import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@/app/monitoring/metrics2";
 
 export function sessionRoutes(app: Fastify) {
 
@@ -168,12 +171,11 @@ export function sessionRoutes(app: Fastify) {
             querystring: z.object({
                 cursor: z.string().optional(),
                 limit: z.coerce.number().int().min(1).max(200).default(50),
-                changedSince: z.coerce.number().int().positive().optional()
             }).optional()
         }
     }, async (request, reply) => {
         const userId = request.userId;
-        const { cursor, limit = 50, changedSince } = request.query || {};
+        const { cursor, limit = 50 } = request.query || {};
 
         // Decode cursor - simple ID-based cursor
         let cursorSessionId: string | undefined;
@@ -185,15 +187,14 @@ export function sessionRoutes(app: Fastify) {
             }
         }
 
-        // Build where clause
-        const where: Prisma.SessionWhereInput = { accountId: userId };
-
-        // Add changedSince filter (just a filter, doesn't affect pagination)
-        if (changedSince) {
-            where.updatedAt = {
-                gt: new Date(changedSince)
-            };
-        }
+        // Build where clause:
+        // Return every session the account can access (owned + shared).
+        const where: Prisma.SessionWhereInput = {
+            OR: [
+                { accountId: userId },
+                { shares: { some: { sharedWithUserId: userId } } },
+            ]
+        };
 
         // Add cursor pagination - always by ID descending (most recent first)
         if (cursorSessionId) {
@@ -212,6 +213,7 @@ export function sessionRoutes(app: Fastify) {
             select: {
                 id: true,
                 seq: true,
+                accountId: true,
                 createdAt: true,
                 updatedAt: true,
                 metadata: true,
@@ -221,6 +223,14 @@ export function sessionRoutes(app: Fastify) {
                 dataEncryptionKey: true,
                 active: true,
                 lastActiveAt: true,
+                shares: {
+                    where: { sharedWithUserId: userId },
+                    select: {
+                        encryptedDataKey: true,
+                        accessLevel: true,
+                        canApprovePermissions: true,
+                    }
+                }
             }
         });
 
@@ -247,10 +257,119 @@ export function sessionRoutes(app: Fastify) {
                 metadataVersion: v.metadataVersion,
                 agentState: v.agentState,
                 agentStateVersion: v.agentStateVersion,
-                dataEncryptionKey: v.dataEncryptionKey ? Buffer.from(v.dataEncryptionKey).toString('base64') : null,
+                // For owned sessions, return the raw session DEK stored on the session row.
+                // For shared sessions, return the per-recipient encrypted DEK from the share row.
+                dataEncryptionKey: v.accountId === userId
+                    ? (v.dataEncryptionKey ? Buffer.from(v.dataEncryptionKey).toString('base64') : null)
+                    : (v.shares[0]?.encryptedDataKey ? Buffer.from(v.shares[0].encryptedDataKey).toString('base64') : null),
+                // Best-effort share info for shared sessions (owner sessions return null here).
+                share: v.accountId === userId
+                    ? null
+                    : (v.shares[0]
+                        ? {
+                            accessLevel: v.shares[0].accessLevel,
+                            canApprovePermissions: v.shares[0].canApprovePermissions,
+                        }
+                        : null),
             })),
             nextCursor,
             hasNext
+        });
+    });
+
+    // V2 - Fetch a single session by id (used by CLI/app snapshot sync paths)
+    app.get('/v2/sessions/:sessionId', {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({
+                sessionId: z.string(),
+            }),
+            response: {
+                200: z.object({
+                    session: z.object({
+                        id: z.string(),
+                        seq: z.number(),
+                        createdAt: z.number(),
+                        updatedAt: z.number(),
+                        active: z.boolean(),
+                        activeAt: z.number(),
+                        metadata: z.string(),
+                        metadataVersion: z.number(),
+                        agentState: z.string().nullable(),
+                        agentStateVersion: z.number(),
+                        dataEncryptionKey: z.string().nullable(),
+                        share: z
+                            .object({
+                                accessLevel: z.string(),
+                                canApprovePermissions: z.boolean(),
+                            })
+                            .nullable(),
+                    }),
+                }),
+                404: z.object({ error: z.literal('Session not found') }),
+            },
+        },
+    }, async (request, reply) => {
+        const userId = request.userId;
+        const { sessionId } = request.params;
+
+        const session = await db.session.findFirst({
+            where: {
+                id: sessionId,
+                OR: [
+                    { accountId: userId },
+                    { shares: { some: { sharedWithUserId: userId } } },
+                ],
+            },
+            select: {
+                id: true,
+                seq: true,
+                accountId: true,
+                createdAt: true,
+                updatedAt: true,
+                metadata: true,
+                metadataVersion: true,
+                agentState: true,
+                agentStateVersion: true,
+                dataEncryptionKey: true,
+                active: true,
+                lastActiveAt: true,
+                shares: {
+                    where: { sharedWithUserId: userId },
+                    select: {
+                        encryptedDataKey: true,
+                        accessLevel: true,
+                        canApprovePermissions: true,
+                    },
+                },
+            },
+        });
+
+        if (!session) {
+            return reply.code(404).send({ error: 'Session not found' });
+        }
+
+        return reply.send({
+            session: {
+                id: session.id,
+                seq: session.seq,
+                createdAt: session.createdAt.getTime(),
+                updatedAt: session.updatedAt.getTime(),
+                active: session.active,
+                activeAt: session.lastActiveAt.getTime(),
+                metadata: session.metadata,
+                metadataVersion: session.metadataVersion,
+                agentState: session.agentState,
+                agentStateVersion: session.agentStateVersion,
+                dataEncryptionKey: session.accountId === userId
+                    ? (session.dataEncryptionKey ? Buffer.from(session.dataEncryptionKey).toString('base64') : null)
+                    : (session.shares[0]?.encryptedDataKey ? Buffer.from(session.shares[0].encryptedDataKey).toString('base64') : null),
+                share: session.accountId === userId
+                    ? null
+                    : (session.shares[0]
+                        ? { accessLevel: session.shares[0].accessLevel, canApprovePermissions: session.shares[0].canApprovePermissions }
+                        : null),
+            },
         });
     });
 
@@ -294,36 +413,40 @@ export function sessionRoutes(app: Fastify) {
                 }
             });
         } else {
-
-            // Resolve seq
-            const updSeq = await allocateUserSeq(userId);
-
-            // Create session
             log({ module: 'session-create', userId, tag }, `Creating new session for user ${userId} with tag ${tag}`);
-            const session = await db.session.create({
-                data: {
-                    accountId: userId,
-                    tag: tag,
-                    metadata: metadata,
-                    dataEncryptionKey: dataEncryptionKey ? new Uint8Array(Buffer.from(dataEncryptionKey, 'base64')) : undefined
-                }
-            });
-            log({ module: 'session-create', sessionId: session.id, userId }, `Session created: ${session.id}`);
+            const session = await inTx(async (tx) => {
+                const created = await tx.session.create({
+                    data: {
+                        accountId: userId,
+                        tag,
+                        metadata,
+                        dataEncryptionKey: dataEncryptionKey ? new Uint8Array(Buffer.from(dataEncryptionKey, 'base64')) : undefined,
+                    },
+                });
 
-            // Emit new session update
-            const updatePayload = buildNewSessionUpdate(session, updSeq, randomKeyNaked(12));
-            log({
-                module: 'session-create',
-                userId,
-                sessionId: session.id,
-                updateType: 'new-session',
-                updatePayload: JSON.stringify(updatePayload)
-            }, `Emitting new-session update to user-scoped connections`);
-            eventRouter.emitUpdate({
-                userId,
-                payload: updatePayload,
-                recipientFilter: { type: 'user-scoped-only' }
+                const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'session', entityId: created.id });
+
+                afterTx(tx, () => {
+                    const updatePayload = buildNewSessionUpdate(created, cursor, randomKeyNaked(12));
+                    log({
+                        module: 'session-create',
+                        userId,
+                        sessionId: created.id,
+                        updateType: 'new-session',
+                        updateId: updatePayload.id,
+                        updateSeq: updatePayload.seq,
+                    }, 'Emitting new-session update to user-scoped connections');
+                    eventRouter.emitUpdate({
+                        userId,
+                        payload: updatePayload,
+                        recipientFilter: { type: 'user-scoped-only' },
+                    });
+                });
+
+                return created;
             });
+
+            log({ module: 'session-create', sessionId: session.id, userId }, `Session created: ${session.id}`);
 
             return reply.send({
                 session: {
@@ -352,27 +475,42 @@ export function sessionRoutes(app: Fastify) {
             querystring: z.object({
                 limit: z.coerce.number().int().min(1).max(500).default(150),
                 beforeSeq: z.coerce.number().int().min(1).optional(),
+                afterSeq: z.coerce.number().int().min(0).optional(),
+            }).superRefine((value, ctx) => {
+                if (value.beforeSeq !== undefined && value.afterSeq !== undefined) {
+                    ctx.addIssue({
+                        code: z.ZodIssueCode.custom,
+                        message: 'beforeSeq and afterSeq are mutually exclusive',
+                    });
+                }
             }).optional(),
         },
         preHandler: app.authenticate
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
-        const { limit = 150, beforeSeq } = request.query || {};
+        const { limit = 150, beforeSeq, afterSeq } = request.query || {};
 
         const access = await checkSessionAccess(userId, sessionId);
         if (!access) {
             return reply.code(404).send({ error: 'Session not found' });
         }
 
+        if (afterSeq !== undefined) {
+            catchupFollowupFetchesCounter.inc({ type: 'session-messages-afterSeq' });
+        }
+
         const where: Prisma.SessionMessageWhereInput = { sessionId };
         if (beforeSeq !== undefined) {
             where.seq = { lt: beforeSeq };
         }
+        if (afterSeq !== undefined) {
+            where.seq = { gt: afterSeq };
+        }
 
         const messages = await db.sessionMessage.findMany({
             where,
-            orderBy: { seq: 'desc' },
+            orderBy: { seq: afterSeq !== undefined ? 'asc' : 'desc' },
             take: limit + 1,
             select: {
                 id: true,
@@ -386,9 +524,22 @@ export function sessionRoutes(app: Fastify) {
 
         const hasMore = messages.length > limit;
         const resultMessages = hasMore ? messages.slice(0, limit) : messages;
-        const nextBeforeSeq = hasMore && resultMessages.length > 0
-            ? resultMessages[resultMessages.length - 1].seq
-            : null;
+        if (afterSeq !== undefined) {
+            catchupFollowupReturnedCounter.inc({ type: 'session-messages-afterSeq' }, resultMessages.length);
+        }
+        const nextBeforeSeq =
+            afterSeq !== undefined
+                ? null
+                : hasMore && resultMessages.length > 0
+                    ? resultMessages[resultMessages.length - 1].seq
+                    : null;
+
+        const nextAfterSeq =
+            afterSeq !== undefined
+                ? hasMore && resultMessages.length > 0
+                    ? resultMessages[resultMessages.length - 1].seq
+                    : null
+                : null;
 
         return reply.send({
             messages: resultMessages.map((v) => ({
@@ -400,7 +551,168 @@ export function sessionRoutes(app: Fastify) {
                 updatedAt: v.updatedAt.getTime()
             })),
             hasMore,
-            nextBeforeSeq
+            nextBeforeSeq,
+            nextAfterSeq,
+        });
+    });
+
+    // V2 - Create session message (durable write)
+    app.post('/v2/sessions/:sessionId/messages', {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({
+                sessionId: z.string(),
+            }),
+            body: z.object({
+                ciphertext: z.string(),
+                localId: z.string().optional(),
+            }),
+            response: {
+                200: z.object({
+                    message: z.object({
+                        id: z.string(),
+                        seq: z.number(),
+                        localId: z.string().nullable(),
+                        createdAt: z.number(),
+                    }),
+                }),
+                400: z.object({ error: z.literal('Invalid parameters') }),
+                403: z.object({ error: z.literal('Forbidden') }),
+                404: z.object({ error: z.literal('Session not found') }),
+                500: z.object({ error: z.literal('Failed to create message') }),
+            },
+        },
+    }, async (request, reply) => {
+        const userId = request.userId;
+        const { sessionId } = request.params;
+        const { ciphertext, localId } = request.body;
+
+        const headerKey = request.headers["idempotency-key"];
+        const idempotencyKey =
+            typeof headerKey === "string"
+                ? headerKey
+                : Array.isArray(headerKey) && typeof headerKey[0] === "string"
+                    ? headerKey[0]
+                    : null;
+
+        const effectiveLocalId = localId ?? idempotencyKey ?? null;
+
+        const result = await createSessionMessage({
+            actorUserId: userId,
+            sessionId,
+            ciphertext,
+            localId: effectiveLocalId,
+        });
+
+        if (!result.ok) {
+            if (result.error === "invalid-params") return reply.code(400).send({ error: "Invalid parameters" });
+            if (result.error === "forbidden") return reply.code(403).send({ error: "Forbidden" });
+            if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
+            return reply.code(500).send({ error: "Failed to create message" });
+        }
+
+        if (result.didWrite) {
+            await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+                const payload = buildNewMessageUpdate(result.message, sessionId, cursor, randomKeyNaked(12));
+                eventRouter.emitUpdate({
+                    userId: accountId,
+                    payload,
+                    recipientFilter: { type: 'all-interested-in-session', sessionId },
+                });
+            }));
+        }
+
+        return reply.send({
+            message: {
+                id: result.message.id,
+                seq: result.message.seq,
+                localId: result.message.localId,
+                createdAt: result.message.createdAt.getTime(),
+            },
+        });
+    });
+
+    // V2 - Patch session fields (durable write)
+    app.patch('/v2/sessions/:sessionId', {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({ sessionId: z.string() }),
+            body: z.object({
+                metadata: z.object({
+                    ciphertext: z.string(),
+                    expectedVersion: z.number().int().min(0),
+                }).optional(),
+                agentState: z.object({
+                    ciphertext: z.string().nullable(),
+                    expectedVersion: z.number().int().min(0),
+                }).optional(),
+            }),
+            response: {
+                200: z.union([
+                    z.object({
+                        success: z.literal(true),
+                        metadata: z.object({ version: z.number() }).optional(),
+                        agentState: z.object({ version: z.number() }).optional(),
+                    }),
+                    z.object({
+                        success: z.literal(false),
+                        error: z.literal("version-mismatch"),
+                        metadata: z.object({ version: z.number(), value: z.string().nullable() }).optional(),
+                        agentState: z.object({ version: z.number(), value: z.string().nullable() }).optional(),
+                    }),
+                ]),
+                400: z.object({ error: z.literal("Invalid parameters") }),
+                403: z.object({ error: z.literal("Forbidden") }),
+                404: z.object({ error: z.literal("Session not found") }),
+                500: z.object({ error: z.literal("Failed to update session") }),
+            },
+        },
+    }, async (request, reply) => {
+        const userId = request.userId;
+        const { sessionId } = request.params;
+        const { metadata, agentState } = request.body;
+
+        const result = await patchSession({
+            actorUserId: userId,
+            sessionId,
+            metadata: metadata ? { ciphertext: metadata.ciphertext, expectedVersion: metadata.expectedVersion } : undefined,
+            agentState: agentState ? { ciphertext: agentState.ciphertext, expectedVersion: agentState.expectedVersion } : undefined,
+        });
+
+        if (!result.ok) {
+            if (result.error === "invalid-params") return reply.code(400).send({ error: "Invalid parameters" });
+            if (result.error === "forbidden") return reply.code(403).send({ error: "Forbidden" });
+            if (result.error === "session-not-found") return reply.code(404).send({ error: "Session not found" });
+            if (result.error === "version-mismatch") {
+                if (!result.current) {
+                    return reply.code(500).send({ error: "Failed to update session" });
+                }
+                return reply.send({
+                    success: false as const,
+                    error: "version-mismatch" as const,
+                    ...(result.current?.metadata ? { metadata: result.current.metadata } : {}),
+                    ...(result.current?.agentState ? { agentState: result.current.agentState } : {}),
+                });
+            }
+            return reply.code(500).send({ error: "Failed to update session" });
+        }
+
+        const metadataUpdate = result.metadata ? { value: result.metadata.value, version: result.metadata.version } : undefined;
+        const agentStateUpdate = result.agentState ? { value: result.agentState.value, version: result.agentState.version } : undefined;
+
+        await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
+            const payload = buildUpdateSessionUpdate(sessionId, cursor, randomKeyNaked(12), metadataUpdate, agentStateUpdate);
+            eventRouter.emitUpdate({
+                userId: accountId,
+                payload,
+                recipientFilter: { type: "all-interested-in-session", sessionId },
+            });
+        }));
+
+        return reply.send({
+            success: true as const,
+            ...(result.metadata ? { metadata: { version: result.metadata.version } } : {}),
+            ...(result.agentState ? { agentState: { version: result.agentState.version } } : {}),
         });
     });
 

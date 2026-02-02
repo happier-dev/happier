@@ -13,6 +13,7 @@ export class ActivityUpdateAccumulator {
     addUpdate(update: ApiEphemeralActivityUpdate): void {
         const sessionId = update.id;
         const lastState = this.lastEmittedStates.get(sessionId);
+        const thinking = update.thinking ?? false;
 
         // Check if this is a critical timestamp update (more than half of disconnect timeout old)
         const timeSinceLastUpdate = lastState ? update.activeAt - lastState.activeAt : 0;
@@ -21,7 +22,7 @@ export class ActivityUpdateAccumulator {
         // Check if this is a significant state change that needs immediate emission
         const isSignificantChange = !lastState || 
             lastState.active !== update.active || 
-            lastState.thinking !== update.thinking ||
+            lastState.thinking !== thinking ||
             isCriticalTimestamp;
 
         if (isSignificantChange) {
@@ -63,7 +64,7 @@ export class ActivityUpdateAccumulator {
             for (const [sessionId, update] of updatesToFlush) {
                 this.lastEmittedStates.set(sessionId, {
                     active: update.active,
-                    thinking: update.thinking,
+                    thinking: update.thinking ?? false,
                     activeAt: update.activeAt
                 });
             }

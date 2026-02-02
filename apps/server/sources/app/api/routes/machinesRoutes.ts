@@ -4,8 +4,9 @@ import { z } from "zod";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
-import { allocateUserSeq } from "@/storage/seq";
 import { buildNewMachineUpdate, buildUpdateMachineUpdate } from "@/app/events/eventRouter";
+import { afterTx, inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 export function machinesRoutes(app: Fastify) {
     app.post('/v1/machines', {
@@ -53,19 +54,44 @@ export function machinesRoutes(app: Fastify) {
 
             let newMachine;
             try {
-                newMachine = await db.machine.create({
-                    data: {
-                        id,
-                        accountId: userId,
-                        metadata,
-                        metadataVersion: 1,
-                        daemonState: daemonState || null,
-                        daemonStateVersion: daemonState ? 1 : 0,
-                        dataEncryptionKey: dataEncryptionKey ? new Uint8Array(Buffer.from(dataEncryptionKey, 'base64')) : undefined,
-                        // Default to offline - in case the user does not start daemon
-                        active: false,
-                        // lastActiveAt and activeAt defaults to now() in schema
-                    }
+                newMachine = await inTx(async (tx) => {
+                    const created = await tx.machine.create({
+                        data: {
+                            id,
+                            accountId: userId,
+                            metadata,
+                            metadataVersion: 1,
+                            daemonState: daemonState || null,
+                            daemonStateVersion: daemonState ? 1 : 0,
+                            dataEncryptionKey: dataEncryptionKey ? new Uint8Array(Buffer.from(dataEncryptionKey, 'base64')) : undefined,
+                            // Default to offline - in case the user does not start daemon
+                            active: false,
+                            // lastActiveAt and activeAt defaults to now() in schema
+                        }
+                    });
+
+                    const cursor = await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: created.id });
+
+                    afterTx(tx, () => {
+                        // Emit both new-machine and update-machine events for backward compatibility.
+                        // IMPORTANT: Both share the same cursor (one durable change).
+                        const newMachinePayload = buildNewMachineUpdate(created, cursor, randomKeyNaked(12));
+                        eventRouter.emitUpdate({
+                            userId,
+                            payload: newMachinePayload,
+                            recipientFilter: { type: 'user-scoped-only' }
+                        });
+
+                        const machineMetadata = { version: 1, value: metadata };
+                        const updatePayload = buildUpdateMachineUpdate(created.id, cursor, randomKeyNaked(12), machineMetadata);
+                        eventRouter.emitUpdate({
+                            userId,
+                            payload: updatePayload,
+                            recipientFilter: { type: 'machine-scoped-only', machineId: created.id }
+                        });
+                    });
+
+                    return created;
                 });
             } catch (e) {
                 // Concurrency safety: multiple clients may race to create the same machine (e.g. daemon + session spawns).
@@ -94,30 +120,6 @@ export function machinesRoutes(app: Fastify) {
                 }
                 throw e;
             }
-
-            // Emit both new-machine and update-machine events for backward compatibility
-            const updSeq1 = await allocateUserSeq(userId);
-            const updSeq2 = await allocateUserSeq(userId);
-            
-            // Emit new-machine event with all data including dataEncryptionKey
-            const newMachinePayload = buildNewMachineUpdate(newMachine, updSeq1, randomKeyNaked(12));
-            eventRouter.emitUpdate({
-                userId,
-                payload: newMachinePayload,
-                recipientFilter: { type: 'user-scoped-only' }
-            });
-
-            // Emit update-machine event for backward compatibility (without dataEncryptionKey)
-            const machineMetadata = {
-                version: 1,
-                value: metadata
-            };
-            const updatePayload = buildUpdateMachineUpdate(newMachine.id, updSeq2, randomKeyNaked(12), machineMetadata);
-            eventRouter.emitUpdate({
-                userId,
-                payload: updatePayload,
-                recipientFilter: { type: 'machine-scoped-only', machineId: newMachine.id }
-            });
 
             return reply.send({
                 machine: {

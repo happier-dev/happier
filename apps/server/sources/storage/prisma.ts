@@ -1,4 +1,8 @@
 import { Prisma, PrismaClient } from "@prisma/client";
+import { PGlite } from "@electric-sql/pglite";
+import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
 
 export { Prisma };
 export type TransactionClient = Prisma.TransactionClient;
@@ -7,6 +11,8 @@ export type PrismaClientType = PrismaClient;
 export * from "./enums.generated";
 
 let _db: PrismaClientType | null = null;
+let _pglite: PGlite | null = null;
+let _pgliteServer: PGLiteSocketServer | null = null;
 
 export const db: PrismaClientType = new Proxy({} as PrismaClientType, {
     get(_target, prop) {
@@ -14,14 +20,14 @@ export const db: PrismaClientType = new Proxy({} as PrismaClientType, {
             if (prop === Symbol.toStringTag) return "PrismaClient";
             // Avoid accidental `await db` treating it like a thenable.
             if (prop === "then") return undefined;
-            throw new Error("Database client is not initialized. Call initDbPostgres() or initDbSqlite() before using db.");
+            throw new Error("Database client is not initialized. Call initDbPostgres() or initDbPglite() before using db.");
         }
         const value = (_db as any)[prop];
         return typeof value === "function" ? value.bind(_db) : value;
     },
     set(_target, prop, value) {
         if (!_db) {
-            throw new Error("Database client is not initialized. Call initDbPostgres() or initDbSqlite() before using db.");
+            throw new Error("Database client is not initialized. Call initDbPostgres() or initDbPglite() before using db.");
         }
         (_db as any)[prop] = value;
         return true;
@@ -32,77 +38,56 @@ export function initDbPostgres(): void {
     _db = new PrismaClient();
 }
 
-export async function initDbSqlite(): Promise<void> {
-    const clientUrl = new URL("../../generated/sqlite-client/index.js", import.meta.url);
-    const mod: any = await import(clientUrl.toString());
-    const SqlitePrismaClient: any = mod?.PrismaClient ?? mod?.default?.PrismaClient;
-    if (!SqlitePrismaClient) {
-        throw new Error("Failed to load sqlite PrismaClient (missing generated/sqlite-client)");
+function resolveLightPgliteDirFromEnv(env: NodeJS.ProcessEnv): string {
+    const fromEnv = env.HAPPY_SERVER_LIGHT_DB_DIR?.trim();
+    if (fromEnv) return fromEnv;
+
+    const dataDir = env.HAPPY_SERVER_LIGHT_DATA_DIR?.trim();
+    if (!dataDir) {
+        throw new Error("Missing HAPPY_SERVER_LIGHT_DATA_DIR (expected applyLightDefaultEnv to set it)");
     }
-    const client = new SqlitePrismaClient() as PrismaClientType;
+    return join(dataDir, "pglite");
+}
 
-    // SQLite can throw transient "database is locked" / SQLITE_BUSY under concurrent writes,
-    // especially in CI where we spawn many sessions in parallel. Add a small retry layer and
-    // increase busy timeout to make light/sqlite a viable test backend.
-    const isSqliteBusyError = (err: unknown): boolean => {
-        const message = err instanceof Error ? err.message : String(err);
-        return message.includes("SQLITE_BUSY") || message.includes("database is locked");
-    };
+function withConnectionLimit(rawUrl: string, limit: number): string {
+    const url = (() => {
+        try {
+            return new URL(rawUrl);
+        } catch {
+            // `PGLiteSocketServer#getServerConn()` returns `host:port` (no scheme). Prisma expects a full Postgres URL.
+            // Disable SSL: pglite-socket does not support TLS negotiation.
+            return new URL(`postgresql://postgres@${rawUrl}/postgres?sslmode=disable`);
+        }
+    })();
+    url.searchParams.set("connection_limit", String(limit));
+    return url.toString();
+}
 
-    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+export async function initDbPglite(): Promise<void> {
+    if (_db || _pglite || _pgliteServer) {
+        throw new Error("Database client is already initialized.");
+    }
 
-    const clientWithRetries = (client as any).$extends({
-        query: {
-            $allModels: {
-                $allOperations: async ({
-                    operation,
-                    args,
-                    query,
-                }: {
-                    operation: string;
-                    args: unknown;
-                    query: (args: unknown) => Promise<unknown>;
-                }) => {
-                    const isWrite =
-                        operation === "create" ||
-                        operation === "createMany" ||
-                        operation === "update" ||
-                        operation === "updateMany" ||
-                        operation === "upsert" ||
-                        operation === "delete" ||
-                        operation === "deleteMany";
+    const dbDir = resolveLightPgliteDirFromEnv(process.env);
+    await mkdir(dbDir, { recursive: true });
 
-                    if (!isWrite) {
-                        return await query(args);
-                    }
+    const pglite = new PGlite(dbDir);
+    // `PGlite` initializes asynchronously. Ensure it's ready before starting the socket server.
+    await (pglite as any).waitReady;
+    const server = new PGLiteSocketServer({
+        db: pglite,
+        host: "127.0.0.1",
+        port: 0,
+    });
+    await server.start();
 
-                    const maxRetries = 6;
-                    let attempt = 0;
-                    while (true) {
-                        try {
-                            return await query(args);
-                        } catch (e) {
-                            if (!isSqliteBusyError(e) || attempt >= maxRetries) {
-                                throw e;
-                            }
-                            const backoffMs = 25 * Math.pow(2, attempt);
-                            attempt += 1;
-                            await sleep(backoffMs);
-                        }
-                    }
-                },
-            },
-        },
-    }) as PrismaClientType;
+    // The Socket server returns a Postgres connection string. Ensure Prisma uses a single connection
+    // because pglite is single-connection.
+    process.env.DATABASE_URL = withConnectionLimit(server.getServerConn(), 1);
 
-    // These PRAGMAs are applied per connection; Prisma may use a pool, but even setting them once
-    // on startup helps CI stability. We keep the connection open; shutdown handler will disconnect.
-    await clientWithRetries.$connect();
-    // NOTE: Some PRAGMAs (e.g. `journal_mode`) return results; use `$queryRaw*` to avoid P2010.
-    await clientWithRetries.$queryRawUnsafe("PRAGMA journal_mode=WAL");
-    await clientWithRetries.$queryRawUnsafe("PRAGMA busy_timeout=5000");
-
-    _db = clientWithRetries;
+    _pglite = pglite;
+    _pgliteServer = server;
+    _db = new PrismaClient();
 }
 
 export function isPrismaErrorCode(err: unknown, code: string): boolean {
@@ -110,4 +95,24 @@ export function isPrismaErrorCode(err: unknown, code: string): boolean {
         return false;
     }
     return (err as any).code === code;
+}
+
+export async function shutdownDbPglite(): Promise<void> {
+    const client = _db;
+    _db = null;
+    if (client) {
+        await client.$disconnect();
+    }
+
+    const server = _pgliteServer;
+    _pgliteServer = null;
+    if (server) {
+        await server.stop();
+    }
+
+    const pglite = _pglite;
+    _pglite = null;
+    if (pglite) {
+        await pglite.close();
+    }
 }

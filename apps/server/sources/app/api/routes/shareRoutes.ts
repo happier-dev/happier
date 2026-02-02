@@ -5,8 +5,11 @@ import { canManageSharing, canManagePermissionDelegation, areFriends } from "@/a
 import { ShareAccessLevel } from "@prisma/client";
 import { PROFILE_SELECT, toShareUserProfile } from "@/app/share/types";
 import { eventRouter, buildSessionSharedUpdate, buildSessionShareUpdatedUpdate, buildSessionShareRevokedUpdate } from "@/app/events/eventRouter";
-import { allocateUserSeq } from "@/storage/seq";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { afterTx, inTx } from "@/storage/inTx";
+import { markAccountChanged } from "@/app/changes/markAccountChanged";
+
+type SessionShareRow = Awaited<ReturnType<typeof db.sessionShare.findFirst>>;
 
 function parseEncryptedDataKeyV0(encryptedDataKeyB64: string): Uint8Array<ArrayBuffer> {
     let bytes: Uint8Array<ArrayBuffer>;
@@ -148,44 +151,52 @@ export function shareRoutes(app: Fastify) {
             return reply.code(400).send({ error: 'Invalid encryptedDataKey' });
         }
 
-        // Create or update share
-        const share = await db.sessionShare.upsert({
-            where: {
-                sessionId_sharedWithUserId: {
-                    sessionId,
-                    sharedWithUserId: userId
-                }
-            },
-            create: {
-                sessionId,
-                sharedByUserId: ownerId,
-                sharedWithUserId: userId,
-                accessLevel: accessLevel as ShareAccessLevel,
-                ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
-                encryptedDataKey: encryptedDataKeyBytes
-            },
-            update: {
-                accessLevel: accessLevel as ShareAccessLevel,
-                ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
-                encryptedDataKey: encryptedDataKeyBytes
-            },
-            include: {
-                sharedWithUser: {
-                    select: PROFILE_SELECT
+        const share = await inTx(async (tx) => {
+            const share = await tx.sessionShare.upsert({
+                where: {
+                    sessionId_sharedWithUserId: {
+                        sessionId,
+                        sharedWithUserId: userId
+                    }
                 },
-                sharedByUser: {
-                    select: PROFILE_SELECT
+                create: {
+                    sessionId,
+                    sharedByUserId: ownerId,
+                    sharedWithUserId: userId,
+                    accessLevel: accessLevel as ShareAccessLevel,
+                    ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
+                    encryptedDataKey: encryptedDataKeyBytes
+                },
+                update: {
+                    accessLevel: accessLevel as ShareAccessLevel,
+                    ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
+                    encryptedDataKey: encryptedDataKeyBytes
+                },
+                include: {
+                    sharedWithUser: {
+                        select: PROFILE_SELECT
+                    },
+                    sharedByUser: {
+                        select: PROFILE_SELECT
+                    }
                 }
-            }
-        });
+            });
 
-        // Emit real-time update to shared user
-        const updateSeq = await allocateUserSeq(userId);
-        const updatePayload = buildSessionSharedUpdate(share, updateSeq, randomKeyNaked(12));
-        eventRouter.emitUpdate({
-            userId: userId,
-            payload: updatePayload,
-            recipientFilter: { type: 'all-user-authenticated-connections' }
+            await markAccountChanged(tx, { accountId: ownerId, kind: 'share', entityId: sessionId });
+            const recipientShareCursor = await markAccountChanged(tx, { accountId: userId, kind: 'share', entityId: sessionId });
+            const recipientSessionCursor = await markAccountChanged(tx, { accountId: userId, kind: 'session', entityId: sessionId });
+            const recipientCursor = Math.max(recipientShareCursor, recipientSessionCursor);
+
+            afterTx(tx, () => {
+                const updatePayload = buildSessionSharedUpdate(share, recipientCursor, randomKeyNaked(12));
+                eventRouter.emitUpdate({
+                    userId: userId,
+                    payload: updatePayload,
+                    recipientFilter: { type: 'all-user-authenticated-connections' }
+                });
+            });
+
+            return share;
         });
 
         return reply.send({
@@ -245,33 +256,42 @@ export function shareRoutes(app: Fastify) {
             return reply.code(400).send({ error: 'Permission approvals require edit or admin access' });
         }
 
-        const share = await db.sessionShare.update({
-            where: { id: shareId },
-            data: {
-                ...(accessLevel !== undefined ? { accessLevel: accessLevel as ShareAccessLevel } : {}),
-                ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
-            },
-            include: {
-                sharedWithUser: {
-                    select: PROFILE_SELECT
+        const share = await inTx(async (tx) => {
+            const share = await tx.sessionShare.update({
+                where: { id: shareId },
+                data: {
+                    ...(accessLevel !== undefined ? { accessLevel: accessLevel as ShareAccessLevel } : {}),
+                    ...(canApprovePermissions !== undefined ? { canApprovePermissions } : {}),
+                },
+                include: {
+                    sharedWithUser: {
+                        select: PROFILE_SELECT
+                    }
                 }
-            }
-        });
+            });
 
-        // Emit real-time update to shared user
-        const updateSeq = await allocateUserSeq(share.sharedWithUserId);
-        const updatePayload = buildSessionShareUpdatedUpdate(
-            share.id,
-            share.sessionId,
-            share.accessLevel,
-            share.updatedAt,
-            updateSeq,
-            randomKeyNaked(12)
-        );
-        eventRouter.emitUpdate({
-            userId: share.sharedWithUserId,
-            payload: updatePayload,
-            recipientFilter: { type: 'all-user-authenticated-connections' }
+            await markAccountChanged(tx, { accountId: userId, kind: 'share', entityId: sessionId });
+            const recipientShareCursor = await markAccountChanged(tx, { accountId: share.sharedWithUserId, kind: 'share', entityId: sessionId });
+            const recipientSessionCursor = await markAccountChanged(tx, { accountId: share.sharedWithUserId, kind: 'session', entityId: sessionId });
+            const recipientCursor = Math.max(recipientShareCursor, recipientSessionCursor);
+
+            afterTx(tx, () => {
+                const updatePayload = buildSessionShareUpdatedUpdate(
+                    share.id,
+                    share.sessionId,
+                    share.accessLevel,
+                    share.updatedAt,
+                    recipientCursor,
+                    randomKeyNaked(12)
+                );
+                eventRouter.emitUpdate({
+                    userId: share.sharedWithUserId,
+                    payload: updatePayload,
+                    recipientFilter: { type: 'all-user-authenticated-connections' }
+                });
+            });
+
+            return share;
         });
 
         return reply.send({
@@ -306,42 +326,44 @@ export function shareRoutes(app: Fastify) {
             return reply.code(403).send({ error: 'Forbidden' });
         }
 
-        // Use transaction to ensure consistent state
-        const result = await db.$transaction(async (tx) => {
-            // Get share before deleting
+        const result = await inTx(async (tx) => {
             const share = await tx.sessionShare.findFirst({
                 where: { id: shareId, sessionId }
             });
 
             if (!share) {
-                return { error: 'Share not found' };
+                return { share: null as SessionShareRow | null };
             }
 
-            // Delete share
             await tx.sessionShare.delete({
                 where: { id: shareId }
+            });
+
+            await markAccountChanged(tx, { accountId: userId, kind: 'share', entityId: sessionId });
+            const recipientShareCursor = await markAccountChanged(tx, { accountId: share.sharedWithUserId, kind: 'share', entityId: sessionId });
+            const recipientSessionCursor = await markAccountChanged(tx, { accountId: share.sharedWithUserId, kind: 'session', entityId: sessionId });
+            const recipientCursor = Math.max(recipientShareCursor, recipientSessionCursor);
+
+            afterTx(tx, async () => {
+                const updatePayload = buildSessionShareRevokedUpdate(
+                    share.id,
+                    share.sessionId,
+                    recipientCursor,
+                    randomKeyNaked(12)
+                );
+                eventRouter.emitUpdate({
+                    userId: share.sharedWithUserId,
+                    payload: updatePayload,
+                    recipientFilter: { type: 'all-user-authenticated-connections' }
+                });
             });
 
             return { share };
         });
 
-        if ('error' in result) {
-            return reply.code(404).send({ error: result.error });
+        if (!result.share) {
+            return reply.code(404).send({ error: 'Share not found' });
         }
-
-        // Emit real-time update to shared user (outside transaction)
-        const updateSeq = await allocateUserSeq(result.share.sharedWithUserId);
-        const updatePayload = buildSessionShareRevokedUpdate(
-            result.share.id,
-            result.share.sessionId,
-            updateSeq,
-            randomKeyNaked(12)
-        );
-        eventRouter.emitUpdate({
-            userId: result.share.sharedWithUserId,
-            payload: updatePayload,
-            recipientFilter: { type: 'all-user-authenticated-connections' }
-        });
 
         return reply.send({ success: true });
     });
