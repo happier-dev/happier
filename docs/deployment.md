@@ -46,6 +46,9 @@ This document describes how to deploy the Happier backend (`apps/server`) and th
 ## Docker image
 A production Dockerfile is provided at `Dockerfile.server`.
 
+Recommended (unified) build:
+- `docker/Dockerfile` target `server` (see `docker/README.md`).
+
 Key notes:
 - The server defaults to port `3005` (set `PORT` explicitly in container environments).
 - The image includes FFmpeg and Python for media processing.

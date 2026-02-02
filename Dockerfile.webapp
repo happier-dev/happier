@@ -15,17 +15,6 @@ COPY apps/docs/package.json apps/docs/
 COPY packages/agents/package.json packages/agents/
 COPY packages/protocol/package.json packages/protocol/
 
-# Workspace postinstall requirements
-COPY apps/ui/patches apps/ui/patches
-COPY apps/ui/tools apps/ui/tools
-COPY apps/server/prisma apps/server/prisma
-COPY apps/cli/scripts apps/cli/scripts
-COPY apps/cli/tools apps/cli/tools
-COPY packages/agents/src packages/agents/src
-COPY packages/agents/tsconfig.json packages/agents/tsconfig.json
-COPY packages/protocol/src packages/protocol/src
-COPY packages/protocol/tsconfig.json packages/protocol/tsconfig.json
-
 RUN yarn install --frozen-lockfile --ignore-engines
 
 # Stage 2: build the web app
@@ -40,7 +29,11 @@ ENV EXPO_PUBLIC_POSTHOG_API_KEY=$POSTHOG_API_KEY
 ENV EXPO_PUBLIC_REVENUE_CAT_STRIPE=$REVENUE_CAT_STRIPE
 
 COPY apps/ui ./apps/ui
+COPY packages/agents ./packages/agents
+COPY packages/protocol ./packages/protocol
 
+RUN yarn workspace @happier-dev/agents postinstall:real && yarn workspace @happier-dev/protocol postinstall:real
+RUN yarn workspace @happier-dev/app postinstall:real
 RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist
 
 # Stage 3: runtime with Nginx

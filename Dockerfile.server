@@ -18,24 +18,17 @@ COPY apps/docs/package.json apps/docs/
 COPY packages/agents/package.json packages/agents/
 COPY packages/protocol/package.json packages/protocol/
 
-# Workspace postinstall requirements
-COPY apps/ui/patches apps/ui/patches
-COPY apps/server/prisma apps/server/prisma
-COPY apps/cli/scripts apps/cli/scripts
-COPY apps/cli/tools apps/cli/tools
-COPY apps/ui/tools apps/ui/tools
-COPY packages/agents/src packages/agents/src
-COPY packages/agents/tsconfig.json packages/agents/tsconfig.json
-COPY packages/protocol/src packages/protocol/src
-COPY packages/protocol/tsconfig.json packages/protocol/tsconfig.json
-
 RUN yarn install --frozen-lockfile --ignore-engines
 
 # Stage 2: build the server
 FROM deps AS builder
 
 COPY apps/server ./apps/server
+COPY packages/agents ./packages/agents
+COPY packages/protocol ./packages/protocol
 
+RUN yarn workspace @happier-dev/agents postinstall:real && yarn workspace @happier-dev/protocol postinstall:real
+RUN yarn workspace @happier-dev/server postinstall:real
 RUN yarn workspace @happier-dev/server build
 
 # Stage 3: runtime
@@ -57,4 +50,4 @@ COPY --from=builder /repo/apps/server /repo/apps/server
 EXPOSE 3000
 
 # Command to run the application
-CMD ["yarn", "--cwd", "apps/server", "start"]
+CMD ["sh", "-lc", "yarn --cwd apps/server prisma migrate deploy && exec yarn --cwd apps/server start"]

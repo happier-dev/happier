@@ -57,3 +57,17 @@ CLAUDE.local.md
 # Development planning notes (keep local, don't commit)
 notes/
 /apps/ui/ios
+
+.worktrees/
+.edison/_generated/
+.edison/_locks/
+.edison/config.local/
+.edison/session/
+.project/logs/
+.project/archive/
+.project/.session-id
+.project/sessions/_tx/
+.project/sessions/_locks/
+.project/qa/evidence-snapshots/
+.project/qa/locks/
+.project/qa/score-history/
