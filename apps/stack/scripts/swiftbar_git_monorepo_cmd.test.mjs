@@ -44,8 +44,8 @@ test('swiftbar git cache treats monorepo package dirs as git repos', async () =>
 
   const bashScript = [
     `set -euo pipefail`,
-    `source "${rootDir}/apps/stack/extras/swiftbar/lib/utils.sh"`,
-    `source "${rootDir}/apps/stack/extras/swiftbar/lib/git.sh"`,
+    `source "${rootDir}/extras/swiftbar/lib/utils.sh"`,
+    `source "${rootDir}/extras/swiftbar/lib/git.sh"`,
     `active_dir="${repoRoot}/apps/ui"`,
     `git_cache_refresh_one main main happier "$active_dir" >/dev/null 2>&1 || true`,
     `key="$(git_cache_key main main happier "$active_dir")"`,

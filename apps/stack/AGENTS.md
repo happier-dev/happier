@@ -62,8 +62,9 @@ If you are an LLM agent: treat this file as the “ground truth” for workflows
 
 - Home: `~/.happier-stack`
 - Workspace: `~/.happier-stack/workspace`
-- Default repo checkout: `<workspace>/happier`
-- Worktrees root: `<workspace>/.worktrees`
+- Default repo checkout: `<workspace>/main`
+- Dev checkout (worktree): `<workspace>/dev`
+- Worktree categories: `<workspace>/{pr,local,tmp}/...`
 - Stack storage: `~/.happier/stacks/<stack>/...` (stack env file: `~/.happier/stacks/<stack>/env`)
 
 ### Happier monorepo
@@ -96,10 +97,13 @@ If you’re tempted to run a low-level command, route it through `hstack` (or ad
 
 ### You must develop in worktrees only
 
-- Do **not** develop directly in the default checkout (typically `<workspace>/happier`).
+- Do **not** develop directly in the default checkout (typically `<workspace>/main`).
   - Treat it as **read-only** “launcher defaults”.
 - All changes should happen inside:
-  - `<workspace>/.worktrees/<owner>/<branch...>` (created/managed by `hstack wt ...`)
+  - `<workspace>/dev` (first-class dev worktree)
+  - `<workspace>/pr/<...>` (PR worktrees)
+  - `<workspace>/local/<owner>/<...>` (local worktrees; owner is your local username)
+  - `<workspace>/tmp/<owner>/<...>` (throwaway worktrees)
 
 ### You must test changes inside isolated stacks
 
@@ -114,30 +118,34 @@ If you’re tempted to run a low-level command, route it through `hstack` (or ad
 
 ### Layout
 
-All worktrees live under:
+The workspace contains:
 
-```
-<workspace>/.worktrees/<owner>/<branch...>
-```
+- `main/` (stable checkout; treat as read-only)
+- `dev/` (first-class dev worktree)
+- categorized worktrees:
+  - `pr/<...>`
+  - `local/<owner>/<...>`
+  - `tmp/<owner>/<...>`
 
 Examples:
 
-- `<workspace>/.worktrees/slopus/pr/123-fix-thing`
-- `<workspace>/.worktrees/happier-dev/local/my-patch`
+- `<workspace>/pr/123-fix-thing`
+- `<workspace>/local/<you>/my-patch`
 
 ### Common commands
 
 - Create: `hstack wt new pr/my-feature --from=upstream --use`
 - PR checkout: `hstack wt pr 123 --use`
-- Switch active checkout: `hstack wt use slopus/pr/123-fix-thing`
+- Switch active checkout: `hstack wt use pr/123-fix-thing`
 - List/status: `hstack wt list` / `hstack wt status`
 
 ### Targeting a worktree without mutating a stack
 
 Pass a one-shot override:
 
-- `hstack stack typecheck <stack> --repo=<owner/branch|/abs/path>`
-- `hstack stack build <stack> --repo=<owner/branch|/abs/path>`
+- `hstack stack typecheck <stack> --repo=dev`
+- `hstack stack build <stack> --repo=pr/123-fix-thing`
+- `hstack stack build <stack> --repo=/abs/path/to/monorepo`
 
 ---
 
@@ -149,11 +157,11 @@ By default, `hstack wt use` refuses to repoint `main` to an arbitrary worktree/p
 
 - Create a new stack and switch that stack:
   - `hstack stack new exp1 --interactive`
-  - `hstack stack wt exp1 -- use slopus/pr/my-branch`
+  - `hstack stack wt exp1 -- use pr/123-fix-thing`
 
 Override (only if you really mean it):
 
-- `hstack wt use slopus/pr/my-branch --force`
+- `hstack wt use pr/123-fix-thing --force`
 
 ---
 

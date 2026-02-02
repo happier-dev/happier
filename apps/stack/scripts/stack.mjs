@@ -384,7 +384,9 @@ async function cmdNew({ rootDir, argv, emit = true }) {
 
   // argv here is already "args after 'new'", so the first positional is the stack name.
   let stackName = stackNameFromArg(positionals, 0);
-  const interactive = flags.has('--interactive') || (!stackName && isTty());
+  const interactive =
+    flags.has('--interactive') ||
+    (!flags.has('--non-interactive') && isTty() && !json);
 
   const defaults = {
     stackName,
@@ -400,21 +402,21 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   }
 
   stackName = config.stackName?.trim() ? config.stackName.trim() : '';
-	  if (!stackName) {
-	    throw new Error(
-	      '[stack] usage: hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] ' +
-	        '[--repo=<owner/...>|<path>|default] [--remote=<name>] ' +
-	        '[--copy-auth-from=<stack>] [--link-auth] [--no-copy-auth] [--interactive] [--force-port]'
-	    );
-	  }
+  if (!stackName) {
+    throw new Error(
+      '[stack] usage: hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] ' +
+        '[--repo=<owner/...>|<path>|default] [--remote=<name>] ' +
+        '[--copy-auth-from=<stack>] [--link-auth] [--no-copy-auth] [--interactive] [--non-interactive] [--force-port]'
+    );
+  }
   if (stackName === 'main') {
     throw new Error('[stack] stack name \"main\" is reserved (use the default stack without creating it)');
   }
 
-	  const serverComponent = (config.serverComponent || 'happier-server-light').trim();
-	  if (serverComponent !== 'happier-server-light' && serverComponent !== 'happier-server') {
-	    throw new Error(`[stack] invalid server component: ${serverComponent}`);
-	  }
+  const serverComponent = (config.serverComponent || 'happier-server-light').trim();
+  if (serverComponent !== 'happier-server-light' && serverComponent !== 'happier-server') {
+    throw new Error(`[stack] invalid server component: ${serverComponent}`);
+  }
 
   const baseDir = resolveStackEnvPath(stackName).baseDir;
   const uiBuildDir = join(baseDir, 'ui');
@@ -2429,7 +2431,7 @@ async function cmdPrStack({ rootDir, argv }) {
         'examples:',
         '  # Create stack + check out PRs + start dev UI',
         '  hstack stack pr pr123 \\',
-        '    --repo=https://github.com/leeroybrun/happier-dev/pull/123 \\',
+        '    --repo=https://github.com/happier-dev/happier/pull/123 \\',
         '    --seed-auth --copy-auth-from=dev-auth \\',
         '    --dev',
         '',
@@ -3218,7 +3220,7 @@ async function main() {
       },
       text: [
         '[stack] usage:',
-        '  hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] [--repo=default|<owner/...>|<path>] [--interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
+        '  hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] [--repo=default|dev|<owner/...>|<path>] [--interactive] [--non-interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
         '  hstack stack edit <name> --interactive [--json]',
         '  hstack stack list [--json]',
         '  hstack stack audit [--fix] [--fix-main] [--fix-ports] [--fix-workspace] [--fix-paths] [--unpin-ports] [--unpin-ports-except=stack1,stack2] [--json]',

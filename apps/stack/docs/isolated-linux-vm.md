@@ -131,7 +131,7 @@ limactl shell happy-pr
 Inside the VM:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/leeroybrun/happier-dev/main/apps/stack/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \
+curl -fsSL https://raw.githubusercontent.com/happier-dev/happier/main/apps/stack/scripts/provision/linux-ubuntu-review-pr.sh -o /tmp/linux-ubuntu-review-pr.sh \
   && chmod +x /tmp/linux-ubuntu-review-pr.sh \
   && /tmp/linux-ubuntu-review-pr.sh
 ```
@@ -154,7 +154,7 @@ Inside the VM:
 
 ```bash
 npx --yes -p @happier-dev/stack@latest hstack review-pr \
-  --repo=https://github.com/leeroybrun/happier-dev/pull/<PR_NUMBER> \
+  --repo=https://github.com/happier-dev/happier/pull/<PR_NUMBER> \
   --vm-ports \
   --no-mobile \
   --keep-sandbox \

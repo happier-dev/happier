@@ -1,9 +1,32 @@
 import { prompt, promptSelect, promptWorktreeSource } from '../cli/wizard.mjs';
+import { gitCapture, gitOk } from '../git/git.mjs';
+import { parseGithubOwnerRepo } from '../git/worktrees.mjs';
+import { getRepoDir } from '../paths/paths.mjs';
 import { bold, cyan, dim, green } from '../ui/ansi.mjs';
 
 function wantsNo(raw) {
   const v = String(raw ?? '').trim().toLowerCase();
   return v === 'n' || v === 'no' || v === '0' || v === 'false';
+}
+
+async function describeGitRemote({ repoDir, remote }) {
+  const r = String(remote ?? '').trim();
+  if (!repoDir || !r) return '';
+  try {
+    const url = (await gitCapture({ cwd: repoDir, args: ['remote', 'get-url', r] })).trim();
+    if (!url) return '';
+    const parsed = parseGithubOwnerRepo(url);
+    return parsed ? `${parsed.owner}/${parsed.repo}` : url;
+  } catch {
+    return '';
+  }
+}
+
+async function resolveDefaultCreateRemote({ repoDir }) {
+  // Prefer upstream when present (clean PR history), else fall back to origin.
+  if (await gitOk({ cwd: repoDir, args: ['remote', 'get-url', 'upstream'] })) return 'upstream';
+  if (await gitOk({ cwd: repoDir, args: ['remote', 'get-url', 'origin'] })) return 'origin';
+  return 'upstream';
 }
 
 export async function interactiveNew({ rootDir, rl, defaults, deps = {} }) {
@@ -56,9 +79,21 @@ export async function interactiveNew({ rootDir, rl, defaults, deps = {} }) {
     console.log('');
     // eslint-disable-next-line no-console
     console.log(bold('Worktrees'));
+    const mainDir = getRepoDir(rootDir, { ...process.env, HAPPIER_STACK_REPO_DIR: '' });
+    const upstreamRepo = await describeGitRemote({ repoDir: mainDir, remote: 'upstream' });
+    const originRepo = await describeGitRemote({ repoDir: mainDir, remote: 'origin' });
+    const defaultRemote = await resolveDefaultCreateRemote({ repoDir: mainDir });
+
     // eslint-disable-next-line no-console
-    console.log(dim(`New worktrees are typically based on ${cyan('upstream')} (clean PR history).`));
-    out.createRemote = await promptFn(rl, `${dim('Git remote for new worktrees')} (default: upstream): `, { defaultValue: 'upstream' });
+    console.log(
+      dim(`New worktrees are typically based on ${cyan('upstream')}${upstreamRepo ? ` (${upstreamRepo})` : ''} (clean PR history).`)
+    );
+    if (upstreamRepo || originRepo) {
+      // eslint-disable-next-line no-console
+      console.log(dim(`Remotes: ${upstreamRepo ? `upstream=${upstreamRepo}` : 'upstream=(missing)'}, ${originRepo ? `origin=${originRepo}` : 'origin=(missing)'}`));
+    }
+
+    out.createRemote = await promptFn(rl, `${dim('Git remote for new worktrees')} (default: ${defaultRemote}): `, { defaultValue: defaultRemote });
   }
 
   if (out.repo == null) {
@@ -106,8 +141,16 @@ export async function interactiveEdit({ rootDir, rl, stackName, existingEnv, def
   console.log('');
   // eslint-disable-next-line no-console
   console.log(bold('Worktrees'));
-  out.createRemote = await promptFn(rl, `${dim('Git remote for new worktrees')} (default: ${currentRemote || 'upstream'}): `, {
-    defaultValue: currentRemote || 'upstream',
+  const mainDir = getRepoDir(rootDir, { ...process.env, HAPPIER_STACK_REPO_DIR: '' });
+  const upstreamRepo = await describeGitRemote({ repoDir: mainDir, remote: 'upstream' });
+  const originRepo = await describeGitRemote({ repoDir: mainDir, remote: 'origin' });
+  if (upstreamRepo || originRepo) {
+    // eslint-disable-next-line no-console
+    console.log(dim(`Remotes: ${upstreamRepo ? `upstream=${upstreamRepo}` : 'upstream=(missing)'}, ${originRepo ? `origin=${originRepo}` : 'origin=(missing)'}`));
+  }
+  const defaultRemote = (currentRemote || (await resolveDefaultCreateRemote({ repoDir: mainDir })) || 'upstream').trim();
+  out.createRemote = await promptFn(rl, `${dim('Git remote for new worktrees')} (default: ${defaultRemote}): `, {
+    defaultValue: defaultRemote,
   });
 
   out.repo = await promptWorktreeSourceFn({

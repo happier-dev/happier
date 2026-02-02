@@ -109,7 +109,7 @@ npx --yes -p @happier-dev/stack hstack setup --profile=dev --workspace-dir=~/Doc
 - **Automated setup**: `hstack setup` + `hstack start` gets the whole stack up and running.
 - **No hosted dependency**: run the full stack on your own computer.
 - **Lower latency**: localhost/LAN is typically much faster than remote hosted servers.
-- **Custom forks**: easily use forks while still contributing upstream to `leeroybrun/happier-dev`.
+- **Custom forks**: easily use forks while still contributing upstream to `happier-dev/happier`.
 - **Worktrees**: clean upstream PR branches without mixing fork-only patches.
 - **Stacks**: run multiple isolated instances in parallel (ports + dirs + repo pinning).
 - **Remote access**: `hstack tailscale ...` helps you get an HTTPS URL for mobile/remote devices.
@@ -184,7 +184,7 @@ hstack wt push active --remote=origin
 Test an upstream PR locally:
 
 ```bash
-hstack wt pr https://github.com/leeroybrun/happier-dev/pull/123 --use
+hstack wt pr https://github.com/happier-dev/happier/pull/123 --use
 hstack wt pr 123 --update --stash
 ```
 
@@ -194,8 +194,8 @@ This creates (or reuses) a named stack, checks out the monorepo PR worktree, opt
 Re-run with `--reuse` to update the existing worktrees when the PR changes.
 
 ```bash
-hstack stack pr pr123 \
-  --repo=https://github.com/leeroybrun/happier-dev/pull/123 \
+  hstack stack pr pr123 \
+  --repo=https://github.com/happier-dev/happier/pull/123 \
   --seed-auth --copy-auth-from=dev-auth --link-auth \
   --dev
 ```
@@ -230,7 +230,7 @@ This is the maintainer-friendly entrypoint. It is safe to re-run and will keep t
 
 ```bash
 npx --yes -p @happier-dev/stack hstack tools setup-pr \
-  --repo=https://github.com/leeroybrun/happier-dev/pull/123 \
+  --repo=https://github.com/happier-dev/happier/pull/123 \
   --dev
 ```
 
@@ -451,7 +451,7 @@ For contributor/LLM workflow expectations: `[AGENTS.md](AGENTS.md)`.
 ### Developing hstack itself
 
 ```bash
-git clone https://github.com/leeroybrun/happier-dev.git
+git clone https://github.com/happier-dev/happier.git
 cd happier-dev
 
 node ./apps/stack/bin/hstack.mjs setup --profile=dev
