@@ -98,6 +98,17 @@ During setup, you’ll be guided through:
 - **recommended**: creating a dedicated dev stack (keep `main` stable)
 - optional: installing the iOS dev-client app (for phone testing)
 
+Manual shortcuts (if you want to do it yourself):
+
+```bash
+# Create the dev-auth seed stack (recommended) and do the guided login now:
+hstack auth seed
+
+# Create a dev stack and pin it to the dev checkout:
+hstack stack new dev
+hstack stack wt dev -- use dev
+```
+
 You can also set it non-interactively:
 
 ```bash
