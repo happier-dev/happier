@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="/.github/header.png" title="Happier Dev" alt="Happier Dev"/>
+  <img src="/.github/header-release.png" title="Happier Dev" alt="Happier Dev"/>
 
   ### Open-source mobile, web, and desktop companion for AI coding agents  
   **Secure • Collaborative • Self-hostable**
