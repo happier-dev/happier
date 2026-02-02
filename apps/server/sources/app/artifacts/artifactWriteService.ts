@@ -263,8 +263,8 @@ export async function deleteArtifact(params: { actorUserId: string; artifactId: 
                 return { ok: false, error: "not-found" };
             }
 
-            await tx.artifact.delete({ where: { id: artifactId } });
             const cursor = await markAccountChanged(tx, { accountId: actorUserId, kind: "artifact", entityId: artifactId });
+            await tx.artifact.delete({ where: { id: artifactId } });
             return { ok: true, cursor };
         });
     } catch {

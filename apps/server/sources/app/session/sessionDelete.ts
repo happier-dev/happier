@@ -81,16 +81,6 @@ export async function sessionDelete(ctx: Context, sessionId: string): Promise<bo
             deletedCount: deletedAccessKeys.count
         }, `Deleted ${deletedAccessKeys.count} access keys`);
 
-        // 4. Delete the session itself
-        await tx.session.delete({
-            where: { id: sessionId }
-        });
-        log({ 
-            module: 'session-delete', 
-            userId: ctx.uid, 
-            sessionId 
-        }, `Session deleted successfully`);
-
         const recipientAccountIds = new Set<string>();
         recipientAccountIds.add(ctx.uid);
         for (const share of session.shares) {
@@ -102,6 +92,16 @@ export async function sessionDelete(ctx: Context, sessionId: string): Promise<bo
             const cursor = await markAccountChanged(tx, { accountId, kind: 'session', entityId: sessionId });
             recipientCursors.push({ accountId, cursor });
         }
+
+        // 4. Delete the session itself (after marking changes so the FK can be set and then nulled by ON DELETE SET NULL)
+        await tx.session.delete({
+            where: { id: sessionId }
+        });
+        log({ 
+            module: 'session-delete', 
+            userId: ctx.uid, 
+            sessionId 
+        }, `Session deleted successfully`);
 
         // Send notification after transaction commits
         afterTx(tx, async () => {

@@ -159,6 +159,8 @@ CMD ["yarn", "--cwd", "apps/docs", "start"]
 
 # Server
 FROM deps-debian AS server-builder
+ARG HAPPIER_BUILD_DB_PROVIDERS=""
+ENV HAPPIER_BUILD_DB_PROVIDERS=$HAPPIER_BUILD_DB_PROVIDERS
 COPY apps/server ./apps/server
 COPY packages/agents ./packages/agents
 COPY packages/protocol ./packages/protocol

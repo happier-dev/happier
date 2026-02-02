@@ -268,13 +268,16 @@ Notes:
 
 #### Light flavor (PGlite + local files)
 
-*The light flavor does not require Docker.* It uses an embedded Postgres database (PGlite) persisted on disk and serves public files from disk under `GET /files/*`.
+*The light flavor does not require Docker.* By default it uses an embedded Postgres database (PGlite) persisted on disk and serves public files from disk under `GET /files/*`.
 
 ```bash
 yarn install
 
 # Runs `prisma migrate deploy` against embedded Postgres (PGlite) before starting
 PORT=3005 yarn dev:light
+
+# Or run the light flavor against SQLite instead of PGlite:
+HAPPIER_DB_PROVIDER=sqlite PORT=3005 yarn dev:light
 ```
 
 Verify:
@@ -285,7 +288,7 @@ curl http://127.0.0.1:3005/health
 
 Notes:
 
-- `yarn dev:light` runs `prisma migrate deploy` against the embedded Postgres database before starting.
+- `yarn dev:light` runs migrations for the selected light DB provider before starting.
 - If you want a clean slate for local dev/testing, delete the light data dir (default: `~/.happy/server-light`) or point the light flavor at a fresh dir via `HAPPIER_SERVER_LIGHT_DATA_DIR=/tmp/happy-server-light`.
 
 ### Prisma schema (providers)

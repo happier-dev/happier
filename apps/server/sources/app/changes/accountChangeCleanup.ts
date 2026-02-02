@@ -1,15 +1,18 @@
-import { Prisma } from "@prisma/client";
 import { db } from "@/storage/db";
 import { log } from "@/utils/log";
 
 type PruneKind = "session" | "share" | "machine" | "artifact";
 
-const PRUNE_TARGETS: Array<{ kind: PruneKind; table: "Session" | "Machine" | "Artifact" }> = [
-    { kind: "session", table: "Session" },
-    // Share changes are keyed by sessionId too (entityId=sessionId).
-    { kind: "share", table: "Session" },
-    { kind: "machine", table: "Machine" },
-    { kind: "artifact", table: "Artifact" },
+type PruneTarget = {
+    kinds: PruneKind[];
+    fkField: "sessionId" | "machineId" | "artifactId";
+};
+
+const PRUNE_TARGETS: PruneTarget[] = [
+    // Session + share changes are keyed by sessionId (entityId=sessionId).
+    { kinds: ["session", "share"], fkField: "sessionId" },
+    { kinds: ["machine"], fkField: "machineId" },
+    { kinds: ["artifact"], fkField: "artifactId" },
 ];
 
 export async function pruneOrphanAccountChangesOnce(): Promise<{
@@ -20,40 +23,52 @@ export async function pruneOrphanAccountChangesOnce(): Promise<{
     const floorByAccountId = new Map<string, number>();
 
     for (const target of PRUNE_TARGETS) {
-        const table = Prisma.raw(`"${target.table}"`);
-        // Delete + RETURNING is atomic and ensures we don't miss the max cursor of rows deleted in this pass.
-        const deleted = await db.$queryRaw<Array<{ accountId: string; cursor: number }>>(
-            Prisma.sql`
-                DELETE FROM "AccountChange" ac
-                WHERE ac."kind" = ${target.kind}
-                AND NOT EXISTS (
-                    SELECT 1 FROM ${table} t WHERE t."id" = ac."entityId"
-                )
-                RETURNING ac."accountId" AS "accountId", ac."cursor" AS "cursor"
-            `,
-        );
+        const baseWhere: any = {
+            kind: { in: target.kinds },
+            [target.fkField]: null,
+        };
 
-        deletedRows += deleted.length;
-        for (const row of deleted) {
-            if (!row || typeof row.accountId !== "string") continue;
-            const cursor = Number((row as any).cursor);
+        const grouped = await db.accountChange.groupBy({
+            by: ["accountId"],
+            where: baseWhere,
+            _max: { cursor: true },
+        });
+
+        // Delete in per-account batches bounded by the observed max cursor, so we never delete rows
+        // beyond the floor we are about to bump. This prevents race conditions where newly-orphaned
+        // rows could be deleted without being covered by changesFloor.
+        for (const g of grouped as Array<{ accountId: string; _max: { cursor: number | null } }>) {
+            if (!g || typeof g.accountId !== "string") continue;
+            const cursor = Number(g._max?.cursor);
             if (!Number.isFinite(cursor) || cursor <= 0) continue;
-            const existing = floorByAccountId.get(row.accountId) ?? 0;
+
+            const deleted = await db.accountChange.deleteMany({
+                where: {
+                    ...baseWhere,
+                    accountId: g.accountId,
+                    cursor: { lte: cursor },
+                },
+            });
+            deletedRows += deleted.count;
+
+            const existing = floorByAccountId.get(g.accountId) ?? 0;
             if (cursor > existing) {
-                floorByAccountId.set(row.accountId, cursor);
+                floorByAccountId.set(g.accountId, cursor);
             }
         }
     }
 
     // Bump the per-account prune floor so clients behind it are forced to do a snapshot rebuild (410 Gone).
     for (const [accountId, floor] of floorByAccountId) {
-        await db.$executeRaw(
-            Prisma.sql`
-                UPDATE "Account"
-                SET "changesFloor" = GREATEST("changesFloor", ${floor})
-                WHERE "id" = ${accountId}
-            `,
-        );
+        await db.account.updateMany({
+            where: {
+                id: accountId,
+                changesFloor: { lt: floor },
+            },
+            data: {
+                changesFloor: floor,
+            },
+        });
     }
 
     return { deletedRows, affectedAccounts: floorByAccountId.size };

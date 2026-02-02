@@ -7,12 +7,12 @@
 
 generator client {
     provider        = "prisma-client-js"
-    previewFeatures = ["metrics"]
-    output          = "../../generated/sqlite-client"
+    previewFeatures = ["metrics", "relationJoins"]
+    output          = "../../generated/mysql-client"
 }
 
 datasource db {
-    provider = "sqlite"
+    provider = "mysql"
     url      = env("DATABASE_URL")
 }
 

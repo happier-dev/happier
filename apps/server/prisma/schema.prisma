@@ -80,6 +80,16 @@ model AccountChange {
     changedAt DateTime @default(now())
     hint      Json?
 
+    /// Nullable, entity-specific foreign keys used to detect orphaned changes in a database-portable way.
+    /// When the target entity is deleted, these are set to NULL via ON DELETE SET NULL.
+    sessionId  String?
+    machineId  String?
+    artifactId String?
+
+    session  Session?  @relation("AccountChangeSession", fields: [sessionId], references: [id], onDelete: SetNull)
+    machine  Machine?  @relation("AccountChangeMachine", fields: [machineId], references: [id], onDelete: SetNull)
+    artifact Artifact? @relation("AccountChangeArtifact", fields: [artifactId], references: [id], onDelete: SetNull)
+
     account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
     @@id([accountId, kind, entityId])
@@ -142,6 +152,7 @@ model Session {
     accessKeys        AccessKey[]
     shares            SessionShare[]
     publicShare       PublicSessionShare?
+    accountChanges    AccountChange[]    @relation("AccountChangeSession")
 
     @@unique([accountId, tag])
     @@index([accountId, updatedAt(sort: Desc)])
@@ -250,6 +261,7 @@ model Machine {
     createdAt          DateTime    @default(now())
     updatedAt          DateTime    @updatedAt
     accessKeys         AccessKey[]
+    accountChanges     AccountChange[] @relation("AccountChangeMachine")
 
     @@unique([accountId, id])
     @@index([accountId])
@@ -302,6 +314,7 @@ model Artifact {
     seq               Int      @default(0)
     createdAt         DateTime @default(now())
     updatedAt         DateTime @updatedAt
+    accountChanges    AccountChange[] @relation("AccountChangeArtifact")
 
     @@index([accountId])
     @@index([accountId, updatedAt(sort: Desc)])

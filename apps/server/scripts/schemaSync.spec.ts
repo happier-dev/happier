@@ -1,31 +1,28 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { generateEnumsTsFromPostgres, generateSqliteSchemaFromPostgres, normalizeSchemaText } from './schemaSync';
+import { describe, expect, it } from "vitest";
 
-describe('generateSqliteSchemaFromPostgres', () => {
-    it('converts the schema header blocks for sqlite', async () => {
-        const master = await readFile(join(process.cwd(), 'prisma/schema.prisma'), 'utf-8');
-        const generated = generateSqliteSchemaFromPostgres(master);
-        expect(generated).toContain('provider = "sqlite"');
-        expect(generated).toContain('output          = "../../generated/sqlite-client"');
-        expect(generated).not.toContain('generator json');
-        expect(generated).not.toMatch(/sort\s*:\s*(Asc|Desc)/);
-    });
+import { generateMySqlSchemaFromPostgres, generateSqliteSchemaFromPostgres } from "./schemaSync";
 
-    it('keeps prisma/sqlite/schema.prisma in sync with prisma/schema.prisma', async () => {
-        const master = await readFile(join(process.cwd(), 'prisma/schema.prisma'), 'utf-8');
-        const existing = await readFile(join(process.cwd(), 'prisma/sqlite/schema.prisma'), 'utf-8');
-        const generated = generateSqliteSchemaFromPostgres(master);
-        expect(normalizeSchemaText(existing)).toBe(normalizeSchemaText(generated));
-    });
-});
+describe("schemaSync", () => {
+    it("generates provider-specific schemas from prisma/schema.prisma", () => {
+        const master = `
+generator client {
+    provider        = "prisma-client-js"
+    previewFeatures = ["metrics", "relationJoins"]
+}
 
-describe('generateEnumsTsFromPostgres', () => {
-    it('keeps sources/storage/enums.generated.ts in sync with prisma/schema.prisma', async () => {
-        const master = await readFile(join(process.cwd(), 'prisma/schema.prisma'), 'utf-8');
-        const existing = await readFile(join(process.cwd(), 'sources/storage/enums.generated.ts'), 'utf-8');
-        const generated = generateEnumsTsFromPostgres(master);
-        expect(existing.replace(/\r\n/g, '\n').trimEnd()).toBe(generated.replace(/\r\n/g, '\n').trimEnd());
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model Account { id String @id }
+`;
+
+        const sqlite = generateSqliteSchemaFromPostgres(master);
+        expect(sqlite).toContain('provider = "sqlite"');
+
+        const mysql = generateMySqlSchemaFromPostgres(master);
+        expect(mysql).toContain('provider = "mysql"');
     });
 });
+

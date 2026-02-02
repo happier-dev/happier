@@ -48,6 +48,18 @@ export async function markAccountChanged(
     if (!entityId) throw new Error('markAccountChanged: entityId is required');
 
     const now = new Date();
+    const fk = (() => {
+        if (kind === "session" || kind === "share") {
+            return { sessionId: entityId };
+        }
+        if (kind === "machine") {
+            return { machineId: entityId };
+        }
+        if (kind === "artifact") {
+            return { artifactId: entityId };
+        }
+        return {};
+    })();
 
     // Cursor strategy (locked in a.project.md):
     // - allocate a unique per-account cursor by incrementing Account.seq once per call,
@@ -72,11 +84,13 @@ export async function markAccountChanged(
             accountId,
             kind,
             entityId,
+            ...fk,
             cursor,
             changedAt: now,
             hint,
         },
         update: {
+            ...fk,
             cursor,
             changedAt: now,
             hint,

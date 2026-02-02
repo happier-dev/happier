@@ -1,6 +1,6 @@
 import { delay } from "@/utils/delay";
 import { db } from "@/storage/db";
-import { isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
+import { getDbProviderFromEnv, isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 
 export type Tx = TransactionClient;
 
@@ -29,7 +29,9 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
     }
     while (true) {
         try {
-            let result = await db.$transaction(wrapped, { isolationLevel: 'Serializable', timeout: 10000 });
+            const provider = getDbProviderFromEnv(process.env, "postgres");
+            const txOpts = provider === "sqlite" ? null : { isolationLevel: "Serializable" as const, timeout: 10000 };
+            let result = txOpts ? await db.$transaction(wrapped, txOpts) : await db.$transaction(wrapped);
             for (let callback of result.callbacks) {
                 try {
                     callback();
