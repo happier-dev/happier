@@ -2,7 +2,11 @@ import { randomUUID } from 'node:crypto';
 
 import { fetchJson } from './http';
 
-export async function createSession(baseUrl: string, token: string): Promise<{ sessionId: string; tag: string }> {
+export async function createSession(
+  baseUrl: string,
+  token: string,
+  opts?: { dataEncryptionKeyBase64?: string | null },
+): Promise<{ sessionId: string; tag: string }> {
   const tag = `e2e-${randomUUID()}`;
   const metadata = Buffer.from(JSON.stringify({ v: 1, tag, createdAt: Date.now() }), 'utf8').toString('base64');
 
@@ -12,7 +16,12 @@ export async function createSession(baseUrl: string, token: string): Promise<{ s
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ tag, metadata, agentState: null }),
+    body: JSON.stringify({
+      tag,
+      metadata,
+      agentState: null,
+      dataEncryptionKey: typeof opts?.dataEncryptionKeyBase64 === 'string' ? opts.dataEncryptionKeyBase64 : undefined,
+    }),
     timeoutMs: 15_000,
   });
 

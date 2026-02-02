@@ -54,6 +54,8 @@ export async function startServerLight(params: {
     CI: '1',
     // Avoid global port conflicts during test runs.
     METRICS_ENABLED: 'false',
+    // Prisma schema requires DATABASE_URL for `prisma generate` even in light mode.
+    DATABASE_URL: process.env.DATABASE_URL ?? 'postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable',
     PORT: String(port),
     PUBLIC_URL: baseUrl,
     HAPPY_SERVER_LIGHT_DATA_DIR: dataDir,
@@ -63,6 +65,19 @@ export async function startServerLight(params: {
     HAPPIER_SERVER_LIGHT_DB_DIR: join(dataDir, 'pglite'),
     HAPPIER_SERVER_LIGHT_FILES_DIR: join(dataDir, 'files'),
   };
+
+  // Ensure Prisma client is generated for the current schema.
+  // In multi-worktree setups it's easy for @prisma/client to become stale and then
+  // light-mode boot will fail at runtime (PrismaClientValidationError).
+  await runLoggedCommand({
+    command: yarnCommand(),
+    args: ['-s', 'workspace', '@happier-dev/server', 'generate'],
+    cwd: repoRootDir(),
+    env,
+    stdoutPath: resolve(params.testDir, 'server.generate.stdout.log'),
+    stderrPath: resolve(params.testDir, 'server.generate.stderr.log'),
+    timeoutMs: 180_000,
+  });
 
   // Ensure the light database schema exists before the server boots.
   // Server light uses pglite + Prisma but does not auto-migrate on startup.
