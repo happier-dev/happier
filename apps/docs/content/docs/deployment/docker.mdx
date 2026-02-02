@@ -1,0 +1,193 @@
+---
+title: Docker
+description: Deploy the Happier Server using Docker / Docker Compose.
+---
+
+This page explains how to deploy **your own Happier Server** with Docker. It focuses on the server only.
+
+## Build images
+
+This repo includes a top-level `Dockerfile` with multiple targets.
+
+```bash
+# Server image (defaults to the full flavor; role defaults to "all" unless SERVER_ROLE is set at runtime)
+docker build -t happier-server --target server .
+
+# Worker image (sets SERVER_ROLE=worker in the image)
+docker build -t happier-server-worker --target server-worker .
+```
+
+## Full vs light flavor
+
+Happier Server supports two “flavors” that share the same API + internal logic. The difference is which storage backends are used.
+
+### Full flavor (recommended for production)
+
+Use this if you want a production setup: external Postgres, S3/Minio-compatible storage for public files, and optional Redis for multi-replica Socket.IO.
+
+**You will need:**
+
+- Postgres (`DATABASE_URL`)
+- S3/Minio-compatible storage (the `S3_*` env vars)
+- A stable secret (`HANDY_MASTER_SECRET`)
+- Optional: Redis for scaling realtime across multiple API replicas (`REDIS_URL` + `HAPPIER_SOCKET_REDIS_ADAPTER=1`)
+
+### Light flavor (single-node / testing)
+
+Use this if you want the simplest self-hosted setup: embedded Postgres via PGlite (stored on disk) and local file storage served by the server at `GET /files/*`.
+
+**You will need:**
+
+- Persistent disk for the light data directory (DB + files + persisted secrets)
+- Optional `HANDY_MASTER_SECRET` for a stable secret (otherwise one is generated and persisted)
+
+## Quick start (single container)
+
+This is useful for quick experiments. For production, prefer Docker Compose (next section) or set a restart policy and use an env file.
+
+### Full flavor
+
+```bash
+docker run --rm -p 3005:3005 \
+  -e PORT=3005 \
+  -e DATABASE_URL='postgresql://user:pass@db:5432/happier?sslmode=require' \
+  -e HANDY_MASTER_SECRET='change-me-to-a-long-random-string' \
+  -e S3_HOST='minio' \
+  -e S3_PORT='9000' \
+  -e S3_USE_SSL='false' \
+  -e S3_BUCKET='happier-public' \
+  -e S3_PUBLIC_URL='https://files.example.com/happier-public' \
+  -e S3_ACCESS_KEY='...' \
+  -e S3_SECRET_KEY='...' \
+  happier-server
+```
+
+Production note: remove `--rm` and add `--restart unless-stopped` (or your platform’s equivalent), and prefer `--env-file` over long `-e ...` lists.
+
+### Light flavor
+
+The default `server` image starts the **full** flavor. To run light in Docker, override the command and run the light migrations:
+
+```bash
+docker run --rm -p 3005:3005 \
+  -e PORT=3005 \
+  -e HAPPIER_SERVER_LIGHT_DATA_DIR=/data/server-light \
+  -v happier-server-light:/data/server-light \
+  happier-server \
+  sh -lc 'yarn --cwd apps/server migrate:light:deploy && yarn --cwd apps/server start:light'
+```
+
+## Recommended: Docker Compose
+
+For most self-hosters, Docker Compose is the most reliable and reproducible way to run the server: it keeps env vars and volumes in one place and makes upgrades easier.
+
+### Full flavor (single process)
+
+This example uses Postgres + Minio. Redis is optional and only needed for multi-replica API deployments.
+
+```yaml
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: happier
+      POSTGRES_USER: happier
+      POSTGRES_PASSWORD: change-me
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  server:
+    build:
+      context: .
+      target: server
+    ports:
+      - "3005:3005"
+    environment:
+      PORT: "3005"
+      DATABASE_URL: postgresql://happier:change-me@db:5432/happier
+      HANDY_MASTER_SECRET: change-me-to-a-long-random-string
+      S3_HOST: minio
+      S3_PORT: "9000"
+      S3_USE_SSL: "false"
+      S3_BUCKET: happier-public
+      # For Minio behind a reverse proxy, set this to your public files URL.
+      S3_PUBLIC_URL: https://files.example.com/happier-public
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      # Single-container mode: leave SERVER_ROLE unset (defaults to "all")
+    depends_on:
+      - db
+      - minio
+
+volumes:
+  pgdata:
+  minio:
+```
+
+### Full flavor (API + worker)
+
+If you split roles, run:
+
+- API container(s) with `SERVER_ROLE=api`
+- Worker container with `SERVER_ROLE=worker`
+
+With more than one API replica, enable Redis fanout (`REDIS_URL` + `HAPPIER_SOCKET_REDIS_ADAPTER=1`) and configure sticky sessions at your load balancer.
+
+Minimal example (add this on top of the full-flavor compose above):
+
+```yaml
+services:
+  redis:
+    image: redis:7
+
+  api:
+    build:
+      context: .
+      target: server
+    environment:
+      SERVER_ROLE: api
+      REDIS_URL: redis://redis:6379
+      HAPPIER_SOCKET_REDIS_ADAPTER: "1"
+    depends_on:
+      - db
+      - minio
+      - redis
+
+  worker:
+    build:
+      context: .
+      target: server-worker
+    environment:
+      REDIS_URL: redis://redis:6379
+      HAPPIER_SOCKET_REDIS_ADAPTER: "1"
+    depends_on:
+      - db
+      - minio
+      - redis
+```
+
+## Migrations
+
+The `server` Docker target runs DB migrations by default before starting:
+
+- Disable with `RUN_MIGRATIONS=0`
+- In multi-replica setups, it’s OK if more than one replica tries to migrate at startup (the DB will serialize via locks)
+
+## Reverse proxy checklist
+
+- Terminate TLS at the proxy (recommended).
+- Forward WebSocket upgrade headers.
+- Increase timeouts for long-lived connections.
+- Keep secrets in your deployment platform (env vars), not in git.
