@@ -213,7 +213,7 @@ jobs:
             exit 1
           fi
 
-          npm install -g "./$PACKAGE_FILE"
+          npm install -g "$PACKAGE_FILE"
 
           timeout 30s happier --help
           timeout 10s happier --version

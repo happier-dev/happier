@@ -49,7 +49,7 @@ jobs:
     - name: Install packed package globally
       run: |
         PACKAGE_FILE=$(ls /tmp/happier-dev-cli-*.tgz | head -n 1)
-        npm install -g "./$PACKAGE_FILE"
+        npm install -g "$PACKAGE_FILE"
 
     - name: Test binary execution
       run: |
