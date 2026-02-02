@@ -136,12 +136,11 @@ export function rpcHandler(
                 await stopRefreshLoopIfIdle();
                 // log({ module: 'websocket-rpc' }, `RPC method unregistered: ${method} from socket ${socket.id} (user: ${userId})`);
 
-                if (userRpcListeners.size === 0) {
-                    allRpcListeners.delete(userId);
-                    // log({ module: 'websocket-rpc' }, `All RPC methods unregistered for user ${userId}`);
-                } else {
-                    // log({ module: 'websocket-rpc' }, `Remaining RPC methods for user ${userId}: ${Array.from(rpcListeners.keys()).join(', ')}`);
-                }
+                // IMPORTANT:
+                // Do not delete the per-user registry map when it becomes empty.
+                // Other active sockets for the same user hold a reference to this map in their rpcHandler closures.
+                // Deleting it would cause subsequent reconnects to allocate a new map, leaving existing sockets unable
+                // to route calls to newly registered methods.
             } else {
                 // log({ module: 'websocket-rpc' }, `RPC unregister ignored: ${method} not registered on socket ${socket.id}`);
             }
@@ -366,8 +365,7 @@ export function rpcHandler(
         }
 
         if (userRpcListeners.size === 0) {
-            allRpcListeners.delete(userId);
-            // log({ module: 'websocket-rpc' }, `All RPC listeners removed for user ${userId}`);
+            // See note in rpc-unregister: keep the per-user registry map object stable across socket lifetimes.
         }
 
         void stopRefreshLoopIfIdle();
