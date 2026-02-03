@@ -349,7 +349,9 @@ export function query(config: {
         signal: config.options?.abort,
         env: spawnEnv,
         // Use shell on Windows for global binaries and command-only mode
-        shell: !isJsFile && process.platform === 'win32'
+        shell: !isJsFile && process.platform === 'win32',
+        // Hide console window on Windows to prevent cmd.exe from appearing
+        windowsHide: process.platform === 'win32',
     }) as ChildProcessWithoutNullStreams
 
     // Handle stdin

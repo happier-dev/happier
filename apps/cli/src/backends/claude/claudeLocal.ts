@@ -250,6 +250,8 @@ export async function claudeLocal(opts: {
                 signal: opts.abort,
                 cwd: opts.path,
                 env,
+                // Hide console window on Windows to prevent cmd.exe from appearing
+                windowsHide: process.platform === 'win32',
             });
 
             // Forward signals to child process to prevent orphaned processes

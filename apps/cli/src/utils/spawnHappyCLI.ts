@@ -113,5 +113,9 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   logger.debug(`[SPAWN HAPPIER CLI] Spawning: ${fullCommand} in ${directory}`);
 
   const { runtime, argv } = buildHappyCliSubprocessInvocation(args);
-  return spawn(runtime, argv, options);
+  return spawn(runtime, argv, {
+    ...options,
+    // Hide console window on Windows to prevent cmd.exe from appearing during remote usage
+    ...(process.platform === 'win32' ? { windowsHide: true } : {})
+  });
 }

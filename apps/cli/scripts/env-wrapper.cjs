@@ -82,7 +82,8 @@ const binPath = path.join(__dirname, '..', 'bin', 'happier.mjs');
 const proc = spawn('node', [binPath, command, ...args], {
   env,
   stdio: 'inherit',
-  shell: process.platform === 'win32'
+  // Hide console window on Windows to prevent cmd.exe from appearing
+  windowsHide: process.platform === 'win32'
 });
 
 proc.on('exit', (code) => process.exit(code || 0));
