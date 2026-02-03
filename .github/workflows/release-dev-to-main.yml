@@ -60,14 +60,13 @@ on:
           - native
           - native_submit
       ui_expo_profile:
-        description: "UI EAS build profile (auto recommended; if native_submit+preview, uses preview-store)"
+        description: "UI EAS build profile (auto recommended)"
         required: true
         default: auto
         type: choice
         options:
           - auto
           - preview
-          - preview-store
           - production
       ui_expo_platform:
         description: "UI Expo native platform"

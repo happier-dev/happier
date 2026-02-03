@@ -94,6 +94,7 @@ COPY packages/protocol ./packages/protocol
 
 RUN yarn workspace @happier-dev/agents postinstall:real && yarn workspace @happier-dev/protocol postinstall:real
 RUN yarn workspace @happier-dev/app postinstall:real
+RUN rm -rf apps/ui/dist
 RUN yarn workspace @happier-dev/app expo export --platform web --output-dir dist
 
 FROM nginx:alpine AS webapp
@@ -109,11 +110,13 @@ RUN echo 'server { \
     \
     location /_expo/ { \
         root   /usr/share/nginx/html; \
+        add_header Cache-Control "public, max-age=31536000, immutable"; \
         try_files $uri =404; \
     } \
     \
     location /assets/ { \
         root   /usr/share/nginx/html; \
+        add_header Cache-Control "public, max-age=31536000, immutable"; \
         try_files $uri =404; \
     } \
     \
@@ -125,6 +128,7 @@ RUN echo 'server { \
     location / { \
         root   /usr/share/nginx/html; \
         index  index.html index.htm; \
+        add_header Cache-Control "no-store"; \
         try_files $uri $uri.html $uri/index.html $uri/index.htm $uri/ /index.html /index.htm =404; \
     } \
     \
