@@ -1,8 +1,18 @@
 const variant = process.env.APP_ENV || 'development';
 
+const DEFAULTS = {
+    owner: "happier-dev",
+    slug: "happier",
+    scheme: "happier",
+    iosBundleId: "dev.happier.app",
+    easProjectId: "2a550bd7-e4d2-4f59-ab47-dcb778775cee",
+    updatesChannel: "production",
+    linkHost: "app.happier.dev",
+};
+
 // Allow opt-in overrides for local dev tooling without changing upstream defaults.
-const nameOverride = (process.env.EXPO_APP_NAME || '').trim();
-const bundleIdOverride = (process.env.EXPO_APP_BUNDLE_ID || '').trim();
+const nameOverride = (process.env.EXPO_APP_NAME || process.env.HAPPY_STACKS_IOS_APP_NAME || '').trim();
+const bundleIdOverride = (process.env.EXPO_APP_BUNDLE_ID || process.env.HAPPY_STACKS_IOS_BUNDLE_ID || '').trim();
 const ownerOverride = (process.env.EXPO_APP_OWNER || '').trim();
 const slugOverride = (process.env.EXPO_APP_SLUG || '').trim();
 
@@ -14,34 +24,47 @@ const namesByVariant = {
 const bundleIdsByVariant = {
     development: "dev.happier.app.dev",
     preview: "dev.happier.app.preview",
-    production: "dev.happier.app"
+    production: DEFAULTS.iosBundleId
 };
 
 // If APP_ENV is unknown, fall back to development-safe defaults to avoid generating
 // an invalid Expo config with undefined name/bundle id.
 const name = nameOverride || namesByVariant[variant] || namesByVariant.development;
 const bundleId = bundleIdOverride || bundleIdsByVariant[variant] || bundleIdsByVariant.development;
-const owner = ownerOverride || "happier-dev";
-const slug = slugOverride || "happier";
+const owner = ownerOverride || DEFAULTS.owner;
+const slug = slugOverride || DEFAULTS.slug;
 
 // IMPORTANT:
-// Expo Updates uses a project-scoped UUID (EAS project id). Since you're migrating to a new Expo org,
-// you should create/link a new EAS project and set this value (via env or by hard-coding it here).
+// Expo Updates uses a project-scoped UUID (EAS project id). EAS cannot write this automatically when
+// using a dynamic config (app.config.js), so we ship a default and allow env overrides.
 const easProjectId =
-    (process.env.EXPO_PUBLIC_EAS_PROJECT_ID || process.env.EAS_PROJECT_ID || '').trim();
-const updatesConfig = easProjectId
-    ? {
-        url: `https://u.expo.dev/${easProjectId}`,
-        requestHeaders: {
-            "expo-channel-name": "production"
-        }
+    (
+        process.env.EXPO_PUBLIC_EAS_PROJECT_ID ||
+        process.env.EAS_PROJECT_ID ||
+        process.env.EXPO_EAS_PROJECT_ID ||
+        ''
+    ).trim() || DEFAULTS.easProjectId;
+
+const updatesUrl = (process.env.EXPO_UPDATES_URL || '').trim() || `https://u.expo.dev/${easProjectId}`;
+const updatesChannel = (process.env.EXPO_UPDATES_CHANNEL || '').trim() || (variant === 'production' ? DEFAULTS.updatesChannel : variant);
+const updatesConfig = {
+    url: updatesUrl,
+    requestHeaders: {
+        "expo-channel-name": updatesChannel
     }
-    : undefined;
+};
+
+const linkHost = (process.env.EXPO_APP_LINK_HOST || DEFAULTS.linkHost).trim();
+const iosAssociatedDomainsRaw = (process.env.EXPO_IOS_ASSOCIATED_DOMAINS || '').trim();
+const iosAssociatedDomains = iosAssociatedDomainsRaw
+    ? iosAssociatedDomainsRaw.split(/[\s,]+/).map(v => v.trim()).filter(Boolean)
+    : [`applinks:${linkHost}`];
+
 // NOTE:
 // The URL scheme is used for deep linking *and* by the Expo development client launcher flow.
 // Keep the default stable for upstream users, but allow opt-in overrides for local dev variants
 // (e.g. to avoid iOS scheme collisions between multiple installs).
-const scheme = (process.env.EXPO_APP_SCHEME || '').trim() || "happier";
+const scheme = (process.env.EXPO_APP_SCHEME || process.env.HAPPY_STACKS_MOBILE_SCHEME || '').trim() || DEFAULTS.scheme;
 
 export default {
     expo: {
@@ -69,7 +92,7 @@ export default {
                 NSLocalNetworkUsageDescription: "Allow $(PRODUCT_NAME) to find and connect to local devices on your network.",
                 NSBonjourServices: ["_http._tcp", "_https._tcp"]
             },
-            associatedDomains: variant === 'production' ? ["applinks:app.happier.dev"] : []
+            associatedDomains: variant === 'production' ? iosAssociatedDomains : []
         },
         android: {
             adaptiveIcon: {
@@ -96,7 +119,7 @@ export default {
                     "data": [
                         {
                             "scheme": "https",
-                            "host": "app.happier.dev",
+                            "host": linkHost,
                             "pathPrefix": "/"
                         }
                     ],
@@ -182,7 +205,7 @@ export default {
                 }
             ]
         ],
-        ...(updatesConfig ? { updates: updatesConfig } : {}),
+        updates: updatesConfig,
         experiments: {
             typedRoutes: true
         },
@@ -190,7 +213,7 @@ export default {
             router: {
                 root: "./sources/app"
             },
-            ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
+            eas: { projectId: easProjectId },
             app: {
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
