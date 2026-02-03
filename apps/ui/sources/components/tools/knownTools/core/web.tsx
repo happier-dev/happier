@@ -1,9 +1,9 @@
 import type { Metadata } from '@/sync/storageTypes';
 import type { ToolCall } from '@/sync/typesMessage';
-import * as z from 'zod';
 import { t } from '@/text';
 import { ICON_WEB } from '../icons';
 import type { KnownToolDefinition } from '../_types';
+import { WebFetchInputV2Schema, WebSearchInputV2Schema } from '@happier-dev/protocol';
 
 export const coreWebTools = {
     'WebFetch': {
@@ -20,10 +20,7 @@ export const coreWebTools = {
         },
         icon: ICON_WEB,
         minimal: true,
-        input: z.object({
-            url: z.string().url().describe('The URL to fetch content from'),
-            prompt: z.string().describe('The prompt to run on the fetched content')
-        }).partial().passthrough(),
+        input: WebFetchInputV2Schema,
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.url === 'string') {
                 try {
@@ -45,11 +42,7 @@ export const coreWebTools = {
         },
         icon: ICON_WEB,
         minimal: true,
-        input: z.object({
-            query: z.string().min(2).describe('The search query to use'),
-            allowed_domains: z.array(z.string()).optional().describe('Only include results from these domains'),
-            blocked_domains: z.array(z.string()).optional().describe('Never include results from these domains')
-        }).partial().passthrough(),
+        input: WebSearchInputV2Schema,
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             if (typeof opts.tool.input.query === 'string') {
                 const query = opts.tool.input.query.length > 30
@@ -61,4 +54,3 @@ export const coreWebTools = {
         }
     },
 } satisfies Record<string, KnownToolDefinition>;
-

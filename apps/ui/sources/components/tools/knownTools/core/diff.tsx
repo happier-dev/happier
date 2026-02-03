@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { t } from '@/text';
 import { ICON_EDIT } from '../icons';
 import type { KnownToolDefinition } from '../_types';
+import { DiffInputV2Schema } from '@happier-dev/protocol';
 
 export const coreDiffTools = {
     Diff: {
@@ -12,9 +13,7 @@ export const coreDiffTools = {
         minimal: false,
         hideDefaultError: true,
         noStatus: true,
-        input: z.object({
-            unified_diff: z.string().describe('Unified diff content'),
-        }).partial().passthrough(),
+        input: DiffInputV2Schema,
         result: z.object({
             status: z.literal('completed').optional(),
         }).partial().passthrough(),
@@ -34,4 +33,3 @@ export const coreDiffTools = {
         extractDescription: () => t('tools.desc.showingDiff'),
     },
 } satisfies Record<string, KnownToolDefinition>;
-

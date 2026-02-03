@@ -18,6 +18,9 @@ import { createUserScopedSocketCollector } from '../socketClient';
 
 import type { ProviderContractMatrixResult, ProviderScenario, ProviderUnderTest } from './types';
 import { opencodeScenarios } from './scenarios';
+import { claudeScenarios } from './scenarios.claude';
+import { diffProviderBaseline, loadProviderBaseline, providerBaselinePath, writeProviderBaseline } from './baselines';
+import { validateNormalizedToolFixturesV2 } from './validateToolSchemas';
 
 type ToolTraceEventV1 = {
   v: number;
@@ -110,7 +113,7 @@ function hasTraceForKey(events: ToolTraceEventV1[], key: string): boolean {
 }
 
 function scenarioSatisfiedByTrace(events: ToolTraceEventV1[], scenario: ProviderScenario): boolean {
-  for (const key of scenario.requiredFixtureKeys) {
+  for (const key of scenario.requiredFixtureKeys ?? []) {
     if (!hasTraceForKey(events, key)) return false;
   }
   for (const bucket of scenario.requiredAnyFixtureKeys ?? []) {
@@ -123,6 +126,58 @@ function scenarioSatisfiedByTrace(events: ToolTraceEventV1[], scenario: Provider
   return true;
 }
 
+async function waitForSessionActiveAtBump(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  initialActiveAt: number;
+  timeoutMs: number;
+}): Promise<void> {
+  // Deprecated: keepAlive writes may be rate-limited server-side and not bump `activeAt` quickly.
+  // Keep the function for now to avoid breaking imports if referenced; prefer RPC readiness checks instead.
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < params.timeoutMs) {
+    const snap = await fetchSessionV2(params.baseUrl, params.token, params.sessionId);
+    if (typeof snap.activeAt === 'number' && snap.activeAt > params.initialActiveAt) return;
+    await sleep(500);
+  }
+}
+
+async function waitForPermissionRpcReady(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  secret: Uint8Array;
+  timeoutMs: number;
+}): Promise<{ socket: ReturnType<typeof createUserScopedSocketCollector> }> {
+  const socket = createUserScopedSocketCollector(params.baseUrl, params.token);
+  socket.connect();
+  const startedConnectAt = Date.now();
+  while (!socket.isConnected() && Date.now() - startedConnectAt < 15_000) {
+    await sleep(50);
+  }
+
+  const startedAt = Date.now();
+  const method = `${params.sessionId}:permission`;
+  const probeId = `probe-${randomUUID()}`;
+  const probeParams = encryptLegacyBase64({ id: probeId, approved: true, decision: 'approved' }, params.secret);
+
+  while (Date.now() - startedAt < params.timeoutMs) {
+    try {
+      const res = await socket.rpcCall<any>(method, probeParams);
+      if (res && typeof res === 'object' && res.ok === true) {
+        return { socket };
+      }
+    } catch {
+      // ignore
+    }
+    await sleep(250);
+  }
+
+  socket.close();
+  throw new Error('Timed out waiting for provider permission RPC to become callable');
+}
+
 async function readFileText(filePath: string): Promise<string> {
   const { readFile } = await import('node:fs/promises');
   return await readFile(filePath, 'utf8');
@@ -130,6 +185,20 @@ async function readFileText(filePath: string): Promise<string> {
 
 function providerCatalog(): ProviderUnderTest[] {
   return [
+    {
+      id: 'claude',
+      enableEnvVar: 'HAPPY_E2E_PROVIDER_CLAUDE',
+      protocol: 'claude',
+      traceProvider: 'claude',
+      cli: {
+        subcommand: 'claude',
+        extraArgs: ['--started-by', 'terminal'],
+        env: {
+          HEADLESS: '1',
+          HAPPIER_VARIANT: 'dev',
+        },
+      },
+    },
     {
       id: 'opencode',
       enableEnvVar: 'HAPPY_E2E_PROVIDER_OPENCODE',
@@ -149,6 +218,7 @@ function providerCatalog(): ProviderUnderTest[] {
 }
 
 function scenariosForProvider(providerId: string): ProviderScenario[] {
+  if (providerId === 'claude') return claudeScenarios;
   if (providerId === 'opencode') return opencodeScenarios;
   return [];
 }
@@ -273,21 +343,18 @@ async function runOneScenario(params: {
   });
 
   try {
-    // Give the CLI time to boot and connect.
-    await sleep(2_000);
+    // Wait for the provider client to be connected and ready by probing `${sessionId}:permission`.
+    // This avoids missing the first prompt when attaching to an existing session.
+    const { socket: uiSocket } = await waitForPermissionRpcReady({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      sessionId,
+      secret,
+      timeoutMs: 30_000,
+    });
 
-    // If YOLO is disabled for this scenario, auto-approve any permission requests
-    // by watching session agentState.requests and sending `${sessionId}:permission` RPC calls.
+    // If YOLO is disabled for this scenario, auto-approve any permission requests.
     const approvedPermissionIds = new Set<string>();
-    const uiSocket = !yolo ? createUserScopedSocketCollector(server.baseUrl, auth.token) : null;
-    if (uiSocket) {
-      uiSocket.connect();
-      // best-effort; do not fail early on connect issues (provider will fail anyway)
-      const startedConnectAt = Date.now();
-      while (!uiSocket.isConnected() && Date.now() - startedConnectAt < 10_000) {
-        await sleep(50);
-      }
-    }
 
     const promptLocalId = randomUUID();
     const promptText = scenario.prompt({ workspaceDir });
@@ -313,16 +380,19 @@ async function runOneScenario(params: {
     let traceRaw = '';
     let traceEvents: ToolTraceEventV1[] = [];
     while (Date.now() - startedWaitAt < maxWaitMs) {
-      if (uiSocket) {
+      if (!yolo) {
         try {
           const snap = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
           const state = snap.agentState ? (decryptLegacyBase64(snap.agentState, secret) as any) : null;
           const requests = state && typeof state === 'object' ? (state as any).requests : null;
           if (requests && typeof requests === 'object') {
+            const decision = scenario.permissionAutoDecision ?? 'approved';
+            const approved =
+              decision === 'approved' || decision === 'approved_for_session' || decision === 'approved_execpolicy_amendment';
             for (const [id] of Object.entries(requests)) {
               if (typeof id !== 'string' || id.length === 0) continue;
               if (approvedPermissionIds.has(id)) continue;
-              const paramsCiphertext = encryptLegacyBase64({ id, approved: true, decision: 'approved' }, secret);
+              const paramsCiphertext = encryptLegacyBase64({ id, approved, decision }, secret);
               // Best-effort: if method isn't registered yet, ignore and retry.
               const res = await uiSocket.rpcCall<any>(`${sessionId}:permission`, paramsCiphertext);
               if (res && typeof res === 'object' && res.ok === true) {
@@ -371,8 +441,15 @@ async function runOneScenario(params: {
       throw new Error('Invalid fixtures JSON (expected v=1 + examples)');
     }
 
+    // Validate that tool-call/tool-result payloads match the shared normalized V2 schemas.
+    // This is forward-compatible (unknown tool names are allowed as long as `_happy` parses).
+    const schemaValidation = validateNormalizedToolFixturesV2({ fixturesExamples: fixtures.examples });
+    if (!schemaValidation.ok) {
+      throw new Error(`Normalized tool schema validation failed: ${schemaValidation.reason}`);
+    }
+
     const keys = Object.keys(fixtures.examples);
-    for (const required of scenario.requiredFixtureKeys) {
+    for (const required of scenario.requiredFixtureKeys ?? []) {
       if (!keys.includes(required)) {
         throw new Error(`Missing required fixture key: ${required}`);
       }
@@ -385,10 +462,36 @@ async function runOneScenario(params: {
       }
     }
 
+    const updateBaselines = envFlag('HAPPY_E2E_PROVIDER_UPDATE_BASELINES', false);
+    if (updateBaselines) {
+      await writeProviderBaseline({
+        providerId: provider.id,
+        scenarioId: scenario.id,
+        fixtureKeys: keys,
+        fixturesExamples: fixtures.examples,
+      });
+    } else {
+      const baseline = await loadProviderBaseline(provider.id, scenario.id);
+      if (baseline) {
+        const strictKeys = envFlag('HAPPY_E2E_PROVIDER_STRICT_KEYS', false);
+        const diff = diffProviderBaseline({
+          baseline,
+          observedFixtureKeys: keys,
+          observedExamples: fixtures.examples,
+          allowExtraKeys: !strictKeys,
+        });
+        if (!diff.ok) {
+          throw new Error(
+            `${diff.reason}. To update: HAPPY_E2E_PROVIDER_UPDATE_BASELINES=1 (baseline: ${providerBaselinePath(provider.id, scenario.id)})`,
+          );
+        }
+      }
+    }
+
     if (scenario.verify) {
       await scenario.verify({ workspaceDir, fixtures, traceEvents });
     }
-    uiSocket?.close();
+    uiSocket.close();
   } finally {
     await proc.stop();
   }

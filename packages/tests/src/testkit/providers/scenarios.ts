@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -24,30 +25,31 @@ export const opencodeScenarios: ProviderScenario[] = [
         '- Use the execute tool to run: echo TRACE_OK',
         '- Then reply DONE.',
       ].join('\n'),
-    requiredFixtureKeys: ['acp/opencode/tool-call/execute', 'acp/opencode/tool-result/execute'],
+    // OpenCode currently surfaces execute calls as the canonical tool `Bash`, with `_happy.rawToolName="execute"`.
+    requiredFixtureKeys: ['acp/opencode/tool-call/Bash', 'acp/opencode/tool-result/Bash'],
     requiredTraceSubstrings: ['TRACE_OK'],
     verify: async ({ fixtures }) => {
       const examples = fixtures?.examples;
       if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
 
-      const calls = (examples['acp/opencode/tool-call/execute'] ?? []) as any[];
+      const calls = (examples['acp/opencode/tool-call/Bash'] ?? []) as any[];
       if (!Array.isArray(calls) || calls.length === 0) throw new Error('Missing execute tool-call fixtures');
-      const hasCommand = calls.some((e) => hasStringSubstring(e?.payload?.input?.command, 'echo TRACE_OK'));
-      if (!hasCommand) {
-        // Some traces may route the command through `_acp.rawInput.cmd` depending on OpenCode version.
-        const hasAlt = calls.some((e) => hasStringSubstring(e?.payload?.input?._acp?.rawInput?.cmd, 'echo TRACE_OK'));
-        if (!hasAlt) throw new Error('execute tool-call did not include expected command shape');
-      }
+      const hasHappyExecute = calls.some(
+        (e) => e?.payload?.name === 'Bash' && e?.payload?.input?._happy?.rawToolName === 'execute',
+      );
+      if (!hasHappyExecute) throw new Error('Expected OpenCode execute normalization (_happy.rawToolName="execute") on Bash tool-call');
 
-      const results = (examples['acp/opencode/tool-result/execute'] ?? []) as any[];
+      const results = (examples['acp/opencode/tool-result/Bash'] ?? []) as any[];
       if (!Array.isArray(results) || results.length === 0) throw new Error('Missing execute tool-result fixtures');
       const hasOk = results.some((e) => hasStringSubstring(e?.payload?.output, 'TRACE_OK'));
       if (!hasOk) throw new Error('execute tool-result did not include TRACE_OK in output');
+      const hasExit0 = results.some((e) => e?.payload?.output?.metadata?.exit === 0);
+      if (!hasExit0) throw new Error('execute tool-result did not include metadata.exit=0');
 
       // Shape pin: ensures key structure doesn’t drift silently.
       const callShape = stableStringifyShape(shapeOf(calls[0]?.payload));
       const resultShape = stableStringifyShape(shapeOf(results[0]?.payload));
-      if (!callShape.includes('"name"') || !callShape.includes('"input"') || !resultShape.includes('"output"')) {
+      if (!callShape.includes('"_happy"') || !callShape.includes('"rawToolName"') || !resultShape.includes('"_happy"')) {
         throw new Error('Unexpected execute tool-call/tool-result payload shape');
       }
     },
@@ -63,13 +65,15 @@ export const opencodeScenarios: ProviderScenario[] = [
         'sh -lc "echo TRACE_ERR && exit 2"',
         'Then reply DONE.',
       ].join('\n'),
-    requiredFixtureKeys: ['acp/opencode/tool-call/execute', 'acp/opencode/tool-result/execute'],
+    requiredFixtureKeys: ['acp/opencode/tool-call/Bash', 'acp/opencode/tool-result/Bash'],
     requiredTraceSubstrings: ['TRACE_ERR'],
     verify: async ({ fixtures }) => {
-      const results = (fixtures?.examples?.['acp/opencode/tool-result/execute'] ?? []) as any[];
+      const results = (fixtures?.examples?.['acp/opencode/tool-result/Bash'] ?? []) as any[];
       if (!Array.isArray(results) || results.length === 0) throw new Error('Missing execute tool-result fixtures');
       const hasErr = results.some((e) => hasStringSubstring(e?.payload?.output, 'TRACE_ERR'));
       if (!hasErr) throw new Error('execute tool-result did not include TRACE_ERR');
+      const hasExit2 = results.some((e) => e?.payload?.output?.metadata?.exit === 2);
+      if (!hasExit2) throw new Error('execute tool-result did not include metadata.exit=2');
     },
   },
   {
@@ -89,7 +93,7 @@ export const opencodeScenarios: ProviderScenario[] = [
         'The output must include: READ_SENTINEL_123',
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
-    requiredFixtureKeys: ['acp/opencode/tool-call/read', 'acp/opencode/tool-result/read'],
+    requiredFixtureKeys: ['acp/opencode/tool-call/Read', 'acp/opencode/tool-result/Read'],
     requiredTraceSubstrings: ['READ_SENTINEL_123'],
   },
   {
@@ -109,11 +113,22 @@ export const opencodeScenarios: ProviderScenario[] = [
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
     requiredAnyFixtureKeys: [
-      ['acp/opencode/tool-call/search', 'acp/opencode/tool-call/grep'],
-      ['acp/opencode/tool-result/search', 'acp/opencode/tool-result/grep'],
+      ['acp/opencode/tool-call/CodeSearch', 'acp/opencode/tool-call/Search', 'acp/opencode/tool-call/Grep'],
+      ['acp/opencode/tool-result/CodeSearch', 'acp/opencode/tool-result/Search', 'acp/opencode/tool-result/Grep'],
     ],
     requiredFixtureKeys: [],
     requiredTraceSubstrings: ['SEARCH_TOKEN_XYZ'],
+    verify: async ({ fixtures }) => {
+      const examples = fixtures?.examples;
+      if (!examples || typeof examples !== 'object') throw new Error('Invalid fixtures: missing examples');
+      const results =
+        ((examples['acp/opencode/tool-result/CodeSearch'] ?? []) as any[])
+          .concat((examples['acp/opencode/tool-result/Search'] ?? []) as any[])
+          .concat((examples['acp/opencode/tool-result/Grep'] ?? []) as any[]);
+      if (results.length === 0) throw new Error('Missing search tool-result fixtures');
+      const hasHappySearch = results.some((e) => e?.payload?.output?._happy?.rawToolName === 'search');
+      if (!hasHappySearch) throw new Error('Expected OpenCode search normalization (_happy.rawToolName="search") on tool-result');
+    },
   },
   {
     id: 'glob_list_files',
@@ -126,19 +141,15 @@ export const opencodeScenarios: ProviderScenario[] = [
     },
     prompt: ({ workspaceDir }) =>
       [
-        'List files in the current working directory using a file listing tool.',
-        'Prefer the glob tool with pattern: e2e-*.txt',
-        'If glob is not available, use ls instead.',
+        'Run exactly one tool call:',
+        '- Use the execute tool to run: ls -1 e2e-*.txt',
+        '- Do not use any other tool (especially do not use search).',
         'Then reply DONE.',
         '',
         'The output must include both: e2e-a.txt and e2e-b.txt',
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
-    requiredAnyFixtureKeys: [
-      ['acp/opencode/tool-call/glob', 'acp/opencode/tool-call/ls'],
-      ['acp/opencode/tool-result/glob', 'acp/opencode/tool-result/ls'],
-    ],
-    requiredFixtureKeys: [],
+    requiredFixtureKeys: ['acp/opencode/tool-call/Bash', 'acp/opencode/tool-result/Bash'],
     requiredTraceSubstrings: ['e2e-a.txt', 'e2e-b.txt'],
   },
   {
@@ -146,6 +157,7 @@ export const opencodeScenarios: ProviderScenario[] = [
     title: 'edit: write file and cat it',
     tier: 'extended',
     yolo: true,
+    requiredFixtureKeys: [],
     prompt: ({ workspaceDir }) =>
       [
         'Create a new file inside the current working directory:',
@@ -153,21 +165,15 @@ export const opencodeScenarios: ProviderScenario[] = [
         '- Content: HELLO_E2E',
         '',
         'Do NOT use execute to write the file; use the edit tool.',
-        'Then use execute to run: cat e2e-write.txt',
-        'Ensure the output includes HELLO_E2E.',
+        'Optionally, verify by using execute to run: cat e2e-write.txt',
         'Then reply DONE.',
         '',
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
-    requiredFixtureKeys: [
-      'acp/opencode/tool-call/execute',
-      'acp/opencode/tool-result/execute',
-    ],
     requiredAnyFixtureKeys: [
-      ['acp/opencode/tool-call/edit', 'acp/opencode/tool-call/write'],
-      ['acp/opencode/tool-result/edit', 'acp/opencode/tool-result/write'],
+      ['acp/opencode/tool-call/Edit', 'acp/opencode/tool-call/Write'],
+      ['acp/opencode/tool-result/Edit', 'acp/opencode/tool-result/Write'],
     ],
-    requiredTraceSubstrings: ['HELLO_E2E'],
     verify: async ({ workspaceDir }) => {
       const filePath = join(workspaceDir, 'e2e-write.txt');
       const content = await readFile(filePath, 'utf8');
@@ -184,7 +190,8 @@ export const opencodeScenarios: ProviderScenario[] = [
     prompt: ({ workspaceDir }) => {
       const outsidePath = join(tmpdir(), `happy-e2e-outside-${randomUUID()}.txt`);
       return [
-        'Attempt to write a file OUTSIDE the current working directory using the edit tool:',
+        'Run exactly one tool call (even if it triggers a permission prompt):',
+        'Use the edit tool to write a file OUTSIDE the current working directory:',
         `- Absolute path: ${outsidePath}`,
         '- Content: OUTSIDE_E2E',
         '',
@@ -193,10 +200,53 @@ export const opencodeScenarios: ProviderScenario[] = [
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n');
     },
-    requiredFixtureKeys: ['acp/opencode/permission-request/edit'],
+    requiredFixtureKeys: ['acp/opencode/permission-request/Edit'],
     requiredAnyFixtureKeys: [
-      ['acp/opencode/tool-call/edit', 'acp/opencode/tool-call/write'],
+      ['acp/opencode/tool-call/Edit', 'acp/opencode/tool-call/Write'],
     ],
-    requiredTraceSubstrings: ['OUTSIDE_E2E'],
+    verify: async ({ fixtures }) => {
+      const reqs = (fixtures?.examples?.['acp/opencode/permission-request/Edit'] ?? []) as any[];
+      if (!Array.isArray(reqs) || reqs.length === 0) throw new Error('Missing permission-request/Edit fixtures');
+      const filepath = reqs[0]?.payload?.options?.input?.filepath;
+      if (typeof filepath !== 'string' || filepath.length === 0) throw new Error('permission-request/Edit missing options.input.filepath');
+      const content = await readFile(filepath, 'utf8').catch(() => '');
+      if (!content.includes('OUTSIDE_E2E')) {
+        throw new Error(`Approved permission but expected content was not written: ${filepath}`);
+      }
+    },
+  },
+  {
+    id: 'permission_deny_outside_workspace',
+    title: 'permissions: deny an outside-workspace write and verify it did not happen',
+    tier: 'extended',
+    yolo: false,
+    permissionAutoDecision: 'denied',
+    prompt: ({ workspaceDir }) => {
+      const outsidePath = join(tmpdir(), `happy-e2e-outside-denied-${randomUUID()}.txt`);
+      return [
+        'Run exactly one tool call (even if it triggers a permission prompt):',
+        'Use the edit tool to write a file OUTSIDE the current working directory:',
+        `- Absolute path: ${outsidePath}`,
+        '- Content: OUTSIDE_DENIED_E2E',
+        '',
+        'This is an automated test. Do not use execute to write the file.',
+        'If the permission is denied, do not retry with other tools.',
+        'Then reply DONE.',
+        `Note: current working directory is ${workspaceDir}`,
+      ].join('\n');
+    },
+    requiredFixtureKeys: ['acp/opencode/permission-request/Edit'],
+    requiredAnyFixtureKeys: [
+      ['acp/opencode/tool-call/Edit', 'acp/opencode/tool-call/Write'],
+    ],
+    verify: async ({ fixtures }) => {
+      const reqs = (fixtures?.examples?.['acp/opencode/permission-request/Edit'] ?? []) as any[];
+      if (!Array.isArray(reqs) || reqs.length === 0) throw new Error('Missing permission-request/Edit fixtures');
+      const filepath = reqs[0]?.payload?.options?.input?.filepath;
+      if (typeof filepath !== 'string' || filepath.length === 0) throw new Error('permission-request/Edit missing options.input.filepath');
+      if (existsSync(filepath)) {
+        throw new Error(`Denied permission but file exists on disk: ${filepath}`);
+      }
+    },
   },
 ];

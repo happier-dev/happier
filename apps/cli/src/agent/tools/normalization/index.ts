@@ -1,5 +1,5 @@
 import { truncateDeep } from '../redaction/redact';
-import type { CanonicalToolName, ToolNormalizationHappyMetaV2, ToolNormalizationProtocol } from './types';
+import type { ToolHappierMetaV2, ToolNormalizationProtocol } from '@happier-dev/protocol';
 import { normalizeBashInput, normalizeBashResult } from './families/execute';
 import { normalizeReadInput, normalizeReadResult } from './families/read';
 import { normalizeEditInput, normalizeEditResult } from './families/edit';
@@ -32,7 +32,7 @@ function asRecord(value: unknown): UnknownRecord | null {
     return value as UnknownRecord;
 }
 
-function mergeHappyMeta(input: unknown, meta: ToolNormalizationHappyMetaV2): UnknownRecord {
+function mergeHappyMeta(input: unknown, meta: ToolHappierMetaV2): UnknownRecord {
     const record = asRecord(input) ?? {};
     const current = asRecord(record._happy) ?? {};
     return { ...record, _happy: { ...current, ...meta } };
@@ -198,7 +198,7 @@ export function normalizeToolCallInputV2(opts: {
 }): unknown {
     if (opts.canonicalToolName.startsWith('mcp__')) {
         const normalized = normalizeMcpInput(opts.canonicalToolName, opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -211,7 +211,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Bash') {
         const normalized = normalizeBashInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -224,7 +224,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Read') {
         const normalized = normalizeReadInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -237,7 +237,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Delete') {
         const normalized = normalizeDeleteInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -250,7 +250,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'TodoWrite') {
         const normalized = normalizeTodoWriteInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -263,7 +263,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'TodoRead') {
         const normalized = normalizeTodoReadInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -276,7 +276,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Task') {
         const normalized = normalizeTaskInput(opts.toolName, opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -289,7 +289,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Write') {
         const normalized = normalizeWriteInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -302,7 +302,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Edit') {
         const normalized = normalizeEditInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -315,7 +315,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'MultiEdit') {
         const normalized = normalizeMultiEditInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -328,7 +328,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Diff') {
         const normalized = normalizeDiffInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -341,7 +341,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Patch') {
         const normalized = normalizePatchInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -354,7 +354,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Reasoning') {
         const normalized = normalizeReasoningInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -367,7 +367,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Glob') {
         const normalized = normalizeGlobInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -380,7 +380,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'CodeSearch') {
         const normalized = normalizeCodeSearchInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -393,7 +393,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'Grep') {
         const normalized = normalizeGrepInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -406,7 +406,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'LS') {
         const normalized = normalizeLsInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -419,7 +419,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'WebFetch') {
         const normalized = normalizeWebFetchInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -432,7 +432,7 @@ export function normalizeToolCallInputV2(opts: {
 
     if (opts.canonicalToolName === 'WebSearch') {
         const normalized = normalizeWebSearchInput(opts.rawInput);
-        const meta: ToolNormalizationHappyMetaV2 = {
+        const meta: ToolHappierMetaV2 = {
             v: 2,
             protocol: opts.protocol,
             provider: opts.provider,
@@ -443,7 +443,7 @@ export function normalizeToolCallInputV2(opts: {
         return { ...withHappy, _raw: truncateDeep(opts.rawInput) };
     }
 
-    const meta: ToolNormalizationHappyMetaV2 = {
+    const meta: ToolHappierMetaV2 = {
         v: 2,
         protocol: opts.protocol,
         provider: opts.provider,
@@ -485,7 +485,7 @@ export function normalizeToolResultV2(opts: {
     canonicalToolName: string;
     rawOutput: unknown;
 }): unknown {
-    const meta: ToolNormalizationHappyMetaV2 = {
+    const meta: ToolHappierMetaV2 = {
         v: 2,
         protocol: opts.protocol,
         provider: opts.provider,

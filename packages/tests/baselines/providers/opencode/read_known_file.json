@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "providerId": "opencode",
+  "scenarioId": "read_known_file",
+  "createdAt": "2026-02-02T19:15:40.530Z",
+  "fixtureKeys": [
+    "acp/opencode/permission-request/Read",
+    "acp/opencode/tool-call/Read",
+    "acp/opencode/tool-result/Read"
+  ],
+  "shapesByKey": {
+    "acp/opencode/tool-call/Read": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"rawInput\":{\"t\":\"object\",\"keys\":{}},\"title\":{\"t\":\"string\"}}},\"_happy\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"rawInput\":{\"t\":\"object\",\"keys\":{}},\"title\":{\"t\":\"string\"}}},\"description\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null}}},\"description\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/permission-request/Read": "{\"t\":\"object\",\"keys\":{\"description\":{\"t\":\"string\"},\"options\":{\"t\":\"object\",\"keys\":{\"input\":{\"t\":\"object\",\"keys\":{\"filepath\":{\"t\":\"string\"},\"parentDir\":{\"t\":\"string\"}}},\"options\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"id\":{\"t\":\"string\"},\"kind\":{\"t\":\"string\"},\"name\":{\"t\":\"string\"}}}},\"permissionId\":{\"t\":\"string\"},\"sessionId\":{\"t\":\"string\"},\"toolCall\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null},\"rawInput\":{\"t\":\"object\",\"keys\":{\"filepath\":{\"t\":\"string\"},\"parentDir\":{\"t\":\"string\"}}},\"status\":{\"t\":\"string\"},\"title\":{\"t\":\"string\"},\"toolCallId\":{\"t\":\"string\"}}},\"toolCallId\":{\"t\":\"string\"},\"toolName\":{\"t\":\"string\"}}},\"permissionId\":{\"t\":\"string\"},\"toolName\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/tool-result/Read": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"output\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"title\":{\"t\":\"string\"}}},\"_happy\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"title\":{\"t\":\"string\"}}},\"metadata\":{\"t\":\"object\",\"keys\":{\"preview\":{\"t\":\"string\"}}},\"output\":{\"t\":\"string\"}}},\"metadata\":{\"t\":\"object\",\"keys\":{\"preview\":{\"t\":\"string\"}}},\"output\":{\"t\":\"string\"}}},\"type\":{\"t\":\"string\"}}}"
+  }
+}

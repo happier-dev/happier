@@ -25,6 +25,8 @@ import { LSView } from './LSView';
 import { ChangeTitleView } from './ChangeTitleView';
 import { DeleteView } from './DeleteView';
 import { MCPToolView } from './MCPToolView';
+import { UnknownToolView } from './UnknownToolView';
+import { KnownCanonicalToolNameV2Schema, type KnownCanonicalToolNameV2 } from '@happier-dev/protocol';
 
 export type ToolViewDetailLevel = 'title' | 'summary' | 'full';
 
@@ -45,7 +47,7 @@ export type ToolViewProps = {
 export type ToolViewComponent = React.ComponentType<ToolViewProps>;
 
 // Registry of tool-specific view components
-export const toolViewRegistry: Record<string, ToolViewComponent> = {
+export const toolViewRegistry: Record<KnownCanonicalToolNameV2, ToolViewComponent> = {
     Edit: EditView,
     Bash: BashView,
     Delete: DeleteView,
@@ -72,7 +74,7 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     change_title: ChangeTitleView,
 };
 
-const legacyToolNameToCanonical: Record<string, keyof typeof toolViewRegistry> = {
+const legacyToolNameToCanonical: Record<string, KnownCanonicalToolNameV2> = {
     // Provider-branded historical names.
     CodexBash: 'Bash',
     CodexPatch: 'Patch',
@@ -107,7 +109,9 @@ export function normalizeToolNameForView(toolName: string): string {
 export function getToolViewComponent(toolName: string): ToolViewComponent | null {
     if (toolName.startsWith('mcp__')) return MCPToolView;
     const normalizedName = normalizeToolNameForView(toolName);
-    return toolViewRegistry[normalizedName] || null;
+    const parsed = KnownCanonicalToolNameV2Schema.safeParse(normalizedName);
+    if (!parsed.success) return UnknownToolView;
+    return toolViewRegistry[parsed.data] ?? UnknownToolView;
 }
 
 // Export individual components
@@ -132,3 +136,4 @@ export { WorkspaceIndexingPermissionView } from './WorkspaceIndexingPermissionVi
 export { ChangeTitleView } from './ChangeTitleView';
 export { DeleteView } from './DeleteView';
 export { MCPToolView } from './MCPToolView';
+export { UnknownToolView } from './UnknownToolView';

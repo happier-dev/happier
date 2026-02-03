@@ -1,9 +1,9 @@
 import type { Metadata } from '@/sync/storageTypes';
 import type { ToolCall, Message } from '@/sync/typesMessage';
-import * as z from 'zod';
 import { t } from '@/text';
 import { ICON_TODO } from '../icons';
 import type { KnownToolDefinition } from '../_types';
+import { TodoResultV2Schema, TodoWriteInputV2Schema } from '@happier-dev/protocol';
 
 export const coreTodoTools = {
     'TodoWrite': {
@@ -26,28 +26,8 @@ export const coreTodoTools = {
 
             return true; // No todos, render as minimal
         },
-        input: z.object({
-            todos: z.array(z.object({
-                content: z.string().describe('The todo item content'),
-                status: z.enum(['pending', 'in_progress', 'completed']).describe('The status of the todo'),
-                priority: z.enum(['high', 'medium', 'low']).optional().describe('The priority of the todo'),
-                id: z.string().optional().describe('Unique identifier for the todo')
-            }).passthrough()).describe('The updated todo list')
-        }).partial().passthrough(),
-        result: z.object({
-            oldTodos: z.array(z.object({
-                content: z.string().describe('The todo item content'),
-                status: z.enum(['pending', 'in_progress', 'completed']).describe('The status of the todo'),
-                priority: z.enum(['high', 'medium', 'low']).optional().describe('The priority of the todo'),
-                id: z.string().describe('Unique identifier for the todo')
-            }).passthrough()).describe('The old todo list'),
-            newTodos: z.array(z.object({
-                content: z.string().describe('The todo item content'),
-                status: z.enum(['pending', 'in_progress', 'completed']).describe('The status of the todo'),
-                priority: z.enum(['high', 'medium', 'low']).optional().describe('The priority of the todo'),
-                id: z.string().describe('Unique identifier for the todo')
-            }).passthrough()).describe('The new todo list')
-        }).partial().passthrough(),
+        input: TodoWriteInputV2Schema,
+        result: TodoResultV2Schema,
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const count =
                 Array.isArray(opts.tool.input?.todos)
@@ -66,14 +46,7 @@ export const coreTodoTools = {
         icon: ICON_TODO,
         noStatus: true,
         minimal: true,
-        result: z.object({
-            todos: z.array(z.object({
-                content: z.string().describe('The todo item content'),
-                status: z.enum(['pending', 'in_progress', 'completed']).describe('The status of the todo'),
-                priority: z.enum(['high', 'medium', 'low']).optional().describe('The priority of the todo'),
-                id: z.string().optional().describe('Unique identifier for the todo')
-            }).passthrough()).describe('The current todo list')
-        }).partial().passthrough(),
+        result: TodoResultV2Schema,
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const list = Array.isArray(opts.tool.result?.todos) ? opts.tool.result.todos : null;
             if (list) {

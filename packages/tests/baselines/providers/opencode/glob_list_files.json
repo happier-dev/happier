@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "providerId": "opencode",
+  "scenarioId": "glob_list_files",
+  "createdAt": "2026-02-02T19:15:55.837Z",
+  "fixtureKeys": [
+    "acp/opencode/permission-request/Bash",
+    "acp/opencode/tool-call/Bash",
+    "acp/opencode/tool-result/Bash"
+  ],
+  "shapesByKey": {
+    "acp/opencode/tool-call/Bash": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"rawInput\":{\"t\":\"object\",\"keys\":{}},\"title\":{\"t\":\"string\"}}},\"_happy\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"rawInput\":{\"t\":\"object\",\"keys\":{}},\"title\":{\"t\":\"string\"}}},\"description\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null}}},\"description\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/permission-request/Bash": "{\"t\":\"object\",\"keys\":{\"description\":{\"t\":\"string\"},\"options\":{\"t\":\"object\",\"keys\":{\"input\":{\"t\":\"object\",\"keys\":{\"command\":{\"t\":\"string\"}}},\"options\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"id\":{\"t\":\"string\"},\"kind\":{\"t\":\"string\"},\"name\":{\"t\":\"string\"}}}},\"permissionId\":{\"t\":\"string\"},\"sessionId\":{\"t\":\"string\"},\"toolCall\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null},\"rawInput\":{\"t\":\"object\",\"keys\":{\"command\":{\"t\":\"string\"}}},\"status\":{\"t\":\"string\"},\"title\":{\"t\":\"string\"},\"toolCallId\":{\"t\":\"string\"}}},\"toolCallId\":{\"t\":\"string\"},\"toolName\":{\"t\":\"string\"}}},\"permissionId\":{\"t\":\"string\"},\"toolName\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/tool-result/Bash": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"output\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"title\":{\"t\":\"string\"}}},\"_happy\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"title\":{\"t\":\"string\"}}},\"metadata\":{\"t\":\"object\",\"keys\":{\"description\":{\"t\":\"string\"},\"exit\":{\"t\":\"number\"},\"output\":{\"t\":\"string\"}}},\"output\":{\"t\":\"string\"}}},\"metadata\":{\"t\":\"object\",\"keys\":{\"description\":{\"t\":\"string\"},\"exit\":{\"t\":\"number\"},\"output\":{\"t\":\"string\"}}},\"output\":{\"t\":\"string\"}}},\"type\":{\"t\":\"string\"}}}"
+  }
+}
