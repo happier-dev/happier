@@ -44,6 +44,16 @@ on:
           - ota
           - native
           - native_submit
+      expo_profile:
+        description: "EAS build profile (auto: preview→preview, production→production; if native_submit+preview, uses preview-store)"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - preview
+          - preview-store
+          - production
       expo_platform:
         description: "Native build platform"
         required: true
@@ -87,6 +97,11 @@ on:
         description: "Expo action (requires EXPO_TOKEN secret)"
         required: false
         default: none
+        type: string
+      expo_profile:
+        description: "EAS build profile (auto: preview→preview, production→production; if native_submit+preview, uses preview-store)"
+        required: false
+        default: auto
         type: string
       expo_platform:
         description: "Native build platform"
@@ -210,6 +225,31 @@ jobs:
             yarn --cwd apps/ui ota
           fi
 
+      - name: Resolve Expo build profile
+        id: expo_profile
+        if: inputs.expo_action == 'native' || inputs.expo_action == 'native_submit'
+        run: |
+          set -euo pipefail
+          env_name="${{ inputs.environment }}"
+          action="${{ inputs.expo_action }}"
+          profile="${{ inputs.expo_profile }}"
+
+          if [ "${profile}" = "auto" ]; then
+            profile="${env_name}"
+            # Submitting iOS builds requires "store" distribution. Default preview builds are "internal".
+            if [ "${env_name}" = "preview" ] && [ "${action}" = "native_submit" ]; then
+              profile="preview-store"
+            fi
+          fi
+
+          echo "profile=${profile}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Expo"
+            echo "- action: \`${action}\`"
+            echo "- environment: \`${env_name}\`"
+            echo "- build profile: \`${profile}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Expo native build
         if: inputs.expo_action == 'native' || inputs.expo_action == 'native_submit'
         env:
@@ -221,7 +261,7 @@ jobs:
             echo "EXPO_TOKEN is required for Expo actions." >&2
             exit 1
           fi
-          npx --yes eas-cli@latest build --platform "${{ inputs.expo_platform }}" --profile "${{ inputs.environment }}" --non-interactive
+          npx --yes eas-cli@latest build --platform "${{ inputs.expo_platform }}" --profile "${{ steps.expo_profile.outputs.profile }}" --non-interactive
 
       - name: Expo submit
         if: inputs.expo_action == 'native_submit'
