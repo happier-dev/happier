@@ -3218,6 +3218,27 @@ async function main() {
   const json = wantsJson(argv, { flags });
 
   const wantsHelpFlag = wantsHelp(argv, { flags });
+  // Subcommand-specific help (so `hstack stack eas --help` works).
+  if (wantsHelpFlag && cmd === 'eas') {
+    const stackName = stackNameFromArg(positionals, 1);
+
+    const runHelp = async (env) => {
+      await run(process.execPath, [join(rootDir, 'scripts', 'eas.mjs'), '--help'], { cwd: rootDir, env });
+    };
+
+    if (stackName && stackExistsSync(stackName)) {
+      await withStackEnv({
+        stackName,
+        fn: async ({ env }) => {
+          await runHelp(env);
+        },
+      });
+      return;
+    }
+
+    await runHelp(process.env);
+    return;
+  }
   // Allow subcommand-specific help (so `hstack stack pr --help` shows PR stack flags).
   if (wantsHelpFlag && cmd === 'pr') {
     await cmdPrStack({ rootDir, argv });
@@ -3242,13 +3263,14 @@ async function main() {
           'archive',
           'duplicate',
           'info',
-        'pr',
-        'create-dev-auth-seed',
-        'daemon',
-        'happier',
-        'env',
-        'auth',
-        'dev',
+          'pr',
+          'create-dev-auth-seed',
+          'daemon',
+          'eas',
+          'happier',
+          'env',
+          'auth',
+          'dev',
           'start',
           'build',
           'review',
@@ -3377,19 +3399,29 @@ async function main() {
                 'example:',
                 '  hstack stack srv exp1 -- status',
               ]
-          : cmd === 'env'
-            ? [
-                '[stack] usage:',
-                '  hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...]',
-                '  hstack stack env <name> unset KEY [KEY2...]',
-                '  hstack stack env <name> get KEY',
-                '  hstack stack env <name> list',
-                '  hstack stack env <name> path',
-              ]
-            : cmd === 'daemon'
+            : cmd === 'env'
               ? [
                   '[stack] usage:',
-                  '  hstack stack daemon <name> start|stop|restart|status [--json]',
+                  '  hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...]',
+                  '  hstack stack env <name> unset KEY [KEY2...]',
+                  '  hstack stack env <name> get KEY',
+                  '  hstack stack env <name> list',
+                  '  hstack stack env <name> path',
+                ]
+              : cmd === 'eas'
+                ? [
+                    '[stack] usage:',
+                    '  hstack stack eas <name> <eas args...>',
+                    '',
+                    'examples:',
+                    '  hstack stack eas happier android --profile production',
+                    '  hstack stack eas happier build --platform android --profile production',
+                    '  hstack stack eas happier env:sync --environment production',
+                  ]
+              : cmd === 'daemon'
+                ? [
+                    '[stack] usage:',
+                    '  hstack stack daemon <name> start|stop|restart|status [--json]',
                   '',
                   'example:',
                   '  hstack stack daemon main status',
