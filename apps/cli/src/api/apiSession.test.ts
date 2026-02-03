@@ -1234,12 +1234,13 @@ describe('ApiSessionClient connection handling', () => {
                             },
                         } as any);
 
-                        resolveAck?.({
-                            ok: true,
-                            id: 'msg-2',
-                            seq: 2,
-                            localId: 'local-p1',
-                        });
+	                        expect(resolveAck).toBeTruthy();
+	                        resolveAck!({
+	                            ok: true,
+	                            id: 'msg-2',
+	                            seq: 2,
+	                            localId: 'local-p1',
+	                        });
 
                         const popped = await popPromise;
                         expect(popped).toBe(true);
