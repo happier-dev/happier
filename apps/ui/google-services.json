@@ -1,21 +1,21 @@
 {
   "project_info": {
-    "project_number": "902947412706",
-    "project_id": "happy-coder-9fe36",
-    "storage_bucket": "happy-coder-9fe36.firebasestorage.app"
+    "project_number": "427065718939",
+    "project_id": "happier-4a4fd",
+    "storage_bucket": "happier-4a4fd.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:902947412706:android:36343adcbad4fca41b9cbb",
+        "mobilesdk_app_id": "1:427065718939:android:4f30a784735abfe97aee3e",
         "android_client_info": {
-          "package_name": "com.ex3ndr.happy"
+          "package_name": "dev.happier.app"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDzdshwzE3tHcc1klD6qIPpReCoAiG2Mxs"
+          "current_key": "AIzaSyA8CVyyWjVOpYD58w8jiDOsZMYY8sk8fxY"
         }
       ],
       "services": {
@@ -26,15 +26,15 @@
     },
     {
       "client_info": {
-        "mobilesdk_app_id": "1:902947412706:android:eb8bccdbb85f0a371b9cbb",
+        "mobilesdk_app_id": "1:427065718939:android:d95397b56dcecbe17aee3e",
         "android_client_info": {
-          "package_name": "com.slopus.happy.dev"
+          "package_name": "dev.happier.app.dev"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDzdshwzE3tHcc1klD6qIPpReCoAiG2Mxs"
+          "current_key": "AIzaSyA8CVyyWjVOpYD58w8jiDOsZMYY8sk8fxY"
         }
       ],
       "services": {
@@ -45,15 +45,15 @@
     },
     {
       "client_info": {
-        "mobilesdk_app_id": "1:902947412706:android:03fd92ac3c9813651b9cbb",
+        "mobilesdk_app_id": "1:427065718939:android:fc6fcb803976fb987aee3e",
         "android_client_info": {
-          "package_name": "com.slopus.happy.preview"
+          "package_name": "dev.happier.app.preview"
         }
       },
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDzdshwzE3tHcc1klD6qIPpReCoAiG2Mxs"
+          "current_key": "AIzaSyA8CVyyWjVOpYD58w8jiDOsZMYY8sk8fxY"
         }
       ],
       "services": {
