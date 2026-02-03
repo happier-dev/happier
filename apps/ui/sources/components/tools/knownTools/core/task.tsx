@@ -1,9 +1,9 @@
 import type { Metadata } from '@/sync/storageTypes';
 import type { ToolCall, Message } from '@/sync/typesMessage';
-import * as z from 'zod';
 import { t } from '@/text';
 import { ICON_TASK } from '../icons';
 import type { KnownToolDefinition } from '../_types';
+import { TaskInputV2Schema } from '@happier-dev/protocol';
 
 export const coreTaskTools = {
     'Task': {
@@ -27,10 +27,6 @@ export const coreTaskTools = {
             }
             return true; // No active sub-tasks, render as minimal
         },
-        input: z.object({
-            prompt: z.string().describe('The task for the agent to perform'),
-            subagent_type: z.string().optional().describe('The type of specialized agent to use')
-        }).partial().passthrough()
+        input: TaskInputV2Schema,
     },
 } satisfies Record<string, KnownToolDefinition>;
-

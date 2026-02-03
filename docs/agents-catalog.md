@@ -169,6 +169,10 @@ Common files (as needed):
 - `acp/backend.ts` (ACP backend, if applicable)
 - `cloud/connect.ts` (cloud connect, if applicable)
 
+Tool normalization (if the agent emits tools):
+- Ensure the CLI normalizes provider tool calls/results into canonical V2 tool shapes (so the app can render them).
+- See: `docs/tool-normalization.md` (V2 schemas + normalization entrypoints + trace/fixtures workflow).
+
 ### Step 3 — export one catalog entry and wire it into the CLI catalog
 
 Create:

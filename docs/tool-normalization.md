@@ -25,9 +25,10 @@ It is written for developers working on **tool reliability and UX** (not for his
 - **Tool call**: a request from the model to run a tool (e.g. `Read`, `Bash`, `Patch`).
 - **Tool result**: the output from running that tool.
 - **Canonical tool name**: the UI renderer key (e.g. `Read`, `Bash`, `Patch`, `TodoWrite`).
-- **V2 tool payload**: a normalized tool input/result that includes `_happy` metadata (and `_raw`).
+- **V2 tool payload**: a normalized tool input/result that includes stable tool metadata under `_happy` (and `_raw`).
 - **Legacy session**: sessions created before V2 tool normalization was emitted by the CLI.
 - **Claude local-control**: sessions where the app mirrors a local terminal transcript and reconstructs tool events client-side.
+- **Task / progress event**: a high-level “progress report” emitted by an agent (not always a concrete tool invocation).
 
 ---
 
@@ -42,6 +43,13 @@ Backends run providers via one of the supported protocols:
 - **Claude**:
   - **remote**: backend emits structured events over the daemon protocol
   - **local-control**: the app reconstructs tool events from the transcript (no `_happy` metadata)
+
+### Messages: user/assistant/system/developer
+
+Happier stores and transports message roles broadly (user/assistant/system/developer), but the UI does **not** generally render
+system/developer messages in the main chat timeline (they are treated as internal instructions / provenance).
+
+Tool normalization focuses on **tool-call/tool-result** and “tool-ish” structured events, not message role rendering.
 
 ### 2) CLI boundary normalization (V2)
 
@@ -64,12 +72,36 @@ This is intentionally narrower than CLI normalization: it exists to keep older d
 
 ## CLI: tool normalization (V2)
 
+### Shared protocol (single source of truth)
+
+The canonical **V2 tool contract** (tool names + per-tool input/result schemas + `_happy` metadata schema) lives in:
+
+- `packages/protocol/src/tools/v2/*`
+
+Preferred imports:
+
+- `@happier-dev/protocol/tools/v2` (subpath export)
+- or `@happier-dev/protocol` (re-exported from root)
+
+This shared package is the place to look if you want to answer: “what is the normalized schema the app expects?”.
+
+If you’re adding a new agent/provider, see:
+- `docs/agents-catalog.md` (how to wire a new backend/provider end-to-end)
+
+Important design choices:
+
+- Schemas are intentionally **forward-compatible**:
+  - `_happy.canonicalToolName` is a string (not a closed enum), so new tool names can ship before the protocol package updates.
+  - Most input/result schemas are permissive (`optional()` + `passthrough()`), because providers drift.
+- We avoid dropping events:
+  - Production code should prefer “best-effort normalization + preserve `_raw`” over “throw if schema changes”.
+  - Schemas are primarily enforced in tests (fixtures + provider harness) to make drift visible and actionable.
+
 ### Code locations
 
 - V2 canonicalization + per-tool families:
   - `apps/cli/src/agent/tools/normalization/index.ts`
   - `apps/cli/src/agent/tools/normalization/families/*`
-  - `apps/cli/src/agent/tools/normalization/types.ts`
 - Entry points where tool events are normalized before sending/storing:
   - `apps/cli/src/api/apiSession.ts` (ACP + Codex MCP paths)
 
@@ -79,6 +111,9 @@ Normalized tool input/results are wrapped with:
 
 - `_happy`: stable metadata used for routing/rendering and debugging
 - `_raw`: original provider payload (truncated for safety)
+
+Note: the project is named **Happier**, but the on-the-wire field name remains `_happy` for backward compatibility with older clients.
+In code, the metadata schema/type is `ToolHappierMetaV2` (aliased as `ToolHappyMetaV2`).
 
 Example `_happy` fields (non-exhaustive):
 
@@ -146,11 +181,43 @@ The drift regression suite is fixture-driven:
 - `apps/cli/src/agent/tools/normalization/index.test.ts`
 - `apps/cli/src/agent/tools/trace/toolTraceFixturesAllowlist.test.ts`
 
+What fixtures assert (high level):
+
+- The fixtures file contains real “raw” tool-trace events we’ve curated as representative.
+- Tests run the CLI normalizers over those raw events and assert:
+  - the canonical tool name chosen for each tool-call/tool-result
+  - that `_happy` metadata is present and correct
+  - that key normalization behaviors exist (e.g. execute→Bash, tool-result error extraction, etc.)
+
+Fixtures are not a brittle “exact output snapshot” of every field; they are a drift detector paired with targeted invariants.
+
 Run via `happys`:
 
 ```bash
 happys stack test <stack> happy-cli
 ```
+
+### Provider contract baselines (optional, e2e-style)
+
+In addition to unit/fixture tests inside `apps/cli`, the provider contract runner in `packages/tests` can validate that:
+
+- the **set of observed fixture keys** matches an expected baseline for a scenario
+- the **shape** (structure) of representative payloads does not drift unexpectedly
+- extracted fixtures include V2 `_happy` metadata and match shared protocol schemas where applicable
+
+Key locations:
+
+- Baselines: `packages/tests/baselines/providers/<provider>/<scenario>.json`
+- Baseline diff logic: `packages/tests/src/testkit/providers/baselines.ts`
+- Provider runner: `packages/tests/src/testkit/providers/harness.ts`
+- Schema validation: `packages/tests/src/testkit/providers/validateToolSchemas.ts`
+
+These tests compare **shapes**, not full values, to avoid brittle failures on dynamic content.
+
+Strictness controls:
+
+- By default, **extra observed fixture keys** do not fail (forward-compatible). Missing baselined keys still fail.
+- To fail on extra keys as well, set `HAPPY_E2E_PROVIDER_STRICT_KEYS=1`.
 
 ---
 
@@ -225,6 +292,28 @@ Key files:
 - `apps/ui/sources/sync/typesRaw/normalize.ts` (canonicalizes tool_use/tool_result blocks)
 
 These reconstructed tools then flow into the same UI pipeline and render via the same registry + views.
+
+---
+
+## Tools vs Tasks (why they differ)
+
+In Happier, **tools** and **tasks** are related but not identical concepts:
+
+- **Tool**: “A concrete action the agent asked the runtime to perform.”
+  - Examples: run a shell command, read a file, apply a patch, search the repo.
+  - Tools have an input and (usually) a result.
+  - Tools are primarily what the tool normalization pipeline targets.
+
+- **Task / progress**: “A higher-level progress report or structured step.”
+  - Examples: “enter plan mode”, “exit plan mode”, or an agent emitting progress updates.
+  - Tasks may be hierarchical conceptually, but today the system does not enforce a universal, cross-provider Task object.
+
+Current state:
+
+- Many “task-like” things are represented as **tool-ish structured events** (e.g. `EnterPlanMode`, `AskUserQuestion`).
+- The `Task` canonical tool name is used for provider/task APIs that are tool-call/tool-result shaped (when the provider exposes them that way).
+
+This keeps the pipeline coherent (everything renders through one tool registry) while leaving room to introduce a future, universal Task model if needed.
 
 ---
 

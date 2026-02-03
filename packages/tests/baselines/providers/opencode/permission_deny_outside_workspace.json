@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "providerId": "opencode",
+  "scenarioId": "permission_deny_outside_workspace",
+  "createdAt": "2026-02-02T19:38:46.168Z",
+  "fixtureKeys": [
+    "acp/opencode/permission-request/Edit",
+    "acp/opencode/tool-call/Edit",
+    "acp/opencode/tool-result/Edit"
+  ],
+  "shapesByKey": {
+    "acp/opencode/tool-call/Edit": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"rawInput\":{\"t\":\"object\",\"keys\":{}},\"title\":{\"t\":\"string\"}}},\"_happy\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"rawInput\":{\"t\":\"object\",\"keys\":{}},\"title\":{\"t\":\"string\"}}},\"description\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null}}},\"description\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/permission-request/Edit": "{\"t\":\"object\",\"keys\":{\"description\":{\"t\":\"string\"},\"options\":{\"t\":\"object\",\"keys\":{\"input\":{\"t\":\"object\",\"keys\":{\"filepath\":{\"t\":\"string\"},\"parentDir\":{\"t\":\"string\"}}},\"options\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"id\":{\"t\":\"string\"},\"kind\":{\"t\":\"string\"},\"name\":{\"t\":\"string\"}}}},\"permissionId\":{\"t\":\"string\"},\"sessionId\":{\"t\":\"string\"},\"toolCall\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null},\"rawInput\":{\"t\":\"object\",\"keys\":{\"filepath\":{\"t\":\"string\"},\"parentDir\":{\"t\":\"string\"}}},\"status\":{\"t\":\"string\"},\"title\":{\"t\":\"string\"},\"toolCallId\":{\"t\":\"string\"}}},\"toolCallId\":{\"t\":\"string\"},\"toolName\":{\"t\":\"string\"}}},\"permissionId\":{\"t\":\"string\"},\"toolName\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/tool-result/Edit": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"isError\":{\"t\":\"boolean\"},\"output\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"}}},\"_happy\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"object\",\"keys\":{\"kind\":{\"t\":\"string\"}}},\"error\":{\"t\":\"string\"},\"status\":{\"t\":\"string\"}}},\"applied\":{\"t\":\"boolean\"},\"error\":{\"t\":\"string\"},\"errorMessage\":{\"t\":\"string\"},\"status\":{\"t\":\"string\"}}},\"type\":{\"t\":\"string\"}}}"
+  }
+}

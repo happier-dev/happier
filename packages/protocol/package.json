@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./tools/v2": {
+      "types": "./dist/tools/v2/index.d.ts",
+      "default": "./dist/tools/v2/index.js"
+    },
     "./spawnSession": {
       "types": "./dist/spawnSession.d.ts",
       "default": "./dist/spawnSession.js"

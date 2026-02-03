@@ -52,3 +52,6 @@ export {
   type UpdateMetadataAckResponse,
   type UpdateStateAckResponse,
 } from './updates.js';
+
+// Tool normalization (V2)
+export * from './tools/v2/index.js';

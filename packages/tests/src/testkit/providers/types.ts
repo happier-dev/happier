@@ -28,6 +28,9 @@ export type ProviderScenario = {
   // Optional override for whether the CLI should be started in YOLO mode for this scenario.
   // When undefined, falls back to `HAPPY_E2E_PROVIDER_YOLO_DEFAULT` (default: true).
   yolo?: boolean;
+  // When YOLO is disabled, the harness will auto-respond to permission requests via `${sessionId}:permission`.
+  // Defaults to `approved`.
+  permissionAutoDecision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
   // Optional per-scenario setup hook (create files, seed workspace, etc.).
   setup?: (ctx: { workspaceDir: string }) => Promise<void>;
   // Tool-trace fixture keys that must exist after running the scenario.

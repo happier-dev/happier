@@ -37,9 +37,12 @@ The entrypoint is `suites/providers/provider.matrix.test.ts`, backed by:
 ### Environment flags
 
 - `HAPPY_E2E_PROVIDERS=1`: enable provider contract matrix
+- `HAPPY_E2E_PROVIDER_CLAUDE=1`: enable Claude scenarios (requires a working Claude auth/config)
 - `HAPPY_E2E_PROVIDER_OPENCODE=1`: enable OpenCode scenarios (more providers will follow)
 - `HAPPY_E2E_PROVIDER_WAIT_MS=...`: scenario timeout (default: 240000)
 - `HAPPY_E2E_PROVIDER_FLAKE_RETRY=1`: retry once and fail as `FLAKY` if it passes on retry
+- `HAPPY_E2E_PROVIDER_UPDATE_BASELINES=1`: write/update baseline snapshots under `packages/tests/baselines/providers/*`
+- `HAPPY_E2E_PROVIDER_STRICT_KEYS=1`: fail if scenarios observe unexpected fixture keys (default: allow extra keys for forward-compat)
 - `HAPPY_E2E_PROVIDER_YOLO_DEFAULT=1|0`: default whether provider CLI is started with `--yolo` (default: `1`)
 - Scenario selection:
   - `HAPPY_E2E_PROVIDER_SCENARIOS=execute_trace_ok,execute_error_exit_2`
@@ -53,6 +56,13 @@ Current OpenCode scenario ids:
 - `glob_list_files` (extended)
 - `edit_write_file_and_cat` (extended)
 - `permission_surface_outside_workspace` (extended, runs with YOLO off + auto-approvals)
+- `permission_deny_outside_workspace` (extended, runs with YOLO off + auto-deny + verifies file did not get written)
+
+Current Claude scenario ids:
+- `bash_echo_trace_ok` (smoke)
+- `read_known_file` (extended)
+- `permission_surface_outside_workspace` (extended, YOLO off + auto-approve + verifies file written)
+- `permission_deny_outside_workspace` (extended, YOLO off + auto-deny + verifies file not written)
 
 ### What the harness does (high level)
 
@@ -64,6 +74,7 @@ Current OpenCode scenario ids:
 - Waits for tool trace (`HAPPIER_STACK_TOOL_TRACE_FILE`)
 - Extracts fixtures using `@happier-dev/cli tool:trace:extract`
 - Asserts scenario invariants (fixture keys + payload shape + optional workspace file checks)
+- Optionally compares extracted fixture keys + payload shapes against committed baselines
 
 ## Adding a new provider
 

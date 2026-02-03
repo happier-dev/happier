@@ -1,10 +1,10 @@
 import type { Metadata } from '@/sync/storageTypes';
 import type { ToolCall } from '@/sync/typesMessage';
-import * as z from 'zod';
 import { t } from '@/text';
 import { ICON_TERMINAL, ICON_EXIT } from '../icons';
 import type { KnownToolDefinition } from '../_types';
 import { extractShellCommand } from '../../utils/shellCommand';
+import { BashInputV2Schema, BashResultV2Schema, ExitPlanModeInputV2Schema } from '@happier-dev/protocol';
 
 export const coreTerminalTools = {
     'Bash': {
@@ -18,14 +18,8 @@ export const coreTerminalTools = {
         minimal: true,
         hideDefaultError: true,
         isMutable: true,
-        input: z.object({
-            command: z.string().describe('The command to execute'),
-            timeout: z.number().optional().describe('Timeout in milliseconds (max 600000)')
-        }),
-        result: z.object({
-            stderr: z.string(),
-            stdout: z.string(),
-        }).partial().passthrough(),
+        input: BashInputV2Schema,
+        result: BashResultV2Schema,
         extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
             const cmd = extractShellCommand(opts.tool.input);
             if (typeof cmd === 'string' && cmd.length > 0) {
@@ -49,16 +43,11 @@ export const coreTerminalTools = {
     'ExitPlanMode': {
         title: t('tools.names.planProposal'),
         icon: ICON_EXIT,
-        input: z.object({
-            plan: z.string().describe('The plan you came up with')
-        }).partial().passthrough()
+        input: ExitPlanModeInputV2Schema,
     },
     'exit_plan_mode': {
         title: t('tools.names.planProposal'),
         icon: ICON_EXIT,
-        input: z.object({
-            plan: z.string().describe('The plan you came up with')
-        }).partial().passthrough()
+        input: ExitPlanModeInputV2Schema,
     },
 } satisfies Record<string, KnownToolDefinition>;
-

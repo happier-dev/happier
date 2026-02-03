@@ -16,8 +16,17 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
     let edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> = [];
     
     const parsed = knownTools.MultiEdit.input.safeParse(tool.input);
-    if (parsed.success && parsed.data.edits) {
-        edits = parsed.data.edits;
+    if (parsed.success && Array.isArray(parsed.data.edits)) {
+        edits = parsed.data.edits
+            .filter((e): e is { old_string: string; new_string: string; replace_all?: boolean } =>
+                typeof (e as any)?.old_string === 'string' &&
+                typeof (e as any)?.new_string === 'string',
+            )
+            .map((e) => ({
+                old_string: (e as any).old_string,
+                new_string: (e as any).new_string,
+                replace_all: typeof (e as any).replace_all === 'boolean' ? (e as any).replace_all : undefined,
+            }));
     }
 
     if (edits.length === 0) {

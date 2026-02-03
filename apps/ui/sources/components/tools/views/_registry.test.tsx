@@ -23,6 +23,7 @@ vi.mock('./CodeSearchView', () => ({ CodeSearchView: () => null }));
 vi.mock('./ReasoningView', () => ({ ReasoningView: () => null }));
 vi.mock('./WorkspaceIndexingPermissionView', () => ({ WorkspaceIndexingPermissionView: () => null }));
 vi.mock('./DeleteView', () => ({ DeleteView: () => null }));
+vi.mock('./UnknownToolView', () => ({ UnknownToolView: () => null }));
 vi.mock('./MCPToolView', () => ({
     MCPToolView: () => null,
     formatMCPTitle: () => 'MCP',
@@ -125,5 +126,18 @@ describe('toolViewRegistry', () => {
         }
 
         expect(getToolViewComponent('mcp__linear__create_issue')).toBe(MCPToolView);
+    });
+
+    it('falls back to a generic renderer for unknown tool names (do not drop tool cards)', async () => {
+        let getToolViewComponent: (name: string) => any;
+        let UnknownToolView: any;
+        try {
+            ({ getToolViewComponent } = await import('./_registry'));
+            ({ UnknownToolView } = await import('./UnknownToolView'));
+        } catch (e: any) {
+            throw new Error(e?.stack ? String(e.stack) : String(e));
+        }
+
+        expect(getToolViewComponent('TotallyNewToolFromFutureProvider')).toBe(UnknownToolView);
     });
 });
