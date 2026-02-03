@@ -1,0 +1,264 @@
+name: RELEASE — npm publish (cli/stack)
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_cli:
+        description: "Publish CLI to npm"
+        required: true
+        default: true
+        type: boolean
+      publish_stack:
+        description: "Publish Stack app to npm"
+        required: true
+        default: false
+        type: boolean
+      channel:
+        description: "Release channel"
+        required: true
+        type: choice
+        options:
+          - production
+          - preview
+      bump:
+        description: "Version bump on main (cli)"
+        required: true
+        type: choice
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      stack_bump:
+        description: "Version bump on main (stack)"
+        required: true
+        type: choice
+        default: none
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      npm_tag:
+        description: "npm dist-tag (production: latest, preview: next)"
+        required: true
+        default: latest
+        type: choice
+        options:
+          - latest
+          - next
+      run_tests:
+        description: "Run publish checks/tests before publishing"
+        required: true
+        default: true
+        type: boolean
+      update_deploy_branch:
+        description: "Also promote main to deploy/<channel>/* (optional audit trail)"
+        required: true
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      publish_cli:
+        description: "Publish CLI to npm"
+        required: false
+        default: true
+        type: boolean
+      publish_stack:
+        description: "Publish Stack app to npm"
+        required: false
+        default: false
+        type: boolean
+      channel:
+        description: "Release channel"
+        required: true
+        type: string
+      bump:
+        description: "Version bump on main (cli)"
+        required: true
+        type: string
+      stack_bump:
+        description: "Version bump on main (stack)"
+        required: false
+        default: none
+        type: string
+      npm_tag:
+        description: "npm dist-tag (production: latest, preview: next)"
+        required: false
+        default: latest
+        type: string
+      run_tests:
+        description: "Run publish checks/tests before publishing"
+        required: false
+        default: true
+        type: boolean
+      update_deploy_branch:
+        description: "Also promote main to deploy/<channel>/* (optional audit trail)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate inputs
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.publish_cli }}" != "true" ] && [ "${{ inputs.publish_stack }}" != "true" ]; then
+            echo "At least one of publish_cli or publish_stack must be true." >&2
+            exit 1
+          fi
+
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Bump cli version (main)
+        id: bump_cli
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.publish_cli }}" != "true" ] || [ "${{ inputs.bump }}" = "none" ]; then
+            echo "version=SKIP" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          out="$(node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.bump }}")"
+          echo "version=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Bump stack version (main)
+        id: bump_stack
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.publish_stack }}" != "true" ] || [ "${{ inputs.stack_bump }}" = "none" ]; then
+            echo "version=SKIP" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          cd apps/stack
+          npm version "${{ inputs.stack_bump }}" --no-git-tag-version >/tmp/bump_stack.txt
+          # `npm version` outputs "vX.Y.Z"
+          v="$(cat /tmp/bump_stack.txt | tr -d '\n' | sed 's/^v//')"
+          if [ -z "${v:-}" ]; then
+            echo "Failed to determine bumped stack version." >&2
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Run cli tests
+        if: inputs.publish_cli && inputs.run_tests
+        run: yarn --cwd apps/cli test
+
+      - name: Run stack tests
+        if: inputs.publish_stack && inputs.run_tests
+        run: yarn --cwd apps/stack test
+
+      - name: Commit version bump(s) (main)
+        if: steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP'
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          bumped=()
+          if [ "${{ steps.bump_cli.outputs.version }}" != "SKIP" ]; then
+            git add apps/cli/package.json
+            bumped+=("cli")
+          fi
+          if [ "${{ steps.bump_stack.outputs.version }}" != "SKIP" ]; then
+            git add apps/stack/package.json
+            bumped+=("stack")
+          fi
+
+          if [ "${#bumped[@]}" -eq 0 ]; then
+            echo "No version bumps requested." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          git commit -m "chore(release): bump versions (${bumped[*]})"
+
+      - name: Push main
+        if: steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP'
+        run: git push origin HEAD:main
+
+      - name: npm publish
+        if: inputs.publish_cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is required to publish." >&2
+            exit 1
+          fi
+          cd apps/cli
+          yarn prepublishOnly
+          npm publish --access public --tag "${{ inputs.npm_tag }}"
+
+      - name: npm publish (stack)
+        if: inputs.publish_stack
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is required to publish." >&2
+            exit 1
+          fi
+          cd apps/stack
+          npm publish --access public --tag "${{ inputs.npm_tag }}"
+
+      - name: Promote main to deploy branch (cli) (optional)
+        if: inputs.update_deploy_branch && inputs.publish_cli
+        env:
+          DEPLOY_REF: deploy/${{ inputs.channel }}/cli
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote --heads origin "$DEPLOY_REF" | awk '{print $1}')"
+          if [ -n "$remote_sha" ]; then
+            git push origin HEAD:"$DEPLOY_REF" --force-with-lease="refs/heads/$DEPLOY_REF:$remote_sha"
+          else
+            git push origin HEAD:"$DEPLOY_REF"
+          fi
+
+      - name: Promote main to deploy branch (stack) (optional)
+        if: inputs.update_deploy_branch && inputs.publish_stack
+        env:
+          DEPLOY_REF: deploy/${{ inputs.channel }}/stack
+        run: |
+          set -euo pipefail
+          remote_sha="$(git ls-remote --heads origin "$DEPLOY_REF" | awk '{print $1}')"
+          if [ -n "$remote_sha" ]; then
+            git push origin HEAD:"$DEPLOY_REF" --force-with-lease="refs/heads/$DEPLOY_REF:$remote_sha"
+          else
+            git push origin HEAD:"$DEPLOY_REF"
+          fi

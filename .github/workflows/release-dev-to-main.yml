@@ -49,6 +49,35 @@ on:
         required: true
         default: true
         type: boolean
+      ui_expo_action:
+        description: "UI Expo action (none|ota|native|native_submit) for the selected environment"
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - ota
+          - native
+          - native_submit
+      ui_expo_profile:
+        description: "UI EAS build profile (auto recommended; if native_submit+preview, uses preview-store)"
+        required: true
+        default: auto
+        type: choice
+        options:
+          - auto
+          - preview
+          - preview-store
+          - production
+      ui_expo_platform:
+        description: "UI Expo native platform"
+        required: true
+        default: ios
+        type: choice
+        options:
+          - ios
+          - android
+          - all
       deploy_server:
         description: "Promote deploy/<env>/server"
         required: true
@@ -69,8 +98,23 @@ on:
         required: true
         default: false
         type: boolean
+      publish_stack:
+        description: "Publish Stack to npm (runs after bump + promotion)"
+        required: true
+        default: false
+        type: boolean
       cli_bump:
         description: "CLI bump for npm publish (ignored if publish_cli=false)"
+        required: true
+        type: choice
+        default: patch
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      stack_bump:
+        description: "Stack bump for npm publish (ignored if publish_stack=false)"
         required: true
         type: choice
         default: patch
@@ -121,6 +165,7 @@ jobs:
       changed_website: ${{ steps.plan.outputs.changed_website }}
       changed_docs: ${{ steps.plan.outputs.changed_docs }}
       changed_shared: ${{ steps.plan.outputs.changed_shared }}
+      changed_stack: ${{ steps.plan.outputs.changed_stack }}
     steps:
       - name: Validate inputs
         run: |
@@ -155,6 +200,11 @@ jobs:
 
           if [ "${{ inputs.publish_cli }}" = "true" ] && [ "${{ inputs.cli_bump }}" = "none" ]; then
             echo "publish_cli=true requires cli_bump != none." >&2
+            exit 1
+          fi
+
+          if [ "${{ inputs.publish_stack }}" = "true" ] && [ "${{ inputs.stack_bump }}" = "none" ]; then
+            echo "publish_stack=true requires stack_bump != none." >&2
             exit 1
           fi
 
@@ -199,6 +249,10 @@ jobs:
           set -euo pipefail
           yarn test
           yarn typecheck
+
+      - name: Stack tests
+        if: inputs.run_checks
+        run: yarn --cwd apps/stack test
 
       - name: Build website
         if: inputs.run_checks && inputs.build_website
@@ -247,12 +301,14 @@ jobs:
           changed_website=false
           changed_docs=false
           changed_shared=false
+          changed_stack=false
 
           while IFS= read -r p; do
             case "$p" in
               apps/ui/*) changed_ui=true ;;
               apps/cli/*) changed_cli=true ;;
               apps/server/*) changed_server=true ;;
+              apps/stack/*) changed_stack=true ;;
               apps/website/*) changed_website=true ;;
               apps/docs/*) changed_docs=true ;;
               packages/agents/*|packages/protocol/*) changed_shared=true ;;
@@ -263,6 +319,7 @@ jobs:
           echo "changed_ui=$changed_ui" >> "$GITHUB_OUTPUT"
           echo "changed_cli=$changed_cli" >> "$GITHUB_OUTPUT"
           echo "changed_server=$changed_server" >> "$GITHUB_OUTPUT"
+          echo "changed_stack=$changed_stack" >> "$GITHUB_OUTPUT"
           echo "changed_website=$changed_website" >> "$GITHUB_OUTPUT"
           echo "changed_docs=$changed_docs" >> "$GITHUB_OUTPUT"
           echo "changed_shared=$changed_shared" >> "$GITHUB_OUTPUT"
@@ -276,11 +333,14 @@ jobs:
             echo "- dry_run: \`${{ inputs.dry_run }}\`"
             echo "- bump: \`${{ inputs.bump }}\`"
             echo "- publish_cli: \`${{ inputs.publish_cli }}\` (cli_bump=\`${{ inputs.cli_bump }}\`)"
+            echo "- publish_stack: \`${{ inputs.publish_stack }}\` (stack_bump=\`${{ inputs.stack_bump }}\`)"
+            echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
             echo ""
             echo "### Changed components (main..dev)"
             echo "- ui: \`$changed_ui\`"
             echo "- cli: \`$changed_cli\`"
             echo "- server: \`$changed_server\`"
+            echo "- stack: \`$changed_stack\`"
             echo "- website: \`$changed_website\`"
             echo "- docs: \`$changed_docs\`"
             echo "- shared (agents/protocol): \`$changed_shared\`"
@@ -308,7 +368,7 @@ jobs:
         id: decide
         run: |
           set -euo pipefail
-          if [ "${{ inputs.bump }}" != "none" ] || [ "${{ inputs.publish_cli }}" = "true" ]; then
+          if [ "${{ inputs.bump }}" != "none" ] || [ "${{ inputs.publish_cli }}" = "true" ] || [ "${{ inputs.publish_stack }}" = "true" ]; then
             echo "should_bump=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_bump=false" >> "$GITHUB_OUTPUT"
@@ -381,6 +441,42 @@ jobs:
             bumped+=("cli")
           fi
 
+          if [ "${{ inputs.publish_stack }}" = "true" ]; then
+            BUMP="${{ inputs.stack_bump }}" node - <<'NODE' >/tmp/bump_stack.txt
+            const fs = require('node:fs');
+            const pkgPath = 'apps/stack/package.json';
+            const bump = String(process.env.BUMP || '').trim();
+
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+            const raw = String(pkg.version ?? '').trim();
+            const m = /^(\d+)\.(\d+)\.(\d+)(?:-.+)?$/.exec(raw);
+            if (!m) throw new Error(`Invalid semver "${raw}"`);
+
+            let major = Number(m[1]);
+            let minor = Number(m[2]);
+            let patch = Number(m[3]);
+
+            if (bump === 'major') {
+              major += 1;
+              minor = 0;
+              patch = 0;
+            } else if (bump === 'minor') {
+              minor += 1;
+              patch = 0;
+            } else if (bump === 'patch') {
+              patch += 1;
+            } else {
+              throw new Error(`Unknown bump "${bump}"`);
+            }
+
+            const next = `${major}.${minor}.${patch}`;
+            pkg.version = next;
+            fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
+            process.stdout.write(`${next}\n`);
+            NODE
+            bumped+=("stack")
+          fi
+
           if [ "${#bumped[@]}" -eq 0 ]; then
             echo "No version bumps requested." >> "$GITHUB_STEP_SUMMARY"
             echo "did_bump=false" >> "$GITHUB_OUTPUT"
@@ -392,7 +488,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add apps/ui/package.json apps/ui/app.config.js apps/server/package.json apps/website/package.json apps/cli/package.json || true
+          git add apps/ui/package.json apps/ui/app.config.js apps/server/package.json apps/website/package.json apps/cli/package.json apps/stack/package.json || true
 
           # Also pick up any tauri version edits if present.
           if [ -d apps/ui/src-tauri ]; then
@@ -413,8 +509,9 @@ jobs:
       allow_cross_promote: false
       bump: none
       deploy_web: true
-      expo_action: none
-      expo_platform: ios
+      expo_action: ${{ inputs.ui_expo_action }}
+      expo_profile: ${{ inputs.ui_expo_profile }}
+      expo_platform: ${{ inputs.ui_expo_platform }}
       run_tests: false
 
   deploy_server:
@@ -452,17 +549,20 @@ jobs:
       allow_cross_promote: false
       run_build: true
 
-  publish_cli:
-    if: inputs.dry_run != true && inputs.publish_cli == true
+  publish_npm:
+    if: inputs.dry_run != true && (inputs.publish_cli == true || inputs.publish_stack == true)
     needs: [checks, promote_main, bump_versions]
-    uses: ./.github/workflows/release-cli.yml
+    uses: ./.github/workflows/release-npm.yml
     secrets: inherit
     with:
+      publish_cli: ${{ inputs.publish_cli }}
+      publish_stack: ${{ inputs.publish_stack }}
       channel: ${{ inputs.environment }}
       bump: none
+      stack_bump: none
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
-      update_deploy_branch: true
+      update_deploy_branch: ${{ inputs.publish_cli || inputs.publish_stack }}
 
   sync_dev:
     if: inputs.dry_run != true && inputs.sync_dev_from_main == true
