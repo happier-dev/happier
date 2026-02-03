@@ -256,11 +256,35 @@ async function cmdPr({ rootDir, argv }) {
 async function main() {
   const rootDir = getRootDir(import.meta.url);
   const argv = process.argv.slice(2);
-  const { flags } = parseArgs(argv);
-  const json = wantsJson(argv, { flags });
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const { flags } = parseArgs(helpScopeArgv);
+  const json = wantsJson(helpScopeArgv, { flags });
 
-  const cmdName = argv.find((a) => !a.startsWith('--')) ?? 'help';
-  if (wantsHelp(argv, { flags }) || cmdName === 'help') {
+  const cmdName = helpScopeArgv.find((a) => a && a !== '--' && !a.startsWith('-')) ?? 'help';
+  const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+
+  const usageByCmd = new Map([
+    ['status', 'hstack contrib status'],
+    ['ensure-dev', 'hstack contrib ensure-dev [--remote=upstream|origin]'],
+    ['sync', 'hstack contrib sync [--remote=upstream|origin] [--hard-reset] [--force]'],
+    ['extract', 'hstack contrib extract <name> [--mode=reset|stack] [--remote=upstream|origin] [--push] [--open]'],
+    ['pr', 'hstack contrib pr <branch> [--open]'],
+  ]);
+
+  if (wantsHelpFlag && cmdName !== 'help') {
+    const usage = usageByCmd.get(cmdName);
+    if (usage) {
+      printResult({
+        json,
+        data: { ok: true, cmd: cmdName, usage },
+        text: [`[contrib ${cmdName}] usage:`, `  ${usage}`, '', 'see also:', '  hstack contrib --help'].join('\n'),
+      });
+      return;
+    }
+  }
+
+  if (wantsHelpFlag || cmdName === 'help') {
     printResult({
       json,
       data: {

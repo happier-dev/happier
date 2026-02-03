@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { parseArgs } from './utils/cli/args.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
+import { getFlagValue } from './utils/cli/arg_values.mjs';
 import { getComponentDir, getComponentRepoDir, getRootDir } from './utils/paths/paths.mjs';
 import { ensureDepsInstalled, requireDir } from './utils/proc/pm.mjs';
 import { run, runCaptureResult } from './utils/proc/proc.mjs';
@@ -114,6 +115,7 @@ async function main() {
   const argv = process.argv.slice(2);
   const { flags, kv } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
+  const testStub = String(process.env.HSTACK_EAS_TEST_STUB ?? '').trim() === '1';
 
   const helpText = [
     '[eas] usage:',
@@ -158,14 +160,6 @@ async function main() {
     return;
   }
 
-  const rootDir = getRootDir(import.meta.url);
-  const happyAppDir = getComponentDir(rootDir, 'happier-ui');
-  const happyRepoDir = getComponentRepoDir(rootDir, 'happier-ui');
-  await requireDir('happier-ui', happyRepoDir);
-
-  // Ensure repo deps exist so app.config.js can be evaluated (plugins import @expo/config-plugins, etc).
-  await ensureDepsInstalled(happyRepoDir, 'happier-ui');
-
   // Passthrough args after "--" (for any subcommand).
   const sepIdx = argv.indexOf('--');
   const extra = sepIdx === -1 ? [] : argv.slice(sepIdx + 1);
@@ -174,6 +168,45 @@ async function main() {
   const isBuildAlias = subcmd === 'ios' || subcmd === 'android';
   const effectiveSubcmd = isBuildAlias ? 'build' : subcmd;
   const aliasPlatform = subcmd === 'ios' ? 'ios' : subcmd === 'android' ? 'android' : '';
+
+  // Test-only mode: allow exercising argument wiring without invoking npx/eas.
+  // This avoids network access + interactive prompts during unit tests.
+  if (testStub) {
+    if (effectiveSubcmd !== 'build') {
+      // For non-build commands, print the forwarded args shape and exit.
+      const afterSubcmd = argv.slice(argv.indexOf(subcmd) + 1);
+      const trimmed = sepIdx === -1 ? afterSubcmd : afterSubcmd.slice(0, afterSubcmd.indexOf('--'));
+      console.log([subcmd, ...trimmed, ...extra].join(' '));
+      return;
+    }
+
+    const platform = isBuildAlias ? aliasPlatform : normalizePlatform(getFlagValue({ argv, kv, flag: '--platform' }));
+    const profile = String(getFlagValue({ argv, kv, flag: '--profile' }) ?? 'production').trim() || 'production';
+    const local = flags.has('--local');
+    const wait = flags.has('--wait');
+    const noWait = flags.has('--no-wait') || !wait;
+    const nonInteractive =
+      flags.has('--non-interactive') ? true : flags.has('--interactive') ? false : !Boolean(process.stdin.isTTY);
+
+    const baseArgs = ['build', '--profile', profile];
+    if (platform) baseArgs.push('--platform', platform);
+    if (local) baseArgs.push('--local');
+    if (noWait) baseArgs.push('--no-wait');
+    if (nonInteractive) baseArgs.push('--non-interactive');
+    baseArgs.push(...extra);
+
+    console.log(baseArgs.join(' '));
+    return;
+  }
+
+  const rootDir = getRootDir(import.meta.url);
+  const happyAppDir = getComponentDir(rootDir, 'happier-ui');
+  const happyRepoDir = getComponentRepoDir(rootDir, 'happier-ui');
+  await requireDir('happier-ui', happyRepoDir);
+
+  // Ensure repo deps exist so app.config.js can be evaluated (plugins import @expo/config-plugins, etc).
+  await ensureDepsInstalled(happyRepoDir, 'happier-ui');
+
   const { cmd: npxCmd, prefixArgs: npxPrefixArgs } = getNpxRunner();
 
   async function easCapture(args, { cwd } = {}) {
@@ -193,10 +226,12 @@ async function main() {
   }
 
   if (effectiveSubcmd === 'env:sync') {
-    const environment = normalizeEasEnvironment(kv.get('--environment') ?? kv.get('--env'));
-    const visibilityRaw = String(kv.get('--visibility') ?? '').trim();
+    const environment = normalizeEasEnvironment(
+      getFlagValue({ argv, kv, flag: '--environment' }) ?? getFlagValue({ argv, kv, flag: '--env' })
+    );
+    const visibilityRaw = String(getFlagValue({ argv, kv, flag: '--visibility' }) ?? '').trim();
     const visibility = visibilityRaw || 'plaintext';
-    const scopeRaw = String(kv.get('--scope') ?? '').trim();
+    const scopeRaw = String(getFlagValue({ argv, kv, flag: '--scope' }) ?? '').trim();
     const scope = scopeRaw || 'project';
     const dryRun = flags.has('--dry-run');
     const showValues = !flags.has('--hide-values');
@@ -306,8 +341,8 @@ async function main() {
     return;
   }
 
-  const platform = isBuildAlias ? aliasPlatform : normalizePlatform(kv.get('--platform'));
-  const profile = String(kv.get('--profile') ?? 'production').trim() || 'production';
+  const platform = isBuildAlias ? aliasPlatform : normalizePlatform(getFlagValue({ argv, kv, flag: '--platform' }));
+  const profile = String(getFlagValue({ argv, kv, flag: '--profile' }) ?? 'production').trim() || 'production';
   const local = flags.has('--local');
   const wait = flags.has('--wait');
   const noWait = flags.has('--no-wait') || !wait;

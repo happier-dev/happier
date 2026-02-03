@@ -83,12 +83,32 @@ async function cmdStatus({ argv }) {
 async function main() {
   const rootDir = getRootDir(import.meta.url);
   const argv = process.argv.slice(2);
-  const { flags } = parseArgs(argv);
-  const positionals = argv.filter((a) => !a.startsWith('--'));
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const { flags } = parseArgs(helpScopeArgv);
+  const positionals = helpScopeArgv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const cmd = positionals[0] ?? 'help';
-  const json = wantsJson(argv, { flags });
+  const json = wantsJson(helpScopeArgv, { flags });
 
-  if (wantsHelp(argv, { flags }) || cmd === 'help') {
+  const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+  const usageByCmd = new Map([
+    ['status', 'hstack srv status [--json]'],
+    ['use', 'hstack srv use <happier-server-light|happier-server> [--json]'],
+  ]);
+
+  if (wantsHelpFlag && cmd !== 'help') {
+    const usage = usageByCmd.get(cmd);
+    if (usage) {
+      printResult({
+        json,
+        data: { ok: true, cmd, usage },
+        text: [`[server-flavor ${cmd}] usage:`, `  ${usage}`, '', 'see also:', '  hstack srv --help'].join('\n'),
+      });
+      return;
+    }
+  }
+
+  if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
       data: { commands: ['status', 'use'] },

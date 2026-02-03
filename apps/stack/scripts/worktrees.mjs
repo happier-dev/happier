@@ -1889,13 +1889,58 @@ async function cmdArchive({ rootDir, argv }) {
 async function main() {
   const rootDir = getRootDir(import.meta.url);
   const argv = process.argv.slice(2);
-  const { flags } = parseArgs(argv);
-  const positionals = argv.filter((a) => !a.startsWith('--'));
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const { flags } = parseArgs(helpScopeArgv);
+  const positionals = helpScopeArgv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const cmd = positionals[0] ?? 'help';
   const interactive = argv.includes('--interactive') || argv.includes('-i');
-  const json = wantsJson(argv, { flags });
+  const json = wantsJson(helpScopeArgv, { flags });
 
-  if (wantsHelp(argv, { flags }) || cmd === 'help') {
+  const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+
+  const usageLines = [
+    'hstack wt sync [--remote=<name>] [--json]',
+    'hstack wt sync-all [--remote=<name>] [--json]',
+    'hstack wt list [--active|--all] [--json]',
+    'hstack wt new <slug> [--category=local|tmp] [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use] [--force] [--interactive|-i] [--json]',
+    'hstack wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]',
+    'hstack wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--stash|--stash-keep] [--force] [--json]',
+    'hstack wt use <main|dev|pr/...|local/...|tmp/...|path> [--force] [--interactive|-i] [--json]',
+    'hstack wt status [worktreeSpec|default|path] [--json]',
+    'hstack wt update [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
+    'hstack wt update-all [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
+    'hstack wt push [worktreeSpec|default|path] [--remote=origin] [--dry-run] [--json]',
+    'hstack wt git [worktreeSpec|active|main|dev|path] -- <git args...> [--json]',
+    'hstack wt shell [worktreeSpec|active|main|dev|path] [--shell=/bin/zsh] [--json]',
+    'hstack wt code [worktreeSpec|active|main|dev|path] [--json]',
+    'hstack wt cursor [worktreeSpec|active|main|dev|path] [--json]',
+    'hstack wt archive <worktreeSpec|active|main|dev|path> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]',
+  ];
+  const usageByCmd = (() => {
+    const map = new Map();
+    for (const line of usageLines) {
+      const parts = line.trim().split(/\s+/);
+      if (parts[0] !== 'hstack' || parts[1] !== 'wt') continue;
+      const c = parts[2] ?? '';
+      if (c) map.set(c, line);
+    }
+    return map;
+  })();
+
+  if (wantsHelpFlag && cmd !== 'help') {
+    const usage = usageByCmd.get(cmd);
+    if (usage) {
+      printResult({
+        json,
+        data: { ok: true, cmd, usage },
+        text: [`[wt ${cmd}] usage:`, `  ${usage}`, '', 'see also:', '  hstack wt --help'].join('\n'),
+      });
+      return;
+    }
+  }
+
+  if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
       data: {
@@ -1904,22 +1949,7 @@ async function main() {
       },
       text: [
         '[wt] usage:',
-        '  hstack wt sync [--remote=<name>] [--json]',
-        '  hstack wt sync-all [--remote=<name>] [--json]',
-        '  hstack wt list [--active|--all] [--json]',
-        '  hstack wt new <slug> [--category=local|tmp] [--from=upstream|origin] [--remote=<name>] [--base=<ref>|--base-worktree=<spec>] [--deps=none|link|install|link-or-install] [--use] [--force] [--interactive|-i] [--json]',
-        '  hstack wt duplicate <fromWorktreeSpec|path|active|default> <newSlug> [--remote=<name>] [--deps=none|link|install|link-or-install] [--use] [--json]',
-        '  hstack wt pr <pr-url|number> [--remote=upstream] [--slug=<name>] [--deps=none|link|install|link-or-install] [--use] [--update] [--stash|--stash-keep] [--force] [--json]',
-        '  hstack wt use <main|dev|pr/...|local/...|tmp/...|path> [--force] [--interactive|-i] [--json]',
-        '  hstack wt status [worktreeSpec|default|path] [--json]',
-        '  hstack wt update [worktreeSpec|default|path] [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
-        '  hstack wt update-all [--remote=upstream] [--base=<ref>] [--rebase|--merge] [--dry-run] [--stash|--stash-keep] [--force] [--json]',
-        '  hstack wt push [worktreeSpec|default|path] [--remote=origin] [--dry-run] [--json]',
-        '  hstack wt git [worktreeSpec|active|main|dev|path] -- <git args...> [--json]',
-        '  hstack wt shell [worktreeSpec|active|main|dev|path] [--shell=/bin/zsh] [--json]',
-        '  hstack wt code [worktreeSpec|active|main|dev|path] [--json]',
-        '  hstack wt cursor [worktreeSpec|active|main|dev|path] [--json]',
-        '  hstack wt archive <worktreeSpec|active|main|dev|path> [--dry-run] [--date=YYYY-MM-DD] [--no-delete-branch] [--detach-stacks] [--json]',
+        ...usageLines.map((l) => `  ${l}`),
         '',
         'selectors:',
         '  (omitted) or "active": current active checkout (env override if set; else <workspace>/main)',

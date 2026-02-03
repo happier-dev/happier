@@ -509,10 +509,39 @@ async function main() {
   }
 
   const argv = process.argv.slice(2);
-  const positionals = argv.filter((a) => !a.startsWith('--'));
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const positionals = helpScopeArgv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const cmd = positionals[0] ?? 'help';
-  const json = wantsJson(argv);
-  if (wantsHelp(argv) || cmd === 'help') {
+  const json = wantsJson(helpScopeArgv);
+
+  const wantsHelpFlag = wantsHelp(helpScopeArgv);
+  const usageByCmd = new Map([
+    ['install', 'hstack service install [--json]'],
+    ['uninstall', 'hstack service uninstall [--json]'],
+    ['status', 'hstack service status [--json]'],
+    ['start', 'hstack service start [--json]'],
+    ['stop', 'hstack service stop [--json]'],
+    ['restart', 'hstack service restart [--json]'],
+    ['enable', 'hstack service enable [--json]'],
+    ['disable', 'hstack service disable [--json]'],
+    ['logs', 'hstack service logs [--json]'],
+    ['tail', 'hstack service tail'],
+  ]);
+
+  if (wantsHelpFlag && cmd !== 'help') {
+    const usage = usageByCmd.get(cmd);
+    if (usage) {
+      printResult({
+        json,
+        data: { ok: true, cmd, usage },
+        text: [`[service ${cmd}] usage:`, `  ${usage}`, '', 'see also:', '  hstack service --help'].join('\n'),
+      });
+      return;
+    }
+  }
+
+  if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
       data: { commands: ['install', 'uninstall', 'status', 'start', 'stop', 'restart', 'enable', 'disable', 'logs', 'tail'] },

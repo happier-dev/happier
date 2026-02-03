@@ -2146,13 +2146,56 @@ async function cmdPortLlm({ kv, flags, json }) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const { flags, kv } = parseArgs(argv);
-  const json = wantsJson(argv, { flags });
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const { flags, kv } = parseArgs(helpScopeArgv);
+  const json = wantsJson(helpScopeArgv, { flags });
 
-  const positionals = argv.filter((a) => !a.startsWith('--'));
+  const positionals = helpScopeArgv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const cmd = positionals[0] || 'help';
   const sub = positionals[1] || '';
-  if (wantsHelp(argv, { flags }) || cmd === 'help') {
+  const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+
+  const usageByPath = new Map([
+    [
+      'port',
+      ['hstack monorepo port --target=/abs/path/to/monorepo [--clone-target] [--target-repo=<git-url>] [--branch=port/<name>] [--base=<ref>] [--onto-current] [--dry-run] [--3way] [--skip-applied] [--continue-on-failure] [--json]'],
+    ],
+    ['port guide', ['hstack monorepo port guide [--target=/abs/path/to/monorepo] [--clone-target] [--target-repo=<git-url>] [--json]']],
+    ['port preflight', ['hstack monorepo port preflight --target=/abs/path/to/monorepo [--base=<ref>] [--3way] [--json]']],
+    ['port status', ['hstack monorepo port status [--target=/abs/path/to/monorepo] [--json]']],
+    ['port continue', ['hstack monorepo port continue [--target=/abs/path/to/monorepo] [--json]']],
+    [
+      'port llm',
+      [
+        'hstack monorepo port llm --target=/abs/path/to/monorepo [--copy] [--launch] [--json]',
+        '  [--from-happy=/abs/path/to/old-happy --from-happy-base=<ref> --from-happy-ref=<ref>]',
+        '  [--from-happy-cli=/abs/path/to/old-happy-cli --from-happy-cli-base=<ref> --from-happy-cli-ref=<ref>]',
+        '  [--from-happy-server=/abs/path/to/old-happy-server --from-happy-server-base=<ref> --from-happy-server-ref=<ref>]',
+      ],
+    ],
+  ]);
+
+  if (wantsHelpFlag && cmd !== 'help') {
+    const key = sub ? `${cmd} ${sub}` : cmd;
+    const lines = usageByPath.get(key);
+    if (lines?.length) {
+      printResult({
+        json,
+        data: { ok: true, cmd, sub: sub || null, usage: lines[0] ?? null },
+        text: [
+          `[monorepo ${key}] usage:`,
+          ...lines.map((l) => `  ${l}`),
+          '',
+          'see also:',
+          '  hstack monorepo --help',
+        ].join('\n'),
+      });
+      return;
+    }
+  }
+
+  if (wantsHelpFlag || cmd === 'help') {
     printResult({ json, data: {}, text: usage() });
     return;
   }
