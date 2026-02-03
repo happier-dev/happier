@@ -49,5 +49,8 @@
             "**/react-native-incall-manager/**"
         ]
     },
+    "resolutions": {
+        "@tauri-apps/api": "2.8.0"
+    },
     "packageManager": "yarn@1.22.22"
 }

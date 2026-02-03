@@ -10,6 +10,7 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { ensureExpoIsolationEnv, getExpoStatePaths, wantsExpoClearCache } from './utils/expo/expo.mjs';
 import { expoExec } from './utils/expo/command.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
+import { applyStackTauriOverrides } from './utils/tauri/stack_overrides.mjs';
 
 /**
  * Build a lightweight static web UI bundle (no Expo dev server).
@@ -211,18 +212,7 @@ async function main() {
 
   // Build a separate "local" app so it doesn't reuse previous storage (server URL, auth, etc).
   // This avoids needing any changes in the Happy source code to override a previously saved server.
-  tauriConfig.identifier = process.env.HAPPIER_STACK_TAURI_IDENTIFIER?.trim()
-    ? process.env.HAPPIER_STACK_TAURI_IDENTIFIER.trim()
-    : 'com.happier.stack';
-  tauriConfig.productName = process.env.HAPPIER_STACK_TAURI_PRODUCT_NAME?.trim()
-    ? process.env.HAPPIER_STACK_TAURI_PRODUCT_NAME.trim()
-    : 'hstack';
-  if (tauriConfig.app?.windows?.length) {
-    tauriConfig.app.windows = tauriConfig.app.windows.map((w) => ({
-      ...w,
-      title: tauriConfig.productName ?? w.title,
-    }));
-  }
+  applyStackTauriOverrides({ tauriConfig, env: process.env });
 
   if (tauriDebug) {
     // Enable devtools in debug builds (useful for troubleshooting connectivity).
