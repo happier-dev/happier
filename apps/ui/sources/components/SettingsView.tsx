@@ -1,4 +1,4 @@
-import { View, ScrollView, Pressable, Platform, Linking, Text as RNText, ActivityIndicator } from 'react-native';
+import { View, Pressable, Platform, Linking, Text as RNText, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import * as React from 'react';
 import { Text } from '@/components/StyledText';
@@ -6,26 +6,23 @@ import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import Constants from 'expo-constants';
-import { useAuth } from '@/auth/AuthContext';
 import { Typography } from "@/constants/Typography";
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useConnectTerminal } from '@/hooks/useConnectTerminal';
-import { useEntitlement, useLocalSettingMutable, useSetting } from '@/sync/storage';
+import { useAuth } from '@/auth/AuthContext';
+import { useEntitlement, useLocalSettingMutable, useSetting, useAllMachines, useProfile } from '@/sync/storage';
 import { sync } from '@/sync/sync';
-import { isUsingCustomServer } from '@/sync/serverConfig';
 import { trackPaywallButtonClicked, trackWhatsNewClicked } from '@/track';
 import { Modal } from '@/modal';
 import { useMultiClick } from '@/hooks/useMultiClick';
-import { useAllMachines } from '@/sync/storage';
 import { isMachineOnline } from '@/utils/machineUtils';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/layout';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { getGitHubOAuthParams, disconnectGitHub } from '@/sync/apiGithub';
 import { disconnectService } from '@/sync/apiServices';
-import { useProfile } from '@/sync/storage';
 import { getDisplayName, getAvatarUrl, getBio } from '@/sync/profile';
 import { Avatar } from '@/components/Avatar';
 import { t } from '@/text';
@@ -44,7 +41,6 @@ export const SettingsView = React.memo(function SettingsView() {
     const expUsageReporting = useSetting('expUsageReporting');
     const useProfiles = useSetting('useProfiles');
     const terminalUseTmux = useSetting('sessionUseTmux');
-    const isCustomServer = isUsingCustomServer();
     const allMachines = useAllMachines();
     const profile = useProfile();
     const displayName = getDisplayName(profile);
@@ -54,6 +50,8 @@ export const SettingsView = React.memo(function SettingsView() {
 
     const anthropicAgentId = resolveAgentIdFromConnectedServiceId('anthropic') ?? DEFAULT_AGENT_ID;
     const anthropicAgentCore = getAgentCore(anthropicAgentId);
+
+    const showHiddenSettingsButtons = devModeEnabled;
 
     const { connectTerminal, connectWithUrl, isLoading } = useConnectTerminal();
     const [refreshingMachines, refreshMachines] = useHappyAction(async () => {
@@ -133,10 +131,10 @@ export const SettingsView = React.memo(function SettingsView() {
             t('modals.developerMode'),
             newDevMode ? t('modals.developerModeEnabled') : t('modals.developerModeDisabled')
         );
-    }, {
-        requiredClicks: 10,
-        resetTimeout: 2000
-    });
+	    }, {
+	        requiredClicks: 10,
+	        resetTimeout: 2000
+	    });
 
     // Connection status
     const isGitHubConnected = !!profile.github;
@@ -191,9 +189,10 @@ export const SettingsView = React.memo(function SettingsView() {
     });
 
 
-    return (
 
-        <ItemList style={{ paddingTop: 0 }}>
+	    return (
+
+	        <ItemList style={{ paddingTop: 0 }}>
             {/* App Info Header */}
             <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                 <View style={{ alignItems: 'center', paddingVertical: 24, backgroundColor: theme.colors.surface, marginTop: 16, borderRadius: 12, marginHorizontal: 16 }}>
@@ -258,65 +257,70 @@ export const SettingsView = React.memo(function SettingsView() {
                         }}
                         showChevron={false}
                     />
-                </ItemGroup>
-            )}
+	                </ItemGroup>
+	            )}
 
-            {/* Support Us */}
-            <ItemGroup>
-                <Item
-                    title={t('settings.supportUs')}
-                    subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
-                    icon={<Ionicons name="heart" size={29} color="#FF3B30" />}
-                    showChevron={false}
-                    onPress={isPro ? undefined : handleSubscribe}
-                />
-            </ItemGroup>
+	            {/* Hidden / unfinished buttons (toggle via Developer Mode) */}
+	            {showHiddenSettingsButtons && (
+	                <>
+	                    {/* Support Us */}
+	                    <ItemGroup>
+	                        <Item
+	                            title={t('settings.supportUs')}
+	                            subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
+	                            icon={<Ionicons name="heart" size={29} color="#FF3B30" />}
+	                            showChevron={false}
+	                            onPress={isPro ? undefined : handleSubscribe}
+	                        />
+	                    </ItemGroup>
 
-            <ItemGroup title={t('settings.connectedAccounts')}>
-                <Item
-                    title={anthropicAgentCore.connectedService.name}
-                    subtitle={isAnthropicConnected
-                        ? t('settingsAccount.statusActive')
-                        : t('settings.connectAccount')
-                    }
-                    icon={
-                        <Image
-                            source={getAgentIconSource(anthropicAgentId)}
-                            style={{ width: 29, height: 29 }}
-                            tintColor={getAgentIconTintColor(anthropicAgentId, theme)}
-                            contentFit="contain"
-                        />
-                    }
-                    onPress={isAnthropicConnected ? handleDisconnectAnthropic : connectAnthropic}
-                    loading={connectingAnthropic || disconnectingAnthropic}
-                    showChevron={false}
-                />
-                <Item
-                    title={t('settings.github')}
-                    subtitle={isGitHubConnected
-                        ? t('settings.githubConnected', { login: profile.github?.login! })
-                        : (githubUnavailableReason ?? t('settings.connectGithubAccount'))
-                    }
-                    icon={
-                        <Ionicons
-                            name="logo-github"
-                            size={29}
-                            color={isGitHubConnected ? theme.colors.status.connected : theme.colors.textSecondary}
-                        />
-                    }
-                    onPress={isGitHubConnected
-                        ? handleDisconnectGitHub
-                        : (githubUnavailableReason ? undefined : connectGitHub)
-                    }
-                    loading={connectingGitHub || disconnectingGitHub}
-                    showChevron={false}
-                />
-            </ItemGroup>
+	                    <ItemGroup title={t('settings.connectedAccounts')}>
+	                        <Item
+	                            title={anthropicAgentCore.connectedService.name}
+	                            subtitle={isAnthropicConnected
+	                                ? t('settingsAccount.statusActive')
+	                                : t('settings.connectAccount')
+	                            }
+	                            icon={
+	                                <Image
+	                                    source={getAgentIconSource(anthropicAgentId)}
+	                                    style={{ width: 29, height: 29 }}
+	                                    tintColor={getAgentIconTintColor(anthropicAgentId, theme)}
+	                                    contentFit="contain"
+	                                />
+	                            }
+	                            onPress={isAnthropicConnected ? handleDisconnectAnthropic : connectAnthropic}
+	                            loading={connectingAnthropic || disconnectingAnthropic}
+	                            showChevron={false}
+	                        />
+	                        <Item
+	                            title={t('settings.github')}
+	                            subtitle={isGitHubConnected
+	                                ? t('settings.githubConnected', { login: profile.github?.login! })
+	                                : (githubUnavailableReason ?? t('settings.connectGithubAccount'))
+	                            }
+	                            icon={
+	                                <Ionicons
+	                                    name="logo-github"
+	                                    size={29}
+	                                    color={isGitHubConnected ? theme.colors.status.connected : theme.colors.textSecondary}
+	                                />
+	                            }
+	                            onPress={isGitHubConnected
+	                                ? handleDisconnectGitHub
+	                                : (githubUnavailableReason ? undefined : connectGitHub)
+	                            }
+	                            loading={connectingGitHub || disconnectingGitHub}
+	                            showChevron={false}
+	                        />
+	                    </ItemGroup>
+	                </>
+	            )}
 
-            {/* Social */}
-            {/* <ItemGroup title={t('settings.social')}>
-                <Item
-                    title={t('navigation.friends')}
+	            {/* Social */}
+	            {/* <ItemGroup title={t('settings.social')}>
+	                <Item
+	                    title={t('navigation.friends')}
                     subtitle={t('friends.manageFriends')}
                     icon={<Ionicons name="people-outline" size={29} color="#007AFF" />}
                     onPress={() => router.push('/friends')}
