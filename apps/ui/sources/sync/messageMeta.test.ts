@@ -9,6 +9,7 @@ describe('buildOutgoingMessageMeta', () => {
             appendSystemPrompt: 'PROMPT',
         });
 
+        expect(meta.source).toBe('ui');
         expect(meta.sentFrom).toBe('web');
         expect(meta.permissionMode).toBe('default');
         expect(meta.appendSystemPrompt).toBe('PROMPT');
@@ -24,6 +25,7 @@ describe('buildOutgoingMessageMeta', () => {
             appendSystemPrompt: 'PROMPT',
         });
 
+        expect(meta.source).toBe('ui');
         expect(meta.model).toBe('gemini-2.5-pro');
         expect('model' in meta).toBe(true);
     });
@@ -36,6 +38,7 @@ describe('buildOutgoingMessageMeta', () => {
             displayText: '',
         });
 
+        expect(meta.source).toBe('ui');
         expect('displayText' in meta).toBe(true);
         expect(meta.displayText).toBe('');
     });
@@ -48,6 +51,7 @@ describe('buildOutgoingMessageMeta', () => {
             fallbackModel: 'gemini-2.5-flash',
         });
 
+        expect(meta.source).toBe('ui');
         expect('fallbackModel' in meta).toBe(true);
         expect(meta.fallbackModel).toBe('gemini-2.5-flash');
     });

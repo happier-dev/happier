@@ -238,6 +238,14 @@ export type SessionMessage = z.infer<typeof SessionMessageSchema>
  */
 export const MessageMetaSchema = z.object({
   sentFrom: z.string().optional(), // Source identifier
+  /**
+   * High-level origin of the message. This is used to prevent reliability features
+   * (ACK, retries, local mirroring) from accidentally turning self-sent CLI writes
+   * into inbound "user prompt" events.
+   *
+   * Forward-compatible: unknown strings are allowed.
+   */
+  source: z.union([z.enum(['cli', 'ui']), z.string()]).optional(),
   permissionMode: z.enum(PERMISSION_MODES).optional(), // Permission mode for this message
   model: z.string().nullable().optional(), // Model name for this message (null = reset)
   fallbackModel: z.string().nullable().optional(), // Fallback model for this message (null = reset)

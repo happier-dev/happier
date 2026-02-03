@@ -389,6 +389,64 @@ describe('claudeLocalLauncher', () => {
     session.cleanup();
   });
 
+  it('returns switch (not exit) when Claude is terminated during app-triggered local→remote switch', async () => {
+    const sendSessionEvent = vi.fn();
+    const client = {
+      keepAlive: vi.fn(),
+      updateMetadata: vi.fn(),
+      rpcHandlerManager: { registerHandler: vi.fn() },
+      sendClaudeSessionMessage: vi.fn(),
+      sendSessionEvent,
+      peekPendingMessageQueueV1Preview: vi.fn(() => ({ count: 0, preview: [] })),
+      discardPendingMessageQueueV1All: vi.fn().mockResolvedValue(0),
+    } as any;
+
+    const session = new Session({
+      api: {} as any,
+      client,
+      path: '/tmp',
+      logPath: '/tmp/log',
+      sessionId: null,
+      mcpServers: {},
+      messageQueue: new MessageQueue2<any>(() => 'mode'),
+      onModeChange: () => {},
+      hookSettingsPath: '/tmp/hooks.json',
+    });
+
+    // Avoid switch waiting on hook data in test; simulate known session.
+    session.onSessionFound('sess_1', { transcript_path: '/tmp/sess_1.jsonl' } as any);
+
+    mockCreateSessionScanner.mockResolvedValue({
+      cleanup: vi.fn(async () => {}),
+      onNewSession: vi.fn(),
+    });
+
+    const { ExitCodeError } = await import('./claudeLocal');
+
+    // Simulate Claude exiting with SIGTERM (143) in response to the abort signal used for switching modes.
+    mockClaudeLocal.mockImplementationOnce(async (opts: any) => {
+      await new Promise<void>((resolve) => {
+        if (opts.abort?.aborted) return resolve();
+        opts.abort?.addEventListener('abort', () => resolve(), { once: true });
+      });
+      throw new ExitCodeError(143);
+    });
+
+    const { claudeLocalLauncher } = await import('./claudeLocalLauncher');
+    const launcherPromise = claudeLocalLauncher(session);
+
+    while (mockClaudeLocal.mock.calls.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    // Message coming from the app triggers local→remote switch (aborts local Claude spawn).
+    session.queue.push('hello from app', { permissionMode: 'default' });
+
+    await expect(launcherPromise).resolves.toEqual({ type: 'switch' });
+
+    session.cleanup();
+  });
+
   it('declines remote→local switch when queued messages exist and user does not confirm discard', async () => {
     const sendSessionEvent = vi.fn();
     const client = {
