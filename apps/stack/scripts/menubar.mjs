@@ -66,11 +66,34 @@ function removeSwiftbarPlugins({ patterns }) {
 async function main() {
   const rawArgv = process.argv.slice(2);
   const argv = rawArgv[0] === 'menubar' ? rawArgv.slice(1) : rawArgv;
-  const { flags } = parseArgs(argv);
-  const json = wantsJson(argv, { flags });
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const { flags } = parseArgs(helpScopeArgv);
+  const json = wantsJson(helpScopeArgv, { flags });
 
-  const cmd = argv.find((a) => !a.startsWith('--')) || 'help';
-  if (wantsHelp(argv, { flags }) || cmd === 'help') {
+  const cmd = helpScopeArgv.find((a) => a && a !== '--' && !a.startsWith('-')) || 'help';
+  const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+  const usageByCmd = new Map([
+    ['install', 'hstack menubar install [--json]'],
+    ['uninstall', 'hstack menubar uninstall [--json]'],
+    ['open', 'hstack menubar open [--json]'],
+    ['mode', 'hstack menubar mode <selfhost|dev> [--json]'],
+    ['status', 'hstack menubar status [--json]'],
+  ]);
+
+  if (wantsHelpFlag && cmd !== 'help') {
+    const usage = usageByCmd.get(cmd);
+    if (usage) {
+      printResult({
+        json,
+        data: { ok: true, cmd, usage },
+        text: [`[menubar ${cmd}] usage:`, `  ${usage}`, '', 'see also:', '  hstack menubar --help'].join('\n'),
+      });
+      return;
+    }
+  }
+
+  if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
       data: { commands: ['install', 'uninstall', 'open', 'mode', 'status'] },

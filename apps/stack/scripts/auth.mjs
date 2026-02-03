@@ -1314,11 +1314,35 @@ async function cmdLogin({ argv, json }) {
 
 async function main() {
   const argv = process.argv.slice(2);
-  const { flags } = parseArgs(argv);
-  const json = wantsJson(argv, { flags });
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const { flags } = parseArgs(helpScopeArgv);
+  const json = wantsJson(helpScopeArgv, { flags });
 
-  const cmd = argv.find((a) => !a.startsWith('--')) || 'status';
-  if (wantsHelp(argv, { flags }) || cmd === 'help') {
+  const cmd = helpScopeArgv.find((a) => a && a !== '--' && !a.startsWith('-')) || 'status';
+  const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+
+  const usageByCmd = new Map([
+    ['status', 'hstack auth status [--json]'],
+    ['login', 'hstack auth login [--identity=<name>] [--no-open] [--force] [--print] [--json]'],
+    ['seed', 'hstack auth seed [name=dev-auth] [--login|--no-login] [--server=...] [--skip-default-seed] [--non-interactive] [--json]'],
+    ['copy-from', 'hstack auth copy-from <sourceStack|legacy> --all [--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]'],
+    ['dev-key', 'hstack auth dev-key [--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]'],
+  ]);
+
+  if (wantsHelpFlag && cmd !== 'help') {
+    const usage = usageByCmd.get(cmd);
+    if (usage) {
+      printResult({
+        json,
+        data: { ok: true, cmd, usage },
+        text: [`[auth ${cmd}] usage:`, `  ${usage}`, '', 'see also:', '  hstack auth --help'].join('\n'),
+      });
+      return;
+    }
+  }
+
+  if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
       data: { commands: ['status', 'login', 'seed', 'copy-from', 'dev-key'], stackScoped: 'hstack stack auth <name> status|login|copy-from' },

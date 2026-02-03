@@ -3204,6 +3204,182 @@ function normalizeStackNameFirstArgs(argv) {
   return next;
 }
 
+const STACK_HELP_USAGE_LINES = [
+  'hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] [--repo=default|dev|<owner/...>|<path>] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>] [--interactive] [--non-interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
+  'hstack stack edit <name> --interactive [--json]',
+  'hstack stack list [--json]',
+  'hstack stack audit [--fix] [--fix-main] [--fix-ports] [--fix-workspace] [--fix-paths] [--unpin-ports] [--unpin-ports-except=stack1,stack2] [--json]',
+  'hstack stack archive <name> [--dry-run] [--date=YYYY-MM-DD] [--json]',
+  'hstack stack duplicate <from> <to> [--duplicate-worktrees] [--deps=none|link|install|link-or-install] [--json]',
+  'hstack stack info <name> [--json]',
+  'hstack stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--dev|--start] [--json] [-- ...]',
+  'hstack stack create-dev-auth-seed [name] [--server=happier-server|happier-server-light] [--login|--no-login] [--skip-default-seed] [--non-interactive] [--json]',
+  'hstack stack daemon <name> start|stop|restart|status [--json]',
+  'hstack stack happier <name> [-- ...]',
+  'hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
+  'hstack stack auth <name> status|login|copy-from [--json]',
+  'hstack stack dev <name> [-- ...]',
+  'hstack stack start <name> [-- ...]',
+  'hstack stack build <name> [-- ...]',
+  'hstack stack review <name> [component...] [--reviewers=coderabbit,codex] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--json]',
+  'hstack stack typecheck <name> [component...] [--json]',
+  'hstack stack lint <name> [component...] [--json]',
+  'hstack stack test <name> [component...] [--json]',
+  'hstack stack doctor <name> [-- ...]',
+  'hstack stack mobile <name> [-- ...]',
+  'hstack stack mobile:install <name> [--name="Happier (exp1)"] [--device=...] [--json]',
+  'hstack stack mobile-dev-client <name> --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]',
+  'hstack stack resume <name> <sessionId...> [--json]',
+  'hstack stack stop <name> [--aggressive] [--sweep-owned] [--no-docker] [--json]',
+  'hstack stack code <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
+  'hstack stack cursor <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
+  'hstack stack open <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]   # prefer Cursor, else VS Code',
+  'hstack stack srv <name> -- status|use ...',
+  'hstack stack wt <name> -- <wt args...>',
+  'hstack stack tailscale:status|enable|disable|url <name> [-- ...]',
+  'hstack stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
+  'hstack stack service:* <name>   # legacy alias',
+];
+
+const STACK_HELP_COMMANDS = [
+  'new',
+  'edit',
+  'list',
+  'audit',
+  'archive',
+  'duplicate',
+  'info',
+  'pr',
+  'create-dev-auth-seed',
+  'daemon',
+  'eas',
+  'happier',
+  'env',
+  'auth',
+  'dev',
+  'start',
+  'build',
+  'review',
+  'typecheck',
+  'lint',
+  'test',
+  'doctor',
+  'mobile',
+  'mobile:install',
+  'mobile-dev-client',
+  'resume',
+  'stop',
+  'code',
+  'cursor',
+  'open',
+  'srv',
+  'wt',
+  'tailscale:*',
+  'service:*',
+];
+
+const STACK_HELP_USAGE_BY_CMD = (() => {
+  const map = new Map();
+  for (const line of STACK_HELP_USAGE_LINES) {
+    const parts = line.trim().split(/\s+/);
+    if (parts[0] !== 'hstack' || parts[1] !== 'stack') continue;
+    const c = parts[2] ?? '';
+    if (c) map.set(c, line);
+  }
+  return map;
+})();
+
+function renderStackRootHelpText() {
+  return ['[stack] usage:', ...STACK_HELP_USAGE_LINES.map((l) => `  ${l}`)].join('\n');
+}
+
+function renderStackSubcommandHelpText(cmd) {
+  const c = (cmd ?? '').toString().trim();
+  if (!c) return null;
+
+  const lines = [];
+  const direct = STACK_HELP_USAGE_BY_CMD.get(c);
+  if (direct) lines.push(direct);
+  else if (c.startsWith('tailscale:')) lines.push(STACK_HELP_USAGE_BY_CMD.get('tailscale:status|enable|disable|url'));
+  else if (c.startsWith('service:')) lines.push(STACK_HELP_USAGE_BY_CMD.get('service:*') || STACK_HELP_USAGE_BY_CMD.get('service'));
+
+  const filtered = lines.filter(Boolean);
+  if (!filtered.length) return null;
+
+  return [`[stack ${c}] usage:`, ...filtered.map((l) => `  ${l}`), '', 'see also:', '  hstack stack --help'].join('\n');
+}
+
+async function maybePrintDelegatedStackHelp({ rootDir, cmd, stackName, json }) {
+  const c = (cmd ?? '').toString().trim();
+  if (!c) return false;
+
+  const helpScriptByCmd = new Map([
+    ['dev', 'dev.mjs'],
+    ['start', 'run.mjs'],
+    ['build', 'build.mjs'],
+    ['typecheck', 'typecheck.mjs'],
+    ['lint', 'lint.mjs'],
+    ['test', 'test.mjs'],
+    ['review', 'review.mjs'],
+    ['doctor', 'doctor.mjs'],
+    ['mobile', 'mobile.mjs'],
+    ['mobile-dev-client', 'mobile_dev_client.mjs'],
+  ]);
+
+  const script = helpScriptByCmd.get(c);
+  if (!script) return false;
+
+  const usageLine = STACK_HELP_USAGE_BY_CMD.get(c) ?? null;
+  const stackExtraFlags =
+    c === 'build' || c === 'typecheck' || c === 'lint' || c === 'test' || c === 'review'
+      ? ['--repo=default|main|active|dev|<owner/...>|<path>', '--repo-dir=<path>']
+      : c === 'dev' || c === 'start'
+        ? ['--background', '--bg']
+        : [];
+
+  // In --json mode, avoid mixing multiple JSON outputs; emit a single wrapper JSON payload.
+  if (json) {
+    printResult({
+      json,
+      data: { ok: true, cmd: c, stackName: stackName || null, usage: usageLine, stackFlags: stackExtraFlags, delegatedHelp: script },
+      text: null,
+    });
+    return true;
+  }
+
+  const headerLines = [
+    `[stack ${c}] usage:`,
+    ...(usageLine ? [`  ${usageLine}`] : []),
+    ...(stackExtraFlags.length
+      ? [
+          '',
+          'stack-only flags:',
+          ...stackExtraFlags.map((f) => `  ${f}`),
+        ]
+      : []),
+    '',
+    `${c} flags (delegated):`,
+    '',
+  ];
+  process.stdout.write(headerLines.join('\n') + '\n');
+
+  const runHelp = async (env) => {
+    await run(process.execPath, [join(rootDir, 'scripts', script), '--help'], { cwd: rootDir, env });
+  };
+
+  if (stackName && stackExistsSync(stackName)) {
+    await withStackEnv({
+      stackName,
+      fn: async ({ env }) => {
+        await runHelp(env);
+      },
+    });
+  } else {
+    await runHelp(process.env);
+  }
+  return true;
+}
+
 async function main() {
   const rootDir = getRootDir(import.meta.url);
   // Some callers pass an extra leading `--` when forwarding args into scripts. Normalize it away so
@@ -3212,12 +3388,16 @@ async function main() {
   const argv0 = rawArgv[0] === '--' ? rawArgv.slice(1) : rawArgv;
   const argv = normalizeStackNameFirstArgs(argv0);
 
-  const { flags } = parseArgs(argv);
-  const positionals = argv.filter((a) => !a.startsWith('--'));
-  const cmd = positionals[0] || 'help';
-  const json = wantsJson(argv, { flags });
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
 
-  const wantsHelpFlag = wantsHelp(argv, { flags });
+  const { flags } = parseArgs(helpScopeArgv);
+  const json = wantsJson(helpScopeArgv, { flags });
+
+  const positionals = helpScopeArgv.filter((a) => a && a !== '--' && !a.startsWith('-'));
+  const cmd = positionals[0] || 'help';
+  const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+  const stackNameForHelp = stackNameFromArg(positionals, 1);
   // Subcommand-specific help (so `hstack stack eas --help` works).
   if (wantsHelpFlag && cmd === 'eas') {
     const stackName = stackNameFromArg(positionals, 1);
@@ -3251,84 +3431,30 @@ async function main() {
     await cmdStackDaemon({ rootDir, stackName, argv: passthrough, json });
     return;
   }
+  if (wantsHelpFlag && cmd !== 'help') {
+    const handled = await maybePrintDelegatedStackHelp({ rootDir, cmd, stackName: stackNameForHelp, json });
+    if (handled) {
+      return;
+    }
+  }
+  if (wantsHelpFlag && cmd !== 'help') {
+    const text = renderStackSubcommandHelpText(cmd);
+    if (text) {
+      printResult({
+        json,
+        data: { ok: true, cmd, usage: STACK_HELP_USAGE_BY_CMD.get(cmd) ?? null },
+        text,
+      });
+      return;
+    }
+  }
   if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
       data: {
-        commands: [
-          'new',
-          'edit',
-          'list',
-          'audit',
-          'archive',
-          'duplicate',
-          'info',
-          'pr',
-          'create-dev-auth-seed',
-          'daemon',
-          'eas',
-          'happier',
-          'env',
-          'auth',
-          'dev',
-          'start',
-          'build',
-          'review',
-          'typecheck',
-          'lint',
-          'test',
-          'doctor',
-          'mobile',
-        'mobile:install',
-        'mobile-dev-client',
-          'resume',
-          'stop',
-          'code',
-          'cursor',
-          'open',
-          'srv',
-          'wt',
-          'tailscale:*',
-          'service:*',
-        ],
+        commands: STACK_HELP_COMMANDS,
       },
-      text: [
-        '[stack] usage:',
-        '  hstack stack new <name> [--port=NNN] [--server=happier-server|happier-server-light] [--repo=default|dev|<owner/...>|<path>] [--db-provider=pglite|sqlite|postgres|mysql] [--database-url=<url>] [--interactive] [--non-interactive] [--copy-auth-from=<stack>] [--no-copy-auth] [--force-port] [--json]',
-        '  hstack stack edit <name> --interactive [--json]',
-        '  hstack stack list [--json]',
-        '  hstack stack audit [--fix] [--fix-main] [--fix-ports] [--fix-workspace] [--fix-paths] [--unpin-ports] [--unpin-ports-except=stack1,stack2] [--json]',
-        '  hstack stack archive <name> [--dry-run] [--date=YYYY-MM-DD] [--json]',
-        '  hstack stack duplicate <from> <to> [--duplicate-worktrees] [--deps=none|link|install|link-or-install] [--json]',
-        '  hstack stack info <name> [--json]',
-        '  hstack stack pr <name> --repo=<pr-url|number> [--server-flavor=light|full] [--dev|--start] [--json] [-- ...]',
-        '  hstack stack create-dev-auth-seed [name] [--server=happier-server|happier-server-light] [--login|--no-login] [--skip-default-seed] [--non-interactive] [--json]',
-        '  hstack stack daemon <name> start|stop|restart|status [--json]',
-        '  hstack stack happier <name> [-- ...]',
-        '  hstack stack env <name> set KEY=VALUE [KEY2=VALUE2...] | unset KEY [KEY2...] | get KEY | list | path [--json]',
-        '  hstack stack auth <name> status|login|copy-from [--json]',
-        '  hstack stack dev <name> [-- ...]',
-        '  hstack stack start <name> [-- ...]',
-        '  hstack stack build <name> [-- ...]',
-        '  hstack stack review <name> [component...] [--reviewers=coderabbit,codex] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--json]',
-        '  hstack stack typecheck <name> [component...] [--json]',
-        '  hstack stack lint <name> [component...] [--json]',
-        '  hstack stack test <name> [component...] [--json]',
-        '  hstack stack doctor <name> [-- ...]',
-        '  hstack stack mobile <name> [-- ...]',
-        '  hstack stack mobile:install <name> [--name="Happier (exp1)"] [--device=...] [--json]',
-        '  hstack stack mobile-dev-client <name> --install [--device=...] [--clean] [--configuration=Debug|Release] [--json]',
-        '  hstack stack resume <name> <sessionId...> [--json]',
-        '  hstack stack stop <name> [--aggressive] [--sweep-owned] [--no-docker] [--json]',
-        '  hstack stack code <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
-        '  hstack stack cursor <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]',
-        '  hstack stack open <name> [--no-stack-dir] [--include-all-components] [--include-cli-home] [--json]   # prefer Cursor, else VS Code',
-        '  hstack stack srv <name> -- status|use ...',
-        '  hstack stack wt <name> -- <wt args...>',
-        '  hstack stack tailscale:status|enable|disable|url <name> [-- ...]',
-        '  hstack stack service <name> <install|uninstall|status|start|stop|restart|enable|disable|logs|tail>',
-        '  hstack stack service:* <name>   # legacy alias',
-      ].join('\n'),
+      text: renderStackRootHelpText(),
     });
     return;
   }

@@ -392,11 +392,33 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
   const argv = process.argv.slice(2);
 
-  const { flags } = parseArgs(argv);
-  const cmd = argv.find((a) => !a.startsWith('--')) ?? 'help';
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const { flags } = parseArgs(helpScopeArgv);
+  const cmd = helpScopeArgv.find((a) => a && a !== '--' && !a.startsWith('-')) ?? 'help';
 
-  if (wantsHelp(argv, { flags }) || cmd === 'help') {
-    const json = wantsJson(argv, { flags });
+  const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+  const json = wantsJson(helpScopeArgv, { flags });
+  const usageByCmd = new Map([
+    ['status', 'hstack self status [--no-check] [--json]'],
+    ['update', 'hstack self update [--to=<version>] [--json]'],
+    ['check', 'hstack self check [--quiet] [--json]'],
+    ['use-cli', 'hstack self use-cli default|main|dev|/abs/path/to/apps/stack [--json]'],
+  ]);
+
+  if (wantsHelpFlag && cmd !== 'help') {
+    const usage = usageByCmd.get(cmd);
+    if (usage) {
+      printResult({
+        json,
+        data: { ok: true, cmd, usage },
+        text: [`[self ${cmd}] usage:`, `  ${usage}`, '', 'see also:', '  hstack self --help'].join('\n'),
+      });
+      return;
+    }
+  }
+
+  if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
       data: { commands: ['status', 'update', 'check', 'use-cli'], flags: ['--no-check', '--to=<version>', '--quiet'] },

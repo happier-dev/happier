@@ -293,13 +293,33 @@ async function ensureShellInstall({ homeDir, shell }) {
 async function main() {
   const rawArgv = process.argv.slice(2);
   const argv = rawArgv[0] === 'completion' ? rawArgv.slice(1) : rawArgv;
-  const { flags, kv } = parseArgs(argv);
-  const json = wantsJson(argv, { flags });
+  const helpSepIdx = argv.indexOf('--');
+  const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const { flags, kv } = parseArgs(helpScopeArgv);
+  const json = wantsJson(helpScopeArgv, { flags });
 
-  const positionals = argv.filter((a) => !a.startsWith('--'));
+  const positionals = helpScopeArgv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const cmd = positionals[0] ?? 'help';
 
-  if (wantsHelp(argv, { flags }) || cmd === 'help') {
+  const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+  const usageByCmd = new Map([
+    ['print', 'hstack completion print [--shell=zsh|bash|fish] [--json]'],
+    ['install', 'hstack completion install [--shell=zsh|bash|fish] [--json]'],
+  ]);
+
+  if (wantsHelpFlag && cmd !== 'help') {
+    const usage = usageByCmd.get(cmd);
+    if (usage) {
+      printResult({
+        json,
+        data: { ok: true, cmd, usage },
+        text: [`[completion ${cmd}] usage:`, `  ${usage}`, '', 'see also:', '  hstack completion --help'].join('\n'),
+      });
+      return;
+    }
+  }
+
+  if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
       data: { commands: ['print', 'install'], flags: ['--shell=zsh|bash|fish', '--json'] },
