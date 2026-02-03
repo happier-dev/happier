@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 reviews:
   profile: chill
   request_changes_workflow: true
@@ -18,7 +19,7 @@ chat:
   auto_reply: true
 knowledge_base:
   learnings:
-    scope: project
+    scope: local
 language: en-US
 early_access: false
 path_instructions:
