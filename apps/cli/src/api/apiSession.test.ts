@@ -687,6 +687,84 @@ describe('ApiSessionClient connection handling', () => {
 	        );
 	    });
 
+        it('does not emit user-message events when committing outbound CLI user messages (ACK is not a prompt)', async () => {
+            const sessionSocket: any = {
+                connected: true,
+                connect: vi.fn(),
+                on: vi.fn(),
+                off: vi.fn(),
+                disconnect: vi.fn(),
+                close: vi.fn(),
+                emit: vi.fn(),
+                timeout: vi.fn().mockReturnThis(),
+                emitWithAck: vi.fn().mockResolvedValue({
+                    ok: true,
+                    id: 'msg-1',
+                    seq: 1,
+                    localId: 'local-1',
+                }),
+            };
+
+            const userSocket: any = {
+                connected: false,
+                connect: vi.fn(),
+                on: vi.fn(),
+                off: vi.fn(),
+                disconnect: vi.fn(),
+                close: vi.fn(),
+                emit: vi.fn(),
+            };
+
+            mockIo.mockReset();
+            mockIo
+                .mockImplementationOnce(() => sessionSocket)
+                .mockImplementationOnce(() => userSocket);
+
+            const client = new ApiSessionClient('fake-token', mockSession);
+
+            const onUserMessageEvent = vi.fn();
+            client.on('user-message', onUserMessageEvent);
+
+            await client.sendUserTextMessageCommitted('hello', { localId: 'local-1' });
+
+            expect(onUserMessageEvent).not.toHaveBeenCalled();
+        });
+
+        it('does not deliver self-sent CLI user messages to onUserMessage callback (prevents ACK echo loops)', async () => {
+            const client = new ApiSessionClient('fake-token', mockSession);
+
+            const onUserMessage = vi.fn();
+            client.onUserMessage(onUserMessage);
+
+            const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
+            expect(typeof updateHandler).toBe('function');
+
+            const plaintext = {
+                role: 'user',
+                content: { type: 'text', text: 'hello from cli' },
+                meta: { sentFrom: 'cli' },
+            };
+            const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+            updateHandler({
+                id: 'update-2',
+                seq: 2,
+                createdAt: Date.now(),
+                body: {
+                    t: 'new-message',
+                    sid: mockSession.id,
+                    message: {
+                        id: 'msg-2',
+                        seq: 2,
+                        localId: 'local-2',
+                        content: { t: 'encrypted', c: encrypted },
+                    },
+                },
+            } as any);
+
+            expect(onUserMessage).not.toHaveBeenCalled();
+        });
+
 				    it('waitForMetadataUpdate resolves when session metadata updates', async () => {
 				        const client = new ApiSessionClient('fake-token', mockSession);
 
@@ -916,10 +994,10 @@ describe('ApiSessionClient connection handling', () => {
                 });
             });
 
-			    it('clears messageQueueV1 inFlight after server ACK (no broadcast required)', async () => {
-				        const sessionSocket: any = {
-				            connected: true,
-				            connect: vi.fn(),
+				    it('clears messageQueueV1 inFlight after server ACK (no broadcast required)', async () => {
+					        const sessionSocket: any = {
+					            connected: true,
+					            connect: vi.fn(),
 				            on: vi.fn(),
 				            off: vi.fn(),
 				            disconnect: vi.fn(),
@@ -1017,14 +1095,161 @@ describe('ApiSessionClient connection handling', () => {
 			        expect(emitWithAck).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'local-p1' }));
 
 			        // Allow queued async clear to run.
-			        await new Promise((r) => setTimeout(r, 0));
-			        expect(emitWithAck).toHaveBeenCalledTimes(3);
-			    });
+				        await new Promise((r) => setTimeout(r, 0));
+				        expect(emitWithAck).toHaveBeenCalledTimes(3);
+				    });
 
-            it('recovers an already-inFlight queued message by fetching the transcript (no server echo required)', async () => {
-                const sessionSocket: any = {
-                    connected: true,
-                    connect: vi.fn(),
+                    it('does not double-deliver a queued message when a user-scoped broadcast arrives before the message ACK', async () => {
+                        const sessionSocket: any = {
+                            connected: true,
+                            connect: vi.fn(),
+                            on: vi.fn(),
+                            off: vi.fn(),
+                            disconnect: vi.fn(),
+                            timeout: vi.fn().mockReturnThis(),
+                            emit: vi.fn(),
+                        };
+
+                        const userSocket: any = {
+                            connected: true,
+                            connect: vi.fn(),
+                            on: vi.fn(),
+                            off: vi.fn(),
+                            disconnect: vi.fn(),
+                            emit: vi.fn(),
+                        };
+
+                        const plaintext = {
+                            role: 'user',
+                            content: { type: 'text', text: 'hello' },
+                            meta: { source: 'ui' },
+                        };
+                        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+                        const metadataBase = {
+                            ...mockSession.metadata,
+                            messageQueueV1: {
+                                v: 1,
+                                queue: [{
+                                    localId: 'local-p1',
+                                    message: encrypted,
+                                    createdAt: 1,
+                                    updatedAt: 1,
+                                }],
+                                inFlight: null,
+                            },
+                        };
+
+                        let resolveAck: ((value: any) => void) | null = null;
+                        const ackPromise = new Promise((resolve) => {
+                            resolveAck = resolve;
+                        });
+
+                        const emitWithAck = vi.fn()
+                            // 1) claim succeeds
+                            .mockResolvedValueOnce({
+                                result: 'success',
+                                version: 1,
+                                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
+                                    ...metadataBase,
+                                    messageQueueV1: {
+                                        v: 1,
+                                        queue: [],
+                                        inFlight: {
+                                            localId: 'local-p1',
+                                            message: encrypted,
+                                            createdAt: 1,
+                                            updatedAt: 1,
+                                            claimedAt: 100,
+                                        },
+                                    },
+                                })),
+                            })
+                            // 2) message ACK is delayed (we'll deliver a user-scoped update first)
+                            .mockImplementationOnce(async () => ackPromise)
+                            // 3) clear succeeds
+                            .mockResolvedValueOnce({
+                                result: 'success',
+                                version: 2,
+                                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
+                                    ...metadataBase,
+                                    messageQueueV1: {
+                                        v: 1,
+                                        queue: [],
+                                        inFlight: null,
+                                    },
+                                })),
+                            })
+                            // Any unexpected extra metadata updates: keep returning a cleared state.
+                            .mockResolvedValue({
+                                result: 'success',
+                                version: 3,
+                                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
+                                    ...metadataBase,
+                                    messageQueueV1: {
+                                        v: 1,
+                                        queue: [],
+                                        inFlight: null,
+                                    },
+                                })),
+                            });
+
+                        sessionSocket.emitWithAck = emitWithAck;
+
+                        mockIo.mockReset();
+                        mockIo
+                            .mockImplementationOnce(() => sessionSocket)
+                            .mockImplementationOnce(() => userSocket);
+
+                        const client = new ApiSessionClient('fake-token', {
+                            ...mockSession,
+                            metadata: metadataBase,
+                        });
+
+                        const onUserMessage = vi.fn();
+                        client.onUserMessage(onUserMessage);
+
+                        const popPromise = client.popPendingMessage();
+
+                        await vi.waitFor(() => {
+                            expect(emitWithAck).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'local-p1' }));
+                        });
+
+                        const updateHandler = (userSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
+                        expect(typeof updateHandler).toBe('function');
+
+                        updateHandler({
+                            id: 'update-1',
+                            seq: 1,
+                            createdAt: Date.now(),
+                            body: {
+                                t: 'new-message',
+                                sid: mockSession.id,
+                                message: {
+                                    id: 'msg-2',
+                                    seq: 2,
+                                    localId: 'local-p1',
+                                    content: { t: 'encrypted', c: encrypted },
+                                },
+                            },
+                        } as any);
+
+                        resolveAck?.({
+                            ok: true,
+                            id: 'msg-2',
+                            seq: 2,
+                            localId: 'local-p1',
+                        });
+
+                        const popped = await popPromise;
+                        expect(popped).toBe(true);
+                        expect(onUserMessage).toHaveBeenCalledTimes(1);
+                    });
+
+	            it('recovers an already-inFlight queued message by fetching the transcript (no server echo required)', async () => {
+	                const sessionSocket: any = {
+	                    connected: true,
+	                    connect: vi.fn(),
                     on: vi.fn(),
                     off: vi.fn(),
                     disconnect: vi.fn(),

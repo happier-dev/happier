@@ -4,6 +4,13 @@ import { PERMISSION_MODES } from '@/constants/PermissionModes';
 // Shared message metadata schema
 export const MessageMetaSchema = z.object({
     sentFrom: z.string().optional(), // Source identifier
+    /**
+     * High-level origin of the message, used by agents to avoid treating
+     * self-sent client traffic as a "new prompt" event.
+     *
+     * Forward-compatible: unknown strings are allowed.
+     */
+    source: z.union([z.enum(['ui', 'cli']), z.string()]).optional(),
     permissionMode: z.enum(PERMISSION_MODES).optional(), // Permission mode for this message
     model: z.string().nullable().optional(), // Model name for this message (null = reset)
     fallbackModel: z.string().nullable().optional(), // Fallback model for this message (null = reset)

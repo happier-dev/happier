@@ -183,6 +183,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 const sid = typeof data?.sid === 'string' ? data.sid : null;
                 const message = typeof data?.message === 'string' ? data.message : null;
                 const localId = typeof data?.localId === 'string' ? data.localId : null;
+                const echoToSender = data?.echoToSender === true;
 
                 if (!sid || !message) {
                     socketMessageAckCounter.inc({ result: 'error', error: 'invalid-params' });
@@ -221,7 +222,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                         userId: participantUserId,
                         payload,
                         recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
-                        skipSenderConnection: participantUserId === userId ? connection : undefined,
+                        skipSenderConnection: participantUserId === userId && !echoToSender ? connection : undefined,
                     });
                 }));
             } catch (error) {

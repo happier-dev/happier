@@ -168,6 +168,25 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
         expect(callback).toHaveBeenCalledWith({ ok: true, id: "m1", seq: 55, localId: "l1" });
     });
 
+    it("does not skip sender connection when echoToSender is requested (opt-in)", async () => {
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+
+        const socket = new FakeSocket();
+        const connection = { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any;
+        sessionUpdateHandler("owner", socket as any, connection);
+
+        const handler = socket.handlers.get("message");
+        expect(typeof handler).toBe("function");
+
+        await handler({ sid: "s1", message: "enc", localId: "l1", echoToSender: true });
+
+        const ownerCall = emitUpdate.mock.calls
+            .map((c) => c[0])
+            .find((payload) => payload?.userId === "owner");
+        expect(ownerCall).toBeTruthy();
+        expect(ownerCall.skipSenderConnection).toBeUndefined();
+    });
+
     it("does not require a callback for socket message ACK (old clients)", async () => {
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 

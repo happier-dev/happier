@@ -2,7 +2,7 @@ import { logger } from '@/ui/logger'
 import { EventEmitter } from 'node:events'
 import axios from 'axios';
 import { Socket } from 'socket.io-client'
-import { AgentState, ClientToServerEvents, MessageContent, Metadata, ServerToClientEvents, Session, SessionMessageContentSchema, Update, UserMessage, UserMessageSchema, Usage } from './types'
+import { AgentState, ClientToServerEvents, MessageAckResponseSchema, MessageContent, Metadata, ServerToClientEvents, Session, SessionMessageContentSchema, Update, UserMessage, UserMessageSchema, Usage } from './types'
 import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { configuration } from '@/configuration';
@@ -373,13 +373,18 @@ export class ApiSessionClient extends EventEmitter {
 
                 logger.debugLargeJson('[SOCKET] [UPDATE] Received update:', bodyWithLocalId)
 
-                // Try to parse as user message first
-                const userResult = UserMessageSchema.safeParse(bodyWithLocalId);
-                if (userResult.success) {
-                    if (this.pendingMessageCallback) {
-                        this.pendingMessageCallback(userResult.data);
-                    } else {
-                        this.pendingMessages.push(userResult.data);
+	                // Try to parse as user message first
+	                const userResult = UserMessageSchema.safeParse(bodyWithLocalId);
+	                if (userResult.success) {
+	                    const sentFrom = userResult.data.meta?.sentFrom;
+	                    const source = userResult.data.meta?.source;
+	                    const shouldDeliverToAgent = source !== 'cli' && sentFrom !== 'cli';
+	                    if (shouldDeliverToAgent) {
+	                        if (this.pendingMessageCallback) {
+	                            this.pendingMessageCallback(userResult.data);
+	                        } else {
+                            this.pendingMessages.push(userResult.data);
+                        }
                     }
                     this.emit('user-message', userResult.data);
                     void this.maybeClearPendingInFlight(userResult.data.localId ?? null);
@@ -839,12 +844,7 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         this.pendingMaterializedLocalIds.add(localId);
-
-        type MessageAck =
-            | { ok: true; id: string; seq: number; localId: string | null }
-            | { ok: false; error: string };
-
-        const ack: MessageAck | null = await (async () => {
+        const ack = await (async () => {
             try {
                 const raw = await this.socket
                     .timeout(7_500)
@@ -854,15 +854,8 @@ export class ApiSessionClient extends EventEmitter {
                         localId,
                     }) as unknown;
 
-                if (!raw || typeof raw !== 'object') return null;
-                const record = raw as any;
-                if (record.ok === true && typeof record.id === 'string' && typeof record.seq === 'number') {
-                    return { ok: true, id: record.id, seq: record.seq, localId: typeof record.localId === 'string' ? record.localId : null };
-                }
-                if (record.ok === false && typeof record.error === 'string') {
-                    return { ok: false, error: record.error };
-                }
-                return null;
+                const parsed = MessageAckResponseSchema.safeParse(raw);
+                return parsed.success ? parsed.data : null;
             } catch {
                 return null;
             }
@@ -873,24 +866,8 @@ export class ApiSessionClient extends EventEmitter {
             this.pendingMaterializedLocalIds.delete(localId);
             this.maybeScheduleUserSocketDisconnect();
             await this.maybeClearPendingInFlight(localId);
-
-            const update: Update = {
-                id: `acked-${localId}`,
-                seq: 0,
-                createdAt: Date.now(),
-                body: {
-                    t: 'new-message',
-                    sid: this.sessionId,
-                    message: {
-                        id: ack.id,
-                        seq: ack.seq,
-                        localId: ack.localId ?? undefined,
-                        content: { t: 'encrypted', c: params.encryptedMessage },
-                    },
-                },
-            } as Update;
-
-            this.handleUpdate(update, { source: 'session-scoped' });
+            // ACK confirms persistence. Do not inject a synthetic update here: outbound sends are not prompts.
+            this.lastObservedMessageSeq = Math.max(this.lastObservedMessageSeq, ack.seq);
             return;
         }
 
@@ -970,7 +947,8 @@ export class ApiSessionClient extends EventEmitter {
                     text: body.message.content
                 },
                 meta: {
-                    sentFrom: 'cli'
+                    sentFrom: 'cli',
+                    source: 'cli',
                 }
             }
         } else {
@@ -982,7 +960,8 @@ export class ApiSessionClient extends EventEmitter {
                     data: body  // This wraps the entire Claude message
                 },
                 meta: {
-                    sentFrom: 'cli'
+                    sentFrom: 'cli',
+                    source: 'cli',
                 }
             };
         }
@@ -1067,7 +1046,8 @@ export class ApiSessionClient extends EventEmitter {
                 data: normalizedBody  // This wraps the entire Codex message
             },
             meta: {
-                sentFrom: 'cli'
+                sentFrom: 'cli',
+                source: 'cli',
             }
         };
 
@@ -1207,6 +1187,7 @@ export class ApiSessionClient extends EventEmitter {
             },
             meta: {
                 sentFrom: 'cli',
+                source: 'cli',
                 ...(opts?.meta && typeof opts.meta === 'object' ? opts.meta : {}),
             }
         };
@@ -1243,6 +1224,7 @@ export class ApiSessionClient extends EventEmitter {
             content: { type: 'text', text },
             meta: {
                 sentFrom: 'cli',
+                source: 'cli',
                 ...(opts?.meta && typeof opts.meta === 'object' ? opts.meta : {}),
             },
         };
@@ -1264,6 +1246,7 @@ export class ApiSessionClient extends EventEmitter {
             content: { type: 'text', text },
             meta: {
                 sentFrom: 'cli',
+                source: 'cli',
                 ...(opts?.meta && typeof opts.meta === 'object' ? opts.meta : {}),
             },
         };
@@ -1387,6 +1370,7 @@ export class ApiSessionClient extends EventEmitter {
             },
             meta: {
                 sentFrom: 'cli',
+                source: 'cli',
                 ...(opts?.meta && typeof opts.meta === 'object' ? opts.meta : {}),
             },
         };
@@ -1841,17 +1825,18 @@ export class ApiSessionClient extends EventEmitter {
             // Materialize the pending item into the transcript via the normal message pipeline.
             // This is idempotent because SessionMessage has a unique (sessionId, localId) constraint.
             this.pendingMaterializedLocalIds.add(inFlightLocalId);
-            type MessageAck =
-                | { ok: true; id: string; seq: number; localId: string | null }
-                | { ok: false; error: string };
-
-            const ack = await this.socket
+            const rawAck = await this.socket
                 .timeout(7_500)
                 .emitWithAck('message', {
                     sid: this.sessionId,
                     message: inFlight.message,
                     localId: inFlightLocalId,
-                }) as MessageAck;
+                }) as unknown;
+
+            const ack = (() => {
+                const parsed = MessageAckResponseSchema.safeParse(rawAck);
+                return parsed.success ? parsed.data : null;
+            })();
 
             if (ack && ack.ok === true) {
                 // We have a post-commit ACK from the server. We can safely clear the inFlight marker

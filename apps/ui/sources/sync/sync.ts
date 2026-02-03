@@ -74,6 +74,7 @@ import { planSyncActionsFromChanges } from './changesPlanner';
 import { applyPlannedChangeActions } from './changesApplier';
 import { runSocketReconnectCatchUpViaChanges } from './socketReconnectViaChanges';
 import { socketEmitWithAckFallback } from './engine/socketEmitWithAckFallback';
+import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
 import {
     buildUpdatedSessionFromSocketUpdate,
     fetchAndApplySessions,
@@ -475,10 +476,6 @@ class Sync {
                 log.log(`Session ${sessionId} not ready after timeout, sending anyway`);
             }
 
-            type MessageAck =
-                | { ok: true; id: string; seq: number; localId: string | null }
-                | { ok: false; error: string };
-
             const payload = {
                 sid: sessionId,
                 message: encryptedRawRecord,
@@ -487,8 +484,8 @@ class Sync {
                 permissionMode: permissionMode || 'default'
             };
 
-            const ack = await socketEmitWithAckFallback<MessageAck>({
-                emitWithAck: (event, payload, opts) => apiSocket.emitWithAck<MessageAck>(event, payload, opts),
+            const rawAck = await socketEmitWithAckFallback<MessageAckResponse>({
+                emitWithAck: (event, payload, opts) => apiSocket.emitWithAck<MessageAckResponse>(event, payload, opts),
                 send: (event, payload) => apiSocket.send(event, payload),
                 event: 'message',
                 payload,
@@ -496,7 +493,16 @@ class Sync {
                 onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
             });
 
-            if (!ack) return;
+            if (!rawAck) return;
+
+            const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
+            if (!parsedAck.success) {
+                // Treat malformed ACKs as "no ACK": keep the pending bubble and retry later.
+                this.schedulePendingMessageCommitRetry({ sessionId, localId });
+                return;
+            }
+
+            const ack = parsedAck.data;
 
             if (ack.ok !== true) {
                 storage.getState().removePendingMessage(sessionId, localId);
@@ -575,10 +581,6 @@ class Sync {
                 return;
             }
 
-            type MessageAck =
-                | { ok: true; id: string; seq: number; localId: string | null }
-                | { ok: false; error: string };
-
             const encrypted = await sessionEncryption.encryptRawRecord(pending.rawRecord as RawRecord);
             const payload = {
                 sid: params.sessionId,
@@ -588,21 +590,23 @@ class Sync {
                 permissionMode: 'default',
             };
 
-            const ack = await (async () => {
+            const rawAck = await (async () => {
                 try {
-                    return await apiSocket.emitWithAck<MessageAck>('message', payload, { timeoutMs: 7_500 });
+                    return await apiSocket.emitWithAck<MessageAckResponse>('message', payload, { timeoutMs: 7_500 });
                 } catch {
                     return null;
                 }
             })();
 
-            if (ack && typeof ack === 'object' && ack.ok === true) {
+            const ack = rawAck ? MessageAckResponseSchema.safeParse(rawAck) : null;
+
+            if (ack?.success && ack.data.ok === true) {
                 storage.getState().removePendingMessage(params.sessionId, params.localId);
-                const committed = normalizeRawMessage(ack.id, params.localId, pending.createdAt, pending.rawRecord as RawRecord);
+                const committed = normalizeRawMessage(ack.data.id, params.localId, pending.createdAt, pending.rawRecord as RawRecord);
                 if (committed) {
                     this.applyMessages(params.sessionId, [committed]);
                 }
-                this.markSessionMaterializedMaxSeq(params.sessionId, ack.seq);
+                this.markSessionMaterializedMaxSeq(params.sessionId, ack.data.seq);
 
                 const currentSession = storage.getState().sessions[params.sessionId];
                 if (currentSession) {
@@ -610,7 +614,7 @@ class Sync {
                         {
                             ...currentSession,
                             updatedAt: nowServerMs(),
-                            seq: Math.max(currentSession.seq ?? 0, ack.seq),
+                            seq: Math.max(currentSession.seq ?? 0, ack.data.seq),
                         }
                     ]);
                 }

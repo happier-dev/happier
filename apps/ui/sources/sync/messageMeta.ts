@@ -9,6 +9,7 @@ export function buildOutgoingMessageMeta(params: {
     displayText?: string;
 }): MessageMeta {
     return {
+        source: 'ui',
         sentFrom: params.sentFrom,
         permissionMode: params.permissionMode,
         appendSystemPrompt: params.appendSystemPrompt,
