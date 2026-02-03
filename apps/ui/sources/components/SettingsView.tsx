@@ -486,7 +486,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.privacyPolicy')}
                     icon={<Ionicons name="shield-checkmark-outline" size={29} color="#007AFF" />}
                     onPress={async () => {
-                        const url = 'https://github.com/happier-dev/happier/blob/main/apps/ui/PRIVACY.md';
+                        const url = 'https://docs.happier.dev/legal/privacy';
                         const supported = await Linking.canOpenURL(url);
                         if (supported) {
                             await Linking.openURL(url);
@@ -497,7 +497,7 @@ export const SettingsView = React.memo(function SettingsView() {
                     title={t('settings.termsOfService')}
                     icon={<Ionicons name="document-text-outline" size={29} color="#007AFF" />}
                     onPress={async () => {
-                        const url = 'https://github.com/happier-dev/happier/blob/main/apps/ui/TERMS.md';
+                        const url = 'https://docs.happier.dev/legal/terms';
                         const supported = await Linking.canOpenURL(url);
                         if (supported) {
                             await Linking.openURL(url);
