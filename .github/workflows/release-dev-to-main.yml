@@ -4,53 +4,63 @@ on:
   workflow_dispatch:
     inputs:
       run_checks:
-        description: "Run release checks (tests/typecheck/builds/CLI smoke). Disable if you already validated this SHA."
+        description: "Checks — Run release checks (tests/typecheck/builds/CLI smoke). Disable if you already validated this SHA."
         required: true
         default: true
         type: boolean
-      environment:
-        description: "Deploy environment (deploy/<env>/*)"
+      cli_smoke_linux:
+        description: "Checks — Run CLI smoke test on Linux"
         required: true
-        type: choice
-        default: preview
-        options:
-          - preview
-          - production
+        default: true
+        type: boolean
+      build_website:
+        description: "Checks — Build website as part of release checks"
+        required: true
+        default: true
+        type: boolean
+      build_docs:
+        description: "Checks — Build docs as part of release checks"
+        required: true
+        default: true
+        type: boolean
+      dry_run:
+        description: "Safety — Run checks and show plan, but do not push/deploy"
+        required: true
+        default: false
+        type: boolean
       promote_mode:
-        description: "How to update main from dev"
+        description: "Promotion — How to update main from dev"
         required: true
         type: choice
         default: fast_forward
         options:
           - fast_forward
           - reset
-      dry_run:
-        description: "Run checks and show plan, but do not push/deploy"
-        required: true
-        default: false
-        type: boolean
       allow_reset:
-        description: "Required when promote_mode=reset (rewrites main history)"
+        description: "Promotion — Required when promote_mode=reset (rewrites main history)"
         required: true
         default: false
         type: boolean
-      bump:
-        description: "Version bump to apply (only for changed components)"
+      sync_dev_from_main:
+        description: "Promotion — Fast-forward dev to main after version bumps (keeps future releases fast-forwardable)"
+        required: true
+        default: true
+        type: boolean
+      environment:
+        description: "Deploy — Target environment (deploy/<env>/*)"
         required: true
         type: choice
-        default: none
+        default: preview
         options:
-          - none
-          - patch
-          - minor
-          - major
+          - preview
+          - production
       deploy_ui:
-        description: "Promote deploy/<env>/ui"
+        description: "Deploy — Promote deploy/<env>/ui (web deploy on push)"
         required: true
         default: true
         type: boolean
       ui_expo_action:
-        description: "UI Expo action (none|ota|native|native_submit) for the selected environment"
+        description: "Deploy — UI Expo action (none|ota|native|native_submit) for the selected environment"
         required: true
         default: none
         type: choice
@@ -60,7 +70,7 @@ on:
           - native
           - native_submit
       ui_expo_profile:
-        description: "UI EAS build profile (auto recommended)"
+        description: "Deploy — UI EAS build profile (auto recommended)"
         required: true
         default: auto
         type: choice
@@ -69,7 +79,7 @@ on:
           - preview
           - production
       ui_expo_platform:
-        description: "UI Expo native platform"
+        description: "Deploy — UI Expo native platform"
         required: true
         default: ios
         type: choice
@@ -78,32 +88,37 @@ on:
           - android
           - all
       deploy_server:
-        description: "Promote deploy/<env>/server"
+        description: "Deploy — Promote deploy/<env>/server"
         required: true
         default: true
         type: boolean
       deploy_website:
-        description: "Promote deploy/<env>/website"
+        description: "Deploy — Promote deploy/<env>/website"
         required: true
         default: true
         type: boolean
       deploy_docs:
-        description: "Promote deploy/<env>/docs"
+        description: "Deploy — Promote deploy/<env>/docs"
         required: true
         default: true
         type: boolean
-      publish_cli:
-        description: "Publish CLI to npm (runs after bump + promotion)"
+      bump:
+        description: "Versions — Version bump to apply (only for changed components)"
         required: true
-        default: false
-        type: boolean
-      publish_stack:
-        description: "Publish Stack to npm (runs after bump + promotion)"
+        type: choice
+        default: none
+        options:
+          - none
+          - patch
+          - minor
+          - major
+      publish_cli:
+        description: "Publish — Publish CLI to npm (runs after bump + promotion)"
         required: true
         default: false
         type: boolean
       cli_bump:
-        description: "CLI bump for npm publish (ignored if publish_cli=false)"
+        description: "Publish — CLI bump for npm publish (ignored if publish_cli=false)"
         required: true
         type: choice
         default: patch
@@ -112,8 +127,13 @@ on:
           - patch
           - minor
           - major
+      publish_stack:
+        description: "Publish — Publish Stack to npm (runs after bump + promotion)"
+        required: true
+        default: false
+        type: boolean
       stack_bump:
-        description: "Stack bump for npm publish (ignored if publish_stack=false)"
+        description: "Publish — Stack bump for npm publish (ignored if publish_stack=false)"
         required: true
         type: choice
         default: patch
@@ -122,30 +142,13 @@ on:
           - patch
           - minor
           - major
-      cli_smoke_linux:
-        description: "Run CLI smoke test on Linux"
-        required: true
-        default: true
-        type: boolean
-      build_docs:
-        description: "Build docs as part of release checks"
-        required: true
-        default: true
-        type: boolean
-      build_website:
-        description: "Build website as part of release checks"
-        required: true
-        default: true
-        type: boolean
-      sync_dev_from_main:
-        description: "Fast-forward dev to main after version bumps (keeps future releases fast-forwardable)"
-        required: true
-        default: true
-        type: boolean
       confirm:
-        description: "Type exactly: release dev to main (or: reset main from dev)"
+        description: "Confirm — Choose the exact action"
         required: true
-        type: string
+        type: choice
+        options:
+          - release dev to main
+          - reset main from dev
 
 permissions:
   contents: read
@@ -292,6 +295,7 @@ jobs:
           dev_sha="$(git rev-parse HEAD)"
           main_sha="$(git rev-parse origin/main)"
 
+          commit_count="$(git rev-list --count "$main_sha..$dev_sha" 2>/dev/null || echo 0)"
           git diff --name-only "$main_sha..$dev_sha" > /tmp/changed_paths.txt || true
 
           changed_ui=false
@@ -335,6 +339,8 @@ jobs:
             echo "- publish_stack: \`${{ inputs.publish_stack }}\` (stack_bump=\`${{ inputs.stack_bump }}\`)"
             echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
             echo ""
+            echo "- commits to release (main..dev): \`$commit_count\`"
+            echo ""
             echo "### Changed components (main..dev)"
             echo "- ui: \`$changed_ui\`"
             echo "- cli: \`$changed_cli\`"
@@ -343,6 +349,135 @@ jobs:
             echo "- website: \`$changed_website\`"
             echo "- docs: \`$changed_docs\`"
             echo "- shared (agents/protocol): \`$changed_shared\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy_plan:
+    name: deploy_plan (main → deploy branches)
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [checks, promote_main, bump_versions]
+    outputs:
+      deploy_ui_needed: ${{ steps.plan.outputs.deploy_ui_needed }}
+      deploy_server_needed: ${{ steps.plan.outputs.deploy_server_needed }}
+      deploy_website_needed: ${{ steps.plan.outputs.deploy_website_needed }}
+      deploy_docs_needed: ${{ steps.plan.outputs.deploy_docs_needed }}
+    steps:
+      - name: Create GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+
+      - name: Compute deploy plan (deploy/<env>/* behind main?)
+        id: plan
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          DEPLOY_UI: ${{ inputs.deploy_ui }}
+          DEPLOY_SERVER: ${{ inputs.deploy_server }}
+          DEPLOY_WEBSITE: ${{ inputs.deploy_website }}
+          DEPLOY_DOCS: ${{ inputs.deploy_docs }}
+        run: |
+          set -euo pipefail
+
+          env_name="${ENVIRONMENT}"
+
+          main_ref="main"
+          main_sha="$(git rev-parse HEAD)"
+          git fetch origin "${main_ref}" --prune --tags
+          main_sha="$(git rev-parse "origin/${main_ref}")"
+
+          ui_ref="deploy/${env_name}/ui"
+          server_ref="deploy/${env_name}/server"
+          website_ref="deploy/${env_name}/website"
+          docs_ref="deploy/${env_name}/docs"
+
+          git fetch origin "${ui_ref}" "${server_ref}" "${website_ref}" "${docs_ref}" --prune || true
+
+          plan_one() {
+            local key="$1"
+            local deploy_ref="$2"
+            local enabled="$3"
+            shift 3
+            local -a patterns=("$@")
+
+            local deploy_sha=""
+            deploy_sha="$(git rev-parse "origin/${deploy_ref}" 2>/dev/null || true)"
+            if [ -z "${deploy_sha:-}" ]; then
+              printf -v "${key}_needed" '%s' "false"
+              printf -v "${key}_commits" '%s' "0"
+              printf -v "${key}_relevant_changes" '%s' "false"
+              echo "${key}_needed=false" >> "$GITHUB_OUTPUT"
+              echo "${key}_commits=0" >> "$GITHUB_OUTPUT"
+              return 0
+            fi
+
+            local commits=""
+            commits="$(git rev-list --count "${deploy_sha}..${main_sha}" 2>/dev/null || echo 0)"
+
+            local base=""
+            base="$(git merge-base "${deploy_sha}" "${main_sha}" 2>/dev/null || true)"
+            if [ -z "${base:-}" ]; then
+              base="${deploy_sha}"
+            fi
+
+            local changed=false
+            if [ "${commits}" != "0" ]; then
+              git diff --name-only "${base}..${main_sha}" > "/tmp/changed_${key}.txt" || true
+              while IFS= read -r p; do
+                for pat in "${patterns[@]}"; do
+                  case "$p" in
+                    $pat) changed=true ;;
+                    *) ;;
+                  esac
+                  if [ "${changed}" = "true" ]; then
+                    break
+                  fi
+                done
+                if [ "${changed}" = "true" ]; then
+                  break
+                fi
+              done < "/tmp/changed_${key}.txt"
+            fi
+
+            local needed=false
+            if [ "${enabled}" = "true" ] && [ "${commits}" != "0" ] && [ "${changed}" = "true" ]; then
+              needed=true
+            fi
+
+            printf -v "${key}_needed" '%s' "${needed}"
+            printf -v "${key}_commits" '%s' "${commits}"
+            printf -v "${key}_relevant_changes" '%s' "${changed}"
+
+            echo "${key}_needed=${needed}" >> "$GITHUB_OUTPUT"
+            echo "${key}_commits=${commits}" >> "$GITHUB_OUTPUT"
+            echo "${key}_relevant_changes=${changed}" >> "$GITHUB_OUTPUT"
+          }
+
+          plan_one "deploy_ui" "${ui_ref}" "${DEPLOY_UI}" "apps/ui/*" "packages/agents/*" "packages/protocol/*"
+          plan_one "deploy_server" "${server_ref}" "${DEPLOY_SERVER}" "apps/server/*" "packages/agents/*" "packages/protocol/*"
+          plan_one "deploy_website" "${website_ref}" "${DEPLOY_WEBSITE}" "apps/website/*"
+          plan_one "deploy_docs" "${docs_ref}" "${DEPLOY_DOCS}" "apps/docs/*"
+
+          {
+            echo "## Deploy plan (main → deploy branches)"
+            echo ""
+            echo "- environment: \`${env_name}\`"
+            echo "- origin/main: \`${main_sha}\`"
+            echo ""
+            echo "| component | enabled | deploy ref | commits behind | relevant changes | will run |"
+            echo "|---|---:|---|---:|---:|---:|"
+            echo "| ui | \`${DEPLOY_UI}\` | \`${ui_ref}\` | \`${deploy_ui_commits}\` | \`${deploy_ui_relevant_changes}\` | \`${deploy_ui_needed}\` |"
+            echo "| server | \`${DEPLOY_SERVER}\` | \`${server_ref}\` | \`${deploy_server_commits}\` | \`${deploy_server_relevant_changes}\` | \`${deploy_server_needed}\` |"
+            echo "| website | \`${DEPLOY_WEBSITE}\` | \`${website_ref}\` | \`${deploy_website_commits}\` | \`${deploy_website_relevant_changes}\` | \`${deploy_website_needed}\` |"
+            echo "| docs | \`${DEPLOY_DOCS}\` | \`${docs_ref}\` | \`${deploy_docs_commits}\` | \`${deploy_docs_relevant_changes}\` | \`${deploy_docs_needed}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
   promote_main:
@@ -498,8 +633,8 @@ jobs:
           git push origin HEAD:main
 
   deploy_ui:
-    if: inputs.dry_run != true && inputs.deploy_ui == true && (needs.checks.outputs.changed_ui == 'true' || needs.checks.outputs.changed_shared == 'true')
-    needs: [checks, promote_main, bump_versions]
+    if: inputs.dry_run != true && inputs.deploy_ui == true && needs.deploy_plan.outputs.deploy_ui_needed == 'true'
+    needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-ui.yml
     secrets: inherit
     with:
@@ -514,8 +649,8 @@ jobs:
       run_tests: false
 
   deploy_server:
-    if: inputs.dry_run != true && inputs.deploy_server == true && (needs.checks.outputs.changed_server == 'true' || needs.checks.outputs.changed_shared == 'true')
-    needs: [checks, promote_main, bump_versions]
+    if: inputs.dry_run != true && inputs.deploy_server == true && needs.deploy_plan.outputs.deploy_server_needed == 'true'
+    needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-server.yml
     secrets: inherit
     with:
@@ -526,8 +661,8 @@ jobs:
       run_tests: false
 
   deploy_website:
-    if: inputs.dry_run != true && inputs.deploy_website == true && needs.checks.outputs.changed_website == 'true'
-    needs: [checks, promote_main, bump_versions]
+    if: inputs.dry_run != true && inputs.deploy_website == true && needs.deploy_plan.outputs.deploy_website_needed == 'true'
+    needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-website.yml
     secrets: inherit
     with:
@@ -538,8 +673,8 @@ jobs:
       run_build: true
 
   deploy_docs:
-    if: inputs.dry_run != true && inputs.deploy_docs == true && needs.checks.outputs.changed_docs == 'true'
-    needs: [checks, promote_main, bump_versions]
+    if: inputs.dry_run != true && inputs.deploy_docs == true && needs.deploy_plan.outputs.deploy_docs_needed == 'true'
+    needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-docs.yml
     secrets: inherit
     with:

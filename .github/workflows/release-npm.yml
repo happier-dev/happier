@@ -3,97 +3,97 @@ name: RELEASE — npm publish (cli/stack)
 on:
   workflow_dispatch:
     inputs:
-      publish_cli:
-        description: "Publish CLI to npm"
-        required: true
-        default: true
-        type: boolean
-      publish_stack:
-        description: "Publish Stack app to npm"
-        required: true
-        default: false
-        type: boolean
       channel:
-        description: "Release channel"
+        description: "Target — Release channel"
         required: true
         type: choice
         options:
           - production
           - preview
+      run_tests:
+        description: "Checks — Run publish checks/tests before publishing"
+        required: true
+        default: true
+        type: boolean
+      publish_cli:
+        description: "Publish (CLI) — Publish CLI to npm"
+        required: true
+        default: true
+        type: boolean
       bump:
-        description: "Version bump on main (cli)"
+        description: "Publish (CLI) — Version bump on main (set none if already bumped)"
         required: true
         type: choice
-        options:
-          - none
-          - patch
-          - minor
-          - major
-      stack_bump:
-        description: "Version bump on main (stack)"
-        required: true
-        type: choice
-        default: none
         options:
           - none
           - patch
           - minor
           - major
       npm_tag:
-        description: "npm dist-tag (production: latest, preview: next)"
+        description: "Publish (CLI) — npm dist-tag (production: latest, preview: next)"
         required: true
         default: latest
         type: choice
         options:
           - latest
           - next
-      run_tests:
-        description: "Run publish checks/tests before publishing"
+      publish_stack:
+        description: "Publish (Stack) — Publish Stack app to npm"
         required: true
-        default: true
+        default: false
         type: boolean
+      stack_bump:
+        description: "Publish (Stack) — Version bump on main (set none if already bumped)"
+        required: true
+        type: choice
+        default: none
+        options:
+          - none
+          - patch
+          - minor
+          - major
       update_deploy_branch:
-        description: "Also promote main to deploy/<channel>/* (optional audit trail)"
+        description: "Deploy — Also promote main to deploy/<channel>/* (optional audit trail)"
         required: true
         default: false
         type: boolean
   workflow_call:
     inputs:
-      publish_cli:
-        description: "Publish CLI to npm"
+      channel:
+        description: "Target — Release channel"
+        required: true
+        type: string
+      run_tests:
+        description: "Checks — Run publish checks/tests before publishing"
         required: false
         default: true
         type: boolean
-      publish_stack:
-        description: "Publish Stack app to npm"
+      publish_cli:
+        description: "Publish (CLI) — Publish CLI to npm"
         required: false
-        default: false
+        default: true
         type: boolean
-      channel:
-        description: "Release channel"
-        required: true
-        type: string
       bump:
-        description: "Version bump on main (cli)"
+        description: "Publish (CLI) — Version bump on main (set none if already bumped)"
         required: true
-        type: string
-      stack_bump:
-        description: "Version bump on main (stack)"
-        required: false
-        default: none
         type: string
       npm_tag:
-        description: "npm dist-tag (production: latest, preview: next)"
+        description: "Publish (CLI) — npm dist-tag (production: latest, preview: next)"
         required: false
         default: latest
         type: string
-      run_tests:
-        description: "Run publish checks/tests before publishing"
+      publish_stack:
+        description: "Publish (Stack) — Publish Stack app to npm"
         required: false
-        default: true
+        default: false
         type: boolean
+      stack_bump:
+        description: "Publish (Stack) — Version bump on main (set none if already bumped)"
+        required: false
+        default: none
+        type: string
       update_deploy_branch:
-        description: "Also promote main to deploy/<channel>/* (optional audit trail)"
+        description: "Deploy — Also promote main to deploy/<channel>/* (optional audit trail)"
         required: false
         default: false
         type: boolean

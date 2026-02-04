@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Promotion mode"
+        description: "Promotion — Mode"
         required: true
         type: choice
         default: fast_forward
@@ -12,19 +12,22 @@ on:
           - fast_forward
           - reset
       dry_run:
-        description: "Only compute and show what would change (no push)"
+        description: "Safety — Only compute and show what would change (no push)"
         required: true
         default: false
         type: boolean
       allow_reset:
-        description: "Required when mode=reset (rewrites main history)"
+        description: "Safety — Required when mode=reset (rewrites main history)"
         required: true
         default: false
         type: boolean
       confirm:
-        description: "Type exactly: promote main from dev (or: reset main from dev)"
+        description: "Confirm — Choose the exact action (mobile-friendly)"
         required: true
-        type: string
+        type: choice
+        options:
+          - promote main from dev
+          - reset main from dev
 
 permissions:
   contents: read
