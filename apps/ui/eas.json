@@ -31,16 +31,6 @@
       "extends": "base",
       "environment": "preview",
       "autoIncrement": true,
-      "distribution": "internal",
-      "channel": "preview",
-      "env": {
-        "APP_ENV": "preview"
-      }
-    },
-    "preview-store": {
-      "extends": "base",
-      "environment": "preview",
-      "autoIncrement": true,
       "distribution": "store",
       "channel": "preview",
       "env": {
