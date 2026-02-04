@@ -1,0 +1,223 @@
+name: CI — Extended DB Matrix
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly (UTC)
+    - cron: "0 4 * * *"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-postgres:
+    name: Core E2E (Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: happier
+          POSTGRES_USER: happier
+          POSTGRES_PASSWORD: happier
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd="pg_isready -U happier -d happier"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run core e2e suite (Postgres)
+        env:
+          CI: "1"
+          HAPPY_E2E_SAVE_ARTIFACTS: "0"
+          HAPPIER_E2E_DB_PROVIDER: postgres
+          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
+        run: yarn test:e2e
+
+      - name: Upload e2e artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-e2e-postgres-artifacts
+          path: .project/logs/e2e
+
+  e2e-mysql:
+    name: Core E2E (MySQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: happier
+          MYSQL_DATABASE: happier
+        ports:
+          - 3306/tcp
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -p${MYSQL_ROOT_PASSWORD}"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run core e2e suite (MySQL)
+        env:
+          CI: "1"
+          HAPPY_E2E_SAVE_ARTIFACTS: "0"
+          HAPPIER_E2E_DB_PROVIDER: mysql
+          DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
+        run: yarn test:e2e
+
+      - name: Upload e2e artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-e2e-mysql-artifacts
+          path: .project/logs/e2e
+
+  db-contract-postgres:
+    name: DB Contract (Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: happier
+          POSTGRES_USER: happier
+          POSTGRES_PASSWORD: happier
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd="pg_isready -U happier -d happier"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Migrate (Postgres)
+        env:
+          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
+        run: yarn -s workspace @happier-dev/server prisma migrate deploy
+
+      - name: Run db contract suite (Postgres)
+        env:
+          HAPPIER_DB_PROVIDER: postgres
+          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
+        run: yarn workspace @happier-dev/server test:db-contract
+
+  db-contract-mysql:
+    name: DB Contract (MySQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: happier
+          MYSQL_DATABASE: happier
+        ports:
+          - 3306/tcp
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -u root -p${MYSQL_ROOT_PASSWORD}"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Migrate (MySQL)
+        env:
+          DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
+        run: yarn -s workspace @happier-dev/server migrate:mysql:deploy
+
+      - name: Run db contract suite (MySQL)
+        env:
+          HAPPIER_DB_PROVIDER: mysql
+          DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
+        run: yarn workspace @happier-dev/server test:db-contract
+

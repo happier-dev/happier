@@ -4,28 +4,31 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: "Source branch to copy FROM"
+        description: "Target — Source branch to copy FROM"
         required: true
         type: choice
         options:
           - dev
           - main
       target:
-        description: "Target branch to reset TO the source"
+        description: "Target — Target branch to reset TO the source"
         required: true
         type: choice
         options:
           - dev
           - main
       allow_reset:
-        description: "I understand this will rewrite the target branch history"
+        description: "Safety — I understand this will rewrite the target branch history"
         required: true
         default: false
         type: boolean
       confirm:
-        description: "Type exactly: reset <target> from <source> (e.g. 'reset main from dev')"
+        description: "Confirm — Choose the exact reset action (mobile-friendly)"
         required: true
-        type: string
+        type: choice
+        options:
+          - reset main from dev
+          - reset dev from main
 
 permissions:
   contents: read

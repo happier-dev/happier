@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment (used for Environment-scoped vars/secrets)"
+        description: "Target — Environment (used for Environment-scoped vars/secrets)"
         required: true
         type: choice
         default: production
@@ -15,7 +15,7 @@ on:
           - production
           - preview
       component:
-        description: "Component to deploy (triggers the matching webhook list)"
+        description: "Target — Component to deploy (triggers the matching webhook list)"
         required: true
         type: choice
         options:
@@ -25,9 +25,20 @@ on:
           - docs
           - cli
       confirm:
-        description: "Type exactly: deploy <environment> <component>"
+        description: "Confirm — Choose the exact deploy action (mobile-friendly)"
         required: true
-        type: string
+        type: choice
+        options:
+          - deploy production ui
+          - deploy production server
+          - deploy production website
+          - deploy production docs
+          - deploy production cli
+          - deploy preview ui
+          - deploy preview server
+          - deploy preview website
+          - deploy preview docs
+          - deploy preview cli
 
 permissions:
   contents: read

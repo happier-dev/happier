@@ -4,24 +4,29 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment (deploy branch)"
+        description: "Target — Environment (deploy branch)"
         required: true
         type: choice
         options:
           - preview
           - production
+      run_tests:
+        description: "Checks — Run apps/ui tests before promoting"
+        required: true
+        default: true
+        type: boolean
       source_ref:
-        description: "Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
+        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
         required: true
         default: auto
         type: string
       allow_cross_promote:
-        description: "Allow promoting a non-default source ref to the selected environment (use with care)."
+        description: "Safety — Allow promoting a non-default source ref to the selected environment (use with care)."
         required: true
         default: false
         type: boolean
       bump:
-        description: "Version bump on source ref (app)"
+        description: "Versions — Version bump on source ref (app)"
         required: true
         default: none
         type: choice
@@ -31,13 +36,14 @@ on:
           - minor
           - major
       deploy_web:
-        description: "Promote deploy/<env>/ui (web deploy on push)"
+        description: "Deploy — Promote deploy/<env>/ui (web deploy on push)"
         required: true
         default: true
         type: boolean
       expo_action:
-        description: "Expo action (requires EXPO_TOKEN secret)"
+        description: "Deploy (Expo) — Action (requires EXPO_TOKEN secret)"
         required: true
+        default: none
         type: choice
         options:
           - none
@@ -45,7 +51,7 @@ on:
           - native
           - native_submit
       expo_profile:
-        description: "EAS build profile (auto: preview→preview, production→production)"
+        description: "Deploy (Expo) — EAS build profile (auto: preview→preview, production→production)"
         required: true
         default: auto
         type: choice
@@ -54,64 +60,60 @@ on:
           - preview
           - production
       expo_platform:
-        description: "Native build platform"
+        description: "Deploy (Expo) — Native build platform"
         required: true
+        default: ios
         type: choice
         options:
           - ios
           - android
           - all
-      run_tests:
-        description: "Run apps/ui tests before promoting"
-        required: true
-        default: true
-        type: boolean
   workflow_call:
     inputs:
       environment:
-        description: "Target environment (deploy branch)"
+        description: "Target — Environment (deploy branch)"
         required: true
         type: string
+      run_tests:
+        description: "Checks — Run apps/ui tests before promoting"
+        required: false
+        default: true
+        type: boolean
       source_ref:
-        description: "Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
+        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
         required: false
         default: auto
         type: string
       allow_cross_promote:
-        description: "Allow promoting a non-default source ref to the selected environment (use with care)."
+        description: "Safety — Allow promoting a non-default source ref to the selected environment (use with care)."
         required: false
         default: false
         type: boolean
       bump:
-        description: "Version bump on source ref (app)"
+        description: "Versions — Version bump on source ref (app)"
         required: false
         default: none
         type: string
       deploy_web:
-        description: "Promote deploy/<env>/ui (web deploy on push)"
+        description: "Deploy — Promote deploy/<env>/ui (web deploy on push)"
         required: false
         default: true
         type: boolean
       expo_action:
-        description: "Expo action (requires EXPO_TOKEN secret)"
+        description: "Deploy (Expo) — Action (requires EXPO_TOKEN secret)"
         required: false
         default: none
         type: string
       expo_profile:
-        description: "EAS build profile (auto: preview→preview, production→production)"
+        description: "Deploy (Expo) — EAS build profile (auto: preview→preview, production→production)"
         required: false
         default: auto
         type: string
       expo_platform:
-        description: "Native build platform"
+        description: "Deploy (Expo) — Native build platform"
         required: false
         default: ios
         type: string
-      run_tests:
-        description: "Run apps/ui tests before promoting"
-        required: false
-        default: true
-        type: boolean
 
 permissions:
   contents: read

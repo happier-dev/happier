@@ -4,17 +4,17 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: "Source branch to copy FROM"
+        description: "Target — Source branch to copy FROM"
         required: true
         default: dev
         type: string
       target:
-        description: "Target branch to update"
+        description: "Target — Target branch to update"
         required: true
         default: main
         type: string
       mode:
-        description: "Promotion mode"
+        description: "Promotion — Mode"
         required: true
         type: choice
         default: fast_forward
@@ -22,17 +22,17 @@ on:
           - fast_forward
           - reset
       dry_run:
-        description: "Only compute and show what would change (no push)"
+        description: "Safety — Only compute and show what would change (no push)"
         required: true
         default: false
         type: boolean
       allow_reset:
-        description: "Required when mode=reset (rewrites main history)"
+        description: "Safety — Required when mode=reset (rewrites target history)"
         required: true
         default: false
         type: boolean
       confirm:
-        description: "Type exactly: promote <target> from <source> (or: reset <target> from <source>)"
+        description: "Confirm — Type exactly: promote <target> from <source> (or: reset <target> from <source>)"
         required: true
         type: string
   workflow_call:

@@ -4,62 +4,63 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Target environment (deploy branch)"
+        description: "Target — Environment (deploy branch)"
         required: true
         type: choice
         options:
           - preview
           - production
+      run_build:
+        description: "Checks — Run apps/website build before promoting"
+        required: true
+        default: true
+        type: boolean
       source_ref:
-        description: "Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
+        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
         required: true
         default: auto
         type: string
       allow_cross_promote:
-        description: "Allow promoting a non-default source ref to the selected environment (use with care)."
+        description: "Safety — Allow promoting a non-default source ref to the selected environment (use with care)."
         required: true
         default: false
         type: boolean
       bump:
-        description: "Version bump on source ref (website)"
+        description: "Versions — Version bump on source ref (website)"
         required: true
         type: choice
+        default: none
         options:
           - none
           - patch
           - minor
           - major
-      run_build:
-        description: "Run apps/website build before promoting"
-        required: true
-        default: true
-        type: boolean
   workflow_call:
     inputs:
       environment:
-        description: "Target environment (deploy branch)"
+        description: "Target — Environment (deploy branch)"
         required: true
         type: string
+      run_build:
+        description: "Checks — Run apps/website build before promoting"
+        required: false
+        default: true
+        type: boolean
       source_ref:
-        description: "Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
+        description: "Promotion — Source ref to promote (branch, tag, or SHA). Use 'auto' to default preview→dev, production→main."
         required: false
         default: auto
         type: string
       allow_cross_promote:
-        description: "Allow promoting a non-default source ref to the selected environment (use with care)."
+        description: "Safety — Allow promoting a non-default source ref to the selected environment (use with care)."
         required: false
         default: false
         type: boolean
       bump:
-        description: "Version bump on source ref (website)"
+        description: "Versions — Version bump on source ref (website)"
         required: false
         default: none
         type: string
-      run_build:
-        description: "Run apps/website build before promoting"
-        required: false
-        default: true
-        type: boolean
 
 permissions:
   contents: read
