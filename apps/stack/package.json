@@ -54,7 +54,9 @@
     "logs:tail": "node ./scripts/service.mjs tail",
     "menubar:install": "node ./scripts/menubar.mjs install",
     "menubar:uninstall": "node ./scripts/menubar.mjs uninstall",
-    "menubar:open": "bash -lc 'DIR=\"$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)\"; if [[ -z \"$DIR\" ]]; then DIR=\"$HOME/Library/Application Support/SwiftBar/Plugins\"; fi; open \"$DIR\"'"
+    "menubar:open": "bash -lc 'DIR=\"$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)\"; if [[ -z \"$DIR\" ]]; then DIR=\"$HOME/Library/Application Support/SwiftBar/Plugins\"; fi; open \"$DIR\"'",
+    "test": "node ./scripts/test_ci.mjs",
+    "test:ci": "node ./scripts/test_ci.mjs"
   },
   "dependencies": {
     "qrcode": "^1.5.4",
