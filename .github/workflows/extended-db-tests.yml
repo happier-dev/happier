@@ -54,7 +54,7 @@ jobs:
       - name: Run core e2e suite (Postgres)
         env:
           CI: "1"
-          HAPPY_E2E_SAVE_ARTIFACTS: "0"
+          HAPPIER_E2E_SAVE_ARTIFACTS: "0"
           HAPPIER_E2E_DB_PROVIDER: postgres
           DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
         run: yarn test:e2e
@@ -108,7 +108,7 @@ jobs:
       - name: Run core e2e suite (MySQL)
         env:
           CI: "1"
-          HAPPY_E2E_SAVE_ARTIFACTS: "0"
+          HAPPIER_E2E_SAVE_ARTIFACTS: "0"
           HAPPIER_E2E_DB_PROVIDER: mysql
           DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
         run: yarn test:e2e
@@ -220,4 +220,3 @@ jobs:
           HAPPIER_DB_PROVIDER: mysql
           DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
         run: yarn workspace @happier-dev/server test:db-contract
-
