@@ -123,7 +123,7 @@ export function gethstackRegistry() {
       kind: 'node',
       scriptRelPath: 'scripts/review.mjs',
       rootUsage:
-        'hstack tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--json]',
+        'hstack tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment] [--type=committed|uncommitted|all] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--json]',
       description: 'Run LLM reviews (maintainer tool)',
       hidden: true,
     },
