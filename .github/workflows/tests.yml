@@ -431,7 +431,7 @@ jobs:
       - name: Run core e2e suite
         env:
           CI: "1"
-          HAPPY_E2E_SAVE_ARTIFACTS: "0"
+          HAPPIER_E2E_SAVE_ARTIFACTS: "0"
           HAPPIER_E2E_DB_PROVIDER: ${{ matrix.db }}
         run: yarn test:e2e
 
