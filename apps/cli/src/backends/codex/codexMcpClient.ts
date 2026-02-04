@@ -162,7 +162,7 @@ function getCodexVersionInfo(codexCommand: string): CodexVersionInfo {
     if (cached) return cached;
 
     try {
-        const raw = execFileSync(codexCommand, ['--version'], { encoding: 'utf8' }).trim();
+        const raw = execFileSync(codexCommand, ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
         const match = raw.match(/(?:codex(?:-cli)?)\s+v?(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?/i)
             ?? raw.match(/\b(\d+)\.(\d+)\.(\d+)(?:-([a-z]+)\.(\d+))?\b/);
         if (!match) {

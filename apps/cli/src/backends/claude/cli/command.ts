@@ -182,7 +182,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
 
     // Run claude --help and display its output
     try {
-      const claudeHelp = execFileSync(claudeCliPath, ['--help'], { encoding: 'utf8' });
+      const claudeHelp = execFileSync(claudeCliPath, ['--help'], { encoding: 'utf8', windowsHide: true });
       console.log(claudeHelp);
     } catch {
       console.log(chalk.yellow('Could not retrieve claude help. Make sure claude is installed.'));

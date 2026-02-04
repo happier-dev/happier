@@ -49,6 +49,8 @@ export function registerBashHandler(rpcHandlerManager: RpcHandlerManager, workin
             const options: ExecOptions = {
                 cwd,
                 timeout: data.timeout || 30000, // Default 30 seconds timeout
+                // Hide console window on Windows to prevent cmd.exe from appearing during remote usage
+                windowsHide: process.platform === 'win32',
             };
 
             logger.debug('Shell command executing...', { cwd: options.cwd, timeout: options.timeout });
