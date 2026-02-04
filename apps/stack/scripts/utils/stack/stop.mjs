@@ -228,7 +228,8 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
 
   // Last resort: sweep any remaining processes that still carry this stack env file in their environment.
   // This is still safe because envPath is unique per stack; we also exclude our own PID.
-  if (sweepOwned && envPath) {
+  const shouldAutoSweep = !runtimeState && envPath;
+  if ((sweepOwned || shouldAutoSweep) && envPath) {
     const needle1 = `HAPPIER_STACK_ENV_FILE=${envPath}`;
     const pids = [...(await listPidsWithEnvNeedle(needle1))]
       .filter((pid) => pid !== process.pid)
@@ -243,7 +244,7 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
         swept.push({ pid, reason: res.reason, pgid: res.pgid ?? null });
       }
     }
-    actions.sweep = { pids: swept };
+    actions.sweep = { pids: swept, auto: shouldAutoSweep && !sweepOwned };
   }
 
   return actions;

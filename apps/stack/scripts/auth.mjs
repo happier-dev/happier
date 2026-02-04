@@ -351,6 +351,7 @@ async function ensureLightMigrationsApplied({ serverDir, baseDir, envIn, quiet =
 }
 
 async function listAccountsFromPglite({ cwd, dbDir }) {
+  const lockModuleUrl = new URL('./utils/pglite_lock.mjs', import.meta.url).toString();
   const script = `
 process.on('uncaughtException', (e) => {
   console.error(e instanceof Error ? e.message : String(e));
@@ -360,30 +361,37 @@ process.on('unhandledRejection', (e) => {
   console.error(e instanceof Error ? e.message : String(e));
   process.exit(1);
 });
+const DB_DIR = ${JSON.stringify(dbDir)};
+const { acquirePgliteDirLock } = await import(${JSON.stringify(lockModuleUrl)});
+const releaseLock = await acquirePgliteDirLock(DB_DIR, { purpose: 'auth:listAccountsFromPglite' });
 const { PGlite } = await import('@electric-sql/pglite');
 const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
 const { PrismaClient } = await import('@prisma/client');
-const pglite = new PGlite(${JSON.stringify(dbDir)});
-await pglite.waitReady;
-const server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
-await server.start();
+const pglite = new PGlite(DB_DIR);
 try {
-  const raw = server.getServerConn();
-  const url = (() => {
-    try { return new URL(raw); } catch { return new URL(\`postgresql://postgres@\${raw}/postgres?sslmode=disable\`); }
-  })();
-  url.searchParams.set('connection_limit', '1');
-  process.env.DATABASE_URL = url.toString();
-  const db = new PrismaClient();
+  await pglite.waitReady;
+  const server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+  await server.start();
   try {
-    const accounts = await db.account.findMany({ select: { id: true, publicKey: true } });
-    console.log(JSON.stringify(accounts));
+    const raw = server.getServerConn();
+    const url = (() => {
+      try { return new URL(raw); } catch { return new URL(\`postgresql://postgres@\${raw}/postgres?sslmode=disable\`); }
+    })();
+    url.searchParams.set('connection_limit', '1');
+    process.env.DATABASE_URL = url.toString();
+    const db = new PrismaClient();
+    try {
+      const accounts = await db.account.findMany({ select: { id: true, publicKey: true } });
+      console.log(JSON.stringify(accounts));
+    } finally {
+      await db.$disconnect();
+    }
   } finally {
-    await db.$disconnect();
+    await server.stop();
   }
 } finally {
-  await server.stop();
   await pglite.close();
+  await releaseLock().catch(() => {});
 }
 `.trim();
 
@@ -396,6 +404,7 @@ try {
 }
 
 async function insertAccountsIntoPglite({ cwd, dbDir, accounts, force }) {
+  const lockModuleUrl = new URL('./utils/pglite_lock.mjs', import.meta.url).toString();
   const script = `
 process.on('uncaughtException', (e) => {
   console.error(e instanceof Error ? e.message : String(e));
@@ -409,64 +418,71 @@ const { PGlite } = await import('@electric-sql/pglite');
 const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
 const { PrismaClient } = await import('@prisma/client');
 import fs from 'node:fs';
+const DB_DIR = ${JSON.stringify(dbDir)};
+const { acquirePgliteDirLock } = await import(${JSON.stringify(lockModuleUrl)});
+const releaseLock = await acquirePgliteDirLock(DB_DIR, { purpose: 'auth:insertAccountsIntoPglite' });
 const FORCE = ${force ? 'true' : 'false'};
 const raw = fs.readFileSync(0, 'utf8').trim();
 const accounts = raw ? JSON.parse(raw) : [];
-const pglite = new PGlite(${JSON.stringify(dbDir)});
-await pglite.waitReady;
-const server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
-await server.start();
+const pglite = new PGlite(DB_DIR);
 try {
-  const rawConn = server.getServerConn();
-  const url = (() => {
-    try { return new URL(rawConn); } catch { return new URL(\`postgresql://postgres@\${rawConn}/postgres?sslmode=disable\`); }
-  })();
-  url.searchParams.set('connection_limit', '1');
-  process.env.DATABASE_URL = url.toString();
-	const db = new PrismaClient();
-	try {
-	  let insertedCount = 0;
-	  for (const a of accounts) {
-	    // eslint-disable-next-line no-await-in-loop
-	    try {
-	      await db.account.upsert({
-	        where: { id: a.id },
-	        update: { publicKey: a.publicKey },
-	        create: { id: a.id, publicKey: a.publicKey },
-	      });
-	      insertedCount += 1;
-	    } catch (e) {
-	      // Prisma unique constraint violation (most commonly: publicKey already exists on another id).
-	      if (e && typeof e === 'object' && 'code' in e && e.code === 'P2002') {
-	        const existing = await db.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
-	        if (existing?.id && existing.id !== a.id) {
-	          if (!FORCE) {
-	            throw new Error(
-	              \`account publicKey conflict: target already has publicKey for id=\${existing.id}, but seed wants id=\${a.id}. Re-run with --force to replace the conflicting account row.\`
-	            );
+  await pglite.waitReady;
+  const server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+  await server.start();
+  try {
+    const rawConn = server.getServerConn();
+    const url = (() => {
+      try { return new URL(rawConn); } catch { return new URL(\`postgresql://postgres@\${rawConn}/postgres?sslmode=disable\`); }
+    })();
+    url.searchParams.set('connection_limit', '1');
+    process.env.DATABASE_URL = url.toString();
+	  const db = new PrismaClient();
+	  try {
+	    let insertedCount = 0;
+	    for (const a of accounts) {
+	      // eslint-disable-next-line no-await-in-loop
+	      try {
+	        await db.account.upsert({
+	          where: { id: a.id },
+	          update: { publicKey: a.publicKey },
+	          create: { id: a.id, publicKey: a.publicKey },
+	        });
+	        insertedCount += 1;
+	      } catch (e) {
+	        // Prisma unique constraint violation (most commonly: publicKey already exists on another id).
+	        if (e && typeof e === 'object' && 'code' in e && e.code === 'P2002') {
+	          const existing = await db.account.findUnique({ where: { publicKey: a.publicKey }, select: { id: true } });
+	          if (existing?.id && existing.id !== a.id) {
+	            if (!FORCE) {
+	              throw new Error(
+	                \`account publicKey conflict: target already has publicKey for id=\${existing.id}, but seed wants id=\${a.id}. Re-run with --force to replace the conflicting account row.\`
+	              );
+	            }
+	            await db.account.delete({ where: { publicKey: a.publicKey } });
+	            await db.account.upsert({
+	              where: { id: a.id },
+	              update: { publicKey: a.publicKey },
+	              create: { id: a.id, publicKey: a.publicKey },
+	            });
+	            insertedCount += 1;
+	            continue;
 	          }
-	          await db.account.delete({ where: { publicKey: a.publicKey } });
-	          await db.account.upsert({
-	            where: { id: a.id },
-	            update: { publicKey: a.publicKey },
-	            create: { id: a.id, publicKey: a.publicKey },
-	          });
-	          insertedCount += 1;
+	          // If we can't attribute the constraint to a publicKey conflict, treat it as "already seeded".
 	          continue;
 	        }
-	        // If we can't attribute the constraint to a publicKey conflict, treat it as "already seeded".
-	        continue;
+	        throw e;
 	      }
-	      throw e;
 	    }
+	    console.log(JSON.stringify({ sourceCount: accounts.length, insertedCount }));
+	  } finally {
+	    await db.$disconnect();
 	  }
-	  console.log(JSON.stringify({ sourceCount: accounts.length, insertedCount }));
-	} finally {
-	  await db.$disconnect();
-	}
+  } finally {
+    await server.stop();
+  }
 } finally {
-  await server.stop();
   await pglite.close();
+  await releaseLock().catch(() => {});
 }
 `.trim();
 
