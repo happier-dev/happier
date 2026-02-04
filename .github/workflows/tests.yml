@@ -390,3 +390,54 @@ jobs:
             tail -n 200 "$f" || true
             echo
           done
+
+  e2e-core:
+    name: Core E2E (packages/tests, server-light, ${{ matrix.db }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [pglite, sqlite]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node (GitHub Actions)
+        if: env.ACT != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Node (act)
+        if: env.ACT == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run core e2e suite
+        env:
+          CI: "1"
+          HAPPY_E2E_SAVE_ARTIFACTS: "0"
+          HAPPIER_E2E_DB_PROVIDER: ${{ matrix.db }}
+        run: yarn test:e2e
+
+      - name: Upload e2e artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-e2e-artifacts-${{ matrix.db }}
+          path: .project/logs/e2e
