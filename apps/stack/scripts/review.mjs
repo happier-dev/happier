@@ -28,6 +28,7 @@ const DEFAULT_TARGETS = VALID_TARGETS;
 const VALID_COMPONENTS = ['happier-ui', 'happier-cli', 'happier-server'];
 const VALID_REVIEWERS = ['coderabbit', 'codex', 'augment'];
 const VALID_DEPTHS = ['deep', 'normal'];
+const VALID_CHANGE_TYPES = ['committed', 'uncommitted', 'all'];
 const DEFAULT_REVIEW_MAX_FILES = 50;
 
 function parseCsv(raw) {
@@ -44,10 +45,17 @@ function normalizeReviewers(list) {
   return uniq.length ? uniq : ['coderabbit'];
 }
 
+function normalizeChangeType(raw) {
+  const t = String(raw ?? '').trim().toLowerCase();
+  if (!t) return 'committed';
+  if (VALID_CHANGE_TYPES.includes(t)) return t;
+  throw new Error(`[review] invalid --type=${raw} (expected: ${VALID_CHANGE_TYPES.join(' | ')})`);
+}
+
 function usage() {
   return [
     '[review] usage:',
-    '  hstack tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
+    '  hstack tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment] [--type=committed|uncommitted|all] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
     '',
     'targets:',
     `  ${[...VALID_TARGETS, 'all'].join(' | ')}`,
@@ -166,20 +174,27 @@ function codexScopePathForComponent(component) {
   }
 }
 
-function buildCodexDeepPrompt({ component, baseRef }) {
+function buildCodexDeepPrompt({ component, baseRef, changeType }) {
   const scopePath = codexScopePathForComponent(component);
-  const diffCmd = scopePath
+  const ct = normalizeChangeType(changeType);
+  const committedCmd = scopePath
     ? `cd \"$(git rev-parse --show-toplevel)\" && git diff ${baseRef}...HEAD -- ${scopePath}/`
     : `cd \"$(git rev-parse --show-toplevel)\" && git diff ${baseRef}...HEAD`;
+  const uncommittedCmd = scopePath
+    ? `cd \"$(git rev-parse --show-toplevel)\" && git diff HEAD -- ${scopePath}/`
+    : `cd \"$(git rev-parse --show-toplevel)\" && git diff HEAD`;
+  const cmds = ct === 'committed' ? [committedCmd] : ct === 'uncommitted' ? [uncommittedCmd] : [committedCmd, uncommittedCmd];
 
   return [
     'Run a deep, long-form code review.',
     '',
-    `Base for review: ${baseRef}`,
+    `Change type: ${ct}`,
+    ct === 'uncommitted' ? 'Base for review: (uncommitted-only)' : `Base for review: ${baseRef}`,
     scopePath ? `Scope: ${scopePath}/` : 'Scope: full repo (no path filter)',
     '',
     'Instructions:',
-    `- Use: ${diffCmd}`,
+    ...cmds.map((c) => `- Use: ${c}`),
+    ct !== 'committed' ? '- Include untracked files (if any): git status --porcelain=v1' : null,
     '- Focus on correctness, edge cases, reliability, performance, and security.',
     '- Prefer unified/coherent fixes; avoid duplication.',
     '- Avoid brittle tests that assert on wording/phrasing/config; test real behavior and observable outcomes.',
@@ -195,19 +210,26 @@ function buildCodexDeepPrompt({ component, baseRef }) {
     'Machine-readable output (required):',
     '- After your review, output a JSON array of findings preceded by a line containing exactly: ===FINDINGS_JSON===',
     '- Each finding should include: severity, file, (optional) lines, title, description, recommendation, needsDiscussion (boolean).',
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
-function buildCodexMonorepoDeepPrompt({ baseRef }) {
-  const diffCmd = `cd \"$(git rev-parse --show-toplevel)\" && git diff ${baseRef}...HEAD`;
+function buildCodexMonorepoDeepPrompt({ baseRef, changeType }) {
+  const ct = normalizeChangeType(changeType);
+  const committedCmd = `cd \"$(git rev-parse --show-toplevel)\" && git diff ${baseRef}...HEAD`;
+  const uncommittedCmd = `cd \"$(git rev-parse --show-toplevel)\" && git diff HEAD`;
+  const cmds = ct === 'committed' ? [committedCmd] : ct === 'uncommitted' ? [uncommittedCmd] : [committedCmd, uncommittedCmd];
   return [
     'Run a deep, long-form code review on the monorepo.',
     '',
-    `Base for review: ${baseRef}`,
+    `Change type: ${ct}`,
+    ct === 'uncommitted' ? 'Base for review: (uncommitted-only)' : `Base for review: ${baseRef}`,
     'Scope: full repo',
     '',
     'Instructions:',
-    `- Use: ${diffCmd}`,
+    ...cmds.map((c) => `- Use: ${c}`),
+    ct !== 'committed' ? '- Include untracked files (if any): git status --porcelain=v1' : null,
     '- You may inspect any file in the repo for cross-references (server/cli/ui).',
     '- Focus on correctness, edge cases, reliability, performance, and security.',
     '- Prefer unified/coherent fixes; avoid duplication.',
@@ -224,7 +246,9 @@ function buildCodexMonorepoDeepPrompt({ baseRef }) {
     'Machine-readable output (required):',
     '- After your review, output a JSON array of findings preceded by a line containing exactly: ===FINDINGS_JSON===',
     '- Each finding should include: severity, file, (optional) lines, title, description, recommendation, needsDiscussion (boolean).',
-  ].join('\n');
+  ]
+    .filter(Boolean)
+    .join('\n');
 }
 
 function buildCodexMonorepoSlicePrompt({ sliceLabel, baseCommit, baseRef }) {
@@ -386,7 +410,19 @@ async function main() {
   const concurrency = (kv.get('--concurrency') ?? '').trim();
   const limit = concurrency ? Number(concurrency) : 4;
   const depth = (kv.get('--depth') ?? 'deep').toString().trim().toLowerCase();
-  const coderabbitType = (kv.get('--coderabbit-type') ?? 'committed').toString().trim().toLowerCase();
+  const changeType = normalizeChangeType(kv.get('--type') ?? kv.get('--review-type') ?? 'committed');
+  const coderabbitTypeRaw = (kv.get('--coderabbit-type') ?? '').toString().trim();
+  const coderabbitType = coderabbitTypeRaw
+    ? (() => {
+      try {
+        return normalizeChangeType(coderabbitTypeRaw);
+      } catch {
+        throw new Error(
+          `[review] invalid --coderabbit-type=${coderabbitTypeRaw} (expected: ${VALID_CHANGE_TYPES.join(' | ')})`,
+        );
+      }
+    })()
+    : changeType;
   const chunkingMode = (kv.get('--chunking') ?? 'auto').toString().trim().toLowerCase();
   const augmentModelFlag = (kv.get('--augment-model') ?? '').toString().trim();
   const augmentMaxTurnsFlag = (kv.get('--augment-max-turns') ?? '').toString().trim();
@@ -531,9 +567,9 @@ async function main() {
 
       const maxFiles = Number.isFinite(chunkMaxFiles) && chunkMaxFiles > 0 ? chunkMaxFiles : 300;
       const sliceConcurrency = Math.max(1, Math.floor(limit / Math.max(1, reviewers.length)));
-      const wantChunksCoderabbit = coderabbitChunksOverride ?? globalChunks;
-      const wantChunksCodex = codexChunksOverride ?? globalChunks;
-      const wantChunksAugment = augmentChunksOverride ?? globalChunks;
+      const wantChunksCoderabbit = coderabbitType === 'committed' ? (coderabbitChunksOverride ?? globalChunks) : false;
+      const wantChunksCodex = changeType === 'committed' ? (codexChunksOverride ?? globalChunks) : false;
+      const wantChunksAugment = changeType === 'committed' ? (augmentChunksOverride ?? globalChunks) : false;
       const effectiveChunking = chunkingMode === 'auto' ? (monorepo ? 'head-slice' : 'commit-window') : chunkingMode;
 
       if (monorepo && stream) {
@@ -628,9 +664,9 @@ async function main() {
             }
 
             // Non-monorepo or non-sliced: optionally chunk by commit windows (older behavior).
-            if (fileCount > maxFiles && effectiveChunking === 'commit-window' && (wantChunksCoderabbit ?? false)) {
+            if (coderabbitType === 'committed' && fileCount > maxFiles && effectiveChunking === 'commit-window' && (wantChunksCoderabbit ?? false)) {
               // fall through to commit-window chunking below
-            } else if (fileCount > maxFiles && (wantChunksCoderabbit === false || wantChunksCoderabbit == null)) {
+            } else if (coderabbitType === 'committed' && fileCount > maxFiles && (wantChunksCoderabbit === false || wantChunksCoderabbit == null)) {
               coderabbitBaseCommit = await pickCoderabbitBaseCommitForMaxFiles({
                 cwd: repoDir,
                 env: process.env,
@@ -644,11 +680,12 @@ async function main() {
               console.log(`[review] coderabbit: ${note}`);
             }
 
-            if (!(fileCount > maxFiles && effectiveChunking === 'commit-window' && (wantChunksCoderabbit ?? false))) {
+            if (!(coderabbitType === 'committed' && fileCount > maxFiles && effectiveChunking === 'commit-window' && (wantChunksCoderabbit ?? false))) {
               const logFile = join(runDir, 'raw', `coderabbit-${sanitizeLabel(component)}.log`);
+              const baseRefForType = coderabbitType === 'uncommitted' ? null : coderabbitBaseCommit ? null : base.baseRef;
               const res = await runCodeRabbitReview({
                 repoDir,
-                baseRef: coderabbitBaseCommit ? null : base.baseRef,
+                baseRef: baseRefForType,
                 baseCommit: coderabbitBaseCommit,
                 env: process.env,
                 type: coderabbitType,
@@ -746,7 +783,7 @@ async function main() {
           }
           if (reviewer === 'codex') {
             const jsonMode = json;
-            const usePromptMode = depth === 'deep';
+            const usePromptMode = depth === 'deep' || changeType === 'all';
             const fileCount = await countChangedFiles({ cwd: repoDir, env: process.env, base: base.baseRef });
             const autoChunks = usePromptMode && fileCount > maxFiles;
 
@@ -832,13 +869,13 @@ async function main() {
 
             const prompt = usePromptMode
               ? monorepo
-                ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef })
-                : buildCodexDeepPrompt({ component, baseRef: base.baseRef })
+                ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType })
+                : buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType })
               : '';
             const logFile = join(runDir, 'raw', `codex-${sanitizeLabel(component)}.log`);
             const res = await runCodexReview({
               repoDir,
-              baseRef: usePromptMode ? null : base.baseRef,
+              baseRef: usePromptMode ? null : changeType === 'uncommitted' ? null : base.baseRef,
               env: process.env,
               jsonMode,
               prompt,
@@ -949,8 +986,8 @@ async function main() {
 
             const prompt = usePromptMode
               ? monorepo
-                ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef })
-                : buildCodexDeepPrompt({ component, baseRef: base.baseRef })
+                ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType })
+                : buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType })
               : '';
             const logFile = join(runDir, 'raw', `augment-${sanitizeLabel(component)}.log`);
             const res = await runAugmentReview({
