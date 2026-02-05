@@ -2,7 +2,7 @@
   "name": "@happier-dev/cli",
   "version": "0.14.0-0",
   "description": "Mobile and Web client for Claude Code and Codex",
-  "author": "Kirill Dubovitskiy",
+  "author": "Leeroy Brun <leeroy.brun@gmail.com>",
   "license": "MIT",
   "type": "module",
   "homepage": "https://github.com/happier-dev/happier",
