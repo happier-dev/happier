@@ -3,13 +3,18 @@ name: RELEASE — Dev → Main
 on:
   workflow_dispatch:
     inputs:
-      run_checks:
-        description: "Checks — Run release checks (tests/typecheck/builds/CLI smoke). Disable if you already validated this SHA."
+      checks_profile:
+        description: "Checks — Profile (full=all standard checks, fast=skip slow builds/smoke, none=skip all checks, custom=use toggles below)"
         required: true
-        default: true
-        type: boolean
+        type: choice
+        default: full
+        options:
+          - full
+          - fast
+          - none
+          - custom
       run_e2e_core:
-        description: "Checks — Run core E2E gate (packages/tests, pglite+sqlite)"
+        description: "Checks (custom) — Run core E2E gate (packages/tests, pglite+sqlite)"
         required: true
         default: true
         type: boolean
@@ -37,22 +42,22 @@ on:
           - smoke
           - extended
       run_stress:
-        description: "Checks — Run stress suite (slow)"
+        description: "Checks (custom) — Run stress suite (slow)"
         required: true
         default: false
         type: boolean
       cli_smoke_linux:
-        description: "Checks — Run CLI smoke test on Linux"
+        description: "Checks (custom) — Run CLI smoke test on Linux"
         required: true
         default: true
         type: boolean
       build_website:
-        description: "Checks — Build website as part of release checks"
+        description: "Checks (custom) — Build website as part of release checks"
         required: true
         default: true
         type: boolean
       build_docs:
-        description: "Checks — Build docs as part of release checks"
+        description: "Checks (custom) — Build docs as part of release checks"
         required: true
         default: true
         type: boolean
@@ -145,31 +150,21 @@ on:
           - patch
           - minor
           - major
-      publish_cli:
-        description: "Publish — Publish CLI to npm (runs after bump + promotion)"
-        required: true
-        default: false
-        type: boolean
       cli_bump:
-        description: "Publish — CLI bump for npm publish (ignored if publish_cli=false)"
+        description: "Publish — Publish CLI to npm (none=skip)"
         required: true
         type: choice
-        default: patch
+        default: none
         options:
           - none
           - patch
           - minor
           - major
-      publish_stack:
-        description: "Publish — Publish Stack to npm (runs after bump + promotion)"
-        required: true
-        default: false
-        type: boolean
       stack_bump:
-        description: "Publish — Stack bump for npm publish (ignored if publish_stack=false)"
+        description: "Publish — Publish Stack to npm (none=skip)"
         required: true
         type: choice
-        default: patch
+        default: none
         options:
           - none
           - patch
@@ -193,7 +188,7 @@ concurrency:
 jobs:
   gate:
     name: CI Gate (dev)
-    if: inputs.run_checks
+    if: inputs.checks_profile != 'none'
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
@@ -203,14 +198,14 @@ jobs:
       run_stack: true
       run_typecheck: true
       run_cli_daemon_e2e: true
-      run_e2e_core: ${{ inputs.run_e2e_core }}
-      run_providers: ${{ inputs.run_providers }}
+      run_e2e_core: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && inputs.run_e2e_core) }}
+      run_providers: ${{ inputs.checks_profile != 'none' && inputs.run_providers }}
       providers_preset: ${{ inputs.providers_preset }}
       providers_tier: ${{ inputs.providers_tier }}
       providers_strict_keys: false
       providers_flake_retry: true
       providers_update_baselines: false
-      run_stress: ${{ inputs.run_stress }}
+      run_stress: ${{ inputs.checks_profile == 'custom' && inputs.run_stress }}
       stress_repeat: "5"
       stress_seed: ""
 
@@ -258,16 +253,6 @@ jobs:
             exit 1
           fi
 
-          if [ "${{ inputs.publish_cli }}" = "true" ] && [ "${{ inputs.cli_bump }}" = "none" ]; then
-            echo "publish_cli=true requires cli_bump != none." >&2
-            exit 1
-          fi
-
-          if [ "${{ inputs.publish_stack }}" = "true" ] && [ "${{ inputs.stack_bump }}" = "none" ]; then
-            echo "publish_stack=true requires stack_bump != none." >&2
-            exit 1
-          fi
-
       - name: Create GitHub App token
         id: app_token
         uses: actions/create-github-app-token@v1
@@ -283,7 +268,7 @@ jobs:
           token: ${{ steps.app_token.outputs.token }}
 
       - name: Setup Node
-        if: inputs.run_checks
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (inputs.build_website || inputs.build_docs || inputs.cli_smoke_linux)) }}
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -291,34 +276,34 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
-        if: inputs.run_checks
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (inputs.build_website || inputs.build_docs || inputs.cli_smoke_linux)) }}
         run: |
           corepack enable
           corepack prepare yarn@1.22.22 --activate
 
       - name: Install dependencies
-        if: inputs.run_checks
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (inputs.build_website || inputs.build_docs || inputs.cli_smoke_linux)) }}
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
       - name: Test + typecheck
-        if: inputs.run_checks
+        if: inputs.checks_profile != 'none'
         run: |
           set -euo pipefail
           echo "CI gate ran in job 'gate' (tests/typecheck/e2e/providers/stress as configured)."
 
       - name: Build website
-        if: inputs.run_checks && inputs.build_website
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && inputs.build_website) }}
         run: yarn website:build
 
       - name: Build docs
-        if: inputs.run_checks && inputs.build_docs
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && inputs.build_docs) }}
         run: yarn docs:build
 
       - name: CLI smoke test (Linux)
-        if: inputs.run_checks && inputs.cli_smoke_linux
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && inputs.cli_smoke_linux) }}
         run: |
           set -euo pipefail
           yarn workspace @happier-dev/cli build
@@ -383,13 +368,13 @@ jobs:
           {
             echo "## Release plan (dev → main)"
             echo ""
-            echo "- run_checks: \`${{ inputs.run_checks }}\`"
+            echo "- checks_profile: \`${{ inputs.checks_profile }}\`"
             echo "- environment: \`${{ inputs.environment }}\`"
             echo "- promote_mode: \`${{ inputs.promote_mode }}\`"
             echo "- dry_run: \`${{ inputs.dry_run }}\`"
             echo "- bump: \`${{ inputs.bump }}\`"
-            echo "- publish_cli: \`${{ inputs.publish_cli }}\` (cli_bump=\`${{ inputs.cli_bump }}\`)"
-            echo "- publish_stack: \`${{ inputs.publish_stack }}\` (stack_bump=\`${{ inputs.stack_bump }}\`)"
+            echo "- cli_bump: \`${{ inputs.cli_bump }}\`"
+            echo "- stack_bump: \`${{ inputs.stack_bump }}\`"
             echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
             echo ""
             echo "- commits to release (main..dev): \`$commit_count\`"
@@ -555,7 +540,7 @@ jobs:
         id: decide
         run: |
           set -euo pipefail
-          if [ "${{ inputs.bump }}" != "none" ] || [ "${{ inputs.publish_cli }}" = "true" ] || [ "${{ inputs.publish_stack }}" = "true" ]; then
+          if [ "${{ inputs.bump }}" != "none" ] || [ "${{ inputs.cli_bump }}" != "none" ] || [ "${{ inputs.stack_bump }}" != "none" ]; then
             echo "should_bump=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_bump=false" >> "$GITHUB_OUTPUT"
@@ -623,12 +608,12 @@ jobs:
             fi
           fi
 
-          if [ "${{ inputs.publish_cli }}" = "true" ]; then
+          if [ "${{ inputs.cli_bump }}" != "none" ]; then
             node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.cli_bump }}" >/tmp/bump_cli.txt
             bumped+=("cli")
           fi
 
-          if [ "${{ inputs.publish_stack }}" = "true" ]; then
+          if [ "${{ inputs.stack_bump }}" != "none" ]; then
             BUMP="${{ inputs.stack_bump }}" node - <<'NODE' >/tmp/bump_stack.txt
             const fs = require('node:fs');
             const pkgPath = 'apps/stack/package.json';
@@ -737,19 +722,19 @@ jobs:
       run_build: true
 
   publish_npm:
-    if: inputs.dry_run != true && (inputs.publish_cli == true || inputs.publish_stack == true)
+    if: inputs.dry_run != true && (inputs.cli_bump != 'none' || inputs.stack_bump != 'none')
     needs: [checks, promote_main, bump_versions]
     uses: ./.github/workflows/release-npm.yml
     secrets: inherit
     with:
-      publish_cli: ${{ inputs.publish_cli }}
-      publish_stack: ${{ inputs.publish_stack }}
+      publish_cli: ${{ inputs.cli_bump != 'none' }}
+      publish_stack: ${{ inputs.stack_bump != 'none' }}
       channel: ${{ inputs.environment }}
       bump: none
       stack_bump: none
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
-      update_deploy_branch: ${{ inputs.publish_cli || inputs.publish_stack }}
+      update_deploy_branch: ${{ inputs.cli_bump != 'none' || inputs.stack_bump != 'none' }}
 
   sync_dev:
     if: inputs.dry_run != true && inputs.sync_dev_from_main == true
