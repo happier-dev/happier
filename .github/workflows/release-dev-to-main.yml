@@ -8,6 +8,39 @@ on:
         required: true
         default: true
         type: boolean
+      run_e2e_core:
+        description: "Checks — Run core E2E gate (packages/tests, pglite+sqlite)"
+        required: true
+        default: true
+        type: boolean
+      run_providers:
+        description: "Checks — Run providers contract suite (requires provider secrets)"
+        required: true
+        default: false
+        type: boolean
+      providers_preset:
+        description: "Checks (Providers) — Preset"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - claude
+          - codex
+          - opencode
+      providers_tier:
+        description: "Checks (Providers) — Tier"
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - extended
+      run_stress:
+        description: "Checks — Run stress suite (slow)"
+        required: true
+        default: false
+        type: boolean
       cli_smoke_linux:
         description: "Checks — Run CLI smoke test on Linux"
         required: true
@@ -158,7 +191,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    name: CI Gate (dev)
+    if: inputs.run_checks
+    uses: ./.github/workflows/tests.yml
+    secrets: inherit
+    with:
+      run_ui: true
+      run_server: true
+      run_cli: true
+      run_stack: true
+      run_typecheck: true
+      run_cli_daemon_e2e: true
+      run_e2e_core: ${{ inputs.run_e2e_core }}
+      run_providers: ${{ inputs.run_providers }}
+      providers_preset: ${{ inputs.providers_preset }}
+      providers_tier: ${{ inputs.providers_tier }}
+      providers_strict_keys: false
+      providers_flake_retry: true
+      providers_update_baselines: false
+      run_stress: ${{ inputs.run_stress }}
+      stress_repeat: "5"
+      stress_seed: ""
+
   checks:
+    needs: [gate]
+    if: ${{ always() && (needs.gate.result == 'success' || needs.gate.result == 'skipped') }}
     runs-on: ubuntu-latest
     outputs:
       changed_ui: ${{ steps.plan.outputs.changed_ui }}
@@ -249,12 +307,7 @@ jobs:
         if: inputs.run_checks
         run: |
           set -euo pipefail
-          yarn test
-          yarn typecheck
-
-      - name: Stack tests
-        if: inputs.run_checks
-        run: yarn --cwd apps/stack test
+          echo "CI gate ran in job 'gate' (tests/typecheck/e2e/providers/stress as configured)."
 
       - name: Build website
         if: inputs.run_checks && inputs.build_website
