@@ -1,0 +1,133 @@
+---
+title: Testing & CI
+description: Test tiers, how to run them locally, and how they are gated in CI/releases.
+---
+
+## Test tiers (repo-wide model)
+
+We use these tiers consistently across scripts and GitHub Actions:
+
+### 1) Unit
+
+Fast, deterministic tests that run without external services.
+
+**Includes:**
+- UI unit tests (`apps/ui`, Vitest in node env)
+- CLI unit/integration tests (`apps/cli`, Vitest; may include tmux integration in CI)
+- Server unit/component tests (`apps/server`, Vitest)
+- Stack tool tests (`apps/stack`, Node’s `node:test`)
+
+**Local commands:**
+```bash
+yarn test
+```
+
+### 2) Typecheck
+
+TypeScript typechecking for the main runtime packages (UI/CLI/server).
+
+**Local command:**
+```bash
+yarn typecheck
+```
+
+### 3) Integration (system-level)
+
+Real subprocess + real server-light where needed (still intended to be deterministic).
+
+**CI example:**
+- “CLI + Server (light/pglite) E2E” job in `CI — Tests` runs daemon control-plane integration against a real server-light.
+
+### 4) E2E (core gate)
+
+This is the “ship confidence” suite: real server-light + real sockets + real DB, asserting real HTTP + Socket.IO contracts.
+
+**Local commands:**
+```bash
+yarn test:e2e
+
+# Run against embedded DB engines:
+yarn test:e2e:core:embedded
+```
+
+### 5) Providers (contract drift)
+
+Opt-in suite that runs **real provider CLIs** through Happier and validates tool-trace normalization + baselines.
+This may consume provider credits and requires secrets.
+
+**Local commands:**
+```bash
+yarn test:providers
+
+# Presets:
+yarn test:providers:all:smoke
+yarn test:providers:claude:extended
+yarn test:providers:codex:smoke
+yarn test:providers:opencode:extended
+```
+
+### 6) Stress
+
+Nightly/on-demand suite for repeat/chaos patterns and flake classification.
+
+**Local command:**
+```bash
+yarn test:stress
+```
+
+### 7) Extended DB matrix (Postgres/MySQL)
+
+Optional validation that core E2E and DB contract tests behave on non-embedded engines.
+In CI this runs via a dedicated workflow using service containers.
+
+**Local commands:**
+```bash
+yarn test:e2e:core:docker
+yarn test:db-contract:docker
+```
+
+## Artifacts
+
+Core E2E / Providers / Stress write per-test logs under:
+- `.project/logs/e2e/...`
+
+CI uploads this directory as an artifact on failure.
+
+## GitHub Actions (what runs where)
+
+### Default PR/push gate
+
+Workflow: `CI — Tests` (`.github/workflows/tests.yml`)
+
+Default gate includes:
+- Unit (UI/Server/CLI/Stack)
+- Typecheck
+- Integration (CLI+Server daemon E2E)
+- Core E2E (pglite + sqlite)
+
+### On-demand provider contracts
+
+Workflow: `CI — Provider Contracts` (`.github/workflows/providers-contracts.yml`)
+
+**Required secrets:**
+- `OPENAI_API_KEY` (required for `codex` and `opencode`)
+- `ANTHROPIC_API_KEY` (required for `claude`)
+- `CODEX_API_KEY` (optional alternative to `OPENAI_API_KEY` for Codex)
+
+### Nightly stress
+
+Workflow: `CI — Stress Tests` (`.github/workflows/stress-tests.yml`)
+
+### Nightly extended DB matrix
+
+Workflow: `CI — Extended DB Matrix` (`.github/workflows/extended-db-tests.yml`)
+
+## Releases
+
+Workflow: `RELEASE — Dev → Main` (`.github/workflows/release-dev-to-main.yml`)
+
+When `run_checks=true`, the release runs the same reusable gate as PR CI (via `workflow_call` into `CI — Tests`), and can optionally include:
+- core e2e
+- providers (smoke/extended)
+- stress
+

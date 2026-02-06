@@ -1,0 +1,70 @@
+name: CI — Stress Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      repeat:
+        description: "Repetitions (HAPPIER_E2E_REPEAT)"
+        required: true
+        default: "10"
+        type: string
+      seed:
+        description: "Seed (HAPPIER_E2E_SEED, empty = random)"
+        required: true
+        default: ""
+        type: string
+  schedule:
+    # Nightly (UTC)
+    - cron: "30 4 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress-scheduled:
+    if: github.event_name == 'schedule'
+    uses: ./.github/workflows/tests.yml
+    secrets: inherit
+    with:
+      run_ui: false
+      run_server: false
+      run_cli: false
+      run_stack: false
+      run_typecheck: false
+      run_cli_daemon_e2e: false
+      run_e2e_core: false
+      run_providers: false
+      providers_preset: all
+      providers_tier: smoke
+      providers_strict_keys: false
+      providers_flake_retry: false
+      providers_update_baselines: false
+      run_stress: true
+      stress_repeat: "10"
+      stress_seed: ""
+
+  stress-manual:
+    if: github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/tests.yml
+    secrets: inherit
+    with:
+      run_ui: false
+      run_server: false
+      run_cli: false
+      run_stack: false
+      run_typecheck: false
+      run_cli_daemon_e2e: false
+      run_e2e_core: false
+      run_providers: false
+      providers_preset: all
+      providers_tier: smoke
+      providers_strict_keys: false
+      providers_flake_retry: false
+      providers_update_baselines: false
+      run_stress: true
+      stress_repeat: ${{ inputs.repeat }}
+      stress_seed: ${{ inputs.seed }}

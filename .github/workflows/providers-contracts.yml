@@ -1,0 +1,63 @@
+name: CI — Provider Contracts
+
+on:
+  workflow_dispatch:
+    inputs:
+      preset:
+        description: "Preset"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - claude
+          - codex
+          - opencode
+      tier:
+        description: "Tier"
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - extended
+      strict_keys:
+        description: "Fail on new fixture keys"
+        required: true
+        default: false
+        type: boolean
+      flake_retry:
+        description: "Retry once to classify flakes"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  providers:
+    uses: ./.github/workflows/tests.yml
+    secrets: inherit
+    with:
+      run_ui: false
+      run_server: false
+      run_cli: false
+      run_stack: false
+      run_typecheck: false
+      run_cli_daemon_e2e: false
+      run_e2e_core: false
+      run_providers: true
+      providers_preset: ${{ inputs.preset }}
+      providers_tier: ${{ inputs.tier }}
+      providers_strict_keys: ${{ inputs.strict_keys }}
+      providers_flake_retry: ${{ inputs.flake_retry }}
+      providers_update_baselines: false
+      run_stress: false
+      stress_repeat: "5"
+      stress_seed: ""
+

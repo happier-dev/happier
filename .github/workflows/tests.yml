@@ -4,6 +4,179 @@ on:
   pull_request:
   push:
   workflow_dispatch:
+    inputs:
+      run_ui:
+        description: "Unit — Run UI tests (apps/ui)"
+        required: true
+        default: true
+        type: boolean
+      run_server:
+        description: "Unit — Run Server tests (apps/server)"
+        required: true
+        default: true
+        type: boolean
+      run_cli:
+        description: "Unit — Run CLI tests (apps/cli)"
+        required: true
+        default: true
+        type: boolean
+      run_stack:
+        description: "Unit — Run Stack tests (apps/stack)"
+        required: true
+        default: true
+        type: boolean
+      run_typecheck:
+        description: "Typecheck — Run repo typecheck (ui/cli/server)"
+        required: true
+        default: true
+        type: boolean
+      run_cli_daemon_e2e:
+        description: "Integration — Run CLI+Server(light) daemon E2E"
+        required: true
+        default: true
+        type: boolean
+      run_e2e_core:
+        description: "E2E — Run core e2e suite (pglite + sqlite)"
+        required: true
+        default: true
+        type: boolean
+      run_providers:
+        description: "Providers — Run provider contract matrix (requires secrets)"
+        required: true
+        default: false
+        type: boolean
+      providers_preset:
+        description: "Providers — Preset"
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - claude
+          - codex
+          - opencode
+      providers_tier:
+        description: "Providers — Tier"
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - extended
+      providers_opencode_version:
+        description: "Providers (OpenCode) — Version"
+        required: true
+        default: "1.1.52"
+        type: string
+      providers_opencode_sha256:
+        description: "Providers (OpenCode) — SHA256 for linux-x64-baseline tar.gz (empty to skip)"
+        required: true
+        default: "c7c1e622aff3d457358385e28dff33ffa8401cb9067e865a9f35a2f94e899490"
+        type: string
+      providers_strict_keys:
+        description: "Providers — Fail on new fixture keys"
+        required: true
+        default: false
+        type: boolean
+      providers_flake_retry:
+        description: "Providers — Retry once to classify flakes"
+        required: true
+        default: false
+        type: boolean
+      providers_update_baselines:
+        description: "Providers — Update committed baselines (requires write access; not for PRs)"
+        required: true
+        default: false
+        type: boolean
+      run_stress:
+        description: "Stress — Run stress suite (repeat/chaos)"
+        required: true
+        default: false
+        type: boolean
+      stress_repeat:
+        description: "Stress — Repetitions (HAPPIER_E2E_REPEAT)"
+        required: true
+        default: "5"
+        type: string
+      stress_seed:
+        description: "Stress — Seed (HAPPIER_E2E_SEED)"
+        required: true
+        default: ""
+        type: string
+  workflow_call:
+    inputs:
+      run_ui:
+        required: false
+        default: true
+        type: boolean
+      run_server:
+        required: false
+        default: true
+        type: boolean
+      run_cli:
+        required: false
+        default: true
+        type: boolean
+      run_stack:
+        required: false
+        default: true
+        type: boolean
+      run_typecheck:
+        required: false
+        default: true
+        type: boolean
+      run_cli_daemon_e2e:
+        required: false
+        default: true
+        type: boolean
+      run_e2e_core:
+        required: false
+        default: true
+        type: boolean
+      run_providers:
+        required: false
+        default: false
+        type: boolean
+      providers_preset:
+        required: false
+        default: all
+        type: string
+      providers_tier:
+        required: false
+        default: smoke
+        type: string
+      providers_opencode_version:
+        required: false
+        default: "1.1.52"
+        type: string
+      providers_opencode_sha256:
+        required: false
+        default: "c7c1e622aff3d457358385e28dff33ffa8401cb9067e865a9f35a2f94e899490"
+        type: string
+      providers_strict_keys:
+        required: false
+        default: false
+        type: boolean
+      providers_flake_retry:
+        required: false
+        default: false
+        type: boolean
+      providers_update_baselines:
+        required: false
+        default: false
+        type: boolean
+      run_stress:
+        required: false
+        default: false
+        type: boolean
+      stress_repeat:
+        required: false
+        default: "5"
+        type: string
+      stress_seed:
+        required: false
+        default: ""
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -11,6 +184,7 @@ concurrency:
 
 jobs:
   ui:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_ui }}
     name: UI Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -47,6 +221,7 @@ jobs:
         run: yarn workspace @happier-dev/app test
 
   server:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_server }}
     name: Server Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -83,6 +258,7 @@ jobs:
         run: yarn workspace @happier-dev/server test
 
   cli:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_cli }}
     name: CLI Tests (incl. tmux integration)
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -158,7 +334,68 @@ jobs:
       - name: Run tests
         run: yarn workspace @happier-dev/cli test
 
+  stack:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_stack }}
+    name: Stack Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run tests
+        run: yarn --cwd apps/stack test
+
+  typecheck:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_typecheck }}
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run typecheck
+        run: yarn typecheck
+
   cli-daemon-e2e:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_cli_daemon_e2e }}
     name: CLI + Server (light/pglite) E2E
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -392,6 +629,7 @@ jobs:
           done
 
   e2e-core:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_e2e_core }}
     name: Core E2E (packages/tests, server-light, ${{ matrix.db }})
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -440,4 +678,182 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: core-e2e-artifacts-${{ matrix.db }}
+          path: .project/logs/e2e
+
+  providers:
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_providers }}
+    name: Providers (contract matrix)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Install provider CLIs
+        env:
+          PRESET: ${{ inputs.providers_preset }}
+          OPENCODE_VERSION: ${{ inputs.providers_opencode_version }}
+          OPENCODE_TARBALL_SHA256: ${{ inputs.providers_opencode_sha256 }}
+        run: |
+          set -euo pipefail
+
+          need_claude=0
+          need_codex=0
+          need_opencode=0
+
+          case "$PRESET" in
+            all) need_claude=1; need_codex=1; need_opencode=1 ;;
+            claude) need_claude=1 ;;
+            codex) need_codex=1 ;;
+            opencode) need_opencode=1 ;;
+            *) echo "Unknown providers_preset: $PRESET" >&2; exit 2 ;;
+          esac
+
+          if [ "$need_claude" = "1" ]; then
+            npm install -g @anthropic-ai/claude-code
+            claude --version
+          fi
+
+          if [ "$need_codex" = "1" ]; then
+            npm install -g @openai/codex
+            codex --version
+          fi
+
+          if [ "$need_opencode" = "1" ]; then
+            # Avoid `curl ... | bash` by downloading a pinned, checksummed release artifact.
+            version="${OPENCODE_VERSION#v}"
+            asset="opencode-linux-x64-baseline.tar.gz"
+            url="https://github.com/anomalyco/opencode/releases/download/v${version}/${asset}"
+
+            install_dir="$HOME/.opencode/bin"
+            mkdir -p "$install_dir"
+
+            tmp_dir="$(mktemp -d)"
+            curl -fsSL -o "$tmp_dir/$asset" "$url"
+
+            if [ -n "${OPENCODE_TARBALL_SHA256:-}" ]; then
+              echo "${OPENCODE_TARBALL_SHA256}  $tmp_dir/$asset" | sha256sum -c -
+            fi
+
+            tar -xzf "$tmp_dir/$asset" -C "$tmp_dir"
+            mv -f "$tmp_dir/opencode" "$install_dir/opencode"
+            chmod 755 "$install_dir/opencode"
+            rm -rf "$tmp_dir"
+
+            echo "$install_dir" >> "$GITHUB_PATH"
+            export PATH="$install_dir:$PATH"
+            opencode --version
+          fi
+
+      - name: Validate provider auth env
+        env:
+          PRESET: ${{ inputs.providers_preset }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          need_openai=0
+          need_anthropic=0
+
+          case "$PRESET" in
+            all) need_openai=1; need_anthropic=1 ;;
+            codex) need_openai=1 ;;
+            opencode) need_openai=1 ;;
+            claude) need_anthropic=1 ;;
+            *) echo "Unknown providers_preset: $PRESET" >&2; exit 2 ;;
+          esac
+
+          if [ "$need_openai" = "1" ] && [ -z "${OPENAI_API_KEY:-}" ] && [ -z "${CODEX_API_KEY:-}" ]; then
+            echo "Missing provider secrets: set OPENAI_API_KEY (or CODEX_API_KEY) to run preset=$PRESET" >&2
+            exit 1
+          fi
+
+          if [ "$need_anthropic" = "1" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "Missing provider secrets: set ANTHROPIC_API_KEY to run preset=$PRESET" >&2
+            exit 1
+          fi
+
+      - name: Run provider contract suite
+        env:
+          CI: "1"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          flags=()
+          if [ "${{ inputs.providers_strict_keys }}" = "true" ]; then flags+=("--strict-keys"); fi
+          if [ "${{ inputs.providers_flake_retry }}" = "true" ]; then flags+=("--flake-retry"); fi
+          if [ "${{ inputs.providers_update_baselines }}" = "true" ]; then flags+=("--update-baselines"); fi
+
+          yarn workspace @happier-dev/tests providers:run "${{ inputs.providers_preset }}" "${{ inputs.providers_tier }}" "${flags[@]}"
+
+      - name: Upload provider artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: providers-artifacts
+          path: .project/logs/e2e
+
+  stress:
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_stress }}
+    name: Stress (repeat/chaos)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run stress suite
+        env:
+          CI: "1"
+          HAPPIER_E2E_REPEAT: ${{ inputs.stress_repeat }}
+          HAPPIER_E2E_SEED: ${{ inputs.stress_seed }}
+          HAPPIER_E2E_FLAKE_RETRY: "1"
+        run: yarn test:stress
+
+      - name: Upload stress artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-artifacts
           path: .project/logs/e2e
