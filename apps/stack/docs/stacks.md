@@ -143,7 +143,7 @@ This updates the stack env file (`~/.happier/stacks/<name>/env`), not repo `env.
 
 ## Run the Happier CLI against a specific stack (`stack happier`)
 
-If you want to run a `happy` CLI command against a specific stack (instead of whatever your current shell env points at), use:
+If you want to run a `happier` CLI command against a specific stack (instead of whatever your current shell env points at), use:
 
 ```bash
 hstack stack happier exp1 -- status
@@ -153,7 +153,7 @@ hstack stack happier exp1 -- daemon status
 Stack shorthand also works:
 
 ```bash
-hstack exp1 happy status
+hstack exp1 happier status
 ```
 
 ## Stack wrappers you can use

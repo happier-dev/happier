@@ -1,7 +1,7 @@
 # Mobile app development (iOS)
 
 This is optional. Most people can use the served web UI on mobile via Tailscale:
-see the “Using Happy from your phone” section in the main README.
+see the “Using Happier from your phone” section in the main README.
 
 ## Prereqs (one-time)
 
@@ -202,7 +202,7 @@ with a **custom bundle id + app name** (example: `dev.happier.app` / `Happier`),
 
 To get a reliable EAS build for a stack-specific app identity, you generally need:
 
-- a **Happy monorepo worktree** that contains the app config hooks (dynamic `app.config.js`)
+- a **Happier monorepo worktree** that contains the app config hooks (dynamic `app.config.js`)
 - a stack pinned to that worktree (`hstack stack wt <stack> -- use ...`)
 - stack env vars describing the **app identity** (bundle id, name, scheme, etc.)
 - EAS **environment variables** configured on Expo (so the cloud builder sees the same values)

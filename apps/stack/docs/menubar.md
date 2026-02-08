@@ -28,8 +28,8 @@ SwiftBar runs a script on an interval and renders its output as native macOS men
 - **Stacks + services layout**
   - Main stack is shown directly (no extra nesting level)
   - Each stack shows service rows (Server/Daemon/Autostart/Tailscale) with per-service submenus
-- **Repo (git/worktrees)**
-  - Available under a top-level **Repo** submenu (to keep the main menu clean)
+- **Components (git/worktrees)**
+  - Available under a top-level **Components** submenu (to keep the main menu clean)
   - Shows repo/worktree status for the active monorepo checkout (`<workspace>/main`, `<workspace>/dev`, or a worktree under `<workspace>/{pr,local,tmp}/...`)
   - Each repo entry includes a **Worktrees** submenu listing all worktrees, with actions to switch/open
   - Quick actions: `wt status/sync/update`, PR worktree prompt, open shells/editors (`wt shell/code/cursor`)
@@ -42,8 +42,8 @@ The menu supports two modes:
 
 - **Selfhost mode** (`selfhost`): lightweight “control panel” for running Happier.
   - Shows only the main stack essentials (Server/Daemon/Autostart/Tailscale) plus a small **Maintenance** section.
-  - Hides developer-oriented sections like stacks enumeration, components git/worktrees, and worktree tooling.
-- **Dev mode** (`dev`): full stack control plane (stacks + components + worktrees).
+  - Hides developer-oriented sections like stacks enumeration, git/worktrees, and worktree tooling.
+- **Dev mode** (`dev`): full stack control plane (stacks + git/worktrees + worktree tooling).
 
 ### How to switch modes
 
@@ -81,7 +81,7 @@ The menu also provides “jump off” actions for the worktree tooling:
 - `hstack wt update-all --dry-run` / `hstack wt update-all`
 - `hstack wt pr ...` (via an in-menu prompt)
 
-For stack-specific worktree selection (which components a stack uses), use:
+For stack-specific worktree selection (which worktree a stack uses), use:
 
 - `hstack stack edit <name> --interactive`
   - or `hstack stack wt <name> -- use --interactive`

@@ -1,6 +1,6 @@
 # Remote access (Tailscale + phone)
 
-Happy relies on “secure context” browser features (WebCrypto). Browsers treat `http://localhost` as a secure context, but **not** `http://<lan-ip>:<port>` or `http://<tailscale-ip>:<port>`.
+Happier relies on “secure context” browser features (WebCrypto). Browsers treat `http://localhost` as a secure context, but **not** `http://<lan-ip>:<port>` or `http://<tailscale-ip>:<port>`.
 
 For remote access (phone, another laptop, etc) you should use **HTTPS**.
 
@@ -35,9 +35,9 @@ Useful knobs:
 - `HAPPIER_STACK_TAILSCALE_WAIT_MS`
 - `HAPPIER_STACK_TAILSCALE_BIN`
 
-## Using the native Happy mobile app (optional)
+## Using the native Happier mobile app (optional)
 
-The upstream Happy mobile app has an “API Endpoint” setting (developer mode).
+The native Happier mobile app has an “API Endpoint” setting (developer mode).
 Point it at the same HTTPS `*.ts.net` URL to use your local server.
 
 However, the simplest option is usually the **served web UI** (no app updates needed).

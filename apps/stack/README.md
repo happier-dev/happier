@@ -55,6 +55,15 @@ On a **fresh machine**, the daemon needs to authenticate once before it can regi
 hstack auth login
 ```
 
+By default (in a TTY), `hstack auth login` is **local-first**: it guides you through authenticating against your **local stack UI**
+instead of the hosted Happier web app. Advanced targeting:
+
+```bash
+hstack auth login --webapp=auto|stack|expo|public|hosted
+hstack auth login --webapp-url=http://localhost:8081
+hstack auth login --start-if-needed
+```
+
 If you want a quick diagnosis:
 
 ```bash
@@ -147,8 +156,8 @@ Diagram:
                    v
            local machine (this repo)
      +--------------------------------+
-     | happy-server-light OR          |
-     | happy-server (via UI gateway)  |
+     | happier-server-light OR         |
+     | happier-server (via UI gateway) |
      |  - listens on :PORT            |
      |  - serves UI at /              |
      +--------------------------------+
@@ -254,19 +263,21 @@ npx --yes -p @happier-dev/stack hstack tools setup-pr --repo=123 --dev --mobile
 Optional: run it in a self-contained sandbox folder (auto-cleaned):
 
 ```bash
-npx --yes -p @happier-dev/stack hstack review-pr --happy=123 --happy-cli=456
+SANDBOX="$(mktemp -d /tmp/hstack-review-pr.XXXXXX)"
+npx --yes -p @happier-dev/stack hstack tools review-pr --repo=123 --dev --sandbox-dir "$SANDBOX"
+rm -rf "$SANDBOX"
 ```
 
 Short form (PR numbers):
 
 ```bash
-npx --yes -p @happier-dev/stack hstack setup-pr --happy=123 --happy-cli=456
+npx --yes -p @happier-dev/stack hstack tools setup-pr --repo=123 --dev
 ```
 
 Override stack name (optional):
 
 ```bash
-npx --yes -p @happier-dev/stack hstack setup-pr --name=pr123 --happy=123 --happy-cli=456
+npx --yes -p @happier-dev/stack hstack tools setup-pr --name=pr123 --repo=123 --dev
 ```
 
 Update when the PR changes:
@@ -275,16 +286,16 @@ Update when the PR changes:
 - If the PR was force-pushed, add `--force`.
 
 ```bash
-npx --yes -p @happier-dev/stack hstack setup-pr --happy=123 --happy-cli=456
-npx --yes -p @happier-dev/stack hstack setup-pr --happy=123 --happy-cli=456 --force
+npx --yes -p @happier-dev/stack hstack tools setup-pr --repo=123 --dev
+npx --yes -p @happier-dev/stack hstack tools setup-pr --repo=123 --dev --force
 ```
 
 Details: `[docs/worktrees-and-forks.md](docs/worktrees-and-forks.md)`.
 
 #### Server flavor (server-light vs full server)
 
-- Use `happy-server-light` for a light local stack (no Redis, no Postgres, no Docker), and UI serving via server-light.
-- Use `happy-server` when you need a more production-like server (Postgres + Redis + S3-compatible storage) or want to develop server changes for upstream.
+- Use `happier-server-light` for a light local stack (no Redis, no Postgres, no Docker), and UI serving via server-light.
+- Use `happier-server` when you need a more production-like server (Postgres + Redis + S3-compatible storage) or want to develop server changes for upstream.
   - hstack can **manage the required infra automatically per stack** (via Docker Compose) and runs a **UI gateway** so you still get a single `https://...ts.net` URL that serves the UI + proxies API/websockets/files.
 
 Switch globally:
@@ -312,8 +323,8 @@ hstack stack dev exp1
 Point a stack at a PR worktree:
 
 ```bash
-hstack wt pr happy 123 --use
-hstack stack wt exp1 -- use happy pr/123-fix-thing
+hstack wt pr 123 --use
+hstack stack wt exp1 -- use pr/123-fix-thing
 hstack stack dev exp1
 ```
 
@@ -323,7 +334,7 @@ Details: `[docs/stacks.md](docs/stacks.md)`.
 
 Non-main stacks use a stack-specific localhost hostname (no `/etc/hosts` changes required):
 
-- `http://happy-<stack>.localhost:<uiPort>`
+- `http://happier-<stack>.localhost:<uiPort>` (default; set `HAPPIER_STACK_LOCALHOST_SUBDOMAIN_PREFIX=happy` for legacy)
 
 This avoids browser auth/session collisions between stacks (separate origin per stack).
 
@@ -350,8 +361,8 @@ Details: `[docs/mobile-ios.md](docs/mobile-ios.md)`.
 
 #### Reviewing PRs in an isolated sandbox
 
-- **Unique hostname per run (default)**: `hstack review-pr` generates a unique stack name by default, which results in a unique `happy-<stack>.localhost` hostname. This prevents browser storage collisions when the sandbox is deleted between runs.
-- **Reuse an existing sandbox**: if a previous run preserved a sandbox (e.g. `--keep-sandbox` or a failure in verbose mode), re-running `hstack review-pr` offers an interactive choice to reuse it (keeping the same hostname + on-disk auth), or create a fresh sandbox.
+- **Unique hostname per run (default)**: `hstack tools review-pr` generates a unique stack name by default, which results in a unique `happier-<stack>.localhost` hostname. This prevents browser storage collisions when the sandbox is deleted between runs.
+- **Reuse an existing sandbox**: if a previous run preserved a sandbox (e.g. `--keep-sandbox` or a failure in verbose mode), re-running `hstack tools review-pr` offers an interactive choice to reuse it (keeping the same hostname + on-disk auth), or create a fresh sandbox.
 
 #### Tauri desktop app (optional)
 
@@ -445,7 +456,7 @@ To fully uninstall the test run, stop the sandbox stacks and delete the sandbox 
 SANDBOX="$(mktemp -d /tmp/hstack-sandbox.XXXXXX)"
 
 # Run a PR stack (fully isolated install)
-npx --yes -p @happier-dev/stack hstack --sandbox-dir "$SANDBOX" setup-pr --happy=123 --happy-cli=456
+npx --yes -p @happier-dev/stack hstack --sandbox-dir "$SANDBOX" tools setup-pr --repo=123 --dev
 
 # Tear down + uninstall
 npx --yes -p @happier-dev/stack hstack --sandbox-dir "$SANDBOX" stop --yes --no-service

@@ -3,7 +3,7 @@
 The Tauri app is a native desktop wrapper around the web UI. It’s useful when you want:
 
 - a native desktop window (instead of a browser tab)
-- separate storage from the “regular” Happy desktop app (so it doesn’t reuse old server URLs/auth)
+- separate storage from the “regular” Happier desktop app (so it doesn’t reuse old server URLs/auth)
 
 ## Important behavior
 

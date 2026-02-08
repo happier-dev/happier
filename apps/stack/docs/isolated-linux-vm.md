@@ -73,7 +73,7 @@ memory: "8GiB"
 
 ### 2c) Host access (ports + browser URLs)
 
-When you want to open Happy/Expo URLs in your macOS browser, **use localhost port forwarding**.
+When you want to open Happier/Expo URLs in your macOS browser, **use localhost port forwarding**.
 
 Why this matters: the Expo web app uses WebCrypto (`crypto.subtle`) via `expo-crypto` for things like key derivation.
 Browsers only expose WebCrypto in **secure contexts**:
@@ -225,8 +225,13 @@ If you want a “clean-ish” rerun without recreating the VM, delete the hstack
 Inside the VM:
 
 ```bash
-rm -rf ~/.happier-stack ~/.happy
+rm -rf ~/.happier-stack ~/.happier ~/.happy
 ```
+
+Why these paths:
+- `~/.happier-stack`: stack runtime home (shims/runtime/cache/logs).
+- `~/.happier`: stack storage root (`~/.happier/stacks/<name>/...` env/state/data).
+- `~/.happy`: legacy pre-monorepo location that older migrations/import tooling may still reference.
 
 If you used `hstack setup --profile=dev` and picked a custom workspace directory (outside `~/.happier-stack/workspace`), delete that directory too.
 
