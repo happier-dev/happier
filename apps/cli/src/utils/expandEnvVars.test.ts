@@ -1,21 +1,33 @@
 /**
  * Unit tests for environment variable expansion utility
  */
-import { describe, expect, it, vi } from 'vitest';
-
-// Mock logger to avoid logger.warn/debug not being a function errors
-vi.mock('@/ui/logger', () => ({
-    logger: {
-        debug: vi.fn(),
-        warn: vi.fn(),
-        info: vi.fn(),
-        error: vi.fn()
-    }
-}));
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '@/ui/logger';
 
 import { expandEnvironmentVariables } from './expandEnvVars';
 
 describe('expandEnvironmentVariables', () => {
+    const originalDebug = process.env.DEBUG;
+
+    function muteLogger(): void {
+        vi.spyOn(logger, 'debug').mockImplementation(() => {});
+        vi.spyOn(logger, 'warn').mockImplementation(() => {});
+        vi.spyOn(logger, 'info').mockImplementation(() => {});
+    }
+
+    beforeEach(() => {
+        muteLogger();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        if (originalDebug === undefined) {
+            delete process.env.DEBUG;
+        } else {
+            process.env.DEBUG = originalDebug;
+        }
+    });
+
     it('should expand simple ${VAR} reference', () => {
         const envVars = {
             TARGET: '${SOURCE}'

@@ -1,4 +1,4 @@
-import { configDefaults, defineConfig } from 'vitest/config'
+import { defineConfig } from 'vitest/config'
 import { resolve } from 'node:path'
 
 import dotenv from 'dotenv'
@@ -20,14 +20,13 @@ export default defineConfig({
     test: {
         globals: false,
         environment: 'node',
-        include: ['src/**/*.test.ts', 'scripts/**/*.test.ts'],
-        exclude: [
-            ...configDefaults.exclude,
-            '**/*.slow.test.ts',
-            '**/*.integration.test.ts',
-            '**/*.real.integration.test.ts',
-            '**/*.integration.spec.ts',
-            '**/*.e2e.test.ts',
+        testTimeout: 60_000,
+        include: [
+            'src/**/*.integration.test.ts',
+            'src/**/*.real.integration.test.ts',
+            'src/**/*.integration.spec.ts',
+            'src/**/*.e2e.test.ts',
+            'scripts/**/*.integration.test.ts',
         ],
         globalSetup: ['./src/test-setup.ts'],
         coverage: {

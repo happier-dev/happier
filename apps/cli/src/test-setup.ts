@@ -20,16 +20,26 @@ export function setup() {
   // We rely on the dist files to spawn our CLI in some integration tests.
   if (skipBuild) return
 
-  const buildResult = spawnSync('yarn', ['build'], { stdio: 'pipe' })
+  const yarnCommand = process.platform === 'win32' ? 'yarn.cmd' : 'yarn'
+  const buildResult = spawnSync(yarnCommand, ['build'], {
+    stdio: 'pipe',
+    encoding: 'utf8',
+  })
 
-  if (buildResult.stderr && buildResult.stderr.length > 0) {
-    const errorOutput = buildResult.stderr.toString()
-    console.error(`Build stderr (could be debugger output): ${errorOutput}`)
-    const stdout = buildResult.stdout.toString()
-    console.log(`Build stdout: ${stdout}`)
+  if (buildResult.error) {
+    throw new Error(`CLI test globalSetup failed to run build: ${buildResult.error.message}`)
+  }
 
-    if (errorOutput.includes('Command failed with exit code')) {
-      throw new Error(`Build failed STDERR: ${errorOutput}`)
-    }
+  if ((buildResult.status ?? 1) !== 0) {
+    const exitCode = typeof buildResult.status === 'number' ? buildResult.status : 'unknown'
+    const stdout = typeof buildResult.stdout === 'string' ? buildResult.stdout.trim() : ''
+    const stderr = typeof buildResult.stderr === 'string' ? buildResult.stderr.trim() : ''
+    const details = [stdout ? `stdout:\n${stdout}` : '', stderr ? `stderr:\n${stderr}` : '']
+      .filter(Boolean)
+      .join('\n\n')
+
+    throw new Error(
+      `CLI test globalSetup build failed (exit ${exitCode})${details ? `\n\n${details}` : ''}`,
+    )
   }
 }

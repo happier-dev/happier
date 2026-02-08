@@ -17,7 +17,7 @@ export const AuthSelector: React.FC<AuthSelectorProps> = ({ onSelect, onCancel }
     }> = [
         {
             method: 'mobile',
-            label: 'Mobile App'
+            label: 'Mobile App (recommended)'
         },
         {
             method: 'web',
@@ -47,6 +47,12 @@ export const AuthSelector: React.FC<AuthSelectorProps> = ({ onSelect, onCancel }
         <Box flexDirection="column" paddingY={1}>
             <Box marginBottom={1}>
                 <Text>How would you like to authenticate?</Text>
+            </Box>
+            <Box marginBottom={1}>
+                <Text dimColor>Mobile is recommended because account creation and device linking are simpler.</Text>
+            </Box>
+            <Box marginBottom={1}>
+                <Text dimColor>If you already use Happier on another device, sign in with that same account.</Text>
             </Box>
 
             <Box flexDirection="column">

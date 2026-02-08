@@ -62,9 +62,34 @@ function getSubprocessRuntime(): 'node' | 'bun' {
   return isBun() ? 'bun' : 'node';
 }
 
+function resolveSubprocessEntrypoint(): string {
+  const override = process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT;
+  if (typeof override === 'string' && override.trim().length > 0) {
+    return override.trim();
+  }
+  return join(projectPath(), 'dist', 'index.mjs');
+}
+
+function resolveDevTsxFallbackEntrypoint(entrypoint: string): string {
+  const distSegment = `${projectPath()}/dist/`;
+  const normalized = entrypoint.replaceAll('\\', '/');
+  if (normalized.startsWith(distSegment)) {
+    return join(projectPath(), 'src', 'index.ts');
+  }
+  return join(projectPath(), 'src', 'index.ts');
+}
+
+function shouldAllowDevTsxFallback(): boolean {
+  if (process.env.HAPPIER_VARIANT !== 'dev') return false;
+  const raw = (process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK ?? '').trim().toLowerCase();
+  if (!raw) return true;
+  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  return true;
+}
+
 export function buildHappyCliSubprocessInvocation(args: string[]): { runtime: 'node' | 'bun'; argv: string[] } {
-  const projectRoot = projectPath();
-  const entrypoint = join(projectRoot, 'dist', 'index.mjs');
+  const entrypoint = resolveSubprocessEntrypoint();
+  const runtime = getSubprocessRuntime();
 
   // Use the same Node.js flags that the wrapper script uses
   const nodeArgs = [
@@ -76,12 +101,21 @@ export function buildHappyCliSubprocessInvocation(args: string[]): { runtime: 'n
 
   // Sanity check of the entrypoint path exists
   if (!existsSync(entrypoint)) {
+    const allowTsxFallback = shouldAllowDevTsxFallback();
+    if (runtime === 'node' && allowTsxFallback) {
+      const tsxEntrypoint = resolveDevTsxFallbackEntrypoint(entrypoint);
+      if (existsSync(tsxEntrypoint)) {
+        return {
+          runtime: 'node',
+          argv: ['--no-warnings', '--no-deprecation', '--import', 'tsx', tsxEntrypoint, ...args],
+        };
+      }
+    }
     const errorMessage = `Entrypoint ${entrypoint} does not exist`;
     logger.debug(`[SPAWN HAPPIER CLI] ${errorMessage}`);
     throw new Error(errorMessage);
   }
 
-  const runtime = getSubprocessRuntime();
   const argv = runtime === 'node' ? nodeArgs : [entrypoint, ...args];
   return { runtime, argv };
 }

@@ -68,6 +68,22 @@ export function formatClaudeMessageForInk(
         case 'assistant': {
             const assistantMsg = message as SDKAssistantMessage
             if (assistantMsg.message && assistantMsg.message.content) {
+                if ((assistantMsg as any).happierPartial === true) {
+                    const deltas = assistantMsg.message.content
+                        .filter((block) => block.type === 'text' && typeof block.text === 'string')
+                        .map((block) => block.text as string)
+                        .join('')
+                    if (deltas.length > 0) {
+                        const last = messageBuffer.getMessages().at(-1)
+                        if (last?.type === 'assistant') {
+                            messageBuffer.updateLastMessage(deltas, 'assistant')
+                        } else {
+                            messageBuffer.addMessage(deltas, 'assistant')
+                        }
+                    }
+                    break
+                }
+
                 messageBuffer.addMessage('🤖 Assistant:', 'assistant')
                 
                 for (const block of assistantMsg.message.content) {

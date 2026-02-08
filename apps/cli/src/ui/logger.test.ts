@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -45,21 +45,19 @@ describe('logger.debugLargeJson', () => {
     });
 
     it('does not throw if log file cannot be written (even when DEBUG is set)', async () => {
-        // Make logs dir read-only so appendFileSync fails deterministically.
-        const logsDir = join(tempDir, 'logs');
-        mkdirSync(logsDir, { recursive: true });
-        chmodSync(logsDir, 0o555);
-
         process.env.DEBUG = '1';
 
         const { logger } = (await import('@/ui/logger')) as typeof import('@/ui/logger');
+        // Deterministic cross-platform write failure: path points to a directory, not a file.
+        mkdirSync(logger.getLogPath(), { recursive: true });
+        const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         try {
             expect(() => {
                 logger.debugLargeJson('[TEST] debugLargeJson write should not throw', { secret: 'value' });
             }).not.toThrow();
         } finally {
-            chmodSync(logsDir, 0o755);
+            errorSpy.mockRestore();
         }
     });
 });

@@ -10,7 +10,7 @@ import { configuration } from '@/configuration'
 import { readSettings, readCredentials } from '@/persistence'
 import { checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient'
 import { findRunawayHappyProcesses, findAllHappyProcesses } from '@/daemon/doctor'
-import { readDaemonState } from '@/persistence'
+import { readDaemonState, type DaemonLocallyPersistedState } from '@/persistence'
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -49,6 +49,14 @@ function redactSettingsForDisplay(settings: SettingsForDisplay): SettingsForDisp
         delete redactedRecord.localEnvironmentVariables;
     }
 
+    return redacted;
+}
+
+export function redactDaemonStateForDisplay(state: DaemonLocallyPersistedState): Record<string, unknown> {
+    const redacted = JSON.parse(JSON.stringify(state ?? {})) as Record<string, unknown>;
+    if (typeof redacted.controlToken === 'string' && redacted.controlToken.trim() !== '') {
+        redacted.controlToken = '<redacted>';
+    }
     return redacted;
 }
 
@@ -184,7 +192,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         if (isRunning && state) {
             console.log(chalk.green('✓ Daemon is running'));
             console.log(`  PID: ${state.pid}`);
-            console.log(`  Started: ${new Date(state.startTime).toLocaleString()}`);
+            console.log(`  Started: ${new Date(state.startedAt).toLocaleString()}`);
             console.log(`  CLI Version: ${state.startedWithCliVersion}`);
             if (state.httpPort) {
                 console.log(`  HTTP Port: ${state.httpPort}`);
@@ -199,7 +207,7 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
         if (state) {
             console.log(chalk.bold('\n📄 Daemon State:'));
             console.log(chalk.blue(`Location: ${configuration.daemonStateFile}`));
-            console.log(chalk.gray(JSON.stringify(state, null, 2)));
+            console.log(chalk.gray(JSON.stringify(redactDaemonStateForDisplay(state), null, 2)));
         }
 
         // All Happier processes

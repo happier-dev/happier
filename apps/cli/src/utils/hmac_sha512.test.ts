@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { hmac_sha512 } from './hmac_sha512';
 import { decode as decodeHex } from '@stablelib/hex';
+import { createHmac } from 'node:crypto';
 
 function decodeHexString(hexString: string, format: 'normal' | 'mac' = 'normal'): Uint8Array {
     if (format === 'mac') {
@@ -27,7 +28,12 @@ const VECTORS = [
         key: decodeHexString('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
         data: decodeHexString('dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'),
         output: decodeHexString('fa73b0089d56a284efb0f0756c890be9b1b5dbdd8ee81a3655f83e33b2279d39bf3e848279a722c806b485a47e67c807b946a337bee8942674278859e13292fb')
-    }
+    },
+    {
+        key: new Uint8Array(131).fill(0xaa),
+        data: new TextEncoder().encode('Test Using Larger Than Block-Size Key - Hash Key First'),
+        output: decodeHexString('80b24263c7c1a3ebb71493c1dd7be8b49b46d1f41b4aeec1121b013783f8f3526b56d037e05f2598bd0fd2215d6a1e5295e64f73f63f0aec8b915a985d786598')
+    },
 ];
 
 describe('hmac_sha512', () => {
@@ -36,5 +42,24 @@ describe('hmac_sha512', () => {
             let res = await hmac_sha512(vec.key, vec.data);
             expect(res).toEqual(vec.output);
         }
+    });
+
+    it('returns a 64-byte digest and is deterministic', async () => {
+        const key = new TextEncoder().encode('deterministic-key');
+        const data = new TextEncoder().encode('deterministic-payload');
+
+        const first = await hmac_sha512(key, data);
+        const second = await hmac_sha512(key, data);
+
+        expect(first).toEqual(second);
+        expect(first.byteLength).toBe(64);
+    });
+
+    it('matches node crypto for empty key/data boundary', async () => {
+        const key = new Uint8Array([]);
+        const data = new Uint8Array([]);
+        const expected = new Uint8Array(createHmac('sha512', key).update(data).digest());
+
+        await expect(hmac_sha512(key, data)).resolves.toEqual(expected);
     });
 });
