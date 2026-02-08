@@ -7,7 +7,7 @@ import { createSession } from '../../src/testkit/sessions';
 import { createSessionScopedSocketCollector, createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
-import { writeTestManifest } from '../../src/testkit/manifest';
+import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -21,7 +21,7 @@ describe('core e2e: rpc permission round-trip + reconnect', () => {
 
   it('routes rpc-call to a different socket; fails closed while agent disconnected; works again after reconnect', async () => {
     const testDir = run.testDir('rpc-permission-roundtrip');
-    const saveArtifactsOnSuccess = envFlag('HAPPY_E2E_SAVE_ARTIFACTS', false);
+    const saveArtifactsOnSuccess = envFlag(['HAPPIER_E2E_SAVE_ARTIFACTS', 'HAPPY_E2E_SAVE_ARTIFACTS'], false);
     const startedAt = new Date().toISOString();
     server = await startServerLight({ testDir });
     const auth = await createTestAuth(server.baseUrl);
@@ -37,16 +37,16 @@ describe('core e2e: rpc permission round-trip + reconnect', () => {
     artifacts.json('agent.rpc.payloads.json', () => payloads);
 
     let passed = false;
-    writeTestManifest(testDir, {
+    writeTestManifestForServer({
+      testDir,
+      server,
       startedAt,
       runId: run.runId,
       testName: 'rpc-permission-roundtrip',
-      baseUrl: server.baseUrl,
-      ports: { server: server.port },
       sessionIds: [sessionId],
       env: {
         CI: process.env.CI,
-        HAPPY_E2E_SAVE_ARTIFACTS: process.env.HAPPY_E2E_SAVE_ARTIFACTS,
+        HAPPIER_E2E_SAVE_ARTIFACTS: process.env.HAPPIER_E2E_SAVE_ARTIFACTS ?? process.env.HAPPY_E2E_SAVE_ARTIFACTS,
       },
     });
 
@@ -72,8 +72,13 @@ describe('core e2e: rpc permission round-trip + reconnect', () => {
     agent.disconnect();
     await waitFor(() => !agent.isConnected(), { timeoutMs: 10_000 });
 
-    const res2 = await ui.rpcCall<{ ok: boolean; errorCode?: string }>(method, JSON.stringify({ id: 'p2', approved: true }));
+    const res2 = await ui.rpcCall<{ ok: boolean; error?: string; errorCode?: string }>(
+      method,
+      JSON.stringify({ id: 'p2', approved: true }),
+    );
     expect(res2.ok).toBe(false);
+    expect(res2.errorCode).toBe('RPC_METHOD_NOT_AVAILABLE');
+    expect(typeof res2.error).toBe('string');
 
     // Reconnect + re-register: method works again.
     agent.connect();

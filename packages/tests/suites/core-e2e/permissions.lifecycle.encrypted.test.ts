@@ -7,7 +7,7 @@ import { createTestAuth } from '../../src/testkit/auth';
 import { createSession, fetchSessionV2 } from '../../src/testkit/sessions';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
-import { writeTestManifest } from '../../src/testkit/manifest';
+import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { waitFor } from '../../src/testkit/timing';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { decryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
@@ -25,7 +25,7 @@ describe('core e2e: permission lifecycle (encrypted rpc + agentState) + reconnec
 
   it('agent publishes requests; UI approves via encrypted RPC; offline device sees completedRequests after reconnect', async () => {
     const testDir = run.testDir('permission-lifecycle-encrypted');
-    const saveArtifactsOnSuccess = envFlag('HAPPY_E2E_SAVE_ARTIFACTS', false);
+    const saveArtifactsOnSuccess = envFlag(['HAPPIER_E2E_SAVE_ARTIFACTS', 'HAPPY_E2E_SAVE_ARTIFACTS'], false);
     const startedAt = new Date().toISOString();
 
     server = await startServerLight({ testDir });
@@ -46,16 +46,16 @@ describe('core e2e: permission lifecycle (encrypted rpc + agentState) + reconnec
       dataKey,
     });
 
-    writeTestManifest(testDir, {
+    writeTestManifestForServer({
+      testDir,
+      server,
       startedAt,
       runId: run.runId,
       testName: 'permission-lifecycle-encrypted',
-      baseUrl: server.baseUrl,
-      ports: { server: server.port },
       sessionIds: [sessionId],
       env: {
         CI: process.env.CI,
-        HAPPY_E2E_SAVE_ARTIFACTS: process.env.HAPPY_E2E_SAVE_ARTIFACTS,
+        HAPPIER_E2E_SAVE_ARTIFACTS: process.env.HAPPIER_E2E_SAVE_ARTIFACTS ?? process.env.HAPPY_E2E_SAVE_ARTIFACTS,
       },
     });
 
@@ -114,4 +114,3 @@ describe('core e2e: permission lifecycle (encrypted rpc + agentState) + reconnec
     }
   });
 });
-
