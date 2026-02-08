@@ -1,5 +1,34 @@
-export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi'] as const;
+export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
+
+export const PERMISSION_MODES = [
+    'default',
+    'acceptEdits',
+    'bypassPermissions',
+    'plan',
+    'read-only',
+    'safe-yolo',
+    'yolo',
+] as const;
+
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
+
+/**
+ * Provider-agnostic permission intent.
+ *
+ * This is the canonical concept we want to persist going forward. Provider-specific tokens
+ * (e.g. Claude's `acceptEdits`, `bypassPermissions`) are treated as legacy aliases at input
+ * boundaries and must not be persisted as the session's selected permission mode.
+ */
+export const PERMISSION_INTENTS = [
+    'default',
+    'read-only',
+    'safe-yolo',
+    'yolo',
+    'plan',
+] as const;
+
+export type PermissionIntent = (typeof PERMISSION_INTENTS)[number];
 
 export type VendorResumeSupportLevel = 'supported' | 'unsupported' | 'experimental';
 export type ResumeRuntimeGate = 'acpLoadSession' | null;
@@ -10,7 +39,8 @@ export type VendorResumeIdField =
     | 'opencodeSessionId'
     | 'auggieSessionId'
     | 'qwenSessionId'
-    | 'kimiSessionId';
+    | 'kimiSessionId'
+    | 'kiloSessionId';
 
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';

@@ -59,4 +59,12 @@ export const AGENTS_CORE = {
         cloudConnect: null,
         resume: { vendorResume: 'supported', vendorResumeIdField: 'kimiSessionId', runtimeGate: 'acpLoadSession' },
     },
+    kilo: {
+        id: 'kilo',
+        cliSubcommand: 'kilo',
+        detectKey: 'kilo',
+        flavorAliases: ['kilocode'],
+        cloudConnect: null,
+        resume: { vendorResume: 'supported', vendorResumeIdField: 'kiloSessionId', runtimeGate: 'acpLoadSession' },
+    },
 } as const satisfies Record<AgentId, AgentCore>;
