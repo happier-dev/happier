@@ -1,36 +1,95 @@
 import { describe, expect, it } from 'vitest';
 
+import { createTestMetadata } from '@/backends/testHelpers/sessionMetadata.testHelpers';
+import type { Metadata } from '@/api/types';
 import { maybeUpdateQwenSessionIdMetadata } from './qwenSessionIdMetadata';
 
 describe('maybeUpdateQwenSessionIdMetadata', () => {
-  it('publishes qwenSessionId once per new session id and preserves other metadata', () => {
+  it.each([null, '', '   '])('does not publish metadata when session id is %p', (sessionId) => {
     const last = { value: null as string | null };
-    let metadata: any = { existing: true };
+    let metadata = createTestMetadata();
+    let updateCalls = 0;
 
     maybeUpdateQwenSessionIdMetadata({
-      getQwenSessionId: () => 'qwen-1',
-      updateHappySessionMetadata: (updater) => { metadata = updater(metadata); },
+      getQwenSessionId: () => sessionId,
+      updateHappySessionMetadata: (updater) => {
+        updateCalls += 1;
+        metadata = updater(metadata);
+      },
       lastPublished: last,
     });
 
-    expect(metadata.qwenSessionId).toBe('qwen-1');
-    expect(metadata.existing).toBe(true);
+    expect(updateCalls).toBe(0);
+    expect(last.value).toBeNull();
+    expect((metadata as Metadata & { qwenSessionId?: string }).qwenSessionId).toBeUndefined();
+  });
 
-    // Same id again should not re-run updater
+  it('publishes trimmed qwenSessionId and preserves existing metadata fields', () => {
+    const last = { value: null as string | null };
+    let metadata = createTestMetadata({ flavor: 'qwen' });
+
+    maybeUpdateQwenSessionIdMetadata({
+      getQwenSessionId: () => '  qwen-1  ',
+      updateHappySessionMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
+      lastPublished: last,
+    });
+
+    expect(last.value).toBe('qwen-1');
+    expect((metadata as Metadata & { qwenSessionId?: string }).qwenSessionId).toBe('qwen-1');
+    expect(metadata.path).toBe('/tmp/project');
+    expect(metadata.flavor).toBe('qwen');
+  });
+
+  it('does not re-run updater when session id is unchanged after trimming', () => {
+    const last = { value: null as string | null };
+    let metadata = createTestMetadata({ flavor: 'qwen' });
+    let updateCalls = 0;
+
+    maybeUpdateQwenSessionIdMetadata({
+      getQwenSessionId: () => 'qwen-1',
+      updateHappySessionMetadata: (updater) => {
+        updateCalls += 1;
+        metadata = updater(metadata);
+      },
+      lastPublished: last,
+    });
     const before = metadata;
     maybeUpdateQwenSessionIdMetadata({
-      getQwenSessionId: () => 'qwen-1',
-      updateHappySessionMetadata: (updater) => { metadata = updater(metadata); },
+      getQwenSessionId: () => '  qwen-1 ',
+      updateHappySessionMetadata: (updater) => {
+        updateCalls += 1;
+        metadata = updater(metadata);
+      },
       lastPublished: last,
     });
+
+    expect(updateCalls).toBe(1);
     expect(metadata).toBe(before);
+    expect(last.value).toBe('qwen-1');
+  });
+
+  it('publishes again when session id changes', () => {
+    const last = { value: null as string | null };
+    let metadata = createTestMetadata({ flavor: 'qwen' });
 
     maybeUpdateQwenSessionIdMetadata({
-      getQwenSessionId: () => 'qwen-2',
-      updateHappySessionMetadata: (updater) => { metadata = updater(metadata); },
+      getQwenSessionId: () => 'qwen-1',
+      updateHappySessionMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
       lastPublished: last,
     });
-    expect(metadata.qwenSessionId).toBe('qwen-2');
+    maybeUpdateQwenSessionIdMetadata({
+      getQwenSessionId: () => 'qwen-2',
+      updateHappySessionMetadata: (updater) => {
+        metadata = updater(metadata);
+      },
+      lastPublished: last,
+    });
+
+    expect(last.value).toBe('qwen-2');
+    expect((metadata as Metadata & { qwenSessionId?: string }).qwenSessionId).toBe('qwen-2');
   });
 });
-
