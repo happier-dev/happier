@@ -77,5 +77,35 @@ describe('getSecretSatisfaction', () => {
         expect(res.isSatisfied).toBe(false);
         expect(res.items[0]?.satisfiedBy).toBe('none');
     });
-});
 
+    it('ignores unknown selected/default ids and falls back to machine env', () => {
+        const profile = makeProfile([{ name: 'A', kind: 'secret', required: true }]);
+        const res = getSecretSatisfaction({
+            profile,
+            secrets,
+            selectedSecretIds: { A: 'unknown' },
+            defaultBindings: { A: 'also-unknown' },
+            machineEnvReadyByName: { A: true },
+        });
+        expect(res.isSatisfied).toBe(true);
+        expect(res.items[0]?.satisfiedBy).toBe('machineEnv');
+    });
+
+    it('treats non-required secret requirements as non-blocking', () => {
+        const profile = makeProfile([
+            { name: 'A', kind: 'secret', required: true },
+            { name: 'B', kind: 'secret', required: false },
+        ]);
+        const res = getSecretSatisfaction({
+            profile,
+            secrets: [],
+            machineEnvReadyByName: { A: true, B: false },
+        });
+
+        expect(res.items.map((item) => [item.envVarName, item.isSatisfied])).toEqual([
+            ['A', true],
+            ['B', false],
+        ]);
+        expect(res.isSatisfied).toBe(true);
+    });
+});

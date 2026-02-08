@@ -55,5 +55,22 @@ describe('applySecretRequirementResult', () => {
         expect(out.nextSelectedSecretIdByProfileIdByEnvVarName.p1?.OPENAI_API_KEY).toBe('s1');
         expect(out.nextSecretBindingsByProfileId.p1?.OPENAI_API_KEY).toBe('s1');
     });
-});
 
+    it('keeps state unchanged for unknown action values', () => {
+        const selected = { p1: { OPENAI_API_KEY: 's0' } };
+        const once = { p1: { OPENAI_API_KEY: 'once' } };
+        const bindings = { p1: { OPENAI_API_KEY: 's0' } };
+
+        const out = applySecretRequirementResult({
+            profileId: 'p1',
+            result: { action: 'unknown', envVarName: 'OPENAI_API_KEY' } as any,
+            selectedSecretIdByProfileIdByEnvVarName: selected,
+            sessionOnlySecretValueByProfileIdByEnvVarName: once,
+            secretBindingsByProfileId: bindings,
+        });
+
+        expect(out.nextSelectedSecretIdByProfileIdByEnvVarName).toEqual(selected);
+        expect(out.nextSessionOnlySecretValueByProfileIdByEnvVarName).toEqual(once);
+        expect(out.nextSecretBindingsByProfileId).toEqual(bindings);
+    });
+});
