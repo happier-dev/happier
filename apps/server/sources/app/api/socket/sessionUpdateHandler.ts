@@ -1,6 +1,6 @@
 import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCounter } from "@/app/monitoring/metrics2";
 import { activityCache } from "@/app/presence/sessionCache";
-import { buildNewMessageUpdate, buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
+import { buildNewMessageUpdate, buildPendingChangedUpdate, buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
 import { AsyncLock } from "@/utils/lock";
 import { log } from "@/utils/log";
@@ -8,6 +8,7 @@ import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { Socket } from "socket.io";
 import { createSessionMessage, updateSessionAgentState, updateSessionMetadata } from "@/app/session/sessionWriteService";
 import { recordSessionAlive } from "@/app/presence/presenceRecorder";
+import { materializeNextPendingMessage } from "@/app/sessionPending/sessionPendingService";
 
 export function sessionUpdateHandler(userId: string, socket: Socket, connection: ClientConnection) {
     socket.on('update-metadata', async (data: any, callback: (response: any) => void) => {
@@ -210,7 +211,7 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 }
 
                 socketMessageAckCounter.inc({ result: 'ok', error: 'none' });
-                respond({ ok: true, id: result.message.id, seq: result.message.seq, localId: result.message.localId });
+                respond({ ok: true, id: result.message.id, seq: result.message.seq, localId: result.message.localId, didWrite: result.didWrite });
 
                 if (result.didWrite === false) {
                     return;
@@ -228,6 +229,82 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
             } catch (error) {
                 log({ module: 'websocket', level: 'error' }, `Error in message handler: ${error}`);
                 socketMessageAckCounter.inc({ result: 'error', error: 'internal' });
+                respond({ ok: false, error: 'internal' });
+            }
+        });
+    });
+
+    socket.on('pending-materialize-next', async (data: any, callback?: (response: any) => void) => {
+        await receiveMessageLock.inLock(async () => {
+            const respond = (response: any) => {
+                if (typeof callback === 'function') {
+                    callback(response);
+                }
+            };
+
+            try {
+                const sid = typeof data?.sid === 'string' ? data.sid : null;
+                if (!sid) {
+                    respond({ ok: false, error: 'invalid-params' });
+                    return;
+                }
+
+                if (connection.connectionType === 'session-scoped' && connection.sessionId && connection.sessionId !== sid) {
+                    respond({ ok: false, error: 'invalid-params' });
+                    return;
+                }
+
+                const result = await materializeNextPendingMessage({
+                    actorUserId: userId,
+                    sessionId: sid,
+                });
+
+                if (!result.ok) {
+                    respond({ ok: false, error: result.error });
+                    return;
+                }
+
+                if (!result.didMaterialize) {
+                    respond({ ok: true, didMaterialize: false });
+                    return;
+                }
+
+                respond({
+                    ok: true,
+                    didMaterialize: true,
+                    didWrite: result.didWriteMessage,
+                    message: { id: result.message.id, seq: result.message.seq, localId: result.message.localId },
+                });
+
+                if (result.didWriteMessage) {
+                    await Promise.all(
+                        result.participantCursorsMessage.map(async ({ accountId, cursor }) => {
+                            const payload = buildNewMessageUpdate(result.message, sid, cursor, randomKeyNaked(12));
+                            eventRouter.emitUpdate({
+                                userId: accountId,
+                                payload,
+                                recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
+                            });
+                        }),
+                    );
+                }
+
+                await Promise.all(
+                    result.participantCursorsPending.map(async ({ accountId, cursor }) => {
+                        const payload = buildPendingChangedUpdate(
+                            { sessionId: sid, pendingCount: result.pendingCount, pendingVersion: result.pendingVersion, changedByAccountId: userId },
+                            cursor,
+                            randomKeyNaked(12),
+                        );
+                        eventRouter.emitUpdate({
+                            userId: accountId,
+                            payload,
+                            recipientFilter: { type: 'all-interested-in-session', sessionId: sid },
+                        });
+                    }),
+                );
+            } catch (error) {
+                log({ module: 'websocket', level: 'error' }, `Error in pending-materialize-next: ${error}`);
                 respond({ ok: false, error: 'internal' });
             }
         });

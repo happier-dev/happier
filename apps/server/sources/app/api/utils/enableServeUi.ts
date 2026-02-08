@@ -3,6 +3,7 @@ import type { UiConfig } from "@/app/api/uiConfig";
 import { extname, resolve, sep } from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { warn } from "@/utils/log";
+import { existsSync } from "node:fs";
 
 type AnyFastifyInstance = FastifyInstance<any, any, any, any, any>;
 
@@ -13,6 +14,12 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
     }
 
     const root = resolve(uiDir);
+    if (ui.required) {
+        const indexPath = resolve(root, 'index.html');
+        if (!existsSync(indexPath)) {
+            throw new Error(`UI index.html not found at ${indexPath}`);
+        }
+    }
 
     async function sendUiFile(relPath: string, reply: any) {
         const candidate = resolve(root, relPath);
@@ -33,6 +40,9 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
             reply.header('content-type', 'text/css; charset=utf-8');
             reply.header('cache-control', 'public, max-age=31536000, immutable');
         } else if (ext === '.json') {
+            reply.header('content-type', 'application/json; charset=utf-8');
+            reply.header('cache-control', 'public, max-age=31536000, immutable');
+        } else if (ext === '.map') {
             reply.header('content-type', 'application/json; charset=utf-8');
             reply.header('cache-control', 'public, max-age=31536000, immutable');
         } else if (ext === '.svg') {
@@ -80,8 +90,35 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
             html = (await readFile(indexPath, 'utf-8')) + '\n<!-- Welcome to Happier Server! -->\n';
         } catch (err) {
             warn({ err, indexPath }, 'UI index.html not found (check UI build dir configuration)');
-            reply.header('cache-control', 'no-cache');
-            return reply.code(404).send({ error: 'Not found' });
+            const isProduction = process.env.NODE_ENV === "production";
+            const revealPathInFallback = !isProduction || process.env.HAPPIER_SERVER_UI_DEBUG_PATH === "1";
+            const escapedIndexPath = String(indexPath)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            const missingBundleDetails = revealPathInFallback
+                ? `<p>The backend is running, but the web UI bundle is missing:</p>\n  <pre>${escapedIndexPath}</pre>\n`
+                : `<p>The backend is running, but the UI bundle is missing for this environment.</p>\n`;
+            html =
+                `<!doctype html>\n` +
+                `<html>\n` +
+                `<head>\n` +
+                `  <meta charset="utf-8" />\n` +
+                `  <meta name="viewport" content="width=device-width, initial-scale=1" />\n` +
+                `  <title>Happier UI not built</title>\n` +
+                `  <style>body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;line-height:1.45;padding:24px;max-width:840px;margin:0 auto}code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}pre{background:#f6f8fa;padding:12px;border-radius:8px;overflow:auto}</style>\n` +
+                `</head>\n` +
+                `<body>\n` +
+                `  <h1>Happier UI is not built</h1>\n` +
+                `  ${missingBundleDetails}` +
+                `  <p>Fix:</p>\n` +
+                `  <pre>hstack build</pre>\n` +
+                `  <p>If the stack is already running via a service, you may need:</p>\n` +
+                `  <pre>hstack service restart</pre>\n` +
+                `  <p style="color:#6a737d">If you are developing the UI, use <code>hstack dev</code> instead.</p>\n` +
+                `</body>\n` +
+                `</html>\n` +
+                `<!-- Welcome to Happier Server! -->\n`;
         }
         reply.header('content-type', 'text/html; charset=utf-8');
         reply.header('cache-control', 'no-cache');
@@ -90,6 +127,54 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
 
     if (ui.mountRoot) {
         app.get('/', async (_request, reply) => await sendIndexHtml(reply));
+        // SPA deep links (e.g. /terminal/connect) should render the same index.html bundle.
+        // Exact API/static routes should still win routing precedence.
+        app.get('/*', async (request, reply) => {
+            try {
+                const rawUrl = typeof request.url === 'string' ? request.url : '';
+                const pathname = rawUrl ? new URL(rawUrl, 'http://localhost').pathname : '/';
+                const lowerPathname = pathname.toLowerCase();
+                const isApiPath =
+                    lowerPathname === '/v1' ||
+                    lowerPathname.startsWith('/v1/') ||
+                    lowerPathname === '/api' ||
+                    lowerPathname.startsWith('/api/');
+                if (isApiPath) {
+                    return reply.code(404).send({ error: 'Not found' });
+                }
+                const decoded = decodeURIComponent(pathname || '/').replace(/^\/+/, '');
+                if (!decoded) {
+                    return await sendIndexHtml(reply);
+                }
+                // Best-effort: if it looks like a UI asset request, try serving the file.
+                // (Avoid treating dot-containing SPA routes like "/user.profile" as static files.)
+                const ext = extname(decoded).toLowerCase();
+                const isStaticAsset = Boolean(ext) && [
+                    '.html',
+                    '.js',
+                    '.css',
+                    '.json',
+                    '.svg',
+                    '.ico',
+                    '.wasm',
+                    '.ttf',
+                    '.woff',
+                    '.woff2',
+                    '.png',
+                    '.jpg',
+                    '.jpeg',
+                    '.webp',
+                    '.gif',
+                    '.map',
+                ].includes(ext);
+                if (isStaticAsset) {
+                    return await sendUiFile(decoded, reply);
+                }
+                return await sendIndexHtml(reply);
+            } catch {
+                return reply.code(404).send({ error: 'Not found' });
+            }
+        });
         app.get('/ui', async (_request, reply) => reply.redirect('/', 302));
         app.get('/ui/', async (_request, reply) => reply.redirect('/', 302));
         app.get('/ui/*', async (request, reply) => {

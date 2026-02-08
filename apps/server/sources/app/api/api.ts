@@ -26,6 +26,12 @@ import { kvRoutes } from "./routes/kvRoutes";
 import { shareRoutes } from "./routes/shareRoutes";
 import { publicShareRoutes } from "./routes/publicShareRoutes";
 import { featuresRoutes } from "./routes/featuresRoutes";
+import { sessionPendingRoutes } from "./routes/sessionPendingRoutes";
+
+export function resolveApiListenHost(env: Record<string, string | undefined>): string {
+    const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
+    return host.length > 0 ? host : '0.0.0.0';
+}
 
 export async function startApi() {
 
@@ -73,6 +79,7 @@ export async function startApi() {
     devRoutes(typed);
     versionRoutes(typed);
     featuresRoutes(typed);
+    sessionPendingRoutes(typed);
     voiceRoutes(typed);
     userRoutes(typed);
     feedRoutes(typed);
@@ -82,7 +89,7 @@ export async function startApi() {
 
     // Start HTTP 
     const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3005;
-    await app.listen({ port, host: '0.0.0.0' });
+    await app.listen({ port, host: resolveApiListenHost(process.env) });
     onShutdown('api', async () => {
         await app.close();
     });

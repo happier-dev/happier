@@ -1,3 +1,5 @@
+import { parseBooleanEnv } from "@/config/env";
+
 export type UiConfig = {
     dir: string | null;
     /**
@@ -7,6 +9,11 @@ export type UiConfig = {
      */
     prefix: string;
     mountRoot: boolean;
+    /**
+     * When true, server startup should fail closed if the UI bundle is missing/incomplete.
+     * This is intended for local stack orchestration where "serve UI" is an explicit capability.
+     */
+    required: boolean;
 };
 
 export function resolveUiConfig(env: NodeJS.ProcessEnv = process.env): UiConfig {
@@ -22,5 +29,8 @@ export function resolveUiConfig(env: NodeJS.ProcessEnv = process.env): UiConfig 
             ? prefixNormalized.slice(0, -1)
             : prefixNormalized;
 
-    return { dir, prefix, mountRoot };
+    const requiredRaw = env.HAPPIER_SERVER_UI_REQUIRED ?? env.HAPPIER_SERVER_LIGHT_UI_REQUIRED;
+    const required = parseBooleanEnv(requiredRaw, false);
+
+    return { dir, prefix, mountRoot, required };
 }

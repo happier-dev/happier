@@ -5,6 +5,7 @@ import { Server, Socket } from "socket.io";
 import { log } from "@/utils/log";
 import { auth } from "@/app/auth/auth";
 import { decrementWebSocketConnection, incrementWebSocketConnection, websocketEventsCounter } from "../monitoring/metrics2";
+import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 import { usageHandler } from "./socket/usageHandler";
 import { rpcHandler } from "./socket/rpcHandler";
 import { pingHandler } from "./socket/pingHandler";
@@ -16,18 +17,11 @@ import { getSocketRooms } from "./socketRooms";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { getRedisClient } from "@/storage/redis";
 import { randomUUID } from "node:crypto";
+import { getSocketAdapterFromEnv, isRedisStreamsEnabled } from "@/config/backends";
 
 export function startSocket(app: Fastify) {
-    const serverFlavor = (process.env.HAPPIER_SERVER_FLAVOR ?? process.env.HAPPY_SERVER_FLAVOR ?? '').trim();
-    const adapter = (process.env.HAPPIER_SOCKET_REDIS_ADAPTER ?? process.env.HAPPY_SOCKET_REDIS_ADAPTER ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
-    const shouldEnableRedisAdapter =
-        serverFlavor !== 'light' &&
-        (adapter === 'true' || adapter === '1') &&
-        typeof process.env.REDIS_URL === 'string' &&
-        process.env.REDIS_URL.trim().length > 0;
+    const socketAdapter = getSocketAdapterFromEnv(process.env, "memory");
+    const shouldEnableRedisAdapter = isRedisStreamsEnabled(process.env, socketAdapter);
 
     const instanceId = process.env.HAPPIER_INSTANCE_ID?.trim() || process.env.HAPPY_INSTANCE_ID?.trim() || randomUUID();
 
@@ -50,47 +44,70 @@ export function startSocket(app: Fastify) {
         serveClient: false // Don't serve the client files
     });
 
+    function rejectSocket(params: { statusCode: number; error: string; provider?: string }) {
+        const err: any = new Error(params.error);
+        err.data = {
+            error: params.error,
+            statusCode: params.statusCode,
+            ...(params.provider ? { provider: params.provider } : {}),
+        };
+        return err;
+    }
+
     let rpcListeners = new Map<string, Map<string, Socket>>();
     eventRouter.setIo(io);
-    io.on("connection", async (socket) => {
-        log({ module: 'websocket' }, `New connection attempt from socket: ${socket.id}`);
+
+    io.use(async (socket, next) => {
         const token = socket.handshake.auth.token as string;
         const clientType = socket.handshake.auth.clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
         const sessionId = socket.handshake.auth.sessionId as string | undefined;
         const machineId = socket.handshake.auth.machineId as string | undefined;
 
         if (!token) {
-            log({ module: 'websocket' }, `No token provided`);
-            socket.emit('error', { message: 'Missing authentication token' });
-            socket.disconnect();
-            return;
+            return next(rejectSocket({ statusCode: 401, error: 'invalid-token' }));
         }
 
-        // Validate session-scoped clients have sessionId
         if (clientType === 'session-scoped' && !sessionId) {
-            log({ module: 'websocket' }, `Session-scoped client missing sessionId`);
-            socket.emit('error', { message: 'Session ID required for session-scoped clients' });
-            socket.disconnect();
-            return;
+            return next(rejectSocket({ statusCode: 400, error: 'missing-session-id' }));
         }
 
-        // Validate machine-scoped clients have machineId
         if (clientType === 'machine-scoped' && !machineId) {
-            log({ module: 'websocket' }, `Machine-scoped client missing machineId`);
-            socket.emit('error', { message: 'Machine ID required for machine-scoped clients' });
-            socket.disconnect();
-            return;
+            return next(rejectSocket({ statusCode: 400, error: 'missing-machine-id' }));
         }
 
         const verified = await auth.verifyToken(token);
         if (!verified) {
-            log({ module: 'websocket' }, `Invalid token provided`);
-            socket.emit('error', { message: 'Invalid authentication token' });
+            return next(rejectSocket({ statusCode: 401, error: 'invalid-token' }));
+        }
+
+        const eligibility = await enforceLoginEligibility({ accountId: verified.userId, env: process.env });
+        if (!eligibility.ok) {
+            return next(rejectSocket({
+                statusCode: eligibility.statusCode,
+                error: eligibility.error,
+                ...(eligibility.error === 'provider-required' ? { provider: eligibility.provider } : {}),
+            }));
+        }
+
+        (socket.data as any).userId = verified.userId;
+        (socket.data as any).clientType = clientType;
+        (socket.data as any).sessionId = sessionId;
+        (socket.data as any).machineId = machineId;
+        return next();
+    });
+
+    io.on("connection", async (socket) => {
+        log({ module: 'websocket' }, `New connection attempt from socket: ${socket.id}`);
+        const userId = (socket.data as any).userId as string | undefined;
+        const clientType = (socket.data as any).clientType as 'session-scoped' | 'user-scoped' | 'machine-scoped' | undefined;
+        const sessionId = (socket.data as any).sessionId as string | undefined;
+        const machineId = (socket.data as any).machineId as string | undefined;
+
+        if (!userId) {
             socket.disconnect();
             return;
         }
 
-        const userId = verified.userId;
         log({ module: 'websocket' }, `Token verified: ${userId}, clientType: ${clientType || 'user-scoped'}, sessionId: ${sessionId || 'none'}, machineId: ${machineId || 'none'}, socketId: ${socket.id}`);
 
         // Store connection based on type
