@@ -1,9 +1,8 @@
 import React from 'react';
 import { View, Text } from 'react-native';
-import { Octicons } from '@expo/vector-icons';
-import { useSessionProjectGitStatus } from '@/sync/storage';
-import { GitStatus } from '@/sync/storageTypes';
+import { useSessionProjectGitSnapshot } from '@/sync/storage';
 import { StyleSheet } from 'react-native-unistyles';
+import { buildGitStatusSummaryFromSnapshot } from './statusSummary';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -65,38 +64,36 @@ interface ProjectGitStatusProps {
 
 export function ProjectGitStatus({ sessionId }: ProjectGitStatusProps) {
     const styles = stylesheet;
-    const gitStatus = useSessionProjectGitStatus(sessionId);
+    const snapshot = useSessionProjectGitSnapshot(sessionId);
+    const gitStatus = buildGitStatusSummaryFromSnapshot(snapshot);
 
     // Don't render if no git status (not a git repository)
-    if (!gitStatus || gitStatus.lastUpdatedAt === 0) {
+    if (!gitStatus) {
         return null;
     }
 
-    const fileCount = getTotalChangedFiles(gitStatus);
-    const hasChanges = fileCount > 0 || gitStatus.unstagedLinesAdded > 0 || gitStatus.unstagedLinesRemoved > 0;
-    const hasLineChanges = gitStatus.unstagedLinesAdded > 0 || gitStatus.unstagedLinesRemoved > 0;
+    const hasLineChanges = gitStatus.hasLineChanges;
+    const changedFilesLabel = `${gitStatus.changedFiles} ${gitStatus.changedFiles === 1 ? 'file' : 'files'}`;
 
     return (
         <View style={styles.container}>
-            {/* Show line changes only */}
+            {!hasLineChanges && gitStatus.hasAnyChanges && (
+                <Text style={styles.filesText}>{changedFilesLabel}</Text>
+            )}
             {hasLineChanges && (
                 <View style={styles.lineChanges}>
-                    {gitStatus.unstagedLinesAdded > 0 && (
+                    {gitStatus.linesAdded > 0 && (
                         <Text style={styles.addedText}>
-                            +{gitStatus.unstagedLinesAdded}
+                            +{gitStatus.linesAdded}
                         </Text>
                     )}
-                    {gitStatus.unstagedLinesRemoved > 0 && (
+                    {gitStatus.linesRemoved > 0 && (
                         <Text style={styles.removedText}>
-                            -{gitStatus.unstagedLinesRemoved}
+                            -{gitStatus.linesRemoved}
                         </Text>
                     )}
                 </View>
             )}
         </View>
     );
-}
-
-function getTotalChangedFiles(status: GitStatus): number {
-    return status.modifiedCount + status.untrackedCount + status.stagedCount;
 }

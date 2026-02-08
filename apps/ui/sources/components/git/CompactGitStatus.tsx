@@ -1,9 +1,9 @@
 import React from 'react';
 import { View, Text } from 'react-native';
-import { useSessionGitStatus, useSessionProjectGitStatus } from '@/sync/storage';
-import { GitStatus } from '@/sync/storageTypes';
+import { useSessionProjectGitSnapshot } from '@/sync/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
+import { buildGitStatusSummaryFromSnapshot } from './statusSummary';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -42,17 +42,16 @@ interface CompactGitStatusProps {
 
 export function CompactGitStatus({ sessionId }: CompactGitStatusProps) {
     const styles = stylesheet;
-    // Use project git status first, fallback to session git status for backward compatibility
-    const projectGitStatus = useSessionProjectGitStatus(sessionId);
-    const sessionGitStatus = useSessionGitStatus(sessionId);
-    const gitStatus = projectGitStatus || sessionGitStatus;
+    const snapshot = useSessionProjectGitSnapshot(sessionId);
+    const gitStatus = buildGitStatusSummaryFromSnapshot(snapshot);
 
     // Don't render if no git status or no meaningful changes
-    if (!gitStatus || !hasMeaningfulChanges(gitStatus)) {
+    if (!gitStatus || !gitStatus.hasAnyChanges) {
         return null;
     }
 
-    const hasLineChanges = gitStatus.unstagedLinesAdded > 0 || gitStatus.unstagedLinesRemoved > 0;
+    const hasLineChanges = gitStatus.hasLineChanges;
+    const changedFilesLabel = `${gitStatus.changedFiles}`;
 
     return (
         <View style={styles.container}>
@@ -62,30 +61,23 @@ export function CompactGitStatus({ sessionId }: CompactGitStatusProps) {
                 color={styles.fileCountText.color}
                 style={{ marginRight: 2 }}
             />
-            
-            {/* Show line changes in compact format */}
+            {!hasLineChanges && (
+                <Text style={styles.fileCountText}>{changedFilesLabel}</Text>
+            )}
             {hasLineChanges && (
                 <View style={styles.lineChanges}>
-                    {gitStatus.unstagedLinesAdded > 0 && (
+                    {gitStatus.linesAdded > 0 && (
                         <Text style={styles.addedText}>
-                            +{gitStatus.unstagedLinesAdded}
+                            +{gitStatus.linesAdded}
                         </Text>
                     )}
-                    {gitStatus.unstagedLinesRemoved > 0 && (
+                    {gitStatus.linesRemoved > 0 && (
                         <Text style={styles.removedText}>
-                            -{gitStatus.unstagedLinesRemoved}
+                            -{gitStatus.linesRemoved}
                         </Text>
                     )}
                 </View>
             )}
         </View>
-    );
-}
-
-function hasMeaningfulChanges(status: GitStatus): boolean {
-    // Only show when there are actual line changes
-    return status.lastUpdatedAt > 0 && status.isDirty && (
-        status.unstagedLinesAdded > 0 ||
-        status.unstagedLinesRemoved > 0
     );
 }
