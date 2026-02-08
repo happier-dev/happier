@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 
 vi.mock('fs/promises', () => ({
   readFile: vi.fn(async () => Buffer.from('hello')),
@@ -17,8 +18,10 @@ import { registerFileSystemHandlers } from './fileSystem';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolve } from 'path';
 
-function createRpcHandlerManager(): { handlers: Map<string, (data: any) => any>; registerHandler: (m: string, h: any) => void } {
-  const handlers = new Map<string, (data: any) => any>();
+type Handler = (data: unknown) => Promise<unknown> | unknown;
+
+function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHandler: (method: string, handler: Handler) => void } {
+  const handlers = new Map<string, Handler>();
   return {
     handlers,
     registerHandler(method, handler) {
@@ -28,15 +31,46 @@ function createRpcHandlerManager(): { handlers: Map<string, (data: any) => any>;
 }
 
 describe('registerFileSystemHandlers', () => {
-  it('uses the validated resolved path for readFile/writeFile operations', async () => {
+  it('rejects traversal-style paths for read and write', async () => {
+    vi.clearAllMocks();
     const mgr = createRpcHandlerManager();
-    registerFileSystemHandlers(mgr as any, '/work/dir');
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir');
 
-    const read = mgr.handlers.get(RPC_METHODS.READ_FILE)!;
+    const read = mgr.handlers.get(RPC_METHODS.READ_FILE);
+    const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
+    if (!read || !write) throw new Error('expected file-system handlers to be registered');
+
+    const readResult = await read({ path: '../outside.txt' });
+    expect(readResult).toMatchObject({
+      success: false,
+    });
+    expect(String((readResult as { error?: string }).error ?? '')).toContain('outside the working directory');
+
+    const writeResult = await write({
+      path: '../../outside.bin',
+      content: Buffer.from('x').toString('base64'),
+      expectedHash: null,
+    });
+    expect(writeResult).toMatchObject({
+      success: false,
+    });
+    expect(String((writeResult as { error?: string }).error ?? '')).toContain('outside the working directory');
+    expect(readFile).not.toHaveBeenCalled();
+    expect(writeFile).not.toHaveBeenCalled();
+  });
+
+  it('uses the validated resolved path for readFile/writeFile operations', async () => {
+    vi.clearAllMocks();
+    const mgr = createRpcHandlerManager();
+    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, '/work/dir');
+
+    const read = mgr.handlers.get(RPC_METHODS.READ_FILE);
+    if (!read) throw new Error('expected read handler');
     await read({ path: 'notes.txt' });
     expect(readFile).toHaveBeenCalledWith(resolve('/work/dir', 'notes.txt'));
 
-    const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE)!;
+    const write = mgr.handlers.get(RPC_METHODS.WRITE_FILE);
+    if (!write) throw new Error('expected write handler');
     await write({ path: './sub/file.bin', content: Buffer.from('x').toString('base64'), expectedHash: null });
     expect(writeFile).toHaveBeenCalledWith(resolve('/work/dir', 'sub', 'file.bin'), expect.any(Buffer));
   });

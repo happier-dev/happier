@@ -6,42 +6,35 @@
  * These replace legacy detect-cli / detect-capabilities / dep-status.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
-import type { RpcRequest } from '@/api/rpc/types';
-import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import { registerSessionHandlers } from './registerSessionHandlers';
 import { chmod, mkdtemp, rm, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { CapabilitiesDescribeResponse, CapabilitiesDetectRequest, CapabilitiesDetectResponse } from '@happier-dev/protocol';
 import { CHECKLIST_IDS, resumeChecklistId } from '@happier-dev/protocol/checklists';
+import { createEncryptedRpcTestClient } from './encryptedRpc.testHelper';
 
 function createTestRpcManager(params?: { scopePrefix?: string }) {
-    const encryptionKey = new Uint8Array(32).fill(7);
-    const encryptionVariant = 'legacy' as const;
     const scopePrefix = params?.scopePrefix ?? 'machine-test';
-
-    const manager = new RpcHandlerManager({
+    return createEncryptedRpcTestClient({
         scopePrefix,
-        encryptionKey,
-        encryptionVariant,
+        encryptionKey: new Uint8Array(32).fill(7),
         logger: () => undefined,
+        registerHandlers: (manager) => registerSessionHandlers(manager, process.cwd()),
     });
+}
 
-    registerSessionHandlers(manager, process.cwd());
-
-    async function call<TResponse, TRequest>(method: string, request: TRequest): Promise<TResponse> {
-        const encryptedParams = encodeBase64(encrypt(encryptionKey, encryptionVariant, request));
-        const rpcRequest: RpcRequest = {
-            method: `${scopePrefix}:${method}`,
-            params: encryptedParams,
-        };
-        const encryptedResponse = await manager.handleRequest(rpcRequest);
-        const decrypted = decrypt(encryptionKey, encryptionVariant, decodeBase64(encryptedResponse));
-        return decrypted as TResponse;
+function expectCapabilityData(
+    response: CapabilitiesDetectResponse,
+    capabilityId: string,
+): Readonly<Record<string, unknown>> {
+    const entry = response.results[capabilityId as keyof CapabilitiesDetectResponse['results']];
+    expect(entry?.ok).toBe(true);
+    if (!entry || !entry.ok || typeof entry.data !== 'object' || entry.data === null) {
+        throw new Error(`Expected capability ${capabilityId} to return object data`);
     }
-
-    return { call };
+    return entry.data as Readonly<Record<string, unknown>>;
 }
 
 describe('registerCommonHandlers capabilities', () => {
@@ -66,11 +59,7 @@ describe('registerCommonHandlers capabilities', () => {
 
     it('describes supported capabilities and checklists', async () => {
         const { call } = createTestRpcManager();
-        const result = await call<{
-            protocolVersion: 1;
-            capabilities: Array<{ id: string; kind: string }>;
-            checklists: Record<string, Array<{ id: string; params?: any }>>;
-        }, {}>(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
+        const result = await call<CapabilitiesDescribeResponse, Record<string, never>>(RPC_METHODS.CAPABILITIES_DESCRIBE, {});
 
         expect(result.protocolVersion).toBe(1);
         expect(result.capabilities.map((c) => c.id)).toEqual(
@@ -151,36 +140,32 @@ describe('registerCommonHandlers capabilities', () => {
             process.env.PATH = `${dir}`;
 
             const { call } = createTestRpcManager();
-            const result = await call<{
-                protocolVersion: 1;
-                results: Record<
-                    string,
-                    { ok: boolean; data?: any; error?: any; checkedAt: number }
-                >;
-            }, { checklistId: string }>(RPC_METHODS.CAPABILITIES_DETECT, { checklistId: CHECKLIST_IDS.NEW_SESSION });
+            const result = await call<CapabilitiesDetectResponse, CapabilitiesDetectRequest>(RPC_METHODS.CAPABILITIES_DETECT, {
+                checklistId: CHECKLIST_IDS.NEW_SESSION,
+            });
 
             expect(result.protocolVersion).toBe(1);
-            expect(result.results['cli.codex'].ok).toBe(true);
-            expect(result.results['cli.codex'].data.available).toBe(true);
-            expect(result.results['cli.codex'].data.resolvedPath).toBe(fakeCodex);
-            expect(result.results['cli.codex'].data.version).toBe('1.2.3');
+            const codexData = expectCapabilityData(result, 'cli.codex');
+            expect(codexData.available).toBe(true);
+            expect(codexData.resolvedPath).toBe(fakeCodex);
+            expect(codexData.version).toBe('1.2.3');
 
-            expect(result.results['cli.claude'].ok).toBe(true);
-            expect(result.results['cli.claude'].data.available).toBe(true);
-            expect(result.results['cli.claude'].data.version).toBe('0.1.0');
+            const claudeData = expectCapabilityData(result, 'cli.claude');
+            expect(claudeData.available).toBe(true);
+            expect(claudeData.version).toBe('0.1.0');
 
-            expect(result.results['cli.gemini'].ok).toBe(true);
-            expect(result.results['cli.gemini'].data.available).toBe(true);
-            expect(result.results['cli.gemini'].data.version).toBe('9.9.9');
+            const geminiData = expectCapabilityData(result, 'cli.gemini');
+            expect(geminiData.available).toBe(true);
+            expect(geminiData.version).toBe('9.9.9');
 
-            expect(result.results['cli.opencode'].ok).toBe(true);
-            expect(result.results['cli.opencode'].data.available).toBe(true);
-            expect(result.results['cli.opencode'].data.resolvedPath).toBe(fakeOpenCode);
-            expect(result.results['cli.opencode'].data.version).toBe('0.1.48');
+            const openCodeData = expectCapabilityData(result, 'cli.opencode');
+            expect(openCodeData.available).toBe(true);
+            expect(openCodeData.resolvedPath).toBe(fakeOpenCode);
+            expect(openCodeData.version).toBe('0.1.48');
 
-            expect(result.results['tool.tmux'].ok).toBe(true);
-            expect(result.results['tool.tmux'].data.available).toBe(true);
-            expect(result.results['tool.tmux'].data.version).toBe('3.3a');
+            const tmuxData = expectCapabilityData(result, 'tool.tmux');
+            expect(tmuxData.available).toBe(true);
+            expect(tmuxData.version).toBe('3.3a');
         } finally {
             await rm(dir, { recursive: true, force: true });
         }
@@ -206,23 +191,19 @@ describe('registerCommonHandlers capabilities', () => {
             process.env.PATH = `${dir}`;
 
             const { call } = createTestRpcManager();
-            const result = await call<{
-                results: Record<string, { ok: boolean; data?: any }>;
-            }, {
-                requests: Array<{ id: string; params?: any }>;
-            }>(RPC_METHODS.CAPABILITIES_DETECT, {
+            const result = await call<CapabilitiesDetectResponse, CapabilitiesDetectRequest>(RPC_METHODS.CAPABILITIES_DETECT, {
                 requests: [
                     { id: 'cli.codex', params: { includeLoginStatus: true } },
                     { id: 'dep.codex-mcp-resume', params: { includeRegistry: true, onlyIfInstalled: true } },
                 ],
             });
 
-            expect(result.results['cli.codex'].ok).toBe(true);
-            expect(result.results['cli.codex'].data.isLoggedIn).toBe(true);
+            const codexData = expectCapabilityData(result, 'cli.codex');
+            expect(codexData.isLoggedIn).toBe(true);
 
-            expect(result.results['dep.codex-mcp-resume'].ok).toBe(true);
-            expect(result.results['dep.codex-mcp-resume'].data.installed).toBe(false);
-            expect(result.results['dep.codex-mcp-resume'].data.registry).toBeUndefined();
+            const resumeData = expectCapabilityData(result, 'dep.codex-mcp-resume');
+            expect(resumeData.installed).toBe(false);
+            expect(resumeData.registry).toBeUndefined();
         } finally {
             await rm(dir, { recursive: true, force: true });
         }
