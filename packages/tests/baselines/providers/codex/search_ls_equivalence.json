@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "providerId": "codex",
+  "scenarioId": "search_ls_equivalence",
+  "createdAt": "2026-02-04T18:49:23.261Z",
+  "fixtureKeys": [
+    "acp/codex/tool-call/CodeSearch",
+    "acp/codex/tool-result/CodeSearch"
+  ],
+  "shapesByKey": {
+    "acp/codex/tool-call/CodeSearch": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"call_id\":{\"t\":\"string\"},\"command\":{\"t\":\"array\",\"item\":{\"t\":\"string\"}},\"cwd\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"path\":{\"t\":\"string\"}}}},\"parsed_cmd\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"cmd\":{\"t\":\"string\"},\"path\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}},\"process_id\":{\"t\":\"string\"},\"source\":{\"t\":\"string\"},\"turn_id\":{\"t\":\"string\"}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/codex/tool-result/CodeSearch": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"output\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"aggregated_output\":{\"t\":\"string\"},\"call_id\":{\"t\":\"string\"},\"command\":{\"t\":\"array\",\"item\":{\"t\":\"string\"}},\"cwd\":{\"t\":\"string\"},\"duration\":{\"t\":\"object\",\"keys\":{\"nanos\":{\"t\":\"number\"},\"secs\":{\"t\":\"number\"}}},\"exit_code\":{\"t\":\"number\"},\"formatted_output\":{\"t\":\"string\"},\"matches\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"excerpt\":{\"t\":\"string\"}}}},\"parsed_cmd\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"cmd\":{\"t\":\"string\"},\"path\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}},\"process_id\":{\"t\":\"string\"},\"source\":{\"t\":\"string\"},\"stderr\":{\"t\":\"string\"},\"stdout\":{\"t\":\"string\"},\"turn_id\":{\"t\":\"string\"}}},\"type\":{\"t\":\"string\"}}}"
+  }
+}
