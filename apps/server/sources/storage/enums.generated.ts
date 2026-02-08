@@ -2,6 +2,21 @@
 // Source: prisma/schema.prisma
 // Regenerate: yarn schema:sync
 
+export const AccountIdentityEligibilityStatus = {
+    unknown: "unknown",
+    eligible: "eligible",
+    ineligible: "ineligible",
+} as const;
+
+export type AccountIdentityEligibilityStatus = (typeof AccountIdentityEligibilityStatus)[keyof typeof AccountIdentityEligibilityStatus];
+
+export const SessionPendingMessageStatus = {
+    queued: "queued",
+    discarded: "discarded",
+} as const;
+
+export type SessionPendingMessageStatus = (typeof SessionPendingMessageStatus)[keyof typeof SessionPendingMessageStatus];
+
 export const RelationshipStatus = {
     none: "none",
     requested: "requested",

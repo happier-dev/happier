@@ -37,8 +37,6 @@ model Account {
     updatedAt       DateTime    @updatedAt
     settings        String?
     settingsVersion Int         @default(0)
-    githubUserId    String?     @unique
-    githubUser      GithubUser? @relation(fields: [githubUserId], references: [id])
 
     // Profile
     firstName String?
@@ -49,6 +47,8 @@ model Account {
 
     Session                Session[]
     AccountPushToken       AccountPushToken[]
+    VoiceSessionLease      VoiceSessionLease[]
+    VoiceConversation      VoiceConversation[]
     TerminalAuthRequest    TerminalAuthRequest[]
     AccountAuthRequest     AccountAuthRequest[]
     UsageReport            UsageReport[]
@@ -68,6 +68,95 @@ model Account {
     PublicShareAccessLogs  PublicShareAccessLog[]     @relation("PublicShareAccessLogs")
     PublicShareBlockedUsers PublicShareBlockedUser[]  @relation("PublicShareBlockedUsers")
     AccountChanges         AccountChange[]
+    SessionPendingMessage  SessionPendingMessage[]
+    AccountIdentity        AccountIdentity[]
+}
+
+enum AccountIdentityEligibilityStatus {
+    unknown
+    eligible
+    ineligible
+}
+
+model AccountIdentity {
+    id             String   @id @default(cuid())
+    accountId      String
+    account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    provider       String
+    providerUserId String
+    providerLogin  String?
+    profile        Json?
+    token          Bytes?
+    scopes         String?
+    showOnProfile  Boolean  @default(true)
+
+    eligibilityStatus      AccountIdentityEligibilityStatus @default(unknown)
+    eligibilityReason      String?
+    eligibilityCheckedAt   DateTime?
+    eligibilityNextCheckAt DateTime?
+
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@unique([provider, providerUserId])
+    @@unique([accountId, provider])
+    @@index([accountId])
+}
+
+model VoiceSessionLease {
+    id               String   @id @default(cuid())
+    accountId        String
+    account          Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    conversation     VoiceConversation?
+
+    /// Optional Happier sessionId (used only for correlation/telemetry).
+    sessionId        String?
+
+    /// UTC YYYY-MM (e.g. "2026-02") for monthly free-quota accounting.
+    periodKey        String
+
+    /// "subscription" | "free" (string for forward/backward compatibility).
+    grantedBy        String
+
+    /// The ElevenLabs agent id used for minting.
+    elevenLabsAgentId String
+
+    expiresAt        DateTime
+    createdAt        DateTime @default(now())
+
+    @@index([accountId, expiresAt])
+    @@index([accountId, periodKey])
+}
+
+model VoiceConversation {
+    id                    String   @id @default(cuid())
+    accountId             String
+    account               Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    /// Lifecycle: persisted on completion only (durationSeconds is required).
+    /// Optional lease reference (leases may be pruned; conversations should remain).
+    leaseId               String?  @unique
+    lease                 VoiceSessionLease? @relation(fields: [leaseId], references: [id], onDelete: SetNull)
+
+    /// Provider id, e.g. "elevenlabs_agents".
+    providerId            String
+
+    /// Provider-specific conversation id.
+    providerConversationId String
+
+    startedAt             DateTime?
+    endedAt               DateTime?
+    durationSeconds       Int
+
+    /// Optional normalized billing unit count (provider-specific).
+    billedUnits           Int?
+
+    createdAt             DateTime @default(now())
+
+    @@unique([providerId, providerConversationId])
+    @@index([accountId, createdAt])
+    @@index([accountId, providerId, createdAt])
 }
 
 model AccountChange {
@@ -101,6 +190,8 @@ model TerminalAuthRequest {
     id                String   @id @default(cuid())
     publicKey         String   @unique
     supportsV2        Boolean  @default(false)
+    claimSecretHash   String?
+    claimedAt         DateTime?
     response          String?
     responseAccountId String?
     responseAccount   Account? @relation(fields: [responseAccountId], references: [id])
@@ -138,17 +229,20 @@ model Session {
     tag               String
     accountId         String
     account           Account             @relation(fields: [accountId], references: [id])
-    metadata          String
+    metadata          String @db.LongText
     metadataVersion   Int                 @default(0)
-    agentState        String?
+    agentState        String? @db.LongText
     agentStateVersion Int                 @default(0)
     dataEncryptionKey Bytes?
     seq               Int                 @default(0)
+    pendingVersion    Int                 @default(0)
+    pendingCount      Int                 @default(0)
     active            Boolean             @default(true)
     lastActiveAt      DateTime            @default(now())
     createdAt         DateTime            @default(now())
     updatedAt         DateTime            @updatedAt
     messages          SessionMessage[]
+    pendingMessages   SessionPendingMessage[]
     usageReports      UsageReport[]
     accessKeys        AccessKey[]
     shares            SessionShare[]
@@ -174,18 +268,34 @@ model SessionMessage {
     @@index([sessionId, seq])
 }
 
-//
-// Github
-//
+enum SessionPendingMessageStatus {
+    queued
+    discarded
+}
 
-model GithubUser {
-    id        String    @id
-    /// [GitHubProfile]
-    profile   Json
-    token     Bytes?
-    createdAt DateTime  @default(now())
-    updatedAt DateTime  @updatedAt
-    Account   Account[]
+model SessionPendingMessage {
+    id              String                     @id @default(cuid())
+    sessionId        String
+    session          Session                    @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    /// Informational only (attribution); pending queue is session-global.
+    authorAccountId  String?
+    authorAccount    Account?                   @relation(fields: [authorAccountId], references: [id], onDelete: SetNull)
+
+    localId          String
+    /// [SessionPendingMessageContent]
+    content          Json
+    status           SessionPendingMessageStatus @default(queued)
+    position         Int
+    discardedAt      DateTime?
+    discardedReason  String?
+    createdAt        DateTime                   @default(now())
+    updatedAt        DateTime                   @updatedAt
+
+    @@unique([sessionId, localId])
+    @@index([sessionId, status, position])
+    @@index([sessionId, authorAccountId])
+    @@index([sessionId, status, updatedAt])
 }
 
 model GithubOrganization {
@@ -251,9 +361,9 @@ model Machine {
     id                 String      @id
     accountId          String
     account            Account     @relation(fields: [accountId], references: [id])
-    metadata           String // Encrypted - contains static machine info
+    metadata           String @db.LongText // Encrypted - contains static machine info
     metadataVersion    Int         @default(0)
-    daemonState        String? // Encrypted - contains dynamic daemon state
+    daemonState        String? @db.LongText // Encrypted - contains dynamic daemon state
     daemonStateVersion Int         @default(0)
     dataEncryptionKey  Bytes?
     seq                Int         @default(0)
@@ -472,7 +582,7 @@ model PublicSessionShare {
     createdByUserId   String
     createdByUser     Account                   @relation("PublicSessionShares", fields: [createdByUserId], references: [id])
     /// sha256(token) (32 bytes)
-    tokenHash         Bytes                     @unique
+    tokenHash         Bytes                     @db.VarBinary(32) @unique
     /// Encrypted dataEncryptionKey for public access
     encryptedDataKey  Bytes
     /// Optional expiration time (null = no expiration)

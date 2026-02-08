@@ -1,4 +1,3 @@
-import { GitHubProfile as GitHubProfileType, GitHubOrg as GitHubOrgType } from "../app/api/types";
 import { ImageRef as ImageRefType } from "./files";
 declare global {
     namespace PrismaJson {
@@ -7,6 +6,9 @@ declare global {
             t: 'encrypted';
             c: string; // Base64 encoded encrypted content
         };
+
+        // Pending queue content types (same encrypted wrapper).
+        type SessionPendingMessageContent = SessionMessageContent;
 
         // Usage report data structure
         type UsageReportData = {
@@ -63,7 +65,6 @@ declare global {
                 value: string | null;
                 version: number;
             } | null | undefined;
-            github?: GitHubProfileType | null | undefined;
         } | {
             t: 'new-machine';
             machineId: string;
@@ -90,9 +91,6 @@ declare global {
             };
             activeAt?: number;
         };
-
-        type GitHubProfile = GitHubProfileType;
-        type GitHubOrg = GitHubOrgType;
         type ImageRef = ImageRefType;
     }
 }
