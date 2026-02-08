@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { TmuxUtilities } from '@/integrations/tmux';
 
@@ -23,19 +23,39 @@ function shouldRunTmuxIntegration(): boolean {
     return process.env.HAPPIER_CLI_TMUX_INTEGRATION === '1' && isTmuxInstalled();
 }
 
-function waitForFile(path: string, timeoutMs: number): Promise<void> {
-    const pollIntervalMs = 50;
+type WaitForOptions = {
+    timeoutMs: number;
+    intervalMs?: number;
+    label: string;
+    debug?: () => string;
+};
+
+async function waitForCondition(condition: () => boolean, opts: WaitForOptions): Promise<void> {
+    const pollIntervalMs = opts.intervalMs ?? 50;
     const start = Date.now();
-    return new Promise((resolve, reject) => {
-        const tick = () => {
-            if (existsSync(path)) return resolve();
-            if (Date.now() - start > timeoutMs) {
-                return reject(new Error(`Timed out waiting for file: ${path}`));
-            }
-            setTimeout(tick, pollIntervalMs);
-        };
-        tick();
-    });
+    while (Date.now() - start <= opts.timeoutMs) {
+        if (condition()) return;
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    }
+    const debug = opts.debug ? `\n${opts.debug()}` : '';
+    throw new Error(`Timed out waiting for ${opts.label} after ${opts.timeoutMs}ms${debug}`);
+}
+
+async function waitForFile(path: string, timeoutMs: number): Promise<void> {
+    const parentDir = dirname(path);
+    await waitForCondition(
+        () => existsSync(path),
+        {
+            timeoutMs,
+            intervalMs: 50,
+            label: `file ${path}`,
+            debug: () => {
+                if (!existsSync(parentDir)) return `parent directory does not exist: ${parentDir}`;
+                const list = runTmux(['list-sessions']);
+                return `tmux list-sessions status=${list.status} stderr=${list.stderr.trim()}`;
+            },
+        },
+    );
 }
 
 function writeDumpScript(dir: string): string {

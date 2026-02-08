@@ -2,19 +2,26 @@
  * Tests for difftastic module
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { run } from './index';
 import { writeFileSync, mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { spawnSync } from 'child_process';
 
-describe('difftastic', () => {
+function isDifftasticAvailable(): boolean {
+    const result = spawnSync('difft', ['--version'], {
+        stdio: 'ignore',
+    });
+    return result.status === 0;
+}
+
+describe.skipIf(!isDifftasticAvailable())('difftastic', () => {
     let testDir: string;
     let file1Path: string;
     let file2Path: string;
 
     beforeAll(() => {
-        // Create test directory and files
         testDir = join(tmpdir(), `difftastic-test-${Date.now()}`);
         mkdirSync(testDir, { recursive: true });
         
@@ -23,11 +30,10 @@ describe('difftastic', () => {
         
         writeFileSync(file1Path, 'Hello\nWorld\nTest\n');
         writeFileSync(file2Path, 'Hello\nModified\nTest\n');
-        
-        return () => {
-            // Cleanup
-            rmSync(testDir, { recursive: true, force: true });
-        };
+    });
+
+    afterAll(() => {
+        rmSync(testDir, { recursive: true, force: true });
     });
 
     it('should show version', async () => {
