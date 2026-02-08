@@ -1,11 +1,8 @@
 import chalk from 'chalk';
 
-import { CODEX_GEMINI_PERMISSION_MODES, isCodexGeminiPermissionMode } from '@/api/types';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { ApiClient } from '@/api/api';
 import { logger } from '@/ui/logger';
-import { isDaemonRunningCurrentlyInstalledHappyVersion } from '@/daemon/controlClient';
-import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { parseSessionStartArgs } from '@/cli/sessionStartArgs';
 import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_ENV } from '@/backends/gemini/constants';
 
@@ -144,16 +141,7 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
   try {
     const { runGemini } = await import('@/backends/gemini/runGemini');
 
-    const { startedBy, permissionMode, permissionModeUpdatedAt } = parseSessionStartArgs(args);
-    if (permissionMode && !isCodexGeminiPermissionMode(permissionMode)) {
-      console.error(
-        chalk.red(
-          `Invalid --permission-mode for gemini: ${permissionMode}. Valid values: ${CODEX_GEMINI_PERMISSION_MODES.join(', ')}`,
-        ),
-      );
-      console.error(chalk.gray('Tip: use --yolo for full bypass-like behavior.'));
-      process.exit(1);
-    }
+    const { startedBy, permissionMode, permissionModeUpdatedAt, agentModeId, agentModeUpdatedAt, modelId, modelUpdatedAt } = parseSessionStartArgs(args);
 
     const readFlagValue = (flag: string): string | undefined => {
       const idx = args.indexOf(flag);
@@ -168,24 +156,16 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
 
     const { credentials } = await authAndSetupMachineIfNeeded();
 
-    logger.debug('Ensuring Happier background service is running & matches our version...');
-    if (!(await isDaemonRunningCurrentlyInstalledHappyVersion())) {
-      logger.debug('Starting Happier background service...');
-      const daemonProcess = spawnHappyCLI(['daemon', 'start-sync'], {
-        detached: true,
-        stdio: 'ignore',
-        env: process.env,
-      });
-      daemonProcess.unref();
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-
     await runGemini({
       credentials,
       startedBy,
       terminalRuntime: context.terminalRuntime,
       permissionMode,
       permissionModeUpdatedAt,
+      agentModeId,
+      agentModeUpdatedAt,
+      modelId,
+      modelUpdatedAt,
       existingSessionId,
       resume,
     });

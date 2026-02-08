@@ -59,7 +59,14 @@ export const GEMINI_TIMEOUTS = {
 const GEMINI_TOOL_PATTERNS: ToolPatternWithInputFields[] = [
   {
     name: 'change_title',
-    patterns: ['change_title', 'change-title', 'happy__change_title', 'mcp__happy__change_title'],
+    patterns: [
+      'change_title',
+      'change-title',
+      'happy__change_title',
+      'mcp__happy__change_title',
+      'happier__change_title',
+      'mcp__happier__change_title',
+    ],
     inputFields: ['title'],
     emptyInputDefault: true, // change_title often has empty input (title extracted from context)
   },
@@ -264,6 +271,10 @@ export class GeminiTransport implements TransportHandler {
     input: Record<string, unknown>,
     _context: ToolNameContext
   ): string {
+    // 0. Normalize direct legacy aliases (for example happy__change_title) to canonical names.
+    const directToolName = findToolNameFromId(toolName, GEMINI_TOOL_PATTERNS, { preferLongestMatch: true });
+    if (directToolName) return directToolName;
+
     // 1. Check toolCallId for known tool names (most reliable)
     // Tool IDs often contain the tool name: "change_title-123456" -> "change_title"
     const idToolName = findToolNameFromId(toolCallId, GEMINI_TOOL_PATTERNS, { preferLongestMatch: true });

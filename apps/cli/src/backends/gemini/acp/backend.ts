@@ -18,6 +18,8 @@ import {
   GEMINI_MODEL_ENV, 
   DEFAULT_GEMINI_MODEL 
 } from '@/backends/gemini/constants';
+import type { PermissionMode } from '@/api/types';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permissionModeCanonical';
 import { 
   readGeminiLocalConfig, 
   determineGeminiModel,
@@ -47,6 +49,9 @@ export interface GeminiBackendOptions extends AgentFactoryOptions {
   
   /** Optional permission handler for tool approval */
   permissionHandler?: AcpPermissionHandler;
+
+  /** Optional Happier permission mode (applied to gemini --approval-mode). */
+  permissionMode?: PermissionMode;
 }
 
 /**
@@ -100,10 +105,18 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   // If options.model is explicitly null, skip local config and use env/default
   const model = determineGeminiModel(options.model, localConfig);
 
-  // Build args - use only --experimental-acp flag
+  const intent = normalizePermissionModeToIntent(options.permissionMode ?? 'default') ?? 'default';
+	  const approvalMode = intent === 'yolo' || intent === 'bypassPermissions'
+	    ? 'yolo'
+	    : intent === 'safe-yolo'
+	      ? 'auto-edit'
+	      : 'default';
+  const sandboxEnabled = !(intent === 'yolo' || intent === 'bypassPermissions');
+
+  // Build args - ACP + provider-native approvals.
   // Model is passed via GEMINI_MODEL env var (gemini CLI reads it automatically)
   // We don't use --model flag to avoid potential stdout conflicts with ACP protocol
-  const geminiArgs = ['--experimental-acp'];
+  const geminiArgs = ['--experimental-acp', '--approval-mode', approvalMode, ...(sandboxEnabled ? ['--sandbox'] : [])];
 
   // Get Google Cloud Project from local config (for Workspace accounts)
   // Only use if: no email stored (global), or email matches current user
@@ -149,7 +162,8 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
       return lower.includes('change_title') ||
              lower.includes('change title') ||
              lower.includes('set title') ||
-             lower.includes('mcp__happy__change_title');
+             lower.includes('mcp__happy__change_title') ||
+             lower.includes('mcp__happier__change_title');
     },
   };
 

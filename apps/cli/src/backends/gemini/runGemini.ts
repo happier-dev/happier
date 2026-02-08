@@ -19,7 +19,7 @@ import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 import { initialMachineMetadata } from '@/daemon/run';
 import { configuration } from '@/configuration';
 import packageJson from '../../../package.json';
-import { MessageQueue2 } from '@/utils/MessageQueue2';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
 import { projectPath } from '@/projectPath';
 import { startHappyServer } from '@/mcp/startHappyServer';
@@ -33,9 +33,10 @@ import type { ApiSessionClient } from '@/api/apiSession';
 import { formatGeminiErrorForUi } from '@/backends/gemini/utils/formatGeminiErrorForUi';
 import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/terminalMetadata';
 import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permissionModeMetadata';
-import { applyStartupMetadataUpdateToSession, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
+import { applyStartupMetadataUpdateToSession, buildAcpSessionModeOverride, buildModelOverride, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
 import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach';
 import { persistTerminalAttachmentInfoIfNeeded, primeAgentStateForUi, reportSessionToDaemonIfRunning, sendTerminalFallbackMessageIfNeeded } from '@/agent/runtime/startupSideEffects';
+import { computePendingModelOverrideApplication, resolveModelOverrideFromMetadataSnapshot, resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
 
 import { createCatalogAcpBackend } from '@/agent/acp';
 import type { GeminiBackendOptions, GeminiBackendResult } from '@/backends/gemini/acp/backend';
@@ -43,13 +44,14 @@ import { importAcpReplayHistoryV1 } from '@/agent/acp/history/importAcpReplayHis
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
 import type { AgentBackend, AgentMessage } from '@/agent';
 import { GeminiTerminalDisplay } from '@/backends/gemini/ui/GeminiTerminalDisplay';
-import { GeminiPermissionHandler } from '@/backends/gemini/utils/permissionHandler';
 import { GeminiReasoningProcessor } from '@/backends/gemini/utils/reasoningProcessor';
 import { GeminiDiffProcessor } from '@/backends/gemini/utils/diffProcessor';
 import type { GeminiMode, CodexMessagePayload } from '@/backends/gemini/types';
-import { CODEX_GEMINI_PERMISSION_MODES, isCodexGeminiPermissionMode, type CodexGeminiPermissionMode, type PermissionMode } from '@/api/types';
+import type { PermissionMode } from '@/api/types';
 import { GEMINI_MODEL_ENV, DEFAULT_GEMINI_MODEL } from '@/backends/gemini/constants';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
+import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permissionModeCanonical';
+import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
 import {
   readGeminiLocalConfig,
   saveGeminiModelToConfig,
@@ -68,6 +70,8 @@ import {
   forwardAcpPermissionRequest,
   forwardAcpTerminalOutput,
 } from '@/agent/acp/bridge/acpCommonHandlers';
+import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
 
 
 /**
@@ -79,6 +83,10 @@ export async function runGemini(opts: {
   terminalRuntime?: import('@/terminal/terminalRuntimeFlags').TerminalRuntimeFlags | null;
   permissionMode?: PermissionMode;
   permissionModeUpdatedAt?: number;
+  agentModeId?: string;
+  agentModeUpdatedAt?: number;
+  modelId?: string;
+  modelUpdatedAt?: number;
   existingSessionId?: string;
   resume?: string;
 }): Promise<void> {
@@ -88,6 +96,7 @@ export async function runGemini(opts: {
 
   
   const sessionTag = randomUUID();
+  const explicitPermissionMode = opts.permissionMode;
 
   // Set backend for offline warnings (before any API calls)
   connectionState.setBackend('Gemini');
@@ -146,10 +155,7 @@ export async function runGemini(opts: {
   // Create session
   //
 
-  const initialPermissionMode: PermissionMode =
-    opts.permissionMode && isCodexGeminiPermissionMode(opts.permissionMode)
-      ? opts.permissionMode
-      : 'default';
+  const initialPermissionMode: PermissionMode = normalizePermissionModeToIntent(opts.permissionMode ?? 'default') ?? 'default';
 
   const { state, metadata } = createSessionMetadata({
     flavor: 'gemini',
@@ -158,6 +164,10 @@ export async function runGemini(opts: {
     terminalRuntime: opts.terminalRuntime ?? null,
     permissionMode: initialPermissionMode,
     permissionModeUpdatedAt: typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : Date.now(),
+    agentModeId: opts.agentModeId,
+    agentModeUpdatedAt: opts.agentModeUpdatedAt,
+    modelId: opts.modelId,
+    modelUpdatedAt: opts.modelUpdatedAt,
   });
   const terminal = buildTerminalMetadataFromRuntimeFlags(opts.terminalRuntime ?? null);
 
@@ -166,7 +176,7 @@ export async function runGemini(opts: {
   let reconnectionHandle: { cancel: () => void } | null = null;
   // Permission handler declared here so it can be updated in onSessionSwap callback
   // (assigned later after Happier server setup)
-  let permissionHandler: GeminiPermissionHandler;
+  let permissionHandler: ProviderEnforcedPermissionHandler;
 
   // Session swap synchronization to prevent race conditions during message processing
   // When a swap is requested during processing, it's queued and applied after the current cycle
@@ -207,12 +217,38 @@ export async function runGemini(opts: {
     session = api.sessionSyncClient(baseSession);
     reportedSessionId = normalizedExistingSessionId;
 
-    applyStartupMetadataUpdateToSession({
-      session,
-      next: metadata,
-      nowMs: Date.now(),
-      permissionModeOverride,
-    });
+    // Attach flows must wait for the persisted session metadata snapshot before writing any startup updates.
+    // Otherwise we risk overwriting the session's canonical workspace path with the local CLI cwd.
+    let snapshot: unknown = null;
+    try {
+      snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 });
+      if (!snapshot) {
+        logger.debug('[gemini] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)');
+      }
+    } catch (error) {
+      logger.debug(
+        '[gemini] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)',
+        error,
+      );
+    }
+
+    if (snapshot) {
+      applyStartupMetadataUpdateToSession({
+        session,
+        next: metadata,
+        nowMs: Date.now(),
+        permissionModeOverride,
+        acpSessionModeOverride: buildAcpSessionModeOverride({
+          agentModeId: opts.agentModeId,
+          agentModeUpdatedAt: opts.agentModeUpdatedAt,
+        }),
+        modelOverride: buildModelOverride({
+          modelId: opts.modelId,
+          modelUpdatedAt: opts.modelUpdatedAt,
+        }),
+        mode: 'attach',
+      });
+    }
   } else {
     const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
 
@@ -261,18 +297,31 @@ export async function runGemini(opts: {
 
   // Track current overrides to apply per message
   let currentPermissionMode: PermissionMode | undefined = initialPermissionMode;
+  let currentPermissionModeUpdatedAt: number =
+    typeof session.getMetadataSnapshot()?.permissionModeUpdatedAt === 'number'
+      ? (session.getMetadataSnapshot()?.permissionModeUpdatedAt as number)
+      : 0;
   let currentModel: string | undefined = undefined;
+  let currentModelOverride: string | undefined = undefined;
+  let currentModelOverrideUpdatedAt: number = 0;
+
+  const seededModelOverride = resolveModelOverrideFromMetadataSnapshot({ metadata: session.getMetadataSnapshot() });
+  if (seededModelOverride) {
+    currentModelOverride = seededModelOverride.modelId;
+    currentModelOverrideUpdatedAt = seededModelOverride.updatedAt;
+  }
 
   session.onUserMessage((message) => {
     // Resolve permission mode (validate) - same as Codex
     let messagePermissionMode = currentPermissionMode;
     if (message.meta?.permissionMode) {
-      if (CODEX_GEMINI_PERMISSION_MODES.includes(message.meta.permissionMode as CodexGeminiPermissionMode)) {
-        const nextPermissionMode = message.meta.permissionMode as PermissionMode;
+      const nextPermissionMode = normalizePermissionModeToIntent(message.meta.permissionMode);
+      if (nextPermissionMode) {
         const res = maybeUpdatePermissionModeMetadata({
           currentPermissionMode,
           nextPermissionMode,
           updateMetadata: (updater) => session.updateMetadata(updater),
+          nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
         });
         currentPermissionMode = res.currentPermissionMode;
         messagePermissionMode = currentPermissionMode;
@@ -281,15 +330,14 @@ export async function runGemini(opts: {
           updatePermissionMode(messagePermissionMode);
           logger.debug(`[Gemini] Permission mode updated from user message to: ${currentPermissionMode}`);
         }
-      } else {
-        logger.debug(`[Gemini] Invalid permission mode received: ${message.meta.permissionMode}`);
       }
     } else {
       logger.debug(`[Gemini] User message received with no permission mode override, using current: ${currentPermissionMode ?? 'default (effective)'}`);
     }
 
-    // Resolve model; explicit null resets to default (undefined)
-    let messageModel = currentModel;
+    // Resolve model; explicit null resets to default (undefined).
+    // Precedence: message meta > session metadata override > last in-memory selection.
+    let messageModel = currentModelOverride ?? currentModel;
     if (message.meta?.hasOwnProperty('model')) {
       // If model is explicitly null, reset internal state but don't update displayed model
       // If model is provided, use it and update displayed model
@@ -565,7 +613,12 @@ export async function runGemini(opts: {
   };
 
   // Create permission handler for tool approval (variable declared earlier for onSessionSwap)
-  permissionHandler = new GeminiPermissionHandler(session, { onAbortRequested: handleAbort });
+  permissionHandler = createProviderEnforcedPermissionHandler({
+    session,
+    logPrefix: '[Gemini]',
+    onAbortRequested: handleAbort,
+    alwaysAutoApproveToolNameIncludes: ['geminireasoning', 'codexreasoning'],
+  });
   
   // Create reasoning processor for handling thinking/reasoning chunks
   const reasoningProcessor = new GeminiReasoningProcessor((message) => {
@@ -727,8 +780,9 @@ export async function runGemini(opts: {
       case 'tool-result':
         // Track change_title completion
         if (msg.toolName === 'change_title' || 
+            msg.toolName === 'happy__change_title' ||
             msg.callId?.includes('change_title') ||
-            msg.toolName === 'happy__change_title') {
+            msg.toolName === 'happier__change_title') {
           changeTitleCompleted = true;
           logger.debug('[gemini] change_title completed');
         }
@@ -949,6 +1003,43 @@ export async function runGemini(opts: {
     let currentModeHash: string | null = null;
     let pending: { message: string; mode: GeminiMode; isolate: boolean; hash: string } | null = null;
 
+    if (typeof explicitPermissionMode !== 'string') {
+      const seeded = await resolveStartupPermissionModeFromSession({ session, take: 50 });
+      if (seeded && seeded.updatedAt > currentPermissionModeUpdatedAt) {
+        currentPermissionModeUpdatedAt = seeded.updatedAt;
+        currentPermissionMode = seeded.mode;
+        updatePermissionMode(seeded.mode);
+      }
+    }
+
+    const syncPermissionModeFromMetadata = () => {
+      const resolved = resolvePermissionIntentFromMetadataSnapshot({
+        metadata: session.getMetadataSnapshot(),
+      });
+      if (!resolved) return;
+      if (resolved.updatedAt <= currentPermissionModeUpdatedAt) return;
+      currentPermissionModeUpdatedAt = resolved.updatedAt;
+      currentPermissionMode = resolved.intent;
+      updatePermissionMode(resolved.intent);
+      logger.debug(`[Gemini] Permission mode updated from metadata to: ${resolved.intent}`);
+    };
+
+    const syncModelOverrideFromMetadata = () => {
+      const computedPending = computePendingModelOverrideApplication({
+        metadata: session.getMetadataSnapshot(),
+        lastAppliedUpdatedAt: currentModelOverrideUpdatedAt,
+      });
+      if (!computedPending) return;
+      currentModelOverrideUpdatedAt = computedPending.updatedAt;
+      currentModelOverride = computedPending.modelId;
+      logger.debug(`[Gemini] Model override updated from metadata to: ${computedPending.modelId}`);
+    };
+
+    const syncControlsFromMetadata = () => {
+      syncPermissionModeFromMetadata();
+      syncModelOverrideFromMetadata();
+    };
+
     while (!shouldExit) {
       let message: { message: string; mode: GeminiMode; isolate: boolean; hash: string } | null = pending;
       pending = null;
@@ -961,6 +1052,7 @@ export async function runGemini(opts: {
           abortSignal: waitSignal,
           popPendingMessage: () => session.popPendingMessage(),
           waitForMetadataUpdate: (signal) => session.waitForMetadataUpdate(signal),
+          onMetadataUpdate: syncControlsFromMetadata,
         });
         if (!batch) {
           if (waitSignal.aborted && !shouldExit) {
@@ -1013,6 +1105,7 @@ export async function runGemini(opts: {
           permissionHandler,
           cloudToken,
           currentUserEmail,
+          permissionMode: message.mode.permissionMode,
           // Pass model from message - if undefined, will use local config/env/default
           // If explicitly null, will skip local config and use env/default
           model: modelToUse,
@@ -1071,6 +1164,7 @@ export async function runGemini(opts: {
               permissionHandler,
               cloudToken,
               currentUserEmail,
+              permissionMode: message.mode.permissionMode,
               // Pass model from message - if undefined, will use local config/env/default
               // If explicitly null, will skip local config and use env/default
               model: modelToUse,
@@ -1160,7 +1254,8 @@ export async function runGemini(opts: {
         // Track if this prompt contains change_title instruction
         // If so, don't send task_complete until change_title is completed
         pendingChangeTitle = message.message.includes('change_title') || 
-                             message.message.includes('happy__change_title');
+                             message.message.includes('happy__change_title') ||
+                             message.message.includes('happier__change_title');
         changeTitleCompleted = false;
         
         if (!geminiBackend || !acpSessionId) {
@@ -1269,10 +1364,14 @@ export async function runGemini(opts: {
           });
         }
       } finally {
+        // Metadata updates can arrive while a turn is in-flight. Sync again at turn-end so the
+        // next turn observes the latest session-scoped control overrides.
+        syncControlsFromMetadata();
+
         // Reset permission handler, reasoning processor, and diff processor after turn (like Codex)
         permissionHandler.reset();
         reasoningProcessor.abort(); // Use abort to properly finish any in-progress tool calls
-        diffProcessor.reset(); // Reset diff processor on turn completion
+        diffProcessor.completeTurn(); // Emit per-turn diffs (if any), then reset
         
         // Send accumulated response to mobile app ONLY when turn is complete
         // This prevents message fragmentation from Gemini's chunked responses
