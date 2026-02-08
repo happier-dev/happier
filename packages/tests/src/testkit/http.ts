@@ -21,15 +21,28 @@ export async function waitForOkHealth(baseUrl: string, opts?: { timeoutMs?: numb
   const timeoutMs = opts?.timeoutMs ?? 60_000;
   const intervalMs = opts?.intervalMs ?? 250;
   const startedAt = Date.now();
+  let lastStatus: number | null = null;
+  let lastBodyStatus: string | null = null;
+  let lastError: string | null = null;
+
   while (Date.now() - startedAt < timeoutMs) {
     try {
       const res = await fetchJson<{ status?: string }>(`${baseUrl}/health`, { timeoutMs: 2_000 });
+      lastStatus = res.status;
+      lastBodyStatus = typeof res.data?.status === 'string' ? res.data.status : null;
       if (res.status === 200 && res.data?.status === 'ok') return;
-    } catch {
-      // ignore
+      lastError = null;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
-  throw new Error(`Timed out waiting for /health at ${baseUrl}`);
+  throw new Error(
+    [
+      `Timed out waiting for /health at ${baseUrl}`,
+      `lastStatus=${lastStatus ?? 'none'}`,
+      `lastBodyStatus=${lastBodyStatus ?? 'none'}`,
+      `lastError=${lastError ?? 'none'}`,
+    ].join(' | '),
+  );
 }
-
