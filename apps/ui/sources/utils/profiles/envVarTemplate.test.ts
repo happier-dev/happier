@@ -27,5 +27,14 @@ describe('envVarTemplate', () => {
         expect(formatEnvVarTemplate({ sourceVar: 'FOO', operator: ':=', fallback: '' })).toBe('${FOO:=}');
         expect(formatEnvVarTemplate({ sourceVar: 'FOO', operator: ':-', fallback: '' })).toBe('${FOO:-}');
     });
-});
 
+    it('defaults to :- operator when fallback is provided without explicit operator', () => {
+        expect(formatEnvVarTemplate({ sourceVar: 'FOO', fallback: 'bar' })).toBe('${FOO:-bar}');
+    });
+
+    it('returns null for invalid templates', () => {
+        expect(parseEnvVarTemplate('${1INVALID}')).toBeNull();
+        expect(parseEnvVarTemplate('FOO')).toBeNull();
+        expect(parseEnvVarTemplate('${FOO:bar}')).toBeNull();
+    });
+});

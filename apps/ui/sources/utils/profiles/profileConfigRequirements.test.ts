@@ -18,7 +18,7 @@ function makeProfile(reqs: AIBackendProfile['envVarRequirements']): AIBackendPro
 }
 
 describe('getMissingRequiredConfigEnvVarNames', () => {
-    it('returns [] when profile has no config requirements', () => {
+    it('returns [] when profile has no required config requirements', () => {
         const profile = makeProfile([{ name: 'OPENAI_API_KEY', kind: 'secret', required: true }]);
         expect(getMissingRequiredConfigEnvVarNames(profile, { OPENAI_API_KEY: false })).toEqual([]);
     });
@@ -39,5 +39,13 @@ describe('getMissingRequiredConfigEnvVarNames', () => {
         expect(getMissingRequiredConfigEnvVarNames(profile, { CFG: null })).toEqual(['CFG']);
         expect(getMissingRequiredConfigEnvVarNames(profile, {})).toEqual(['CFG']);
     });
-});
 
+    it('ignores malformed requirement names and only returns valid required config names', () => {
+        const profile = makeProfile([
+            { name: '', kind: 'config', required: true } as any,
+            { kind: 'config', required: true } as any,
+            { name: 'CFG_OK', kind: 'config', required: true },
+        ]);
+        expect(getMissingRequiredConfigEnvVarNames(profile, { CFG_OK: false })).toEqual(['CFG_OK']);
+    });
+});
