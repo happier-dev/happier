@@ -1,98 +1,36 @@
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
+import { describe, expect, it } from 'vitest'
+import { join } from 'node:path'
 
-function readLauncherFile(): string {
-    return readFileSync(join(__dirname, '../ripgrep_launcher.cjs'), 'utf8');
+type LauncherRun = SpawnSyncReturns<string>
+
+function runLauncher(argv: string[]): LauncherRun {
+  return spawnSync(process.execPath, [join(__dirname, '../ripgrep_launcher.cjs'), ...argv], {
+    encoding: 'utf8',
+    stdio: 'pipe',
+  })
 }
 
-describe('Ripgrep Launcher Runtime Compatibility', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-    });
+describe('ripgrep launcher behavior', () => {
+  it('exits with an error when JSON argv is missing', () => {
+    const result = runLauncher([])
 
-    it('has correct file structure', () => {
-        // Test that the launcher file has the correct structure
-        expect(() => {
-            const content = readLauncherFile();
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('Missing arguments: expected JSON-encoded argv')
+  })
 
-            // Check for required elements
-            expect(content).toContain('#!/usr/bin/env node');
-            expect(content).toContain('ripgrepMain');
-            expect(content).toContain('loadRipgrepNative');
-        }).not.toThrow();
-    });
+  it('exits with an error when JSON argv is invalid', () => {
+    const result = runLauncher(['{not-json}'])
 
-    it('handles --version argument gracefully', () => {
-        // Test that --version handling logic exists
-        expect(() => {
-            const content = readLauncherFile();
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('Failed to parse arguments:')
+  })
 
-            // Check that --version handling is present
-            expect(content).toContain('--version');
-            expect(content).toContain('ripgrepMain');
-        }).not.toThrow();
-    });
+  it('handles --version invocation without throwing', () => {
+    const result = runLauncher([JSON.stringify(['--version'])])
 
-    it('detects runtime correctly', () => {
-        // Test runtime detection function exists
-        expect(() => {
-            const content = readLauncherFile();
-
-            // Check that runtime detection logic is present
-            expect(content).toContain('detectRuntime');
-            expect(content).toContain('typeof Bun');
-            expect(content).toContain('typeof Deno');
-            expect(content).toContain('process?.versions');
-        }).not.toThrow();
-    });
-
-    it('contains fallback chain logic', () => {
-        // Test that fallback logic is present
-        expect(() => {
-            const content = readLauncherFile();
-
-            // Check that fallback chain is present
-            expect(content).toContain('loadRipgrepNative');
-            expect(content).toContain('systemRipgrep');
-            expect(content).toContain('createRipgrepWrapper');
-            expect(content).toContain('createMockRipgrep');
-        }).not.toThrow();
-    });
-
-    it('contains cross-platform logic', () => {
-        // Test that cross-platform logic is present
-        expect(() => {
-            const content = readLauncherFile();
-
-            // Check for platform-specific logic
-            expect(content).toContain('process.platform');
-            expect(content).toContain('win32');
-            expect(content).toContain('darwin');
-            expect(content).toContain('linux');
-            expect(content).toContain('execFileSync');
-        }).not.toThrow();
-    });
-
-    it('provides helpful error messages', () => {
-        // Test that helpful error messages are present
-        expect(() => {
-            const content = readLauncherFile();
-
-            // Check for helpful messages
-            expect(content).toContain('brew install ripgrep');
-            expect(content).toContain('winget install BurntSushi.ripgrep');
-            expect(content).toContain('Search functionality unavailable');
-            expect(content).toContain('Missing arguments: expected JSON-encoded argv');
-        }).not.toThrow();
-    });
-
-    it('does not treat signal termination as success', () => {
-        expect(() => {
-            const content = readLauncherFile();
-
-            expect(content).not.toContain('result.status || 0');
-            expect(content).toContain('result.signal');
-        }).not.toThrow();
-    });
-}); 
+    expect(result.status).toBe(0)
+    expect(result.error).toBeUndefined()
+    expect(`${result.stdout}${result.stderr}`).not.toContain('Missing arguments: expected JSON-encoded argv')
+  })
+})

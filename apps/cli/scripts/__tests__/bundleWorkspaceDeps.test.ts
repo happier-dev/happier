@@ -16,10 +16,12 @@ describe('bundleWorkspaceDeps', () => {
     writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
 
     const agentsDir = resolve(repoRoot, 'packages', 'agents');
+    const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
     const protocolDir = resolve(repoRoot, 'packages', 'protocol');
     const happyCliDir = resolve(repoRoot, 'apps', 'cli');
 
     mkdirSync(resolve(agentsDir, 'dist'), { recursive: true });
+    mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
     mkdirSync(resolve(protocolDir, 'dist'), { recursive: true });
     mkdirSync(happyCliDir, { recursive: true });
 
@@ -42,9 +44,19 @@ describe('bundleWorkspaceDeps', () => {
       exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
       scripts: { postinstall: 'echo should-not-run' },
     });
+    writeJson(resolve(cliCommonDir, 'package.json'), {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      types: './dist/index.d.ts',
+      exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+      scripts: { postinstall: 'echo should-not-run' },
+    });
 
     writeFileSync(resolve(agentsDir, 'dist', 'index.js'), 'export const x = 1;\n', 'utf8');
     writeFileSync(resolve(protocolDir, 'dist', 'index.js'), 'export const y = 2;\n', 'utf8');
+    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 3;\n', 'utf8');
 
     bundleWorkspaceDeps({ repoRoot, happyCliDir });
 
@@ -54,6 +66,9 @@ describe('bundleWorkspaceDeps', () => {
     const bundledProtocolPkgJson = JSON.parse(
       readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'protocol', 'package.json'), 'utf8'),
     );
+    const bundledCommonPkgJson = JSON.parse(
+      readFileSync(resolve(happyCliDir, 'node_modules', '@happier-dev', 'cli-common', 'package.json'), 'utf8'),
+    );
 
     expect(bundledAgentsPkgJson.scripts).toBeUndefined();
     expect(bundledAgentsPkgJson.devDependencies).toBeUndefined();
@@ -61,5 +76,8 @@ describe('bundleWorkspaceDeps', () => {
 
     expect(bundledProtocolPkgJson.scripts).toBeUndefined();
     expect(bundledProtocolPkgJson.name).toBe('@happier-dev/protocol');
+
+    expect(bundledCommonPkgJson.scripts).toBeUndefined();
+    expect(bundledCommonPkgJson.name).toBe('@happier-dev/cli-common');
   });
 });
