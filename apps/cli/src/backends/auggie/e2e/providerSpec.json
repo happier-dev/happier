@@ -1,0 +1,59 @@
+{
+  "v": 1,
+  "id": "auggie",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_AUGGIE",
+  "protocol": "acp",
+  "traceProvider": "auggie",
+  "requiredBinaries": [
+    {
+      "bin": "auggie",
+      "envOverride": "HAPPIER_E2E_PROVIDER_AUGGIE_BIN",
+      "requireExists": true
+    }
+  ],
+  "auth": {
+    "mode": "auto",
+    "env": {
+      "requiredAnyOf": [["AUGMENT_SESSION_AUTH"], ["OPENAI_API_KEY"]]
+    }
+  },
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": false,
+      "permissionSurfaceOutsideWorkspaceYolo": true
+    }
+  },
+  "cli": {
+    "subcommand": "auggie",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev"
+    },
+    "envFrom": {
+      "HAPPIER_AUGGIE_PATH": "HAPPIER_E2E_PROVIDER_AUGGIE_BIN"
+    }
+  }
+}

@@ -4,6 +4,7 @@ import { createCatalogAcpBackend } from '@/agent/acp';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
 import type { ApiSessionClient } from '@/api/apiSession';
+import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
 
@@ -18,9 +19,9 @@ export function createAuggieAcpRuntime(params: {
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
   allowIndexing: boolean;
+  getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
   const lastPublishedAuggieSessionId = { value: null as string | null };
-  let backend: AgentBackend | null = null;
 
   return createAcpRuntime({
     provider: 'auggie',
@@ -31,16 +32,17 @@ export function createAuggieAcpRuntime(params: {
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
     ensureBackend: async () => {
-      if (backend) return backend;
+      const permissionModeRaw = params.getPermissionMode?.();
+      const permissionMode = typeof permissionModeRaw === 'string' ? permissionModeRaw : undefined;
       const created = await createCatalogAcpBackend<AuggieBackendOptions>('auggie', {
         cwd: params.directory,
         mcpServers: params.mcpServers,
         permissionHandler: params.permissionHandler,
         allowIndexing: params.allowIndexing,
+        permissionMode,
       });
-      backend = created.backend;
       logger.debug('[AuggieACP] Backend created');
-      return backend;
+      return created.backend as unknown as AgentBackend;
     },
     onSessionIdChange: (nextSessionId) => {
       maybeUpdateAuggieSessionIdMetadata({
@@ -51,4 +53,3 @@ export function createAuggieAcpRuntime(params: {
     },
   });
 }
-

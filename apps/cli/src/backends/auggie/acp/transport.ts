@@ -30,7 +30,14 @@ export const AUGGIE_TIMEOUTS = {
 const AUGGIE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
   {
     name: 'change_title',
-    patterns: ['change_title', 'change-title', 'happy__change_title', 'mcp__happy__change_title'],
+    patterns: [
+      'change_title',
+      'change-title',
+      'happy__change_title',
+      'mcp__happy__change_title',
+      'happier__change_title',
+      'mcp__happier__change_title',
+    ],
     inputFields: ['title'],
   },
   {
@@ -109,6 +116,9 @@ export class AuggieTransport implements TransportHandler {
     input: Record<string, unknown>,
     _context: ToolNameContext,
   ): string {
+    const directToolName = findToolNameFromId(toolName, AUGGIE_TOOL_PATTERNS, { preferLongestMatch: true });
+    if (directToolName) return directToolName;
+
     const idToolName = findToolNameFromId(toolCallId, AUGGIE_TOOL_PATTERNS, { preferLongestMatch: true });
     if (idToolName) return idToolName;
 
@@ -135,4 +145,3 @@ export class AuggieTransport implements TransportHandler {
 }
 
 export const auggieTransport = new AuggieTransport();
-

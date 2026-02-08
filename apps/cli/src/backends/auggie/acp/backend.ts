@@ -9,24 +9,28 @@
  */
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
+import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
 import { auggieTransport } from '@/backends/auggie/acp/transport';
+import type { PermissionMode } from '@/api/types';
+import { buildAuggiePermissionArgs } from './permissions';
 
 export interface AuggieBackendOptions extends AgentFactoryOptions {
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
   allowIndexing?: boolean;
+  permissionMode?: PermissionMode;
 }
 
 export function createAuggieBackend(options: AuggieBackendOptions): AgentBackend {
   const allowIndexing = options.allowIndexing === true;
 
-  const args = ['--acp', ...(allowIndexing ? ['--allow-indexing'] : [])];
+  const args = ['--acp', ...(allowIndexing ? ['--allow-indexing'] : []), ...buildAuggiePermissionArgs(options.permissionMode)];
 
   const backendOptions: AcpBackendOptions = {
     agentName: 'auggie',
     cwd: options.cwd,
-    command: 'auggie',
+    command: resolveCliPathOverride({ agentId: 'auggie' }) ?? 'auggie',
     args,
     env: {
       ...options.env,
@@ -41,4 +45,3 @@ export function createAuggieBackend(options: AuggieBackendOptions): AgentBackend
 
   return new AcpBackend(backendOptions);
 }
-

@@ -29,16 +29,23 @@ import {
   sendTerminalFallbackMessageIfNeeded,
 } from '@/agent/runtime/startupSideEffects';
 import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permissionModeMetadata';
-import { applyStartupMetadataUpdateToSession, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
+import { applyStartupMetadataUpdateToSession, buildAcpSessionModeOverride, buildModelOverride, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { stopCaffeinate } from '@/integrations/caffeinate';
-import { MessageQueue2 } from '@/utils/MessageQueue2';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permissionModeCanonical';
+import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
+import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
+import { createAcpSessionModeOverrideSynchronizer } from '@/agent/runtime/acpSessionModeOverrideSync';
+import { createAcpConfigOptionOverrideSynchronizer } from '@/agent/runtime/acpConfigOptionOverrideSync';
+import { createModelOverrideSynchronizer } from '@/agent/runtime/modelOverrideSync';
+import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
 
 import type { McpServerConfig } from '@/agent';
-import { AuggiePermissionHandler } from '@/backends/auggie/utils/permissionHandler';
 import { createAuggieAcpRuntime } from '@/backends/auggie/acp/runtime';
 import { waitForNextAuggieMessage } from '@/backends/auggie/utils/waitForNextAuggieMessage';
 import { readAuggieAllowIndexingFromEnv } from '@/backends/auggie/utils/env';
@@ -86,10 +93,15 @@ export async function runAuggie(opts: {
   terminalRuntime?: import('@/terminal/terminalRuntimeFlags').TerminalRuntimeFlags | null;
   permissionMode?: PermissionMode;
   permissionModeUpdatedAt?: number;
+  agentModeId?: string;
+  agentModeUpdatedAt?: number;
+  modelId?: string;
+  modelUpdatedAt?: number;
   existingSessionId?: string;
   resume?: string;
 }): Promise<void> {
   const sessionTag = randomUUID();
+  const explicitPermissionMode = opts.permissionMode;
 
   connectionState.setBackend('Auggie');
 
@@ -103,7 +115,7 @@ export async function runAuggie(opts: {
   }
   await api.getOrCreateMachine({ machineId, metadata: initialMachineMetadata });
 
-  const initialPermissionMode = opts.permissionMode ?? 'default';
+  const initialPermissionMode = normalizePermissionModeToIntent(opts.permissionMode ?? 'default') ?? 'default';
 
   const allowIndexingFromEnv = readAuggieAllowIndexingFromEnv();
 
@@ -114,6 +126,10 @@ export async function runAuggie(opts: {
     terminalRuntime: opts.terminalRuntime ?? null,
     permissionMode: initialPermissionMode,
     permissionModeUpdatedAt: typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : Date.now(),
+    agentModeId: opts.agentModeId,
+    agentModeUpdatedAt: opts.agentModeUpdatedAt,
+    modelId: opts.modelId,
+    modelUpdatedAt: opts.modelUpdatedAt,
   });
 
   // Persist the indexing choice in metadata so it can be inspected/toggled from the app.
@@ -121,7 +137,7 @@ export async function runAuggie(opts: {
 
   const terminal = metadata.terminal;
   let session: ApiSessionClient;
-  let permissionHandler: AuggiePermissionHandler;
+  let permissionHandler: ProviderEnforcedPermissionHandler;
   let reconnectionHandle: { cancel: () => void } | null = null;
 
   const normalizedExistingSessionId = typeof opts.existingSessionId === 'string' ? opts.existingSessionId.trim() : '';
@@ -133,15 +149,38 @@ export async function runAuggie(opts: {
     const baseSession = await createBaseSessionForAttach({ existingSessionId: normalizedExistingSessionId, metadata, state });
     session = api.sessionSyncClient(baseSession);
 
-    applyStartupMetadataUpdateToSession({
-      session,
-      next: metadata,
-      nowMs: Date.now(),
-      permissionModeOverride: buildPermissionModeOverride({
-        permissionMode: opts.permissionMode,
-        permissionModeUpdatedAt: opts.permissionModeUpdatedAt,
-      }),
-    });
+    let snapshot: unknown = null;
+    let snapshotError: unknown = null;
+    try {
+      snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 });
+    } catch (error) {
+      snapshotError = error;
+    }
+    if (!snapshot) {
+      logger.debug(
+        '[auggie] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)',
+        snapshotError ?? undefined,
+      );
+    } else {
+      applyStartupMetadataUpdateToSession({
+        session,
+        next: metadata,
+        nowMs: Date.now(),
+        permissionModeOverride: buildPermissionModeOverride({
+          permissionMode: opts.permissionMode,
+          permissionModeUpdatedAt: opts.permissionModeUpdatedAt,
+        }),
+        acpSessionModeOverride: buildAcpSessionModeOverride({
+          agentModeId: opts.agentModeId,
+          agentModeUpdatedAt: opts.agentModeUpdatedAt,
+        }),
+        modelOverride: buildModelOverride({
+          modelId: opts.modelId,
+          modelUpdatedAt: opts.modelUpdatedAt,
+        }),
+        mode: 'attach',
+      });
+    }
 
     // If the UI has toggled indexing for this session, prefer the stored metadata.
     // Env var remains the highest priority override (useful for debugging/local runs).
@@ -192,7 +231,9 @@ export async function runAuggie(opts: {
   };
 
   let abortRequestedCallback: (() => void | Promise<void>) | null = null;
-  permissionHandler = new AuggiePermissionHandler(session, {
+  permissionHandler = createProviderEnforcedPermissionHandler({
+    session,
+    logPrefix: '[Auggie]',
     onAbortRequested: () => abortRequestedCallback?.(),
   });
   permissionHandler.setPermissionMode(initialPermissionMode);
@@ -202,18 +243,25 @@ export async function runAuggie(opts: {
   }));
 
   let currentPermissionMode: PermissionMode | undefined = initialPermissionMode;
+  let currentPermissionModeUpdatedAt: number =
+    typeof session.getMetadataSnapshot()?.permissionModeUpdatedAt === 'number'
+      ? (session.getMetadataSnapshot()?.permissionModeUpdatedAt as number)
+      : 0;
 
   session.onUserMessage((message) => {
     let messagePermissionMode = currentPermissionMode;
     if (message.meta?.permissionMode) {
-      const nextPermissionMode = message.meta.permissionMode as PermissionMode;
-      const res = maybeUpdatePermissionModeMetadata({
-        currentPermissionMode,
-        nextPermissionMode,
-        updateMetadata: (updater) => session.updateMetadata(updater),
-      });
-      currentPermissionMode = res.currentPermissionMode;
-      messagePermissionMode = currentPermissionMode;
+      const nextPermissionMode = normalizePermissionModeToIntent(message.meta.permissionMode);
+      if (nextPermissionMode) {
+        const res = maybeUpdatePermissionModeMetadata({
+          currentPermissionMode,
+          nextPermissionMode,
+          updateMetadata: (updater) => session.updateMetadata(updater),
+          nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
+        });
+        currentPermissionMode = res.currentPermissionMode;
+        messagePermissionMode = currentPermissionMode;
+      }
     }
 
     const mode = { permissionMode: messagePermissionMode || 'default' };
@@ -254,6 +302,7 @@ export async function runAuggie(opts: {
     permissionHandler,
     onThinkingChange: (value) => { thinking = value; },
     allowIndexing,
+    getPermissionMode: () => currentPermissionMode ?? 'default',
   });
 
   const handleAbort = async () => {
@@ -322,6 +371,52 @@ export async function runAuggie(opts: {
     type QueuedMessage = { message: string; mode: { permissionMode: PermissionMode }; hash: string };
     let pending: QueuedMessage | null = null;
 
+    const acpSessionModeSync = createAcpSessionModeOverrideSynchronizer({
+      session: { getMetadataSnapshot: () => session.getMetadataSnapshot?.() ?? null },
+      runtime: { setSessionMode: (modeId) => runtime.setSessionMode(modeId) },
+      isStarted: () => wasStarted,
+    });
+    const configOptionSync = createAcpConfigOptionOverrideSynchronizer({
+      session: { getMetadataSnapshot: () => session.getMetadataSnapshot?.() ?? null },
+      runtime: { setSessionConfigOption: (configId, value) => runtime.setSessionConfigOption(configId, value) },
+      isStarted: () => wasStarted,
+    });
+    const modelSync = createModelOverrideSynchronizer({
+      session: { getMetadataSnapshot: () => session.getMetadataSnapshot?.() ?? null },
+      runtime: { setSessionModel: (modelId) => runtime.setSessionModel(modelId) },
+      isStarted: () => wasStarted,
+    });
+
+    if (typeof explicitPermissionMode !== 'string') {
+      const seeded = await resolveStartupPermissionModeFromSession({ session, take: 50 });
+      if (seeded && seeded.updatedAt > currentPermissionModeUpdatedAt) {
+        currentPermissionModeUpdatedAt = seeded.updatedAt;
+        currentPermissionMode = seeded.mode;
+        permissionHandler.setPermissionMode(seeded.mode);
+      }
+    }
+
+    const syncPermissionModeFromMetadata = () => {
+      const resolved = resolvePermissionIntentFromMetadataSnapshot({
+        metadata: session.getMetadataSnapshot(),
+      });
+      if (!resolved) return;
+      if (resolved.updatedAt <= currentPermissionModeUpdatedAt) return;
+      currentPermissionModeUpdatedAt = resolved.updatedAt;
+      currentPermissionMode = resolved.intent;
+      permissionHandler.setPermissionMode(resolved.intent);
+    };
+
+    const syncControlsFromMetadata = () => {
+      syncPermissionModeFromMetadata();
+      acpSessionModeSync.syncFromMetadata();
+      configOptionSync.syncFromMetadata();
+      modelSync.syncFromMetadata();
+    };
+
+    // Capture any startup override already present in the snapshot so we can apply it immediately after runtime start.
+    syncControlsFromMetadata();
+
     while (!shouldExit) {
       let message: QueuedMessage | null = pending;
       pending = null;
@@ -331,6 +426,7 @@ export async function runAuggie(opts: {
           messageQueue,
           abortSignal: abortController.signal,
           session,
+          onMetadataUpdate: syncControlsFromMetadata,
         });
         if (!next) continue;
         message = { message: next.message, mode: next.mode, hash: next.hash };
@@ -339,11 +435,23 @@ export async function runAuggie(opts: {
 
       permissionHandler.setPermissionMode(message.mode.permissionMode);
 
-      if (currentModeHash && message.hash !== currentModeHash) {
+      if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
+        const resumeId = runtime.getSessionId();
         currentModeHash = message.hash;
-      } else {
-        currentModeHash = message.hash;
+        if (resumeId) storedSessionIdForResume = resumeId;
+
+        messageBuffer.addMessage('Restarting Auggie session (permission settings changed)…', 'status');
+        await runtime.reset();
+        wasStarted = false;
+        permissionHandler.reset();
+        thinking = false;
+        session.keepAlive(thinking, 'remote');
+
+        pending = message;
+        continue;
       }
+
+      currentModeHash = message.hash;
 
       messageBuffer.addMessage(message.message, 'user');
 
@@ -379,6 +487,9 @@ export async function runAuggie(opts: {
             await runtime.startOrLoad({});
           }
           wasStarted = true;
+          await acpSessionModeSync.flushPendingAfterStart();
+          await configOptionSync.flushPendingAfterStart();
+          await modelSync.flushPendingAfterStart();
         }
         await runtime.sendPrompt(message.message);
       } catch (error) {
@@ -393,6 +504,10 @@ export async function runAuggie(opts: {
         });
       } finally {
         runtime.flushTurn();
+        // Avoid missing ACP mode override updates that land while we're mid-turn.
+        acpSessionModeSync.syncFromMetadata();
+        configOptionSync.syncFromMetadata();
+        modelSync.syncFromMetadata();
         thinking = false;
         session.keepAlive(thinking, 'remote');
         sendReady();
