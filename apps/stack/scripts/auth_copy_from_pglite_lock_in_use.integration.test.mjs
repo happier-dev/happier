@@ -1,27 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const cleanEnv = {};
-    for (const [k, v] of Object.entries(env ?? {})) {
-      if (v == null) continue;
-      cleanEnv[k] = String(v);
-    }
-    const proc = spawn(process.execPath, args, { cwd, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('exit', (code) => resolve({ code: code ?? 0, stdout, stderr }));
-  });
-}
+import { authScriptPath, runNodeCapture, terminateChildProcess } from './auth.testHelper.mjs';
 
 test('hstack stack auth copy-from skips pglite DB seed when lock is held by a live pid', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
@@ -87,21 +71,20 @@ test('hstack stack auth copy-from skips pglite DB seed when lock is held by a li
       HAPPIER_STACK_ENV_FILE: join(storageDir, 'dev', 'env'),
     };
 
-    const res = await runNode([join(rootDir, 'scripts', 'auth.mjs'), 'copy-from', 'dev-auth'], { cwd: rootDir, env });
+    const res = await runNodeCapture([authScriptPath(rootDir), 'copy-from', 'dev-auth'], { cwd: rootDir, env });
     assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
-    assert.ok(
-      res.stdout.includes('db seed skipped') || res.stderr.includes('db seed skipped'),
-      `expected db seed to be skipped\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
-    );
-    assert.ok(
-      res.stdout.includes('pglite db dir is in use by pid=') ||
-        res.stderr.includes('pglite db dir is in use by pid=') ||
-        res.stdout.includes('pglite db dir is in use by pid') ||
-        res.stderr.includes('pglite db dir is in use by pid'),
+    const combinedOutput = `${res.stdout}\n${res.stderr}`;
+    assert.match(combinedOutput, /\bdb seed skipped\b/i, `expected db seed to be skipped\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+    assert.match(
+      combinedOutput,
+      /\bpglite db dir is in use by pid(?:=|\b)/i,
       `expected message about live pglite lock\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
     );
   } finally {
-    holder.kill('SIGKILL');
+    try {
+      await terminateChildProcess(holder, { signal: 'SIGTERM', timeoutMs: 1200 });
+    } finally {
+      await rm(tmp, { recursive: true, force: true });
+    }
   }
 });
-
