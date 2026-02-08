@@ -1,8 +1,24 @@
 import { io, type Socket } from 'socket.io-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
-export type UpdateEvent = { id: string; seq: number; createdAt: number; body: { t: string; [k: string]: any } };
-export type EphemeralEvent = { type: string; [k: string]: any };
+function describeError(error: unknown): string {
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message?: unknown }).message ?? error);
+  }
+  return String(error);
+}
+
+export type UpdateEvent = {
+  id?: string;
+  seq?: number;
+  createdAt?: number;
+  body?: { t?: string; [k: string]: unknown };
+  [k: string]: unknown;
+};
+export type EphemeralEvent = { type?: string; [k: string]: unknown };
+type RpcRequestPayload = { method: string; params: string };
+type RpcRegisterEventPayload = { method?: unknown; error?: unknown };
+type RpcResponseEnvelope = { ok?: unknown; result?: unknown; error?: unknown; errorCode?: unknown };
 
 export type CapturedEvent =
   | { at: number; kind: 'update'; payload: UpdateEvent }
@@ -20,11 +36,11 @@ export class SocketCollector {
 
     socket.on('connect', () => this.events.push({ at: Date.now(), kind: 'connect' }));
     socket.on('disconnect', (reason) => this.events.push({ at: Date.now(), kind: 'disconnect', reason }));
-    socket.on('connect_error', (err: any) =>
-      this.events.push({ at: Date.now(), kind: 'connect_error', message: String(err?.message ?? err) }),
+    socket.on('connect_error', (err: unknown) => this.events.push({ at: Date.now(), kind: 'connect_error', message: describeError(err) }));
+    socket.on('update', (payload: unknown) => this.events.push({ at: Date.now(), kind: 'update', payload: (payload ?? {}) as UpdateEvent }));
+    socket.on('ephemeral', (payload: unknown) =>
+      this.events.push({ at: Date.now(), kind: 'ephemeral', payload: (payload ?? {}) as EphemeralEvent }),
     );
-    socket.on('update', (payload: any) => this.events.push({ at: Date.now(), kind: 'update', payload }));
-    socket.on('ephemeral', (payload: any) => this.events.push({ at: Date.now(), kind: 'ephemeral', payload }));
   }
 
   connect(): void {
@@ -47,17 +63,17 @@ export class SocketCollector {
     return [...this.events];
   }
 
-  async emitWithAck<T = any>(event: string, data: any, timeoutMs = 10_000): Promise<T> {
+  async emitWithAck<T = unknown>(event: string, data: unknown, timeoutMs = 10_000): Promise<T> {
     return (await this.socket.timeout(timeoutMs).emitWithAck(event as any, data)) as T;
   }
 
-  onRpcRequest(handler: (data: { method: string; params: string }) => string | Promise<string>): () => void {
-    const listener = async (data: { method: string; params: string }, callback: (response: string) => void) => {
+  onRpcRequest(handler: (data: RpcRequestPayload) => string | Promise<string>): () => void {
+    const listener = async (data: RpcRequestPayload, callback: (response: string) => void) => {
       try {
         const out = await handler(data);
         callback(out);
-      } catch (e: any) {
-        callback(JSON.stringify({ ok: false, error: String(e?.message ?? e) }));
+      } catch (e: unknown) {
+        callback(JSON.stringify({ ok: false, error: describeError(e) }));
       }
     };
     this.socket.on(SOCKET_RPC_EVENTS.REQUEST as any, listener as any);
@@ -74,13 +90,15 @@ export class SocketCollector {
         reject(new Error(`rpc-register timed out for method: ${method}`));
       }, timeoutMs);
 
-      const onRegistered = (data: any) => {
+      const onRegistered = (data: RpcRegisterEventPayload) => {
         if (data?.method !== method) return;
         cleanup();
         resolve();
       };
 
-      const onError = (data: any) => {
+      const onError = (data: RpcRegisterEventPayload) => {
+        const errorMethod = typeof data?.method === 'string' ? data.method : null;
+        if (errorMethod && errorMethod !== method) return;
         cleanup();
         reject(new Error(`rpc-register error: ${typeof data?.error === 'string' ? data.error : 'unknown'}`));
       };
@@ -97,11 +115,11 @@ export class SocketCollector {
     });
   }
 
-  async rpcCall<T = any>(method: string, params: string): Promise<T> {
+  async rpcCall<T = RpcResponseEnvelope>(method: string, params: string): Promise<T> {
     return await this.emitWithAck(SOCKET_RPC_EVENTS.CALL, { method, params }, 30_000);
   }
 
-  emit(event: string, data: any): void {
+  emit(event: string, data: unknown): void {
     this.socket.emit(event as any, data);
   }
 }
