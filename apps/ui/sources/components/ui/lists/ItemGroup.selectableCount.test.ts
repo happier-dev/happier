@@ -44,4 +44,26 @@ describe('countSelectableItems', () => {
 
         expect(countSelectableItems(node)).toBe(2);
     });
+
+    it('counts rows with onLongPress handlers as selectable', () => {
+        const node = React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(TestItem, { title: 'long press', onLongPress: () => {} }),
+            React.createElement(TestItem, { title: 'press', onPress: () => {} }),
+        );
+
+        expect(countSelectableItems(node)).toBe(2);
+    });
+
+    it('does not count rows when handlers are present but not functions', () => {
+        const node = React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(TestItem, { title: 'bad', onPress: true as any }),
+            React.createElement(TestItem, { title: 'ok', onPress: () => {} }),
+        );
+
+        expect(countSelectableItems(node)).toBe(1);
+    });
 });

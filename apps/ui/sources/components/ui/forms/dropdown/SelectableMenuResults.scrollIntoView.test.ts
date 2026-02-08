@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -57,6 +57,10 @@ vi.mock('@/components/ui/lists/ItemGroupRowPosition', () => {
 });
 
 describe('SelectableMenuResults (web)', () => {
+    beforeEach(() => {
+        scrollIntoViewSpy.mockClear();
+    });
+
     it('does not call DOM scrollIntoView (prevents scrolling the underlying page when opening dropdowns)', async () => {
         const { SelectableMenuResults } = await import('./SelectableMenuResults');
 
@@ -91,6 +95,49 @@ describe('SelectableMenuResults (web)', () => {
                 React.createElement(SelectableMenuResults, {
                     categories,
                     selectedIndex: 1,
+                    onSelectionChange: () => {},
+                    onPressItem: () => {},
+                    rowVariant: 'slim',
+                    emptyLabel: 'empty',
+                    rowKind: 'item',
+                }),
+            );
+        });
+
+        expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not call DOM scrollIntoView for item-row rendering mode either', async () => {
+        const { SelectableMenuResults } = await import('./SelectableMenuResults');
+
+        const categories = [
+            {
+                id: 'general',
+                title: 'General',
+                items: [{ id: 'a', title: 'A', disabled: false, left: null, right: null }],
+            },
+        ] as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(SelectableMenuResults, {
+                    categories,
+                    selectedIndex: 0,
+                    onSelectionChange: () => {},
+                    onPressItem: () => {},
+                    rowVariant: 'slim',
+                    emptyLabel: 'empty',
+                    rowKind: 'item',
+                }),
+            );
+        });
+
+        act(() => {
+            tree?.update(
+                React.createElement(SelectableMenuResults, {
+                    categories,
+                    selectedIndex: 0,
                     onSelectionChange: () => {},
                     onPressItem: () => {},
                     rowVariant: 'slim',

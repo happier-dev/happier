@@ -54,5 +54,57 @@ describe('OverlayPortalProvider', () => {
         expect(tree?.root.findAllByType('PortalContent' as any).length).toBe(1);
         expect(renderCount).toBe(1);
     });
-});
 
+    it('replaces and removes portal nodes without re-rendering provider children', async () => {
+        const { OverlayPortalHost, OverlayPortalProvider, useOverlayPortal } = await import('./OverlayPortal');
+
+        let renderCount = 0;
+        let dispatch: ReturnType<typeof useOverlayPortal> | null = null;
+
+        function RenderCountChild() {
+            renderCount += 1;
+            return React.createElement('RenderCountChild');
+        }
+
+        function CaptureDispatch() {
+            dispatch = useOverlayPortal();
+            return React.createElement('CaptureDispatch');
+        }
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(
+                    OverlayPortalProvider,
+                    null,
+                    React.createElement(RenderCountChild),
+                    React.createElement(CaptureDispatch),
+                    React.createElement(OverlayPortalHost),
+                ),
+            );
+        });
+
+        expect(renderCount).toBe(1);
+        expect(dispatch).toBeTruthy();
+
+        act(() => {
+            dispatch?.setPortalNode('test-node', React.createElement('PortalContentA'));
+        });
+        expect(tree?.root.findAllByType('PortalContentA' as any).length).toBe(1);
+        expect(renderCount).toBe(1);
+
+        act(() => {
+            dispatch?.setPortalNode('test-node', React.createElement('PortalContentB'));
+        });
+        expect(tree?.root.findAllByType('PortalContentA' as any).length).toBe(0);
+        expect(tree?.root.findAllByType('PortalContentB' as any).length).toBe(1);
+        expect(renderCount).toBe(1);
+
+        act(() => {
+            dispatch?.removePortalNode('test-node');
+            dispatch?.removePortalNode('missing-node');
+        });
+        expect(tree?.root.findAllByType('PortalContentB' as any).length).toBe(0);
+        expect(renderCount).toBe(1);
+    });
+});

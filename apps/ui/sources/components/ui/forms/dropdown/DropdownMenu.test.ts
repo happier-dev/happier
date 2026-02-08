@@ -144,4 +144,52 @@ describe('DropdownMenu', () => {
         });
         expect(onOpenChange).toHaveBeenCalledWith(false);
     });
+
+    it('supports a static trigger node and keeps popover unmounted when closed', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+        const { Text } = await import('react-native');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu, {
+                    open: false,
+                    onOpenChange: vi.fn(),
+                    items: [{ id: 'a', title: 'A' }],
+                    onSelect: () => {},
+                    trigger: React.createElement(Text, null, 'Static Trigger'),
+                }),
+            );
+        });
+
+        const labels = tree?.root.findAllByType(Text).map((node: any) => node.props?.children) ?? [];
+        expect(labels).toContain('Static Trigger');
+        expect(tree?.root.findAllByType('Popover' as any).length).toBe(0);
+    });
+
+    it('passes default and explicit row rendering options to SelectableMenuResults', async () => {
+        const { DropdownMenu } = await import('./DropdownMenu');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(DropdownMenu, {
+                    open: true,
+                    onOpenChange: vi.fn(),
+                    items: [{ id: 'a', title: 'A' }],
+                    onSelect: () => {},
+                    trigger: React.createElement('View'),
+                    showCategoryTitles: false,
+                    rowKind: 'item',
+                }),
+            );
+        });
+
+        const popover = tree?.root.findByType('Popover' as any);
+        expect(popover?.props?.placement).toBe('bottom');
+
+        const selectableResults = tree?.root.findByType('SelectableMenuResults' as any);
+        expect(selectableResults?.props?.showCategoryTitles).toBe(false);
+        expect(selectableResults?.props?.rowKind).toBe('item');
+    });
 });

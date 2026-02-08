@@ -1,24 +1,19 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { FloatingOverlay } from './FloatingOverlay';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-function flattenStyle(style: any): Record<string, any> {
-    if (!style) return {};
-    if (Array.isArray(style)) {
-        return style.reduce((acc, item) => ({ ...acc, ...flattenStyle(item) }), {});
+(
+    globalThis as typeof globalThis & {
+        IS_REACT_ACT_ENVIRONMENT?: boolean;
     }
-    return style;
-}
+).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native', () => {
-    const React = require('react');
-    return {
-        Platform: { OS: 'web' },
-        ScrollView: (props: any) => React.createElement('ScrollView', props, props.children),
-    };
-});
+vi.mock('react-native', () => ({
+    Platform: { OS: 'web' },
+    ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('ScrollView', props, props.children),
+}));
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -32,9 +27,20 @@ vi.mock('react-native-unistyles', () => ({
         },
     }),
     StyleSheet: {
-        create: (factory: any) => {
-            // FloatingOverlay's stylesheet factory is called with (theme, runtime)
-            return factory(
+        create: (
+            factory: (
+                theme: {
+                    colors: {
+                        surface: string;
+                        modal: { border: string };
+                        shadow: { color: string; opacity: number };
+                        textSecondary: string;
+                    };
+                },
+                runtime: Record<string, unknown>,
+            ) => unknown,
+        ) =>
+            factory(
                 {
                     colors: {
                         surface: '#fff',
@@ -44,15 +50,15 @@ vi.mock('react-native-unistyles', () => ({
                     },
                 },
                 {},
-            );
-        },
+            ),
     },
 }));
 
 vi.mock('react-native-reanimated', () => {
-    const React = require('react');
-    const AnimatedView = (props: any) => React.createElement('AnimatedView', props, props.children);
-    const AnimatedScrollView = (props: any) => React.createElement('AnimatedScrollView', props, props.children);
+    const AnimatedView = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('AnimatedView', props, props.children);
+    const AnimatedScrollView = (props: Record<string, unknown> & { children?: React.ReactNode }) =>
+        React.createElement('AnimatedScrollView', props, props.children);
     return {
         __esModule: true,
         default: {
@@ -62,15 +68,13 @@ vi.mock('react-native-reanimated', () => {
     };
 });
 
-vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => {
-    const React = require('react');
-    return { ScrollEdgeFades: () => React.createElement('ScrollEdgeFades') };
-});
+vi.mock('@/components/ui/scroll/ScrollEdgeFades', () => ({
+    ScrollEdgeFades: () => React.createElement('ScrollEdgeFades'),
+}));
 
-vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => {
-    const React = require('react');
-    return { ScrollEdgeIndicators: () => React.createElement('ScrollEdgeIndicators') };
-});
+vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
+    ScrollEdgeIndicators: () => React.createElement('ScrollEdgeIndicators'),
+}));
 
 vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
     useScrollEdgeFades: () => ({
@@ -81,49 +85,38 @@ vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
     }),
 }));
 
+async function renderOverlay(props: Omit<React.ComponentProps<typeof FloatingOverlay>, 'children'>) {
+    let tree: renderer.ReactTestRenderer | undefined;
+    await act(async () => {
+        tree = renderer.create(React.createElement(FloatingOverlay, props, React.createElement(Child)));
+    });
+    return tree!;
+}
+
+function Child() {
+    return null;
+}
+
 describe('FloatingOverlay', () => {
     it('renders an arrow when configured', async () => {
-        const { FloatingOverlay } = await import('./FloatingOverlay');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(
-                    FloatingOverlay,
-                    {
-                        maxHeight: 200,
-                        arrow: { placement: 'bottom' },
-                    } as any,
-                    React.createElement('Child'),
-                ),
-            );
+        const tree = await renderOverlay({
+            maxHeight: 200,
+            arrow: { placement: 'bottom' },
         });
 
-        const arrows = tree?.root.findAllByProps({ testID: 'floating-overlay-arrow' } as any) ?? [];
-        // Our Animated shim is a wrapper component returning a host element; filter to host nodes.
-        const hostArrows = arrows.filter((node: any) => typeof node.type === 'string');
-        expect(hostArrows.length).toBe(1);
+        const arrows = tree.root.findAllByProps({ testID: 'floating-overlay-arrow' });
+        const hostArrows = arrows.filter((node) => typeof node.type === 'string');
+        expect(hostArrows).toHaveLength(1);
     });
 
     it('renders edge indicators when enabled without edge fades', async () => {
-        const { FloatingOverlay } = await import('./FloatingOverlay');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(
-                    FloatingOverlay,
-                    {
-                        maxHeight: 200,
-                        edgeIndicators: true,
-                        edgeFades: false,
-                    } as any,
-                    React.createElement('Child'),
-                ),
-            );
+        const tree = await renderOverlay({
+            maxHeight: 200,
+            edgeIndicators: true,
+            edgeFades: false,
         });
 
-        const indicators = tree?.root.findAll((node) => (node as any).type === 'ScrollEdgeIndicators') ?? [];
-        expect(indicators.length).toBe(1);
+        const indicators = tree.root.findAll((node) => node.type === 'ScrollEdgeIndicators');
+        expect(indicators).toHaveLength(1);
     });
 });

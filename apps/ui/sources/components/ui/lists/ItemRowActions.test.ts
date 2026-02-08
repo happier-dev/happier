@@ -1,12 +1,8 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-vi.mock('@/components/ui/popover', () => ({
-    usePopoverBoundaryRef: () => null,
-}));
 
 vi.mock('@/components/FloatingOverlay', () => {
     const React = require('react');
@@ -18,6 +14,7 @@ vi.mock('@/components/FloatingOverlay', () => {
 vi.mock('@/components/ui/popover', () => {
     const React = require('react');
     return {
+        usePopoverBoundaryRef: () => null,
         Popover: (props: any) => {
             if (!props.open) return null;
             return React.createElement(
@@ -80,6 +77,14 @@ vi.mock('react-native', () => {
 });
 
 describe('ItemRowActions', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('invokes overflow actions even when InteractionManager does not run callbacks', async () => {
         const { ItemRowActions } = await import('./ItemRowActions');
         const { SelectableRow } = await import('@/components/ui/lists/SelectableRow');
@@ -116,10 +121,31 @@ describe('ItemRowActions', () => {
             editRow?.props?.onPress?.();
         });
 
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 0));
+        act(() => {
+            vi.runOnlyPendingTimers();
         });
 
         expect(onEdit).toHaveBeenCalledTimes(1);
+        expect(tree?.root.findAllByType('Popover' as any).length).toBe(0);
+    });
+
+    it('does not render overflow trigger when there are no actions', async () => {
+        const { ItemRowActions } = await import('./ItemRowActions');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        act(() => {
+            tree = renderer.create(
+                React.createElement(ItemRowActions, {
+                    title: 'Profile',
+                    actions: [],
+                }),
+            );
+        });
+
+        const trigger = (tree?.root.findAllByType('Pressable' as any) ?? []).find(
+            (node: any) => node.props?.accessibilityLabel === 'More actions',
+        );
+        expect(trigger).toBeUndefined();
+        expect(tree?.root.findAllByType('Popover' as any).length).toBe(0);
     });
 });

@@ -41,6 +41,12 @@ function collectShowDividers(node: React.ReactNode): Array<boolean | undefined> 
 }
 
 describe('withItemGroupDividers', () => {
+    it('returns empty-like input unchanged when there are no element rows', () => {
+        expect(withItemGroupDividers(null)).toBe(null);
+        expect(withItemGroupDividers(undefined)).toBe(undefined);
+        expect(withItemGroupDividers('text-only')).toBe('text-only');
+    });
+
     it('treats fragment children as part of the divider sequence', () => {
         const children = React.createElement(
             React.Fragment,
@@ -69,5 +75,17 @@ describe('withItemGroupDividers', () => {
 
         const processed = withItemGroupDividers(children);
         expect(collectShowDividers(processed)).toEqual([false, true, false]);
+    });
+
+    it('never renders a divider on the final row even when explicitly requested', () => {
+        const children = React.createElement(
+            React.Fragment,
+            null,
+            React.createElement(TestItem, { id: 'a', showDivider: true }),
+            React.createElement(TestItem, { id: 'b', showDivider: true }),
+        );
+
+        const processed = withItemGroupDividers(children);
+        expect(collectShowDividers(processed)).toEqual([true, false]);
     });
 });

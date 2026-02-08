@@ -29,5 +29,9 @@ describe('getItemGroupRowCornerRadii', () => {
                 borderBottomRightRadius: 16,
             });
     });
-});
 
+    it('returns empty corner radii for middle rows', () => {
+        expect(getItemGroupRowCornerRadii({ hasBackground: true, position: { isFirst: false, isLast: false }, radius: 16 }))
+            .toEqual({});
+    });
+});

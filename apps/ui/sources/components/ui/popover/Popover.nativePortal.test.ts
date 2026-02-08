@@ -30,6 +30,30 @@ function flushMicrotasks(times: number) {
     });
 }
 
+const INITIAL_POSITIONING_TICKS = 3;
+
+async function flushInitialPositioning() {
+    await flushMicrotasks(INITIAL_POSITIONING_TICKS);
+}
+
+async function withImmediateRequestAnimationFrame(run: () => Promise<void>) {
+    const previous = (globalThis as any).requestAnimationFrame;
+    (globalThis as any).requestAnimationFrame = (cb: () => void) => {
+        cb();
+        return 0 as any;
+    };
+    try {
+        await run();
+    } finally {
+        if (previous === undefined) {
+            // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+            delete (globalThis as any).requestAnimationFrame;
+        } else {
+            (globalThis as any).requestAnimationFrame = previous;
+        }
+    }
+}
+
 vi.mock('@/components/ui/popover', () => ({
     usePopoverBoundaryRef: () => null,
 }));
@@ -101,7 +125,7 @@ describe('Popover (native portal)', () => {
         });
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const child = tree?.root.findByType('PopoverChild' as any);
@@ -166,7 +190,7 @@ describe('Popover (native portal)', () => {
         });
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const child = tree?.root.findByType('PopoverChild' as any);
@@ -182,56 +206,50 @@ describe('Popover (native portal)', () => {
         const { OverlayPortalHost, OverlayPortalProvider } = await import('./OverlayPortal');
         const { Popover } = await import('./Popover');
 
-        const originalRaf = (globalThis as any).requestAnimationFrame;
-        (globalThis as any).requestAnimationFrame = (cb: () => void) => {
-            cb();
-            return 0 as any;
-        };
-
-        let measureCalls = 0;
-        const anchorRef = {
-            current: {
-                measureInWindow: (cb: any) => {
-                    measureCalls += 1;
-                    if (measureCalls === 1) {
-                        cb(200, 200, 0, 0);
-                        return;
-                    }
-                    cb(200, 200, 20, 20);
+        await withImmediateRequestAnimationFrame(async () => {
+            let measureCalls = 0;
+            const anchorRef = {
+                current: {
+                    measureInWindow: (cb: any) => {
+                        measureCalls += 1;
+                        if (measureCalls === 1) {
+                            cb(200, 200, 0, 0);
+                            return;
+                        }
+                        cb(200, 200, 20, 20);
+                    },
                 },
-            },
-        } as any;
+            } as any;
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(
-                    OverlayPortalProvider,
-                    null,
-                    React.createElement(Popover, {
-                        open: true,
-                        anchorRef,
-                        placement: 'bottom',
-                        portal: { native: true },
-                        backdrop: false,
-                        children: () => React.createElement(PopoverChild),
-                    }),
-                    React.createElement(OverlayPortalHost),
-                ),
-            );
+            let tree: ReturnType<typeof renderer.create> | undefined;
+            await act(async () => {
+                tree = renderer.create(
+                    React.createElement(
+                        OverlayPortalProvider,
+                        null,
+                        React.createElement(Popover, {
+                            open: true,
+                            anchorRef,
+                            placement: 'bottom',
+                            portal: { native: true },
+                            backdrop: false,
+                            children: () => React.createElement(PopoverChild),
+                        }),
+                        React.createElement(OverlayPortalHost),
+                    ),
+                );
+            });
+
+            await act(async () => {
+                await flushInitialPositioning();
+            });
+
+            expect(measureCalls).toBeGreaterThanOrEqual(2);
+
+            const child = tree?.root.findByType('PopoverChild' as any);
+            const contentView = nearestView(child);
+            expect(flattenStyle(contentView?.props?.style).opacity).toBe(1);
         });
-
-        await act(async () => {
-            await flushMicrotasks(3);
-        });
-
-        expect(measureCalls).toBeGreaterThanOrEqual(2);
-
-        const child = tree?.root.findByType('PopoverChild' as any);
-        const contentView = nearestView(child);
-        expect(flattenStyle(contentView?.props?.style).opacity).toBe(1);
-
-        (globalThis as any).requestAnimationFrame = originalRaf;
     });
 
     it('renders inline when no OverlayPortalProvider is present', async () => {
@@ -366,7 +384,7 @@ describe('Popover (native portal)', () => {
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const childAfterMeasure = tree?.root.findByType('PopoverChild' as any);
@@ -423,7 +441,7 @@ describe('Popover (native portal)', () => {
         });
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const effects = tree?.root.findAllByProps({ testID: 'popover-backdrop-effect' } as any) ?? [];
@@ -466,7 +484,7 @@ describe('Popover (native portal)', () => {
         });
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const overlays = tree?.root.findAllByProps({ testID: 'popover-anchor-overlay' } as any) ?? [];

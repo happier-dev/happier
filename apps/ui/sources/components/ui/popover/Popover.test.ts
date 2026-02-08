@@ -16,6 +16,22 @@ function flushMicrotasks(times: number) {
     });
 }
 
+const INITIAL_POSITIONING_TICKS = 3;
+const RETRY_POSITIONING_TICKS = 6;
+const POST_LAYOUT_TICKS = 2;
+
+async function flushInitialPositioning() {
+    await flushMicrotasks(INITIAL_POSITIONING_TICKS);
+}
+
+async function flushRetryPositioning() {
+    await flushMicrotasks(RETRY_POSITIONING_TICKS);
+}
+
+async function flushPostLayoutTicks() {
+    await flushMicrotasks(POST_LAYOUT_TICKS);
+}
+
 function flattenStyle(style: any): Record<string, any> {
     if (!style) return {};
     if (Array.isArray(style)) {
@@ -294,7 +310,7 @@ describe('Popover (web)', () => {
                     },
                 ),
             );
-            await flushMicrotasks(6);
+            await flushRetryPositioning();
         });
 
         const child = tree?.root.findByType('PopoverChild' as any);
@@ -392,7 +408,7 @@ describe('Popover (web)', () => {
                     },
                 ),
             );
-            await flushMicrotasks(6);
+            await flushRetryPositioning();
         });
 
         expect(tree).toBeTruthy();
@@ -401,8 +417,8 @@ describe('Popover (web)', () => {
         expect(renders.at(-1)?.maxHeight).toBe(400);
     });
 
-	    it('positions top-placed portal popovers using the measured content height (avoids “mid-screen” placement)', async () => {
-	        const { Popover } = await import('./Popover');
+    it('positions top-placed portal popovers using the measured content height (avoids “mid-screen” placement)', async () => {
+        const { Popover } = await import('./Popover');
 
         const anchorRef = {
             current: {
@@ -431,29 +447,29 @@ describe('Popover (web)', () => {
                     children: () => React.createElement('PopoverChild'),
                 }),
             );
-            await flushMicrotasks(6);
-	        });
+            await flushRetryPositioning();
+        });
 
-	        const child = tree?.root.findByType('PopoverChild' as any);
-	        expect(child).toBeTruthy();
+        const child = tree?.root.findByType('PopoverChild' as any);
+        expect(child).toBeTruthy();
 
-	        const contentView = tree?.root.findAllByType('View' as any).find((v: any) => typeof v.props.onLayout === 'function');
-	        expect(contentView).toBeTruthy();
+        const contentView = tree?.root.findAllByType('View' as any).find((v: any) => typeof v.props.onLayout === 'function');
+        expect(contentView).toBeTruthy();
 
         // Simulate measuring the popover content.
         await act(async () => {
             contentView?.props?.onLayout?.({ nativeEvent: { layout: { width: 520, height: 200 } } });
-	            await flushMicrotasks(2);
-	        });
+            await flushPostLayoutTicks();
+        });
 
-	        const updatedChild = tree?.root.findByType('PopoverChild' as any);
-	        const updatedContent = updatedChild ? nearestView(updatedChild) : undefined;
-	        expect(updatedContent).toBeTruthy();
+        const updatedChild = tree?.root.findByType('PopoverChild' as any);
+        const updatedContent = updatedChild ? nearestView(updatedChild) : undefined;
+        expect(updatedContent).toBeTruthy();
 
-	        const style = flattenStyle(updatedContent?.props?.style);
-	        // top should be anchorTop - contentHeight - gap = 600 - 200 - 8 = 392
-	        expect(style.top).toBe(392);
-	    });
+        const style = flattenStyle(updatedContent?.props?.style);
+        // top should be anchorTop - contentHeight - gap = 600 - 200 - 8 = 392
+        expect(style.top).toBe(392);
+    });
 
     it('does not attach wheel propagation stoppers when not using a portal', async () => {
         const { Popover } = await import('./Popover');
@@ -509,7 +525,7 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const childAfter = tree?.root.findByType('PopoverChild' as any);
@@ -545,7 +561,7 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const childAfter = tree?.root.findByType('PopoverChild' as any);
@@ -584,7 +600,7 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const childAfter = tree?.root.findByType('PopoverChild' as any);
@@ -627,7 +643,7 @@ describe('Popover (web)', () => {
         expect(flattenStyle(contentView?.props?.style).opacity).toBe(0);
 
         await act(async () => {
-            await flushMicrotasks(6);
+            await flushRetryPositioning();
         });
 
         const childAfter = tree?.root.findByType('PopoverChild' as any);
@@ -665,7 +681,7 @@ describe('Popover (web)', () => {
         });
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const child = tree?.root.findByType('PopoverChild' as any);
@@ -741,7 +757,7 @@ describe('Popover (web)', () => {
         });
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const effects = tree?.root.findAllByProps({ testID: 'popover-backdrop-effect' } as any) ?? [];
@@ -783,7 +799,7 @@ describe('Popover (web)', () => {
         });
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const effects = tree?.root.findAllByProps({ testID: 'popover-backdrop-effect' } as any) ?? [];
@@ -823,7 +839,7 @@ describe('Popover (web)', () => {
         });
 
         await act(async () => {
-            await flushMicrotasks(3);
+            await flushInitialPositioning();
         });
 
         const overlays = tree?.root.findAllByProps({ testID: 'popover-anchor-overlay' } as any) ?? [];

@@ -71,4 +71,61 @@ describe('PopoverPortalTargetProvider (native)', () => {
         expect(tree?.root.findByProps({ testID: 'outer-host' }).findAllByType('PopoverChild' as any).length).toBe(0);
     });
 
+    it('removes portal content when popover closes', async () => {
+        const { Popover } = await import('./Popover');
+        const { PopoverPortalTargetProvider } = await import('./PopoverPortalTargetProvider');
+
+        const anchorRef = {
+            current: {
+                measureInWindow: (cb: any) => cb(120, 240, 20, 20),
+            },
+        } as any;
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(
+                    PopoverPortalTargetProvider,
+                    null,
+                    React.createElement(
+                        'View',
+                        { testID: 'screen' },
+                        React.createElement(Popover, {
+                            open: true,
+                            anchorRef,
+                            placement: 'bottom',
+                            portal: { native: true },
+                            onRequestClose: () => {},
+                            children: () => React.createElement(PopoverChild),
+                        } as any),
+                    ),
+                ),
+            );
+        });
+
+        expect(tree?.root.findAllByType('PopoverChild' as any).length).toBe(1);
+
+        await act(async () => {
+            tree?.update(
+                React.createElement(
+                    PopoverPortalTargetProvider,
+                    null,
+                    React.createElement(
+                        'View',
+                        { testID: 'screen' },
+                        React.createElement(Popover, {
+                            open: false,
+                            anchorRef,
+                            placement: 'bottom',
+                            portal: { native: true },
+                            onRequestClose: () => {},
+                            children: () => React.createElement(PopoverChild),
+                        } as any),
+                    ),
+                ),
+            );
+        });
+
+        expect(tree?.root.findAllByType('PopoverChild' as any).length).toBe(0);
+    });
 });

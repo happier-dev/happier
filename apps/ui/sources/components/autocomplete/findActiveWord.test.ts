@@ -1,365 +1,289 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { findActiveWord, findActiveWordString, getActiveWordQuery } from './findActiveWord';
 
+type Selection = Parameters<typeof findActiveWord>[1];
+
+type ActiveWordCase = {
+    name: string;
+    content: string;
+    selection: Selection;
+    expected: ReturnType<typeof findActiveWord>;
+    prefixes?: string[];
+};
+
+function expectedActiveWord(params: {
+    word: string;
+    offset: number;
+    endOffset: number;
+    activeWord?: string;
+}): NonNullable<ReturnType<typeof findActiveWord>> {
+    const activeWord = params.activeWord ?? params.word;
+    return {
+        word: params.word,
+        activeWord,
+        offset: params.offset,
+        length: params.word.length,
+        activeLength: activeWord.length,
+        endOffset: params.endOffset,
+    };
+}
+
+function assertFindCase(testCase: ActiveWordCase) {
+    const result = findActiveWord(testCase.content, testCase.selection, testCase.prefixes);
+    expect(result).toEqual(testCase.expected);
+}
+
 describe('findActiveWord', () => {
-    describe('basic prefix detection', () => {
-        it('should detect @ mention at cursor', () => {
-            const content = 'Hello @john';
-            const selection = { start: 11, end: 11 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@john', activeWord: '@john', offset: 6, length: 5, activeLength: 5, endOffset: 11 });
-        });
+    it.each<ActiveWordCase>([
+        {
+            name: 'detects mention at cursor',
+            content: 'Hello @john',
+            selection: { start: 11, end: 11 },
+            expected: expectedActiveWord({ word: '@john', offset: 6, endOffset: 11 }),
+        },
+        {
+            name: 'detects emoji at cursor',
+            content: 'I feel :happy',
+            selection: { start: 13, end: 13 },
+            expected: expectedActiveWord({ word: ':happy', offset: 7, endOffset: 13 }),
+        },
+        {
+            name: 'detects command at cursor',
+            content: 'Type /help for info',
+            selection: { start: 10, end: 10 },
+            expected: expectedActiveWord({ word: '/help', offset: 5, endOffset: 10 }),
+        },
+        {
+            name: 'supports custom prefix list',
+            content: 'This is #important',
+            selection: { start: 18, end: 18 },
+            prefixes: ['@', ':', '/', '#'],
+            expected: expectedActiveWord({ word: '#important', offset: 8, endOffset: 18 }),
+        },
+        {
+            name: 'returns single prefix for immediate suggestions',
+            content: 'Hello @',
+            selection: { start: 7, end: 7 },
+            expected: expectedActiveWord({ word: '@', offset: 6, endOffset: 7 }),
+        },
+    ])('$name', assertFindCase);
 
-        it('should detect : emoji at cursor', () => {
-            const content = 'I feel :happy';
-            const selection = { start: 13, end: 13 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: ':happy', activeWord: ':happy', offset: 7, length: 6, activeLength: 6, endOffset: 13 });
-        });
+    it.each<ActiveWordCase>([
+        {
+            name: 'does not detect prefix inside email-like token',
+            content: 'email@domain.com',
+            selection: { start: 16, end: 16 },
+            expected: undefined,
+        },
+        {
+            name: 'detects prefix after a space',
+            content: 'Hello @user',
+            selection: { start: 11, end: 11 },
+            expected: expectedActiveWord({ word: '@user', offset: 6, endOffset: 11 }),
+        },
+        {
+            name: 'detects prefix at start of line',
+            content: '@user hello',
+            selection: { start: 5, end: 5 },
+            expected: expectedActiveWord({ word: '@user', offset: 0, endOffset: 5 }),
+        },
+        {
+            name: 'detects prefix after newline',
+            content: 'Hello\n@user',
+            selection: { start: 11, end: 11 },
+            expected: expectedActiveWord({ word: '@user', offset: 6, endOffset: 11 }),
+        },
+    ])('$name', assertFindCase);
 
-        it('should detect / command at cursor', () => {
-            const content = 'Type /help for info';
-            const selection = { start: 10, end: 10 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '/help', activeWord: '/help', offset: 5, length: 5, activeLength: 5, endOffset: 10 });
-        });
+    it.each<ActiveWordCase>([
+        {
+            name: 'stops at comma',
+            content: 'Hi, @user',
+            selection: { start: 9, end: 9 },
+            expected: expectedActiveWord({ word: '@user', offset: 4, endOffset: 9 }),
+        },
+        {
+            name: 'stops at parentheses',
+            content: '(@user)',
+            selection: { start: 6, end: 6 },
+            expected: expectedActiveWord({ word: '@user', offset: 1, endOffset: 6 }),
+        },
+        {
+            name: 'stops at brackets',
+            content: '[@user]',
+            selection: { start: 6, end: 6 },
+            expected: expectedActiveWord({ word: '@user', offset: 1, endOffset: 6 }),
+        },
+        {
+            name: 'stops at braces',
+            content: '{@user}',
+            selection: { start: 6, end: 6 },
+            expected: expectedActiveWord({ word: '@user', offset: 1, endOffset: 6 }),
+        },
+        {
+            name: 'stops at angle brackets',
+            content: '<@user>',
+            selection: { start: 6, end: 6 },
+            expected: expectedActiveWord({ word: '@user', offset: 1, endOffset: 6 }),
+        },
+        {
+            name: 'stops at semicolon',
+            content: 'text;@user',
+            selection: { start: 10, end: 10 },
+            expected: expectedActiveWord({ word: '@user', offset: 5, endOffset: 10 }),
+        },
+    ])('$name', assertFindCase);
 
-        it('should detect # tag at cursor', () => {
-            const content = 'This is #important';
-            const selection = { start: 18, end: 18 };
-            const result = findActiveWord(content, selection, ['@', ':', '/', '#']);
-            expect(result).toEqual({ word: '#important', activeWord: '#important', offset: 8, length: 10, activeLength: 10, endOffset: 18 });
-        });
+    it.each<ActiveWordCase>([
+        {
+            name: 'returns undefined when cursor is at beginning',
+            content: '@user',
+            selection: { start: 0, end: 0 },
+            expected: undefined,
+        },
+        {
+            name: 'returns undefined for non-collapsed selection',
+            content: 'Hello @user',
+            selection: { start: 6, end: 11 },
+            expected: undefined,
+        },
+        {
+            name: 'returns undefined for empty content',
+            content: '',
+            selection: { start: 0, end: 0 },
+            expected: undefined,
+        },
+        {
+            name: 'returns undefined for plain words without prefix',
+            content: 'Hello world',
+            selection: { start: 8, end: 8 },
+            expected: undefined,
+        },
+        {
+            name: 'returns undefined for unsupported prefix',
+            content: 'Hello $user',
+            selection: { start: 11, end: 11 },
+            expected: undefined,
+        },
+    ])('$name', assertFindCase);
 
-        it('should return just the prefix when typed alone', () => {
-            const content = 'Hello @';
-            const selection = { start: 7, end: 7 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@', activeWord: '@', offset: 6, length: 1, activeLength: 1, endOffset: 7 });
-        });
-    });
-
-    describe('word boundary detection', () => {
-        it('should only detect prefix at word boundary', () => {
-            const content = 'email@domain.com';
-            const selection = { start: 16, end: 16 };
-            const result = findActiveWord(content, selection);
-            expect(result).toBeUndefined();
-        });
-
-        it('should detect prefix after space', () => {
-            const content = 'Hello @user';
-            const selection = { start: 11, end: 11 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 6, length: 5, activeLength: 5, endOffset: 11 });
-        });
-
-        it('should detect prefix at start of line', () => {
-            const content = '@user hello';
-            const selection = { start: 5, end: 5 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 0, length: 5, activeLength: 5, endOffset: 5 });
-        });
-
-        it('should detect prefix after newline', () => {
-            const content = 'Hello\n@user';
-            const selection = { start: 11, end: 11 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 6, length: 5, activeLength: 5, endOffset: 11 });
-        });
-    });
-
-    describe('stop character handling', () => {
-        it('should stop at newline', () => {
-            const content = 'Hello\n@user';
-            const selection = { start: 11, end: 11 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 6, length: 5, activeLength: 5, endOffset: 11 });
-        });
-
-        it('should stop at comma', () => {
-            const content = 'Hi, @user';
-            const selection = { start: 9, end: 9 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 4, length: 5, activeLength: 5, endOffset: 9 });
-        });
-
-        it('should stop at parentheses', () => {
-            const content = '(@user)';
-            const selection = { start: 6, end: 6 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 1, length: 5, activeLength: 5, endOffset: 6 });
-        });
-
-        it('should stop at brackets', () => {
-            const content = '[@user]';
-            const selection = { start: 6, end: 6 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 1, length: 5, activeLength: 5, endOffset: 6 });
-        });
-
-        it('should stop at braces', () => {
-            const content = '{@user}';
-            const selection = { start: 6, end: 6 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 1, length: 5, activeLength: 5, endOffset: 6 });
-        });
-
-        it('should stop at angle brackets', () => {
-            const content = '<@user>';
-            const selection = { start: 6, end: 6 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 1, length: 5, activeLength: 5, endOffset: 6 });
-        });
-
-        it('should stop at semicolon', () => {
-            const content = 'text;@user';
-            const selection = { start: 10, end: 10 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 5, length: 5, activeLength: 5, endOffset: 10 });
-        });
-    });
-
-    describe('multiple space handling', () => {
-        it('should handle single space before prefix', () => {
-            const content = 'Hello @user';
-            const selection = { start: 11, end: 11 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 6, length: 5, activeLength: 5, endOffset: 11 });
-        });
-
-        it('should stop at multiple spaces', () => {
-            const content = 'Hello  @user';
-            const selection = { start: 12, end: 12 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 7, length: 5, activeLength: 5, endOffset: 12 });
-        });
-
-        it('should handle spaces within active word search', () => {
-            const content = 'text @user name';
-            const selection = { start: 10, end: 10 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 5, length: 5, activeLength: 5, endOffset: 10 });
-        });
-    });
-
-    describe('edge cases', () => {
-        it('should return undefined when cursor at beginning', () => {
-            const content = '@user';
-            const selection = { start: 0, end: 0 };
-            const result = findActiveWord(content, selection);
-            expect(result).toBeUndefined();
-        });
-
-        it('should return undefined when text is selected', () => {
-            const content = 'Hello @user';
-            const selection = { start: 6, end: 11 };
-            const result = findActiveWord(content, selection);
-            expect(result).toBeUndefined();
-        });
-
-        it('should handle empty content', () => {
-            const content = '';
-            const selection = { start: 0, end: 0 };
-            const result = findActiveWord(content, selection);
-            expect(result).toBeUndefined();
-        });
-
-        it('should handle cursor in middle of word without prefix', () => {
-            const content = 'Hello world';
-            const selection = { start: 8, end: 8 };
-            const result = findActiveWord(content, selection);
-            expect(result).toBeUndefined();
-        });
-
-        it('should handle prefix not in the prefix list', () => {
-            const content = 'Hello $user';
-            const selection = { start: 11, end: 11 };
-            const result = findActiveWord(content, selection);
-            expect(result).toBeUndefined();
-        });
-    });
-
-    describe('custom prefixes', () => {
-        it('should work with custom prefix array', () => {
-            const content = 'Hello $user';
-            const selection = { start: 11, end: 11 };
-            const result = findActiveWord(content, selection, ['$']);
-            expect(result).toEqual({ word: '$user', activeWord: '$user', offset: 6, length: 5, activeLength: 5, endOffset: 11 });
-        });
-
-        it('should work with multiple custom prefixes', () => {
-            const content1 = 'Hello $user';
-            const selection1 = { start: 11, end: 11 };
-            const result1 = findActiveWord(content1, selection1, ['$', '%']);
-            expect(result1).toEqual({ word: '$user', activeWord: '$user', offset: 6, length: 5, activeLength: 5, endOffset: 11 });
-
-            const content2 = 'Hello %task';
-            const selection2 = { start: 11, end: 11 };
-            const result2 = findActiveWord(content2, selection2, ['$', '%']);
-            expect(result2).toEqual({ word: '%task', activeWord: '%task', offset: 6, length: 5, activeLength: 5, endOffset: 11 });
-        });
-
-        it('should use default prefixes when none provided', () => {
-            const content = 'Hello @user';
-            const selection = { start: 11, end: 11 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@user', activeWord: '@user', offset: 6, length: 5, activeLength: 5, endOffset: 11 });
-        });
-    });
-
-    describe('cursor in middle of word', () => {
-        it('should return full word and active part when cursor in middle', () => {
-            const content = 'Hello @username!';
-            const selection = { start: 10, end: 10 }; // cursor after @use
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ 
-                word: '@username',      // Full word
-                activeWord: '@use',     // Part up to cursor
+    it.each<ActiveWordCase>([
+        {
+            name: 'returns full and active word with cursor in middle',
+            content: 'Hello @username!',
+            selection: { start: 10, end: 10 },
+            expected: expectedActiveWord({
+                word: '@username',
+                activeWord: '@use',
                 offset: 6,
-                length: 9,
-                activeLength: 4,
-                endOffset: 15
-            });
-        });
-
-        it('should handle cursor at different positions in word', () => {
-            const content = 'Type @mention here';
-            
-            // Cursor after @m
-            const result1 = findActiveWord(content, { start: 7, end: 7 });
-            expect(result1).toEqual({
+                endOffset: 15,
+            }),
+        },
+        {
+            name: 'tracks partial token at first cursor position',
+            content: 'Type @mention here',
+            selection: { start: 7, end: 7 },
+            expected: expectedActiveWord({
                 word: '@mention',
                 activeWord: '@m',
                 offset: 5,
-                length: 8,
-                activeLength: 2,
-                endOffset: 13
-            });
-            
-            // Cursor after @ment
-            const result2 = findActiveWord(content, { start: 10, end: 10 });
-            expect(result2).toEqual({
+                endOffset: 13,
+            }),
+        },
+        {
+            name: 'tracks partial token at later cursor position',
+            content: 'Type @mention here',
+            selection: { start: 10, end: 10 },
+            expected: expectedActiveWord({
                 word: '@mention',
                 activeWord: '@ment',
                 offset: 5,
-                length: 8,
-                activeLength: 5,
-                endOffset: 13
-            });
-        });
-
-        it('should stop at stop characters after cursor', () => {
-            const content = 'Hello @user, welcome';
-            const selection = { start: 9, end: 9 }; // cursor after @us
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({
+                endOffset: 13,
+            }),
+        },
+        {
+            name: 'tracks active segment when punctuation exists after cursor',
+            content: 'Hello @user, welcome',
+            selection: { start: 9, end: 9 },
+            expected: expectedActiveWord({
                 word: '@user',
                 activeWord: '@us',
                 offset: 6,
-                length: 5,
-                activeLength: 3,
-                endOffset: 11
-            });
-        });
-
-        it('should handle word ending with space after cursor', () => {
-            const content = 'Use :smile face';
-            const selection = { start: 8, end: 8 }; // cursor after :smi
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({
+                endOffset: 11,
+            }),
+        },
+        {
+            name: 'tracks active segment with trailing space after full token',
+            content: 'Use :smile face',
+            selection: { start: 8, end: 8 },
+            expected: expectedActiveWord({
                 word: ':smile',
                 activeWord: ':smi',
                 offset: 4,
-                length: 6,
-                activeLength: 4,
-                endOffset: 10
-            });
-        });
-    });
+                endOffset: 10,
+            }),
+        },
+    ])('$name', assertFindCase);
 
-    describe('complex scenarios', () => {
-        it('should handle multiple prefixes in same line', () => {
-            const content = 'Hey @john, use :smile: and /help';
-            const selection1 = { start: 9, end: 9 };
-            const result1 = findActiveWord(content, selection1);
-            expect(result1).toEqual({ word: '@john', activeWord: '@john', offset: 4, length: 5, activeLength: 5, endOffset: 9 });
-
-            const selection2 = { start: 22, end: 22 };
-            const result2 = findActiveWord(content, selection2);
-            expect(result2).toEqual({ word: ':smile:', activeWord: ':smile:', offset: 15, length: 7, activeLength: 7, endOffset: 22 });
-
-            const selection3 = { start: 32, end: 32 };
-            const result3 = findActiveWord(content, selection3);
-            expect(result3).toEqual({ word: '/help', activeWord: '/help', offset: 27, length: 5, activeLength: 5, endOffset: 32 });
-        });
-
-        it('should handle prefix at end of text', () => {
-            const content = 'Hello @';
-            const selection = { start: 7, end: 7 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@', activeWord: '@', offset: 6, length: 1, activeLength: 1, endOffset: 7 });
-        });
-
-        it('should handle long active words', () => {
-            const content = 'Hello @very_long_username_here';
-            const selection = { start: 30, end: 30 };
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ word: '@very_long_username_here', activeWord: '@very_long_username_here', offset: 6, length: 24, activeLength: 24, endOffset: 30 });
-        });
-
-        it('should handle cursor positions within active word', () => {
-            const content = 'Hello @username';
-            const selection = { start: 10, end: 10 }; // cursor in middle of username
-            const result = findActiveWord(content, selection);
-            expect(result).toEqual({ 
-                word: '@username',      // Full word
-                activeWord: '@use',     // Part up to cursor
+    it.each<ActiveWordCase>([
+        {
+            name: 'resolves mention in mixed-prefix line',
+            content: 'Hey @john, use :smile: and /help',
+            selection: { start: 9, end: 9 },
+            expected: expectedActiveWord({ word: '@john', offset: 4, endOffset: 9 }),
+        },
+        {
+            name: 'resolves emoji in mixed-prefix line',
+            content: 'Hey @john, use :smile: and /help',
+            selection: { start: 22, end: 22 },
+            expected: expectedActiveWord({ word: ':smile:', offset: 15, endOffset: 22 }),
+        },
+        {
+            name: 'resolves command in mixed-prefix line',
+            content: 'Hey @john, use :smile: and /help',
+            selection: { start: 32, end: 32 },
+            expected: expectedActiveWord({ word: '/help', offset: 27, endOffset: 32 }),
+        },
+        {
+            name: 'handles long prefixed token',
+            content: 'Hello @very_long_username_here',
+            selection: { start: 30, end: 30 },
+            expected: expectedActiveWord({
+                word: '@very_long_username_here',
                 offset: 6,
-                length: 9,              // Full length
-                activeLength: 4,        // Length up to cursor
-                endOffset: 15           // Where the word ends
-            });
-        });
-    });
+                endOffset: 30,
+            }),
+        },
+    ])('$name', assertFindCase);
 });
 
 describe('findActiveWordString', () => {
-    it('should return just the word string for backward compatibility', () => {
+    it('returns active word string for backward compatibility', () => {
         const content = 'Hello @john';
         const selection = { start: 11, end: 11 };
-        const result = findActiveWordString(content, selection);
-        expect(result).toBe('@john');
+        expect(findActiveWordString(content, selection)).toBe('@john');
     });
 
-    it('should return undefined when no active word', () => {
+    it('returns undefined when no active word exists', () => {
         const content = 'Hello world';
         const selection = { start: 11, end: 11 };
-        const result = findActiveWordString(content, selection);
-        expect(result).toBeUndefined();
+        expect(findActiveWordString(content, selection)).toBeUndefined();
     });
 });
 
 describe('getActiveWordQuery', () => {
-    it('should extract query without prefix', () => {
-        expect(getActiveWordQuery('@user')).toBe('user');
-        expect(getActiveWordQuery(':smile')).toBe('smile');
-        expect(getActiveWordQuery('/help')).toBe('help');
-        expect(getActiveWordQuery('#tag')).toBe('tag');
-    });
-
-    it('should return empty string for just prefix', () => {
-        expect(getActiveWordQuery('@')).toBe('');
-        expect(getActiveWordQuery(':')).toBe('');
-        expect(getActiveWordQuery('/')).toBe('');
-        expect(getActiveWordQuery('#')).toBe('');
-    });
-
-    it('should handle empty string', () => {
-        expect(getActiveWordQuery('')).toBe('');
-    });
-
-    it('should handle long queries', () => {
-        expect(getActiveWordQuery('@very_long_username')).toBe('very_long_username');
+    it.each([
+        { activeWord: '@user', expected: 'user' },
+        { activeWord: ':smile', expected: 'smile' },
+        { activeWord: '/help', expected: 'help' },
+        { activeWord: '#tag', expected: 'tag' },
+        { activeWord: '@', expected: '' },
+        { activeWord: ':', expected: '' },
+        { activeWord: '/', expected: '' },
+        { activeWord: '#', expected: '' },
+        { activeWord: '', expected: '' },
+        { activeWord: '@very_long_username', expected: 'very_long_username' },
+    ])('extracts query from "$activeWord"', ({ activeWord, expected }) => {
+        expect(getActiveWordQuery(activeWord)).toBe(expected);
     });
 });

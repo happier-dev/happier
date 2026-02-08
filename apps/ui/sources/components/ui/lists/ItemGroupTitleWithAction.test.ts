@@ -39,4 +39,40 @@ describe('ItemGroupTitleWithAction', () => {
         expect(children.map((c) => c.type)).toEqual(['Text', 'Pressable']);
         expect(children[0]?.props?.children).toBe('Detected CLIs');
     });
+
+    it('renders title only when no action is provided', async () => {
+        const { ItemGroupTitleWithAction } = await import('./ItemGroupTitleWithAction');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(React.createElement(ItemGroupTitleWithAction, {
+                title: 'Detected CLIs',
+                titleStyle: { color: '#000' },
+            }));
+        });
+
+        expect(tree!.root.findAllByType('Pressable' as any).length).toBe(0);
+        expect(tree!.root.findAllByType('Text' as any).length).toBe(1);
+    });
+
+    it('renders loading indicator instead of icon when action is loading', async () => {
+        const { ItemGroupTitleWithAction } = await import('./ItemGroupTitleWithAction');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(React.createElement(ItemGroupTitleWithAction, {
+                title: 'Detected CLIs',
+                action: {
+                    accessibilityLabel: 'Refresh',
+                    iconName: 'refresh',
+                    iconColor: '#666',
+                    loading: true,
+                    onPress: vi.fn(),
+                },
+            }));
+        });
+
+        expect(tree!.root.findAllByType('ActivityIndicator' as any).length).toBe(1);
+        expect(tree!.root.findAllByType('Ionicons' as any).length).toBe(0);
+    });
 });
