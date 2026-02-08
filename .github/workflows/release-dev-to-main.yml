@@ -13,18 +13,13 @@ on:
           - fast
           - none
           - custom
-      run_e2e_core:
-        description: "Checks (custom) — Run core E2E gate (packages/tests, pglite+sqlite)"
-        required: true
-        default: true
-        type: boolean
       run_providers:
         description: "Checks — Run providers contract suite (requires provider secrets)"
         required: true
-        default: false
+        default: true
         type: boolean
       providers_preset:
-        description: "Checks (Providers) — Preset"
+        description: "Checks (PROVIDERS) — Preset"
         required: true
         default: all
         type: choice
@@ -34,30 +29,40 @@ on:
           - codex
           - opencode
       providers_tier:
-        description: "Checks (Providers) — Tier"
+        description: "Checks (PROVIDERS) — Tier"
         required: true
         default: smoke
         type: choice
         options:
           - smoke
           - extended
+      run_e2e_core:
+        description: "Checks (CUST) — Run core E2E gate (packages/tests, pglite+sqlite). Ignored unless checks_profile=custom."
+        required: true
+        default: true
+        type: boolean
+      run_server_db_contract:
+        description: "Checks (CUST) — Run server DB contract suite (Postgres). Ignored unless checks_profile=custom."
+        required: true
+        default: true
+        type: boolean
       run_stress:
-        description: "Checks (custom) — Run stress suite (slow)"
+        description: "Checks (CUST) — Run stress suite (slow). Ignored unless checks_profile=custom."
         required: true
         default: false
         type: boolean
       cli_smoke_linux:
-        description: "Checks (custom) — Run CLI smoke test on Linux"
+        description: "Checks (CUST) — Run CLI smoke test on Linux. Ignored unless checks_profile=custom."
         required: true
         default: true
         type: boolean
       build_website:
-        description: "Checks (custom) — Build website as part of release checks"
+        description: "Checks (CUST) — Build website as part of release checks. Ignored unless checks_profile=custom."
         required: true
         default: true
         type: boolean
       build_docs:
-        description: "Checks (custom) — Build docs as part of release checks"
+        description: "Checks (CUST) — Build docs as part of release checks. Ignored unless checks_profile=custom."
         required: true
         default: true
         type: boolean
@@ -74,11 +79,6 @@ on:
         options:
           - fast_forward
           - reset
-      allow_reset:
-        description: "Promotion — Required when promote_mode=reset (rewrites main history)"
-        required: true
-        default: false
-        type: boolean
       sync_dev_from_main:
         description: "Promotion — Fast-forward dev to main after version bumps (keeps future releases fast-forwardable)"
         required: true
@@ -199,6 +199,7 @@ jobs:
       run_typecheck: true
       run_cli_daemon_e2e: true
       run_e2e_core: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && inputs.run_e2e_core) }}
+      run_server_db_contract: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && inputs.run_server_db_contract) }}
       run_providers: ${{ inputs.checks_profile != 'none' && inputs.run_providers }}
       providers_preset: ${{ inputs.providers_preset }}
       providers_tier: ${{ inputs.providers_tier }}
@@ -237,10 +238,6 @@ jobs:
               exit 1
             fi
           elif [ "$mode" = "reset" ]; then
-            if [ "${{ inputs.allow_reset }}" != "true" ]; then
-              echo "Refusing to reset without allow_reset=true." >&2
-              exit 1
-            fi
             expected="reset main from dev"
             if [ "$confirm" != "$expected" ]; then
               echo "Confirmation mismatch." >&2
@@ -528,7 +525,7 @@ jobs:
       target: main
       mode: ${{ inputs.promote_mode }}
       dry_run: ${{ inputs.dry_run }}
-      allow_reset: ${{ inputs.allow_reset }}
+      allow_reset: ${{ inputs.promote_mode == 'reset' }}
       confirm: ${{ inputs.promote_mode == 'reset' && 'reset main from dev' || 'promote main from dev' }}
 
   bump_versions:
