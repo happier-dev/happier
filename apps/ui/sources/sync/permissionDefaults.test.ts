@@ -24,12 +24,13 @@ describe('resolveNewSessionDefaultPermissionMode', () => {
 
     it('falls back to legacy profile override mapping when provider-specific override is missing', () => {
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('plan');
-        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('safe-yolo');
+        // "plan" is not a codex-like permission mode. Fail closed to read-only.
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('read-only');
         expect(resolveNewSessionDefaultPermissionMode({ agentType: 'gemini', accountDefaults, legacyProfileDefaultPermissionMode: 'bypassPermissions' })).toBe('yolo');
     });
 
     it('clamps unsupported profile override modes to safe defaults for the target provider', () => {
-        // Claude has no "read-only" mode.
-        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'claude', accountDefaults, legacyProfileDefaultPermissionMode: 'read-only' })).toBe('default');
+        // Codex-like agents do not expose "plan" as a permission mode.
+        expect(resolveNewSessionDefaultPermissionMode({ agentType: 'codex', accountDefaults, legacyProfileDefaultPermissionMode: 'plan' })).toBe('read-only');
     });
 });

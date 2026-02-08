@@ -28,7 +28,7 @@ describe('getPermissionModeOverrideForSpawn', () => {
             permissionModeUpdatedAt: 11,
             metadata: { permissionModeUpdatedAt: 10 },
         } as any)).toEqual({
-            permissionMode: 'ask',
+            permissionMode: 'default',
             permissionModeUpdatedAt: 11,
         });
     });
@@ -44,5 +44,28 @@ describe('getPermissionModeOverrideForSpawn', () => {
             permissionModeUpdatedAt: 11,
         });
     });
-});
 
+    it('clamps unsupported plan mode for codex-like sessions', () => {
+        expect(getPermissionModeOverrideForSpawn({
+            id: 's1',
+            permissionMode: 'plan',
+            permissionModeUpdatedAt: 11,
+            metadata: { permissionModeUpdatedAt: 10, flavor: 'codex' },
+        } as any)).toEqual({
+            permissionMode: 'read-only',
+            permissionModeUpdatedAt: 11,
+        });
+    });
+
+    it('preserves plan mode for claude sessions', () => {
+        expect(getPermissionModeOverrideForSpawn({
+            id: 's1',
+            permissionMode: 'plan',
+            permissionModeUpdatedAt: 11,
+            metadata: { permissionModeUpdatedAt: 10, flavor: 'claude' },
+        } as any)).toEqual({
+            permissionMode: 'plan',
+            permissionModeUpdatedAt: 11,
+        });
+    });
+});
