@@ -10,9 +10,9 @@ import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import { getTempData, type NewSessionData } from '@/utils/tempDataStore';
 import type { PermissionMode, ModelMode } from '@/sync/permissionTypes';
-import { mapPermissionModeAcrossAgents } from '@/sync/permissionMapping';
+import { normalizePermissionModeForAgentType } from '@/sync/permissionModeOptions';
 import { readAccountPermissionDefaults, resolveNewSessionDefaultPermissionMode } from '@/sync/permissionDefaults';
-import { AIBackendProfile, getProfileEnvironmentVariables, isProfileCompatibleWithAgent } from '@/sync/settings';
+import { AIBackendProfile, getProfileEnvironmentVariables, isProfileCompatibleWithAgent, type SavedSecret } from '@/sync/settings';
 import { getBuiltInProfile, DEFAULT_PROFILES, getProfilePrimaryCli, getProfileSupportedAgentIds, isProfileCompatibleWithAnyAgent } from '@/sync/profileUtils';
 import { useCLIDetection } from '@/hooks/useCLIDetection';
 import { DEFAULT_AGENT_ID, getAgentCore, isAgentId, resolveAgentIdFromCliDetectKey, type AgentId } from '@/agents/catalog';
@@ -23,7 +23,7 @@ import { isMachineOnline } from '@/utils/machineUtils';
 import { loadNewSessionDraft, saveNewSessionDraft } from '@/sync/persistence';
 import { EnvironmentVariablesPreviewModal } from '@/components/sessions/new/components/EnvironmentVariablesPreviewModal';
 import { consumeProfileIdParam, consumeSecretIdParam } from '@/profileRouteParams';
-import { getModelOptionsForAgentType } from '@/sync/modelOptions';
+import { getModelOptionsForAgentTypeOrPreflight, type PreflightModelList } from '@/sync/modelOptions';
 import { useFocusEffect } from '@react-navigation/native';
 import { getRecentPathsForMachine } from '@/utils/sessions/recentPaths';
 import { useMachineEnvPresence } from '@/hooks/useMachineEnvPresence';
@@ -33,6 +33,7 @@ import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { getInstallableDepRegistryEntries } from '@/capabilities/installableDepsRegistry';
 import { resolveTerminalSpawnOptions } from '@/sync/terminalSettings';
 import type { CapabilityId } from '@/sync/capabilitiesProtocol';
+import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 import {
     buildResumeCapabilityOptionsFromUiState,
     getAgentResumeExperimentsFromSettings,
@@ -90,6 +91,12 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const newSessionSidePadding = 16;
     const newSessionBottomPadding = Math.max(screenWidth < 420 ? 8 : 16, safeArea.bottom);
+
+    // Simple (non-wizard) new-session screen spacing.
+    // Keep wizard spacing unchanged (the wizard layout benefits from wider margins).
+    const simpleNewSessionTopPadding = screenWidth < 420 ? 20 : 28;
+    const simpleNewSessionSidePadding = screenWidth < 420 ? 16 : 24;
+    const simpleNewSessionBottomPadding = Math.max(8, safeArea.bottom);
     const {
         prompt,
         dataId,
@@ -406,7 +413,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         return core.model.defaultMode;
     });
-    const modelOptions = React.useMemo(() => getModelOptionsForAgentType(agentType), [agentType]);
 
     // Session details state
     const [selectedMachineId, setSelectedMachineId] = React.useState<string | null>(() => {
@@ -422,6 +428,67 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
         return null;
     });
+
+    const [preflightModels, setPreflightModels] = React.useState<PreflightModelList | null>(null);
+    const preflightModelsCacheRef = React.useRef(new Map<string, PreflightModelList>());
+
+    const preflightModelsKey = React.useMemo(() => {
+        if (!selectedMachineId) return null;
+        return `${selectedMachineId}:${agentType}`;
+    }, [selectedMachineId, agentType]);
+
+    React.useEffect(() => {
+        if (!preflightModelsKey) {
+            setPreflightModels(null);
+            return;
+        }
+
+        const cached = preflightModelsCacheRef.current.get(preflightModelsKey) ?? null;
+        setPreflightModels(cached);
+
+        let cancelled = false;
+        const run = async () => {
+            const core = getAgentCore(agentType);
+            if (core.model.supportsSelection !== true) return;
+            if (!selectedMachineId) return;
+
+            const res = await machineCapabilitiesInvoke(selectedMachineId, {
+                id: `cli.${agentType}` as any,
+                method: 'probeModels',
+                params: { timeoutMs: 3500 },
+            });
+            if (cancelled) return;
+            if (!res.supported) return;
+            if (!res.response.ok) return;
+
+            const raw = res.response.result as any;
+            const modelsRaw = raw?.availableModels;
+            const supportsFreeformRaw = raw?.supportsFreeform;
+            if (!Array.isArray(modelsRaw)) return;
+
+            const list: PreflightModelList = {
+                availableModels: modelsRaw
+                    .filter((m: any) => m && typeof m.id === 'string' && typeof m.name === 'string')
+                    .map((m: any) => ({
+                        id: String(m.id),
+                        name: String(m.name),
+                        ...(typeof m.description === 'string' ? { description: m.description } : {}),
+                    })),
+                supportsFreeform: Boolean(supportsFreeformRaw),
+            };
+
+            preflightModelsCacheRef.current.set(preflightModelsKey, list);
+            setPreflightModels(list);
+        };
+
+        void run();
+        return () => { cancelled = true; };
+    }, [preflightModelsKey, agentType, selectedMachineId]);
+
+    const modelOptions = React.useMemo(
+        () => getModelOptionsForAgentTypeOrPreflight({ agentType, preflight: preflightModels }),
+        [agentType, preflightModels],
+    );
 
     const allProfilesRequirementNames = React.useMemo(() => {
         const names = new Set<string>();
@@ -867,7 +934,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const selectedSavedSecret = React.useMemo(() => {
         if (!selectedSecretId) return null;
-        return secrets.find((k) => k.id === selectedSecretId) ?? null;
+        return secrets.find((k: SavedSecret) => k.id === selectedSecretId) ?? null;
     }, [secrets, selectedSecretId]);
 
     React.useEffect(() => {
@@ -949,7 +1016,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                     text: t('profiles.delete.confirm'),
                     style: 'destructive',
                     onPress: () => {
-                        const updatedProfiles = profiles.filter(p => p.id !== profile.id);
+                        const updatedProfiles = profiles.filter((p: AIBackendProfile) => p.id !== profile.id);
                         setProfiles(updatedProfiles);
                         if (selectedProfileId === profile.id) {
                             setSelectedProfileId(null);
@@ -1238,7 +1305,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         }
 
         const current = permissionModeRef.current;
-        const mapped = mapPermissionModeAcrossAgents(current, prev, agentType);
+        const mapped = normalizePermissionModeForAgentType(current, agentType);
         applyPermissionMode(mapped, 'auto');
     }, [
         agentType,
@@ -1251,9 +1318,17 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     // Reset model mode when agent type changes to appropriate default
     React.useEffect(() => {
         const core = getAgentCore(agentType);
+        if (preflightModels && Array.isArray(preflightModels.availableModels) && preflightModels.availableModels.length > 0) {
+            if (preflightModels.supportsFreeform === true) return;
+            const allowed = new Set<string>(['default', ...preflightModels.availableModels.map((m) => m.id)]);
+            if (allowed.has(String(modelMode))) return;
+            setModelMode(core.model.defaultMode);
+            return;
+        }
+
         if ((core.model.allowedModes as readonly ModelMode[]).includes(modelMode)) return;
         setModelMode(core.model.defaultMode);
-    }, [agentType, modelMode]);
+    }, [agentType, modelMode, preflightModels]);
 
     const openProfileEnvVarsPreview = React.useCallback((profile: AIBackendProfile) => {
         Modal.show({
@@ -1488,20 +1563,21 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     // Shows machine/path selection via chips that navigate to picker screens
     // ========================================================================
     if (!useEnhancedSessionWizard) {
-        return {
-            variant: 'simple',
-            popoverBoundaryRef,
-            simpleProps: {
-                popoverBoundaryRef,
-                headerHeight,
-                safeAreaTop: safeArea.top,
-                safeAreaBottom: safeArea.bottom,
-                newSessionSidePadding,
-                newSessionBottomPadding,
-                containerStyle: styles.container as any,
-                experimentsEnabled: experimentsEnabled === true,
-                expSessionType: expSessionType === true,
-                sessionType,
+	        return {
+	            variant: 'simple',
+	            popoverBoundaryRef,
+	            simpleProps: {
+	                popoverBoundaryRef,
+	                headerHeight,
+	                safeAreaTop: safeArea.top,
+	                safeAreaBottom: safeArea.bottom,
+	                newSessionTopPadding: simpleNewSessionTopPadding,
+	                newSessionSidePadding: simpleNewSessionSidePadding,
+	                newSessionBottomPadding: simpleNewSessionBottomPadding,
+	                containerStyle: styles.container as any,
+	                experimentsEnabled: experimentsEnabled === true,
+	                expSessionType: expSessionType === true,
+	                sessionType,
                 setSessionType,
                 sessionPrompt,
                 setSessionPrompt,

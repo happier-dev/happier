@@ -4,10 +4,19 @@ import { View, Platform, useWindowDimensions, ViewStyle, Text, ActivityIndicator
 import { Image } from 'expo-image';
 import { layout } from '@/components/layout';
 import { MultiTextInput, KeyPressEvent } from '@/components/MultiTextInput';
+import { Switch } from '@/components/Switch';
 import { Typography } from '@/constants/Typography';
 import type { PermissionMode, ModelMode } from '@/sync/permissionTypes';
-import { getModelOptionsForAgentType } from '@/sync/modelOptions';
-import { getPermissionModeBadgeLabelForAgentType, getPermissionModeLabelForAgentType, getPermissionModeTitleForAgentType, getPermissionModesForAgentType, normalizePermissionModeForAgentType } from '@/sync/permissionModeOptions';
+import { getModelOptionsForSession, supportsFreeformModelSelectionForSession } from '@/sync/modelOptions';
+import { describeEffectiveModelMode } from '@/sync/describeEffectiveModelMode';
+import { Modal } from '@/modal';
+import {
+    getPermissionModeBadgeLabelForAgentType,
+    getPermissionModeLabelForAgentType,
+    getPermissionModeOptionsForSession,
+    getPermissionModeTitleForAgentType,
+} from '@/sync/permissionModeOptions';
+import { describeEffectivePermissionMode } from '@/sync/describeEffectivePermissionMode';
 import { hapticsLight, hapticsError } from '@/components/haptics';
 import { Shaker, ShakeInstance } from '@/components/Shaker';
 import { StatusDot } from '@/components/StatusDot';
@@ -21,7 +30,8 @@ import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicator
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { TextInputState, MultiTextInputHandle } from '@/components/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
-import { GitStatusBadge, useHasMeaningfulGitStatus } from '@/components/GitStatusBadge';
+import { GitStatusBadge, useHasMeaningfulGitStatus } from '@/components/git';
+import { ModelPickerOverlay } from '@/components/model/ModelPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSetting } from '@/sync/storage';
 import { Theme } from '@/theme';
@@ -39,6 +49,9 @@ import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
 import { computeAgentInputDefaultMaxHeight } from './inputMaxHeight';
 import { getContextWarning } from './contextWarning';
 import { buildAgentInputActionMenuActions } from './actionMenuActions';
+import { PermissionModePicker } from './components/PermissionModePicker';
+import { computeAcpPlanModeControl, computeAcpSessionModePickerControl } from '@/sync/acpSessionModeControl';
+import { computeAcpConfigOptionControls, type AcpConfigOptionValueId } from '@/sync/acpConfigOptionsControl';
 
 export type AgentInputExtraActionChipRenderContext = Readonly<{
     chipStyle: (pressed: boolean) => any;
@@ -64,6 +77,8 @@ interface AgentInputProps {
     permissionMode?: PermissionMode;
     onPermissionModeChange?: (mode: PermissionMode) => void;
     onPermissionClick?: () => void;
+    onAcpSessionModeChange?: (modeId: string) => void;
+    onAcpConfigOptionChange?: (configId: string, valueId: AcpConfigOptionValueId) => void;
     modelMode?: ModelMode;
     onModelModeChange?: (mode: ModelMode) => void;
     metadata?: Metadata | null;
@@ -106,12 +121,20 @@ interface AgentInputProps {
     onEnvVarsClick?: () => void;
     contentPaddingHorizontal?: number;
     panelStyle?: ViewStyle;
+    maxWidthCap?: number | null;
     extraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
 }
 
 function truncateWithEllipsis(value: string, maxChars: number) {
     if (value.length <= maxChars) return value;
     return `${value.slice(0, maxChars)}…`;
+}
+
+function parseAcpBooleanValueId(valueId: string): boolean {
+    const normalized = valueId.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true;
+    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false;
+    return false;
 }
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
@@ -170,6 +193,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         height: 1,
         backgroundColor: theme.colors.divider,
         marginHorizontal: 16,
+    },
+    overlayEffectivePolicy: {
+        paddingHorizontal: 16,
+        paddingTop: 2,
+        paddingBottom: 8,
     },
 
     // Selection styles
@@ -259,17 +287,20 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonsColumn: {
         flexDirection: 'column',
         flex: 1,
-        gap: 3,
+        ...(Platform.OS === 'web' ? { gap: 3 } : {}),
     },
     actionButtonsColumnNarrow: {
         flexDirection: 'column',
         flex: 1,
-        gap: 2,
+        ...(Platform.OS === 'web' ? { gap: 2 } : {}),
     },
     actionButtonsRow: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
+    },
+    actionButtonsRowWithBelow: {
+        marginBottom: Platform.OS === 'web' ? 3 : 8,
     },
     pathRow: {
         flexDirection: 'row',
@@ -277,8 +308,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     actionButtonsLeft: {
         flexDirection: 'row',
-        columnGap: 6,
-        rowGap: 3,
+        ...(Platform.OS === 'web' ? { columnGap: 6, rowGap: 3 } : {}),
         flex: 1,
         flexWrap: 'wrap',
         overflow: 'visible',
@@ -290,7 +320,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     actionButtonsLeftScrollContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        columnGap: 6,
+        ...(Platform.OS === 'web' ? { columnGap: 6 } : {}),
         paddingRight: 6,
     },
     actionButtonsFadeLeft: {
@@ -324,6 +354,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'center',
         height: 32,
         gap: 6,
+        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: 6 }),
     },
     actionChipIconOnly: {
         paddingHorizontal: 8,
@@ -453,7 +484,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const hasText = props.value.trim().length > 0;
 
     const agentId: AgentId = resolveAgentIdFromFlavor(props.metadata?.flavor) ?? props.agentType ?? DEFAULT_AGENT_ID;
-    const modelOptions = React.useMemo(() => getModelOptionsForAgentType(agentId), [agentId]);
+    const modelOptions = React.useMemo(() => getModelOptionsForSession(agentId, props.metadata ?? null), [agentId, props.metadata]);
 
     // Profile data
     const profiles = useSetting('profiles');
@@ -491,6 +522,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const agentInputEnterToSend = useSetting('agentInputEnterToSend');
     const agentInputActionBarLayout = useSetting('agentInputActionBarLayout');
     const agentInputChipDensity = useSetting('agentInputChipDensity');
+    const sessionPermissionModeApplyTiming = useSetting('sessionPermissionModeApplyTiming');
 
     const effectiveChipDensity = React.useMemo<'labels' | 'icons'>(() => {
         if (agentInputChipDensity === 'labels' || agentInputChipDensity === 'icons') {
@@ -573,13 +605,63 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         edgeThreshold: 2,
     });
 
-    const normalizedPermissionMode = React.useMemo(() => {
-        return normalizePermissionModeForAgentType(props.permissionMode ?? 'default', agentId);
-    }, [agentId, props.permissionMode]);
+		    const permissionModeOptions = React.useMemo(() => {
+		        return getPermissionModeOptionsForSession(agentId, props.metadata ?? null);
+		    }, [agentId, props.metadata]);
 
-    const permissionChipLabel = React.useMemo(() => {
-        return getPermissionModeBadgeLabelForAgentType(agentId, normalizedPermissionMode);
-    }, [agentId, normalizedPermissionMode]);
+	    const permissionModeOrder = React.useMemo(() => {
+	        return permissionModeOptions.map((o) => o.value);
+	    }, [permissionModeOptions]);
+
+    const effectivePermissionPolicy = React.useMemo(() => {
+	            return describeEffectivePermissionMode({
+	                agentType: agentId,
+	                selectedMode: props.permissionMode ?? 'default',
+                metadata: props.metadata ?? null,
+                applyTiming: sessionPermissionModeApplyTiming ?? 'immediate',
+            });
+    }, [agentId, props.metadata, props.permissionMode, sessionPermissionModeApplyTiming]);
+
+    const effectiveModelPolicy = React.useMemo(() => {
+        return describeEffectiveModelMode({
+            agentType: agentId,
+            selectedModelId: props.modelMode ?? 'default',
+            metadata: props.metadata ?? null,
+        });
+    }, [agentId, props.metadata, props.modelMode]);
+
+    const effectiveModelLabel = React.useMemo(() => {
+        const found = modelOptions.find((o) => o.value === effectiveModelPolicy.effectiveModelId);
+        if (found) return found.label;
+        return effectiveModelPolicy.effectiveModelId === 'default' ? 'Default' : effectiveModelPolicy.effectiveModelId;
+    }, [effectiveModelPolicy.effectiveModelId, modelOptions]);
+
+    const canEnterCustomModel = React.useMemo(() => {
+        return supportsFreeformModelSelectionForSession(agentId, props.metadata ?? null);
+    }, [agentId, props.metadata]);
+
+    const acpPlanModeControl = React.useMemo(() => {
+        if (!props.onAcpSessionModeChange) return null;
+        return computeAcpPlanModeControl(props.metadata ?? null);
+    }, [props.metadata, props.onAcpSessionModeChange]);
+
+    const acpSessionModePickerControl = React.useMemo(() => {
+        if (!props.onAcpSessionModeChange) return null;
+        return computeAcpSessionModePickerControl({ agentId, metadata: props.metadata ?? null });
+    }, [agentId, props.metadata, props.onAcpSessionModeChange]);
+
+    const acpConfigOptionControls = React.useMemo(() => {
+        if (!props.onAcpConfigOptionChange) return null;
+        return computeAcpConfigOptionControls({ agentId, metadata: props.metadata ?? null });
+    }, [agentId, props.metadata, props.onAcpConfigOptionChange]);
+
+	        const effectivePermissionLabel = React.useMemo(() => {
+	            return getPermissionModeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
+	        }, [agentId, effectivePermissionPolicy.effectiveMode]);
+
+		    const permissionChipLabel = React.useMemo(() => {
+		        return getPermissionModeBadgeLabelForAgentType(agentId, effectivePermissionPolicy.effectiveMode);
+		    }, [agentId, effectivePermissionPolicy.effectiveMode]);
 
     // Handle settings button press
     const handleSettingsPress = React.useCallback(() => {
@@ -749,20 +831,21 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     return true; // Key was handled
                 }
             }
-            // Handle Shift+Tab for permission mode switching
-            if (event.key === 'Tab' && event.shiftKey && props.onPermissionModeChange) {
-                const modeOrder = [...getPermissionModesForAgentType(agentId)];
-                const current = normalizePermissionModeForAgentType(props.permissionMode || 'default', agentId);
-                const currentIndex = modeOrder.indexOf(current);
-                const nextIndex = (currentIndex + 1) % modeOrder.length;
-                props.onPermissionModeChange(modeOrder[nextIndex]);
-                hapticsLight();
-                return true; // Key was handled, prevent default tab behavior
-            }
+                // Handle Shift+Tab for permission mode switching
+                if (event.key === 'Tab' && event.shiftKey && props.onPermissionModeChange) {
+                    const modeOrder = permissionModeOrder;
+                    if (!modeOrder || modeOrder.length === 0) return false;
+                    const current = effectivePermissionPolicy.effectiveMode;
+                    const currentIndex = modeOrder.indexOf(current);
+                    const nextIndex = (currentIndex + 1) % modeOrder.length;
+                    props.onPermissionModeChange(modeOrder[nextIndex]);
+                    hapticsLight();
+                    return true; // Key was handled, prevent default tab behavior
+                }
 
         }
         return false; // Key was not handled
-    }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, agentInputEnterToSend, props.value, props.onSend, props.permissionMode, props.onPermissionModeChange, agentId]);
+		    }, [suggestions, moveUp, moveDown, selected, handleSuggestionSelect, inputState.text, inputState.selection.start, inputState.selection.end, props.showAbortButton, props.onAbort, isAborting, handleAbortPress, agentInputEnterToSend, props.value, props.onSend, props.onPermissionModeChange, agentId, permissionModeOrder, effectivePermissionPolicy.effectiveMode]);
 
 
 
@@ -774,7 +857,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         ]}>
             <View style={[
                 styles.innerContainer,
-                { maxWidth: layout.maxWidth }
+                ...(typeof props.maxWidthCap === 'number'
+                    ? [{ maxWidth: props.maxWidthCap }]
+                    : props.maxWidthCap === null
+                        ? []
+                        : [{ maxWidth: layout.maxWidth }])
             ]} ref={overlayAnchorRef}>
                 {/* Autocomplete suggestions overlay */}
                 {suggestions.length > 0 && (
@@ -836,111 +923,291 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     />
                                 ) : null}
 
-                                {actionBarIsCollapsed && hasAnyActions ? (
-                                    <View style={styles.overlayDivider} />
-                                ) : null}
+	                                {actionBarIsCollapsed && hasAnyActions ? (
+	                                    <View style={styles.overlayDivider} />
+	                                ) : null}
 
-                                {/* Permission Mode Section */}
-                                <View style={styles.overlaySection}>
-                                    <Text style={styles.overlaySectionTitle}>
-                                        {getPermissionModeTitleForAgentType(agentId)}
-                                    </Text>
-                                    {getPermissionModesForAgentType(agentId).map((mode) => {
-                                        const isSelected = normalizedPermissionMode === mode;
+	                                {/* Permission Mode Section */}
+		                                <PermissionModePicker
+		                                    title={getPermissionModeTitleForAgentType(agentId)}
+		                                    options={permissionModeOptions}
+		                                    selected={effectivePermissionPolicy.effectiveMode}
+		                                    onSelect={handleSettingsSelect}
+		                                    styles={styles}
+		                                />
 
-                                        return (
-                                            <Pressable
-                                                key={mode}
-                                                onPress={() => handleSettingsSelect(mode)}
-                                                style={({ pressed }) => [
-                                                    styles.overlayOptionRow,
-                                                    pressed ? styles.overlayOptionRowPressed : null,
-                                                ]}
-                                            >
-                                                <View
-                                                    style={[
-                                                        styles.overlayRadioOuter,
-                                                        isSelected
-                                                            ? styles.overlayRadioOuterSelected
-                                                            : styles.overlayRadioOuterUnselected,
-                                                    ]}
-                                                >
-                                                    {isSelected && (
-                                                        <View style={styles.overlayRadioInner} />
-                                                    )}
-                                                </View>
-                                                <Text
-                                                    style={[
-                                                        styles.overlayOptionLabel,
-                                                        isSelected ? styles.overlayOptionLabelSelected : styles.overlayOptionLabelUnselected,
-                                                    ]}
-                                                >
-                                                    {getPermissionModeLabelForAgentType(agentId, mode)}
+                                    <View style={styles.overlaySection}>
+                                        <Text style={styles.overlayOptionDescription}>
+                                            Effective: {effectivePermissionLabel}
+                                        </Text>
+                                        {effectivePermissionPolicy.notes.map((note, idx) => (
+                                            <Text key={idx} style={styles.overlayOptionDescription}>
+                                                {note}
+                                            </Text>
+                                        ))}
+                                    </View>
+
+                                    {acpSessionModePickerControl ? (
+                                        <>
+                                            <View style={styles.overlayDivider} />
+                                            <View style={styles.overlaySection}>
+                                                <Text style={styles.overlaySectionTitle}>
+                                                    Mode
                                                 </Text>
-                                            </Pressable>
-                                        );
-                                    })}
-                                </View>
 
-                                {/* Divider */}
-                                <View style={styles.overlayDivider} />
+                                                <Text style={styles.overlayOptionDescription}>
+                                                    {acpSessionModePickerControl.isPending
+                                                        ? `Pending: switching from ${acpSessionModePickerControl.currentModeName} to ${acpSessionModePickerControl.requestedModeName}`
+                                                        : `Current: ${acpSessionModePickerControl.currentModeName}`}
+                                                </Text>
 
-                                {/* Model Section */}
-                                <View style={styles.overlaySection}>
-                                    <Text style={styles.overlaySectionTitle}>
-                                        {t('agentInput.model.title')}
-                                    </Text>
-                                    {modelOptions.length > 0 ? (
-                                        modelOptions.map((option) => {
-                                            const isSelected = props.modelMode === option.value;
-                                            return (
-                                                <Pressable
-                                                    key={option.value}
-                                                    onPress={() => {
-                                                        hapticsLight();
-                                                        props.onModelModeChange?.(option.value);
-                                                    }}
-                                                    style={({ pressed }) => [
-                                                        styles.overlayOptionRow,
-                                                        pressed ? styles.overlayOptionRowPressed : null,
-                                                    ]}
-                                                >
-                                                    <View
-                                                        style={[
-                                                            styles.overlayRadioOuter,
-                                                            isSelected
-                                                                ? styles.overlayRadioOuterSelected
-                                                                : styles.overlayRadioOuterUnselected,
-                                                        ]}
-                                                    >
-                                                        {isSelected && (
-                                                            <View style={styles.overlayRadioInner} />
-                                                        )}
-                                                    </View>
-                                                    <View>
-                                                        <Text
-                                                            style={[
-                                                                styles.overlayOptionLabel,
-                                                                isSelected
-                                                                    ? styles.overlayOptionLabelSelected
-                                                                    : styles.overlayOptionLabelUnselected,
+                                                {acpSessionModePickerControl.options.map((option) => {
+                                                    const isSelected = acpSessionModePickerControl.effectiveModeId === option.id;
+                                                    return (
+                                                        <Pressable
+                                                            key={option.id}
+                                                            onPress={() => {
+                                                                hapticsLight();
+                                                                props.onAcpSessionModeChange?.(option.id);
+                                                            }}
+                                                            style={({ pressed }) => [
+                                                                styles.overlayOptionRow,
+                                                                pressed ? styles.overlayOptionRowPressed : null,
                                                             ]}
                                                         >
-                                                            {option.label}
-                                                        </Text>
-                                                        <Text style={styles.overlayOptionDescription}>
-                                                            {option.description}
-                                                        </Text>
-                                                    </View>
-                                                </Pressable>
-                                            );
-                                        })
-                                    ) : (
-                                        <Text style={styles.overlayEmptyText}>
-                                            {t('agentInput.model.configureInCli')}
-                                        </Text>
-                                    )}
-                                </View>
+                                                            <View
+                                                                style={[
+                                                                    styles.overlayRadioOuter,
+                                                                    isSelected
+                                                                        ? styles.overlayRadioOuterSelected
+                                                                        : styles.overlayRadioOuterUnselected,
+                                                                ]}
+                                                            >
+                                                                {isSelected && (
+                                                                    <View style={styles.overlayRadioInner} />
+                                                                )}
+                                                            </View>
+                                                            <View style={{ flexShrink: 1 }}>
+                                                                <Text
+                                                                    style={[
+                                                                        styles.overlayOptionLabel,
+                                                                        isSelected
+                                                                            ? styles.overlayOptionLabelSelected
+                                                                            : styles.overlayOptionLabelUnselected,
+                                                                    ]}
+                                                                >
+                                                                    {option.name}
+                                                                </Text>
+                                                                {option.description ? (
+                                                                    <Text style={styles.overlayOptionDescription}>
+                                                                        {option.description}
+                                                                    </Text>
+                                                                ) : null}
+                                                            </View>
+                                                        </Pressable>
+                                                    );
+                                                })}
+                                            </View>
+                                        </>
+                                    ) : null}
+
+                                    {acpConfigOptionControls ? (
+                                        <>
+                                            <View style={styles.overlayDivider} />
+                                            <View style={styles.overlaySection}>
+                                                <Text style={styles.overlaySectionTitle}>
+                                                    Options
+                                                </Text>
+
+                                                {acpConfigOptionControls.map((control) => {
+                                                    const option = control.option;
+                                                    const effectiveValue = control.effectiveValue;
+                                                    const isBool =
+                                                        option.type === 'boolean' ||
+                                                        option.type === 'bool' ||
+                                                        option.type === 'toggle';
+
+                                                    const formatValue = (valueId: AcpConfigOptionValueId): string => {
+                                                        return valueId;
+                                                    };
+
+                                                    if (isBool) {
+                                                        const boolValue = parseAcpBooleanValueId(effectiveValue);
+                                                        return (
+                                                            <Pressable
+                                                                key={option.id}
+                                                                onPress={() => {
+                                                                    hapticsLight();
+                                                                    props.onAcpConfigOptionChange?.(option.id, boolValue ? 'false' : 'true');
+                                                                }}
+                                                                style={({ pressed }) => [
+                                                                    styles.overlayOptionRow,
+                                                                    pressed ? styles.overlayOptionRowPressed : null,
+                                                                ]}
+                                                            >
+                                                                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}>
+                                                                    <View style={{ flex: 1, flexShrink: 1 }}>
+                                                                        <Text style={styles.overlayOptionLabel}>
+                                                                            {option.name}
+                                                                        </Text>
+                                                                        <Text style={styles.overlayOptionDescription}>
+                                                                            {control.isPending
+                                                                                ? `Pending: ${formatValue(option.currentValue)} → ${formatValue(control.requestedValue!)}`
+                                                                                : `Current: ${formatValue(option.currentValue)}`}
+                                                                        </Text>
+                                                                        {option.description ? (
+                                                                            <Text style={styles.overlayOptionDescription}>
+                                                                                {option.description}
+                                                                            </Text>
+                                                                        ) : null}
+                                                                    </View>
+	                                                                    <View style={{ paddingLeft: 12 }}>
+	                                                                        <Switch
+	                                                                            value={boolValue}
+	                                                                            onValueChange={(next) => {
+	                                                                                hapticsLight();
+	                                                                                props.onAcpConfigOptionChange?.(option.id, next ? 'true' : 'false');
+	                                                                            }}
+	                                                                        />
+	                                                                    </View>
+                                                                </View>
+                                                            </Pressable>
+                                                        );
+                                                    }
+
+                                                    const isSelect = option.type === 'select';
+                                                    if (!isSelect || !option.options || option.options.length === 0) {
+                                                        return (
+                                                            <View key={option.id} style={styles.overlaySection}>
+                                                                <Text style={styles.overlayOptionLabel}>
+                                                                    {option.name}
+                                                                </Text>
+                                                                <Text style={styles.overlayOptionDescription}>
+                                                                    Current: {formatValue(option.currentValue)}
+                                                                </Text>
+                                                                {option.description ? (
+                                                                    <Text style={styles.overlayOptionDescription}>
+                                                                        {option.description}
+                                                                    </Text>
+                                                                ) : null}
+                                                            </View>
+                                                        );
+                                                    }
+
+                                                    const currentLabel =
+                                                        option.options.find((o) => o.value === option.currentValue)?.name ??
+                                                        formatValue(option.currentValue);
+                                                    const requestedLabel =
+                                                        control.requestedValue !== undefined
+                                                            ? (option.options.find((o) => o.value === control.requestedValue)?.name ??
+                                                                formatValue(control.requestedValue))
+                                                            : null;
+
+                                                    return (
+                                                        <View key={option.id} style={styles.overlaySection}>
+                                                            <Text style={styles.overlayOptionLabel}>
+                                                                {option.name}
+                                                            </Text>
+                                                            <Text style={styles.overlayOptionDescription}>
+                                                                {control.isPending && requestedLabel
+                                                                    ? `Pending: ${currentLabel} → ${requestedLabel}`
+                                                                    : `Current: ${currentLabel}`}
+                                                            </Text>
+                                                            {option.description ? (
+                                                                <Text style={styles.overlayOptionDescription}>
+                                                                    {option.description}
+                                                                </Text>
+                                                            ) : null}
+
+                                                            {option.options.map((opt) => {
+                                                                const isSelected = effectiveValue === opt.value;
+                                                                return (
+                                                                    <Pressable
+                                                                        key={`${option.id}:${String(opt.value)}`}
+                                                                        onPress={() => {
+                                                                            hapticsLight();
+                                                                            props.onAcpConfigOptionChange?.(option.id, opt.value);
+                                                                        }}
+                                                                        style={({ pressed }) => [
+                                                                            styles.overlayOptionRow,
+                                                                            pressed ? styles.overlayOptionRowPressed : null,
+                                                                        ]}
+                                                                    >
+                                                                        <View
+                                                                            style={[
+                                                                                styles.overlayRadioOuter,
+                                                                                isSelected
+                                                                                    ? styles.overlayRadioOuterSelected
+                                                                                    : styles.overlayRadioOuterUnselected,
+                                                                            ]}
+                                                                        >
+                                                                            {isSelected && (
+                                                                                <View style={styles.overlayRadioInner} />
+                                                                            )}
+                                                                        </View>
+                                                                        <View style={{ flexShrink: 1 }}>
+                                                                            <Text
+                                                                                style={[
+                                                                                    styles.overlayOptionLabel,
+                                                                                    isSelected
+                                                                                        ? styles.overlayOptionLabelSelected
+                                                                                        : styles.overlayOptionLabelUnselected,
+                                                                                ]}
+                                                                            >
+                                                                                {opt.name}
+                                                                            </Text>
+                                                                            {opt.description ? (
+                                                                                <Text style={styles.overlayOptionDescription}>
+                                                                                    {opt.description}
+                                                                                </Text>
+                                                                            ) : null}
+                                                                        </View>
+                                                                    </Pressable>
+                                                                );
+                                                            })}
+                                                        </View>
+                                                    );
+                                                })}
+                                            </View>
+                                        </>
+                                    ) : null}
+
+	                                {/* Divider */}
+	                                <View style={styles.overlayDivider} />
+
+                                <ModelPickerOverlay
+                                    title={t('agentInput.model.title')}
+                                    effectiveLabel={effectiveModelLabel}
+                                    notes={effectiveModelPolicy.notes}
+                                    options={modelOptions.map((option) => ({
+                                        value: option.value,
+                                        label: option.label,
+                                        description: option.description,
+                                    }))}
+                                    selectedValue={effectiveModelPolicy.effectiveModelId}
+                                    emptyText={t('agentInput.model.configureInCli')}
+                                    canEnterCustomModel={canEnterCustomModel}
+                                    customLabel={`${t('profiles.custom')}…`}
+                                    customDescription="Use a model id that isn’t listed."
+                                    onSelect={(value) => {
+                                        hapticsLight();
+                                        props.onModelModeChange?.(value);
+                                    }}
+                                    onRequestCustomModel={canEnterCustomModel ? async () => {
+                                        hapticsLight();
+                                        const next = await Modal.prompt(
+                                            t('profiles.model'),
+                                            'Enter a model id',
+                                            {
+                                                placeholder: 'e.g. claude-3.5-sonnet',
+                                                confirmText: t('common.save'),
+                                            },
+                                        );
+                                        const normalized = typeof next === 'string' ? next.trim() : '';
+                                        if (!normalized) return;
+                                        props.onModelModeChange?.(normalized);
+                                    } : undefined}
+                                />
                             </FloatingOverlay>
                         )}
                     </Popover>
@@ -983,12 +1250,12 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                     style={[
                                         styles.permissionModeText,
                                         {
-                                            color: normalizedPermissionMode === 'acceptEdits' ? theme.colors.permission.acceptEdits :
-                                                normalizedPermissionMode === 'bypassPermissions' ? theme.colors.permission.bypass :
-                                                    normalizedPermissionMode === 'plan' ? theme.colors.permission.plan :
-                                                        normalizedPermissionMode === 'read-only' ? theme.colors.permission.readOnly :
-                                                            normalizedPermissionMode === 'safe-yolo' ? theme.colors.permission.safeYolo :
-                                                                normalizedPermissionMode === 'yolo' ? theme.colors.permission.yolo :
+                                            color: effectivePermissionPolicy.effectiveMode === 'acceptEdits' ? theme.colors.permission.acceptEdits :
+                                                effectivePermissionPolicy.effectiveMode === 'bypassPermissions' ? theme.colors.permission.bypass :
+                                                    effectivePermissionPolicy.effectiveMode === 'plan' ? theme.colors.permission.plan :
+                                                        effectivePermissionPolicy.effectiveMode === 'read-only' ? theme.colors.permission.readOnly :
+                                                            effectivePermissionPolicy.effectiveMode === 'safe-yolo' ? theme.colors.permission.safeYolo :
+                                                                effectivePermissionPolicy.effectiveMode === 'yolo' ? theme.colors.permission.yolo :
                                                                     theme.colors.textSecondary, // Use secondary text color for default
                                         },
                                     ]}
@@ -1022,7 +1289,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     <View style={styles.actionButtonsContainer}>
                         <View style={screenWidth < 420 ? styles.actionButtonsColumnNarrow : styles.actionButtonsColumn}>{[
                             // Row 1: Settings, Profile (FIRST), Agent, Abort, Git Status
-                            <View key="row1" style={styles.actionButtonsRow}>
+                            <View
+                                key="row1"
+                                style={[styles.actionButtonsRow, showPathAndResumeRow ? styles.actionButtonsRowWithBelow : null]}
+                            >
                                 {(() => {
                                     const chipStyle = (pressed: boolean) => ([
                                         styles.actionChip,
@@ -1062,6 +1332,35 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             {showChipLabels && permissionChipLabel ? (
                                                 <Text style={styles.actionChipText}>
                                                     {permissionChipLabel}
+                                                </Text>
+                                            ) : null}
+                                        </Pressable>
+                                    ) : null;
+
+                                    const acpPlanChip = (acpPlanModeControl && props.onAcpSessionModeChange && !actionBarIsCollapsed) ? (
+                                        <Pressable
+                                            key="acp-plan"
+                                            onPress={() => {
+                                                hapticsLight();
+                                                if (acpPlanModeControl.planOn) {
+                                                    if (acpPlanModeControl.offModeId) {
+                                                        props.onAcpSessionModeChange?.(acpPlanModeControl.offModeId);
+                                                    }
+                                                } else {
+                                                    props.onAcpSessionModeChange?.('plan');
+                                                }
+                                            }}
+                                            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                                            style={(p) => chipStyle(p.pressed)}
+                                        >
+                                            <Ionicons
+                                                name="list-outline"
+                                                size={16}
+                                                color={theme.colors.button.secondary.tint}
+                                            />
+                                            {showChipLabels ? (
+                                                <Text style={styles.actionChipText}>
+                                                    Plan
                                                 </Text>
                                             ) : null}
                                         </Pressable>
@@ -1245,6 +1544,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         ? [permissionOrControlsChip].filter(Boolean)
                                         : [
                                             permissionOrControlsChip,
+                                            acpPlanChip,
                                             profileChip,
                                             envVarsChip,
                                             agentChip,

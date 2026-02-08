@@ -111,6 +111,25 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
         }
     }, [props.sessionId, props.onClose]);
 
+    const handleMove = React.useCallback(async (pendingId: string, dir: 'up' | 'down') => {
+        const ids = messages.map((m) => m.id);
+        const idx = ids.indexOf(pendingId);
+        if (idx < 0) return;
+        const nextIdx = dir === 'up' ? idx - 1 : idx + 1;
+        if (nextIdx < 0 || nextIdx >= ids.length) return;
+
+        const next = ids.slice();
+        const tmp = next[nextIdx]!;
+        next[nextIdx] = next[idx]!;
+        next[idx] = tmp;
+
+        try {
+            await sync.reorderPendingMessages(props.sessionId, next);
+        } catch (e) {
+            Modal.alert('Error', e instanceof Error ? e.message : 'Failed to reorder pending messages');
+        }
+    }, [messages, props.sessionId]);
+
     return (
         <View style={{ padding: 16, width: '100%', maxWidth: 720 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -143,7 +162,7 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
 
             {messages.length > 0 && (
                 <ScrollView style={{ marginTop: 12, maxHeight: 520 }}>
-                    {messages.map((m) => (
+                    {messages.map((m, index) => (
                         <View
                             key={m.id}
                             style={{
@@ -165,6 +184,22 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
                             </Text>
 
                             <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                                {index > 0 && (
+                                    <ActionButton
+                                        title="Up"
+                                        onPress={() => handleMove(m.id, 'up')}
+                                        theme={theme}
+                                        testID={`pendingMessages.moveUp:${m.id}`}
+                                    />
+                                )}
+                                {index < messages.length - 1 && (
+                                    <ActionButton
+                                        title="Down"
+                                        onPress={() => handleMove(m.id, 'down')}
+                                        theme={theme}
+                                        testID={`pendingMessages.moveDown:${m.id}`}
+                                    />
+                                )}
                                 <ActionButton
                                     title="Edit"
                                     onPress={() => handleEdit(m.id, m.text)}

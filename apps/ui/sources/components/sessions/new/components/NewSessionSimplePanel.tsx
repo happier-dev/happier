@@ -4,7 +4,6 @@ import { Platform, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SessionTypeSelectorRows } from '@/components/SessionTypeSelector';
-import { layout } from '@/components/layout';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
@@ -15,6 +14,7 @@ export function NewSessionSimplePanel(props: Readonly<{
     headerHeight: number;
     safeAreaTop: number;
     safeAreaBottom: number;
+    newSessionTopPadding: number;
     newSessionSidePadding: number;
     newSessionBottomPadding: number;
     containerStyle: ViewStyle;
@@ -68,7 +68,7 @@ export function NewSessionSimplePanel(props: Readonly<{
                     : [
                         {
                             justifyContent: 'flex-end' as const,
-                            paddingTop: 40,
+                            paddingTop: 0,
                         },
                     ]),
             ]}
@@ -89,14 +89,13 @@ export function NewSessionSimplePanel(props: Readonly<{
                             style={{
                                 width: '100%',
                                 alignSelf: 'center',
-                                paddingTop: props.safeAreaTop,
-                                paddingBottom: props.safeAreaBottom,
+                                paddingTop: props.safeAreaTop + props.newSessionTopPadding,
                             }}
                         >
                             {/* Session type selector only if enabled via experiments */}
                             {props.experimentsEnabled && props.expSessionType && (
                                 <View style={{ paddingHorizontal: props.newSessionSidePadding, marginBottom: 16 }}>
-                                    <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
+                                    <View style={{ width: '100%', alignSelf: 'center' }}>
                                         <ItemGroup title={t('newSession.sessionType.title')} containerStyle={{ marginHorizontal: 0 }}>
                                             <SessionTypeSelectorRows value={props.sessionType} onChange={props.setSessionType} />
                                         </ItemGroup>
@@ -107,12 +106,11 @@ export function NewSessionSimplePanel(props: Readonly<{
                             {/* AgentInput with inline chips - sticky at bottom */}
                             <View
                                 style={{
-                                    paddingTop: 12,
                                     paddingBottom: props.newSessionBottomPadding,
                                 }}
                             >
                                 <View style={{ paddingHorizontal: props.newSessionSidePadding }}>
-                                    <View style={{ maxWidth: layout.maxWidth, width: '100%', alignSelf: 'center' }}>
+                                    <View style={{ width: '100%', alignSelf: 'center' }}>
                                         <AgentInput
                                             value={props.sessionPrompt}
                                             onChangeText={props.setSessionPrompt}
@@ -139,6 +137,7 @@ export function NewSessionSimplePanel(props: Readonly<{
                                             onResumeClick={props.showResumePicker ? props.handleResumeClick : undefined}
                                             resumeIsChecking={props.isResumeSupportChecking}
                                             contentPaddingHorizontal={0}
+                                            maxWidthCap={null}
                                             {...(props.useProfiles
                                                 ? {
                                                     profileId: props.selectedProfileId,

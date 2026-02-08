@@ -13,6 +13,7 @@ import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secret
 import { clearNewSessionDraft } from '@/sync/persistence';
 import { getBuiltInProfile } from '@/sync/profileUtils';
 import type { AIBackendProfile, SavedSecret, Settings } from '@/sync/settings';
+import { resolveWindowsRemoteSessionConsoleFromMachineMetadata } from '@/sync/windowsRemoteSessionConsole';
 import { getAgentCore, type AgentId } from '@/agents/catalog';
 import { buildResumeCapabilityOptionsFromUiState, buildSpawnEnvironmentVariablesFromUiState, buildSpawnSessionExtrasFromUiState, getAgentResumeExperimentsFromSettings, getNewSessionPreflightIssues, getResumeRuntimeSupportPrefetchPlan } from '@/agents/catalog';
 import { describeAcpLoadSessionSupport } from '@/agents/acpRuntimeResume';
@@ -23,6 +24,8 @@ import type { UseMachineEnvPresenceResult } from '@/hooks/useMachineEnvPresence'
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities } from '@/hooks/useMachineCapabilitiesCache';
 import type { PermissionMode, ModelMode } from '@/sync/permissionTypes';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
+import { nowServerMs } from '@/sync/time';
 
 export function useCreateNewSession(params: Readonly<{
     router: { push: (options: any) => void; replace: (path: any, options?: any) => void };
@@ -72,7 +75,7 @@ export function useCreateNewSession(params: Readonly<{
 
         params.setIsCreating(true);
 
-        try {
+	        try {
             let actualPath = params.selectedPath;
 
             // Handle worktree creation
@@ -273,21 +276,36 @@ export function useCreateNewSession(params: Readonly<{
                 }
             }
 
-            const result = await machineSpawnNewSession({
-                machineId: params.selectedMachineId,
-                directory: actualPath,
-                approvedNewDirectoryCreation: true,
-                agent: params.agentType,
-                profileId: profilesActive ? (params.selectedProfileId ?? '') : undefined,
-                environmentVariables,
-                resume: resumeDecision.resume,
-                ...buildSpawnSessionExtrasFromUiState({
-                    agentId: params.agentType,
-                    settings: params.settings,
-                    resumeSessionId: params.resumeSessionId,
-                }),
-                terminal,
-            });
+	            const spawnPermissionMode = parsePermissionIntentAlias(params.permissionMode) ?? 'default';
+	            const spawnPermissionModeUpdatedAt = nowServerMs();
+                const spawnModelId =
+                    getAgentCore(params.agentType).model.supportsSelection === true &&
+                    typeof params.modelMode === 'string' &&
+                    params.modelMode.trim().length > 0 &&
+                    params.modelMode !== 'default'
+                        ? params.modelMode
+                        : undefined;
+                const spawnModelUpdatedAt = spawnModelId ? spawnPermissionModeUpdatedAt : undefined;
+
+	            const result = await machineSpawnNewSession({
+	                machineId: params.selectedMachineId,
+	                directory: actualPath,
+	                approvedNewDirectoryCreation: true,
+	                agent: params.agentType,
+	                profileId: profilesActive ? (params.selectedProfileId ?? '') : undefined,
+	                environmentVariables,
+	                resume: resumeDecision.resume,
+	                permissionMode: spawnPermissionMode,
+	                permissionModeUpdatedAt: spawnPermissionModeUpdatedAt,
+                    ...(spawnModelId ? { modelId: spawnModelId, modelUpdatedAt: spawnModelUpdatedAt } : {}),
+	                ...buildSpawnSessionExtrasFromUiState({
+	                    agentId: params.agentType,
+	                    settings: params.settings,
+	                    resumeSessionId: params.resumeSessionId,
+	                }),
+	                terminal,
+	                windowsRemoteSessionConsole: resolveWindowsRemoteSessionConsoleFromMachineMetadata(params.selectedMachine?.metadata),
+	            });
 
             if (result.type === 'success' && result.sessionId) {
                 // Clear draft state on successful session creation
@@ -346,11 +364,11 @@ export function useCreateNewSession(params: Readonly<{
             Modal.alert(t('common.error'), errorMessage);
             params.setIsCreating(false);
         }
-    }, [
-        params.agentType,
-        params.machineEnvPresence.meta,
-        params.modelMode,
-        params.permissionMode,
+	    }, [
+	        params.agentType,
+	        params.machineEnvPresence.meta,
+	        params.modelMode,
+	        params.permissionMode,
         params.profileMap,
         params.recentMachinePaths,
         params.resumeSessionId,
@@ -360,12 +378,14 @@ export function useCreateNewSession(params: Readonly<{
         params.secretBindingsByProfileId,
         params.secrets,
         params.selectedMachineCapabilities,
-        params.selectedSecretIdByProfileIdByEnvVarName,
-        params.selectedMachineId,
-        params.selectedPath,
-        params.selectedProfileId,
-        params.sessionOnlySecretValueByProfileIdByEnvVarName,
-        params.sessionPrompt,
+	        params.selectedSecretIdByProfileIdByEnvVarName,
+	        params.selectedMachine?.metadata?.platform,
+	        params.selectedMachine?.metadata?.windowsRemoteSessionConsole,
+	        params.selectedMachineId,
+	        params.selectedPath,
+	        params.selectedProfileId,
+	        params.sessionOnlySecretValueByProfileIdByEnvVarName,
+	        params.sessionPrompt,
         params.sessionType,
         params.setIsCreating,
         params.setIsResumeSupportChecking,
