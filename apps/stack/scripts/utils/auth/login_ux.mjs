@@ -9,6 +9,7 @@ export function normalizeAuthLoginContext(raw) {
 }
 
 import { bold, cyan, dim, green, yellow } from '../ui/ansi.mjs';
+import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 
 export function printAuthLoginInstructions({
   stackName,
@@ -32,7 +33,7 @@ export function printAuthLoginInstructions({
   // eslint-disable-next-line no-console
   console.log('');
   // eslint-disable-next-line no-console
-  console.log(bold(`${cyan('Happy')} login`));
+  console.log(bold(`${cyan('Happier')} login`));
   if (subtitle) {
     // eslint-disable-next-line no-console
     console.log(dim(subtitle));
@@ -42,7 +43,7 @@ export function printAuthLoginInstructions({
   // eslint-disable-next-line no-console
   console.log(bold('What will happen:'));
   // eslint-disable-next-line no-console
-  console.log(`- ${cyan('browser')}: we’ll open the Happy web app`);
+  console.log(`- ${cyan('browser')}: we’ll open the Happier web app`);
   // eslint-disable-next-line no-console
   console.log(`- ${cyan('account')}: you’ll sign in (or create an account)`);
   // eslint-disable-next-line no-console
@@ -65,6 +66,23 @@ export function printAuthLoginInstructions({
     console.log(`${dim('Public:')}    ${publicServerUrl}`);
   }
 
+  if (ctx === 'selfhost' && webappUrl && (publicServerUrl || internalServerUrl)) {
+    const serverUrl = publicServerUrl || internalServerUrl;
+    const links = buildConfigureServerLinks({ webappUrl, serverUrl });
+    // eslint-disable-next-line no-console
+    console.log('');
+    // eslint-disable-next-line no-console
+    console.log(bold('Step 0 — Configure your app/web (self-host only)'));
+    // eslint-disable-next-line no-console
+    console.log(dim('Open the link below, confirm, then sign in/create an account before approving the terminal connection.'));
+    // eslint-disable-next-line no-console
+    console.log('');
+    // eslint-disable-next-line no-console
+    console.log(`${dim('Web:')}   ${cyan(links.webUrl)}`);
+    // eslint-disable-next-line no-console
+    console.log(`${dim('Mobile:')} ${cyan(links.mobileUrl)}`);
+  }
+
   if (ctx === 'selfhost') {
     // eslint-disable-next-line no-console
     console.log('');
@@ -85,4 +103,3 @@ export function printAuthLoginInstructions({
   // eslint-disable-next-line no-console
   console.log(`${green('✓')} You can safely close the browser when it finishes.`);
 }
-

@@ -2,10 +2,16 @@ import { createInterface } from 'node:readline/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { listWorktreeSpecs } from '../git/worktrees.mjs';
+import { sanitizeSlugPart } from '../git/refs.mjs';
 import { getDevRepoDir } from '../paths/paths.mjs';
 import { bold, cyan, dim, green } from '../ui/ansi.mjs';
+import { warn } from '../ui/layout.mjs';
 
 export function isTty() {
+  const nonInteractive = (process.env.HAPPIER_STACK_NON_INTERACTIVE ?? '').toString().trim().toLowerCase();
+  if (nonInteractive === '1' || nonInteractive === 'true' || nonInteractive === 'yes' || nonInteractive === 'y') {
+    return false;
+  }
   if (process.env.HAPPIER_STACK_TEST_TTY === '1') {
     return true;
   }
@@ -35,8 +41,10 @@ export async function promptSelect(rl, { title, options, defaultIndex = 0 }) {
   // eslint-disable-next-line no-console
   console.log(title);
   for (let i = 0; i < options.length; i++) {
+    const isDefault = i === defaultIndex;
+    const suffix = isDefault ? ` ${dim('(default)')}` : '';
     // eslint-disable-next-line no-console
-    console.log(`  ${i + 1}) ${options[i].label}`);
+    console.log(`  ${i + 1}) ${options[i].label}${suffix}`);
   }
   const answer = (await rl.question(`Pick [1-${options.length}] (default: ${defaultIndex + 1}): `)).trim();
   const token = answer.match(/\d+/)?.[0] ?? '';
@@ -110,11 +118,22 @@ export async function promptWorktreeSource({ rl, rootDir, component, stackName, 
   console.log(bold(`Create a new ${cyan('repo')} worktree`));
   // eslint-disable-next-line no-console
   console.log(dim(`This will create a worktree under ${cyan('local/')}${dim('<owner>/...')} based on ${createRemote}.`));
-  const slug = await promptFn(rl, `New worktree slug (example: my-feature): `, {
-    defaultValue: '',
-  });
-  if (!slug) {
-    return 'default';
+  while (true) {
+    // eslint-disable-next-line no-await-in-loop
+    const raw = await promptFn(rl, `New worktree slug (example: my-feature): `, { defaultValue: '' });
+    const trimmed = String(raw ?? '').trim();
+    if (!trimmed) return 'default';
+
+    const normalized = sanitizeSlugPart(trimmed);
+    if (!normalized) {
+      // eslint-disable-next-line no-console
+      console.log(warn('Invalid worktree slug. Use letters/numbers and separators like "-" (example: my-feature).'));
+      continue;
+    }
+    if (normalized !== trimmed) {
+      // eslint-disable-next-line no-console
+      console.log(dim(`Normalized slug to ${cyan(normalized)}.`));
+    }
+    return { create: true, slug: normalized, remote: createRemote };
   }
-  return { create: true, slug, remote: createRemote };
 }

@@ -8,6 +8,33 @@ import { isTcpPortFree } from '../net/ports.mjs';
 
 export { isPidAlive };
 
+function resolveMetroStatusTimeoutMsFromEnv(env = process.env) {
+  const raw = (env.HAPPIER_STACK_EXPO_METRO_STATUS_TIMEOUT_MS ?? '').toString().trim();
+  const n = raw ? Number(raw) : null;
+  if (Number.isFinite(n) && n > 0) return n;
+  return 800;
+}
+
+export async function looksLikeExpoMetro({ port, timeoutMs = null } = {}) {
+  const p = Number(port);
+  if (!Number.isFinite(p) || p <= 0) return false;
+  const ms = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : resolveMetroStatusTimeoutMsFromEnv();
+  const url = `http://127.0.0.1:${p}/status`;
+  try {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeout = setTimeout(() => controller?.abort(), ms);
+    try {
+      const res = await fetch(url, { signal: controller?.signal });
+      const txt = await res.text().catch(() => '');
+      return res.ok && String(txt).toLowerCase().includes('packager-status:running');
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return false;
+  }
+}
+
 function hashDir(dir) {
   return createHash('sha1').update(String(dir ?? '')).digest('hex').slice(0, 12);
 }
@@ -69,13 +96,17 @@ export async function isStateProcessRunning(statePath) {
   }
 
   // Expo/Metro can sometimes be “up” even if the original wrapper pid exited (pm/yarn layers).
-  // If we have a port and something is listening on it, treat it as running.
+  // If we have a port and something is listening on it, treat it as running only if it looks like Metro.
   const port = Number(state?.port);
   if (Number.isFinite(port) && port > 0) {
     try {
       const free = await isTcpPortFree(port, { host: '127.0.0.1' });
       if (!free) {
-        return { running: true, state, reason: 'port' };
+        const ok = await looksLikeExpoMetro({ port });
+        if (ok) {
+          return { running: true, state, reason: 'port' };
+        }
+        return { running: false, state };
       }
     } catch {
       // ignore

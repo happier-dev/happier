@@ -4,7 +4,14 @@ function formatMissingTool({ name, why, install }) {
   return [`- ${name}: ${why}`, ...(install?.length ? install.map((l) => `  ${l}`) : [])].join('\n');
 }
 
-export async function assertCliPrereqs({ git = false, yarn = false, codex = false, coderabbit = false, augment = false } = {}) {
+export async function assertCliPrereqs({
+  git = false,
+  yarn = false,
+  codex = false,
+  coderabbit = false,
+  augment = false,
+  claude = false,
+} = {}) {
   const missing = [];
 
   if (git) {
@@ -71,6 +78,17 @@ export async function assertCliPrereqs({ git = false, yarn = false, codex = fals
         name: 'auggie',
         why: 'required to run Augment (Auggie) review',
         install: ['Install Auggie CLI: `npm install -g @augmentcode/auggie`', 'Then authenticate: `auggie login`'],
+      });
+    }
+  }
+
+  if (claude) {
+    const hasClaude = await commandExists('claude');
+    if (!hasClaude) {
+      missing.push({
+        name: 'claude',
+        why: 'required to run Claude Code review',
+        install: ['Install Claude Code CLI and ensure `claude` is on PATH', 'Then authenticate (if needed) with your Claude setup'],
       });
     }
   }

@@ -1,14 +1,12 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { isTty, promptSelect, withRl } from '../cli/wizard.mjs';
 import { detectSeedableAuthSources } from './sources.mjs';
-import { guidedStackAuthLoginNow, stackAuthCopyFrom } from './stack_guided_login.mjs';
+import { stackAuthCopyFrom } from './stack_guided_login.mjs';
+import { runOrchestratedGuidedAuthFlow } from './orchestrated_stack_auth_flow.mjs';
 import { bold, cyan, dim, green } from '../ui/ansi.mjs';
+import { findAnyCredentialPathInCliHome } from './credentials_paths.mjs';
 
 export function needsAuthSeed({ cliHomeDir, accountCount }) {
-  const accessKeyPath = join(cliHomeDir, 'access.key');
-  const hasAccessKey = existsSync(accessKeyPath);
+  const hasAccessKey = Boolean(findAnyCredentialPathInCliHome({ cliHomeDir }));
   const hasAccounts = typeof accountCount === 'number' ? accountCount > 0 : null;
   return !hasAccessKey || hasAccounts === false;
 }
@@ -56,7 +54,13 @@ export async function maybeRunInteractiveStackAuthSetup({
     if (beforeLogin && typeof beforeLogin === 'function') {
       await beforeLogin();
     }
-    await guidedStackAuthLoginNow({ rootDir, stackName, env });
+    await runOrchestratedGuidedAuthFlow({
+      rootDir,
+      stackName,
+      env,
+      verbosity: 0,
+      json: false,
+    });
     return { ok: true, skipped: false, mode: 'login' };
   }
 
@@ -64,4 +68,3 @@ export async function maybeRunInteractiveStackAuthSetup({
   await stackAuthCopyFrom({ rootDir, stackName, fromStackName: from, env, link: true });
   return { ok: true, skipped: false, mode: 'seed', from, link: true };
 }
-

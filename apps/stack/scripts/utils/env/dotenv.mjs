@@ -1,5 +1,4 @@
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { expandHome } from '../paths/canonical_home.mjs';
 
 export function parseDotenv(contents) {
   const out = new Map();
@@ -20,8 +19,8 @@ export function parseDotenv(contents) {
     if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
       value = value.slice(1, -1);
     }
-    if (value.startsWith('~/')) {
-      value = join(homedir(), value.slice(2));
+    if (value.startsWith('~/') || value.startsWith('~\\')) {
+      value = expandHome(value);
     }
     out.set(key, value);
   }

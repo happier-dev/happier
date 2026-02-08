@@ -1,5 +1,4 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { findExistingStackCredentialPath, resolveStackCredentialPaths } from './credentials_paths.mjs';
 
 /**
  * Shared policy for when the stack runner should start the Happier daemon.
@@ -10,18 +9,24 @@ import { join } from 'node:path';
  * which leads to "no machines" in the UI.
  */
 
-export function credentialsPathForCliHomeDir(cliHomeDir) {
-  return join(String(cliHomeDir ?? ''), 'access.key');
+export function credentialsPathForCliHomeDir(cliHomeDir, serverUrl = '', env = process.env) {
+  const resolved = resolveStackCredentialPaths({ cliHomeDir, serverUrl, env });
+  return (
+    findExistingStackCredentialPath({ cliHomeDir, serverUrl, env }) ||
+    resolved.serverScopedPath
+  );
 }
 
-export function hasStackCredentials({ cliHomeDir }) {
+export function hasStackCredentials({ cliHomeDir, serverUrl = '', env = process.env }) {
   if (!cliHomeDir) return false;
-  return existsSync(credentialsPathForCliHomeDir(cliHomeDir));
+  return Boolean(findExistingStackCredentialPath({ cliHomeDir, serverUrl, env }));
 }
 
 export function isAuthFlowEnabled(env) {
   const v = (env?.HAPPIER_STACK_AUTH_FLOW ?? '').toString().trim();
-  return v === '1' || v.toLowerCase() === 'true';
+  const wait = (env?.HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH ?? '').toString().trim();
+  const isTrue = (s) => s === '1' || String(s).toLowerCase() === 'true';
+  return isTrue(v) || isTrue(wait);
 }
 
 /**
@@ -31,8 +36,9 @@ export function isAuthFlowEnabled(env) {
  * - skip daemon start without error in orchestrated auth flows, or
  * - fail closed in non-interactive contexts.
  */
-export function daemonStartGate({ env, cliHomeDir }) {
-  if (hasStackCredentials({ cliHomeDir })) {
+export function daemonStartGate({ env, cliHomeDir, serverUrl = '' }) {
+  const resolvedServerUrl = String(serverUrl ?? '').trim() || String(env?.HAPPIER_SERVER_URL ?? '').trim();
+  if (hasStackCredentials({ cliHomeDir, serverUrl: resolvedServerUrl, env })) {
     return { ok: true, reason: 'credentials_present' };
   }
   if (isAuthFlowEnabled(env)) {
@@ -43,12 +49,18 @@ export function daemonStartGate({ env, cliHomeDir }) {
   return { ok: false, reason: 'missing_credentials' };
 }
 
-export function formatDaemonAuthRequiredError({ stackName, cliHomeDir }) {
+export function formatDaemonAuthRequiredError({ stackName, cliHomeDir, serverUrl = '' }) {
   const name = (stackName ?? '').toString().trim() || 'main';
-  const path = credentialsPathForCliHomeDir(cliHomeDir);
+  const resolved = resolveStackCredentialPaths({ cliHomeDir, serverUrl });
+  const path = `${resolved.legacyPath} or ${resolved.serverScopedPath}`;
+  const loginCmd =
+    name === 'main'
+      ? 'hstack auth login --no-open'
+      : `hstack stack auth ${name} login --no-open`;
   return (
     `[local] daemon auth required: credentials not found for stack "${name}".\n` +
     `[local] expected: ${path}\n` +
-    `[local] fix: run \`happier auth login\` (stack-scoped), or re-run with UI enabled to complete guided login.`
+    `[local] fix: run \`${loginCmd}\`.\n` +
+    `[local] tip (headless servers): use \`--method=mobile\` to print a QR code / deep link for the mobile app.`
   );
 }

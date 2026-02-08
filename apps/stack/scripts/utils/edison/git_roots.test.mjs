@@ -33,3 +33,17 @@ test('normalizeGitRoots de-duplicates multiple paths inside the same repo', asyn
   const roots = normalizeGitRoots([join(repoRoot, 'apps', 'ui'), join(repoRoot, 'apps', 'cli')]);
   assert.deepEqual(roots, [repoRoot]);
 });
+
+test('findGitRootForPath returns empty string for blank path input', () => {
+  assert.equal(findGitRootForPath(''), '');
+  assert.equal(findGitRootForPath('   '), '');
+});
+
+test('normalizeGitRoots keeps non-repo paths and de-duplicates by resolved absolute path', async (t) => {
+  const root = await withTempRoot(t);
+  const plainDir = join(root, 'plain');
+  await mkdir(plainDir, { recursive: true });
+
+  const roots = normalizeGitRoots([plainDir, join(plainDir, '..', 'plain')]);
+  assert.deepEqual(roots, [plainDir]);
+});

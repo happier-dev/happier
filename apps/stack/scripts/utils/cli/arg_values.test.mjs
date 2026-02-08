@@ -27,3 +27,17 @@ test('getFlagValue uses the last occurrence in argv', () => {
   assert.equal(getFlagValue({ argv, kv, flag: '--platform' }), 'android');
 });
 
+test('getFlagValue falls back to argv when kv entry is undefined', () => {
+  const argv = ['build', '--platform', 'android'];
+  const kv = new Map([['--platform', undefined]]);
+  assert.equal(getFlagValue({ argv, kv, flag: '--platform' }), 'android');
+});
+
+test('getFlagValue returns undefined when flag token is empty', () => {
+  assert.equal(getFlagValue({ argv: ['--platform', 'android'], kv: new Map(), flag: '   ' }), undefined);
+});
+
+test('getFlagValue ignores equals-form flags and missing string values', () => {
+  assert.equal(getFlagValue({ argv: ['--platform=android'], kv: new Map(), flag: '--platform' }), undefined);
+  assert.equal(getFlagValue({ argv: ['--platform', 123], kv: new Map(), flag: '--platform' }), undefined);
+});

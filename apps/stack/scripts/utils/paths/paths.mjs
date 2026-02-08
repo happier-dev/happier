@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 
@@ -56,11 +56,43 @@ const HAPPY_MONOREPO_LAYOUTS = {
   },
 };
 
+export function isWin32ShapedAbsolutePath(p) {
+  const s = String(p ?? '').trim();
+  if (!s) return false;
+  // IMPORTANT: `path.win32.isAbsolute('/foo') === true`, so do not use it directly here.
+  // We only want to treat *Windows-shaped* absolute paths as win32:
+  // - Drive paths: C:\... or C:/...
+  // - UNC paths: \\server\share\...
+  // - Device namespace: \\?\...
+  // - Current-drive rooted: \foo\bar
+  if (/^[a-zA-Z]:[\\/]/.test(s)) return true;
+  if (s.startsWith('\\\\?\\')) return true;
+  if (s.startsWith('\\\\')) return true;
+  if (s.startsWith('\\')) return true;
+  return false;
+}
+
+function joinPath(root, ...parts) {
+  return isWin32ShapedAbsolutePath(root) ? win32.join(root, ...parts) : join(root, ...parts);
+}
+
+function resolvePath(p) {
+  const s = String(p ?? '').trim();
+  if (!s) return '';
+  return isWin32ShapedAbsolutePath(s) ? win32.resolve(s) : resolve(s);
+}
+
+function dirnamePath(p) {
+  const s = String(p ?? '').trim();
+  if (!s) return '';
+  return isWin32ShapedAbsolutePath(s) ? win32.dirname(s) : dirname(s);
+}
+
 function detectHappyMonorepoLayout(monorepoRoot) {
   const root = String(monorepoRoot ?? '').trim();
   if (!root) return '';
   try {
-    const hasAll = (markers) => markers.every((m) => existsSync(join(root, ...m)));
+    const hasAll = (markers) => markers.every((m) => existsSync(joinPath(root, ...m)));
     if (hasAll(HAPPY_MONOREPO_LAYOUTS.apps.markers)) return HAPPY_MONOREPO_LAYOUTS.apps.id;
     if (hasAll(HAPPY_MONOREPO_LAYOUTS.packages.markers)) return HAPPY_MONOREPO_LAYOUTS.packages.id;
     return '';
@@ -120,7 +152,8 @@ function normalizePathForEnv(rootDir, raw, env = process.env) {
   const expanded = expandHome(trimmed);
   // If the path is relative, treat it as relative to the workspace root (default: repo root).
   const workspaceDir = getWorkspaceDir(rootDir, env);
-  return expanded.startsWith('/') ? expanded : resolve(workspaceDir, expanded);
+  const abs = isAbsolute(expanded) || isWin32ShapedAbsolutePath(expanded);
+  return abs ? expanded : resolve(workspaceDir, expanded);
 }
 
 export function isHappyMonorepoComponentName(name) {
@@ -152,10 +185,10 @@ export function isHappyMonorepoRoot(dir) {
 export function coerceHappyMonorepoRootFromPath(path) {
   const p = String(path ?? '').trim();
   if (!p) return null;
-  let cur = resolve(p);
+  let cur = resolvePath(p);
   while (true) {
     if (isHappyMonorepoRoot(cur)) return cur;
-    const parent = dirname(cur);
+    const parent = dirnamePath(cur);
     if (parent === cur) return null;
     cur = parent;
   }
@@ -164,7 +197,7 @@ export function coerceHappyMonorepoRootFromPath(path) {
 function resolveHappyMonorepoPackageDir({ monorepoRoot, component }) {
   const sub = happyMonorepoSubdirForComponent(component, { monorepoRoot });
   if (!sub) return null;
-  return join(monorepoRoot, sub);
+  return joinPath(monorepoRoot, sub);
 }
 
 export function getComponentRepoDir(rootDir, name, env = process.env) {
@@ -243,5 +276,27 @@ export function getDefaultAutostartPaths(env = process.env) {
     systemdUnitPath,
     stdoutPath,
     stderrPath,
+  };
+}
+
+export function getSystemdUnitInfo({ env = process.env, mode = 'user' } = {}) {
+  const m = String(mode ?? '').trim().toLowerCase() === 'system' ? 'system' : 'user';
+  const { label, systemdUnitName, systemdUnitPath } = getDefaultAutostartPaths(env);
+  void label;
+  if (m === 'system') {
+    return {
+      mode: 'system',
+      unitName: systemdUnitName,
+      unitPath: join('/etc/systemd/system', systemdUnitName),
+      systemctlArgsPrefix: [],
+      journalctlArgsPrefix: [],
+    };
+  }
+  return {
+    mode: 'user',
+    unitName: systemdUnitName,
+    unitPath: systemdUnitPath,
+    systemctlArgsPrefix: ['--user'],
+    journalctlArgsPrefix: ['--user'],
   };
 }

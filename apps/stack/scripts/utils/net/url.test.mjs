@@ -18,3 +18,12 @@ test('normalizeUrlNoTrailingSlash preserves query/hash URLs', () => {
   assert.equal(normalizeUrlNoTrailingSlash('https://example.com/api/?q=1'), 'https://example.com/api/?q=1');
 });
 
+test('normalizeUrlNoTrailingSlash handles invalid/blank values defensively', () => {
+  assert.equal(normalizeUrlNoTrailingSlash(''), '');
+  assert.equal(normalizeUrlNoTrailingSlash('   '), '');
+  assert.equal(normalizeUrlNoTrailingSlash('not-a-url///'), 'not-a-url');
+});
+
+test('normalizeUrlNoTrailingSlash preserves hash-only URL semantics', () => {
+  assert.equal(normalizeUrlNoTrailingSlash('https://example.com/path/#hash'), 'https://example.com/path/#hash');
+});

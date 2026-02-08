@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export function expandHome(p) {
-  return String(p ?? '').replace(/^~(?=\/)/, homedir());
+  return String(p ?? '').replace(/^~(?=[/\\])/, homedir());
 }
 
 export function getCanonicalHomeDirFromEnv(env = process.env) {

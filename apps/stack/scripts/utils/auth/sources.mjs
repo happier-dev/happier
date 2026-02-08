@@ -2,12 +2,13 @@ import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 
 import { resolveStackEnvPath } from '../paths/paths.mjs';
+import { findAnyCredentialPathInCliHome } from './credentials_paths.mjs';
 
 export function stackHasAccessKey(stackName) {
   try {
     const { baseDir, envPath } = resolveStackEnvPath(stackName);
     if (!existsSync(envPath)) return false;
-    return existsSync(join(baseDir, 'cli', 'access.key'));
+    return Boolean(findAnyCredentialPathInCliHome({ cliHomeDir: join(baseDir, 'cli') }));
   } catch {
     return false;
   }

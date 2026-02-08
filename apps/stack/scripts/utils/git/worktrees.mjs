@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import { userInfo } from 'node:os';
 
 import {
@@ -10,11 +10,26 @@ import {
   getRepoDir,
   getWorkspaceDir,
   happyMonorepoSubdirForComponent,
+  isWin32ShapedAbsolutePath,
 } from '../paths/paths.mjs';
 import { pathExists } from '../fs/fs.mjs';
 import { runCapture } from '../proc/proc.mjs';
 
 export const WORKTREE_CATEGORIES = Object.freeze(['pr', 'local', 'tmp']);
+
+function normalizePathForCompare(p) {
+  let s = String(p ?? '').trim();
+  if (!s) return '';
+  s = s.replaceAll('\\', '/');
+  while (s.length > 1 && s.endsWith('/')) s = s.slice(0, -1);
+  return s;
+}
+
+function resolveForCompare(rawPath) {
+  const raw = String(rawPath ?? '').trim();
+  if (!raw) return '';
+  return isWin32ShapedAbsolutePath(raw) ? win32.resolve(raw) : resolve(raw);
+}
 
 function getLocalOwner(env = process.env) {
   const explicit = String(env.HAPPIER_STACK_OWNER ?? '').trim();
@@ -63,6 +78,13 @@ export function componentRepoDir(rootDir, component, env = process.env) {
 }
 
 function resolveWorktreeRootFromPath({ workspaceDir, absPath }) {
+  // Contract (Option A): on POSIX hosts, win32-shaped strings are supported for
+  // prefix/spec comparisons, but filesystem walk/root inference is native-only.
+  // We intentionally fail closed here instead of pretending to walk a non-native path.
+  if (process.platform !== 'win32' && isWin32ShapedAbsolutePath(workspaceDir)) {
+    return null;
+  }
+
   // Normalize to the actual worktree root directory (the one containing `.git`) so
   // package subdirectories like `.../apps/cli` don't corrupt the computed spec.
   let cur = absPath;
@@ -79,9 +101,9 @@ function resolveWorktreeRootFromPath({ workspaceDir, absPath }) {
 export function isWorktreePath({ rootDir, dir, env = process.env }) {
   const raw = String(dir ?? '').trim();
   if (!raw) return false;
-  const abs = resolve(raw);
-  const workspaceDir = resolve(getWorkspaceDir(rootDir, env));
-  const prefix = workspaceDir + '/';
+  const abs = normalizePathForCompare(resolveForCompare(raw));
+  const workspaceDir = normalizePathForCompare(resolveForCompare(getWorkspaceDir(rootDir, env)));
+  const prefix = `${workspaceDir}/`;
   if (!abs.startsWith(prefix)) return false;
 
   // Only count category worktrees (not main/ or dev/).
@@ -93,20 +115,25 @@ export function isWorktreePath({ rootDir, dir, env = process.env }) {
 export function worktreeSpecFromDir({ rootDir, component, dir, env = process.env }) {
   const raw = String(dir ?? '').trim();
   if (!raw) return null;
-  const abs = resolve(raw);
+  const absNative = resolveForCompare(raw);
+  const abs = normalizePathForCompare(absNative);
   void component;
 
-  const workspaceDir = resolve(getWorkspaceDir(rootDir, env));
-  const mainDir = resolve(getRepoDir(rootDir, { ...env, HAPPIER_STACK_REPO_DIR: '' }));
-  const devDir = resolve(getDevRepoDir(rootDir, env));
+  const workspaceDirNative = resolveForCompare(getWorkspaceDir(rootDir, env));
+  const workspaceDir = normalizePathForCompare(workspaceDirNative);
+  const mainDirNative = resolveForCompare(getRepoDir(rootDir, { ...env, HAPPIER_STACK_REPO_DIR: '' }));
+  const mainDir = normalizePathForCompare(mainDirNative);
+  const devDirNative = resolveForCompare(getDevRepoDir(rootDir, env));
+  const devDir = normalizePathForCompare(devDirNative);
 
-  if (abs === mainDir || abs.startsWith(mainDir + '/')) return 'main';
-  if (abs === devDir || abs.startsWith(devDir + '/')) return 'dev';
+  if (abs === mainDir || abs.startsWith(`${mainDir}/`)) return 'main';
+  if (abs === devDir || abs.startsWith(`${devDir}/`)) return 'dev';
 
-  const prefix = workspaceDir + '/';
+  const prefix = `${workspaceDir}/`;
   if (!abs.startsWith(prefix)) return null;
 
-  const wtRoot = resolveWorktreeRootFromPath({ workspaceDir, absPath: abs });
+  const wtRootNative = resolveWorktreeRootFromPath({ workspaceDir: workspaceDirNative, absPath: absNative });
+  const wtRoot = wtRootNative ? normalizePathForCompare(wtRootNative) : null;
   if (!wtRoot) return null;
 
   const rel = wtRoot.slice(prefix.length).split('/').filter(Boolean);
@@ -130,7 +157,7 @@ export function resolveComponentSpecToDir({ rootDir, component, spec, env = proc
     return getDevRepoDir(rootDir, env);
   }
 
-  if (isAbsolute(raw)) {
+  if (isAbsolute(raw) || isWin32ShapedAbsolutePath(raw)) {
     const monoRoot = coerceHappyMonorepoRootFromPath(raw);
     const sub = monoRoot ? happyMonorepoSubdirForComponent(component, { monorepoRoot: monoRoot }) : null;
     if (monoRoot && sub) return join(monoRoot, sub);
@@ -159,7 +186,8 @@ export function resolveComponentSpecToDir({ rootDir, component, spec, env = proc
 
 export async function listWorktreeSpecs({ rootDir, component, env = process.env }) {
   void component;
-  const workspaceDir = resolve(getWorkspaceDir(rootDir, env));
+  const workspaceDirNative = resolveForCompare(getWorkspaceDir(rootDir, env));
+  const workspaceDir = normalizePathForCompare(workspaceDirNative);
   const specs = [];
 
   const walk = async (d, prefixParts) => {
@@ -206,8 +234,8 @@ export async function listWorktreeSpecs({ rootDir, component, env = process.env 
     .filter((s) => {
       // Basic safety: ensure spec resolves under the workspace root.
       try {
-        const abs = resolve(workspaceDir, s);
-        return abs.startsWith(workspaceDir + '/');
+        const abs = normalizePathForCompare(resolveForCompare(join(workspaceDirNative, s)));
+        return abs.startsWith(`${workspaceDir}/`);
       } catch {
         return false;
       }

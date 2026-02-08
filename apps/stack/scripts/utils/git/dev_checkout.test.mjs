@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,6 +24,14 @@ function runCapture(cmd, args, { cwd, env } = {}) {
       reject(e);
     });
   });
+}
+
+async function withTempRoot(t) {
+  const dir = await mkdtemp(join(tmpdir(), 'hstack-dev-checkout-'));
+  t.after(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+  return dir;
 }
 
 async function initBareRepo(dir) {
@@ -61,51 +69,47 @@ async function cloneIntoWorkspaceMain({ workspaceDir, upstreamBareDir, originBar
   await runCapture('git', ['remote', 'set-url', 'origin', originBareDir], { cwd: mainDir });
   await runCapture('git', ['remote', 'add', 'upstream', upstreamBareDir], { cwd: mainDir });
   await runCapture('git', ['fetch', '--all'], { cwd: mainDir });
-  return mainDir;
 }
 
-test('ensureDevCheckout prefers upstream/dev when upstream is pushable', async () => {
+async function createDevCheckoutFixture(t, { forkWorkflow }) {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const stackRootDir = dirname(dirname(dirname(scriptsDir))); // .../scripts/utils/git -> .../apps/stack
-
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-dev-checkout-'));
-  const workspaceDir = join(tmp, 'workspace');
-  const upstreamBareDir = join(tmp, 'upstream.git');
-  const seedDir = join(tmp, 'seed');
+  const stackRootDir = dirname(dirname(dirname(scriptsDir)));
+  const tempRoot = await withTempRoot(t);
+  const workspaceDir = join(tempRoot, 'workspace');
+  const upstreamBareDir = join(tempRoot, 'upstream.git');
+  const originBareDir = forkWorkflow ? join(tempRoot, 'origin.git') : upstreamBareDir;
+  const seedDir = join(tempRoot, 'seed');
 
   await initBareRepo(upstreamBareDir);
-  // Maintainer-like setup: origin and upstream both point at the canonical repo.
-  await seedRepoWithBranches({ seedDir, upstreamBareDir, originBareDir: upstreamBareDir });
-  await cloneIntoWorkspaceMain({ workspaceDir, upstreamBareDir, originBareDir: upstreamBareDir });
+  if (forkWorkflow) {
+    await initBareRepo(originBareDir);
+  }
+  await seedRepoWithBranches({ seedDir, upstreamBareDir, originBareDir });
+  await cloneIntoWorkspaceMain({ workspaceDir, upstreamBareDir, originBareDir });
 
-  const env = { ...process.env, HAPPIER_STACK_WORKSPACE_DIR: workspaceDir };
-  const res = await ensureDevCheckout({ rootDir: stackRootDir, env });
+  return {
+    stackRootDir,
+    workspaceDir,
+    originBareDir,
+  };
+}
+
+test('ensureDevCheckout prefers upstream/dev when upstream is pushable', async (t) => {
+  const fixture = await createDevCheckoutFixture(t, { forkWorkflow: false });
+  const env = { ...process.env, HAPPIER_STACK_WORKSPACE_DIR: fixture.workspaceDir };
+  const res = await ensureDevCheckout({ rootDir: fixture.stackRootDir, env });
   assert.equal(res.ok, true);
   assert.equal(res.trackingRemote, 'upstream');
 });
 
-test('ensureDevCheckout uses origin/dev when upstream is not pushable (fork workflow)', async () => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const stackRootDir = dirname(dirname(dirname(scriptsDir)));
-
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-dev-checkout-'));
-  const workspaceDir = join(tmp, 'workspace');
-  const upstreamBareDir = join(tmp, 'upstream.git');
-  const originBareDir = join(tmp, 'origin.git');
-  const seedDir = join(tmp, 'seed');
-
-  await initBareRepo(upstreamBareDir);
-  await initBareRepo(originBareDir);
-  await seedRepoWithBranches({ seedDir, upstreamBareDir, originBareDir });
-
-  await cloneIntoWorkspaceMain({ workspaceDir, upstreamBareDir, originBareDir });
-
-  const env = { ...process.env, HAPPIER_STACK_WORKSPACE_DIR: workspaceDir };
-  const res = await ensureDevCheckout({ rootDir: stackRootDir, env });
+test('ensureDevCheckout uses origin/dev when upstream is not pushable (fork workflow)', async (t) => {
+  const fixture = await createDevCheckoutFixture(t, { forkWorkflow: true });
+  const env = { ...process.env, HAPPIER_STACK_WORKSPACE_DIR: fixture.workspaceDir };
+  const res = await ensureDevCheckout({ rootDir: fixture.stackRootDir, env });
   assert.equal(res.ok, true);
   assert.equal(res.trackingRemote, 'origin');
 
-  const devDir = join(workspaceDir, 'dev');
+  const devDir = join(fixture.workspaceDir, 'dev');
   const { stdout } = await runCapture('git', ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], { cwd: devDir });
   assert.equal(stdout.trim(), 'origin/dev');
 });

@@ -5,7 +5,7 @@ import { WORKTREE_CATEGORIES, getWorktreeCategoryRoot } from '../git/worktrees.m
 import { getDevRepoDir, getRepoDir, getWorkspaceDir, happyMonorepoSubdirForComponent, isHappyMonorepoRoot } from '../paths/paths.mjs';
 
 export function getInvokedCwd(env = process.env) {
-  return String(env.HAPPIER_STACK_INVOKED_CWD ?? env.PWD ?? '').trim();
+  return String(env.HAPPIER_STACK_INVOKED_CWD ?? env.PWD ?? process.cwd()).trim();
 }
 
 function hasGitMarker(dir) {
@@ -62,7 +62,7 @@ function resolveHappyMonorepoComponentFromPath({ monorepoRoot, absPath }) {
   return null;
 }
 
-export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
+export function inferComponentFromCwd({ rootDir, invokedCwd, components, env = process.env }) {
   const cwd = String(invokedCwd ?? '').trim();
   const list = Array.isArray(components) ? components : [];
   if (!rootDir || !cwd || !list.length) {
@@ -70,7 +70,7 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
   }
 
   const abs = resolve(cwd);
-  const workspaceDir = getWorkspaceDir(rootDir);
+  const workspaceDir = getWorkspaceDir(rootDir, env);
 
   // Monorepo-aware inference:
   // If we're inside a Happier monorepo checkout/worktree, infer which "logical component"
@@ -82,11 +82,11 @@ export function inferComponentFromCwd({ rootDir, invokedCwd, components }) {
   // - running from inside <workspace>/local/.../apps/cli (should infer happier-cli)
   // - running from inside <workspace>/tmp/.../apps/cli (should infer happier-cli)
   {
-    const categoryRoots = WORKTREE_CATEGORIES.map((c) => resolve(getWorktreeCategoryRoot(rootDir, c, process.env)));
+    const categoryRoots = WORKTREE_CATEGORIES.map((c) => resolve(getWorktreeCategoryRoot(rootDir, c, env)));
     const monorepoScopes = Array.from(
       new Set([
-        resolve(getRepoDir(rootDir)),
-        resolve(getDevRepoDir(rootDir)),
+        resolve(getRepoDir(rootDir, env)),
+        resolve(getDevRepoDir(rootDir, env)),
         resolve(workspaceDir),
         ...categoryRoots,
       ])

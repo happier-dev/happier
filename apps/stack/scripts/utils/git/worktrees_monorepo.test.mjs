@@ -44,3 +44,17 @@ test('worktreeSpecFromDir normalizes monorepo package dirs to the worktree spec'
     'pr/123-fix-monorepo'
   );
 });
+
+test('worktreeSpecFromDir resolves the same spec from the monorepo root and nested unknown dirs', async (t) => {
+  const rootDir = await withTempRoot(t);
+  const env = { HAPPIER_STACK_WORKSPACE_DIR: rootDir };
+  const wtRoot = join(rootDir, 'pr', '456-pathstyle');
+  await mkdir(join(wtRoot, 'docs', 'guides'), { recursive: true });
+  await writeHappyMonorepoStub({ rootDir, worktreeRoot: wtRoot });
+
+  assert.equal(worktreeSpecFromDir({ rootDir, component: 'happier-ui', dir: wtRoot, env }), 'pr/456-pathstyle');
+  assert.equal(
+    worktreeSpecFromDir({ rootDir, component: 'happier-cli', dir: join(wtRoot, 'docs', 'guides'), env }),
+    'pr/456-pathstyle'
+  );
+});

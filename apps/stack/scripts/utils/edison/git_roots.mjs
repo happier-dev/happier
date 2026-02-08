@@ -2,8 +2,10 @@ import { dirname, join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 
 export function findGitRootForPath(dir) {
-  let cur = resolve(String(dir ?? '').trim());
-  if (!cur) return '';
+  const raw = String(dir ?? '').trim();
+  if (!raw) return '';
+
+  let cur = resolve(raw);
   while (true) {
     try {
       if (existsSync(join(cur, '.git'))) {
@@ -26,4 +28,3 @@ export function normalizeGitRoots(paths) {
     .filter(Boolean);
   return Array.from(new Set(normalized));
 }
-

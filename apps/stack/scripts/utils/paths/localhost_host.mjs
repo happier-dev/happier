@@ -7,6 +7,15 @@ function resolveBindMode(env) {
   return raw === 'lan' ? 'lan' : raw === 'loopback' ? 'loopback' : '';
 }
 
+function resolveLocalhostSubdomainPrefix(env) {
+  const raw = (env.HAPPIER_STACK_LOCALHOST_SUBDOMAIN_PREFIX ?? '').toString().trim().toLowerCase();
+  if (!raw) return 'happier';
+  // Keep legacy compatibility (older installs used happy-<stack>.localhost).
+  if (raw === 'happy') return 'happy';
+  if (raw === 'happier') return 'happier';
+  return 'happier';
+}
+
 function detectLanHost({ env = process.env } = {}) {
   const override = (env.HAPPIER_STACK_LAN_HOST ?? '').toString().trim();
   if (override) return override;
@@ -41,7 +50,8 @@ export function resolveLocalhostHost({ stackMode, stackName = null, env = proces
     if (lanHost) return lanHost;
   }
   if (!name || name === 'main') return 'localhost';
-  return `happy-${sanitizeDnsLabel(name)}.localhost`;
+  const prefix = resolveLocalhostSubdomainPrefix(env);
+  return `${prefix}-${sanitizeDnsLabel(name)}.localhost`;
 }
 
 export async function preferStackLocalhostHost({ stackName = null, env = process.env } = {}) {
@@ -54,7 +64,7 @@ export async function preferStackLocalhostHost({ stackName = null, env = process
   // even though browsers treat `*.localhost` as loopback and will load it fine.
   //
   // Since this hostname is primarily used for browser-facing URLs and origin isolation, we
-  // prefer the stable `happy-<stack>.localhost` form by default and allow opting out via env.
+  // prefer a stable `<prefix>-<stack>.localhost` form by default and allow opting out via env.
   const modeRaw = (env.HAPPIER_STACK_LOCALHOST_SUBDOMAINS ?? '')
     .toString()
     .trim()
@@ -66,7 +76,7 @@ export async function preferStackLocalhostHost({ stackName = null, env = process
   return preferredHost || 'localhost';
 }
 
-// Best-effort: for stacks, prefer `happy-<stack>.localhost` over `localhost` when it's reachable.
+// Best-effort: for stacks, prefer `<prefix>-<stack>.localhost` over `localhost` when it's reachable.
 // This keeps URLs stable and stack-scoped while still failing closed to plain localhost.
 export async function preferStackLocalhostUrl(url, { stackName = null, env = process.env } = {}) {
   const raw = String(url ?? '').trim();

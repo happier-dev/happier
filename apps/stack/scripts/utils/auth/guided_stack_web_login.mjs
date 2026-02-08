@@ -9,13 +9,13 @@ export async function guidedStackWebSignupThenLogin({ webappUrl, stackName }) {
   // eslint-disable-next-line no-console
   console.log('');
   // eslint-disable-next-line no-console
-  console.log(bold(`${cyan('Happy')} login`));
+  console.log(bold(`${cyan('Happier')} login`));
 
   // Step 1/2
   // eslint-disable-next-line no-console
   console.log(dim('Step 1/2 — open the web app'));
   // eslint-disable-next-line no-console
-  console.log(`We’ll open the Happy web app so you can ${bold('create an account')} (or ${bold('log in')}).`);
+  console.log(`We’ll open the Happier web app so you can ${bold('create an account')} (or ${bold('log in')}).`);
   if (url) {
     // eslint-disable-next-line no-console
     console.log(`${dim('URL:')} ${cyan(url)}`);
@@ -39,7 +39,7 @@ export async function guidedStackWebSignupThenLogin({ webappUrl, stackName }) {
   // eslint-disable-next-line no-console
   console.log(dim('Step 2/2 — connect this terminal'));
   // eslint-disable-next-line no-console
-  console.log(`Next, we’ll connect ${bold('this terminal')} to your Happy account.`);
+  console.log(`Next, we’ll connect ${bold('this terminal')} to your Happier account.`);
   // eslint-disable-next-line no-console
   console.log(`When prompted, choose: ${bold('Web Browser')} ${dim('(press 2)')}.`);
   // eslint-disable-next-line no-console
@@ -54,4 +54,3 @@ export async function guidedStackWebSignupThenLogin({ webappUrl, stackName }) {
     await prompt(rl, '', { defaultValue: '' });
   });
 }
-

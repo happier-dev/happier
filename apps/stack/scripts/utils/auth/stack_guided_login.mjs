@@ -7,10 +7,11 @@ import { run, runCapture } from '../proc/proc.mjs';
 import { preferStackLocalhostUrl } from '../paths/localhost_host.mjs';
 import { guidedStackWebSignupThenLogin } from './guided_stack_web_login.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../paths/paths.mjs';
-import { getExpoStatePaths, isStateProcessRunning } from '../expo/expo.mjs';
+import { getExpoStatePaths, isStateProcessRunning, looksLikeExpoMetro } from '../expo/expo.mjs';
 import { resolveLocalhostHost } from '../paths/localhost_host.mjs';
 import { getStackRuntimeStatePath, isPidAlive, readStackRuntimeStateFile } from '../stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from '../env/read.mjs';
+import { resolveServerUrls } from '../server/urls.mjs';
 
 function extractEnvVar(cmd, key) {
   const re = new RegExp(`${key}="([^"]+)"`);
@@ -24,8 +25,12 @@ async function resolveRuntimeExpoWebappUrlForAuth({ stackName }) {
     const st = await readStackRuntimeStateFile(runtimeStatePath);
     const ownerPid = Number(st?.ownerPid);
     if (!isPidAlive(ownerPid)) return '';
+    const expoPid = Number(st?.processes?.expoPid);
+    if (Number.isFinite(expoPid) && expoPid > 1 && !isPidAlive(expoPid)) return '';
     const port = Number(st?.expo?.port ?? st?.expo?.webPort ?? st?.expo?.mobilePort);
     if (!Number.isFinite(port) || port <= 0) return '';
+    const live = await looksLikeExpoMetro({ port, timeoutMs: 900 });
+    if (!live) return '';
     const host = resolveLocalhostHost({ stackMode: true, stackName });
     return `http://${host}:${port}`;
   } catch {
@@ -52,27 +57,6 @@ async function resolveExpoWebappUrlForAuth({ rootDir, stackName, timeoutMs }) {
       return resolve(getComponentDir(rootDir, 'happier-ui', merged));
     } catch {
       return '';
-    }
-  }
-
-  async function looksLikeExpoMetro({ port }) {
-    const p = Number(port);
-    if (!Number.isFinite(p) || p <= 0) return false;
-
-    // Metro exposes `/status` which returns "packager-status:running".
-    const url = `http://127.0.0.1:${p}/status`;
-    try {
-      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-      const timeout = setTimeout(() => controller?.abort(), 800);
-      try {
-        const res = await fetch(url, { signal: controller?.signal });
-        const txt = await res.text().catch(() => '');
-        return res.ok && String(txt).toLowerCase().includes('packager-status:running');
-      } finally {
-        clearTimeout(timeout);
-      }
-    } catch {
-      return false;
     }
   }
 
@@ -115,11 +99,7 @@ async function resolveExpoWebappUrlForAuth({ rootDir, stackName, timeoutMs }) {
 
       // If we're only considering this "running" because the port is occupied (pid not alive),
       // do a quick Metro probe so we don't accept an unrelated process reusing the port.
-      if (running.reason === 'port') {
-        // eslint-disable-next-line no-await-in-loop
-        const ok = await looksLikeExpoMetro({ port });
-        if (!ok) continue;
-      }
+      // Note: `isStateProcessRunning` already verifies Metro /status for port-only cases.
 
       // Prefer newest (startedAt) and prefer real pid-verified instances.
       const startedAtMs = Date.parse(String(running.state?.startedAt ?? '')) || 0;
@@ -162,6 +142,19 @@ async function fetchText(url, { timeoutMs = 2000 } = {}) {
 function pickHtmlBundlePath(html) {
   const m = String(html ?? '').match(/<script[^>]+src="([^"]+)"[^>]*><\/script>/i);
   return m?.[1] ? String(m[1]) : '';
+}
+
+export function parseExpoBundleErrorPayload(payload) {
+  try {
+    const parsed = JSON.parse(String(payload ?? ''));
+    const type = String(parsed?.type ?? '').trim();
+    const message = String(parsed?.message ?? '').trim();
+    if (!type && !message) return null;
+    const isResolverError = type === 'UnableToResolveError' || message.includes('Unable to resolve module');
+    return { type, message, isResolverError };
+  } catch {
+    return null;
+  }
 }
 
 async function detectSymlinkedNodeModules({ worktreeDir }) {
@@ -208,35 +201,29 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
     }
 
     // Metro resolver errors are deterministic: surface immediately with actionable hints.
-    try {
-      const parsed = JSON.parse(String(bundleRes.text ?? ''));
-      const type = String(parsed?.type ?? '').trim();
-      const msg = String(parsed?.message ?? '').trim();
-      if (type === 'UnableToResolveError' || msg.includes('Unable to resolve module')) {
-        let hint = '';
-        try {
-          const { envPath } = resolveStackEnvPath(stackName);
-          const stackEnv = await readEnvObjectFromFile(envPath);
-          const uiDir = getComponentDir(rootDir, 'happier-ui', { ...process.env, ...stackEnv });
-          const symlinked = uiDir ? await detectSymlinkedNodeModules({ worktreeDir: uiDir }) : false;
-          if (symlinked) {
-            hint =
-              '\n' +
-              '[auth] Hint: this looks like an Expo/Metro resolution failure with symlinked node_modules.\n' +
-              '[auth] Fix: re-run review-pr/setup-pr with `--deps=install` (avoid linking node_modules for happy).\n';
-          }
-        } catch {
-          // ignore
+    const bundleError = parseExpoBundleErrorPayload(bundleRes.text);
+    if (bundleError?.isResolverError) {
+      let hint = '';
+      try {
+        const { envPath } = resolveStackEnvPath(stackName);
+        const stackEnv = await readEnvObjectFromFile(envPath);
+        const uiDir = getComponentDir(rootDir, 'happier-ui', { ...process.env, ...stackEnv });
+        const symlinked = uiDir ? await detectSymlinkedNodeModules({ worktreeDir: uiDir }) : false;
+        if (symlinked) {
+          hint =
+            '\n' +
+            '[auth] Hint: this looks like an Expo/Metro resolution failure with symlinked node_modules.\n' +
+            '[auth] Fix: re-run review-pr/setup-pr with `--deps=install` (avoid linking node_modules for happy).\n';
         }
-        throw new Error(
-          '[auth] Expo web UI is running, but the web bundle failed to build.\n' +
-            `[auth] URL: ${webappUrl}\n` +
-            `[auth] Error: ${msg || type || `HTTP ${bundleRes.status}`}\n` +
-            hint
-        );
+      } catch {
+        // ignore
       }
-    } catch {
-      // not JSON / not a known error
+      throw new Error(
+        '[auth] Expo web UI is running, but the web bundle failed to build.\n' +
+          `[auth] URL: ${webappUrl}\n` +
+          `[auth] Error: ${bundleError.message || bundleError.type || `HTTP ${bundleRes.status}`}\n` +
+          hint
+      );
     }
 
     lastError = `HTTP ${bundleRes.status} loading bundle ${bundlePath}`;
@@ -255,8 +242,7 @@ export async function assertExpoWebappBundlesOrThrow({ rootDir, stackName, webap
 }
 
 export async function resolveStackWebappUrlForAuth({ rootDir, stackName, env = process.env }) {
-  // Fast path: if the stack runner already recorded Expo webPort in stack.runtime.json,
-  // use it immediately (runtime state is authoritative).
+  // Fast path: runtime Expo metadata is a hint, but only accepted when liveness checks pass.
   const runtimeExpoUrl = await resolveRuntimeExpoWebappUrlForAuth({ stackName });
   if (runtimeExpoUrl) {
     return await preferStackLocalhostUrl(runtimeExpoUrl, { stackName });
@@ -307,8 +293,114 @@ export async function resolveStackWebappUrlForAuth({ rootDir, stackName, env = p
   }
 }
 
+function resolvePortFromUrl(urlRaw) {
+  const raw = String(urlRaw ?? '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (!parsed.port) return null;
+    const n = Number(parsed.port);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+async function resolveServerPortForCoreAuth({ stackName, env = process.env }) {
+  const direct = Number((env.HAPPIER_STACK_SERVER_PORT ?? '').toString().trim());
+  if (Number.isFinite(direct) && direct > 0) return direct;
+
+  const fromInternal = resolvePortFromUrl(env.HAPPIER_SERVER_URL);
+  if (fromInternal) return fromInternal;
+
+  const fromPublic = resolvePortFromUrl(env.HAPPIER_PUBLIC_SERVER_URL);
+  if (fromPublic) return fromPublic;
+
+  try {
+    const runtimeStatePath = getStackRuntimeStatePath(stackName);
+    const st = await readStackRuntimeStateFile(runtimeStatePath);
+    const runtimePort = Number(st?.ports?.server);
+    if (Number.isFinite(runtimePort) && runtimePort > 0) return runtimePort;
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+async function prepareCoreAuthEnv({ stackName, webappUrl, env = process.env } = {}) {
+  const name = String(stackName ?? '').trim() || 'main';
+  const merged = { ...process.env, ...(env ?? {}) };
+  const { baseDir } = resolveStackEnvPath(name, merged);
+
+  const serverPort = await resolveServerPortForCoreAuth({ stackName: name, env: merged });
+  if (!serverPort) {
+    throw new Error('[auth] cannot run stack login: unable to resolve stack server port');
+  }
+
+  const internalServerUrl = String(merged.HAPPIER_SERVER_URL ?? '').trim() || `http://127.0.0.1:${serverPort}`;
+  const resolvedPublic = await resolveServerUrls({
+    env: merged,
+    serverPort,
+    allowEnable: false,
+  });
+  const publicServerUrl =
+    String(merged.HAPPIER_PUBLIC_SERVER_URL ?? '').trim() || String(resolvedPublic.publicServerUrl ?? '').trim();
+  if (!publicServerUrl) {
+    throw new Error('[auth] cannot run stack login: unable to resolve public server URL');
+  }
+
+  const cliHomeDir =
+    String(merged.HAPPIER_HOME_DIR ?? '').trim() ||
+    String(merged.HAPPIER_STACK_CLI_HOME_DIR ?? '').trim() ||
+    join(baseDir, 'cli');
+
+  return {
+    ...merged,
+    HAPPIER_HOME_DIR: cliHomeDir,
+    HAPPIER_SERVER_URL: internalServerUrl,
+    HAPPIER_PUBLIC_SERVER_URL: publicServerUrl,
+    HAPPIER_WEBAPP_URL: webappUrl,
+  };
+}
+
+export function buildStackAuthLoginInvocation({ rootDir, stackName, webappUrl, env = process.env } = {}) {
+  const root = String(rootDir ?? '').trim();
+  if (!root) {
+    throw new Error('[auth] buildStackAuthLoginInvocation requires rootDir');
+  }
+  const url = String(webappUrl ?? '').trim();
+  if (!url) {
+    throw new Error('[auth] buildStackAuthLoginInvocation requires a webappUrl');
+  }
+  const cliBin = join(getComponentDir(root, 'happier-cli', env), 'bin', 'happier.mjs');
+  const merged = { ...(env ?? process.env), HAPPIER_WEBAPP_URL: url };
+  const method = String(merged.HAPPIER_AUTH_METHOD ?? '').trim().toLowerCase();
+  if (method && method !== 'web' && method !== 'browser' && method !== 'mobile') {
+    throw new Error(`[auth] invalid HAPPIER_AUTH_METHOD=${method} (expected: web|browser|mobile)`);
+  }
+  const normalizedMethod = method === 'browser' ? 'web' : method;
+
+  const args = [cliBin, 'auth', 'login'];
+  if (String(merged.HAPPIER_AUTH_FORCE ?? '').trim() === '1') {
+    args.push('--force');
+  }
+  if (String(merged.HAPPIER_NO_BROWSER_OPEN ?? '').trim() === '1') {
+    args.push('--no-open');
+  }
+  if (normalizedMethod) {
+    args.push('--method', normalizedMethod);
+  }
+
+  return {
+    args,
+    env: merged,
+  };
+}
+
 export async function guidedStackAuthLoginNow({ rootDir, stackName, env = process.env, webappUrl = null }) {
-  const resolved = (webappUrl ?? '').toString().trim() || (await resolveStackWebappUrlForAuth({ rootDir, stackName, env }));
+  const name = String(stackName ?? '').trim() || 'main';
+  const resolved = (webappUrl ?? '').toString().trim() || (await resolveStackWebappUrlForAuth({ rootDir, stackName: name, env }));
   if (!resolved) {
     throw new Error('[auth] cannot start guided login: web UI URL is empty');
   }
@@ -316,14 +408,17 @@ export async function guidedStackAuthLoginNow({ rootDir, stackName, env = proces
   const skipBundleCheck = (env.HAPPIER_STACK_AUTH_SKIP_BUNDLE_CHECK ?? '').toString().trim() === '1';
   // Surface common "blank page" issues (Metro resolver errors) even in quiet mode.
   if (!skipBundleCheck) {
-    await assertExpoWebappBundlesOrThrow({ rootDir, stackName, webappUrl: resolved });
+    await assertExpoWebappBundlesOrThrow({ rootDir, stackName: name, webappUrl: resolved });
   }
 
-  await guidedStackWebSignupThenLogin({ webappUrl: resolved, stackName });
-  await run(process.execPath, [join(rootDir, 'scripts', 'stack.mjs'), 'auth', stackName, '--', 'login'], {
-    cwd: rootDir,
-    env,
-  });
+  const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  if (interactive) {
+    await guidedStackWebSignupThenLogin({ webappUrl: resolved, stackName: name });
+  }
+
+  const preparedEnv = await prepareCoreAuthEnv({ stackName: name, webappUrl: resolved, env });
+  const inv = buildStackAuthLoginInvocation({ rootDir, stackName: name, webappUrl: resolved, env: preparedEnv });
+  await run(process.execPath, inv.args, { cwd: rootDir, env: inv.env });
 }
 
 export async function stackAuthCopyFrom({ rootDir, stackName, fromStackName, env = process.env, link = true }) {

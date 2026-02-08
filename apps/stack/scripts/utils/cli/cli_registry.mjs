@@ -273,6 +273,13 @@ export function gethstackRegistry() {
       description: 'Multiple isolated stacks',
     },
     {
+      name: 'daemon',
+      kind: 'node',
+      scriptRelPath: 'scripts/daemon_cmd.mjs',
+      rootUsage: 'hstack daemon start|stop|restart|status [--identity=<name>] [--json]',
+      description: 'Manage the main stack daemon',
+    },
+    {
       name: 'tailscale',
       kind: 'node',
       scriptRelPath: 'scripts/tailscale.mjs',
