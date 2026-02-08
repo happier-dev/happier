@@ -3,30 +3,45 @@ import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { WizardSectionHeaderRow } from './WizardSectionHeaderRow';
 
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
 describe('WizardSectionHeaderRow', () => {
-    it('renders the optional action immediately after the title', () => {
-        (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-        let tree: ReturnType<typeof renderer.create> | null = null;
+    it('renders the optional action immediately after the title and invokes its handler', () => {
+        const onPress = vi.fn();
+
+        let tree: renderer.ReactTestRenderer | undefined;
         act(() => {
-            tree = renderer.create(React.createElement(WizardSectionHeaderRow, {
-                iconName: 'desktop-outline',
-                title: 'Select Machine',
-                action: {
-                    accessibilityLabel: 'Refresh machines',
-                    iconName: 'refresh-outline',
-                    onPress: vi.fn(),
-                },
-            }));
+            tree = renderer.create(
+                React.createElement(WizardSectionHeaderRow, {
+                    iconName: 'desktop-outline',
+                    title: 'Select Machine',
+                    action: {
+                        accessibilityLabel: 'Refresh machines',
+                        iconName: 'refresh-outline',
+                        onPress,
+                    },
+                }),
+            );
         });
 
-        const rootView = tree!.root.findByType('View' as any);
-        const children = React.Children.toArray(rootView.props.children) as any[];
+        const rootView = tree?.root.findByType('View');
+        const children = React.Children.toArray(rootView?.props.children).filter(React.isValidElement);
+        const childTypes = children.map((child) => child.type);
 
-        expect(children.map((c: any) => c.type)).toEqual(['Ionicons', 'Text', 'Pressable']);
-        expect(children[1].props.children).toBe('Select Machine');
+        expect(childTypes).toEqual(['Ionicons', 'Text', 'Pressable']);
+        expect((children[1]?.props as { children?: unknown }).children).toBe('Select Machine');
+
+        const action = tree?.root.findByProps({ accessibilityLabel: 'Refresh machines' });
+        expect(action).toBeTruthy();
+
+        act(() => {
+            action?.props.onPress?.();
+        });
+
+        expect(onPress).toHaveBeenCalledTimes(1);
     });
 });

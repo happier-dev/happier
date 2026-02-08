@@ -31,4 +31,30 @@ describe('inputMaxHeight', () => {
         const open = computeNewSessionInputMaxHeight({ useEnhancedSessionWizard: true, screenHeight: 900, keyboardHeight: 400 });
         expect(open).toBeLessThanOrEqual(240);
     });
+
+    it.each([
+        { platform: 'ios', screenHeight: 1, keyboardHeight: 0, expected: 120 },
+        { platform: 'web', screenHeight: 1, keyboardHeight: 0, expected: 200 },
+        { platform: 'ios', screenHeight: 9_999, keyboardHeight: 0, expected: 360 },
+        { platform: 'web', screenHeight: 9_999, keyboardHeight: 0, expected: 900 },
+        { platform: 'web', screenHeight: 600, keyboardHeight: -300, expected: 675 },
+    ])(
+        'clamps default max height for platform=$platform screen=$screenHeight keyboard=$keyboardHeight',
+        ({ platform, screenHeight, keyboardHeight, expected }) => {
+            expect(computeAgentInputDefaultMaxHeight({ platform, screenHeight, keyboardHeight })).toBe(expected);
+        },
+    );
+
+    it.each([
+        { useEnhancedSessionWizard: false, screenHeight: Number.NaN, keyboardHeight: 10, expected: 120 },
+        { useEnhancedSessionWizard: false, screenHeight: 10_000, keyboardHeight: 0, expected: 900 },
+        { useEnhancedSessionWizard: false, screenHeight: 10_000, keyboardHeight: 3_000, expected: 360 },
+        { useEnhancedSessionWizard: true, screenHeight: 10_000, keyboardHeight: 0, expected: 240 },
+        { useEnhancedSessionWizard: true, screenHeight: Number.POSITIVE_INFINITY, keyboardHeight: Number.NaN, expected: 120 },
+    ])(
+        'clamps /new input max height for wizard=$useEnhancedSessionWizard screen=$screenHeight keyboard=$keyboardHeight',
+        ({ useEnhancedSessionWizard, screenHeight, keyboardHeight, expected }) => {
+            expect(computeNewSessionInputMaxHeight({ useEnhancedSessionWizard, screenHeight, keyboardHeight })).toBe(expected);
+        },
+    );
 });
