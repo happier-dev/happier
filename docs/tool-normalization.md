@@ -25,9 +25,10 @@ It is written for developers working on **tool reliability and UX** (not for his
 - **Tool call**: a request from the model to run a tool (e.g. `Read`, `Bash`, `Patch`).
 - **Tool result**: the output from running that tool.
 - **Canonical tool name**: the UI renderer key (e.g. `Read`, `Bash`, `Patch`, `TodoWrite`).
-- **V2 tool payload**: a normalized tool input/result that includes stable tool metadata under `_happy` (and `_raw`).
+- **V2 tool payload**: a normalized tool input/result that includes stable tool metadata under `_happier` (and `_raw`).
 - **Legacy session**: sessions created before V2 tool normalization was emitted by the CLI.
 - **Claude local-control**: sessions where the app mirrors a local terminal transcript and reconstructs tool events client-side.
+- **Codex local-control**: sessions where the CLI mirrors Codex rollout JSONL (`~/.codex/sessions`) into the session as V2-normalized tool calls/results.
 - **Task / progress event**: a high-level “progress report” emitted by an agent (not always a concrete tool invocation).
 
 ---
@@ -42,7 +43,10 @@ Backends run providers via one of the supported protocols:
 - **Codex MCP** (Codex via MCP): tool calls/results stream via Codex-specific integration.
 - **Claude**:
   - **remote**: backend emits structured events over the daemon protocol
-  - **local-control**: the app reconstructs tool events from the transcript (no `_happy` metadata)
+  - **local-control**: the app reconstructs tool events from the transcript (no canonical V2 tool metadata)
+- **Codex**:
+  - **remote**: backend runs Codex via MCP (default) or ACP (`codex-acp`) depending on experiments
+  - **local-control**: backend runs Codex TUI in the user’s terminal and **mirrors Codex rollouts** into the session
 
 ### Messages: user/assistant/system/developer
 
@@ -61,9 +65,40 @@ At the **CLI boundary** (before events become “session messages”), tool call
 
 This is the **preferred** normalization path.
 
+### Codex local-control: where tool events come from
+
+Codex local-control is intentionally different from Claude local-control:
+
+- Claude local-control reconstructs tool events **in the app** from transcript text.
+- Codex local-control reconstructs tool events **in the CLI** from Codex rollout JSONL and then emits them through the
+  normal `sendCodexMessage(...)` pathway, so **V2 tool normalization + renderers apply**.
+
+Codex rollout source directory:
+
+- Default: `~/.codex/sessions`
+- Override (tests / nonstandard installs): `HAPPIER_CODEX_SESSIONS_DIR`
+
+Mapping Codex rollout tool names to canonical tools:
+
+- `apps/cli/src/backends/codex/localControl/rolloutToolNameMapping.ts`
+  - Keeps a conservative allowlist of observed non-MCP tool names (drift detection via unit tests).
+  - Canonicalizes known tools (`exec_command` → `Bash`, `apply_patch` → `Patch`).
+  - Treats `mcp__*` tools as pass-through (they’re already handled by the V2 normalizers/renderers).
+
+Local-control metadata:
+
+- Codex rollout mirroring injects `_happier.sessionMode='local_control'` into tool inputs so the app can make
+  session-mode-specific UI decisions (for example, default detail level).
+
+Diffs and edits:
+
+- Incremental edits are shown as Patch tool cards (`apply_patch` → `Patch`).
+- Codex per-turn diffs (`turn_diff.unified_diff`) are emitted as a single `CodexDiff` per turn and normalized to canonical `Diff`.
+  Multi-file unified diffs are rendered per-file in the app.
+
 ### 3) App rendering normalization (fallback)
 
-The app prefers V2 (`_happy.canonicalToolName`) when present. For sessions without `_happy` metadata (legacy + Claude local-control),
+The app prefers V2 (`_happier.canonicalToolName`) when present. For sessions without `_happier` metadata (legacy + Claude local-control),
 the app applies a **rendering-only normalization** to infer a canonical tool name and coerce a minimal render-friendly input/result.
 
 This is intentionally narrower than CLI normalization: it exists to keep older data renderable.
@@ -74,7 +109,7 @@ This is intentionally narrower than CLI normalization: it exists to keep older d
 
 ### Shared protocol (single source of truth)
 
-The canonical **V2 tool contract** (tool names + per-tool input/result schemas + `_happy` metadata schema) lives in:
+The canonical **V2 tool contract** (tool names + per-tool input/result schemas + `_happier` metadata schema) lives in:
 
 - `packages/protocol/src/tools/v2/*`
 
@@ -91,7 +126,7 @@ If you’re adding a new agent/provider, see:
 Important design choices:
 
 - Schemas are intentionally **forward-compatible**:
-  - `_happy.canonicalToolName` is a string (not a closed enum), so new tool names can ship before the protocol package updates.
+  - `_happier.canonicalToolName` is a string (not a closed enum), so new tool names can ship before the protocol package updates.
   - Most input/result schemas are permissive (`optional()` + `passthrough()`), because providers drift.
 - We avoid dropping events:
   - Production code should prefer “best-effort normalization + preserve `_raw`” over “throw if schema changes”.
@@ -105,17 +140,17 @@ Important design choices:
 - Entry points where tool events are normalized before sending/storing:
   - `apps/cli/src/api/apiSession.ts` (ACP + Codex MCP paths)
 
-### Canonical tool metadata (`_happy` + `_raw`)
+### Canonical tool metadata (`_happier` + `_raw`)
 
 Normalized tool input/results are wrapped with:
 
-- `_happy`: stable metadata used for routing/rendering and debugging
+- `_happier`: stable metadata used for routing/rendering and debugging
 - `_raw`: original provider payload (truncated for safety)
 
-Note: the project is named **Happier**, but the on-the-wire field name remains `_happy` for backward compatibility with older clients.
-In code, the metadata schema/type is `ToolHappierMetaV2` (aliased as `ToolHappyMetaV2`).
+The on-the-wire field name is `_happier`. Older *development* sessions may contain `_happy`; the app treats `_happy` as a legacy alias
+for routing and detail-level decisions.
 
-Example `_happy` fields (non-exhaustive):
+Example `_happier` fields (non-exhaustive):
 
 - `v`: `2`
 - `protocol`: `acp | codex | claude`
@@ -186,15 +221,15 @@ What fixtures assert (high level):
 - The fixtures file contains real “raw” tool-trace events we’ve curated as representative.
 - Tests run the CLI normalizers over those raw events and assert:
   - the canonical tool name chosen for each tool-call/tool-result
-  - that `_happy` metadata is present and correct
+  - that `_happier` metadata is present and correct
   - that key normalization behaviors exist (e.g. execute→Bash, tool-result error extraction, etc.)
 
 Fixtures are not a brittle “exact output snapshot” of every field; they are a drift detector paired with targeted invariants.
 
-Run via `happys`:
+Run:
 
 ```bash
-happys stack test <stack> happy-cli
+yarn workspace @happier-dev/cli test
 ```
 
 ### Provider contract baselines (optional, e2e-style)
@@ -203,7 +238,7 @@ In addition to unit/fixture tests inside `apps/cli`, the provider contract runne
 
 - the **set of observed fixture keys** matches an expected baseline for a scenario
 - the **shape** (structure) of representative payloads does not drift unexpectedly
-- extracted fixtures include V2 `_happy` metadata and match shared protocol schemas where applicable
+- extracted fixtures include V2 `_happier` metadata and match shared protocol schemas where applicable
 
 Key locations:
 
@@ -264,7 +299,7 @@ Relevant keys:
 
 ### Fallback normalization for rendering (legacy + Claude local-control)
 
-When `_happy.canonicalToolName` is missing, the app normalizes tool calls for rendering via:
+When `_happier.canonicalToolName` is missing (or when only legacy `_happy` metadata exists), the app normalizes tool calls for rendering via:
 
 - `apps/ui/sources/components/tools/utils/normalizeToolCallForRendering.ts`
 - helpers in `apps/ui/sources/components/tools/utils/normalize/*`
@@ -278,7 +313,7 @@ This normalization:
 This path covers two cases:
 
 1) **Legacy sessions** (pre V2 CLI normalization)
-2) **Claude local-control** reconstructed tools (transcript-derived; no `_happy` metadata)
+2) **Claude local-control** reconstructed tools (transcript-derived; no canonical V2 tool metadata)
 
 ---
 
@@ -327,8 +362,8 @@ When a provider changes tool shapes, the recommended workflow is:
 4) Update CLI normalization (`families/*` + canonical name mapping) and add/adjust tests.
 5) Ensure the app still renders legacy + Claude local-control sessions (fallback normalization should remain conservative).
 6) Run stack-scoped tests:
-   - `happys stack test <stack> happy-cli`
-   - `happys stack test <stack> happy` (app test suite)
+   - `yarn workspace @happier-dev/cli test`
+   - `yarn workspace @happier-dev/app test` (app test suite)
 
 The canonical rule:
 

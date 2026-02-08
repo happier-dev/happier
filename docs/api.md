@@ -80,11 +80,15 @@ Auth flows:
 - `DELETE /v1/push-tokens/:token`
 - `GET /v1/push-tokens`
 
-### Connect (GitHub + vendor tokens)
-- `GET /v1/connect/github/params`
-- `GET /v1/connect/github/callback`
-- `POST /v1/connect/github/webhook`
-- `DELETE /v1/connect/github`
+### Connect (OAuth providers + vendor tokens)
+- `GET /v1/auth/external/:provider/params`
+- `POST /v1/auth/external/:provider/finalize`
+- `DELETE /v1/auth/external/:provider/pending/:pending`
+- `GET /v1/connect/external/:provider/params`
+- `POST /v1/connect/external/:provider/finalize`
+- `DELETE /v1/connect/external/:provider/pending/:pending`
+- `DELETE /v1/connect/external/:provider`
+- `GET /v1/oauth/:provider/callback`
 - `POST /v1/connect/:vendor/register` (`vendor` in `openai | anthropic | gemini`)
 - `GET /v1/connect/:vendor/token`
 - `DELETE /v1/connect/:vendor`

@@ -37,10 +37,43 @@ This document describes how to deploy the Happier backend (`apps/server`) and th
 - `S3_USE_SSL`: `true`/`false` (default `true`).
 
 **Optional integrations**
-- GitHub OAuth/App: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_APP_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_WEBHOOK_SECRET`, plus redirect URL/URI.
-  - `GITHUB_REDIRECT_URL` is used by the OAuth callback handler.
-  - `GITHUB_REDIRECT_URI` is used by the GitHub App initializer.
-- Voice: `ELEVENLABS_API_KEY` (required for `/v1/voice/token` in production).
+- GitHub (OAuth + optional org allowlist enforcement)
+  - OAuth (used for linking a GitHub identity and for GitHub-only signup when enabled):
+    - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`
+    - `GITHUB_REDIRECT_URL` (preferred) or legacy `GITHUB_REDIRECT_URI`
+      - Set this to your server callback: `https://YOUR_SERVER/v1/oauth/github/callback`
+    - Optional: `GITHUB_STORE_ACCESS_TOKEN` (`true` to persist encrypted user tokens; default `false`)
+  - Auth policy / enforcement (enterprise / self-hosting restrictions):
+    - `AUTH_ANONYMOUS_SIGNUP_ENABLED` (default `true`)
+    - `AUTH_SIGNUP_PROVIDERS` (e.g. `github`)
+    - `AUTH_REQUIRED_LOGIN_PROVIDERS` (e.g. `github`)
+    - `AUTH_GITHUB_ALLOWED_USERS` (CSV list of lowercase GitHub logins)
+    - `AUTH_GITHUB_ALLOWED_ORGS` (CSV list of lowercase org slugs)
+    - `AUTH_GITHUB_ORG_MATCH` (`any`/`all`, default `any`)
+    - `AUTH_OFFBOARDING_ENABLED` (default `true` when allowlists are set)
+    - `AUTH_OFFBOARDING_INTERVAL_SECONDS` (default `600`)
+    - `AUTH_OFFBOARDING_MODE` (`per-request-cache`)
+    - `AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE` (`github_app` recommended when org allowlist is set, or `oauth_user_token`)
+  - GitHub App mode for org membership checks (recommended; avoids relying on user OAuth tokens):
+    - `AUTH_GITHUB_APP_ID`
+    - `AUTH_GITHUB_APP_PRIVATE_KEY` (PEM)
+    - `AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG` (e.g. `acme=123,other=456`)
+- Voice (server-minted ElevenLabs conversation tokens via `POST /v1/voice/token`):
+  - Required: `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID_PROD`
+  - Required when `VOICE_REQUIRE_SUBSCRIPTION=true`: `REVENUECAT_SECRET_KEY`
+  - Optional controls:
+    - `VOICE_ENABLED` (`true`/`false`, default `true`)
+    - `VOICE_REQUIRE_SUBSCRIPTION` (`true`/`false`, defaults to `true` when `NODE_ENV=production`)
+    - `VOICE_FREE_SESSIONS_PER_MONTH` (default `0`)
+    - `VOICE_FREE_MINUTES_PER_MONTH` (default `0`, enforced when `VOICE_REQUIRE_SUBSCRIPTION=true`)
+    - `VOICE_MAX_CONCURRENT_SESSIONS` (default `1`)
+    - `VOICE_MAX_SESSION_SECONDS` (default `1200`, min `30`)
+    - `VOICE_MAX_MINUTES_PER_DAY` (default `0` = unlimited; global per-user guardrail)
+    - `VOICE_TOKEN_MAX_PER_MINUTE` (default `10`, `0` disables rate limiting)
+    - `VOICE_COMPLETE_MAX_PER_MINUTE` (default `60`, `0` disables rate limiting)
+    - `VOICE_LEASE_CLEANUP` (`true`/`false`, default `false`)
+    - `VOICE_LEASE_RETENTION_DAYS` (default `30`, clamp 7–365)
+    - `VOICE_LEASE_CLEANUP_INTERVAL_MS` (default `21600000` = 6h, min `10000`)
 - Debug logging: `DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING` (enables file logging + dev log endpoint).
 
 ## Docker image
