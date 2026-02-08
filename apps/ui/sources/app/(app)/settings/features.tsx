@@ -13,12 +13,10 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [experiments, setExperiments] = useSettingMutable('experiments');
     const [experimentalAgents, setExperimentalAgents] = useSettingMutable('experimentalAgents');
     const [expUsageReporting, setExpUsageReporting] = useSettingMutable('expUsageReporting');
-    const [expFileViewer, setExpFileViewer] = useSettingMutable('expFileViewer');
+    const [expGitOperations, setExpGitOperations] = useSettingMutable('expGitOperations');
     const [expShowThinkingMessages, setExpShowThinkingMessages] = useSettingMutable('expShowThinkingMessages');
     const [expSessionType, setExpSessionType] = useSettingMutable('expSessionType');
     const [expZen, setExpZen] = useSettingMutable('expZen');
-    const [expVoiceAuthFlow, setExpVoiceAuthFlow] = useSettingMutable('expVoiceAuthFlow');
-    const [expInboxFriends, setExpInboxFriends] = useSettingMutable('expInboxFriends');
     const [expCodexResume, setExpCodexResume] = useSettingMutable('expCodexResume');
     const [expCodexAcp, setExpCodexAcp] = useSettingMutable('expCodexAcp');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
@@ -40,24 +38,21 @@ export default React.memo(function FeaturesSettingsScreen() {
         }
         setExperimentalAgents(nextExperimentalAgents as any);
         setExpUsageReporting(enabled);
-        setExpFileViewer(enabled);
+        // Intentionally NOT auto-enabled: this exposes write operations on user repositories.
+        setExpGitOperations(false);
         setExpShowThinkingMessages(enabled);
         setExpSessionType(enabled);
         setExpZen(enabled);
-        setExpVoiceAuthFlow(enabled);
-        setExpInboxFriends(enabled);
         // Intentionally NOT auto-enabled: these require additional local installs and have extra surface area.
         setExpCodexResume(false);
         setExpCodexAcp(false);
     }, [
         setExpCodexAcp,
         setExpCodexResume,
-        setExpFileViewer,
-        setExpInboxFriends,
+        setExpGitOperations,
         setExpSessionType,
         setExpShowThinkingMessages,
         setExpUsageReporting,
-        setExpVoiceAuthFlow,
         setExpZen,
         experimentalAgents,
         setExperimentalAgents,
@@ -205,10 +200,10 @@ export default React.memo(function FeaturesSettingsScreen() {
                         showChevron={false}
                     />
                     <Item
-                        title={t('settingsFeatures.expFileViewer')}
-                        subtitle={t('settingsFeatures.expFileViewerSubtitle')}
-                        icon={<Ionicons name="folder-open-outline" size={29} color="#FF9500" />}
-                        rightElement={<Switch value={expFileViewer} onValueChange={setExpFileViewer} />}
+                        title={t('settingsFeatures.expGitOperations')}
+                        subtitle={t('settingsFeatures.expGitOperationsSubtitle')}
+                        icon={<Ionicons name="git-branch-outline" size={29} color="#FF9500" />}
+                        rightElement={<Switch value={expGitOperations} onValueChange={setExpGitOperations} />}
                         showChevron={false}
                     />
                     <Item
@@ -230,20 +225,6 @@ export default React.memo(function FeaturesSettingsScreen() {
                         subtitle={t('settingsFeatures.expZenSubtitle')}
                         icon={<Ionicons name="leaf-outline" size={29} color="#34C759" />}
                         rightElement={<Switch value={expZen} onValueChange={setExpZen} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsFeatures.expVoiceAuthFlow')}
-                        subtitle={t('settingsFeatures.expVoiceAuthFlowSubtitle')}
-                        icon={<Ionicons name="mic-outline" size={29} color="#FF3B30" />}
-                        rightElement={<Switch value={expVoiceAuthFlow} onValueChange={setExpVoiceAuthFlow} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsFeatures.expInboxFriends')}
-                        subtitle={t('settingsFeatures.expInboxFriendsSubtitle')}
-                        icon={<Ionicons name="people-outline" size={29} color="#007AFF" />}
-                        rightElement={<Switch value={expInboxFriends} onValueChange={setExpInboxFriends} />}
                         showChevron={false}
                     />
                     <Item

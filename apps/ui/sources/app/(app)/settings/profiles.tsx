@@ -204,7 +204,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
         );
         if (!confirmed) return;
 
-        const updatedProfiles = profiles.filter(p => p.id !== profile.id);
+        const updatedProfiles = profiles.filter((p: AIBackendProfile) => p.id !== profile.id);
         setProfiles(updatedProfiles);
 
         // Clear last used profile if it was deleted
@@ -253,7 +253,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
             const hasBuiltInNameConflict = builtInNames.includes(newProfile.name.trim());
 
             // Check for duplicate names (excluding the new profile)
-            const isDuplicate = profiles.some(p =>
+            const isDuplicate = profiles.some((p: AIBackendProfile) =>
                 p.name.trim() === newProfile.name.trim()
             );
             if (isDuplicate || hasBuiltInNameConflict) {
@@ -265,7 +265,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
         } else {
             // Handle custom profile updates
             // Check for duplicate names (excluding current profile if editing)
-            const isDuplicate = profiles.some(p =>
+            const isDuplicate = profiles.some((p: AIBackendProfile) =>
                 p.id !== profile.id && p.name.trim() === profile.name.trim()
             );
             const hasBuiltInNameConflict = builtInNames.includes(profile.name.trim());
@@ -274,7 +274,7 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 return false;
             }
 
-            const existingIndex = profiles.findIndex(p => p.id === profile.id);
+            const existingIndex = profiles.findIndex((p: AIBackendProfile) => p.id === profile.id);
             let updatedProfiles: AIBackendProfile[];
 
             if (existingIndex >= 0) {

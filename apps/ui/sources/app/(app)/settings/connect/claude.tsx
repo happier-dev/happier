@@ -1,17 +1,8 @@
 import React from 'react';
-import { useRouter } from 'expo-router';
-import { OAuthView } from '@/components/OAuthView';
-import { buildAuthorizationUrl, ClaudeAuthTokens, exchangeCodeForTokens } from '@/utils/oauth';
-import { Modal } from '@/modal';
 import { t } from '@/text';
-import { StatusBar } from 'expo-status-bar';
-import { useAuth } from '@/auth/AuthContext';
-import { connectService } from '@/sync/apiServices';
-import { sync } from '@/sync/sync';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { Text } from '@/components/StyledText';
 import { StyleSheet } from 'react-native-unistyles';
-import { Platform } from 'react-native';
 
 export default function ClaudeOAuth() {
     // const router = useRouter();
@@ -21,7 +12,7 @@ export default function ClaudeOAuth() {
     //     try {
     //         // Send tokens to server which will update profile.connectedServices
     //         // Pass the raw token response to the server
-    //         await connectService(auth.credentials!, 'anthropic', tokens);
+    //         await connectVendorToken(auth.credentials!, 'anthropic', tokens);
     //         await sync.refreshProfile();
 
     //         // The server will handle updating the profile's connectedServices array

@@ -10,11 +10,18 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
+import { useAuth } from '@/auth/AuthContext';
+import { getServerUrl } from '@/sync/serverConfig';
+import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/pendingTerminalConnect';
+import { buildTerminalConnectDeepLink } from '@/utils/terminalConnectUrl';
 
 export default function TerminalConnectScreen() {
     const router = useRouter();
     const [publicKey, setPublicKey] = useState<string | null>(null);
+    const [serverUrl, setServerUrl] = useState<string | null>(null);
     const [hashProcessed, setHashProcessed] = useState(false);
+    const auth = useAuth();
+    const authRedirectTriggeredRef = React.useRef(false);
     const { processAuthUrl, isLoading } = useConnectTerminal({
         onSuccess: () => {
             router.back();
@@ -24,29 +31,46 @@ export default function TerminalConnectScreen() {
     // Extract key from hash on web platform
     useEffect(() => {
         if (Platform.OS === 'web' && typeof window !== 'undefined' && !hashProcessed) {
-            const hash = window.location.hash;
-            if (hash.startsWith('#key=')) {
-                const key = hash.substring(5); // Remove '#key='
-                setPublicKey(key);
+            const rawHash = window.location.hash || '';
+            if (rawHash.length > 1) {
+                const params = new URLSearchParams(rawHash.slice(1)); // remove '#'
+                const key = (params.get('key') ?? '').trim();
+                const server = (params.get('server') ?? '').trim();
+                if (key) setPublicKey(key);
+                if (server) setServerUrl(server);
                 
                 // Clear the hash from URL to prevent exposure in browser history
                 window.history.replaceState(null, '', window.location.pathname + window.location.search);
-                setHashProcessed(true);
-            } else {
-                setHashProcessed(true);
             }
+            setHashProcessed(true);
         }
     }, [hashProcessed]);
 
+    useEffect(() => {
+        if (auth.isAuthenticated) return;
+        if (!hashProcessed || !publicKey) return;
+        if (authRedirectTriggeredRef.current) return;
+
+        authRedirectTriggeredRef.current = true;
+        setPendingTerminalConnect({
+            publicKeyB64Url: publicKey,
+            serverUrl: serverUrl ?? getServerUrl(),
+        });
+        router.replace('/');
+    }, [auth.isAuthenticated, hashProcessed, publicKey, router, serverUrl]);
+
     const handleConnect = async () => {
         if (publicKey) {
-            // Convert the hash key format to the expected happier:// URL format
-            const authUrl = `happier://terminal?${publicKey}`;
+            const authUrl = buildTerminalConnectDeepLink({
+                publicKeyB64Url: publicKey,
+                serverUrl,
+            });
             await processAuthUrl(authUrl);
         }
     };
 
     const handleReject = () => {
+        clearPendingTerminalConnect();
         router.back();
     };
 
@@ -101,6 +125,24 @@ export default function TerminalConnectScreen() {
                     }}>
                         <Text style={{ ...Typography.default(), color: '#666' }}>
                             {t('terminal.processingConnection')}
+                        </Text>
+                    </View>
+                </ItemGroup>
+            </ItemList>
+        );
+    }
+
+    if (!auth.isAuthenticated && publicKey) {
+        return (
+            <ItemList>
+                <ItemGroup>
+                    <View style={{ 
+                        alignItems: 'center',
+                        paddingVertical: 32,
+                        paddingHorizontal: 16
+                    }}>
+                        <Text style={{ ...Typography.default(), color: '#666', textAlign: 'center', lineHeight: 20 }}>
+                            {t('modals.pleaseSignInFirst')}
                         </Text>
                     </View>
                 </ItemGroup>

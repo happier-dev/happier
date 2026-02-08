@@ -12,6 +12,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { QRCode } from '@/components/qr/QRCode';
+import { getServerFeatures } from '@/sync/apiFeatures';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -71,12 +72,25 @@ export default function Restore() {
     const [isWaitingForAuth, setIsWaitingForAuth] = useState(false);
     const [authReady, setAuthReady] = useState(false);
     const [waitingDots, setWaitingDots] = useState(0);
+    const [providerResetEnabled, setProviderResetEnabled] = useState(false);
     const isCancelledRef = useRef(false);
 
     // Memoize keypair generation to prevent re-creating on re-renders
     const keypair = React.useMemo(() => generateAuthKeyPair(), []);
 
     // Start QR authentication when component mounts
+    useEffect(() => {
+        let mounted = true;
+        void (async () => {
+            const features = await getServerFeatures({ timeoutMs: 800 });
+            const enabled = features?.features?.auth?.recovery?.providerReset?.enabled === true;
+            if (mounted) setProviderResetEnabled(enabled);
+        })();
+        return () => {
+            mounted = false;
+        };
+    }, []);
+
     useEffect(() => {
         const startQRAuth = async () => {
             try {
@@ -157,6 +171,16 @@ export default function Restore() {
                     <RoundButton title={t('connect.restoreWithSecretKeyInstead')} display='inverted' onPress={() => {
                         router.push('/restore/manual');
                     }} />
+                    {providerResetEnabled ? (
+                        <View style={{ paddingTop: 12 }}>
+                            <RoundButton
+                                size="small"
+                                title={t('connect.lostAccessLink')}
+                                display="inverted"
+                                onPress={() => router.push('/restore/lost-access')}
+                            />
+                        </View>
+                    ) : null}
                 </View>
             </View>
         </ScrollView>

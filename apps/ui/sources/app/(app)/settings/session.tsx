@@ -17,19 +17,67 @@ import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentTyp
 import type { PermissionMode } from '@/sync/permissionTypes';
 import { useEnabledAgentIds } from '@/agents/useEnabledAgentIds';
 import { getAgentCore, type AgentId } from '@/agents/catalog';
+import { getPermissionApplyTimingSubtitleKey } from './sessionI18n';
 
 type ToolViewDetailLevel = 'title' | 'summary' | 'full';
+type ToolDetailLevelTranslationKey =
+    | 'settingsSession.toolDetailLevel.defaultTitle'
+    | 'settingsSession.toolDetailLevel.defaultSubtitle'
+    | 'settingsSession.toolDetailLevel.titleOnlyTitle'
+    | 'settingsSession.toolDetailLevel.titleOnlySubtitle'
+    | 'settingsSession.toolDetailLevel.summaryTitle'
+    | 'settingsSession.toolDetailLevel.summarySubtitle'
+    | 'settingsSession.toolDetailLevel.fullTitle'
+    | 'settingsSession.toolDetailLevel.fullSubtitle';
 
-const TOOL_DETAIL_LEVEL_OPTIONS: Array<{ key: ToolViewDetailLevel; title: string; subtitle: string }> = [
-    { key: 'title', title: 'Title only', subtitle: 'Show only the tool name (no body) in the timeline.' },
-    { key: 'summary', title: 'Summary', subtitle: 'Show a compact, safe summary in the timeline.' },
-    { key: 'full', title: 'Full', subtitle: 'Show full details inline in the timeline.' },
-];
+const TOOL_DETAIL_LEVEL_OPTIONS = [
+    {
+        key: 'title',
+        titleKey: 'settingsSession.toolDetailLevel.titleOnlyTitle',
+        subtitleKey: 'settingsSession.toolDetailLevel.titleOnlySubtitle',
+    },
+    {
+        key: 'summary',
+        titleKey: 'settingsSession.toolDetailLevel.summaryTitle',
+        subtitleKey: 'settingsSession.toolDetailLevel.summarySubtitle',
+    },
+    {
+        key: 'full',
+        titleKey: 'settingsSession.toolDetailLevel.fullTitle',
+        subtitleKey: 'settingsSession.toolDetailLevel.fullSubtitle',
+    },
+ ] as const satisfies ReadonlyArray<{
+    key: ToolViewDetailLevel;
+    titleKey:
+        | 'settingsSession.toolDetailLevel.titleOnlyTitle'
+        | 'settingsSession.toolDetailLevel.summaryTitle'
+        | 'settingsSession.toolDetailLevel.fullTitle';
+    subtitleKey:
+        | 'settingsSession.toolDetailLevel.titleOnlySubtitle'
+        | 'settingsSession.toolDetailLevel.summarySubtitle'
+        | 'settingsSession.toolDetailLevel.fullSubtitle';
+}>;
 
-const TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS: Array<{ key: ToolViewDetailLevel | 'default'; title: string; subtitle: string }> = [
-    { key: 'default', title: 'Default', subtitle: 'Use the global default.' },
+const TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS = [
+    {
+        key: 'default',
+        titleKey: 'settingsSession.toolDetailLevel.defaultTitle',
+        subtitleKey: 'settingsSession.toolDetailLevel.defaultSubtitle',
+    },
     ...TOOL_DETAIL_LEVEL_OPTIONS,
-];
+] as const satisfies ReadonlyArray<{
+    key: ToolViewDetailLevel | 'default';
+    titleKey:
+        | 'settingsSession.toolDetailLevel.defaultTitle'
+        | 'settingsSession.toolDetailLevel.titleOnlyTitle'
+        | 'settingsSession.toolDetailLevel.summaryTitle'
+        | 'settingsSession.toolDetailLevel.fullTitle';
+    subtitleKey:
+        | 'settingsSession.toolDetailLevel.defaultSubtitle'
+        | 'settingsSession.toolDetailLevel.titleOnlySubtitle'
+        | 'settingsSession.toolDetailLevel.summarySubtitle'
+        | 'settingsSession.toolDetailLevel.fullSubtitle';
+}>;
 
 const TOOL_OVERRIDE_KEYS: Array<{ toolName: string; title: string }> = [
     { toolName: 'Bash', title: 'Bash' },
@@ -73,6 +121,7 @@ export default React.memo(function SessionSettingsScreen() {
     const enabledAgentIds = useEnabledAgentIds();
 
     const [defaultPermissionByAgent, setDefaultPermissionByAgent] = useSettingMutable('sessionDefaultPermissionModeByAgent');
+    const [permissionModeApplyTiming, setPermissionModeApplyTiming] = useSettingMutable('sessionPermissionModeApplyTiming');
     const getDefaultPermission = React.useCallback((agent: AgentId): PermissionMode => {
         const raw = (defaultPermissionByAgent as any)?.[agent] as PermissionMode | undefined;
         return (raw ?? 'default') as PermissionMode;
@@ -86,28 +135,29 @@ export default React.memo(function SessionSettingsScreen() {
 
     const [openProvider, setOpenProvider] = React.useState<null | AgentId>(null);
     const [openToolDetailMenu, setOpenToolDetailMenu] = React.useState<null | string>(null);
+    const tToolDetail = t as (key: ToolDetailLevelTranslationKey) => string;
 
     const options: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
         {
             key: 'agent_queue',
-            title: 'Queue in agent (current)',
-            subtitle: 'Write to transcript immediately; agent processes when ready.',
+            title: t('settingsSession.messageSending.queueInAgentTitle'),
+            subtitle: t('settingsSession.messageSending.queueInAgentSubtitle'),
         },
         {
             key: 'interrupt',
-            title: 'Interrupt & send',
-            subtitle: 'Abort current turn, then send immediately.',
+            title: t('settingsSession.messageSending.interruptTitle'),
+            subtitle: t('settingsSession.messageSending.interruptSubtitle'),
         },
         {
             key: 'server_pending',
-            title: 'Pending until ready',
-            subtitle: 'Keep messages in a pending queue; agent pulls when ready.',
+            title: t('settingsSession.messageSending.pendingTitle'),
+            subtitle: t('settingsSession.messageSending.pendingSubtitle'),
         },
     ];
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
-            <ItemGroup title="Message sending" footer="Controls what happens when you send a message while the agent is running.">
+            <ItemGroup title={t('settingsSession.messageSending.title')} footer={t('settingsSession.messageSending.footer')}>
                 {options.map((option) => (
                     <Item
                         key={option.key}
@@ -122,8 +172,8 @@ export default React.memo(function SessionSettingsScreen() {
             </ItemGroup>
 
             <ItemGroup
-                title="Tool rendering"
-                footer="Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior."
+                title={t('settingsSession.toolRendering.title')}
+                footer={t('settingsSession.toolRendering.footer')}
             >
                 <DropdownMenu
                     open={openToolDetailMenu === 'toolViewDetailLevelDefault'}
@@ -138,8 +188,13 @@ export default React.memo(function SessionSettingsScreen() {
                     popoverBoundaryRef={popoverBoundaryRef}
                     trigger={({ open, toggle }) => (
                         <Item
-                            title="Default tool detail level"
-                            subtitle={TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefault)?.title ?? String(toolViewDetailLevelDefault)}
+                            title={t('settingsSession.toolRendering.defaultToolDetailLevelTitle')}
+                            subtitle={
+                                (() => {
+                                    const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefault)?.titleKey;
+                                    return key ? tToolDetail(key) : String(toolViewDetailLevelDefault);
+                                })()
+                            }
                             icon={<Ionicons name="construct-outline" size={29} color="#007AFF" />}
                             rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
                             onPress={toggle}
@@ -149,8 +204,8 @@ export default React.memo(function SessionSettingsScreen() {
                     )}
                     items={TOOL_DETAIL_LEVEL_OPTIONS.map((opt) => ({
                         id: opt.key,
-                        title: opt.title,
-                        subtitle: opt.subtitle,
+                        title: tToolDetail(opt.titleKey),
+                        subtitle: tToolDetail(opt.subtitleKey),
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                                 <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
@@ -176,8 +231,13 @@ export default React.memo(function SessionSettingsScreen() {
                     popoverBoundaryRef={popoverBoundaryRef}
                     trigger={({ open, toggle }) => (
                         <Item
-                            title="Local-control default"
-                            subtitle={TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefaultLocalControl)?.title ?? String(toolViewDetailLevelDefaultLocalControl)}
+                            title={t('settingsSession.toolRendering.localControlDefaultTitle')}
+                            subtitle={
+                                (() => {
+                                    const key = TOOL_DETAIL_LEVEL_OPTIONS.find((opt) => opt.key === toolViewDetailLevelDefaultLocalControl)?.titleKey;
+                                    return key ? tToolDetail(key) : String(toolViewDetailLevelDefaultLocalControl);
+                                })()
+                            }
                             icon={<Ionicons name="shield-outline" size={29} color="#FF9500" />}
                             rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
                             onPress={toggle}
@@ -187,8 +247,8 @@ export default React.memo(function SessionSettingsScreen() {
                     )}
                     items={TOOL_DETAIL_LEVEL_OPTIONS.map((opt) => ({
                         id: opt.key,
-                        title: opt.title,
-                        subtitle: opt.subtitle,
+                        title: tToolDetail(opt.titleKey),
+                        subtitle: tToolDetail(opt.subtitleKey),
                         icon: (
                             <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                                 <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
@@ -202,8 +262,8 @@ export default React.memo(function SessionSettingsScreen() {
                 />
 
                 <Item
-                    title="Show debug by default"
-                    subtitle="Auto-expand raw tool payloads in the full tool view."
+                    title={t('settingsSession.toolRendering.showDebugByDefaultTitle')}
+                    subtitle={t('settingsSession.toolRendering.showDebugByDefaultSubtitle')}
                     icon={<Ionicons name="code-slash-outline" size={29} color="#5856D6" />}
                     rightElement={<Switch value={toolViewShowDebugByDefault} onValueChange={setToolViewShowDebugByDefault} />}
                     showChevron={false}
@@ -212,8 +272,8 @@ export default React.memo(function SessionSettingsScreen() {
             </ItemGroup>
 
             <ItemGroup
-                title="Tool detail overrides"
-                footer="Override the detail level for specific tools. Overrides apply to the canonical tool name (V2), after legacy normalization."
+                title={t('settingsSession.toolDetailOverrides.title')}
+                footer={t('settingsSession.toolDetailOverrides.footer')}
             >
                 {TOOL_OVERRIDE_KEYS.map((toolKey, index) => {
                     const override = (toolViewDetailLevelByToolName as any)?.[toolKey.toolName] as ToolViewDetailLevel | undefined;
@@ -236,7 +296,12 @@ export default React.memo(function SessionSettingsScreen() {
                             trigger={({ open, toggle }) => (
                                 <Item
                                     title={toolKey.title}
-                                    subtitle={TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.title ?? String(selected)}
+                                    subtitle={
+                                        (() => {
+                                            const key = TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.find((opt) => opt.key === selected)?.titleKey;
+                                            return key ? tToolDetail(key) : String(selected);
+                                        })()
+                                    }
                                     icon={<Ionicons name="construct-outline" size={29} color={theme.colors.textSecondary} />}
                                     rightElement={<Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={20} color={theme.colors.textSecondary} />}
                                     onPress={toggle}
@@ -247,8 +312,8 @@ export default React.memo(function SessionSettingsScreen() {
                             )}
                             items={TOOL_DETAIL_LEVEL_WITH_DEFAULT_OPTIONS.map((opt) => ({
                                 id: opt.key,
-                                title: opt.title,
-                                subtitle: opt.subtitle,
+                                title: tToolDetail(opt.titleKey),
+                                subtitle: tToolDetail(opt.subtitleKey),
                                 icon: (
                                     <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
                                         <Ionicons name="list-outline" size={22} color={theme.colors.textSecondary} />
@@ -272,7 +337,21 @@ export default React.memo(function SessionSettingsScreen() {
                 })}
             </ItemGroup>
 
-            <ItemGroup title="Default permissions" footer="Applies when starting a new session. Profiles can optionally override this.">
+            <ItemGroup title={t('settingsSession.defaultPermissions.title')} footer={t('settingsSession.defaultPermissions.footer')}>
+                <Item
+                    title={t('settingsSession.defaultPermissions.applyPermissionChangesTitle')}
+                    subtitle={t(getPermissionApplyTimingSubtitleKey(permissionModeApplyTiming))}
+                    icon={<Ionicons name="shield-checkmark-outline" size={29} color="#34C759" />}
+                    rightElement={(
+                        <Switch
+                            value={permissionModeApplyTiming === 'immediate'}
+                            onValueChange={(value) => setPermissionModeApplyTiming(value ? 'immediate' : 'next_prompt')}
+                        />
+                    )}
+                    showChevron={false}
+                    showDivider={true}
+                    onPress={() => setPermissionModeApplyTiming(permissionModeApplyTiming === 'immediate' ? 'next_prompt' : 'immediate')}
+                />
                 {enabledAgentIds.map((agentId, index) => {
                     const core = getAgentCore(agentId);
                     const mode = getDefaultPermission(agentId);

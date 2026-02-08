@@ -20,6 +20,7 @@ export default function DeviceInfo() {
     const deviceType = getDeviceType();
     const headerHeight = useHeaderHeight();
     const isRunningOnMacCatalyst = isRunningOnMac();
+    const isPad = Platform.OS === 'ios' && (Platform as any).isPad === true;
     
     // Calculate device dimensions using the correct function
     const dimensions = calculateDeviceDimensions({
@@ -69,8 +70,7 @@ export default function DeviceInfo() {
                     />
                     <Item
                         title="Detection Method"
-                        // @ts-ignore - isPad is not in the type definitions but exists at runtime on iOS
-                        detail={Platform.OS === 'ios' && Platform.isPad ? 'iOS isPad' : `${diagonalInches.toFixed(1)}" diagonal`}
+                        detail={isPad ? 'iOS isPad' : `${diagonalInches.toFixed(1)}" diagonal`}
                     />
                     <Item
                         title="Mac Catalyst"
@@ -150,8 +150,7 @@ export default function DeviceInfo() {
                         <>
                             <Item
                                 title="iOS Interface"
-                                // @ts-ignore - isPad is not in the type definitions but exists at runtime on iOS
-                                detail={Platform.isPad ? 'iPad' : 'iPhone'}
+                                detail={isPad ? 'iPad' : 'iPhone'}
                             />
                             <Item
                                 title="iOS Version"

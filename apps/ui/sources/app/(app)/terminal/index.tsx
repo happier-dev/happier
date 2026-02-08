@@ -11,40 +11,97 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
+import { useAuth } from '@/auth/AuthContext';
+import { getServerUrl } from '@/sync/serverConfig';
+import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/pendingTerminalConnect';
+import { buildTerminalConnectDeepLink } from '@/utils/terminalConnectUrl';
 
 export default function TerminalScreen() {
     const router = useRouter();
     const searchParams = useLocalSearchParams();
     const { theme } = useUnistyles();
+    const auth = useAuth();
+    const authRedirectTriggeredRef = React.useRef(false);
 
     // const [urlProcessed, setUrlProcessed] = useState(false);
     const publicKey = React.useMemo(() => {
-        const keys = Object.keys(searchParams);
-        if (keys.length > 0) {
-            // If we have any search params, the first one should be our key
-            const key = keys[0];
-            return key;
-        } else {
-            return null;
-        }
-    }, [searchParams])
+        const keyParam = searchParams.key;
+        if (typeof keyParam === 'string' && keyParam.trim()) return keyParam.trim();
+        if (Array.isArray(keyParam) && keyParam[0]?.trim()) return keyParam[0].trim();
+
+        // Legacy deep-link format: happier://terminal?<publicKeyB64Url>
+        const knownParams = new Set(['key', 'server']);
+        const unknownKeys = Object.keys(searchParams).filter((k) => !knownParams.has(k));
+        if (unknownKeys.length !== 1) return null;
+        const legacyKey = unknownKeys[0]?.trim();
+        return legacyKey ?? null;
+    }, [searchParams]);
+
+    const serverUrl = React.useMemo(() => {
+        const v = searchParams.server;
+        if (typeof v === 'string' && v.trim()) return v.trim();
+        if (Array.isArray(v) && v[0]?.trim()) return v[0].trim();
+        return null;
+    }, [searchParams]);
     const { processAuthUrl, isLoading } = useConnectTerminal({
         onSuccess: () => {
             router.back();
         }
     });
 
+    React.useEffect(() => {
+        if (auth.isAuthenticated) return;
+        if (!publicKey) return;
+        if (authRedirectTriggeredRef.current) return;
+
+        authRedirectTriggeredRef.current = true;
+        setPendingTerminalConnect({
+            publicKeyB64Url: publicKey,
+            serverUrl: serverUrl ?? getServerUrl(),
+        });
+        router.replace('/');
+    }, [auth.isAuthenticated, publicKey, router, serverUrl]);
+
     const handleConnect = async () => {
         if (publicKey) {
-            // Use the full happier:// URL format expected by the hook
-            const authUrl = `happier://terminal?${publicKey}`;
+            const authUrl = buildTerminalConnectDeepLink({
+                publicKeyB64Url: publicKey,
+                serverUrl,
+            });
             await processAuthUrl(authUrl);
         }
     };
 
     const handleReject = () => {
+        clearPendingTerminalConnect();
         router.back();
     };
+
+    if (!auth.isAuthenticated && publicKey) {
+        return (
+            <>
+                <ItemList>
+                    <ItemGroup>
+                        <View style={{
+                            alignItems: 'center',
+                            paddingVertical: 32,
+                            paddingHorizontal: 16
+                        }}>
+                            <Text style={{
+                                ...Typography.default(),
+                                fontSize: 14,
+                                color: theme.colors.textSecondary,
+                                textAlign: 'center',
+                                lineHeight: 20
+                            }}>
+                                {t('modals.pleaseSignInFirst')}
+                            </Text>
+                        </View>
+                    </ItemGroup>
+                </ItemList>
+            </>
+        );
+    }
 
     // Show error if no key found
     if (!publicKey) {

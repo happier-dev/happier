@@ -12,6 +12,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { config } from '@/config';
+import { resolveExpoReleaseChannel } from './expoConstantsReleaseChannel';
 
 interface JsonViewerProps {
     title: string;
@@ -154,8 +155,8 @@ export default function ExpoConstantsScreen() {
     // Get Updates manifest if available
     let updatesManifest = null;
     try {
-        // @ts-ignore - manifest might not be typed
-        updatesManifest = Updates.manifest;
+        const maybeManifest = Updates.manifest;
+        updatesManifest = maybeManifest && Object.keys(maybeManifest).length > 0 ? maybeManifest : null;
     } catch (e) {
         // expo-updates might not be available
     }
@@ -164,15 +165,16 @@ export default function ExpoConstantsScreen() {
     let updateId = null;
     let releaseChannel = null;
     let channel = null;
-    let isEmbeddedLaunch = null;
+    let isEmbeddedLaunch: boolean | undefined = undefined;
     try {
-        // @ts-ignore
-        updateId = Updates.updateId;
-        // @ts-ignore
-        releaseChannel = Updates.releaseChannel;
-        // @ts-ignore
-        channel = Updates.channel;
-        // @ts-ignore
+        updateId = Updates.updateId ?? null;
+        channel = Updates.channel ?? null;
+        releaseChannel = resolveExpoReleaseChannel({
+            updatesReleaseChannel: (Updates as any).releaseChannel ?? null,
+            updatesChannel: channel,
+            manifestReleaseChannel: (manifest as any)?.releaseChannel ?? null,
+            expoConfigReleaseChannel: (expoConfig as any)?.releaseChannel ?? null,
+        });
         isEmbeddedLaunch = Updates.isEmbeddedLaunch;
     } catch (e) {
         // Properties might not be available

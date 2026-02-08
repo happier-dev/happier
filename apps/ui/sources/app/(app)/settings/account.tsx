@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { View, Text, Pressable, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
 import { useAuth } from '@/auth/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
@@ -17,22 +16,29 @@ import { sync } from '@/sync/sync';
 import { useUnistyles } from 'react-native-unistyles';
 import { Switch } from '@/components/Switch';
 import { useConnectAccount } from '@/hooks/useConnectAccount';
-import { getDisplayName, getAvatarUrl } from '@/sync/profile';
+import { getDisplayName } from '@/sync/profile';
 import { Image } from 'expo-image';
 import { useHappyAction } from '@/hooks/useHappyAction';
-import { disconnectGitHub } from '@/sync/apiGithub';
-import { disconnectService } from '@/sync/apiServices';
+import { disconnectVendorToken } from '@/sync/apiVendorTokens';
 import { getAgentCore, resolveAgentIdFromConnectedServiceId, getAgentIconSource, getAgentIconTintColor } from '@/agents/catalog';
+import { HappyError } from '@/utils/errors';
+import { setAccountUsername } from '@/sync/apiUsername';
+import { storage } from '@/sync/storageStore';
+import { useInboxFriendsEnabled } from '@/hooks/useInboxFriendsEnabled';
+import { useFriendsIdentityReadiness } from '@/hooks/useFriendsIdentityReadiness';
+import { ProviderIdentityItems } from '@/components/account/ProviderIdentityItems';
 
 export default React.memo(() => {
     const { theme } = useUnistyles();
     const auth = useAuth();
-    const router = useRouter();
     const [showSecret, setShowSecret] = useState(false);
     const [copiedRecently, setCopiedRecently] = useState(false);
     const [analyticsOptOut, setAnalyticsOptOut] = useSettingMutable('analyticsOptOut');
     const { connectAccount, isLoading: isConnecting } = useConnectAccount();
     const profile = useProfile();
+    const friendsIdentityReadiness = useFriendsIdentityReadiness();
+    const friendsEnabled = useInboxFriendsEnabled();
+    const applyProfile = storage((state) => state.applyProfile);
 
     // Get the current secret key
     const currentSecret = auth.credentials?.secret || '';
@@ -40,23 +46,49 @@ export default React.memo(() => {
 
     // Profile display values
     const displayName = getDisplayName(profile);
-    const githubUsername = profile.github?.login;
+    const canSetUsername =
+        friendsEnabled &&
+        !friendsIdentityReadiness.isLoadingFeatures &&
+        friendsIdentityReadiness.gate.gateVariant === 'username';
 
-    // GitHub disconnection
-    const [disconnecting, handleDisconnectGitHub] = useHappyAction(async () => {
-        const confirmed = await Modal.confirm(
-            t('modals.disconnectGithub'),
-            t('modals.disconnectGithubConfirm'),
-            { confirmText: t('modals.disconnect'), destructive: true }
+    const [savingUsername, saveUsername] = useHappyAction(async () => {
+        if (!auth.credentials) return;
+        if (!canSetUsername) return;
+
+        const next = await Modal.prompt(
+            t('profile.username'),
+            undefined,
+            {
+                placeholder: t('profile.username'),
+                defaultValue: profile.username ?? undefined,
+                confirmText: t('common.save'),
+                cancelText: t('common.cancel'),
+            },
         );
-        if (confirmed) {
-            await disconnectGitHub(auth.credentials!);
+        if (next == null) return;
+
+        try {
+            const res = await setAccountUsername(auth.credentials, next);
+            applyProfile({ ...profile, username: res.username });
+        } catch (e) {
+            if (e instanceof HappyError) {
+                const msg =
+                    e.message === 'username-taken' ? t('friends.username.taken')
+                        : e.message === 'invalid-username' ? t('friends.username.invalid')
+                            : e.message === 'username-disabled' ? t('friends.username.disabled')
+                                : e.message === 'friends-disabled' ? t('friends.disabled')
+                                    : e.message;
+                await Modal.alert(t('common.error'), msg);
+                return;
+            }
+            throw e;
         }
     });
 
     // Service disconnection
     const [disconnectingService, setDisconnectingService] = useState<string | null>(null);
     const handleDisconnectService = async (service: string, displayName: string) => {
+        if (!auth.credentials) return;
         const confirmed = await Modal.confirm(
             t('modals.disconnectService', { service: displayName }),
             t('modals.disconnectServiceConfirm', { service: displayName }),
@@ -65,7 +97,7 @@ export default React.memo(() => {
         if (confirmed) {
             setDisconnectingService(service);
             try {
-                await disconnectService(auth.credentials!, service);
+                await disconnectVendorToken(auth.credentials, service);
                 await sync.refreshProfile();
                 // The profile will be updated via sync
             } catch (error) {
@@ -137,8 +169,7 @@ export default React.memo(() => {
                 </ItemGroup>
 
                 {/* Profile Section */}
-                {(displayName || githubUsername || profile.avatar) && (
-                    <ItemGroup title={t('settingsAccount.profile')}>
+                <ItemGroup title={t('settingsAccount.profile')}>
                         {displayName && (
                             <Item
                                 title={t('settingsAccount.name')}
@@ -146,30 +177,27 @@ export default React.memo(() => {
                                 showChevron={false}
                             />
                         )}
-                        {githubUsername && (
+                        {canSetUsername && (
                             <Item
-                                title={t('settingsAccount.github')}
-                                detail={`@${githubUsername}`}
-                                subtitle={t('settingsAccount.tapToDisconnect')}
-                                onPress={handleDisconnectGitHub}
-                                loading={disconnecting}
+                                title={t('profile.username')}
+                                detail={profile.username ? `@${profile.username}` : undefined}
+                                subtitle={
+                                    profile.username ? undefined : t('friends.username.required')
+                                }
+                                onPress={saveUsername}
+                                disabled={savingUsername}
+                                loading={savingUsername}
                                 showChevron={false}
-                                icon={profile.avatar?.url ? (
-                                    <Image
-                                        source={{ uri: profile.avatar.url }}
-                                        style={{ width: 29, height: 29, borderRadius: 14.5 }}
-                                        placeholder={{ thumbhash: profile.avatar.thumbhash }}
-                                        contentFit="cover"
-                                        transition={200}
-                                        cachePolicy="memory-disk"
-                                    />
-                                ) : (
-                                    <Ionicons name="logo-github" size={29} color={theme.colors.textSecondary} />
-                                )}
+                                icon={<Ionicons name="at-outline" size={29} color={theme.colors.textSecondary} />}
                             />
                         )}
-                    </ItemGroup>
-                )}
+                        <ProviderIdentityItems
+                            profile={profile}
+                            credentials={auth.credentials}
+                            applyProfile={applyProfile}
+                            returnTo="/settings/account"
+                        />
+                </ItemGroup>
 
                 {/* Connected Services Section */}
                 {profile.connectedServices && profile.connectedServices.length > 0 && (() => {
@@ -229,6 +257,14 @@ export default React.memo(() => {
                         subtitle={showSecret ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
                         icon={<Ionicons name={showSecret ? "eye-off-outline" : "eye-outline"} size={29} color="#FF9500" />}
                         onPress={handleShowSecret}
+                        rightElement={
+                            <Pressable
+                                onPress={handleCopySecret}
+                                hitSlop={12}
+                            >
+                                <Ionicons name="copy-outline" size={18} color={theme.colors.textSecondary} />
+                            </Pressable>
+                        }
                         showChevron={false}
                     />
                 </ItemGroup>
