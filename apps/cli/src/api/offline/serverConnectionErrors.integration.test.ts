@@ -48,43 +48,76 @@ interface TestHandleConfig<T = { id: string }> {
     onNotify?: (msg: string) => void;
     onCleanup?: () => void;
     initialDelayMs?: number;
+    backoffDelayMs?: (failureCount: number) => number;
 }
+
+const reconnectionSignals = new WeakMap<object, Promise<void>>();
 
 /**
  * Creates a test reconnection handle with sensible defaults.
  * Reduces boilerplate in individual tests.
  */
 function createTestHandle<T = { id: string }>(config: TestHandleConfig<T> = {}) {
-    const onReconnected = config.onReconnected ?? vi.fn().mockResolvedValue({ id: 'test-session' });
+    const onReconnectedImpl = config.onReconnected ?? vi.fn().mockResolvedValue({ id: 'test-session' });
+    let resolveReconnected!: () => void;
+    const reconnectedSignal = new Promise<void>((resolve) => {
+        resolveReconnected = resolve;
+    });
+    const onReconnected = vi.fn(async () => {
+        const session = await onReconnectedImpl();
+        resolveReconnected();
+        return session;
+    });
     const onNotify = config.onNotify ?? vi.fn();
     const onCleanup = config.onCleanup ?? vi.fn();
 
     const handle = startOfflineReconnection<T>({
         serverUrl: 'http://test-server',
-        onReconnected: onReconnected as () => Promise<T>,
+        onReconnected: onReconnected as unknown as () => Promise<T>,
         onNotify,
         onCleanup,
         healthCheck: config.healthCheck ?? (async () => { /* success */ }),
-        initialDelayMs: config.initialDelayMs ?? 1
+        initialDelayMs: config.initialDelayMs ?? 1,
+        backoffDelayMs: config.backoffDelayMs ?? (() => 1),
     });
 
+    reconnectionSignals.set(handle as object, reconnectedSignal);
     return { handle, onReconnected, onNotify, onCleanup };
+}
+
+function createDeferred<T = void>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
 }
 
 /**
  * Waits for reconnection to succeed, with timeout protection.
- * Polls isReconnected() to avoid flaky timing issues.
  */
 async function waitForReconnection(
     handle: ReturnType<typeof startOfflineReconnection>,
     timeoutMs: number = 15000
 ): Promise<boolean> {
-    const startTime = Date.now();
-    while (Date.now() - startTime < timeoutMs) {
-        if (handle.isReconnected()) return true;
-        await new Promise(resolve => setTimeout(resolve, 100));
+    const signal = reconnectionSignals.get(handle as object);
+    if (!signal) {
+        await vi.waitFor(
+            () => {
+                expect(handle.isReconnected()).toBe(true);
+            },
+            { timeout: timeoutMs, interval: 1 },
+        );
+        return handle.isReconnected();
     }
-    return false;
+
+    await Promise.race([
+        signal,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for reconnection')), timeoutMs)),
+    ]);
+    return handle.isReconnected();
 }
 
 /**
@@ -139,7 +172,6 @@ describe('startOfflineReconnection', () => {
             const { handle, onReconnected } = createTestHandle();
 
             await waitForReconnection(handle);
-            await new Promise(resolve => setTimeout(resolve, 200)); // Extra wait
 
             expect(onReconnected).toHaveBeenCalledTimes(1);
 
@@ -212,20 +244,26 @@ describe('startOfflineReconnection', () => {
     describe('cancellation', () => {
         it('should stop attempts when cancelled', async () => {
             let attemptCount = 0;
+            const firstAttemptStarted = createDeferred<void>();
+            const unblockFirstAttempt = createDeferred<void>();
             const healthCheck = async () => {
                 attemptCount++;
+                if (attemptCount === 1) {
+                    firstAttemptStarted.resolve();
+                    await unblockFirstAttempt.promise;
+                }
                 throw new Error('Always fail');
             };
 
             const { handle, onCleanup } = createTestHandle({ healthCheck });
-
-            await new Promise(resolve => setTimeout(resolve, 50));
-            const countBeforeCancel = attemptCount;
+            await firstAttemptStarted.promise;
 
             handle.cancel();
+            const countBeforeCancel = attemptCount;
+            unblockFirstAttempt.resolve();
             expect(onCleanup).toHaveBeenCalledOnce();
 
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await Promise.resolve();
             expect(attemptCount).toBe(countBeforeCancel);
         });
 
@@ -236,8 +274,6 @@ describe('startOfflineReconnection', () => {
 
             handle.cancel();
             expect(onCleanup).toHaveBeenCalledOnce();
-
-            await new Promise(resolve => setTimeout(resolve, 600));
 
             expect(onReconnected).not.toHaveBeenCalled();
             expect(handle.isReconnected()).toBe(false);
@@ -251,8 +287,7 @@ describe('startOfflineReconnection', () => {
             handle.cancel();
             handle.cancel();
 
-            // onCleanup should still only be called once per cancel() call
-            // (cancel sets cancelled=true, preventing further action)
+            // cancel() is safe to call repeatedly; onCleanup runs on each invocation.
             expect(onCleanup).toHaveBeenCalledTimes(3);
         });
     });
@@ -266,8 +301,9 @@ describe('startOfflineReconnection', () => {
             };
 
             const { handle, onNotify, onReconnected } = createTestHandle({ healthCheck });
-
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await vi.waitFor(() => {
+                expect(attemptCount).toBe(1);
+            });
 
             expect(attemptCount).toBe(1);
             expect(onNotify).toHaveBeenCalledWith(
@@ -275,7 +311,7 @@ describe('startOfflineReconnection', () => {
             );
             expect(onReconnected).not.toHaveBeenCalled();
 
-            await new Promise(resolve => setTimeout(resolve, 200));
+            await Promise.resolve();
             expect(attemptCount).toBe(1); // No retry after auth failure
 
             handle.cancel();
@@ -378,27 +414,24 @@ describe('startOfflineReconnection', () => {
 
     describe('edge cases', () => {
         it('should handle race condition: cancel during async health check', async () => {
-            let healthCheckResolve: () => void;
-            const healthCheckPromise = new Promise<void>(resolve => {
-                healthCheckResolve = resolve;
-            });
+            const healthCheckStarted = createDeferred<void>();
+            const healthCheckGate = createDeferred<void>();
 
             const { handle, onReconnected } = createTestHandle({
                 healthCheck: async () => {
-                    await healthCheckPromise;
+                    healthCheckStarted.resolve();
+                    await healthCheckGate.promise;
                 }
             });
 
-            // Wait for health check to start
-            await new Promise(resolve => setTimeout(resolve, 50));
+            await healthCheckStarted.promise;
 
             // Cancel while health check is in progress
             handle.cancel();
 
             // Now let health check complete
-            healthCheckResolve!();
-
-            await new Promise(resolve => setTimeout(resolve, 50));
+            healthCheckGate.resolve();
+            await Promise.resolve();
 
             // onReconnected should NOT be called because cancelled flag is set
             expect(onReconnected).not.toHaveBeenCalled();
@@ -406,28 +439,27 @@ describe('startOfflineReconnection', () => {
         });
 
         it('should handle race condition: cancel during async onReconnected', async () => {
-            let onReconnectedResolve: () => void;
-            const onReconnectedPromise = new Promise<{ id: string }>(resolve => {
-                onReconnectedResolve = () => resolve({ id: 'session' });
-            });
+            const onReconnectedStarted = createDeferred<void>();
+            const onReconnectedGate = createDeferred<{ id: string }>();
 
             const onReconnected = vi.fn().mockImplementation(async () => {
-                return onReconnectedPromise;
+                onReconnectedStarted.resolve();
+                return onReconnectedGate.promise;
             });
 
             const { handle, onNotify } = createTestHandle({ onReconnected });
 
-            // Wait for onReconnected to start
-            await new Promise(resolve => setTimeout(resolve, 50));
+            await onReconnectedStarted.promise;
             expect(onReconnected).toHaveBeenCalled();
 
             // Cancel while onReconnected is in progress
             handle.cancel();
 
             // Now let onReconnected complete
-            onReconnectedResolve!();
-
-            await new Promise(resolve => setTimeout(resolve, 50));
+            onReconnectedGate.resolve({ id: 'session' });
+            await vi.waitFor(() => {
+                expect(handle.getSession()).toEqual({ id: 'session' });
+            });
 
             // Session should still be set (async operation completed)
             // but no further actions should occur
