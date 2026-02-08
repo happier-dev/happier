@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createInTxHarness } from "../api/testkit/txHarness";
 
 const emitUpdate = vi.fn();
 const buildKVBatchUpdateUpdate = vi.fn((_changes: any, updSeq: number, updId: string) => ({
@@ -23,26 +24,13 @@ let txCreate: any;
 let txUpdate: any;
 
 vi.mock("@/storage/inTx", () => {
-    const afterTx = (tx: any, callback: () => void) => {
-        tx.__afterTxCallbacks.push(callback);
-    };
-
-    const inTx = async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
-        const tx: any = {
-            __afterTxCallbacks: [] as Array<() => void | Promise<void>>,
+    const { inTx, afterTx } = createInTxHarness(() => ({
             userKVStore: {
                 findUnique: (...args: any[]) => txFindUnique(...args),
                 create: (...args: any[]) => txCreate(...args),
                 update: (...args: any[]) => txUpdate(...args),
             },
-        };
-
-        const result = await fn(tx);
-        for (const cb of tx.__afterTxCallbacks) {
-            await cb();
-        }
-        return result;
-    };
+    }));
 
     return { afterTx, inTx };
 });
@@ -125,4 +113,3 @@ describe("kvMutate (AccountChange integration)", () => {
         );
     });
 });
-

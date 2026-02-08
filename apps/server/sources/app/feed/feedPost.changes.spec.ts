@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+    flushAfterTxCallbacks,
+    registerAfterTxCallback,
+    withAfterTxCallbacks,
+} from "../api/testkit/txHarness";
 
 const emitUpdate = vi.fn();
 const buildNewFeedPostUpdate = vi.fn((_item: any, updSeq: number, updId: string) => ({
@@ -20,7 +25,7 @@ vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
 vi.mock("@/storage/inTx", () => ({
     afterTx: (tx: any, callback: () => void | Promise<void>) => {
-        tx.__afterTxCallbacks.push(callback);
+        registerAfterTxCallback(tx, callback);
     },
 }));
 
@@ -28,8 +33,7 @@ describe("feedPost (AccountChange integration)", () => {
     it("marks feed change and emits update using returned cursor", async () => {
         const { feedPost } = await import("./feedPost");
 
-        const tx: any = {
-            __afterTxCallbacks: [] as Array<() => void | Promise<void>>,
+        const tx = withAfterTxCallbacks({
             userFeedItem: {
                 deleteMany: vi.fn(async () => ({})),
                 create: vi.fn(async () => ({
@@ -44,12 +48,10 @@ describe("feedPost (AccountChange integration)", () => {
             account: {
                 update: vi.fn(async () => ({ feedSeq: BigInt(7) })),
             },
-        };
+        });
 
         const result = await feedPost(tx, { uid: "u1" } as any, { kind: "friend_request", uid: "u2" } as any, "rk");
-        for (const cb of tx.__afterTxCallbacks) {
-            await cb();
-        }
+        await flushAfterTxCallbacks(tx);
 
         expect(markAccountChanged).toHaveBeenCalledWith(
             tx,

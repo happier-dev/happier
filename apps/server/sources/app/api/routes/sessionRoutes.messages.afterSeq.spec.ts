@@ -1,55 +1,22 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
-vi.mock("@/app/events/eventRouter", () => ({
-    eventRouter: { emitUpdate: vi.fn() },
-    buildNewMessageUpdate: vi.fn(),
-    buildNewSessionUpdate: vi.fn(),
-    buildUpdateSessionUpdate: vi.fn(),
-}));
-const catchupFetchesInc = vi.fn();
-const catchupReturnedInc = vi.fn();
-vi.mock("@/app/monitoring/metrics2", () => ({
-    catchupFollowupFetchesCounter: { inc: catchupFetchesInc },
-    catchupFollowupReturnedCounter: { inc: catchupReturnedInc },
-}));
-vi.mock("@/utils/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "upd-id") }));
-vi.mock("@/utils/log", () => ({ log: vi.fn() }));
-vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () => true) }));
-vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
-vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi.fn() }));
-vi.mock("@/app/session/sessionWriteService", () => ({ createSessionMessage: vi.fn(), patchSession: vi.fn() }));
-vi.mock("@/storage/inTx", () => ({ inTx: vi.fn(async (fn: any) => await fn({})), afterTx: vi.fn() }));
-
-const checkSessionAccess = vi.fn();
-vi.mock("@/app/share/accessControl", () => ({
-    checkSessionAccess: (...args: any[]) => checkSessionAccess(...args),
-}));
-
-const sessionMessageFindMany = vi.fn();
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: { findMany: vi.fn(async () => []) },
-        sessionShare: { findMany: vi.fn(async () => []) },
-        sessionMessage: { findMany: (...args: any[]) => sessionMessageFindMany(...args) },
-    },
-}));
-
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get(path: string, _opts: any, handler: any) {
-        this.routes.set(`GET ${path}`, handler);
-    }
-    post() {}
-    patch() {}
-    delete() {}
-}
+import {
+    catchupFetchesInc,
+    catchupReturnedInc,
+    checkSessionAccess,
+    createSessionRouteReply,
+    registerSessionRoutesAndGetHandler,
+    resetSessionRouteMocks,
+    sessionMessageFindMany,
+} from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v1 messages pagination", () => {
     beforeEach(() => {
-        catchupFetchesInc.mockClear();
-        catchupReturnedInc.mockClear();
+        resetSessionRouteMocks();
+        checkSessionAccess.mockReset();
+        sessionMessageFindMany.mockReset();
+        catchupFetchesInc.mockReset();
+        catchupReturnedInc.mockReset();
     });
 
     it("returns forward page in ascending order with nextAfterSeq when hasMore", async () => {
@@ -62,12 +29,8 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m5", seq: 5, localId: null, content: { t: "encrypted", c: "c5" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { sessionRoutes } = await import("./sessionRoutes");
-        const app = new FakeApp();
-        sessionRoutes(app as any);
-
-        const handler = app.routes.get("GET /v1/sessions/:sessionId/messages");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
+        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
+        const reply = createSessionRouteReply();
 
         const res = await handler(
             {
@@ -108,12 +71,8 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m3", seq: 3, localId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { sessionRoutes } = await import("./sessionRoutes");
-        const app = new FakeApp();
-        sessionRoutes(app as any);
-
-        const handler = app.routes.get("GET /v1/sessions/:sessionId/messages");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
+        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
+        const reply = createSessionRouteReply();
 
         const res = await handler(
             {
@@ -147,12 +106,8 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m3", seq: 3, localId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { sessionRoutes } = await import("./sessionRoutes");
-        const app = new FakeApp();
-        sessionRoutes(app as any);
-
-        const handler = app.routes.get("GET /v1/sessions/:sessionId/messages");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
+        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
+        const reply = createSessionRouteReply();
 
         const res = await handler(
             {
@@ -194,12 +149,8 @@ describe("sessionRoutes v1 messages pagination", () => {
             { id: "m3", seq: 3, localId: null, content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
         ]);
 
-        const { sessionRoutes } = await import("./sessionRoutes");
-        const app = new FakeApp();
-        sessionRoutes(app as any);
-
-        const handler = app.routes.get("GET /v1/sessions/:sessionId/messages");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
+        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v1/sessions/:sessionId/messages");
+        const reply = createSessionRouteReply();
 
         const res = await handler(
             {

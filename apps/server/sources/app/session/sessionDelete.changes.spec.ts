@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createInTxHarness } from "../api/testkit/txHarness";
 
 const emitUpdate = vi.fn();
 const buildDeleteSessionUpdate = vi.fn((_sid: string, updSeq: number, updId: string) => ({
@@ -27,13 +28,7 @@ vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 vi.mock("@/utils/log", () => ({ log: vi.fn() }));
 
 vi.mock("@/storage/inTx", () => {
-    const afterTx = (tx: any, callback: () => void) => {
-        tx.__afterTxCallbacks.push(callback);
-    };
-
-    const inTx = async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
-        const tx: any = {
-            __afterTxCallbacks: [] as Array<() => void | Promise<void>>,
+    const { inTx, afterTx } = createInTxHarness(() => ({
             session: {
                 findFirst: vi.fn(async () => ({
                     id: "s1",
@@ -44,14 +39,7 @@ vi.mock("@/storage/inTx", () => {
             sessionMessage: { deleteMany: vi.fn(async () => ({ count: 0 })) },
             usageReport: { deleteMany: vi.fn(async () => ({ count: 0 })) },
             accessKey: { deleteMany: vi.fn(async () => ({ count: 0 })) },
-        };
-
-        const result = await fn(tx);
-        for (const cb of tx.__afterTxCallbacks) {
-            await cb();
-        }
-        return result;
-    };
+    }));
 
     return { afterTx, inTx };
 });
@@ -74,4 +62,3 @@ describe("sessionDelete (AccountChange integration)", () => {
         expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({ userId: "u2" }));
     });
 });
-

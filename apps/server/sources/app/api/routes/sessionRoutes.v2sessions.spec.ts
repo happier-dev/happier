@@ -1,43 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
-vi.mock("@/app/events/eventRouter", () => ({
-    eventRouter: { emitUpdate: vi.fn() },
-    buildNewMessageUpdate: vi.fn(),
-    buildNewSessionUpdate: vi.fn(),
-    buildUpdateSessionUpdate: vi.fn(),
-}));
-vi.mock("@/utils/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "upd-id") }));
-vi.mock("@/utils/log", () => ({ log: vi.fn() }));
-vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () => true) }));
-vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
-vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi.fn() }));
-vi.mock("@/app/share/accessControl", () => ({ checkSessionAccess: vi.fn(async () => ({ level: "owner" })) }));
-vi.mock("@/app/session/sessionWriteService", () => ({ createSessionMessage: vi.fn(), patchSession: vi.fn() }));
-vi.mock("@/storage/inTx", () => ({ inTx: vi.fn(async (fn: any) => await fn({})), afterTx: vi.fn() }));
-
-const sessionFindMany = vi.fn();
-vi.mock("@/storage/db", () => ({
-    db: {
-        session: { findMany: (...args: any[]) => sessionFindMany(...args) },
-        sessionShare: { findMany: vi.fn(async () => []) },
-        sessionMessage: { findMany: vi.fn(async () => []) },
-    },
-}));
-
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get(path: string, _opts: any, handler: any) {
-        this.routes.set(`GET ${path}`, handler);
-    }
-    post() {}
-    patch() {}
-    delete() {}
-}
+import {
+    createSessionRouteReply,
+    registerSessionRoutesAndGetHandler,
+    resetSessionRouteMocks,
+    sessionFindMany,
+} from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v2 sessions snapshot", () => {
     beforeEach(() => {
+        resetSessionRouteMocks();
         sessionFindMany.mockReset();
     });
 
@@ -97,12 +69,8 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             },
         ]);
 
-        const { sessionRoutes } = await import("./sessionRoutes");
-        const app = new FakeApp();
-        sessionRoutes(app as any);
-
-        const handler = app.routes.get("GET /v2/sessions");
-        const reply: any = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
+        const { handler } = await registerSessionRoutesAndGetHandler("GET", "/v2/sessions");
+        const reply = createSessionRouteReply();
 
         const res = await handler(
             {
@@ -130,4 +98,3 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         });
     });
 });
-

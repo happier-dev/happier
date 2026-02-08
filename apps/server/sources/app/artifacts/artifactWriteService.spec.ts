@@ -1,14 +1,40 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-let currentTx: any;
+import type { Tx } from "@/storage/inTx";
+
+type ArtifactTxFixture = {
+    artifact: {
+        findUnique: ReturnType<typeof vi.fn>;
+        findFirst: ReturnType<typeof vi.fn>;
+        create: ReturnType<typeof vi.fn>;
+        updateMany: ReturnType<typeof vi.fn>;
+        delete: ReturnType<typeof vi.fn>;
+    };
+};
+
+let txFixture: ArtifactTxFixture;
+let currentTx: Tx;
+
+function createArtifactTxFixture(): ArtifactTxFixture {
+    return {
+        artifact: {
+            findUnique: vi.fn(),
+            findFirst: vi.fn(),
+            create: vi.fn(),
+            updateMany: vi.fn(),
+            delete: vi.fn(),
+        },
+    };
+}
 
 vi.mock("@/storage/inTx", () => ({
-    inTx: async (fn: any) => await fn(currentTx),
+    inTx: async <T>(fn: (tx: Tx) => Promise<T>) => await fn(currentTx),
 }));
 
-const markAccountChanged = vi.fn();
+const markAccountChanged = vi.fn<(tx: Tx, params: { accountId: string; kind: "artifact"; entityId: string }) => Promise<number>>();
 vi.mock("@/app/changes/markAccountChanged", () => ({
-    markAccountChanged: (...args: any[]) => markAccountChanged(...args),
+    markAccountChanged: (tx: Tx, params: { accountId: string; kind: "artifact"; entityId: string }) =>
+        markAccountChanged(tx, params),
 }));
 
 import { createArtifact, deleteArtifact, updateArtifact } from "./artifactWriteService";
@@ -16,16 +42,8 @@ import { createArtifact, deleteArtifact, updateArtifact } from "./artifactWriteS
 describe("artifactWriteService", () => {
     beforeEach(() => {
         markAccountChanged.mockReset();
-
-        currentTx = {
-            artifact: {
-                findUnique: vi.fn(),
-                findFirst: vi.fn(),
-                create: vi.fn(),
-                updateMany: vi.fn(),
-                delete: vi.fn(),
-            },
-        };
+        txFixture = createArtifactTxFixture();
+        currentTx = txFixture as unknown as Tx;
     });
 
     describe("createArtifact", () => {
@@ -42,7 +60,7 @@ describe("artifactWriteService", () => {
                 createdAt: new Date("2020-01-01T00:00:00.000Z"),
                 updatedAt: new Date("2020-01-01T00:00:00.000Z"),
             };
-            currentTx.artifact.findUnique.mockResolvedValue(existing);
+            txFixture.artifact.findUnique.mockResolvedValue(existing);
 
             const res = await createArtifact({
                 actorUserId: "u1",
@@ -57,12 +75,12 @@ describe("artifactWriteService", () => {
             expect(res.didWrite).toBe(false);
             if (res.didWrite !== false) throw new Error("expected didWrite false");
             expect(res.artifact.id).toBe("a1");
-            expect(currentTx.artifact.create).not.toHaveBeenCalled();
+            expect(txFixture.artifact.create).not.toHaveBeenCalled();
             expect(markAccountChanged).not.toHaveBeenCalled();
         });
 
         it("fails with conflict when artifact id exists on another account", async () => {
-            currentTx.artifact.findUnique.mockResolvedValue({
+            txFixture.artifact.findUnique.mockResolvedValue({
                 id: "a1",
                 accountId: "someone-else",
                 header: new Uint8Array([]),
@@ -89,7 +107,7 @@ describe("artifactWriteService", () => {
 
     describe("updateArtifact", () => {
         it("updates via CAS and returns cursor + updated field versions", async () => {
-            currentTx.artifact.findFirst.mockResolvedValue({
+            txFixture.artifact.findFirst.mockResolvedValue({
                 id: "a1",
                 seq: 5,
                 header: new Uint8Array([1]),
@@ -97,7 +115,7 @@ describe("artifactWriteService", () => {
                 body: new Uint8Array([2]),
                 bodyVersion: 20,
             });
-            currentTx.artifact.updateMany.mockResolvedValue({ count: 1 });
+            txFixture.artifact.updateMany.mockResolvedValue({ count: 1 });
             markAccountChanged.mockResolvedValueOnce(123);
 
             const res = await updateArtifact({
@@ -115,7 +133,7 @@ describe("artifactWriteService", () => {
         });
 
         it("returns version-mismatch with current bytes", async () => {
-            currentTx.artifact.findFirst.mockResolvedValue({
+            txFixture.artifact.findFirst.mockResolvedValue({
                 id: "a1",
                 seq: 5,
                 header: new Uint8Array([1]),
@@ -139,19 +157,18 @@ describe("artifactWriteService", () => {
 
     describe("deleteArtifact", () => {
         it("returns not-found when missing", async () => {
-            currentTx.artifact.findFirst.mockResolvedValue(null);
+            txFixture.artifact.findFirst.mockResolvedValue(null);
             const res = await deleteArtifact({ actorUserId: "u1", artifactId: "a1" });
             expect(res).toEqual({ ok: false, error: "not-found" });
         });
 
         it("deletes and marks change", async () => {
-            currentTx.artifact.findFirst.mockResolvedValue({ id: "a1" });
+            txFixture.artifact.findFirst.mockResolvedValue({ id: "a1" });
             markAccountChanged.mockResolvedValueOnce(77);
 
             const res = await deleteArtifact({ actorUserId: "u1", artifactId: "a1" });
             expect(res).toEqual({ ok: true, cursor: 77 });
-            expect(currentTx.artifact.delete).toHaveBeenCalledWith({ where: { id: "a1" } });
+            expect(txFixture.artifact.delete).toHaveBeenCalledWith({ where: { id: "a1" } });
         });
     });
 });
-
