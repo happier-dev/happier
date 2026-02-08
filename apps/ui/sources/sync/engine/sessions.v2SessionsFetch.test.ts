@@ -1,132 +1,182 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { fetchAndApplySessions } from './sessionsSnapshot'
+import type { AuthCredentials } from '@/auth/tokenStorage';
+import { HappyError } from '@/utils/errors';
 
-describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
-    it('pages through /v2/sessions and applies decrypted sessions', async () => {
-        const previousUrl = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL
-        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'https://example.test'
+import { fetchAndApplySessions, type SessionListEncryption } from './sessionsSnapshot';
 
-        const fetchSpy = vi.fn(async (input: any) => {
-            const url = typeof input === 'string' ? input : String(input?.url ?? '')
-            const parsed = new URL(url)
-            expect(parsed.pathname).toBe('/v2/sessions')
+vi.mock('../serverConfig', () => ({
+    getServerUrl: () => 'https://example.test',
+}));
 
-            const cursor = parsed.searchParams.get('cursor')
-            if (!cursor) {
-                return {
-                    ok: true,
-                    status: 200,
-                    json: async () => ({
-                        sessions: [
-                            {
-                                id: 's2',
-                                seq: 2,
-                                createdAt: 2,
-                                updatedAt: 2,
-                                active: true,
-                                activeAt: 2,
-                                metadata: 'm2',
-                                metadataVersion: 1,
-                                agentState: null,
-                                agentStateVersion: 0,
-                                dataEncryptionKey: 'k2',
-                                share: null,
-                            },
-                            {
-                                id: 's1',
-                                seq: 1,
-                                createdAt: 1,
-                                updatedAt: 1,
-                                active: true,
-                                activeAt: 1,
-                                metadata: 'm1',
-                                metadataVersion: 1,
-                                agentState: null,
-                                agentStateVersion: 0,
-                                dataEncryptionKey: null,
-                                share: { accessLevel: 'view', canApprovePermissions: true },
-                            },
-                        ],
-                        nextCursor: 'cursor_v1_s1',
-                        hasNext: true,
-                    }),
-                } as any
-            }
+type SessionRow = {
+    id: string;
+    seq: number;
+    createdAt: number;
+    updatedAt: number;
+    active: boolean;
+    activeAt: number;
+    metadata: string;
+    metadataVersion: number;
+    agentState: string | null;
+    agentStateVersion: number;
+    dataEncryptionKey: string | null;
+    share: {
+        accessLevel: 'view' | 'edit' | 'admin';
+        canApprovePermissions: boolean;
+    } | null;
+};
 
-            expect(cursor).toBe('cursor_v1_s1')
-            return {
-                ok: true,
-                status: 200,
-                json: async () => ({
-                    sessions: [
-                        {
-                            id: 's0',
-                            seq: 0,
-                            createdAt: 0,
-                            updatedAt: 0,
-                            active: false,
-                            activeAt: 0,
-                            metadata: 'm0',
-                            metadataVersion: 1,
-                            agentState: null,
-                            agentStateVersion: 0,
-                            dataEncryptionKey: 'k0',
-                            share: null,
-                        },
-                    ],
-                    nextCursor: null,
-                    hasNext: false,
-                }),
-            } as any
-        })
+function buildSessionRow(overrides: Partial<SessionRow> & Pick<SessionRow, 'id'>): SessionRow {
+    return {
+        id: overrides.id,
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        metadata: `metadata-${overrides.id}`,
+        metadataVersion: 1,
+        agentState: null,
+        agentStateVersion: 0,
+        dataEncryptionKey: null,
+        share: null,
+        ...overrides,
+    };
+}
 
-        vi.stubGlobal('fetch', fetchSpy as any)
+function jsonResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+    });
+}
 
-        const decryptEncryptionKey = vi.fn(async (value: string) => new Uint8Array([value.length]))
-        const initializeSessions = vi.fn(async () => {})
-        const decryptMetadata = vi.fn(async () => ({ ok: true }))
-        const decryptAgentState = vi.fn(async () => null)
-        const getSessionEncryption = vi.fn(() => ({
+function createEncryptionHarness(): {
+    encryption: SessionListEncryption;
+    decryptEncryptionKey: ReturnType<typeof vi.fn>;
+    initializeSessions: ReturnType<typeof vi.fn>;
+    decryptMetadata: ReturnType<typeof vi.fn>;
+    decryptAgentState: ReturnType<typeof vi.fn>;
+} {
+    const decryptEncryptionKey = vi.fn(async (value: string) => new Uint8Array([value.length]));
+    const initializeSessions = vi.fn(async () => {});
+    const decryptMetadata = vi.fn(async (_version: number, value: string) => ({ decrypted: value }));
+    const decryptAgentState = vi.fn(async () => null);
+    const encryption: SessionListEncryption = {
+        decryptEncryptionKey,
+        initializeSessions,
+        getSessionEncryption: () => ({
             decryptMetadata,
             decryptAgentState,
-        }))
+        }),
+    };
+    return { encryption, decryptEncryptionKey, initializeSessions, decryptMetadata, decryptAgentState };
+}
 
-        const applied: any[] = []
-        const sessionDataKeys = new Map<string, Uint8Array>()
+afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+});
+
+describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
+    it('pages through /v2/sessions and applies decrypted sessions with share and key cache mapping', async () => {
+        const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+            const parsed = new URL(typeof input === 'string' ? input : String(input));
+            expect(parsed.pathname).toBe('/v2/sessions');
+
+            const cursor = parsed.searchParams.get('cursor');
+            if (!cursor) {
+                return jsonResponse({
+                    sessions: [
+                        buildSessionRow({ id: 's2', seq: 2, dataEncryptionKey: 'k2' }),
+                        buildSessionRow({
+                            id: 's1',
+                            seq: 1,
+                            dataEncryptionKey: null,
+                            share: { accessLevel: 'view', canApprovePermissions: true },
+                        }),
+                    ],
+                    nextCursor: 'cursor_v1_s1',
+                    hasNext: true,
+                });
+            }
+
+            expect(cursor).toBe('cursor_v1_s1');
+            return jsonResponse({
+                sessions: [
+                    buildSessionRow({ id: 's0', seq: 0, active: false, activeAt: 0, dataEncryptionKey: 'k0' }),
+                ],
+                nextCursor: null,
+                hasNext: false,
+            });
+        });
+        vi.stubGlobal('fetch', fetchSpy);
+
+        const { encryption, decryptEncryptionKey, initializeSessions, decryptMetadata, decryptAgentState } =
+            createEncryptionHarness();
+        const credentials: AuthCredentials = { token: 't', secret: 's' };
+        const appliedSessions: Array<Record<string, unknown>> = [];
+        const sessionDataKeys = new Map<string, Uint8Array>();
 
         await fetchAndApplySessions({
-            credentials: { token: 't' } as any,
-            encryption: {
-                decryptEncryptionKey,
-                initializeSessions,
-                getSessionEncryption,
-            },
+            credentials,
+            encryption,
             sessionDataKeys,
             applySessions: (sessions) => {
-                applied.push(...sessions)
+                appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
             },
             repairInvalidReadStateV1: async () => {},
             log: { log: () => {} },
-        })
+        });
 
-        expect(fetchSpy).toHaveBeenCalledTimes(2)
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+        expect(decryptEncryptionKey).toHaveBeenCalledTimes(2);
+        expect(initializeSessions).toHaveBeenCalledTimes(1);
+        expect(decryptMetadata).toHaveBeenCalledTimes(3);
+        expect(decryptAgentState).toHaveBeenCalledTimes(3);
 
-        expect(decryptEncryptionKey).toHaveBeenCalledTimes(2)
-        expect(initializeSessions).toHaveBeenCalledTimes(1)
+        expect(appliedSessions).toHaveLength(3);
+        expect(appliedSessions.map((session) => session.id)).toEqual(['s2', 's1', 's0']);
 
-        expect(applied).toHaveLength(3)
-        expect(applied.map((s) => s.id)).toEqual(['s2', 's1', 's0'])
+        const sharedSession = appliedSessions.find((session) => session.id === 's1');
+        expect(sharedSession?.accessLevel).toBe('view');
+        expect(sharedSession?.canApprovePermissions).toBe(true);
 
-        const shared = applied.find((s) => s.id === 's1')
-        expect(shared.accessLevel).toBe('view')
-        expect(shared.canApprovePermissions).toBe(true)
+        expect(sessionDataKeys.has('s2')).toBe(true);
+        expect(sessionDataKeys.has('s0')).toBe(true);
+        expect(sessionDataKeys.has('s1')).toBe(false);
+    });
 
-        expect(sessionDataKeys.has('s2')).toBe(true)
-        expect(sessionDataKeys.has('s0')).toBe(true)
-        expect(sessionDataKeys.has('s1')).toBe(false)
+    it('throws HappyError for non-retryable 4xx responses', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => new Response('forbidden', { status: 403 })));
+        const { encryption } = createEncryptionHarness();
 
-        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = previousUrl
-        vi.unstubAllGlobals()
-    })
-})
+        await expect(
+            fetchAndApplySessions({
+                credentials: { token: 't', secret: 's' },
+                encryption,
+                sessionDataKeys: new Map<string, Uint8Array>(),
+                applySessions: () => {},
+                repairInvalidReadStateV1: async () => {},
+                log: { log: () => {} },
+            }),
+        ).rejects.toBeInstanceOf(HappyError);
+    });
+
+    it('throws when /v2/sessions response shape is invalid', async () => {
+        vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({ sessions: 'bad-shape', hasNext: false })));
+        const { encryption } = createEncryptionHarness();
+
+        await expect(
+            fetchAndApplySessions({
+                credentials: { token: 't', secret: 's' },
+                encryption,
+                sessionDataKeys: new Map<string, Uint8Array>(),
+                applySessions: () => {},
+                repairInvalidReadStateV1: async () => {},
+                log: { log: () => {} },
+            }),
+        ).rejects.toThrow('Invalid /v2/sessions response');
+    });
+});
