@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall, makeToolViewProps } from '../ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -30,20 +30,15 @@ describe('EditView', () => {
         const { EditView } = await import('./EditView');
 
         const longText = Array.from({ length: 30 }, (_, i) => `line-${i}`).join('\n');
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Edit',
             state: 'completed',
-            input: { old_string: longText, new_string: longText } as any,
+            input: { old_string: longText, new_string: longText },
             result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        });
 
         await act(async () => {
-            renderer.create(React.createElement(EditView as any, { tool, metadata: null }));
+            renderer.create(React.createElement(EditView, makeToolViewProps(tool)));
         });
 
         expect(diffSpy).toHaveBeenCalledWith(
@@ -55,6 +50,7 @@ describe('EditView', () => {
         expect(diffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
                 oldText: Array.from({ length: 20 }, (_, i) => `line-${i}`).join('\n'),
+                newText: Array.from({ length: 20 }, (_, i) => `line-${i}`).join('\n'),
             })
         );
     });
@@ -64,21 +60,16 @@ describe('EditView', () => {
         const { EditView } = await import('./EditView');
 
         const longText = Array.from({ length: 30 }, (_, i) => `line-${i}`).join('\n');
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Edit',
             state: 'completed',
-            input: { old_string: longText, new_string: longText } as any,
+            input: { old_string: longText, new_string: longText },
             result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        });
 
         await act(async () => {
             renderer.create(
-                React.createElement(EditView as any, { tool, metadata: null, detailLevel: 'full' })
+                React.createElement(EditView, makeToolViewProps(tool, { detailLevel: 'full' }))
             );
         });
 
@@ -87,8 +78,8 @@ describe('EditView', () => {
                 showLineNumbers: true,
                 showPlusMinusSymbols: true,
                 oldText: longText,
+                newText: longText,
             })
         );
     });
 });
-

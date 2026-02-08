@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { collectHostText, makeToolCall, makeToolViewProps } from '../ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,46 +22,38 @@ describe('ChangeTitleView', () => {
     it('renders the title from tool.input.title', async () => {
         const { ChangeTitleView } = await import('./ChangeTitleView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'change_title',
             state: 'completed',
-            input: { title: 'Hello' } as any,
-            result: {} as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+            input: { title: 'Hello' },
+            result: {},
+        });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(ChangeTitleView, { tool, metadata: null } as any));
+            tree = renderer.create(React.createElement(ChangeTitleView, makeToolViewProps(tool)));
         });
 
-        const textNodes = tree.root.findAllByType('Text' as any);
-        const renderedText = textNodes.map((n) => n.props.children).join(' ');
+        const renderedText = collectHostText(tree);
+        expect(renderedText).toContain('Title');
         expect(renderedText).toContain('Hello');
     });
 
     it('renders nothing when detailLevel=title', async () => {
         const { ChangeTitleView } = await import('./ChangeTitleView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'change_title',
             state: 'completed',
-            input: { title: 'Hello' } as any,
-            result: {} as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+            input: { title: 'Hello' },
+            result: {},
+        });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(ChangeTitleView, { tool, metadata: null, detailLevel: 'title' } as any));
+            tree = renderer.create(
+                React.createElement(ChangeTitleView, makeToolViewProps(tool, { detailLevel: 'title' })),
+            );
         });
 
         expect(tree.root.findAllByType('Text' as any).length).toBe(0);

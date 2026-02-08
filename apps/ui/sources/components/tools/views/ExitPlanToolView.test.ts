@@ -2,6 +2,7 @@ import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/typesMessage';
+import { collectHostText, makeToolCall, makeToolViewProps } from '../ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,6 +10,7 @@ const sessionAllow = vi.fn();
 const sessionDeny = vi.fn();
 const sendMessage = vi.fn();
 const modalAlert = vi.fn();
+const safeParsePlan = vi.fn();
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -47,7 +49,7 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/components/markdown/MarkdownView', () => ({
-    MarkdownView: () => null,
+    MarkdownView: (props: { markdown: string }) => React.createElement('MarkdownView', props),
 }));
 
 vi.mock('../../tools/ToolSectionView', () => ({
@@ -58,7 +60,7 @@ vi.mock('../../tools/knownTools', () => ({
     knownTools: {
         ExitPlanMode: {
             input: {
-                safeParse: () => ({ success: true, data: { plan: 'plan' } }),
+                safeParse: (...args: unknown[]) => safeParsePlan(...args),
             },
         },
     },
@@ -76,102 +78,81 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 describe('ExitPlanToolView', () => {
+    function makeRunningTool(overrides: Partial<ToolCall> = {}): ToolCall {
+        return makeToolCall({
+            name: 'ExitPlanMode',
+            state: 'running',
+            input: { plan: 'plan' },
+            completedAt: null,
+            permission: { id: 'perm1', status: 'pending' },
+            ...overrides,
+        });
+    }
+
+    async function renderView(tool: ToolCall, overrides: Record<string, unknown> = {}) {
+        const { ExitPlanToolView } = await import('./ExitPlanToolView');
+        let tree: renderer.ReactTestRenderer | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(
+                    ExitPlanToolView,
+                    makeToolViewProps(tool, { sessionId: 's1', ...overrides }),
+                ),
+            );
+        });
+        return tree!;
+    }
+
     beforeEach(() => {
         sessionAllow.mockReset();
         sessionDeny.mockReset();
         sendMessage.mockReset();
         modalAlert.mockReset();
+        safeParsePlan.mockReset();
+        safeParsePlan.mockReturnValue({ success: true, data: { plan: 'plan' } });
     });
 
     it('approves via permission RPC and does not send a follow-up user message', async () => {
-        const { ExitPlanToolView } = await import('./ExitPlanToolView');
-
-        const tool: ToolCall = {
-            name: 'ExitPlanMode',
-            state: 'running',
-            input: { plan: 'plan' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: null,
-            description: null,
-            permission: { id: 'perm1', status: 'pending' },
-        };
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ExitPlanToolView, { tool, sessionId: 's1', metadata: null, messages: [] }),
-            );
-        });
+        sessionAllow.mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeRunningTool());
 
         await act(async () => {
-            await tree!.root.findByProps({ testID: 'exit-plan-approve' }).props.onPress();
+            await tree.root.findByProps({ testID: 'exit-plan-approve' }).props.onPress();
         });
 
         expect(sessionAllow).toHaveBeenCalledTimes(1);
+        expect(sessionAllow).toHaveBeenCalledWith('s1', 'perm1');
         expect(sendMessage).toHaveBeenCalledTimes(0);
+        expect(collectHostText(tree)).toContain('tools.exitPlanMode.responded');
     });
 
     it('rejects via permission RPC and does not send a follow-up user message', async () => {
-        const { ExitPlanToolView } = await import('./ExitPlanToolView');
-
-        const tool: ToolCall = {
-            name: 'ExitPlanMode',
-            state: 'running',
-            input: { plan: 'plan' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: null,
-            description: null,
-            permission: { id: 'perm1', status: 'pending' },
-        };
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ExitPlanToolView, { tool, sessionId: 's1', metadata: null, messages: [] }),
-            );
-        });
+        sessionDeny.mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeRunningTool());
 
         await act(async () => {
-            await tree!.root.findByProps({ testID: 'exit-plan-reject' }).props.onPress();
+            await tree.root.findByProps({ testID: 'exit-plan-reject' }).props.onPress();
         });
 
         expect(sessionDeny).toHaveBeenCalledTimes(1);
+        expect(sessionDeny).toHaveBeenCalledWith('s1', 'perm1');
         expect(sendMessage).toHaveBeenCalledTimes(0);
     });
 
     it('requests changes via permission RPC with a reason', async () => {
-        const { ExitPlanToolView } = await import('./ExitPlanToolView');
+        sessionDeny.mockResolvedValueOnce(undefined);
+        const tree = await renderView(makeRunningTool());
 
-        const tool: ToolCall = {
-            name: 'ExitPlanMode',
-            state: 'running',
-            input: { plan: 'plan' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: null,
-            description: null,
-            permission: { id: 'perm1', status: 'pending' },
-        };
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
-            tree = renderer.create(
-                React.createElement(ExitPlanToolView, { tool, sessionId: 's1', metadata: null, messages: [] }),
-            );
+            await tree.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
         });
 
         await act(async () => {
-            await tree!.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
+            tree.root.findByProps({ testID: 'exit-plan-request-changes-input' }).props.onChangeText('Please change step 2');
         });
 
         await act(async () => {
-            tree!.root.findByProps({ testID: 'exit-plan-request-changes-input' }).props.onChangeText('Please change step 2');
-        });
-
-        await act(async () => {
-            await tree!.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
+            await tree.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
         });
 
         expect(sessionDeny).toHaveBeenCalledTimes(1);
@@ -182,139 +163,87 @@ describe('ExitPlanToolView', () => {
     it('shows an error when requesting plan changes fails', async () => {
         sessionDeny.mockRejectedValueOnce(new Error('network'));
 
-        const { ExitPlanToolView } = await import('./ExitPlanToolView');
+        const tree = await renderView(makeRunningTool());
 
-        const tool: ToolCall = {
-            name: 'ExitPlanMode',
-            state: 'running',
-            input: { plan: 'plan' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: null,
-            description: null,
-            permission: { id: 'perm1', status: 'pending' },
-        };
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
-            tree = renderer.create(
-                React.createElement(ExitPlanToolView, { tool, sessionId: 's1', metadata: null, messages: [] }),
-            );
+            await tree.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
         });
 
         await act(async () => {
-            await tree!.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
+            tree.root.findByProps({ testID: 'exit-plan-request-changes-input' }).props.onChangeText('Please change step 2');
         });
 
         await act(async () => {
-            tree!.root.findByProps({ testID: 'exit-plan-request-changes-input' }).props.onChangeText('Please change step 2');
-        });
-
-        await act(async () => {
-            await tree!.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
+            await tree.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
         });
 
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'tools.exitPlanMode.requestChangesFailed');
     });
 
-    it('does not mark as responded when approve is pressed without a permission id', async () => {
-        const { ExitPlanToolView } = await import('./ExitPlanToolView');
-
-        const tool: ToolCall = {
-            name: 'ExitPlanMode',
-            state: 'running',
-            input: { plan: 'plan' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: null,
-            description: null,
-            permission: undefined,
-        };
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
+    it('shows an error when requesting changes is attempted without text', async () => {
+        const tree = await renderView(makeRunningTool());
         await act(async () => {
-            tree = renderer.create(
-                React.createElement(ExitPlanToolView, { tool, sessionId: 's1', metadata: null, messages: [] }),
-            );
+            await tree.root.findByProps({ testID: 'exit-plan-request-changes' }).props.onPress();
+        });
+        await act(async () => {
+            await tree.root.findByProps({ testID: 'exit-plan-request-changes-send' }).props.onPress();
         });
 
+        expect(sessionDeny).toHaveBeenCalledTimes(0);
+        expect(modalAlert).toHaveBeenCalledWith('common.error', 'tools.exitPlanMode.requestChangesEmpty');
+    });
+
+    it('does not mark as responded when approve is pressed without a permission id', async () => {
+        const tree = await renderView(makeRunningTool({ permission: undefined }));
+
         await act(async () => {
-            await tree!.root.findByProps({ testID: 'exit-plan-approve' }).props.onPress();
+            await tree.root.findByProps({ testID: 'exit-plan-approve' }).props.onPress();
         });
 
         expect(sessionAllow).toHaveBeenCalledTimes(0);
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'errors.missingPermissionId');
 
-        const buttonsAfter = tree!.root.findAllByType('TouchableOpacity' as any);
+        const buttonsAfter = tree.root.findAllByType('TouchableOpacity' as any);
         expect(buttonsAfter.length).toBeGreaterThanOrEqual(2);
     });
 
     it('does not mark as responded when reject is pressed without a permission id', async () => {
-        const { ExitPlanToolView } = await import('./ExitPlanToolView');
-
-        const tool: ToolCall = {
-            name: 'ExitPlanMode',
-            state: 'running',
-            input: { plan: 'plan' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: null,
-            description: null,
-            permission: undefined,
-        };
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ExitPlanToolView, { tool, sessionId: 's1', metadata: null, messages: [] }),
-            );
-        });
+        const tree = await renderView(makeRunningTool({ permission: undefined }));
 
         await act(async () => {
-            await tree!.root.findByProps({ testID: 'exit-plan-reject' }).props.onPress();
+            await tree.root.findByProps({ testID: 'exit-plan-reject' }).props.onPress();
         });
 
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(modalAlert).toHaveBeenCalledWith('common.error', 'errors.missingPermissionId');
 
-        const buttonsAfter = tree!.root.findAllByType('TouchableOpacity' as any);
+        const buttonsAfter = tree.root.findAllByType('TouchableOpacity' as any);
         expect(buttonsAfter.length).toBeGreaterThanOrEqual(2);
     });
 
     it('does not allow responding when canApprovePermissions is false', async () => {
-        const { ExitPlanToolView } = await import('./ExitPlanToolView');
-
-        const tool: ToolCall = {
-            name: 'ExitPlanMode',
-            state: 'running',
-            input: { plan: 'plan' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: null,
-            description: null,
-            permission: { id: 'perm1', status: 'pending' },
-        };
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ExitPlanToolView, {
-                    tool,
-                    sessionId: 's1',
-                    metadata: null,
-                    messages: [],
-                    interaction: { canSendMessages: true, canApprovePermissions: false, permissionDisabledReason: 'notGranted' },
-                }),
-            );
+        const tree = await renderView(makeRunningTool(), {
+            interaction: {
+                canSendMessages: true,
+                canApprovePermissions: false,
+                permissionDisabledReason: 'notGranted',
+            },
         });
 
-        expect(tree!.root.findAllByProps({ testID: 'exit-plan-approve' })).toHaveLength(0);
-        expect(tree!.root.findAllByProps({ testID: 'exit-plan-reject' })).toHaveLength(0);
+        expect(tree.root.findAllByProps({ testID: 'exit-plan-approve' })).toHaveLength(0);
+        expect(tree.root.findAllByProps({ testID: 'exit-plan-reject' })).toHaveLength(0);
 
         expect(sessionAllow).toHaveBeenCalledTimes(0);
         expect(sessionDeny).toHaveBeenCalledTimes(0);
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n) => n.props.children).flat();
-        expect(texts).toContain('session.sharing.permissionApprovalsDisabledNotGranted');
+        expect(collectHostText(tree)).toContain('session.sharing.permissionApprovalsDisabledNotGranted');
+    });
+
+    it('falls back to <empty> when plan input schema parse fails', async () => {
+        safeParsePlan.mockReturnValueOnce({ success: false });
+        const tree = await renderView(makeRunningTool({ input: { unexpected: true } }));
+
+        const markdownNode = tree.root.findByType('MarkdownView' as any);
+        expect(markdownNode.props.markdown).toBe('<empty>');
     });
 });

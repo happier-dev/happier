@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall, makeToolViewProps } from '../ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,25 +23,28 @@ describe('BashView', () => {
         const { BashView } = await import('./BashView');
 
         const longStdout = 'x'.repeat(7000);
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Bash',
             state: 'completed',
-            input: { command: ['/bin/zsh', '-lc', 'echo hi'] } as any,
-            result: { stdout: longStdout, stderr: '' } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+            input: { command: ['/bin/zsh', '-lc', 'echo hi'] },
+            result: { stdout: longStdout, stderr: '' },
+        });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(BashView as any, { tool, metadata: null }));
+            tree = renderer.create(React.createElement(BashView, makeToolViewProps(tool)));
         });
 
         expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
-        expect(commandViewSpy).toHaveBeenCalledWith(expect.objectContaining({ stdout: expect.stringMatching(/^…/) }));
+        expect(commandViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                command: 'echo hi',
+                stdout: expect.stringMatching(/^…/),
+            }),
+        );
+        const lastCallProps = commandViewSpy.mock.calls.at(-1)?.[0] as { stdout?: string };
+        expect(lastCallProps.stdout).toHaveLength(6001);
+        expect(lastCallProps.stdout).not.toBe(longStdout);
     });
 
     it('shows full stdout when detailLevel=full', async () => {
@@ -49,25 +52,25 @@ describe('BashView', () => {
         const { BashView } = await import('./BashView');
 
         const longStdout = 'x'.repeat(7000);
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Bash',
             state: 'completed',
-            input: { command: ['/bin/zsh', '-lc', 'echo hi'] } as any,
-            result: { stdout: longStdout, stderr: '' } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+            input: { command: ['/bin/zsh', '-lc', 'echo hi'] },
+            result: { stdout: longStdout, stderr: '' },
+        });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(BashView as any, { tool, metadata: null, detailLevel: 'full' }));
+            tree = renderer.create(React.createElement(BashView, makeToolViewProps(tool, { detailLevel: 'full' })));
         });
 
         expect(tree.root.findAllByType('CommandView' as any)).toHaveLength(1);
-        expect(commandViewSpy).toHaveBeenCalledWith(expect.objectContaining({ stdout: longStdout }));
+        expect(commandViewSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                command: 'echo hi',
+                stdout: longStdout,
+                fullWidth: true,
+            }),
+        );
     });
 });
-

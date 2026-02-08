@@ -1,7 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolViewProps } from '../ToolView.testHelpers';
+import { expectListSummary, makeCompletedTool } from './listView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,63 +25,37 @@ describe('LSView', () => {
         const { LSView } = await import('./LSView');
 
         const entries = Array.from({ length: 50 }, (_, i) => `entry-${i}`);
-        const tool: ToolCall = {
-            name: 'LS',
-            state: 'completed',
-            input: { path: '/tmp' } as any,
-            result: { entries } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        const tool = makeCompletedTool('LS', { path: '/tmp' }, { entries });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(LSView, { tool, metadata: null } as any));
+            tree = renderer.create(React.createElement(LSView, makeToolViewProps(tool)));
         });
 
-        const renderedText = tree.root
-            .findAllByType('Text' as any)
-            .map((n) => (Array.isArray(n.props.children) ? n.props.children.join('') : String(n.props.children)))
-            .join('\n');
-
-        expect(renderedText).toContain('entry-0');
-        expect(renderedText).toContain('entry-7');
-        expect(renderedText).not.toContain('entry-8');
-        expect(renderedText).toContain('+42 more');
+        expectListSummary({
+            tree,
+            visibleValues: ['entry-0', 'entry-7'],
+            hiddenValues: ['entry-8'],
+            moreLabel: '+42 more',
+        });
     });
 
     it('expands to show more entries when detailLevel=full', async () => {
         const { LSView } = await import('./LSView');
 
         const entries = Array.from({ length: 50 }, (_, i) => `entry-${i}`);
-        const tool: ToolCall = {
-            name: 'LS',
-            state: 'completed',
-            input: { path: '/tmp' } as any,
-            result: { entries } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        const tool = makeCompletedTool('LS', { path: '/tmp' }, { entries });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(LSView, { tool, metadata: null, detailLevel: 'full' } as any));
+            tree = renderer.create(React.createElement(LSView, makeToolViewProps(tool, { detailLevel: 'full' })));
         });
 
-        const renderedText = tree.root
-            .findAllByType('Text' as any)
-            .map((n) => (Array.isArray(n.props.children) ? n.props.children.join('') : String(n.props.children)))
-            .join('\n');
-
-        expect(renderedText).toContain('entry-0');
-        expect(renderedText).toContain('entry-39');
-        expect(renderedText).not.toContain('entry-40');
-        expect(renderedText).toContain('+10 more');
+        expectListSummary({
+            tree,
+            visibleValues: ['entry-0', 'entry-39'],
+            hiddenValues: ['entry-40'],
+            moreLabel: '+10 more',
+        });
     });
 });

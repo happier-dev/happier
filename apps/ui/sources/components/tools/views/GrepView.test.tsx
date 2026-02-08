@@ -1,7 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolViewProps } from '../ToolView.testHelpers';
+import { expectListSummary, makeCompletedTool } from './listView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,62 +24,36 @@ describe('GrepView', () => {
         const { GrepView } = await import('./GrepView');
 
         const matches = Array.from({ length: 10 }, (_, i) => ({ excerpt: `match-${i}` }));
-        const tool: ToolCall = {
-            name: 'Grep',
-            state: 'completed',
-            input: { pattern: 'test' } as any,
-            result: { matches } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        const tool = makeCompletedTool('Grep', { pattern: 'test' }, { matches });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(GrepView, { tool, metadata: null } as any));
+            tree = renderer.create(React.createElement(GrepView, makeToolViewProps(tool)));
         });
 
-        const renderedText = tree.root
-            .findAllByType('Text' as any)
-            .map((n) => (Array.isArray(n.props.children) ? n.props.children.join('') : String(n.props.children)))
-            .join('\n');
-
-        expect(renderedText).toContain('match-0');
-        expect(renderedText).toContain('match-5');
-        expect(renderedText).not.toContain('match-6');
-        expect(renderedText).toContain('+4 more');
+        expectListSummary({
+            tree,
+            visibleValues: ['match-0', 'match-5'],
+            hiddenValues: ['match-6'],
+            moreLabel: '+4 more',
+        });
     });
 
     it('expands to show more matches when detailLevel=full', async () => {
         const { GrepView } = await import('./GrepView');
 
         const matches = Array.from({ length: 10 }, (_, i) => ({ excerpt: `match-${i}` }));
-        const tool: ToolCall = {
-            name: 'Grep',
-            state: 'completed',
-            input: { pattern: 'test' } as any,
-            result: { matches } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        const tool = makeCompletedTool('Grep', { pattern: 'test' }, { matches });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(GrepView, { tool, metadata: null, detailLevel: 'full' } as any));
+            tree = renderer.create(React.createElement(GrepView, makeToolViewProps(tool, { detailLevel: 'full' })));
         });
 
-        const renderedText = tree.root
-            .findAllByType('Text' as any)
-            .map((n) => (Array.isArray(n.props.children) ? n.props.children.join('') : String(n.props.children)))
-            .join('\n');
-
-        expect(renderedText).toContain('match-0');
-        expect(renderedText).toContain('match-9');
-        expect(renderedText).not.toContain('+4 more');
+        expectListSummary({
+            tree,
+            visibleValues: ['match-0', 'match-9'],
+            hiddenValues: ['+4 more'],
+        });
     });
 });
