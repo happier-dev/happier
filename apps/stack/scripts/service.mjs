@@ -1,10 +1,11 @@
 import './utils/env/env.mjs';
 import { run, runCapture } from './utils/proc/proc.mjs';
-import { getComponentDir, getDefaultAutostartPaths, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
+import { getComponentDir, getDefaultAutostartPaths, getRootDir, getSystemdUnitInfo, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { getInternalServerUrl, getPublicServerUrlEnvOverride } from './utils/server/urls.mjs';
 import { ensureMacAutostartDisabled, ensureMacAutostartEnabled } from './utils/service/autostart_darwin.mjs';
 import { getCanonicalHomeDir } from './utils/env/config.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
+import { expandHome } from './utils/paths/canonical_home.mjs';
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
@@ -16,12 +17,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { readLastLines } from './utils/fs/tail.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
+import {
+  findExistingStackCredentialPath,
+  resolvePreferredStackDaemonStatePaths,
+  resolveStackCredentialPaths,
+} from './utils/auth/credentials_paths.mjs';
 
 /**
  * Manage the autostart service installed by `hstack bootstrap -- --autostart`.
  *
  * - macOS: launchd LaunchAgents
- * - Linux: systemd user services
+ * - Linux: systemd user services (default) or system services (--mode=system)
  *
  * Commands:
  * - install | uninstall
@@ -39,7 +45,7 @@ function getUid() {
   return Number.isFinite(n) ? n : null;
 }
 
-function getAutostartEnv({ rootDir }) {
+function getAutostartEnv({ rootDir, mode }) {
   // IMPORTANT:
   // LaunchAgents should NOT bake the entire config into the plist, because that would require
   // reinstalling the service for any config change (server flavor, worktrees, ports, etc).
@@ -50,17 +56,60 @@ function getAutostartEnv({ rootDir }) {
   // - `hstack stack service <name> ...` runs under a stack env already, so we persist that pointer.
   //
   // Main installs:
-  // - default to the main stack env (outside the repo): ~/.happy/stacks/main/env
+  // - default to the main stack env (outside the repo): ~/.happier/stacks/main/env
 
   const stacksEnvFile = process.env.HAPPIER_STACK_ENV_FILE?.trim() ? process.env.HAPPIER_STACK_ENV_FILE.trim() : '';
-  const envFile = stacksEnvFile || resolveStackEnvPath('main').envPath;
+  const envFileRaw = stacksEnvFile || resolveStackEnvPath('main').envPath;
+
+  // For system services, prefer a dynamic %h-based default when no explicit env file is set.
+  // This avoids accidentally pinning root's stack env when the service will run as another user.
+  const envFile =
+    mode === 'system' && !stacksEnvFile
+      ? '%h/.happier/stacks/main/env'
+      : envFileRaw;
 
   return {
     HAPPIER_STACK_ENV_FILE: envFile,
   };
 }
 
-export async function installService() {
+function resolveServiceMode(argv) {
+  if (argv.includes('--system')) return 'system';
+  if (argv.includes('--user')) return 'user';
+  const raw = argv.find((a) => a.startsWith('--mode=')) ?? '';
+  const v = raw ? raw.slice('--mode='.length).trim().toLowerCase() : '';
+  return v === 'system' ? 'system' : 'user';
+}
+
+function resolveSystemUser(argv) {
+  const raw = argv.find((a) => a.startsWith('--system-user=')) ?? '';
+  const v = raw ? raw.slice('--system-user='.length).trim() : '';
+  return v || null;
+}
+
+async function resolveHomeDirForUser(user) {
+  const u = String(user ?? '').trim();
+  if (!u) return null;
+  try {
+    const out = await runCapture('getent', ['passwd', u]);
+    const line = out.trim().split('\n')[0] ?? '';
+    const parts = line.split(':');
+    const home = parts[5] ? parts[5].trim() : '';
+    return home || null;
+  } catch {
+    // best-effort fallback
+    return `/home/${u}`;
+  }
+}
+
+function ensureLinuxSystemModeSupported({ mode }) {
+  if (mode !== 'system') return;
+  if (process.platform !== 'linux') {
+    throw new Error(`[local] --mode=system is only supported on Linux.`);
+  }
+}
+
+export async function installService({ mode = 'user', systemUser = null } = {}) {
   if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     throw new Error(
       '[local] service install is disabled in sandbox mode.\n' +
@@ -68,18 +117,22 @@ export async function installService() {
         'If you really want this, set: HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL=1'
     );
   }
+  ensureLinuxSystemModeSupported({ mode });
   if (process.platform !== 'darwin' && process.platform !== 'linux') {
-    throw new Error('[local] service install is only supported on macOS (launchd) and Linux (systemd user).');
+    throw new Error('[local] service install is only supported on macOS (launchd) and Linux (systemd).');
   }
   const rootDir = getRootDir(import.meta.url);
   const { label } = getDefaultAutostartPaths();
-  const env = getAutostartEnv({ rootDir });
+  const env = getAutostartEnv({ rootDir, mode });
   // Ensure the env file exists so the service never points at a missing path.
   try {
     const envFile = env.HAPPIER_STACK_ENV_FILE;
-    await mkdir(dirname(envFile), { recursive: true });
-    if (!existsSync(envFile)) {
-      await writeFile(envFile, '', { flag: 'a' });
+    // systemd specifier paths like %h/... are resolved at runtime; don't try to create them here.
+    if (!envFile.includes('%')) {
+      await mkdir(dirname(envFile), { recursive: true });
+      if (!existsSync(envFile)) {
+        await writeFile(envFile, '', { flag: 'a' });
+      }
     }
   } catch {
     // ignore
@@ -89,18 +142,29 @@ export async function installService() {
     console.log(`${green('✓')} service installed ${dim('(macOS launchd)')}`);
     return;
   }
+  if (mode === 'system') {
+    await ensureSystemdSystemServiceEnabled({ rootDir, label, env, systemUser });
+    console.log(`${green('✓')} service installed ${dim('(Linux systemd system)')}`);
+    return;
+  }
   await ensureSystemdUserServiceEnabled({ rootDir, label, env });
   console.log(`${green('✓')} service installed ${dim('(Linux systemd --user)')}`);
 }
 
-export async function uninstallService() {
+export async function uninstallService({ mode = 'user' } = {}) {
   if (isSandboxed() && !sandboxAllowsGlobalSideEffects()) {
     // Sandbox cleanups should be safe and should not touch global services by default.
     return;
   }
+  ensureLinuxSystemModeSupported({ mode });
   if (process.platform !== 'darwin' && process.platform !== 'linux') return;
 
   if (process.platform === 'linux') {
+    if (mode === 'system') {
+      await ensureSystemdSystemServiceDisabled({ remove: true });
+      console.log(`${green('✓')} service uninstalled ${dim('(systemd system unit removed)')}`);
+      return;
+    }
     await ensureSystemdUserServiceDisabled({ remove: true });
     console.log(`${green('✓')} service uninstalled ${dim('(systemd user unit removed)')}`);
     return;
@@ -160,12 +224,67 @@ WantedBy=default.target
   await run('systemctl', ['--user', 'enable', '--now', systemdUnitName()]);
 }
 
+async function ensureSystemdSystemServiceEnabled({ rootDir, label, env, systemUser }) {
+  const { unitName, unitPath } = getSystemdUnitInfo({ mode: 'system' });
+  let userLine = '';
+  let hstackShim = join(getCanonicalHomeDir(), 'bin', 'hstack');
+  if (systemUser) {
+    const home = await resolveHomeDirForUser(systemUser);
+    if (home) {
+      hstackShim = join(home, '.happier-stack', 'bin', 'hstack');
+    }
+    userLine = `User=${systemUser}\n`;
+  }
+
+  const entry = existsSync(hstackShim) ? hstackShim : join(rootDir, 'bin', 'hstack.mjs');
+  const exec = existsSync(hstackShim) ? entry : `${process.execPath} ${entry}`;
+
+  const unit = `[Unit]
+Description=Happier Stack (${label})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+${userLine}WorkingDirectory=%h
+${systemdEnvLines(env)}
+ExecStart=${exec} start
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+`;
+
+  try {
+    await writeFile(unitPath, unit, 'utf-8');
+  } catch (e) {
+    const code = e && typeof e === 'object' && 'code' in e ? String(e.code) : '';
+    if (code === 'EACCES' || code === 'EPERM') {
+      throw new Error(`[local] --mode=system requires root (run with sudo).`);
+    }
+    throw e;
+  }
+  await runCapture('systemctl', ['daemon-reload']).catch(() => {});
+  await run('systemctl', ['enable', '--now', unitName]);
+}
+
 async function ensureSystemdUserServiceDisabled({ remove } = {}) {
   await runCapture('systemctl', ['--user', 'disable', '--now', systemdUnitName()]).catch(() => {});
   await runCapture('systemctl', ['--user', 'stop', systemdUnitName()]).catch(() => {});
   if (remove) {
     await rm(systemdUnitPath(), { force: true }).catch(() => {});
     await runCapture('systemctl', ['--user', 'daemon-reload']).catch(() => {});
+  }
+}
+
+async function ensureSystemdSystemServiceDisabled({ remove } = {}) {
+  const { unitName, unitPath } = getSystemdUnitInfo({ mode: 'system' });
+  await runCapture('systemctl', ['disable', '--now', unitName]).catch(() => {});
+  await runCapture('systemctl', ['stop', unitName]).catch(() => {});
+  if (remove) {
+    await rm(unitPath, { force: true }).catch(() => {});
+    await runCapture('systemctl', ['daemon-reload']).catch(() => {});
   }
 }
 
@@ -259,7 +378,7 @@ async function postStartDiagnostics() {
   const internalUrl = getInternalServerUrl({ env: process.env, defaultPort: 3005 }).internalServerUrl;
 
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPIER_STACK_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+    ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
     : join(getDefaultAutostartPaths().baseDir, 'cli');
 
   let port = 3005;
@@ -273,9 +392,12 @@ async function postStartDiagnostics() {
   const cliDir = getComponentDir(rootDir, 'happier-cli');
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
 
-  const accessKey = join(cliHomeDir, 'access.key');
-  const stateFile = join(cliHomeDir, 'daemon.state.json');
-  const lockFile = join(cliHomeDir, 'daemon.state.json.lock');
+  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalUrl });
+  const existingCredentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalUrl });
+  const accessKey = existingCredentialPath || credentialPaths.serverScopedPath;
+  const daemonPaths = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalUrl });
+  const stateFile = daemonPaths.statePath;
+  const lockFile = daemonPaths.lockPath;
   const logsDir = join(cliHomeDir, 'logs');
 
   const latestDaemonLog = async () => {
@@ -364,7 +486,7 @@ async function postStartDiagnostics() {
   console.log(sectionTitle('Daemon'));
   if (res.kind === 'starting') {
     console.log(bullets([`${yellow('!')} starting ${dim(`(pid=${res.pid ?? 'unknown'})`)}`]));
-  } else if (!existsSync(accessKey)) {
+  } else if (!existingCredentialPath) {
     console.log(bullets([`${yellow('!')} auth required ${dim(`(missing ${accessKey})`)}`]));
     console.log('');
     console.log(sectionTitle('Authenticate'));
@@ -504,13 +626,16 @@ async function tailLogs() {
 }
 
 async function main() {
-  if (process.platform !== 'darwin' && process.platform !== 'linux') {
-    throw new Error('[local] service commands are only supported on macOS (launchd) and Linux (systemd user).');
-  }
-
   const argv = process.argv.slice(2);
   const helpSepIdx = argv.indexOf('--');
   const helpScopeArgv = helpSepIdx === -1 ? argv : argv.slice(0, helpSepIdx);
+  const mode = resolveServiceMode(helpScopeArgv);
+  const systemUser = resolveSystemUser(helpScopeArgv);
+  ensureLinuxSystemModeSupported({ mode });
+
+  if (process.platform !== 'darwin' && process.platform !== 'linux') {
+    throw new Error('[local] service commands are only supported on macOS (launchd) and Linux (systemd).');
+  }
   const positionals = helpScopeArgv.filter((a) => a && a !== '--' && !a.startsWith('-'));
   const cmd = positionals[0] ?? 'help';
   const json = wantsJson(helpScopeArgv);
@@ -546,14 +671,14 @@ async function main() {
       json,
       data: { commands: ['install', 'uninstall', 'status', 'start', 'stop', 'restart', 'enable', 'disable', 'logs', 'tail'] },
       text: [
-        banner('service', { subtitle: 'Autostart service management (launchd/systemd user).' }),
+        banner('service', { subtitle: 'Autostart service management (launchd/systemd).' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hstack service')} install|uninstall [--json]`,
-        `  ${cyan('hstack service')} status [--json]`,
-        `  ${cyan('hstack service')} start|stop|restart [--json]`,
-        `  ${cyan('hstack service')} enable|disable [--json]`,
-        `  ${cyan('hstack service')} logs [--json]`,
+        `  ${cyan('hstack service')} install|uninstall [--mode=system|user] [--system-user=<name>] [--json]`,
+        `  ${cyan('hstack service')} status [--mode=system|user] [--json]`,
+        `  ${cyan('hstack service')} start|stop|restart [--mode=system|user] [--json]`,
+        `  ${cyan('hstack service')} enable|disable [--mode=system|user] [--json]`,
+        `  ${cyan('hstack service')} logs [--mode=system|user] [--json]`,
         `  ${cyan('hstack service')} tail`,
         '',
         sectionTitle('legacy aliases:'),
@@ -567,11 +692,11 @@ async function main() {
   }
   switch (cmd) {
     case 'install':
-      await installService();
+      await installService({ mode, systemUser });
       if (json) printResult({ json, data: { ok: true, action: 'install' } });
       return;
     case 'uninstall':
-      await uninstallService();
+      await uninstallService({ mode });
       if (json) printResult({ json, data: { ok: true, action: 'uninstall' } });
       return;
     case 'status':
@@ -601,21 +726,25 @@ async function main() {
           }
           printResult({ json, data: { label, plistPath, stdoutPath, stderrPath, internalUrl, launchctlLine, health } });
         } else {
-          const unitName = systemdUnitName();
-          const unitPath = systemdUnitPath();
+          const { unitName, unitPath, systemctlArgsPrefix } = getSystemdUnitInfo({ mode });
           let systemctlStatus = null;
           try {
-            systemctlStatus = await runCapture('systemctl', ['--user', 'status', unitName, '--no-pager']);
+            systemctlStatus = await runCapture('systemctl', [...systemctlArgsPrefix, 'status', unitName, '--no-pager']);
           } catch (e) {
             systemctlStatus = e && typeof e === 'object' && 'out' in e ? e.out : null;
           }
-          printResult({ json, data: { unitName, unitPath, internalUrl, systemctlStatus, health } });
+          printResult({ json, data: { mode, unitName, unitPath, internalUrl, systemctlStatus, health } });
         }
       } else {
         if (process.platform === 'darwin') {
           await showStatus();
         } else {
-          await systemdStatus();
+          if (mode === 'system') {
+            const { unitName, systemctlArgsPrefix } = getSystemdUnitInfo({ mode });
+            await run('systemctl', [...systemctlArgsPrefix, 'status', unitName, '--no-pager']);
+          } else {
+            await systemdStatus();
+          }
         }
       }
       return;
@@ -623,7 +752,12 @@ async function main() {
       if (process.platform === 'darwin') {
         await startLaunchAgent({ persistent: false });
       } else {
-        await systemdStart({ persistent: false });
+        if (mode === 'system') {
+          const { unitName } = getSystemdUnitInfo({ mode });
+          await run('systemctl', ['start', unitName]);
+        } else {
+          await systemdStart({ persistent: false });
+        }
       }
       await postStartDiagnostics();
       if (json) printResult({ json, data: { ok: true, action: 'start' } });
@@ -632,7 +766,12 @@ async function main() {
       if (process.platform === 'darwin') {
         await stopLaunchAgent({ persistent: false });
       } else {
-        await systemdStop({ persistent: false });
+        if (mode === 'system') {
+          const { unitName } = getSystemdUnitInfo({ mode });
+          await run('systemctl', ['stop', unitName]);
+        } else {
+          await systemdStop({ persistent: false });
+        }
       }
       if (json) printResult({ json, data: { ok: true, action: 'stop' } });
       return;
@@ -644,7 +783,12 @@ async function main() {
           await startLaunchAgent({ persistent: false });
         }
       } else {
-        await systemdRestart();
+        if (mode === 'system') {
+          const { unitName } = getSystemdUnitInfo({ mode });
+          await run('systemctl', ['restart', unitName]);
+        } else {
+          await systemdRestart();
+        }
       }
       await postStartDiagnostics();
       if (json) printResult({ json, data: { ok: true, action: 'restart' } });
@@ -653,7 +797,12 @@ async function main() {
       if (process.platform === 'darwin') {
         await startLaunchAgent({ persistent: true });
       } else {
-        await systemdStart({ persistent: true });
+        if (mode === 'system') {
+          const { unitName } = getSystemdUnitInfo({ mode });
+          await run('systemctl', ['enable', '--now', unitName]);
+        } else {
+          await systemdStart({ persistent: true });
+        }
       }
       await postStartDiagnostics();
       if (json) printResult({ json, data: { ok: true, action: 'enable' } });
@@ -662,7 +811,12 @@ async function main() {
       if (process.platform === 'darwin') {
         await stopLaunchAgent({ persistent: true });
       } else {
-        await systemdStop({ persistent: true });
+        if (mode === 'system') {
+          const { unitName } = getSystemdUnitInfo({ mode });
+          await run('systemctl', ['disable', '--now', unitName]);
+        } else {
+          await systemdStop({ persistent: true });
+        }
       }
       if (json) printResult({ json, data: { ok: true, action: 'disable' } });
       return;
@@ -671,14 +825,24 @@ async function main() {
         await showLogs();
       } else {
         const lines = Number(process.env.HAPPIER_STACK_LOG_LINES ?? 120) || 120;
-        await systemdLogs({ lines });
+        if (mode === 'system') {
+          const { unitName, journalctlArgsPrefix } = getSystemdUnitInfo({ mode });
+          await run('journalctl', [...journalctlArgsPrefix, '-u', unitName, '-n', String(lines), '--no-pager']);
+        } else {
+          await systemdLogs({ lines });
+        }
       }
       return;
     case 'tail':
       if (process.platform === 'darwin') {
         await tailLogs();
       } else {
-        await systemdTail();
+        if (mode === 'system') {
+          const { unitName, journalctlArgsPrefix } = getSystemdUnitInfo({ mode });
+          await run('journalctl', [...journalctlArgsPrefix, '-u', unitName, '-f']);
+        } else {
+          await systemdTail();
+        }
       }
       return;
     default:

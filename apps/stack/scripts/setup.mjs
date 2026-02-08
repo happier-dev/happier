@@ -21,7 +21,7 @@ import { normalizeProfile, normalizeServerComponent } from './utils/cli/normaliz
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
 import { commandExists } from './utils/proc/commands.mjs';
 import { readServerPortFromEnvFile, resolveServerPortFromEnv } from './utils/server/port.mjs';
-import { guidedStackAuthLoginNow } from './utils/auth/stack_guided_login.mjs';
+import { runOrchestratedGuidedAuthFlow } from './utils/auth/orchestrated_stack_auth_flow.mjs';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { runCommandLogged } from './utils/cli/progress.mjs';
 import { bold, cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
@@ -32,6 +32,7 @@ import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/lay
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
 import { ensureDevCheckout } from './utils/git/dev_checkout.mjs';
 import { parseGithubOwnerRepo } from './utils/git/worktrees.mjs';
+import { findAnyCredentialPathInCliHome, findExistingStackCredentialPath } from './utils/auth/credentials_paths.mjs';
 
 function resolveWorkspaceDirDefault() {
   const explicit = (process.env.HAPPIER_STACK_WORKSPACE_DIR ?? '').toString().trim();
@@ -308,13 +309,13 @@ function mainCliHomeDirForEnvPath(envPath) {
 
 function getMainStacksAccessKeyPath() {
   const cliHomeDir = mainCliHomeDirForEnvPath(resolveStackEnvPath('main').envPath);
-  return join(cliHomeDir, 'access.key');
+  return findAnyCredentialPathInCliHome({ cliHomeDir });
 }
 
 function getDevAuthStackAccessKeyPath(stackName = 'dev-auth') {
   const { baseDir, envPath } = resolveStackEnvPath(stackName);
   if (!existsSync(envPath)) return null;
-  return join(baseDir, 'cli', 'access.key');
+  return findAnyCredentialPathInCliHome({ cliHomeDir: join(baseDir, 'cli') });
 }
 
 function detectAuthSources() {
@@ -520,8 +521,11 @@ async function cmdSetup({ rootDir, argv }) {
 	          '--profile=selfhost|dev',
 	          '--server=happier-server-light|happier-server',
 	          '--server-flavor=light|full',
+            '--non-interactive',
 	          '--happier-repo=<owner/repo|url>     # override the monorepo clone source',
 	          '--workspace-dir=/absolute/path   # dev profile only',
+            '--no-ui-deps                  # bootstrap: skip UI deps',
+            '--no-ui-build                 # bootstrap: skip UI build',
 	          '--install-path',
 	          '--start-now',
           '--bind=loopback|lan',
@@ -555,7 +559,7 @@ async function cmdSetup({ rootDir, argv }) {
 	    return;
 	  }
 
-  const interactive = isTty();
+  const interactive = isTty() && !flags.has('--non-interactive');
   let profile = normalizeProfile(kv.get('--profile'));
   if (!profile && interactive) {
     profile = await withRl(async (rl) => {
@@ -578,6 +582,9 @@ async function cmdSetup({ rootDir, argv }) {
 
   // Optional: override the monorepo clone source (UI + CLI + full server).
   const happierRepoUrl = normalizeGithubRepoUrl(kv.get('--happier-repo'));
+  const bootstrapExtraArgs = [];
+  if (flags.has('--no-ui-deps')) bootstrapExtraArgs.push('--no-ui-deps');
+  if (flags.has('--no-ui-build')) bootstrapExtraArgs.push('--no-ui-build');
 
   function isInteractiveChildCommand({ rel, args }) {
     // If a child command needs to prompt the user, it must inherit stdin/stdout.
@@ -636,7 +643,7 @@ async function cmdSetup({ rootDir, argv }) {
           ]
         : [
             `- ${cyan('workspace')}: your git checkouts (repo + worktrees)`,
-            `- ${cyan('stacks')}: isolated runtimes under ${cyan('~/.happy/stacks/<name>')}`,
+            `- ${cyan('stacks')}: isolated runtimes under ${cyan('~/.happier/stacks/<name>')}`,
             `- ${cyan('daemon')}: runs sessions + connects the UI <-> terminal`,
           ],
       '',
@@ -743,7 +750,7 @@ async function cmdSetup({ rootDir, argv }) {
       `- ${dim('local')}: ${cyan(join(suggested, 'local'))}`,
       `- ${dim('tmp')}:   ${cyan(join(suggested, 'tmp'))}`,
       '',
-      dim('Pick a stable folder that is easy to open in your editor (example: ~/Development/happy).'),
+      dim('Pick a stable folder that is easy to open in your editor (example: ~/Development/happier).'),
       '',
     ].join('\n');
     // eslint-disable-next-line no-console
@@ -1119,7 +1126,7 @@ async function cmdSetup({ rootDir, argv }) {
       rel: 'scripts/install.mjs',
       // Self-hosting: always clone the Happier monorepo from upstream.
       // Light flavor uses embedded Postgres (PGlite) and is handled by the server package itself.
-      args: [`--server=${serverComponent}`, '--upstream', '--clone'],
+      args: [`--server=${serverComponent}`, '--upstream', '--clone', ...bootstrapExtraArgs],
     });
   }
 
@@ -1224,24 +1231,31 @@ async function cmdSetup({ rootDir, argv }) {
     // 8) Optional: auth login (runs interactive browser flow via happier-cli).
     if (authWanted) {
       const cliHomeDir = mainCliHomeDirForEnvPath(resolveStackEnvPath('main').envPath);
-      const accessKey = join(cliHomeDir, 'access.key');
-      if (existsSync(accessKey)) {
+      const existingCredentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl });
+      if (existingCredentialPath) {
         // eslint-disable-next-line no-console
-        console.log('[setup] auth: already configured (access.key exists)');
+        console.log(`[setup] auth: already configured (${existingCredentialPath} exists)`);
       } else {
         const env = {
           ...process.env,
           HAPPIER_STACK_SERVER_PORT: String(port),
         };
         if (interactive) {
-          await guidedStackAuthLoginNow({ rootDir, stackName: 'main', env });
+          await runOrchestratedGuidedAuthFlow({
+            rootDir,
+            stackName: 'main',
+            env,
+            verbosity,
+            json: false,
+          });
         } else {
           await runNodeScript({ rootDir, rel: 'scripts/stack.mjs', args: ['auth', 'main', '--', 'login'], env });
         }
 
-        if (!existsSync(accessKey)) {
+        const credentialAfterLogin = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl });
+        if (!credentialAfterLogin) {
           // eslint-disable-next-line no-console
-          console.log('[setup] auth: not completed yet (missing access.key). You can retry with: hstack auth login');
+          console.log('[setup] auth: not completed yet (missing credentials). You can retry with: hstack auth login');
         } else {
           // eslint-disable-next-line no-console
           console.log('[setup] auth: complete');

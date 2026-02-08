@@ -6,7 +6,6 @@ import { getComponentDir, getDefaultAutostartPaths, getRootDir } from './utils/p
 import { killPortListeners } from './utils/net/ports.mjs';
 import { getServerComponentName, isHappierServerRunning, waitForServerReady } from './utils/server/server.mjs';
 import { ensureCliBuilt, ensureDepsInstalled, pmExecBin, pmSpawnScript, requireDir } from './utils/proc/pm.mjs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { maybeResetTailscaleServe } from './tailscale.mjs';
@@ -30,6 +29,9 @@ import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mo
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 import { isSandboxed } from './utils/env/sandbox.mjs';
+import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
+import { expandHome } from './utils/paths/canonical_home.mjs';
+import { validateUiServingConfig } from './utils/server/ui_build_check.mjs';
 
 /**
  * Run the local stack in "production-like" mode:
@@ -129,7 +131,11 @@ async function main() {
 
   const startDaemon = !flags.has('--no-daemon') && (process.env.HAPPIER_STACK_DAEMON ?? '1') !== '0';
   const serveUiWanted = !flags.has('--no-ui') && (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
-  const serveUi = serveUiWanted;
+  let serveUi = serveUiWanted;
+  // Capability semantics: if UI serving is enabled, default to "required" (fail closed)
+  // unless explicitly disabled.
+  const uiRequiredRaw = (process.env.HAPPIER_STACK_UI_REQUIRED ?? '').toString().trim();
+  const uiRequired = uiRequiredRaw ? uiRequiredRaw !== '0' : Boolean(serveUiWanted);
   const startMobile = flags.has('--mobile') || flags.has('--with-mobile');
   const expoTailscale = flags.has('--expo-tailscale') || resolveExpoTailscaleEnabled({ env: process.env });
   const noBrowser = flags.has('--no-browser') || (process.env.HAPPIER_STACK_NO_BROWSER ?? '').toString().trim() === '1';
@@ -148,7 +154,7 @@ async function main() {
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
 
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPIER_STACK_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+    ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
     : join(autostart.baseDir, 'cli');
   const restart = flags.has('--restart');
 
@@ -166,6 +172,7 @@ async function main() {
         publicServerUrl,
         startDaemon,
         serveUi,
+        uiRequired,
         startMobile,
         uiPrefix,
         uiBuildDir,
@@ -187,19 +194,28 @@ async function main() {
   }
 
   const uiBuildDirExists = await pathExists(uiBuildDir);
-  if (serveUi && !uiBuildDirExists) {
-    if (serverComponentName === 'happier-server-light') {
-      throw new Error(
-        `[local] UI build directory not found at ${uiBuildDir}. ` +
-          `Run: ${cmd('hstack build')}`
-      );
+  const uiIndexExists = serveUi && uiBuildDirExists ? await pathExists(join(uiBuildDir, 'index.html')) : false;
+  {
+    const validated = validateUiServingConfig({
+      serverComponentName,
+      serveUiWanted: serveUi,
+      uiRequired,
+      uiBuildDir,
+      uiBuildDirExists,
+      uiIndexExists,
+    });
+    serveUi = validated.serveUi;
+    if (!serveUi && validated.warning) {
+      // For happier-server, UI serving is optional; warn and continue.
+      if (serverComponentName !== 'happier-server-light') {
+        console.log(`${yellow('!')} ${validated.warning}`);
+      }
     }
-    // For happier-server, UI serving is optional.
-    console.log(`${yellow('!')} UI build directory not found at ${uiBuildDir}; UI serving will be disabled`);
   }
 
   const children = [];
   let shuttingDown = false;
+  installExitCleanup({ label: 'local', children });
   const baseEnv = { ...process.env };
   const stackCtx = resolveStackContext({ env: baseEnv, autostart });
   const { stackMode, runtimeStatePath, stackName, envPath, ephemeral } = stackCtx;
@@ -269,7 +285,9 @@ async function main() {
     // Avoid noisy failures if a previous run left the metrics port busy.
     // You can override with METRICS_ENABLED=true if you want it.
     METRICS_ENABLED: baseEnv.METRICS_ENABLED ?? 'false',
-    ...resolveServerUiEnv({ serveUi, uiBuildDir, uiPrefix, uiBuildDirExists }),
+    // Server-side enforcement: if UI serving is enabled (capability), require a valid bundle.
+    ...(serveUi ? { HAPPIER_SERVER_UI_REQUIRED: uiRequired ? '1' : '0' } : {}),
+    ...resolveServerUiEnv({ serveUi, uiBuildDir, uiPrefix, uiBuildDirExists: Boolean(serveUi && uiBuildDirExists && uiIndexExists) }),
   };
   let serverLightAccountCount = null;
   let happierServerAccountCount = null;
@@ -428,14 +446,20 @@ async function main() {
 
   // Daemon
   if (startDaemon) {
-    const gate = daemonStartGate({ env: baseEnv, cliHomeDir });
+    const gate = daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: effectiveInternalServerUrl });
     if (!gate.ok) {
       const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
       // In orchestrated auth flows, keep server/UI up and let the orchestrator start daemon post-auth.
       if (gate.reason === 'auth_flow_missing_credentials') {
         console.log('[local] auth flow: skipping daemon start until credentials exist');
       } else if (!isInteractive) {
-        throw new Error(formatDaemonAuthRequiredError({ stackName: autostart.stackName, cliHomeDir }));
+        throw new Error(
+          formatDaemonAuthRequiredError({
+            stackName: autostart.stackName,
+            cliHomeDir,
+            serverUrl: effectiveInternalServerUrl,
+          })
+        );
       }
     } else {
       const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);

@@ -4,9 +4,11 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { compareVersions, installRuntimeFromNpm, readNpmDistTagVersion, resolveNpmPackageNameOverride } from '@happier-dev/cli-common/update';
+
 import { parseArgs } from './utils/cli/args.mjs';
 import { pathExists } from './utils/fs/fs.mjs';
-import { run, runCapture } from './utils/proc/proc.mjs';
+import { run } from './utils/proc/proc.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { getHappyStacksHomeDir, getRootDir } from './utils/paths/paths.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
@@ -63,44 +65,31 @@ async function getInvokerVersion({ rootDir }) {
   return await readPackageJsonVersion(join(rootDir, 'package.json'));
 }
 
-async function fetchLatestVersion({ packageName }) {
-  // Prefer npm (available on most systems with Node).
-  // Keep it simple: `npm view <pkg> version` prints a single version.
-  try {
-    const pkg = String(packageName ?? '').trim();
-    if (!pkg) return null;
-    const out = (await runCapture('npm', ['view', pkg, 'version'])).trim();
-    return out || null;
-  } catch {
-    return null;
-  }
+function parseSelfChannel({ flags, kv }) {
+  if (flags.has('--preview')) return 'preview';
+  const raw = String(kv.get('--channel') ?? '').trim();
+  return raw === 'preview' ? 'preview' : 'stable';
 }
 
-function compareVersions(a, b) {
-  // Very small semver-ish compare (supports x.y.z); falls back to string compare.
-  const pa = String(a ?? '').trim().split('.').map((n) => Number(n));
-  const pb = String(b ?? '').trim().split('.').map((n) => Number(n));
-  if (pa.length >= 2 && pb.length >= 2 && pa.every((n) => Number.isFinite(n)) && pb.every((n) => Number.isFinite(n))) {
-    const len = Math.max(pa.length, pb.length);
-    for (let i = 0; i < len; i++) {
-      const da = pa[i] ?? 0;
-      const db = pb[i] ?? 0;
-      if (da > db) return 1;
-      if (da < db) return -1;
-    }
-    return 0;
-  }
-  return String(a).localeCompare(String(b));
+async function fetchLatestVersion({ packageName, distTag, cwd }) {
+  const pkg = String(packageName ?? '').trim();
+  if (!pkg) return null;
+  return readNpmDistTagVersion({ packageName: pkg, distTag, cwd, env: process.env });
 }
 
 async function cmdStatus({ rootDir, argv }) {
-  const { flags } = parseArgs(argv);
+  const { flags, kv: kvArgs } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   const doCheck = !flags.has('--no-check');
+  const channel = parseSelfChannel({ flags, kv: kvArgs });
+  const distTag = channel === 'preview' ? 'next' : 'latest';
 
   const { updateJson, cacheDir } = cachePaths();
   const invoker = await readJsonIfExists(join(rootDir, 'package.json'), { defaultValue: null });
-  const packageName = String(invoker?.name ?? '').trim();
+  const packageName = resolveNpmPackageNameOverride({
+    envValue: process.env.HAPPIER_STACK_UPDATE_PACKAGE_NAME,
+    fallback: String(invoker?.name ?? '').trim(),
+  });
   const invokerVersion = await getInvokerVersion({ rootDir });
   const runtimeDir = getRuntimeDir();
   const runtimeVersion = await getRuntimeInstalledVersion();
@@ -113,7 +102,7 @@ async function cmdStatus({ rootDir, argv }) {
 
   if (doCheck) {
     try {
-      latest = await fetchLatestVersion({ packageName });
+      latest = await fetchLatestVersion({ packageName, distTag, cwd: rootDir });
       checkedAt = Date.now();
       const current = runtimeVersion || invokerVersion;
       updateAvailable = Boolean(current && latest && compareVersions(latest, current) > 0);
@@ -161,44 +150,47 @@ async function cmdStatus({ rootDir, argv }) {
 }
 
 async function cmdUpdate({ rootDir, argv }) {
-  const { flags, kv } = parseArgs(argv);
+  const { flags, kv: kvArgs } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
 
   const runtimeDir = getRuntimeDir();
-  const to = (kv.get('--to') ?? '').trim();
+  const to = (kvArgs.get('--to') ?? '').trim();
+  const channel = parseSelfChannel({ flags, kv: kvArgs });
   const invoker = await readJsonIfExists(join(rootDir, 'package.json'), { defaultValue: null });
-  const pkgName = String(invoker?.name ?? '').trim();
+  const pkgName = resolveNpmPackageNameOverride({
+    envValue: process.env.HAPPIER_STACK_UPDATE_PACKAGE_NAME,
+    fallback: String(invoker?.name ?? '').trim(),
+  });
   if (!pkgName) throw new Error('[self] unable to resolve package name (missing package.json name)');
-  const spec = to ? `${pkgName}@${to}` : `${pkgName}@latest`;
+  const spec = to ? `${pkgName}@${to}` : `${pkgName}@${channel === 'preview' ? 'next' : 'latest'}`;
 
   // Ensure runtime dir exists.
   await mkdir(runtimeDir, { recursive: true });
 
   // Install/update runtime package.
-  try {
-    await run('npm', ['install', '--no-audit', '--no-fund', '--silent', '--prefix', runtimeDir, spec], { cwd: rootDir });
-  } catch (err) {
+  const installRes = installRuntimeFromNpm({ runtimeDir, spec, cwd: rootDir, env: process.env });
+  if (!installRes.ok) {
     // Pre-publish dev fallback: allow updating runtime from the local checkout.
-    if (!to && existsSync(join(rootDir, 'package.json'))) {
+    if (!to && !String(process.env.HAPPIER_STACK_UPDATE_PACKAGE_NAME ?? '').trim() && existsSync(join(rootDir, 'package.json'))) {
       try {
         const raw = await readFile(join(rootDir, 'package.json'), 'utf-8');
         const pkg = JSON.parse(raw);
         if (pkg?.name === pkgName) {
           await run('npm', ['install', '--no-audit', '--no-fund', '--silent', '--prefix', runtimeDir, rootDir], { cwd: rootDir });
         } else {
-          throw err;
+          throw new Error(installRes.errorMessage);
         }
       } catch {
-        throw err;
+        throw new Error(installRes.errorMessage);
       }
     } else {
-      throw err;
+      throw new Error(installRes.errorMessage);
     }
   }
 
   // Refresh cache best-effort.
   try {
-    const latest = await fetchLatestVersion({ packageName: pkgName });
+    const latest = await fetchLatestVersion({ packageName: pkgName, distTag: channel === 'preview' ? 'next' : 'latest', cwd: rootDir });
     const runtimeVersion = await getRuntimeInstalledVersion();
     const invokerVersion = await getInvokerVersion({ rootDir });
     const current = runtimeVersion || invokerVersion;
@@ -227,20 +219,25 @@ async function cmdUpdate({ rootDir, argv }) {
 }
 
 async function cmdCheck({ rootDir, argv }) {
-  const { flags } = parseArgs(argv);
+  const { flags, kv: kvArgs } = parseArgs(argv);
   const json = wantsJson(argv, { flags });
   const quiet = flags.has('--quiet');
+  const channel = parseSelfChannel({ flags, kv: kvArgs });
+  const distTag = channel === 'preview' ? 'next' : 'latest';
 
   const { updateJson, cacheDir } = cachePaths();
   const runtimeVersion = await getRuntimeInstalledVersion();
   const invokerVersion = await getInvokerVersion({ rootDir });
   const current = runtimeVersion || invokerVersion;
   const invoker = await readJsonIfExists(join(rootDir, 'package.json'), { defaultValue: null });
-  const packageName = String(invoker?.name ?? '').trim();
+  const packageName = resolveNpmPackageNameOverride({
+    envValue: process.env.HAPPIER_STACK_UPDATE_PACKAGE_NAME,
+    fallback: String(invoker?.name ?? '').trim(),
+  });
 
   let latest = null;
   try {
-    latest = await fetchLatestVersion({ packageName });
+    latest = await fetchLatestVersion({ packageName, distTag, cwd: rootDir });
   } catch {
     latest = null;
   }
@@ -400,9 +397,9 @@ async function main() {
   const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
   const json = wantsJson(helpScopeArgv, { flags });
   const usageByCmd = new Map([
-    ['status', 'hstack self status [--no-check] [--json]'],
-    ['update', 'hstack self update [--to=<version>] [--json]'],
-    ['check', 'hstack self check [--quiet] [--json]'],
+    ['status', 'hstack self status [--preview|--channel=preview] [--no-check] [--json]'],
+    ['update', 'hstack self update [--preview|--channel=preview] [--to=<version>] [--json]'],
+    ['check', 'hstack self check [--preview|--channel=preview] [--quiet] [--json]'],
     ['use-cli', 'hstack self use-cli default|main|dev|/abs/path/to/apps/stack [--json]'],
   ]);
 
@@ -421,15 +418,21 @@ async function main() {
   if (wantsHelpFlag || cmd === 'help') {
     printResult({
       json,
-      data: { commands: ['status', 'update', 'check', 'use-cli'], flags: ['--no-check', '--to=<version>', '--quiet'] },
+      data: { commands: ['status', 'update', 'check', 'use-cli'], flags: ['--preview', '--channel=preview', '--no-check', '--to=<version>', '--quiet'] },
       text: [
         banner('self', { subtitle: 'Runtime install + self-update.' }),
         '',
         sectionTitle('usage:'),
-        `  ${cyan('hstack self')} status [--no-check] [--json]`,
-        `  ${cyan('hstack self')} update [--to=<version>] [--json]`,
-        `  ${cyan('hstack self')} check [--quiet] [--json]`,
+        `  ${cyan('hstack self')} status [--preview|--channel=preview] [--no-check] [--json]`,
+        `  ${cyan('hstack self')} update [--preview|--channel=preview] [--to=<version>] [--json]`,
+        `  ${cyan('hstack self')} check [--preview|--channel=preview] [--quiet] [--json]`,
         `  ${cyan('hstack self')} use-cli default|main|dev|/abs/path/to/apps/stack [--json]`,
+        '',
+        sectionTitle('channels:'),
+        bullets([
+          kv('stable:', dim('npm dist-tag latest')),
+          kv('preview:', dim('npm dist-tag next')),
+        ]),
       ].join('\n'),
     });
     return;
@@ -456,6 +459,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('[self] failed:', err);
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`[self] failed: ${msg}`);
   process.exit(1);
 });

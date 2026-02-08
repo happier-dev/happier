@@ -4,10 +4,14 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { isTty } from './utils/cli/wizard.mjs';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { createStepPrinter, runCommandLogged } from './utils/cli/progress.mjs';
-import { createFileLogForwarder } from './utils/cli/log_forwarder.mjs';
 import { assertCliPrereqs } from './utils/cli/prereqs.mjs';
 import { decidePrAuthPlan } from './utils/auth/guided_pr_auth.mjs';
-import { assertExpoWebappBundlesOrThrow, guidedStackAuthLoginNow, resolveStackWebappUrlForAuth } from './utils/auth/stack_guided_login.mjs';
+import { findAnyCredentialPathInCliHome } from './utils/auth/credentials_paths.mjs';
+import {
+  runOrchestratedGuidedAuthFlow,
+  startDaemonPostAuth,
+} from './utils/auth/orchestrated_stack_auth_flow.mjs';
+import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { getComponentDir, getRootDir, resolveStackEnvPath } from './utils/paths/paths.mjs';
 import { run } from './utils/proc/proc.mjs';
@@ -15,7 +19,6 @@ import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox
 import { sanitizeStackName } from './utils/stack/names.mjs';
 import { getStackRuntimeStatePath, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
 import { readEnvObjectFromFile } from './utils/env/read.mjs';
-import { checkDaemonState, startLocalDaemonWithAuth } from './daemon.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -167,11 +170,10 @@ async function printReviewerStackSummary({ rootDir, stackName, env, wantsMobile 
 
 function detectBestAuthSource() {
   const devAuthEnvExists = existsSync(resolveStackEnvPath('dev-auth').envPath);
-  const devAuthAccessKey = join(resolveStackEnvPath('dev-auth').baseDir, 'cli', 'access.key');
-  const mainAccessKey = join(resolveStackEnvPath('main').baseDir, 'cli', 'access.key');
-
-  const hasDevAuth = devAuthEnvExists && existsSync(devAuthAccessKey);
-  const hasMain = existsSync(mainAccessKey);
+  const hasDevAuth =
+    devAuthEnvExists &&
+    Boolean(findAnyCredentialPathInCliHome({ cliHomeDir: join(resolveStackEnvPath('dev-auth').baseDir, 'cli') }));
+  const hasMain = Boolean(findAnyCredentialPathInCliHome({ cliHomeDir: join(resolveStackEnvPath('main').baseDir, 'cli') }));
 
   if (hasDevAuth) return { from: 'dev-auth', hasAny: true };
   if (hasMain) return { from: 'main', hasAny: true };
@@ -304,7 +306,7 @@ async function main() {
     try {
       const { baseDir, envPath } = resolveStackEnvPath(stackName);
       if (!existsSync(envPath)) return false;
-      return existsSync(join(baseDir, 'cli', 'access.key'));
+      return Boolean(findAnyCredentialPathInCliHome({ cliHomeDir: join(baseDir, 'cli') }));
     } catch {
       return false;
     }
@@ -365,6 +367,7 @@ async function main() {
   if (wantsMobile) {
     stackStartEnv = pickReviewerMobileSchemeEnv(stackStartEnv);
   }
+  stackStartEnv = applyStackActiveServerScopeEnv({ env: stackStartEnv, stackName, cliIdentity: 'default' });
   // (No extra messaging here; review-pr prints the up-front explanation + enter-to-proceed gate.)
 
   // 1) Ensure happy-stacks home is initialized (idempotent).
@@ -501,84 +504,14 @@ async function main() {
   if (needsAuthFlow) {
     // eslint-disable-next-line no-console
     console.log('');
-    if (interactive) {
-      // In verbose mode, tail the runner log so users can debug Expo/auth issues,
-      // but pause forwarding during the guided login prompts (keeps instructions readable).
-      let forwarder = null;
-      if (!json && verbosity > 0) {
-        try {
-          const runtimeStatePath = getStackRuntimeStatePath(stackName);
-          const deadline = Date.now() + 10_000;
-          let logPath = '';
-          while (Date.now() < deadline) {
-            // eslint-disable-next-line no-await-in-loop
-            const st = await readStackRuntimeStateFile(runtimeStatePath);
-            logPath = String(st?.logs?.runner ?? '').trim();
-            if (logPath) break;
-            // eslint-disable-next-line no-await-in-loop
-            await new Promise((r) => setTimeout(r, 200));
-          }
-          if (logPath) {
-            forwarder = createFileLogForwarder({
-              path: logPath,
-              enabled: true,
-              label: 'stack',
-              startFromEnd: false,
-            });
-            await forwarder.start();
-          }
-        } catch {
-          forwarder = null;
-        }
-      }
-
-      const steps = createStepPrinter({ enabled: Boolean(process.stdout.isTTY && !json) });
-      const label = 'prepare login (waiting for web UI)';
-      steps.start(label);
-      let webappUrl = '';
-      try {
-        // Use the same env overlay we used to start the stack in background (includes auth-flow markers).
-        webappUrl = await resolveStackWebappUrlForAuth({ rootDir, stackName, env: stackStartEnv });
-        // This can take a moment (first bundle compile / resolver errors).
-        await assertExpoWebappBundlesOrThrow({ rootDir, stackName, webappUrl });
-        steps.stop('✓', label);
-      } catch (e) {
-        // For guided login, failing to resolve the UI origin should fail closed (server URL fallback is misleading).
-        steps.stop('x', label);
-        try {
-          await forwarder?.stop();
-        } catch {
-          // ignore
-        }
-        throw e;
-      }
-
-      try {
-        forwarder?.pause();
-        // We've already checked the web UI bundle above; skip repeating it here.
-        await guidedStackAuthLoginNow({
-          rootDir,
-          stackName,
-          env: { ...stackStartEnv, HAPPIER_STACK_AUTH_SKIP_BUNDLE_CHECK: '1' },
-          webappUrl,
-        });
-      } finally {
-        try {
-          forwarder?.resume();
-        } catch {
-          // ignore
-        }
-        try {
-          await forwarder?.stop();
-        } catch {
-          // ignore
-        }
-      }
-    }
-    // `guidedStackAuthLoginNow` already ran `stack auth <name> login` in interactive mode.
-    if (!interactive) {
-      await runNodeScript({ rootDir, rel: 'scripts/stack.mjs', args: ['auth', stackName, '--', 'login'] });
-    }
+    const guided = await runOrchestratedGuidedAuthFlow({
+      rootDir,
+      stackName,
+      env: stackStartEnv,
+      verbosity,
+      json: false,
+    });
+    const postAuthWebappUrl = String(guided?.webappUrl ?? '').trim();
 
     // After guided login, start daemon now (unless the user explicitly disabled it).
     // This ensures the machine is registered and appears in the UI.
@@ -587,46 +520,27 @@ async function main() {
       const label = 'start daemon (post-auth)';
       steps.start(label);
       try {
-        const { envPath, baseDir } = resolveStackEnvPath(stackName, stackStartEnv);
-        const stackEnv = await readEnvObjectFromFile(envPath);
-        const mergedEnv = { ...process.env, ...stackEnv };
-
-        const cliHomeDir =
-          (mergedEnv.HAPPIER_STACK_CLI_HOME_DIR ?? '').toString().trim() ||
-          join(baseDir, 'cli');
-        const cliDir = getComponentDir(rootDir, 'happier-cli', mergedEnv);
-        const cliBin = join(cliDir, 'bin', 'happier.mjs');
-
-        const runtimeStatePath = getStackRuntimeStatePath(stackName);
-        const st = await readStackRuntimeStateFile(runtimeStatePath);
-        const serverPort = Number(st?.ports?.server);
-        if (!Number.isFinite(serverPort) || serverPort <= 0) {
+        const daemonStart = await startDaemonPostAuth({
+          rootDir,
+          stackName,
+          env: stackStartEnv,
+          forceRestart: true,
+          webappUrl: postAuthWebappUrl,
+        });
+        if (daemonStart?.ok === false) {
+          steps.stop('!', label);
+          if (!json) {
+            // eslint-disable-next-line no-console
+            console.error(daemonStart.error ?? `[setup-pr] ${stackName}: post-auth daemon start verification timed out`);
+          }
+        } else {
+          steps.stop('✓', label);
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message.includes('could not resolve server port')) {
+          steps.stop('x', label);
           throw new Error('[setup-pr] post-auth daemon start failed: could not resolve server port from stack.runtime.json');
         }
-        const internalServerUrl = `http://127.0.0.1:${serverPort}`;
-        const publicServerUrl = internalServerUrl;
-
-        await startLocalDaemonWithAuth({
-          cliBin,
-          cliHomeDir,
-          internalServerUrl,
-          publicServerUrl,
-          isShuttingDown: () => false,
-          forceRestart: true,
-          env: mergedEnv,
-          stackName,
-        });
-
-        // Verify: daemon wrote state (best-effort wait).
-        const deadline = Date.now() + 10_000;
-        while (Date.now() < deadline) {
-          const s = checkDaemonState(cliHomeDir);
-          if (s.status === 'running') break;
-          // eslint-disable-next-line no-await-in-loop
-          await new Promise((r) => setTimeout(r, 250));
-        }
-        steps.stop('✓', label);
-      } catch (e) {
         steps.stop('x', label);
         throw e;
       }

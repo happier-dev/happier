@@ -7,6 +7,7 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { getComponentDir, getRootDir, getStackName } from './utils/paths/paths.mjs';
 import { resolveCliHomeDir } from './utils/stack/dirs.mjs';
 import { getPublicServerUrlEnvOverride, resolveServerPortFromEnv } from './utils/server/urls.mjs';
+import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 
 async function main() {
   const argv = process.argv.slice(2);
@@ -47,10 +48,15 @@ async function main() {
     process.exit(1);
   }
 
-  const env = { ...process.env };
+  let env = { ...process.env };
   env.HAPPIER_HOME_DIR = env.HAPPIER_HOME_DIR || cliHomeDir;
   env.HAPPIER_SERVER_URL = env.HAPPIER_SERVER_URL || internalServerUrl;
   env.HAPPIER_WEBAPP_URL = env.HAPPIER_WEBAPP_URL || publicServerUrl;
+  env = applyStackActiveServerScopeEnv({
+    env,
+    stackName,
+    cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
+  });
 
   const res = spawnSync(process.execPath, ['--no-warnings', '--no-deprecation', entrypoint, ...argv], {
     stdio: 'inherit',

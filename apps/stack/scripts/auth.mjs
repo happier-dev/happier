@@ -5,7 +5,7 @@ import { getComponentDir, getDefaultAutostartPaths, getRootDir, getStackName, re
 import { listAllStackNames } from './utils/stack/stacks.mjs';
 import { resolvePublicServerUrl } from './tailscale.mjs';
 import { getInternalServerUrl, getPublicServerUrlEnvOverride, getWebappUrlEnvOverride } from './utils/server/urls.mjs';
-import { fetchHappierHealth } from './utils/server/server.mjs';
+import { fetchHappierHealth, waitForHappierHealthOk } from './utils/server/server.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -21,12 +21,12 @@ import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForSer
 import { clearDevAuthKey, readDevAuthKey, writeDevAuthKey } from './utils/auth/dev_key.mjs';
 import { getExpoStatePaths, isStateProcessRunning } from './utils/expo/expo.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
-import { printAuthLoginInstructions } from './utils/auth/login_ux.mjs';
 import { copyFileIfMissing, linkFileIfMissing, removeFileOrSymlinkIfExists, writeSecretFileIfMissing } from './utils/auth/files.mjs';
 import { resolveHandyMasterSecretFromStack } from './utils/auth/handy_master_secret.mjs';
 import { ensureDir, readTextIfExists } from './utils/fs/ops.mjs';
 import { stackExistsSync } from './utils/stack/stacks.mjs';
 import { checkDaemonState } from './daemon.mjs';
+import { isTty, prompt, withRl } from './utils/cli/wizard.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from './utils/stack/cli_identities.mjs';
 import {
   getCliHomeDirFromEnvOrDefault,
@@ -36,6 +36,23 @@ import {
 import { resolveLocalhostHost, preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, ok, sectionTitle, warn } from './utils/ui/layout.mjs';
 import { bold, cyan, dim } from './utils/ui/ansi.mjs';
+import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
+import { runOrchestratedGuidedAuthFlow, startDaemonPostAuth } from './utils/auth/orchestrated_stack_auth_flow.mjs';
+import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
+import {
+  findAnyCredentialPathInCliHome,
+  findExistingStackCredentialPath,
+  resolveStackCredentialPaths,
+} from './utils/auth/credentials_paths.mjs';
+import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
+import { getStackRuntimeStatePath, isPidAlive as isRuntimePidAlive, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
+
+function resolveGuidedStartAction({ healthOk = false, runtimeOwnerAlive = false, autoStart = false } = {}) {
+  if (healthOk) return 'proceed';
+  if (runtimeOwnerAlive) return 'wait';
+  if (autoStart) return 'start';
+  return 'prompt';
+}
 
 function getInternalServerUrlCompat() {
   const { port, internalServerUrl } = getInternalServerUrl({ env: process.env, defaultPort: 3005 });
@@ -76,6 +93,119 @@ function fileHasContent(path) {
   }
 }
 
+function readAuthTokenFromCredentialPath(path) {
+  const p = String(path ?? '').trim();
+  if (!p || !existsSync(p)) return null;
+  try {
+    const raw = readFileSync(p, 'utf-8').trim();
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.token === 'string' && parsed.token.trim()) {
+        return parsed.token.trim();
+      }
+    } catch {
+      // fall through
+    }
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+function decodeJwtPayloadUnsafe(token) {
+  const raw = String(token ?? '').trim();
+  if (!raw) return null;
+  const parts = raw.split('.');
+  if (parts.length < 2) return null;
+  try {
+    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padLength = normalized.length % 4 === 0 ? 0 : 4 - (normalized.length % 4);
+    const padded = normalized + '='.repeat(padLength);
+    const decoded = Buffer.from(padded, 'base64').toString('utf-8');
+    const payload = JSON.parse(decoded);
+    return payload && typeof payload === 'object' ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveJwtSubjectFromCredentialPath(path) {
+  const token = readAuthTokenFromCredentialPath(path);
+  if (!token) return '';
+  const payload = decodeJwtPayloadUnsafe(token);
+  const sub = payload && typeof payload.sub === 'string' ? payload.sub.trim() : '';
+  return sub || '';
+}
+
+async function validateAuthTokenAgainstServer({ credentialPath, internalServerUrl }) {
+  const token = readAuthTokenFromCredentialPath(credentialPath);
+  if (!token) {
+    return {
+      checked: false,
+      valid: null,
+      status: null,
+      code: 'missing-token',
+      error: null,
+    };
+  }
+
+  const ctl = new AbortController();
+  const timeout = setTimeout(() => ctl.abort(), 2_500);
+  try {
+    const res = await fetch(`${internalServerUrl}/v1/account/profile`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: ctl.signal,
+    });
+    const text = await res.text();
+    let body = null;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = null;
+    }
+
+    if (res.status >= 200 && res.status < 300) {
+      return {
+        checked: true,
+        valid: true,
+        status: res.status,
+        code: 'ok',
+        error: null,
+      };
+    }
+
+    if (res.status === 401) {
+      return {
+        checked: true,
+        valid: false,
+        status: res.status,
+        code: typeof body?.code === 'string' && body.code ? body.code : 'invalid-token',
+        error: typeof body?.error === 'string' ? body.error : null,
+      };
+    }
+
+    return {
+      checked: true,
+      valid: false,
+      status: res.status,
+      code: `http-${res.status}`,
+      error: typeof body?.error === 'string' ? body.error : null,
+    };
+  } catch (e) {
+    return {
+      checked: true,
+      valid: null,
+      status: null,
+      code: 'request-error',
+      error: e instanceof Error ? e.message : String(e),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function authLoginSuggestion(stackName) {
   return stackName === 'main' ? 'hstack auth login' : `hstack stack auth ${stackName} login`;
 }
@@ -84,6 +214,41 @@ function authCopyFromSeedSuggestion(stackName) {
   if (stackName === 'main') return null;
   const from = resolveAuthSeedFromEnv(process.env);
   return `hstack stack auth ${stackName} copy-from ${from}`;
+}
+
+function argvKvValue(argv, name) {
+  const n = String(name ?? '').trim();
+  if (!n) return '';
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = String(argv[i] ?? '');
+    if (a === n) {
+      const next = String(argv[i + 1] ?? '');
+      if (next && !next.startsWith('--')) return next;
+      return '';
+    }
+    if (a.startsWith(`${n}=`)) {
+      return a.slice(`${n}=`.length);
+    }
+  }
+  return '';
+}
+
+function resolveGuidedServerReadyTimeoutMs(env = process.env) {
+  const raw = String(env.HAPPIER_STACK_AUTH_SERVER_READY_TIMEOUT_MS ?? '').trim();
+  if (!raw) return 30_000;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 1_000 ? n : 30_000;
+}
+
+async function isStackRuntimeOwnerAlive(stackName) {
+  try {
+    const statePath = getStackRuntimeStatePath(stackName);
+    const state = await readStackRuntimeStateFile(statePath);
+    const ownerPid = Number(state?.ownerPid);
+    return Number.isFinite(ownerPid) && ownerPid > 1 && isRuntimePidAlive(ownerPid);
+  } catch {
+    return false;
+  }
 }
 
 function resolveServerComponentForCurrentStack() {
@@ -895,6 +1060,130 @@ async function cmdCopyFrom({ argv, json }) {
     stackName,
   };
 
+  const sourceBaseDir = resolveStackEnvPath(fromStackName).baseDir;
+  const sourceEnvRaw = await readTextIfExists(resolveStackEnvPath(fromStackName).envPath);
+  const sourceEnv = sourceEnvRaw ? parseEnvToObject(sourceEnvRaw) : {};
+  const sourceCli = getCliHomeDirFromEnvOrDefault({ stackBaseDir: sourceBaseDir, env: sourceEnv });
+
+  const resolveStackInternalServerUrlForAuth = async ({ stackName: name, env, defaultPort }) => {
+    const runtimeStatePath = getStackRuntimeStatePath(name);
+    try {
+      const st = await readStackRuntimeStateFile(runtimeStatePath);
+      const ownerPid = Number(st?.ownerPid);
+      const runtimeOwnerAlive = Number.isFinite(ownerPid) && ownerPid > 1 ? isRuntimePidAlive(ownerPid) : false;
+      const port = Number(st?.ports?.server);
+      if (runtimeOwnerAlive && Number.isFinite(port) && port > 0) {
+        return `http://127.0.0.1:${port}`;
+      }
+    } catch {
+      // ignore; fall back to env/default port
+    }
+    const { internalServerUrl } = getInternalServerUrl({ env, defaultPort });
+    return internalServerUrl;
+  };
+
+  // IMPORTANT:
+  // Stack auth now uses stable server IDs (`HAPPIER_ACTIVE_SERVER_ID`) which are not persisted in stack env files.
+  // Reconstruct the stable scope ID here so copy-from reads the same source credential path that login wrote.
+  const sourceEnvScoped = applyStackActiveServerScopeEnv({
+    env: { ...process.env, ...sourceEnv },
+    stackName: fromStackName,
+    cliIdentity: 'default',
+  });
+  const sourceInternalServerUrl = await resolveStackInternalServerUrlForAuth({
+    stackName: fromStackName,
+    env: sourceEnvScoped,
+    defaultPort: 3005,
+  });
+  const sourceCredentialPath =
+    findExistingStackCredentialPath({ cliHomeDir: sourceCli, serverUrl: sourceInternalServerUrl, env: sourceEnvScoped }) ||
+    findAnyCredentialPathInCliHome({ cliHomeDir: sourceCli });
+  const targetEnv = process.env;
+  const targetEnvScoped = applyStackActiveServerScopeEnv({
+    env: targetEnv,
+    stackName,
+    cliIdentity: 'default',
+  });
+  const { url: targetInternalServerUrl } = getInternalServerUrlCompat();
+  const targetCredentialPaths = resolveStackCredentialPaths({
+    cliHomeDir: targetCli,
+    serverUrl: targetInternalServerUrl,
+    env: targetEnvScoped,
+  });
+  const fromServerComponent = resolveServerComponentFromEnv(sourceEnv);
+  const targetServerComponent = resolveServerComponentFromEnv(targetEnv);
+
+  const sourceCwd = resolveServerComponentDir({ rootDir, serverComponent: fromServerComponent });
+  const targetCwd = resolveServerComponentDir({ rootDir, serverComponent: targetServerComponent });
+  const sourceDbProvider =
+    fromServerComponent === 'happier-server-light'
+      ? resolveDbProviderForLightFromEnv(sourceEnv)
+      : resolveDbProviderForFullFromEnv(sourceEnv);
+  const targetDbProvider =
+    targetServerComponent === 'happier-server-light'
+      ? resolveDbProviderForLightFromEnv(targetEnv)
+      : resolveDbProviderForFullFromEnv(targetEnv);
+
+  const sourceClientImport =
+    fromServerComponent === 'happier-server-light'
+      ? sourceDbProvider === 'sqlite'
+        ? resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: 'sqlite' })
+        : resolvePrismaClientImportForServerComponent({ serverComponentName: fromServerComponent, serverDir: sourceCwd })
+      : resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: sourceDbProvider });
+  const targetClientImport =
+    targetServerComponent === 'happier-server-light'
+      ? targetDbProvider === 'sqlite'
+        ? resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: 'sqlite' })
+        : resolvePrismaClientImportForServerComponent({ serverComponentName: targetServerComponent, serverDir: targetCwd })
+      : resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: targetDbProvider });
+
+  const readSourceAccounts = async () => {
+    if (fromServerComponent === 'happier-server-light') {
+      const lightProvider = resolveDbProviderForLightFromEnv(sourceEnv);
+      const { dataDir, dbDir } = await ensureLightMigrationsApplied({
+        serverDir: sourceCwd,
+        baseDir: sourceBaseDir,
+        envIn: sourceEnv,
+        quiet: json,
+      });
+      if (lightProvider === 'sqlite') {
+        const url = resolveSqliteDatabaseUrlForLight({ dataDir });
+        return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: url });
+      }
+      return await listAccountsFromPglite({ cwd: sourceCwd, dbDir });
+    }
+    const fromDatabaseUrl = resolveDatabaseUrlFromEnvOrThrow({
+      env: sourceEnv,
+      stackName: fromStackName,
+      label: `source stack "${fromStackName}"`,
+      provider: sourceDbProvider,
+    });
+    return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: fromDatabaseUrl });
+  };
+
+  let sourceAccounts = null;
+  const sourceTokenSubject = resolveJwtSubjectFromCredentialPath(sourceCredentialPath);
+  const hasSourceDatabaseUrl = Boolean(String(sourceEnv.DATABASE_URL ?? '').trim());
+  const canValidateSourceTokenSubject =
+    Boolean(sourceTokenSubject) &&
+    (fromServerComponent === 'happier-server-light' || hasSourceDatabaseUrl);
+  if (canValidateSourceTokenSubject) {
+    try {
+      sourceAccounts = await readSourceAccounts();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `[auth] source auth appears stale: unable to validate token subject "${sourceTokenSubject}" against source Account rows for stack "${fromStackName}" (${detail}). Re-auth the source stack and retry.`
+      );
+    }
+    const hasMatchingSourceAccount = sourceAccounts.some((account) => String(account?.id ?? '') === sourceTokenSubject);
+    if (!hasMatchingSourceAccount) {
+      throw new Error(
+        `[auth] source auth appears stale: token subject "${sourceTokenSubject}" is not present in source Account rows for stack "${fromStackName}". Re-auth the source stack and retry.`
+      );
+    }
+  }
+
   if (secret) {
     if (serverComponent === 'happier-server-light') {
       const target = join(targetServerLightDataDir, 'handy-master-secret.txt');
@@ -914,21 +1203,33 @@ async function cmdCopyFrom({ argv, json }) {
     }
   }
 
-  const sourceBaseDir = resolveStackEnvPath(fromStackName).baseDir;
-  const sourceEnvRaw = await readTextIfExists(resolveStackEnvPath(fromStackName).envPath);
-  const sourceEnv = sourceEnvRaw ? parseEnvToObject(sourceEnvRaw) : {};
-  const sourceCli = getCliHomeDirFromEnvOrDefault({ stackBaseDir: sourceBaseDir, env: sourceEnv });
-
   if (linkMode) {
-    copied.accessKey = await linkFileIfMissing({ from: join(sourceCli, 'access.key'), to: join(targetCli, 'access.key'), force });
+    const linkedLegacy = await linkFileIfMissing({
+      from: sourceCredentialPath || '',
+      to: targetCredentialPaths.legacyPath,
+      force,
+    });
+    const linkedServerScoped = await linkFileIfMissing({
+      from: sourceCredentialPath || '',
+      to: targetCredentialPaths.serverScopedPath,
+      force,
+    });
+    copied.accessKey = linkedLegacy || linkedServerScoped;
     copied.settings = await linkFileIfMissing({ from: join(sourceCli, 'settings.json'), to: join(targetCli, 'settings.json'), force });
   } else {
-    copied.accessKey = await copyFileIfMissing({
-      from: join(sourceCli, 'access.key'),
-      to: join(targetCli, 'access.key'),
+    const copiedLegacy = await copyFileIfMissing({
+      from: sourceCredentialPath || '',
+      to: targetCredentialPaths.legacyPath,
       mode: 0o600,
       force,
     });
+    const copiedServerScoped = await copyFileIfMissing({
+      from: sourceCredentialPath || '',
+      to: targetCredentialPaths.serverScopedPath,
+      mode: 0o600,
+      force,
+    });
+    copied.accessKey = copiedLegacy || copiedServerScoped;
     copied.settings = await copyFileIfMissing({
       from: join(sourceCli, 'settings.json'),
       to: join(targetCli, 'settings.json'),
@@ -945,53 +1246,8 @@ async function cmdCopyFrom({ argv, json }) {
     // IMPORTANT: when running with --json, keep stdout clean (no yarn/prisma chatter).
     await ensureDepsInstalled(serverDirForPrisma, serverComponent, { quiet: json }).catch(() => {});
 
-    const fromServerComponent = resolveServerComponentFromEnv(sourceEnv);
-    const targetEnv = process.env;
-    const targetServerComponent = resolveServerComponentFromEnv(targetEnv);
-
-	    const sourceCwd = resolveServerComponentDir({ rootDir, serverComponent: fromServerComponent });
-	    const targetCwd = resolveServerComponentDir({ rootDir, serverComponent: targetServerComponent });
-	    const sourceDbProvider =
-	      fromServerComponent === 'happier-server-light'
-	        ? resolveDbProviderForLightFromEnv(sourceEnv)
-	        : resolveDbProviderForFullFromEnv(sourceEnv);
-	    const targetDbProvider =
-	      targetServerComponent === 'happier-server-light'
-	        ? resolveDbProviderForLightFromEnv(targetEnv)
-	        : resolveDbProviderForFullFromEnv(targetEnv);
-
-	    const sourceClientImport =
-	      fromServerComponent === 'happier-server-light'
-	        ? sourceDbProvider === 'sqlite'
-	          ? resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: 'sqlite' })
-	          : resolvePrismaClientImportForServerComponent({ serverComponentName: fromServerComponent, serverDir: sourceCwd })
-	        : resolvePrismaClientImportForDbProvider({ serverDir: sourceCwd, provider: sourceDbProvider });
-	    const targetClientImport =
-	      targetServerComponent === 'happier-server-light'
-	        ? targetDbProvider === 'sqlite'
-	          ? resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: 'sqlite' })
-	          : resolvePrismaClientImportForServerComponent({ serverComponentName: targetServerComponent, serverDir: targetCwd })
-	        : resolvePrismaClientImportForDbProvider({ serverDir: targetCwd, provider: targetDbProvider });
-
     // 1) Read Account rows from the source DB.
-	    const accounts = await (async () => {
-	      if (fromServerComponent === 'happier-server-light') {
-	        const lightProvider = resolveDbProviderForLightFromEnv(sourceEnv);
-	        const { dataDir, dbDir } = await ensureLightMigrationsApplied({ serverDir: sourceCwd, baseDir: sourceBaseDir, envIn: sourceEnv, quiet: json });
-	        if (lightProvider === 'sqlite') {
-	          const url = resolveSqliteDatabaseUrlForLight({ dataDir });
-	          return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: url });
-	        }
-	        return await listAccountsFromPglite({ cwd: sourceCwd, dbDir });
-	      }
-	      const fromDatabaseUrl = resolveDatabaseUrlFromEnvOrThrow({
-	        env: sourceEnv,
-	        stackName: fromStackName,
-	        label: `source stack "${fromStackName}"`,
-	        provider: sourceDbProvider,
-	      });
-	      return await listAccountsFromPostgres({ cwd: sourceCwd, clientImport: sourceClientImport, databaseUrl: fromDatabaseUrl });
-	    })();
+    const accounts = sourceAccounts ?? (await readSourceAccounts());
 
     // 2) Insert Account rows into the target DB.
     const runInsert = async () => {
@@ -1121,24 +1377,48 @@ async function cmdStatus({ json }) {
   });
 
   const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: resolveCliHomeDir(), identity });
-  const accessKeyPath = join(cliHomeDir, 'access.key');
+  const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl, env: process.env });
+  const existingCredentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl, env: process.env });
   const settingsPath = join(cliHomeDir, 'settings.json');
 
   const auth = {
-    ok: fileHasContent(accessKeyPath),
-    accessKeyPath,
-    hasAccessKey: fileHasContent(accessKeyPath),
+    ok: Boolean(existingCredentialPath),
+    accessKeyPath: existingCredentialPath || credentialPaths.legacyPath,
+    accessKeyPaths: credentialPaths.paths,
+    hasAccessKey: Boolean(existingCredentialPath),
     settingsPath,
     hasSettings: fileHasContent(settingsPath),
+    serverValidation: {
+      checked: false,
+      valid: null,
+      status: null,
+      code: 'not-checked',
+      error: null,
+    },
   };
 
-  const daemon = checkDaemonState(cliHomeDir);
+  const daemon = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl });
   const healthRaw = await fetchHappierHealth(internalServerUrl);
   const health = {
     ok: Boolean(healthRaw.ok),
     status: healthRaw.status,
     body: healthRaw.text ? healthRaw.text.trim() : null,
   };
+
+  if (auth.hasAccessKey && health.ok) {
+    auth.serverValidation = await validateAuthTokenAgainstServer({
+      credentialPath: existingCredentialPath || credentialPaths.legacyPath,
+      internalServerUrl,
+    });
+  } else if (auth.hasAccessKey && !health.ok) {
+    auth.serverValidation = {
+      checked: false,
+      valid: null,
+      status: null,
+      code: 'server-unreachable',
+      error: null,
+    };
+  }
 
   const out = {
     stackName,
@@ -1157,7 +1437,19 @@ async function cmdStatus({ json }) {
     return;
   }
 
-  const authLine = auth.ok ? '✅ auth: ok' : '❌ auth: required';
+  const authLine = (() => {
+    if (!auth.hasAccessKey) return '❌ auth: required';
+    if (auth.serverValidation.checked && auth.serverValidation.valid === true) {
+      return '✅ auth: ok (server-verified)';
+    }
+    if (auth.serverValidation.checked && auth.serverValidation.valid === false) {
+      const code = auth.serverValidation.code ? `, ${auth.serverValidation.code}` : '';
+      const status = auth.serverValidation.status != null ? auth.serverValidation.status : 'error';
+      return `❌ auth: invalid (${status}${code})`;
+    }
+    if (!health.ok) return '⚠️ auth: present (server unreachable)';
+    return '⚠️ auth: present (not verified)';
+  })();
   const daemonLine =
     daemon.status === 'running'
       ? `✅ daemon: running (pid=${daemon.pid})`
@@ -1184,6 +1476,12 @@ async function cmdStatus({ json }) {
     if (copyFromSeed) {
       console.log(`  ↪ or (recommended if your seed stack is already logged in): ${copyFromSeed}`);
     }
+  } else if (auth.serverValidation.checked && auth.serverValidation.valid === false) {
+    const copyFromSeed = authCopyFromSeedSuggestion(stackName);
+    console.log(`  ↪ run: ${authLoginSuggestion(stackName)} --force`);
+    if (copyFromSeed) {
+      console.log(`  ↪ or reseed explicitly: ${copyFromSeed} --force`);
+    }
   }
   console.log(daemonLine);
   console.log(serverLine);
@@ -1202,6 +1500,7 @@ async function cmdLogin({ argv, json }) {
   const stackName = getStackName();
   const { flags, kv } = parseArgs(argv);
 
+  const tty = isTty();
   const { port, url: internalServerUrl } = getInternalServerUrlCompat();
   const { defaultPublicUrl, envPublicUrl } = getPublicServerUrlEnvOverride({ env: process.env, serverPort: port, stackName });
   const { publicServerUrl } = await resolvePublicServerUrl({
@@ -1211,24 +1510,58 @@ async function cmdLogin({ argv, json }) {
     allowEnable: false,
     stackName,
   });
+
+  const webappModeRaw =
+    (argvKvValue(argv, '--webapp') || (kv.get('--webapp') ?? '')).toString().trim().toLowerCase();
+  const webappMode = webappModeRaw || 'auto'; // auto|stack|public|expo|hosted
+  const explicitWebappUrl =
+    (argvKvValue(argv, '--webapp-url') || (kv.get('--webapp-url') ?? '')).toString().trim();
+  const methodRaw = (argvKvValue(argv, '--method') || (kv.get('--method') ?? '')).toString().trim().toLowerCase();
+  const method = methodRaw === 'mobile' ? 'mobile' : methodRaw === 'web' || methodRaw === 'browser' ? 'web' : '';
+  if (methodRaw && !method) {
+    throw new Error(`[auth] login: invalid --method=${methodRaw} (expected: web|browser|mobile)`);
+  }
+
   const { envWebappUrl } = getWebappUrlEnvOverride({ env: process.env, stackName });
   const expoWebappUrl = await resolveWebappUrlFromRunningExpo({ rootDir, stackName });
-  const webappUrlRaw = envWebappUrl || expoWebappUrl || publicServerUrl;
-  const webappUrl = await preferStackLocalhostUrl(webappUrlRaw, { stackName });
-  const webappUrlSource = expoWebappUrl ? 'expo' : envWebappUrl ? 'stack env override' : 'server';
+
+  let webappUrlRaw = '';
+  let webappUrlSource = '';
+  if (explicitWebappUrl) {
+    webappUrlRaw = explicitWebappUrl;
+    webappUrlSource = 'webapp-url flag';
+  } else if (webappMode === 'public') {
+    webappUrlRaw = publicServerUrl;
+    webappUrlSource = 'public server';
+  } else if (webappMode === 'hosted') {
+    // Use happier-cli defaults (do not force a URL here).
+    webappUrlRaw = '';
+    webappUrlSource = 'cli default';
+  } else if (webappMode === 'expo') {
+    webappUrlRaw = expoWebappUrl || '';
+    webappUrlSource = 'expo';
+  } else {
+    // auto|stack: preserve existing ordering for now (env override wins unless explicitly forced otherwise).
+    webappUrlRaw = envWebappUrl || expoWebappUrl || publicServerUrl;
+    webappUrlSource = envWebappUrl ? 'stack env override' : expoWebappUrl ? 'expo' : 'server';
+  }
+
+  const webappUrl = webappUrlRaw ? await preferStackLocalhostUrl(webappUrlRaw, { stackName }) : '';
+  const flowRaw = (argvKvValue(argv, '--flow') || (kv.get('--flow') ?? '')).toString().trim();
+  if (flowRaw) {
+    throw new Error('[auth] login: --flow is no longer supported (stack login is always guided)');
+  }
+  const flow = 'guided';
 
   const identity = parseCliIdentityOrThrow((kv.get('--identity') ?? '').trim());
   const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: resolveCliHomeDir(), identity });
   const cliBin = join(getComponentDir(rootDir, 'happier-cli'), 'bin', 'happier.mjs');
 
-  const force = !argv.includes('--no-force');
+  const force =
+    argv.includes('--force') ||
+    (kv.get('--force') ?? '').toString().trim() === '1';
   const wantPrint = argv.includes('--print');
   const noOpen = flags.has('--no-open') || flags.has('--no-browser') || flags.has('--no-browser-open');
-  const contextRaw =
-    (kv.get('--context') ?? process.env.HAPPIER_STACK_AUTH_LOGIN_CONTEXT ?? '')
-      .toString()
-      .trim();
-  const context = contextRaw || (stackName === 'main' ? 'generic' : 'stack');
 
   const nodeArgs = [cliBin, 'auth', 'login'];
   if (force || argv.includes('--force')) {
@@ -1237,95 +1570,170 @@ async function cmdLogin({ argv, json }) {
   if (noOpen) {
     nodeArgs.push('--no-open');
   }
+  if (method) {
+    nodeArgs.push('--method', method);
+  }
 
-  const env = {
+  let env = {
     ...process.env,
     HAPPIER_HOME_DIR: cliHomeDir,
     HAPPIER_SERVER_URL: internalServerUrl,
-    HAPPIER_WEBAPP_URL: webappUrl,
+    HAPPIER_PUBLIC_SERVER_URL: publicServerUrl,
+    ...(webappUrl ? { HAPPIER_WEBAPP_URL: webappUrl } : {}),
     ...(noOpen ? { HAPPIER_NO_BROWSER_OPEN: '1' } : {}),
+    ...(method ? { HAPPIER_AUTH_METHOD: method } : {}),
+    ...(force ? { HAPPIER_AUTH_FORCE: '1' } : {}),
   };
+  env = applyStackActiveServerScopeEnv({ env, stackName, cliIdentity: identity });
 
   if (wantPrint) {
     const cmd =
       `HAPPIER_HOME_DIR="${cliHomeDir}" ` +
       `HAPPIER_SERVER_URL="${internalServerUrl}" ` +
-      `HAPPIER_WEBAPP_URL="${webappUrl}" ` +
+      `HAPPIER_PUBLIC_SERVER_URL="${publicServerUrl}" ` +
+      (env.HAPPIER_ACTIVE_SERVER_ID ? `HAPPIER_ACTIVE_SERVER_ID="${env.HAPPIER_ACTIVE_SERVER_ID}" ` : '') +
+      (webappUrl ? `HAPPIER_WEBAPP_URL="${webappUrl}" ` : '') +
       (noOpen ? `HAPPIER_NO_BROWSER_OPEN="1" ` : '') +
+      (method ? `HAPPIER_AUTH_METHOD="${method}" ` : '') +
       `node "${cliBin}" auth login` +
       (nodeArgs.includes('--force') ? ' --force' : '') +
-      (noOpen ? ' --no-open' : '');
+      (noOpen ? ' --no-open' : '') +
+      (method ? ` --method ${method}` : '');
+
+    const configureServer =
+      webappUrl && publicServerUrl
+        ? buildConfigureServerLinks({ webappUrl, serverUrl: publicServerUrl })
+        : webappUrl
+          ? buildConfigureServerLinks({ webappUrl, serverUrl: internalServerUrl })
+          : null;
     if (json) {
-      printResult({ json, data: { ok: true, stackName, cliIdentity: identity, cmd } });
+      printResult({
+        json,
+        data: {
+          ok: true,
+          flow,
+          stackName,
+          cliIdentity: identity,
+          internalServerUrl,
+          publicServerUrl,
+          webappUrl,
+          webappUrlSource,
+          method: method || null,
+          configureServer,
+          cmd,
+        },
+      });
     } else {
       console.log(cmd);
     }
     return;
   }
 
-  const quietUx = flags.has('--quiet') || flags.has('--no-ux');
-  if (!json && !quietUx) {
-    printAuthLoginInstructions({
-      stackName,
-      context,
-      webappUrl,
-      webappUrlSource,
-      internalServerUrl,
-      publicServerUrl,
-      rerunCmd: authLoginSuggestion(stackName),
-    });
+  if (json) {
+    throw new Error('[auth] login: --json is supported only with --print');
   }
 
-  const child = spawn(process.execPath, nodeArgs, {
-    cwd: rootDir,
-    env,
-    stdio: 'inherit',
-  });
-
-  const timeoutMsRaw =
-    (process.env.HAPPIER_STACK_AUTH_LOGIN_TIMEOUT_MS ?? '600000').toString().trim();
-  const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 600000;
-  const hasTimeout = Number.isFinite(timeoutMs) && timeoutMs > 0;
-
-  let exiting = false;
-  const killChild = (signal) => {
-    if (exiting) return;
-    exiting = true;
-    try {
-      child.kill(signal);
-    } catch {
-      // ignore
+  const shouldAutoStart = flags.has('--start-if-needed');
+  const guidedReadyTimeoutMs = resolveGuidedServerReadyTimeoutMs(process.env);
+  const waitForGuidedServerReadyOrThrow = async (reason) => {
+    const ready = await waitForHappierHealthOk(internalServerUrl, {
+      timeoutMs: guidedReadyTimeoutMs,
+      intervalMs: 300,
+    });
+    if (!ready) {
+      throw new Error(
+        `[auth] ${stackName}: server did not become healthy in time (${guidedReadyTimeoutMs}ms) while ${reason}.\n` +
+          `[auth] Start it manually:\n` +
+          `  hstack stack dev ${stackName} --background`
+      );
     }
-    setTimeout(() => {
-      try {
-        if (child.pid) process.kill(child.pid, 'SIGKILL');
-      } catch {
-        // ignore
-      }
-    }, 1500).unref?.();
   };
 
-  const onSigint = () => killChild('SIGINT');
-  const onSigterm = () => killChild('SIGTERM');
-  process.on('SIGINT', onSigint);
-  process.on('SIGTERM', onSigterm);
+  const health = await fetchHappierHealth(internalServerUrl);
+  if (!health.ok) {
+    const runtimeOwnerAlive = await isStackRuntimeOwnerAlive(stackName);
+    const action = resolveGuidedStartAction({
+      healthOk: false,
+      runtimeOwnerAlive,
+      autoStart: shouldAutoStart,
+    });
 
-  const t = hasTimeout
-    ? setTimeout(() => {
-        console.warn(`[auth] login timed out after ${timeoutMs}ms (set HAPPIER_STACK_AUTH_LOGIN_TIMEOUT_MS=0 to disable)`);
-        killChild('SIGTERM');
-      }, timeoutMs)
-    : null;
+    if (action === 'wait') {
+      // eslint-disable-next-line no-console
+      console.error(`[auth] ${stackName}: stack runtime is already starting; waiting for health before guided login...`);
+      await waitForGuidedServerReadyOrThrow('already starting');
+    } else {
+      let startOk = action === 'start';
+      if (!startOk) {
+        if (!tty) {
+          throw new Error(
+            `[auth] ${stackName}: cannot run guided login because the stack is not running in non-interactive mode.\n` +
+              `[auth] Re-run with --start-if-needed or start it manually:\n` +
+              `  hstack stack dev ${stackName} --background`
+          );
+        }
+        startOk = await withRl(async (rl) => {
+          const ans = (
+            await prompt(rl, `[auth] ${stackName}: server is not running. Start the stack in background now? [Y/n] `, {
+              defaultValue: 'y',
+            })
+          ).toLowerCase();
+          return ans === 'y' || ans === 'yes' || ans === '';
+        });
+      }
+      if (!startOk) {
+        throw new Error(
+          `[auth] ${stackName}: cannot run guided login because the stack is not running.\n` +
+            `[auth] Start it with: hstack stack dev ${stackName} --background`
+        );
+      }
 
-  await new Promise((resolve) => child.on('exit', resolve));
-  process.off('SIGINT', onSigint);
-  process.off('SIGTERM', onSigterm);
-  if (t) clearTimeout(t);
-  if (json) {
-    printResult({ json, data: { ok: child.exitCode === 0, exitCode: child.exitCode } });
-  } else if (child.exitCode && child.exitCode !== 0) {
-    process.exit(child.exitCode);
+      await run(
+        process.execPath,
+        [join(rootDir, 'scripts', 'stack.mjs'), 'dev', stackName, '--background', '--no-daemon', '--no-browser'],
+        {
+          cwd: rootDir,
+          env: { ...process.env, HAPPIER_STACK_AUTH_FLOW: '1' },
+        }
+      ).catch((err) => {
+        const msg =
+          `[auth] ${stackName}: failed to start the stack for guided login.\n` +
+          `[auth] Try starting it manually:\n` +
+          `  hstack stack dev ${stackName} --background\n\n` +
+          `${String(err?.stack ?? err)}`;
+        throw new Error(msg);
+      });
+
+      await waitForGuidedServerReadyOrThrow('starting in background');
+    }
   }
+
+  const verbosity = getVerbosityLevel(process.env);
+  const guidedEnv = applyStackActiveServerScopeEnv({
+    env: { ...env, HAPPIER_STACK_AUTH_FLOW: '1' },
+    stackName,
+    cliIdentity: identity,
+  });
+  const guided = await runOrchestratedGuidedAuthFlow({
+    rootDir,
+    stackName,
+    env: guidedEnv,
+    verbosity,
+    json: false,
+  });
+
+  const daemonStart = await startDaemonPostAuth({
+    rootDir,
+    stackName,
+    env: guidedEnv,
+    forceRestart: true,
+    webappUrl: guided?.webappUrl,
+  });
+  if (daemonStart?.ok === false) {
+    // eslint-disable-next-line no-console
+    console.error(daemonStart.error ?? `[auth] ${stackName}: post-auth daemon start verification timed out`);
+  }
+  return;
 }
 
 async function main() {
@@ -1335,12 +1743,13 @@ async function main() {
   const { flags } = parseArgs(helpScopeArgv);
   const json = wantsJson(helpScopeArgv, { flags });
 
-  const cmd = helpScopeArgv.find((a) => a && a !== '--' && !a.startsWith('-')) || 'status';
   const wantsHelpFlag = wantsHelp(helpScopeArgv, { flags });
+  const explicitCmd = helpScopeArgv.find((a) => a && a !== '--' && !a.startsWith('-')) || '';
+  const cmd = explicitCmd || (wantsHelpFlag ? 'help' : 'status');
 
   const usageByCmd = new Map([
     ['status', 'hstack auth status [--json]'],
-    ['login', 'hstack auth login [--identity=<name>] [--no-open] [--force] [--print] [--json]'],
+    ['login', 'hstack auth login [--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--json]'],
     ['seed', 'hstack auth seed [name=dev-auth] [--login|--no-login] [--server=...] [--skip-default-seed] [--non-interactive] [--json]'],
     ['copy-from', 'hstack auth copy-from <sourceStack|legacy> --all [--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]'],
     ['dev-key', 'hstack auth dev-key [--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]'],
@@ -1369,7 +1778,7 @@ async function main() {
         sectionTitle('Usage (global)'),
         bullets([
           `${dim('status:')} ${cmdFmt('hstack auth status')} ${dim('[--json]')}`,
-          `${dim('login:')}  ${cmdFmt('hstack auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
+          `${dim('login:')}  ${cmdFmt('hstack auth login')} ${dim('[--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--json]')}`,
           `${dim('seed stack:')} ${cmdFmt('hstack auth seed')} ${dim('[name=dev-auth] [--login|--no-login] [--server=...] [--skip-default-seed] [--non-interactive] [--json]')}`,
           `${dim('seed:')}   ${cmdFmt('hstack auth copy-from <sourceStack|legacy> --all')} ${dim('[--except=main,dev-auth] [--force] [--with-infra] [--link] [--json]')}`,
           `${dim('dev key:')} ${cmdFmt('hstack auth dev-key')} ${dim('[--print] [--format=base64url|backup] [--set=<secret>] [--clear] [--json]')}`,
@@ -1378,7 +1787,7 @@ async function main() {
         sectionTitle('Usage (stack-scoped)'),
         bullets([
           `${dim('status:')} ${cmdFmt('hstack stack auth <name> status')} ${dim('[--json]')}`,
-          `${dim('login:')}  ${cmdFmt('hstack stack auth <name> login')} ${dim('[--identity=<name>] [--no-open] [--force] [--print] [--json]')}`,
+          `${dim('login:')}  ${cmdFmt('hstack stack auth <name> login')} ${dim('[--identity=<name>] [--no-open] [--force] [--method=web|mobile] [--print] [--webapp=auto|stack|public|expo|hosted] [--webapp-url=<url>] [--start-if-needed] [--json]')}`,
           `${dim('seed:')}   ${cmdFmt('hstack stack auth <name> copy-from <sourceStack|legacy>')} ${dim('[--force] [--with-infra] [--link] [--json]')}`,
         ]),
         '',

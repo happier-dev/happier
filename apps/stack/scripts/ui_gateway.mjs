@@ -12,7 +12,7 @@ function usage() {
     '[ui-gateway] usage:',
     '  node scripts/ui_gateway.mjs --port=<port> --backend-url=<url> --minio-port=<port> --bucket=<name> [--ui-dir=<path>] [--no-ui]',
     '',
-    'Reverse-proxy gateway that can optionally serve the built Happy web UI at /.',
+    'Reverse-proxy gateway that can optionally serve the built Happier web UI at /.',
     '',
     'Always proxies:',
     '- /v1/* and /health to backend-url',
