@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
 vi.mock("@/app/share/accessControl", () => ({
     checkSessionAccess: vi.fn(async () => ({ accessLevel: "edit" })),
@@ -106,15 +107,6 @@ vi.mock("@/storage/inTx", () => {
     return { afterTx, inTx };
 });
 
-class FakeSocket {
-    public id = "fake-socket";
-    public handlers = new Map<string, any>();
-
-    on(event: string, handler: any) {
-        this.handlers.set(event, handler);
-    }
-}
-
 describe("sessionUpdateHandler (AccountChange integration)", () => {
     beforeEach(() => {
         keyCounter = 0;
@@ -128,15 +120,14 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
     it("marks a session change for all participants and emits updates using the returned cursors", async () => {
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sessionUpdateHandler(
             "owner",
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
         );
 
-        const handler = socket.handlers.get("message");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "message");
 
         const callback = vi.fn();
         await handler({ sid: "s1", message: "enc", localId: "l1" }, callback);
@@ -165,18 +156,17 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
 
         expect(emitUpdate).toHaveBeenCalledTimes(2);
         expect(socketMessageAckInc).toHaveBeenCalledWith({ result: "ok", error: "none" });
-        expect(callback).toHaveBeenCalledWith({ ok: true, id: "m1", seq: 55, localId: "l1" });
+        expect(callback).toHaveBeenCalledWith({ ok: true, id: "m1", seq: 55, localId: "l1", didWrite: true });
     });
 
     it("does not skip sender connection when echoToSender is requested (opt-in)", async () => {
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         const connection = { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any;
         sessionUpdateHandler("owner", socket as any, connection);
 
-        const handler = socket.handlers.get("message");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "message");
 
         await handler({ sid: "s1", message: "enc", localId: "l1", echoToSender: true });
 
@@ -190,15 +180,14 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
     it("does not require a callback for socket message ACK (old clients)", async () => {
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sessionUpdateHandler(
             "owner",
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
         );
 
-        const handler = socket.handlers.get("message");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "message");
 
         await handler({ sid: "s1", message: "enc", localId: "l1" });
 

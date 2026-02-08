@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
+import { createInTxHarness } from "../testkit/txHarness";
+import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
 vi.mock("@/app/share/accessControl", () => ({
     checkSessionAccess: vi.fn(async () => ({ accessLevel: "edit" })),
@@ -52,15 +54,9 @@ vi.mock("@/storage/db", () => ({
 }));
 
 vi.mock("@/storage/inTx", () => {
-    const afterTx = (tx: any, callback: () => void) => {
-        tx.__afterTxCallbacks.push(callback);
-    };
-
-    const inTx = async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
-        const tx: any = {
-            __afterTxCallbacks: [] as Array<() => void | Promise<void>>,
+    const { inTx, afterTx } = createInTxHarness(() => ({
             session: {
-                findUnique: vi.fn(async (args: any) => {
+                findUnique: async (args: any) => {
                     if (args?.select?.metadataVersion === true) {
                         return { metadataVersion: 1, metadata: "m1" };
                     }
@@ -71,44 +67,27 @@ vi.mock("@/storage/inTx", () => {
                         return { accountId: "owner", shares: [{ sharedWithUserId: "u2" }] };
                     }
                     return null;
-                }),
-                updateMany: vi.fn(async () => ({ count: 1 })),
+                },
+                updateMany: async () => ({ count: 1 }),
             },
-        };
-
-        const result = await fn(tx);
-        for (const cb of tx.__afterTxCallbacks) {
-            await cb();
-        }
-        return result;
-    };
+    }));
 
     return { afterTx, inTx };
 });
-
-class FakeSocket {
-    public id = "fake-socket";
-    public handlers = new Map<string, any>();
-
-    on(event: string, handler: any) {
-        this.handlers.set(event, handler);
-    }
-}
 
 describe("sessionUpdateHandler (session state AccountChange integration)", () => {
     it("marks session metadata updates for all participants and emits updates using those cursors", async () => {
         randomKeyNaked.mockReset().mockReturnValueOnce("upd-a").mockReturnValueOnce("upd-b");
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sessionUpdateHandler(
             "owner",
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
         );
 
-        const handler = socket.handlers.get("update-metadata");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "update-metadata");
 
         const callback = vi.fn();
         await handler({ sid: "s1", metadata: "m2", expectedVersion: 1 }, callback);
@@ -131,15 +110,14 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         randomKeyNaked.mockReset().mockReturnValueOnce("upd-c").mockReturnValueOnce("upd-d");
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sessionUpdateHandler(
             "owner",
             socket as any,
             { connectionType: "session-scoped", socket: socket as any, userId: "owner", sessionId: "s1" } as any,
         );
 
-        const handler = socket.handlers.get("update-state");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "update-state");
 
         const callback = vi.fn();
         await handler({ sid: "s1", agentState: "a2", expectedVersion: 1 }, callback);

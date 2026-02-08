@@ -26,4 +26,19 @@ describe('resolveUiConfig', () => {
         expect(cfg.mountRoot).toBe(false);
         expect(cfg.prefix).toBe('/ui');
     });
+
+    it('defaults required=false unless explicitly set', () => {
+        const cfg = resolveUiConfig({ HAPPIER_SERVER_UI_DIR: '/tmp/ui' });
+        expect(cfg.required).toBe(false);
+    });
+
+    it('sets required=true when HAPPIER_SERVER_UI_REQUIRED=1', () => {
+        const cfg = resolveUiConfig({ HAPPIER_SERVER_UI_DIR: '/tmp/ui', HAPPIER_SERVER_UI_REQUIRED: '1' });
+        expect(cfg.required).toBe(true);
+    });
+
+    it('treats HAPPIER_SERVER_UI_REQUIRED=false as false', () => {
+        const cfg = resolveUiConfig({ HAPPIER_SERVER_UI_DIR: '/tmp/ui', HAPPIER_SERVER_UI_REQUIRED: 'false' });
+        expect(cfg.required).toBe(false);
+    });
 });

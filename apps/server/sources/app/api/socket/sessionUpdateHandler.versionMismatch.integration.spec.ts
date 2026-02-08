@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { UpdateMetadataAckResponseSchema, UpdateStateAckResponseSchema } from "@happier-dev/protocol/updates";
+import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
 const updateSessionMetadata = vi.fn();
 const updateSessionAgentState = vi.fn();
@@ -28,13 +29,6 @@ vi.mock("@/app/presence/sessionCache", () => ({
 }));
 vi.mock("@/storage/db", () => ({ db: {} }));
 
-class FakeSocket {
-    public handlers = new Map<string, any>();
-    on(event: string, handler: any) {
-        this.handlers.set(event, handler);
-    }
-}
-
 describe("sessionUpdateHandler version-mismatch responses", () => {
     it("returns current metadata (not the attempted value) on version-mismatch", async () => {
         updateSessionMetadata.mockResolvedValueOnce({
@@ -44,10 +38,10 @@ describe("sessionUpdateHandler version-mismatch responses", () => {
         });
 
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sessionUpdateHandler("u1", socket as any, { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any);
 
-        const handler = socket.handlers.get("update-metadata");
+        const handler = getSocketHandler(socket, "update-metadata");
         const cb = vi.fn();
         await handler({ sid: "s1", metadata: "mAttempt", expectedVersion: 4 }, cb);
 
@@ -63,10 +57,10 @@ describe("sessionUpdateHandler version-mismatch responses", () => {
         });
 
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sessionUpdateHandler("u1", socket as any, { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any);
 
-        const handler = socket.handlers.get("update-state");
+        const handler = getSocketHandler(socket, "update-state");
         const cb = vi.fn();
         await handler({ sid: "s1", agentState: "aAttempt", expectedVersion: 4 }, cb);
 
@@ -82,10 +76,10 @@ describe("sessionUpdateHandler version-mismatch responses", () => {
         });
 
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         sessionUpdateHandler("u1", socket as any, { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any);
 
-        const handler = socket.handlers.get("update-metadata");
+        const handler = getSocketHandler(socket, "update-metadata");
         const cb = vi.fn();
         await handler({ sid: "s1", metadata: "mAttempt", expectedVersion: 4 }, cb);
 

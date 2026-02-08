@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createInTxHarness } from "../testkit/txHarness";
+import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
 const emitUpdate = vi.fn();
 const buildNewArtifactUpdate = vi.fn((_artifact: any, updSeq: number, updId: string) => ({
@@ -43,13 +45,7 @@ let txArtifactCreate: any;
 let txArtifactDelete: any;
 
 vi.mock("@/storage/inTx", () => {
-    const afterTx = (tx: any, callback: () => void) => {
-        tx.__afterTxCallbacks.push(callback);
-    };
-
-    const inTx = async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
-        const tx: any = {
-            __afterTxCallbacks: [] as Array<() => void | Promise<void>>,
+    const { inTx, afterTx } = createInTxHarness(() => ({
             artifact: {
                 findFirst: (...args: any[]) => txArtifactFindFirst(...args),
                 findUnique: (...args: any[]) => txArtifactFindUnique(...args),
@@ -57,14 +53,7 @@ vi.mock("@/storage/inTx", () => {
                 create: (...args: any[]) => txArtifactCreate(...args),
                 delete: (...args: any[]) => txArtifactDelete(...args),
             },
-        };
-
-        const result = await fn(tx);
-        for (const cb of tx.__afterTxCallbacks) {
-            await cb();
-        }
-        return result;
-    };
+    }));
 
     return { afterTx, inTx };
 });
@@ -77,14 +66,6 @@ vi.mock("@/storage/db", () => ({
         },
     },
 }));
-
-class FakeSocket {
-    public handlers = new Map<string, any>();
-
-    on(event: string, handler: any) {
-        this.handlers.set(event, handler);
-    }
-}
 
 describe("artifactUpdateHandler (AccountChange integration)", () => {
     beforeEach(() => {
@@ -115,11 +96,9 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
 
         const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         artifactUpdateHandler("u1", socket as any);
-
-        const handler = socket.handlers.get("artifact-update");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "artifact-update");
 
         const callback = vi.fn();
         await handler(
@@ -169,11 +148,9 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
 
         const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         artifactUpdateHandler("u1", socket as any);
-
-        const handler = socket.handlers.get("artifact-create");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "artifact-create");
 
         const callback = vi.fn();
         await handler({ id: "a2", header: "aGVhZA==", body: "Ym9keQ==", dataEncryptionKey: "a2V5" }, callback);
@@ -198,11 +175,9 @@ describe("artifactUpdateHandler (AccountChange integration)", () => {
 
         const { artifactUpdateHandler } = await import("./artifactUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         artifactUpdateHandler("u1", socket as any);
-
-        const handler = socket.handlers.get("artifact-delete");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "artifact-delete");
 
         const callback = vi.fn();
         await handler({ artifactId: "a3" }, callback);

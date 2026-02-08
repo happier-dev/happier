@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createInTxHarness } from "../testkit/txHarness";
+import { createFakeSocket, getSocketHandler } from "../testkit/socketHarness";
 
 const emitUpdate = vi.fn();
 const buildUpdateMachineUpdate = vi.fn((_machineId: string, updSeq: number, updId: string) => ({
@@ -36,15 +38,9 @@ vi.mock("@/app/presence/sessionCache", () => ({
 vi.mock("@/storage/db", () => ({ db: {} }));
 
 vi.mock("@/storage/inTx", () => {
-    const afterTx = (tx: any, callback: () => void) => {
-        tx.__afterTxCallbacks.push(callback);
-    };
-
-    const inTx = async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
-        const tx: any = {
-            __afterTxCallbacks: [] as Array<() => void | Promise<void>>,
+    const { inTx, afterTx } = createInTxHarness(() => ({
             machine: {
-                findFirst: vi.fn(async (args: any) => {
+                findFirst: async (args: any) => {
                     if (args?.select?.metadataVersion) {
                         return { metadataVersion: 1, metadata: "old-meta" };
                     }
@@ -52,28 +48,13 @@ vi.mock("@/storage/inTx", () => {
                         return { daemonStateVersion: 2, daemonState: "old-state" };
                     }
                     return null;
-                }),
-                updateMany: vi.fn(async () => ({ count: 1 })),
+                },
+                updateMany: async () => ({ count: 1 }),
             },
-        };
-
-        const result = await fn(tx);
-        for (const cb of tx.__afterTxCallbacks) {
-            await cb();
-        }
-        return result;
-    };
+    }));
 
     return { afterTx, inTx };
 });
-
-class FakeSocket {
-    public handlers = new Map<string, any>();
-
-    on(event: string, handler: any) {
-        this.handlers.set(event, handler);
-    }
-}
 
 describe("machineUpdateHandler (AccountChange integration)", () => {
     beforeEach(() => {
@@ -83,11 +64,9 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
     it("marks machine metadata changes and emits updates using the returned cursor", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         machineUpdateHandler("u1", socket as any);
-
-        const handler = socket.handlers.get("machine-update-metadata");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "machine-update-metadata");
 
         const callback = vi.fn();
         await handler({ machineId: "m1", metadata: "new-meta", expectedVersion: 1 }, callback);
@@ -109,11 +88,9 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
     it("marks machine daemonState changes and emits updates using the returned cursor", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
-        const socket = new FakeSocket();
+        const socket = createFakeSocket();
         machineUpdateHandler("u1", socket as any);
-
-        const handler = socket.handlers.get("machine-update-state");
-        expect(typeof handler).toBe("function");
+        const handler = getSocketHandler(socket, "machine-update-state");
 
         const callback = vi.fn();
         await handler({ machineId: "m2", daemonState: "new-state", expectedVersion: 2 }, callback);
