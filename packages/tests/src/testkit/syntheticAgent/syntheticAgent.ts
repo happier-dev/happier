@@ -2,12 +2,12 @@ import type { CapturedEvent } from '../socketClient';
 import { createSessionScopedSocketCollector, type SocketCollector } from '../socketClient';
 import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../rpcCrypto';
 import { fetchSessionV2, patchSessionAgentState } from '../sessions';
-import { waitFor } from '../timing';
+import { sleep, waitFor } from '../timing';
 
 type PermissionRequest = {
   id: string;
   tool: string;
-  args: any;
+  args: unknown;
 };
 
 type PermissionDecision = {
@@ -22,12 +22,12 @@ type PermissionDecision = {
 };
 
 type AgentStateShape = {
-  requests?: Record<string, { tool: string; arguments: any; createdAt?: number | null }>;
+  requests?: Record<string, { tool: string; arguments: unknown; createdAt?: number | null }>;
   completedRequests?: Record<
     string,
     {
       tool: string;
-      arguments: any;
+      arguments: unknown;
       createdAt?: number | null;
       completedAt?: number | null;
       status: 'canceled' | 'denied' | 'approved';
@@ -38,6 +38,15 @@ type AgentStateShape = {
     }
   >;
 };
+
+export function computeVersionMismatchBackoffMs(attempt: number): number {
+  const boundedAttempt = Math.max(1, Math.floor(attempt));
+  const base = 25;
+  const cap = 750;
+  const exponential = Math.min(cap, base * 2 ** (boundedAttempt - 1));
+  const jitter = (boundedAttempt * 17) % 31;
+  return exponential + jitter;
+}
 
 export class SyntheticAgent {
   private readonly baseUrl: string;
@@ -97,18 +106,12 @@ export class SyntheticAgent {
   }
 
   async waitForCompletedPermission(permissionId: string, opts?: { timeoutMs?: number }): Promise<void> {
-    const timeoutMs = opts?.timeoutMs ?? 15_000;
-    const startedAt = Date.now();
-    for (;;) {
+    await waitFor(async () => {
       const session = await fetchSessionV2(this.baseUrl, this.token, this.sessionId);
       const state = session.agentState ? (decryptDataKeyBase64(session.agentState, this.dataKey) as AgentStateShape | null) : null;
       const completed = state?.completedRequests ?? {};
-      if (completed && completed[permissionId]) return;
-      if (Date.now() - startedAt > timeoutMs) {
-        throw new Error(`Timed out waiting for completed permission: ${permissionId}`);
-      }
-      await new Promise((r) => setTimeout(r, 100));
-    }
+      return Boolean(completed && completed[permissionId]);
+    }, { timeoutMs: opts?.timeoutMs ?? 15_000, intervalMs: 100, context: `completed permission ${permissionId}` });
   }
 
   private async applyPermissionDecision(decision: PermissionDecision): Promise<void> {
@@ -156,10 +159,12 @@ export class SyntheticAgent {
       });
 
       if (res.ok) return;
-      if (res.error === 'version-mismatch') continue;
+      if (res.error === 'version-mismatch') {
+        await sleep(computeVersionMismatchBackoffMs(attempt));
+        continue;
+      }
       throw new Error(`Failed to patch agentState (${res.error})`);
     }
-    throw new Error('Failed to patch agentState due to repeated version mismatches');
+    throw new Error(`Failed to patch agentState due to repeated version mismatches (attempts=${attempts})`);
   }
 }
-
