@@ -2,7 +2,7 @@
   "title": "Getting started",
   "pages": [
     "index",
+    "onboarding",
     "local-development"
   ]
 }
-

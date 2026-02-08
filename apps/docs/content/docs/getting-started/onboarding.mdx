@@ -1,0 +1,102 @@
+---
+title: Onboarding
+description: Pick hosted vs self-hosted, then configure the app and connect a daemon.
+---
+
+Happier always follows the same high-level flow:
+
+1. **Choose a server** (hosted by default; self-hosting is optional).
+2. **Configure the app/web UI to that server**.
+3. **Sign in / create an account** on that server.
+4. **Connect a terminal/daemon** (the connect link/QR includes the server URL to avoid “wrong server” confusion).
+
+## Choose your setup
+
+### Option A — Hosted (recommended to start)
+You use the official Happier server.
+
+1. Install the CLI:
+
+```bash
+npm install -g @happier-dev/cli
+```
+
+2. Sign in:
+
+```bash
+happier auth login
+```
+
+3. Follow the printed instructions to connect your terminal/daemon.
+   - **Recommended:** choose the mobile path first (QR/deep link). It is the easiest way to create/login once and then link other devices.
+   - If you already use Happier on another device, sign in with that same account.
+   - If you open a terminal-connect link while logged out, Happier guides you through sign in/create account and then returns to terminal approval automatically.
+
+### Option B — Self-host server-only (daemon on your laptop)
+You run your own server (remote machine, LAN box, or even your own computer), but run the daemon on another machine.
+
+1. Install your server (examples):
+   - Proxmox: see [Proxmox deployment](../deployment/proxmox).
+   - Any machine: use `hstack setup` (recommended) to install the stack.
+
+2. Configure the Happier app/web UI to your server.
+   - If you used `hstack setup`, it prints **configure-server** links/QRs you can open/scan.
+   - Otherwise, open the app and add/select your server in **Server** settings.
+
+3. Create an account / sign in on your server (in the app or web UI).
+
+4. On the machine where you want the daemon, add/use the server and connect:
+
+```bash
+happier server add --name company --server-url https://YOUR_SERVER_URL --webapp-url https://YOUR_WEBAPP_URL --use
+happier auth login
+```
+
+Then use the same mobile-first flow:
+
+- Scan the terminal QR from `happier auth login` in the Happier mobile app (recommended), or use the web link.
+- If you already use Happier on another device, sign in with that same account on this server.
+- If you are not signed in yet, complete sign in/create account first; Happier returns you to terminal approval automatically.
+
+### Option C — Devbox (server + daemon on the same machine)
+You install both the server and the daemon on one box.
+
+1. Install the stack (for example via `hstack setup` or the Proxmox “devbox” option).
+2. Configure the app/web UI to your server (use the printed configure-server link/QR).
+3. Sign in / create an account.
+4. Approve the daemon connection when prompted.
+
+Recommended for first setup:
+
+- Use the mobile app to sign in/create account first.
+- Scan/approve terminal connection from the mobile app.
+
+## Multiple servers (personal + company)
+
+- The app and CLI support **multiple saved servers**.
+- Credentials/state are **scoped per server**, so switching servers doesn’t overwrite other accounts.
+- Accounts are per server. Using the same login provider on two servers still creates two independent server-side account contexts.
+- Web: you can switch the server **for this tab** or **make it the device default**.
+
+### CLI: target a server per invocation
+
+```bash
+happier --server company auth login
+happier --server company daemon start
+```
+
+### CLI: run multiple daemons on one machine (one per server)
+
+```bash
+happier --server personal daemon service install
+happier --server company daemon service install
+```
+
+Then verify:
+
+```bash
+happier daemon service list
+happier daemon status --all
+```
+
+For complete profile/switching behavior and CLI reference, see [Features → Multi-server](/docs/features/multi-server).
