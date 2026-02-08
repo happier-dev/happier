@@ -67,6 +67,18 @@ export function resolveBuildDbProvidersFromEnv(env: NodeJS.ProcessEnv): Set<Buil
     return out;
 }
 
+export function prismaGenerateDatabaseUrlForProvider(provider: BuildDbProvider): string {
+    if (provider === "postgres") {
+        return "postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable";
+    }
+    if (provider === "mysql") {
+        // Any syntactically valid MySQL URL works for `prisma generate` (no network calls).
+        return "mysql://root:root@127.0.0.1:3306/mysql";
+    }
+    // Any syntactically valid SQLite URL works for `prisma generate` (no file access required).
+    return "file:./.happier-prisma-generate.sqlite";
+}
+
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {
         const child = spawn(cmd, args, {
@@ -89,13 +101,19 @@ async function main(): Promise<void> {
     await run("yarn", ["-s", "schema:sync", "--quiet"], env);
 
     // Always generate the default client (postgres schema).
-    await run("yarn", ["-s", "prisma", "generate"], env);
+    await run("yarn", ["-s", "prisma", "generate"], { ...env, DATABASE_URL: prismaGenerateDatabaseUrlForProvider("postgres") });
 
     if (providers.has("sqlite")) {
-        await run("yarn", ["-s", "prisma", "generate", "--schema", "prisma/sqlite/schema.prisma"], env);
+        await run("yarn", ["-s", "prisma", "generate", "--schema", "prisma/sqlite/schema.prisma"], {
+            ...env,
+            DATABASE_URL: prismaGenerateDatabaseUrlForProvider("sqlite"),
+        });
     }
     if (providers.has("mysql")) {
-        await run("yarn", ["-s", "prisma", "generate", "--schema", "prisma/mysql/schema.prisma"], env);
+        await run("yarn", ["-s", "prisma", "generate", "--schema", "prisma/mysql/schema.prisma"], {
+            ...env,
+            DATABASE_URL: prismaGenerateDatabaseUrlForProvider("mysql"),
+        });
     }
 }
 

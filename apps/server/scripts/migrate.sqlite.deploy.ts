@@ -46,11 +46,16 @@ async function main() {
 
     ensureSqliteDatabaseUrl(env);
     await ensureSqliteDbDir(env);
-    await run("yarn", ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"], env);
+    // Work around a Prisma CLI behavior where SQLite migrate errors can surface as a blank
+    // "Schema engine error:" on some Node/engine combinations. Enabling Rust logging restores
+    // normal output and behavior.
+    await run("yarn", ["-s", "prisma", "migrate", "deploy", "--schema", "prisma/sqlite/schema.prisma"], {
+        ...env,
+        RUST_LOG: "info",
+    });
 }
 
 main().catch((err) => {
     console.error(err);
     process.exit(1);
 });
-

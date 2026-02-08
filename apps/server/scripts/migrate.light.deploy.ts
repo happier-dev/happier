@@ -4,6 +4,7 @@ import { applyLightDefaultEnv } from '@/flavors/light/env';
 import { requireLightDataDir } from './migrate.light.deployPlan';
 import { PGlite } from '@electric-sql/pglite';
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
+import { acquirePgliteDirLock } from '@/storage/pgliteLock';
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -33,15 +34,19 @@ async function main() {
     }
     await mkdir(dbDir, { recursive: true });
 
-    const pglite = new PGlite(dbDir);
-    // Ensure pglite is ready before starting the socket server.
-    await (pglite as any).waitReady;
-    const server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
-    await server.start();
-
+    let releaseLock: (() => Promise<void>) | undefined;
+    let pglite: PGlite | undefined;
+    let server: PGLiteSocketServer | undefined;
     try {
+        releaseLock = await acquirePgliteDirLock(dbDir, { purpose: 'script:migrate.light.deploy' });
+        pglite = new PGlite(dbDir);
+        // Ensure pglite is ready before starting the socket server.
+        await pglite.waitReady;
+        server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
+        await server.start();
+
         const url = (() => {
-            const raw = server.getServerConn();
+            const raw = server!.getServerConn();
             try {
                 return new URL(raw);
             } catch {
@@ -53,8 +58,9 @@ async function main() {
 
         await run('yarn', ['-s', 'prisma', 'migrate', 'deploy', '--schema', 'prisma/schema.prisma'], env);
     } finally {
-        await server.stop();
-        await pglite.close();
+        await server?.stop().catch(() => {});
+        await pglite?.close().catch(() => {});
+        await releaseLock?.().catch(() => {});
     }
 }
 

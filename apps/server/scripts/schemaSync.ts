@@ -93,9 +93,20 @@ function generateProviderSchemaFromPostgres(
     const bodyStart = match.index + match[0].length;
     const rawBody = schema.slice(bodyStart);
 
-    const body = normalizeSchemaText(rawBody)
+    let body = normalizeSchemaText(rawBody)
         .replace(/^\s+/, '')
         .replace(/(\w+)\(\s*sort\s*:\s*\w+\s*\)/g, '$1');
+
+    if (opts.provider === "mysql") {
+        // MySQL cannot create UNIQUE/INDEX keys on BLOB/TEXT columns without a key length.
+        // `PublicSessionShare.tokenHash` stores a sha256 digest (32 bytes) and must be indexed.
+        body = body.replace(/^(\s*tokenHash\s+Bytes\s+)@unique\b/gm, "$1@db.VarBinary(32) @unique");
+
+        // MySQL defaults `String` to VARCHAR(191), which is too small for our encrypted state blobs.
+        body = body.replace(/^(\s*metadata\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+        body = body.replace(/^(\s*agentState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+        body = body.replace(/^(\s*daemonState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+    }
 
     const header = [
         '// AUTO-GENERATED FILE - DO NOT EDIT.',
