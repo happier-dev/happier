@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { Platform, View, Text, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
@@ -9,10 +9,12 @@ import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { FloatingOverlay } from '@/components/FloatingOverlay';
 import { useSocketStatus, useSyncError, useLastSyncAt } from '@/sync/storage';
 import { getServerUrl } from '@/sync/serverConfig';
+import { getActiveServerId, listServerProfiles, setActiveServerId } from '@/sync/serverProfiles';
 import { useAuth } from '@/auth/AuthContext';
 import { useRouter } from 'expo-router';
 import { sync } from '@/sync/sync';
 import { Typography } from '@/constants/Typography';
+import * as Updates from 'expo-updates';
 
 type Variant = 'sidebar' | 'header';
 
@@ -96,6 +98,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const lastSyncAt = useLastSyncAt();
 
     const [open, setOpen] = React.useState(false);
+    const [webSwitchScope, setWebSwitchScope] = React.useState<'tab' | 'device'>(() => (Platform.OS === 'web' ? 'tab' : 'device'));
     const anchorRef = React.useRef<any>(null);
 
     const connectionStatus = React.useMemo(() => {
@@ -118,6 +121,54 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const textSize = props.textSize ?? (props.variant === 'sidebar' ? 11 : 12);
     const dotSize = props.dotSize ?? 6;
     const chevronSize = props.chevronSize ?? 8;
+
+    const servers = React.useMemo(() => {
+        try {
+            return listServerProfiles()
+                .slice()
+                .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
+        } catch {
+            return [];
+        }
+    }, [open]);
+
+    const activeServerId = React.useMemo(() => {
+        try {
+            return getActiveServerId();
+        } catch {
+            return 'official';
+        }
+    }, [open]);
+
+    const reloadNow = React.useCallback(async () => {
+        if (Platform.OS === 'web') {
+            try {
+                window.location.reload();
+            } catch {
+                // ignore
+            }
+            return;
+        }
+        try {
+            await Updates.reloadAsync();
+        } catch {
+            // ignore (dev mode)
+        }
+    }, []);
+
+    const switchServer = React.useCallback(async (serverId: string) => {
+        const scope: 'tab' | 'device' = Platform.OS === 'web' ? webSwitchScope : 'device';
+        setActiveServerId(serverId, { scope });
+        if (Platform.OS === 'web' && scope === 'device') {
+            try {
+                setActiveServerId(serverId, { scope: 'tab' });
+            } catch {
+                // ignore
+            }
+        }
+        setOpen(false);
+        await reloadNow();
+    }, [reloadNow, webSwitchScope]);
 
     return (
         <>
@@ -208,6 +259,44 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
                                         <Text style={styles.popoverLabel}>Last error</Text>
                                         <Text style={styles.popoverValue} numberOfLines={3}>{syncError.message}</Text>
                                     </View>
+                                ) : null}
+
+                                {servers.length > 1 ? (
+                                    <ActionListSection
+                                        title={t('server.serverConfiguration')}
+                                        actions={[
+                                            Platform.OS === 'web' ? {
+                                                id: 'server-scope-tab',
+                                                label: 'Switch for this tab',
+                                                icon: webSwitchScope === 'tab' ? <Ionicons name="checkmark" size={18} color={theme.colors.text} /> : null,
+                                                onPress: () => setWebSwitchScope('tab'),
+                                            } : null,
+                                            Platform.OS === 'web' ? {
+                                                id: 'server-scope-device',
+                                                label: 'Make default on this device',
+                                                icon: webSwitchScope === 'device' ? <Ionicons name="checkmark" size={18} color={theme.colors.text} /> : null,
+                                                onPress: () => setWebSwitchScope('device'),
+                                            } : null,
+                                            ...servers.map((s) => ({
+                                                id: `server-use-${s.id}`,
+                                                label: s.name,
+                                                icon: s.id === activeServerId ? <Ionicons name="checkmark" size={18} color={theme.colors.text} /> : null,
+                                                disabled: s.id === activeServerId,
+                                                onPress: () => {
+                                                    void switchServer(s.id);
+                                                },
+                                            })),
+                                            {
+                                                id: 'server-manage',
+                                                label: 'Manage servers…',
+                                                icon: <Ionicons name="server-outline" size={18} color={theme.colors.text} />,
+                                                onPress: () => {
+                                                    setOpen(false);
+                                                    router.push('/server');
+                                                },
+                                            }
+                                        ]}
+                                    />
                                 ) : null}
 
                                 <ActionListSection
