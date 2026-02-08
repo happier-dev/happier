@@ -1,24 +1,38 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import {
+    createNavigationMock,
+    createRouterMock,
+    enableReactActEnvironment,
+    PICKER_NAV_STATE,
+    PICKER_THEME_COLORS,
+    type PickerStackOptionsInput,
+} from './testHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+enableReactActEnvironment();
 
 const stableMachines = [{ id: 'm1', metadata: { homeDir: '/home' } }] as const;
-const stableSessions: any[] = [];
-const stableRecentMachinePaths: any[] = [];
-const stableFavoriteDirectories: any[] = [];
+const stableSessions: readonly unknown[] = [];
+const stableRecentMachinePaths: readonly unknown[] = [];
+const stableFavoriteDirectories: readonly string[] = [];
+let localSearchParams: { machineId: string; selectedPath: string } = { machineId: 'm1', selectedPath: '' };
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
+
+type ItemGroupProps = React.PropsWithChildren<Record<string, never>>;
+type PathSelectorProps = {
+    onChangeSearchQuery?: (value: string) => void;
+};
 
 vi.mock('@/constants/Typography', () => ({
     Typography: { default: () => ({}) },
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
+    ItemList: ({ children }: ItemGroupProps) => React.createElement('ItemList', null, children),
 }));
 
 vi.mock('@/components/layout', () => ({
@@ -26,7 +40,7 @@ vi.mock('@/components/layout', () => ({
 }));
 
 vi.mock('@/components/sessions/new/components/PathSelector', () => ({
-    PathSelector: (props: any) => {
+    PathSelector: (props: PathSelectorProps) => {
         const didTriggerRef = React.useRef(false);
         React.useEffect(() => {
             if (didTriggerRef.current) return;
@@ -58,8 +72,14 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { header: { tint: '#000' } } } }),
+    useUnistyles: () => ({ theme: { colors: PICKER_THEME_COLORS } }),
     StyleSheet: { create: () => ({}) },
+}));
+
+vi.mock('@react-navigation/native', () => ({
+    CommonActions: {
+        setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
+    },
 }));
 
 vi.mock('@/sync/storage', () => ({
@@ -75,13 +95,14 @@ vi.mock('@/sync/storage', () => ({
 
 describe('PathPickerScreen (Stack.Screen options stability)', () => {
     it('keeps Stack.Screen options referentially stable across parent re-renders', async () => {
-        const routerApi = { back: vi.fn(), setParams: vi.fn() };
-        const navigationApi = { goBack: vi.fn() };
+        const routerApi = createRouterMock();
+        const navigationApi = createNavigationMock();
+        navigationApi.getState = () => PICKER_NAV_STATE;
         const setOptions = vi.fn();
 
         vi.doMock('expo-router', () => ({
             Stack: {
-                Screen: ({ options }: any) => {
+                Screen: ({ options }: { options: PickerStackOptionsInput }) => {
                     React.useEffect(() => {
                         setOptions(options);
                     }, [options]);
@@ -90,12 +111,18 @@ describe('PathPickerScreen (Stack.Screen options stability)', () => {
             },
             useRouter: () => routerApi,
             useNavigation: () => navigationApi,
-            useLocalSearchParams: () => ({ machineId: 'm1', selectedPath: '' }),
+            useLocalSearchParams: () => localSearchParams,
         }));
 
         const PathPickerScreen = (await import('@/app/(app)/new/pick/path')).default;
+        let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
-            renderer.create(React.createElement(PathPickerScreen));
+            tree = renderer.create(React.createElement(PathPickerScreen));
+        });
+
+        localSearchParams = { machineId: 'm1', selectedPath: '/tmp/next' };
+        await act(async () => {
+            tree?.update(React.createElement(PathPickerScreen));
         });
 
         expect(setOptions).toHaveBeenCalledTimes(1);

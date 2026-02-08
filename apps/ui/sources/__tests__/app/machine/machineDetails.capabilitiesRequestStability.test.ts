@@ -2,16 +2,35 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-(globalThis as any).expo = { EventEmitter: class {} };
+type ReactActEnvironmentGlobal = typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+    expo?: { EventEmitter: new () => unknown };
+};
+(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as ReactActEnvironmentGlobal).expo = { EventEmitter: class {} };
 
-const requests: unknown[] = [];
+const requests: Array<Record<string, unknown>> = [];
+const machineThemeColors = {
+    header: { tint: '#000' },
+    input: { background: '#fff', text: '#000' },
+    groupped: { background: '#fff', sectionTitle: '#000' },
+    divider: '#ddd',
+    button: { primary: { background: '#000', tint: '#fff' } },
+    text: '#000',
+    textSecondary: '#666',
+    surface: '#fff',
+    surfaceHigh: '#fff',
+    shadow: { color: '#000', opacity: 0.1 },
+    status: { error: '#f00', connected: '#0f0', connecting: '#ff0', disconnected: '#999', default: '#999' },
+    permissionButton: { inactive: { background: '#ccc' } },
+};
 
 vi.mock('react-native-reanimated', () => ({}));
 
 vi.mock('react-native', () => {
+    type PlatformSelectOptions<T> = { web?: T; default?: T };
     return {
-        Platform: { OS: 'web', select: (o: any) => o.web ?? o.default },
+        Platform: { OS: 'web', select: <T,>(options: PlatformSelectOptions<T>) => options.web ?? options.default },
         TurboModuleRegistry: { getEnforcing: () => ({}) },
         View: 'View',
         Text: 'Text',
@@ -31,8 +50,7 @@ vi.mock('@expo/vector-icons', () => {
 });
 
 vi.mock('expo-router', () => {
-    const Stack: any = {};
-    Stack.Screen = () => null;
+    const Stack: { Screen: () => null } = { Screen: () => null };
     return {
         Stack,
         useLocalSearchParams: () => ({ id: 'machine-1' }),
@@ -46,41 +64,11 @@ vi.mock('react-native-unistyles', () => {
         useUnistyles: () => {
             React.useMemo(() => 0, []);
             return {
-                theme: {
-                    colors: {
-                        header: { tint: '#000' },
-                        input: { background: '#fff', text: '#000' },
-                        groupped: { background: '#fff', sectionTitle: '#000' },
-                        divider: '#ddd',
-                        button: { primary: { background: '#000', tint: '#fff' } },
-                        text: '#000',
-                        textSecondary: '#666',
-                        surface: '#fff',
-                        surfaceHigh: '#fff',
-                        shadow: { color: '#000', opacity: 0.1 },
-                        status: { error: '#f00', connected: '#0f0', connecting: '#ff0', disconnected: '#999', default: '#999' },
-                        permissionButton: { inactive: { background: '#ccc' } },
-                    },
-                },
+                theme: { colors: machineThemeColors },
             };
         },
         StyleSheet: {
-            create: (fn: any) => fn({
-                colors: {
-                    header: { tint: '#000' },
-                    input: { background: '#fff', text: '#000' },
-                    groupped: { background: '#fff', sectionTitle: '#000' },
-                    divider: '#ddd',
-                    button: { primary: { background: '#000', tint: '#fff' } },
-                    text: '#000',
-                    textSecondary: '#666',
-                    surface: '#fff',
-                    surfaceHigh: '#fff',
-                    shadow: { color: '#000', opacity: 0.1 },
-                    status: { error: '#f00' },
-                    permissionButton: { inactive: { background: '#ccc' } },
-                },
-            }),
+            create: (fn: (theme: { colors: typeof machineThemeColors }) => unknown) => fn({ colors: machineThemeColors }),
         },
     };
 });
@@ -98,11 +86,11 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemList: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/MultiTextInput', () => ({
@@ -154,8 +142,11 @@ vi.mock('@/hooks/useNavigateToSession', () => {
 });
 
 vi.mock('@/hooks/useMachineCapabilitiesCache', () => {
+    type UseMachineCapabilitiesParams = {
+        request: Record<string, unknown>;
+    };
     return {
-        useMachineCapabilitiesCache: (params: any) => {
+        useMachineCapabilitiesCache: (params: UseMachineCapabilitiesParams) => {
             requests.push(params.request);
             return { state: { status: 'idle' }, refresh: vi.fn() };
         },

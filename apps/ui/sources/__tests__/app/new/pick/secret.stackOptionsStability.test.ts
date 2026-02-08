@@ -1,8 +1,15 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import {
+    createNavigationMock,
+    createRouterMock,
+    enableReactActEnvironment,
+    PICKER_THEME_COLORS,
+    type PickerStackOptionsInput,
+} from './testHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+enableReactActEnvironment();
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -18,11 +25,11 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/sync/storage', () => ({
-    useSettingMutable: () => React.useState<any[]>([]),
+    useSettingMutable: () => React.useState<readonly unknown[]>([]),
 }));
 
 vi.mock('@/components/secrets/SecretsList', () => ({
-    SecretsList: ({ onChangeSecrets }: any) => {
+    SecretsList: ({ onChangeSecrets }: { onChangeSecrets?: (next: readonly unknown[]) => void }) => {
         const didTriggerRef = React.useRef(false);
         React.useEffect(() => {
             if (didTriggerRef.current) return;
@@ -34,18 +41,19 @@ vi.mock('@/components/secrets/SecretsList', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { header: { tint: '#000' } } } }),
+    useUnistyles: () => ({ theme: { colors: { header: PICKER_THEME_COLORS.header } } }),
 }));
 
 describe('SecretPickerScreen (Stack.Screen options stability)', () => {
     it('keeps Stack.Screen options referentially stable across parent re-renders', async () => {
-        const routerApi = { back: vi.fn(), setParams: vi.fn() };
-        const navigationApi = { goBack: vi.fn() };
+        const routerApi = createRouterMock();
+        const navigationApi = createNavigationMock();
+        let searchParams = { selectedId: '' };
         const setOptions = vi.fn();
 
         vi.doMock('expo-router', () => ({
             Stack: {
-                Screen: ({ options }: any) => {
+                Screen: ({ options }: { options: PickerStackOptionsInput }) => {
                     React.useEffect(() => {
                         setOptions(options);
                     }, [options]);
@@ -54,13 +62,19 @@ describe('SecretPickerScreen (Stack.Screen options stability)', () => {
             },
             useRouter: () => routerApi,
             useNavigation: () => navigationApi,
-            useLocalSearchParams: () => ({ selectedId: '' }),
+            useLocalSearchParams: () => searchParams,
         }));
 
         const SecretPickerScreen = (await import('@/app/(app)/new/pick/secret')).default;
+        let tree: renderer.ReactTestRenderer | undefined;
 
         await act(async () => {
-            renderer.create(React.createElement(SecretPickerScreen));
+            tree = renderer.create(React.createElement(SecretPickerScreen));
+        });
+
+        searchParams = { selectedId: 'secret-1' };
+        await act(async () => {
+            tree?.update(React.createElement(SecretPickerScreen));
         });
 
         expect(setOptions).toHaveBeenCalledTimes(1);

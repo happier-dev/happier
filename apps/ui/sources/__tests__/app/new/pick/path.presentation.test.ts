@@ -1,37 +1,55 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import {
+    createNavigationMock,
+    createRouterMock,
+    createStackOptionsCapture,
+    enableReactActEnvironment,
+    PICKER_THEME_COLORS,
+    type PickerStackOptionsInput,
+} from './testHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+enableReactActEnvironment();
 
-vi.mock('@/text', () => ({
-    t: (key: string) => key,
-}));
+const routerMock = createRouterMock();
+const navigationMock = createNavigationMock();
+const stackOptionsCapture = createStackOptionsCapture();
+
+vi.mock('@/text', () => ({ t: (key: string) => key }));
+
+type PlatformSelectOptions<T> = { ios?: T; default?: T };
+type ItemGroupProps = React.PropsWithChildren<Record<string, never>>;
 
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     Pressable: 'Pressable',
-    Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default },
+    Platform: { OS: 'ios', select: <T,>(options: PlatformSelectOptions<T>) => options.ios ?? options.default },
     TurboModuleRegistry: { getEnforcing: () => ({}) },
 }));
 
-let lastStackScreenOptions: any = null;
 vi.mock('expo-router', () => ({
     Stack: {
-        Screen: ({ options }: any) => {
-            lastStackScreenOptions = options;
+        Screen: ({ options }: { options: PickerStackOptionsInput }) => {
+            stackOptionsCapture.record(options);
             return null;
         },
     },
-    useRouter: () => ({ back: vi.fn() }),
-    useNavigation: () => ({ getState: () => ({ index: 1, routes: [{ key: 'a' }, { key: 'b' }] }) }),
+    useRouter: () => routerMock,
+    useNavigation: () => navigationMock,
     useLocalSearchParams: () => ({ machineId: 'm1', selectedPath: '/tmp' }),
 }));
 
+vi.mock('@react-navigation/native', () => ({
+    CommonActions: {
+        setParams: (params: any) => ({ type: 'SET_PARAMS', payload: { params } }),
+    },
+}));
+
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { header: { tint: '#000' }, textSecondary: '#666', input: { background: '#fff', placeholder: '#aaa', text: '#000' }, divider: '#ddd' } } }),
-    StyleSheet: { create: (fn: any) => fn({ colors: { header: { tint: '#000' }, textSecondary: '#666', input: { background: '#fff', placeholder: '#aaa', text: '#000' }, divider: '#ddd' } }) },
+    useUnistyles: () => ({ theme: { colors: PICKER_THEME_COLORS } }),
+    StyleSheet: { create: (fn: any) => fn({ colors: PICKER_THEME_COLORS }) },
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -39,7 +57,7 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemList: ({ children }: ItemGroupProps) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/layout', () => ({
@@ -72,13 +90,19 @@ vi.mock('@/sync/storage', () => ({
 describe('PathPickerScreen (iOS presentation)', () => {
     it('presents as containedModal on iOS and provides an explicit header back button', async () => {
         const PathPickerScreen = (await import('@/app/(app)/new/pick/path')).default;
-        lastStackScreenOptions = null;
+        stackOptionsCapture.reset();
 
         await act(async () => {
             renderer.create(React.createElement(PathPickerScreen));
         });
 
-        expect(lastStackScreenOptions?.presentation).toBe('containedModal');
-        expect(typeof lastStackScreenOptions?.headerLeft).toBe('function');
+        const options = stackOptionsCapture.getResolved();
+        expect(options?.presentation).toBe('containedModal');
+        expect(typeof options?.headerLeft).toBe('function');
+
+        const backButton = options?.headerLeft?.();
+        expect(typeof backButton?.props?.onPress).toBe('function');
+        backButton?.props?.onPress?.();
+        expect(routerMock.back).toHaveBeenCalledTimes(1);
     });
 });

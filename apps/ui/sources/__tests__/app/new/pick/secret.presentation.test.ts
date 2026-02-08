@@ -1,8 +1,16 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import {
+    createNavigationMock,
+    createRouterMock,
+    createStackOptionsCapture,
+    enableReactActEnvironment,
+    PICKER_THEME_COLORS,
+    type PickerStackOptionsInput,
+} from './testHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+enableReactActEnvironment();
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -18,19 +26,22 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { header: { tint: '#000' } } } }),
+    useUnistyles: () => ({ theme: { colors: { header: PICKER_THEME_COLORS.header } } }),
 }));
 
-let lastStackScreenOptions: any = null;
+const routerMock = createRouterMock();
+const navigationMock = createNavigationMock();
+const stackOptionsCapture = createStackOptionsCapture();
+
 vi.mock('expo-router', () => ({
     Stack: {
-        Screen: ({ options }: any) => {
-            lastStackScreenOptions = options;
+        Screen: ({ options }: { options: PickerStackOptionsInput }) => {
+            stackOptionsCapture.record(options);
             return null;
         },
     },
-    useRouter: () => ({ back: vi.fn(), setParams: vi.fn() }),
-    useNavigation: () => ({ goBack: vi.fn() }),
+    useRouter: () => routerMock,
+    useNavigation: () => navigationMock,
     useLocalSearchParams: () => ({ selectedId: '' }),
 }));
 
@@ -45,13 +56,19 @@ vi.mock('@/components/secrets/SecretsList', () => ({
 describe('SecretPickerScreen (iOS presentation)', () => {
     it('presents as containedModal on iOS and provides an explicit header back button', async () => {
         const SecretPickerScreen = (await import('@/app/(app)/new/pick/secret')).default;
-        lastStackScreenOptions = null;
+        stackOptionsCapture.reset();
 
         await act(async () => {
             renderer.create(React.createElement(SecretPickerScreen));
         });
 
-        expect(lastStackScreenOptions?.presentation).toBe('containedModal');
-        expect(typeof lastStackScreenOptions?.headerLeft).toBe('function');
+        const options = stackOptionsCapture.getResolved();
+        expect(options?.presentation).toBe('containedModal');
+        expect(typeof options?.headerLeft).toBe('function');
+
+        const backButton = options?.headerLeft?.();
+        expect(typeof backButton?.props?.onPress).toBe('function');
+        backButton?.props?.onPress?.();
+        expect(navigationMock.goBack).toHaveBeenCalledTimes(1);
     });
 });

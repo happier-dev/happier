@@ -1,17 +1,30 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import {
+    createNavigationMock,
+    createRouterMock,
+    createStackOptionsCapture,
+    enableReactActEnvironment,
+    PICKER_THEME_COLORS,
+    type PickerStackOptionsInput,
+} from './testHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+enableReactActEnvironment();
+
+const routerMock = createRouterMock();
+const navigationMock = createNavigationMock();
+const stackOptionsCapture = createStackOptionsCapture();
 
 vi.mock('react-native', () => {
     const React = require('react');
+    type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
     return {
         Platform: { OS: 'ios' },
-        ActivityIndicator: (props: any) => React.createElement('ActivityIndicator', props),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        Text: (props: any) => React.createElement('Text', props, props.children),
-        View: (props: any) => React.createElement('View', props, props.children),
+        ActivityIndicator: (props: Record<string, unknown>) => React.createElement('ActivityIndicator', props),
+        Pressable: (props: NativeChildrenProps) => React.createElement('Pressable', props, props.children),
+        Text: (props: NativeChildrenProps) => React.createElement('Text', props, props.children),
+        View: (props: NativeChildrenProps) => React.createElement('View', props, props.children),
     };
 });
 
@@ -24,20 +37,33 @@ vi.mock('@/text', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { textSecondary: '#666', header: { tint: '#000' }, surface: '#fff' } } }),
+    useUnistyles: () => ({
+        theme: {
+            colors: {
+                textSecondary: PICKER_THEME_COLORS.textSecondary,
+                header: PICKER_THEME_COLORS.header,
+                surface: PICKER_THEME_COLORS.surface,
+            },
+        },
+    }),
     StyleSheet: { create: () => ({ container: {}, emptyContainer: {}, emptyText: {} }) },
 }));
 
 vi.mock('expo-router', () => ({
-    Stack: { Screen: (props: any) => React.createElement('StackScreen', props) },
-    useRouter: () => ({ back: vi.fn() }),
-    useNavigation: () => ({ getState: () => ({ index: 1, routes: [{ key: 'a' }, { key: 'b' }] }), dispatch: vi.fn() }),
+    Stack: {
+        Screen: ({ options }: { options: PickerStackOptionsInput }) => {
+            stackOptionsCapture.record(options);
+            return React.createElement('StackScreen');
+        },
+    },
+    useRouter: () => routerMock,
+    useNavigation: () => navigationMock,
     useLocalSearchParams: () => ({ selectedId: 'm1' }),
 }));
 
 vi.mock('@react-navigation/native', () => ({
     CommonActions: {
-        setParams: (params: any) => ({ type: 'SET_PARAMS', payload: { params } }),
+        setParams: (params: Record<string, unknown>) => ({ type: 'SET_PARAMS', payload: { params } }),
     },
 }));
 
@@ -49,7 +75,7 @@ vi.mock('@/sync/storage', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemList: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
@@ -75,14 +101,19 @@ vi.mock('@/hooks/useMachineEnvPresence', () => ({
 describe('MachinePickerScreen (iOS presentation)', () => {
     it('presents as containedModal on iOS and provides an explicit header back button', async () => {
         const MachinePickerScreen = (await import('@/app/(app)/new/pick/machine')).default;
+        stackOptionsCapture.reset();
 
-        let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
-            tree = renderer.create(React.createElement(MachinePickerScreen));
+            renderer.create(React.createElement(MachinePickerScreen));
         });
 
-        const stackScreen = tree?.root.findByType('StackScreen' as any);
-        expect(stackScreen?.props?.options?.presentation).toBe('containedModal');
-        expect(typeof stackScreen?.props?.options?.headerLeft).toBe('function');
+        const options = stackOptionsCapture.getResolved();
+        expect(options?.presentation).toBe('containedModal');
+        expect(typeof options?.headerLeft).toBe('function');
+
+        const backButton = options?.headerLeft?.();
+        expect(typeof backButton?.props?.onPress).toBe('function');
+        backButton?.props?.onPress?.();
+        expect(routerMock.back).toHaveBeenCalledTimes(1);
     });
 });

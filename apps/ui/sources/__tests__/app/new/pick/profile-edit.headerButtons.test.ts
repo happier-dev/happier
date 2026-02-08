@@ -1,8 +1,15 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import {
+    createStackOptionsCapture,
+    enableReactActEnvironment,
+    PICKER_NAV_STATE,
+    PICKER_THEME_COLORS,
+    type PickerStackOptionsInput,
+} from './testHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+enableReactActEnvironment();
 
 vi.mock('react-native', () => {
     const React = require('react');
@@ -40,15 +47,18 @@ const routerMock = {
 const navigationMock = {
     setOptions: vi.fn(),
     addListener: vi.fn(() => ({ remove: vi.fn() })),
-    getState: vi.fn(() => ({ index: 1, routes: [{ key: 'prev' }, { key: 'current' }] })),
+    getState: vi.fn(() => PICKER_NAV_STATE),
     dispatch: vi.fn(),
 };
+const stackOptionsCapture = createStackOptionsCapture();
 
 vi.mock('expo-router', () => {
-    const React = require('react');
     return {
         Stack: {
-            Screen: (props: any) => React.createElement('StackScreen', props),
+            Screen: ({ options }: { options: PickerStackOptionsInput }) => {
+                stackOptionsCapture.record(options);
+                return React.createElement('StackScreen');
+            },
         },
         useRouter: () => routerMock,
         useLocalSearchParams: () => ({
@@ -65,11 +75,12 @@ vi.mock('expo-router', () => {
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
-        theme: { colors: { header: { tint: '#000000' }, groupped: { background: '#ffffff' } } },
+        theme: { colors: { header: PICKER_THEME_COLORS.header, groupped: PICKER_THEME_COLORS.groupped } },
         rt: { insets: { bottom: 0 } },
     }),
     StyleSheet: {
-        create: (fn: any) => fn({ colors: { groupped: { background: '#ffffff' } } }, { insets: { bottom: 0 } }),
+        create: (fn: (theme: { colors: { groupped: typeof PICKER_THEME_COLORS.groupped } }, rt: { insets: { bottom: number } }) => unknown) =>
+            fn({ colors: { groupped: PICKER_THEME_COLORS.groupped } }, { insets: { bottom: 0 } }),
     },
 }));
 
@@ -97,9 +108,9 @@ vi.mock('@/sync/profileUtils', () => ({
 }));
 
 vi.mock('@/sync/profileMutations', () => ({
-    convertBuiltInProfileToCustom: (p: any) => p,
+    convertBuiltInProfileToCustom: <T,>(profile: T) => profile,
     createEmptyCustomProfile: () => ({ id: 'new', name: '', isBuiltIn: false, compatibility: { claude: true, codex: true, gemini: true } }),
-    duplicateProfileForEdit: (p: any) => p,
+    duplicateProfileForEdit: <T,>(profile: T) => profile,
 }));
 
 vi.mock('@/modal', () => ({
@@ -113,28 +124,28 @@ vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
 describe('ProfileEditScreen (header buttons)', () => {
     it('renders a header close button even when the form is pristine', async () => {
         const ProfileEditScreen = (await import('@/app/(app)/new/pick/profile-edit')).default;
+        stackOptionsCapture.reset();
 
-        let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
-            tree = renderer.create(React.createElement(ProfileEditScreen));
+            renderer.create(React.createElement(ProfileEditScreen));
         });
 
-        const stackScreen = tree?.root.findByType('StackScreen' as any);
-        expect(typeof stackScreen?.props?.options?.headerLeft).toBe('function');
+        const options = stackOptionsCapture.getResolved();
+        expect(typeof options?.headerLeft).toBe('function');
     });
 
     it('renders a disabled header save button when the form is pristine', async () => {
         const ProfileEditScreen = (await import('@/app/(app)/new/pick/profile-edit')).default;
+        stackOptionsCapture.reset();
 
-        let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
-            tree = renderer.create(React.createElement(ProfileEditScreen));
+            renderer.create(React.createElement(ProfileEditScreen));
         });
 
-        const stackScreen = tree?.root.findByType('StackScreen' as any);
-        expect(typeof stackScreen?.props?.options?.headerRight).toBe('function');
+        const options = stackOptionsCapture.getResolved();
+        expect(typeof options?.headerRight).toBe('function');
 
-        const headerRight = stackScreen?.props?.options?.headerRight;
+        const headerRight = options?.headerRight;
         const saveButton = headerRight?.();
         expect(saveButton?.props?.disabled).toBe(true);
     });

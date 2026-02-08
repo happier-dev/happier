@@ -1,8 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { createRouterMock, enableReactActEnvironment, PICKER_NAV_STATE, PICKER_THEME_COLORS, type PickerStackOptionsInput } from './testHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+enableReactActEnvironment();
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -28,7 +29,7 @@ vi.mock('@/sync/storage', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
@@ -69,24 +70,26 @@ vi.mock('@/utils/tempDataStore', () => ({
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { header: { tint: '#000' } } } }),
+    useUnistyles: () => ({ theme: { colors: { header: PICKER_THEME_COLORS.header } } }),
     StyleSheet: { create: () => ({}) },
 }));
 
 describe('ProfilePickerScreen (Stack.Screen options stability)', () => {
     it('does not trigger an infinite setOptions update loop', async () => {
+        const routerApi = createRouterMock();
         const listeners = new Set<() => void>();
         let setOptionsCalls = 0;
-        let didLoop = false;
+        const observedOptions: unknown[] = [];
+        let searchParams = { selectedId: '', machineId: 'm1' };
 
         const navigationApi = {
-            getState: () => ({ index: 1, routes: [{ key: 'a' }, { key: 'b' }] }),
+            getState: () => PICKER_NAV_STATE,
             dispatch: vi.fn(),
             setOptions: (_options: unknown) => {
                 setOptionsCalls += 1;
-                if (setOptionsCalls > 20) {
-                    didLoop = true;
-                    return;
+                observedOptions.push(_options);
+                if (setOptionsCalls > 8) {
+                    throw new Error(`setOptions loop detected after ${setOptionsCalls} calls`);
                 }
                 listeners.forEach((notify) => notify());
             },
@@ -94,31 +97,39 @@ describe('ProfilePickerScreen (Stack.Screen options stability)', () => {
 
         vi.doMock('expo-router', () => ({
             Stack: {
-                Screen: ({ options }: any) => {
+                Screen: ({ options }: { options: PickerStackOptionsInput }) => {
                     React.useEffect(() => {
                         navigationApi.setOptions(typeof options === 'function' ? options() : options);
                     }, [options]);
                     return null;
                 },
             },
-            useRouter: () => ({ back: vi.fn(), push: vi.fn(), setParams: vi.fn() }),
+            useRouter: () => routerApi,
             useNavigation: () => {
                 const [, force] = React.useReducer((x) => x + 1, 0);
                 React.useLayoutEffect(() => {
                     listeners.add(force);
                     return () => void listeners.delete(force);
                 }, [force]);
-                return navigationApi as any;
+                return navigationApi;
             },
-            useLocalSearchParams: () => ({ selectedId: '', machineId: 'm1' }),
+            useLocalSearchParams: () => searchParams,
         }));
 
         const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
+        let tree: renderer.ReactTestRenderer | undefined;
 
         await act(async () => {
-            renderer.create(React.createElement(ProfilePickerScreen));
+            tree = renderer.create(React.createElement(ProfilePickerScreen));
         });
 
-        expect(didLoop).toBe(false);
+        searchParams = { selectedId: 'profile-1', machineId: 'm1' };
+        await act(async () => {
+            tree?.update(React.createElement(ProfilePickerScreen));
+        });
+
+        expect(setOptionsCalls).toBeGreaterThan(0);
+        expect(setOptionsCalls).toBeLessThanOrEqual(2);
+        expect(observedOptions.every((entry) => entry === observedOptions[0])).toBe(true);
     });
 });

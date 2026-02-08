@@ -1,8 +1,9 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { createRouterMock, enableReactActEnvironment, PICKER_NAV_STATE, PICKER_THEME_COLORS } from './testHarness';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+enableReactActEnvironment();
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -18,26 +19,23 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-const routerMock = {
-    push: vi.fn(),
-    back: vi.fn(),
-};
+const routerMock = createRouterMock();
 
 vi.mock('expo-router', () => ({
     Stack: { Screen: () => null },
     useRouter: () => routerMock,
-    useNavigation: () => ({ getState: () => ({ index: 1, routes: [{ key: 'a' }, { key: 'b' }] }), dispatch: vi.fn(), setParams: vi.fn() }),
+    useNavigation: () => ({ getState: () => PICKER_NAV_STATE, dispatch: vi.fn(), setParams: vi.fn() }),
     useLocalSearchParams: () => ({ selectedId: '', machineId: 'm1' }),
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { header: { tint: '#000' }, textSecondary: '#666' } } }),
+    useUnistyles: () => ({ theme: { colors: PICKER_THEME_COLORS } }),
     StyleSheet: { create: () => ({}) },
 }));
 
 const modalShowMock = vi.fn();
 vi.mock('@/modal', () => ({
-    Modal: { alert: vi.fn(), show: (...args: any[]) => modalShowMock(...args) },
+    Modal: { alert: vi.fn(), show: (...args: readonly unknown[]) => modalShowMock(...args) },
 }));
 
 vi.mock('@/sync/storage', () => ({
@@ -56,16 +54,31 @@ vi.mock('@/sync/storage', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemGroup: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: () => null,
 }));
 
-let capturedProfilesListProps: any = null;
+type ProfileCompatibility = {
+    claude: boolean;
+    codex: boolean;
+    gemini: boolean;
+};
+type ProfileRow = {
+    id: string;
+    name: string;
+    isBuiltIn: boolean;
+    compatibility: ProfileCompatibility;
+};
+type CapturedProfilesListProps = {
+    onPressProfile?: (profile: ProfileRow) => Promise<void> | void;
+};
+
+let capturedProfilesListProps: CapturedProfilesListProps | null = null;
 vi.mock('@/components/profiles/ProfilesList', () => ({
-    ProfilesList: (props: any) => {
+    ProfilesList: (props: CapturedProfilesListProps) => {
         capturedProfilesListProps = props;
         return null;
     },
@@ -117,7 +130,7 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
         expect(typeof capturedProfilesListProps?.onPressProfile).toBe('function');
 
         await act(async () => {
-            await capturedProfilesListProps.onPressProfile({
+            await capturedProfilesListProps?.onPressProfile?.({
                 id: 'deepseek',
                 name: 'DeepSeek',
                 isBuiltIn: true,

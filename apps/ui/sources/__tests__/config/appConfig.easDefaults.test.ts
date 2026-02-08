@@ -10,6 +10,10 @@ function getUiDir(): string {
     return join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 }
 
+function getPublicConfig() {
+    return getConfig(getUiDir(), { skipSDKVersionRequirement: true, isPublicConfig: true }).exp;
+}
+
 function withCleanEnv<T>(fn: () => T): T {
     const keys = [
         'APP_ENV',
@@ -43,14 +47,57 @@ function withCleanEnv<T>(fn: () => T): T {
 
 describe('app.config.js', () => {
     it('includes a default EAS project id so EAS can link dynamic configs', () => {
-        const { exp } = withCleanEnv(() => {
-            return getConfig(getUiDir(), { skipSDKVersionRequirement: true, isPublicConfig: true });
-        });
+        const exp = withCleanEnv(() => getPublicConfig());
 
         expect(exp.extra?.eas?.projectId).toBe(DEFAULT_EAS_PROJECT_ID);
         expect(exp.updates?.url).toBe(DEFAULT_UPDATES_URL);
         expect(exp.owner).toBe('happier-dev');
         expect(exp.slug).toBe('happier');
     });
-});
 
+    it('uses EXPO_PUBLIC_EAS_PROJECT_ID with highest precedence for updates linkage', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_PUBLIC_EAS_PROJECT_ID = 'public-project-id';
+            process.env.EAS_PROJECT_ID = 'eas-project-id';
+            process.env.EXPO_EAS_PROJECT_ID = 'expo-project-id';
+            return getPublicConfig();
+        });
+
+        expect(exp.extra?.eas?.projectId).toBe('public-project-id');
+        expect(exp.updates?.url).toBe('https://u.expo.dev/public-project-id');
+    });
+
+    it('uses EAS_PROJECT_ID when EXPO_PUBLIC_EAS_PROJECT_ID is unset', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EAS_PROJECT_ID = 'eas-project-id';
+            process.env.EXPO_EAS_PROJECT_ID = 'expo-project-id';
+            return getPublicConfig();
+        });
+
+        expect(exp.extra?.eas?.projectId).toBe('eas-project-id');
+        expect(exp.updates?.url).toBe('https://u.expo.dev/eas-project-id');
+    });
+
+    it('allows EXPO_UPDATES_URL override while keeping project id override intact', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_PUBLIC_EAS_PROJECT_ID = 'public-project-id';
+            process.env.EXPO_UPDATES_URL = 'https://updates.example.test/custom';
+            return getPublicConfig();
+        });
+
+        expect(exp.extra?.eas?.projectId).toBe('public-project-id');
+        expect(exp.updates?.url).toBe('https://updates.example.test/custom');
+    });
+
+    it('allows owner and slug overrides for local variants', () => {
+        const exp = withCleanEnv(() => {
+            process.env.EXPO_APP_OWNER = 'example-owner';
+            process.env.EXPO_APP_SLUG = 'example-slug';
+            return getPublicConfig();
+        });
+
+        expect(exp.owner).toBe('example-owner');
+        expect(exp.slug).toBe('example-slug');
+        expect(exp.extra?.eas?.projectId).toBe(DEFAULT_EAS_PROJECT_ID);
+    });
+});

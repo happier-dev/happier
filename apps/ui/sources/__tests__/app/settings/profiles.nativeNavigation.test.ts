@@ -2,21 +2,42 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+type ReactActEnvironmentGlobal = typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+
+type NativeChildrenProps = React.PropsWithChildren<Record<string, unknown>>;
+type ProfileCompatibility = {
+    claude: boolean;
+    codex: boolean;
+    gemini: boolean;
+};
+type ProfileRow = {
+    id: string;
+    name: string;
+    isBuiltIn: boolean;
+    compatibility: ProfileCompatibility;
+};
+type CapturedProfilesListProps = {
+    onAddProfilePress?: () => void;
+    onDuplicateProfile?: (profile: ProfileRow) => void;
+    onEditProfile?: (profile: ProfileRow) => void;
+};
 
 vi.mock('react-native', () => {
     const React = require('react');
     return {
         Platform: { OS: 'ios' },
-        View: (props: any) => React.createElement('View', props, props.children),
-        Pressable: (props: any) => React.createElement('Pressable', props, props.children),
+        View: (props: NativeChildrenProps) => React.createElement('View', props, props.children),
+        Pressable: (props: NativeChildrenProps) => React.createElement('Pressable', props, props.children),
     };
 });
 
 vi.mock('@expo/vector-icons', () => {
     const React = require('react');
     return {
-        Ionicons: (props: any) => React.createElement('Ionicons', props, props.children),
+        Ionicons: (props: NativeChildrenProps) => React.createElement('Ionicons', props, props.children),
     };
 });
 
@@ -35,7 +56,10 @@ vi.mock('react-native-unistyles', () => ({
         theme: { colors: { groupped: { background: '#ffffff' }, surface: '#ffffff', divider: '#dddddd' } },
         rt: { insets: { bottom: 0 } },
     }),
-    StyleSheet: { create: (fn: any) => fn({ colors: { groupped: { background: '#ffffff' }, divider: '#dddddd' } }) },
+    StyleSheet: {
+        create: (fn: (theme: { colors: { groupped: { background: string }; divider: string } }) => unknown) =>
+            fn({ colors: { groupped: { background: '#ffffff' }, divider: '#dddddd' } }),
+    },
 }));
 
 vi.mock('@/text', () => ({
@@ -59,9 +83,9 @@ vi.mock('@/components/profiles/edit', () => ({
     ProfileEditForm: () => React.createElement('ProfileEditForm'),
 }));
 
-let capturedProfilesListProps: any = null;
+let capturedProfilesListProps: CapturedProfilesListProps | null = null;
 vi.mock('@/components/profiles/ProfilesList', () => ({
-    ProfilesList: (props: any) => {
+    ProfilesList: (props: CapturedProfilesListProps) => {
         capturedProfilesListProps = props;
         return React.createElement('ProfilesList');
     },
@@ -74,22 +98,22 @@ vi.mock('@/sync/profileUtils', () => ({
 }));
 
 vi.mock('@/sync/profileMutations', () => ({
-    convertBuiltInProfileToCustom: (p: any) => p,
+    convertBuiltInProfileToCustom: <T,>(profile: T) => profile,
     createEmptyCustomProfile: () => ({ id: 'new', name: '', isBuiltIn: false, compatibility: { claude: true, codex: true, gemini: true } }),
-    duplicateProfileForEdit: (p: any) => p,
+    duplicateProfileForEdit: <T,>(profile: T) => profile,
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: (props: any) => React.createElement('ItemList', props, props.children),
+    ItemList: (props: NativeChildrenProps) => React.createElement('ItemList', props, props.children),
 }));
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
+    ItemGroup: (props: NativeChildrenProps) => React.createElement('ItemGroup', props, props.children),
 }));
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.children),
+    Item: (props: NativeChildrenProps) => React.createElement('Item', props, props.children),
 }));
 vi.mock('@/components/Switch', () => ({
-    Switch: (props: any) => React.createElement('Switch', props, props.children),
+    Switch: (props: NativeChildrenProps) => React.createElement('Switch', props, props.children),
 }));
 
 vi.mock('@/components/secrets/requirements', () => ({
@@ -105,20 +129,37 @@ vi.mock('@/sync/profileSecrets', () => ({
 }));
 
 describe('ProfileManager (native)', () => {
-    it('navigates to the profile edit screen instead of using the inline modal editor', async () => {
+    async function renderProfileManager() {
         const ProfileManager = (await import('@/app/(app)/settings/profiles')).default;
-
         capturedProfilesListProps = null;
-        routerMock.push.mockClear();
-
         await act(async () => {
             renderer.create(React.createElement(ProfileManager));
         });
+    }
+
+    it('navigates to the profile edit screen when adding a profile', async () => {
+        routerMock.push.mockClear();
+        await renderProfileManager();
+
+        expect(typeof capturedProfilesListProps?.onAddProfilePress).toBe('function');
+        await act(async () => {
+            capturedProfilesListProps?.onAddProfilePress?.();
+        });
+
+        expect(routerMock.push).toHaveBeenCalledTimes(1);
+        expect(routerMock.push).toHaveBeenCalledWith({
+            pathname: '/new/pick/profile-edit',
+            params: {},
+        });
+    });
+
+    it('navigates to the profile edit screen instead of using the inline modal editor', async () => {
+        routerMock.push.mockClear();
+        await renderProfileManager();
 
         expect(typeof capturedProfilesListProps?.onEditProfile).toBe('function');
-
         await act(async () => {
-            capturedProfilesListProps.onEditProfile({
+            capturedProfilesListProps?.onEditProfile?.({
                 id: 'p1',
                 name: 'Test profile',
                 isBuiltIn: false,
@@ -130,6 +171,27 @@ describe('ProfileManager (native)', () => {
         expect(routerMock.push).toHaveBeenCalledWith({
             pathname: '/new/pick/profile-edit',
             params: { profileId: 'p1' },
+        });
+    });
+
+    it('navigates with clone id when duplicating a profile', async () => {
+        routerMock.push.mockClear();
+        await renderProfileManager();
+
+        expect(typeof capturedProfilesListProps?.onDuplicateProfile).toBe('function');
+        await act(async () => {
+            capturedProfilesListProps?.onDuplicateProfile?.({
+                id: 'p1',
+                name: 'Test profile',
+                isBuiltIn: false,
+                compatibility: { claude: true, codex: true, gemini: true },
+            });
+        });
+
+        expect(routerMock.push).toHaveBeenCalledTimes(1);
+        expect(routerMock.push).toHaveBeenCalledWith({
+            pathname: '/new/pick/profile-edit',
+            params: { cloneFromProfileId: 'p1' },
         });
     });
 });
