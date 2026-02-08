@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiSessionClient } from './apiSession';
 
 // Use vi.hoisted to ensure mock function is available when vi.mock factory runs
@@ -16,10 +16,20 @@ vi.mock('./changes', () => ({
 }));
 
 describe('ApiSessionClient /v2/changes feature flag', () => {
+    const previousEnableV2Changes = process.env.HAPPY_ENABLE_V2_CHANGES;
+
     beforeEach(() => {
         fetchChanges.mockReset();
         mockIo.mockReset();
         delete process.env.HAPPY_ENABLE_V2_CHANGES;
+    });
+
+    afterEach(() => {
+        if (previousEnableV2Changes === undefined) {
+            delete process.env.HAPPY_ENABLE_V2_CHANGES;
+        } else {
+            process.env.HAPPY_ENABLE_V2_CHANGES = previousEnableV2Changes;
+        }
     });
 
     it('skips /v2/changes sync when HAPPY_ENABLE_V2_CHANGES is false', async () => {

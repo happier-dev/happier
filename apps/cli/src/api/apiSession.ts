@@ -12,13 +12,13 @@ import { AsyncLock } from '@/utils/lock';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { registerSessionHandlers } from '@/rpc/handlers/registerSessionHandlers';
 import { addDiscardedCommittedMessageLocalIds } from './queue/discardedCommittedMessageLocalIds';
-import { claimMessageQueueV1Next, clearMessageQueueV1InFlight, discardMessageQueueV1All, parseMessageQueueV1 } from './queue/messageQueueV1';
 import { fetchSessionSnapshotUpdateFromServer, shouldSyncSessionSnapshotOnConnect } from './session/snapshotSync';
 import { createSessionScopedSocket, createUserScopedSocket } from './session/sockets';
 import { isToolTraceEnabled, recordAcpToolTraceEventIfNeeded, recordClaudeToolTraceEvents, recordCodexToolTraceEventIfNeeded } from './session/toolTrace';
 import { updateSessionAgentStateWithAck, updateSessionMetadataWithAck } from './session/stateUpdates';
 import type { CatalogAgentId } from '@/backends/types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { resolveLatestPermissionIntent } from '@happier-dev/agents';
 import { normalizeToolCallV2, normalizeToolResultV2 } from '@/agent/tools/normalization';
 import { calculateCost } from '@/utils/pricing';
 import { fetchChanges } from './apiChanges';
@@ -28,7 +28,9 @@ import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
  * ACP (Agent Communication Protocol) message data types.
  * This is the unified format for all agent messages - CLI adapts each provider's format to ACP.
  */
-export type ACPMessageData =
+type AcpSidechainMeta = { sidechainId?: string };
+
+export type ACPMessageData = AcpSidechainMeta & (
     // Core message types
     | { type: 'message'; message: string }
     | { type: 'reasoning'; message: string }
@@ -47,7 +49,8 @@ export type ACPMessageData =
     // Permissions
     | { type: 'permission-request'; permissionId: string; toolName: string; description: string; options?: unknown }
     // Usage/metrics
-    | { type: 'token_count';[key: string]: unknown };
+    | { type: 'token_count';[key: string]: unknown }
+);
 
 export type ACPProvider = CatalogAgentId;
 
@@ -69,6 +72,8 @@ export class ApiSessionClient extends EventEmitter {
     private encryptionVariant: 'legacy' | 'dataKey';
     private disconnectedSendLogged = false;
     private readonly pendingMaterializedLocalIds = new Set<string>();
+    private readonly pendingQueueMaterializedLocalIds = new Set<string>();
+    private pendingWakeSeq = 0;
     private readonly pendingCommitRetryAttemptsByLocalId = new Map<string, number>();
     private userSocketDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private closed = false;
@@ -176,7 +181,7 @@ export class ApiSessionClient extends EventEmitter {
             encryptionVariant: this.encryptionVariant,
             logger: (msg, data) => logger.debug(msg, data)
         });
-        registerSessionHandlers(this.rpcHandlerManager, this.metadata.path);
+        registerSessionHandlers(this.rpcHandlerManager, this.metadata.path, { flavor: (this.metadata as any)?.flavor });
 
         //
         // Create socket
@@ -188,7 +193,7 @@ export class ApiSessionClient extends EventEmitter {
         //
         // Server-side broadcasting skips the sender connection, so a session-scoped agent that emits a
         // transcript message will not receive its own "new-message" update. Without observing the
-        // materialized message, the agent can't enqueue it for processing or clear messageQueueV1.inFlight.
+        // materialized message, the agent can't enqueue it for processing.
         //
         // A second (user-scoped) connection will still receive the broadcast, letting us safely
         // drive the normal update pipeline without server changes.
@@ -208,9 +213,9 @@ export class ApiSessionClient extends EventEmitter {
             void this.syncChangesOnConnect({ reason: isReconnect ? 'reconnect' : 'connect' });
 
             // Resumed sessions (inactive-session-resume) start with metadataVersion/agentStateVersion = -1.
-            // If the user enqueued pending messages before this agent connected, the corresponding metadata
-            // update happened "in the past" and won't be replayed over the socket. Syncing a snapshot here
-            // ensures messageQueueV1 is visible so popPendingMessage() can materialize the first queued item.
+            // If the user performed session mutations before this agent connected, the corresponding
+            // updates happened "in the past" and won't be replayed over the socket. Syncing a snapshot
+            // here ensures we start from a consistent metadata/agentState baseline.
             if (shouldSyncSessionSnapshotOnConnect({ metadataVersion: this.metadataVersion, agentStateVersion: this.agentStateVersion })) {
                 void this.syncSessionSnapshotFromServer({ reason: 'connect' });
             }
@@ -254,24 +259,24 @@ export class ApiSessionClient extends EventEmitter {
         if (this.closed) return Promise.resolve();
         if (this.snapshotSyncInFlight) return this.snapshotSyncInFlight;
 
-		const p = (async () => {
-			try {
-				const update = await fetchSessionSnapshotUpdateFromServer({
-					token: this.token,
-					sessionId: this.sessionId,
-					encryptionKey: this.encryptionKey,
-					encryptionVariant: this.encryptionVariant,
-					currentMetadataVersion: this.metadataVersion,
-					currentAgentStateVersion: this.agentStateVersion,
-				});
+        const p = (async () => {
+            try {
+                const update = await fetchSessionSnapshotUpdateFromServer({
+                    token: this.token,
+                    sessionId: this.sessionId,
+                    encryptionKey: this.encryptionKey,
+                    encryptionVariant: this.encryptionVariant,
+                    currentMetadataVersion: this.metadataVersion,
+                    currentAgentStateVersion: this.agentStateVersion,
+                });
 
-				if (this.closed) return;
+                if (this.closed) return;
 
-				if (update.metadata) {
-					this.metadata = update.metadata.metadata;
-					this.metadataVersion = update.metadata.metadataVersion;
-					this.emit('metadata-updated');
-				}
+                if (update.metadata) {
+                    this.metadata = update.metadata.metadata;
+                    this.metadataVersion = update.metadata.metadataVersion;
+                    this.emit('metadata-updated');
+                }
 
                 if (update.agentState) {
                     this.agentState = update.agentState.agentState;
@@ -308,6 +313,7 @@ export class ApiSessionClient extends EventEmitter {
     private maybeScheduleUserSocketDisconnect(): void {
         if (this.closed) return;
         if (this.pendingMaterializedLocalIds.size > 0) return;
+        if (this.pendingQueueMaterializedLocalIds.size > 0) return;
         if (!this.userSocket.connected) return;
         if (this.userSocketDisconnectTimer) return;
 
@@ -315,6 +321,7 @@ export class ApiSessionClient extends EventEmitter {
         this.userSocketDisconnectTimer = setTimeout(() => {
             this.userSocketDisconnectTimer = null;
             if (this.pendingMaterializedLocalIds.size > 0) return;
+            if (this.pendingQueueMaterializedLocalIds.size > 0) return;
             if (!this.userSocket.connected) return;
             try {
                 this.userSocket.disconnect();
@@ -323,6 +330,16 @@ export class ApiSessionClient extends EventEmitter {
             }
         }, 2_000);
         this.userSocketDisconnectTimer.unref?.();
+    }
+
+    private hasMaterializedLocalId(localId: string): boolean {
+        return this.pendingMaterializedLocalIds.has(localId) || this.pendingQueueMaterializedLocalIds.has(localId);
+    }
+
+    private deleteMaterializedLocalId(localId: string): void {
+        this.pendingMaterializedLocalIds.delete(localId);
+        this.pendingQueueMaterializedLocalIds.delete(localId);
+        this.maybeScheduleUserSocketDisconnect();
     }
 
     private handleUpdate(data: Update, opts: { source: 'session-scoped' | 'user-scoped' }): void {
@@ -352,14 +369,15 @@ export class ApiSessionClient extends EventEmitter {
                 }
 
                 const localId = data.body.message.localId ?? null;
-                if (opts.source === 'user-scoped') {
-                    if (!localId) return;
-                    if (!this.pendingMaterializedLocalIds.has(localId)) {
-                        return;
-                    }
-                    // Avoid double-processing if we get multiple copies.
-                    this.pendingMaterializedLocalIds.delete(localId);
-                    this.maybeScheduleUserSocketDisconnect();
+                if (localId && this.hasMaterializedLocalId(localId)) {
+                    // We observed the broadcast for a message we materialized; cancel any recovery path.
+                    //
+                    // Historically we only delivered `new-message` updates from user-scoped sockets when the
+                    // message localId was materialized by this client, to avoid double-delivery across sockets.
+                    // In practice, session-scoped sockets can briefly disconnect during mode switches, and the
+                    // user-scoped socket may be the only path that observes UI-posted messages. We already
+                    // de-dupe by message id, so it's safe (and more reliable) to accept user-scoped updates too.
+                    this.deleteMaterializedLocalId(localId);
                 }
 
                 const body = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(parsedContent.data.c));
@@ -370,28 +388,41 @@ export class ApiSessionClient extends EventEmitter {
                             ...(body as any),
                             localId: data.body.message.localId,
                         };
+                const bodyWithTransportFields = {
+                    ...(bodyWithLocalId as any),
+                    // Attach server timestamps so downstream consumers can make clock-safe decisions.
+                    createdAt: typeof data.createdAt === 'number' ? data.createdAt : undefined,
+                };
 
-                logger.debugLargeJson('[SOCKET] [UPDATE] Received update:', bodyWithLocalId)
+                logger.debugLargeJson('[SOCKET] [UPDATE] Received update:', bodyWithTransportFields)
 
-	                // Try to parse as user message first
-	                const userResult = UserMessageSchema.safeParse(bodyWithLocalId);
-	                if (userResult.success) {
-	                    const sentFrom = userResult.data.meta?.sentFrom;
-	                    const source = userResult.data.meta?.source;
-	                    const shouldDeliverToAgent = source !== 'cli' && sentFrom !== 'cli';
-	                    if (shouldDeliverToAgent) {
-	                        if (this.pendingMessageCallback) {
-	                            this.pendingMessageCallback(userResult.data);
-	                        } else {
+                // Try to parse as user message first
+                const userResult = UserMessageSchema.safeParse(bodyWithTransportFields);
+                if (userResult.success) {
+                    const sentFrom = userResult.data.meta?.sentFrom;
+                    const source = userResult.data.meta?.source;
+                    const shouldDeliverToAgent = source !== 'cli' && sentFrom !== 'cli';
+                    if (shouldDeliverToAgent) {
+                        if (this.pendingMessageCallback) {
+                            this.pendingMessageCallback(userResult.data);
+                        } else {
                             this.pendingMessages.push(userResult.data);
                         }
                     }
                     this.emit('user-message', userResult.data);
-                    void this.maybeClearPendingInFlight(userResult.data.localId ?? null);
                 } else {
                     // If not a user message, it might be a permission response or other message type
                     this.emit('message', body);
                 }
+                return;
+            }
+
+            if ((data.body as any).t === 'pending-changed') {
+                const sid = (data.body as any).sid ?? (data.body as any).sessionId;
+                if (sid !== this.sessionId) return;
+                // Wake idle loops waiting on "metadata updates" (this is the queue wake signal in V2).
+                this.pendingWakeSeq += 1;
+                this.emit('metadata-updated');
                 return;
             }
 
@@ -664,8 +695,7 @@ export class ApiSessionClient extends EventEmitter {
         if (!found) return false;
 
         // Prevent later user-scoped updates from double-processing this localId.
-        this.pendingMaterializedLocalIds.delete(localId);
-        this.maybeScheduleUserSocketDisconnect();
+        this.deleteMaterializedLocalId(localId);
 
         const update: Update = {
             id: `recovered-${localId}`,
@@ -691,7 +721,7 @@ export class ApiSessionClient extends EventEmitter {
         // Belt-and-suspenders: if we fail to observe the user-scoped update (connect race, brief disconnect),
         // recover by scanning the transcript and re-injecting the message into the normal update pipeline.
         const timer = setTimeout(() => {
-            if (!this.pendingMaterializedLocalIds.has(localId)) return;
+            if (!this.hasMaterializedLocalId(localId)) return;
             void this.recoverMaterializedLocalId(localId, { maxWaitMs: 7_500 });
         }, 500);
         timer.unref?.();
@@ -711,6 +741,7 @@ export class ApiSessionClient extends EventEmitter {
 
         const startMetadataVersion = this.metadataVersion;
         const startAgentStateVersion = this.agentStateVersion;
+        const startPendingWakeSeq = this.pendingWakeSeq;
         if (startMetadataVersion < 0 || startAgentStateVersion < 0) {
             void this.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' });
         }
@@ -722,8 +753,14 @@ export class ApiSessionClient extends EventEmitter {
                 resolve(true);
             };
             const onConnect = () => {
-                cleanup();
-                resolve(true);
+                void (async () => {
+                    // If we just connected the user-scoped socket, we may have missed "update-session" broadcasts
+                    // while it was disconnected. Sync a snapshot once so callers can reliably observe the latest
+                    // metadata/agentState immediately after this wakeup.
+                    await this.syncSessionSnapshotFromServer({ reason: 'connect' });
+                    cleanup();
+                    resolve(true);
+                })();
             };
             const onAbort = () => {
                 cleanup();
@@ -762,7 +799,11 @@ export class ApiSessionClient extends EventEmitter {
             }
 
             // Avoid lost wakeups if a snapshot sync or socket event raced with handler registration.
-            if (this.metadataVersion !== startMetadataVersion || this.agentStateVersion !== startAgentStateVersion) {
+            if (
+                this.metadataVersion !== startMetadataVersion ||
+                this.agentStateVersion !== startAgentStateVersion ||
+                this.pendingWakeSeq !== startPendingWakeSeq
+            ) {
                 onUpdate();
                 return;
             }
@@ -773,48 +814,66 @@ export class ApiSessionClient extends EventEmitter {
         });
     }
 
-    private async maybeClearPendingInFlight(localId: string | null): Promise<void> {
-        if (!localId) return;
-        if (!this.socket.connected) return;
-        if (!this.metadata) return;
+    /**
+     * Ensure we have a decrypted metadata snapshot from the server.
+     *
+     * Unlike waitForMetadataUpdate(), this does not resolve early just because the socket connected.
+     * It resolves only once metadataVersion is >= 0 and metadata is available (or times out).
+     */
+    async ensureMetadataSnapshot(opts?: { timeoutMs?: number; abortSignal?: AbortSignal }): Promise<Metadata | null> {
+        const abortSignal = opts?.abortSignal;
+        if (abortSignal?.aborted) return null;
 
-        try {
-            await this.metadataLock.inLock(async () => {
-                await backoff(async () => {
-                    const current = this.metadata as unknown as Record<string, unknown>;
-                    const mq = parseMessageQueueV1((current as any).messageQueueV1);
-                    const inFlightLocalId = mq?.inFlight?.localId ?? null;
-                    if (inFlightLocalId !== localId) {
-                        return;
-                    }
-
-                    const cleared = clearMessageQueueV1InFlight(current, localId);
-                    if (cleared === current) {
-                        return;
-                    }
-
-                    const answer = await this.socket.emitWithAck('update-metadata', {
-                        sid: this.sessionId,
-                        expectedVersion: this.metadataVersion,
-                        metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, cleared)),
-                    });
-                    if (answer.result === 'success') {
-                        this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
-                        this.metadataVersion = answer.version;
-                        return;
-                    }
-                    if (answer.result === 'version-mismatch') {
-                        if (answer.version > this.metadataVersion) {
-                            this.metadataVersion = answer.version;
-                            this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
-                        }
-                        throw new Error('Metadata version mismatch');
-                    }
-                });
-            });
-        } catch (error) {
-            logger.debug('[API] failed to clear messageQueueV1 inFlight', { error });
+        if (this.metadataVersion >= 0 && this.metadata) {
+            return this.metadata;
         }
+
+        const timeoutMs = typeof opts?.timeoutMs === 'number' ? opts.timeoutMs : 15_000;
+
+        if (this.metadataVersion < 0) {
+            void this.syncSessionSnapshotFromServer({ reason: 'waitForMetadataUpdate' });
+        }
+
+        return await new Promise((resolve) => {
+            let cleanedUp = false;
+            const onAbort = () => {
+                cleanup();
+                resolve(null);
+            };
+            const onDisconnect = () => {
+                cleanup();
+                resolve(null);
+            };
+            const onUpdate = () => {
+                if (this.metadataVersion >= 0 && this.metadata) {
+                    cleanup();
+                    resolve(this.metadata);
+                }
+            };
+
+            const timer = setTimeout(() => {
+                cleanup();
+                resolve(this.metadataVersion >= 0 ? this.metadata : null);
+            }, timeoutMs);
+            timer.unref?.();
+
+            const cleanup = () => {
+                if (cleanedUp) return;
+                cleanedUp = true;
+                clearTimeout(timer);
+                this.off('metadata-updated', onUpdate);
+                abortSignal?.removeEventListener('abort', onAbort);
+                this.userSocket.off('disconnect', onDisconnect);
+                this.maybeScheduleUserSocketDisconnect();
+            };
+
+            this.on('metadata-updated', onUpdate);
+            this.userSocket.on('disconnect', onDisconnect);
+            abortSignal?.addEventListener('abort', onAbort, { once: true });
+
+            // Avoid lost wakeups if the snapshot sync raced with handler registration.
+            onUpdate();
+        });
     }
 
     private async commitEncryptedSessionMessage(
@@ -863,9 +922,7 @@ export class ApiSessionClient extends EventEmitter {
 
         if (ack && ack.ok === true) {
             this.pendingCommitRetryAttemptsByLocalId.delete(localId);
-            this.pendingMaterializedLocalIds.delete(localId);
-            this.maybeScheduleUserSocketDisconnect();
-            await this.maybeClearPendingInFlight(localId);
+            this.deleteMaterializedLocalId(localId);
             // ACK confirms persistence. Do not inject a synthetic update here: outbound sends are not prompts.
             this.lastObservedMessageSeq = Math.max(this.lastObservedMessageSeq, ack.seq);
             return;
@@ -873,8 +930,7 @@ export class ApiSessionClient extends EventEmitter {
 
         if (ack && ack.ok === false) {
             this.pendingCommitRetryAttemptsByLocalId.delete(localId);
-            this.pendingMaterializedLocalIds.delete(localId);
-            this.maybeScheduleUserSocketDisconnect();
+            this.deleteMaterializedLocalId(localId);
             if (params.requireCommit) {
                 throw new Error(ack.error);
             }
@@ -1076,7 +1132,7 @@ export class ApiSessionClient extends EventEmitter {
         opts?: { localId?: string; meta?: Record<string, unknown> },
     ) {
         const normalizedBody: ACPMessageData = (() => {
-            // V2 tool-call normalization (canonical tool names + canonical input aliases + _happy/_raw).
+            // V2 tool-call normalization (canonical tool names + canonical input aliases + _happier/_raw).
             if (body.type === 'tool-call') {
                 const callId = body.callId;
                 const rawToolName = body.name;
@@ -1199,7 +1255,8 @@ export class ApiSessionClient extends EventEmitter {
             normalizedBody.type === 'tool-result' ||
             normalizedBody.type === 'permission-request' ||
             normalizedBody.type === 'file-edit' ||
-            normalizedBody.type === 'terminal-output'
+            normalizedBody.type === 'terminal-output' ||
+            normalizedBody.type === 'task_complete'
         ) {
             recordAcpToolTraceEventIfNeeded({
                 sessionId: this.sessionId,
@@ -1447,12 +1504,53 @@ export class ApiSessionClient extends EventEmitter {
         }
     }
 
+    async fetchLatestUserPermissionIntentFromTranscript(opts?: { take?: number }): Promise<{ intent: import('./types').PermissionMode; updatedAt: number } | null> {
+        const take = typeof opts?.take === 'number' && opts.take > 0 ? Math.min(opts.take, 200) : 200;
+        try {
+            const response = await axios.get(`${configuration.serverUrl}/v1/sessions/${this.sessionId}/messages`, {
+                headers: {
+                    Authorization: `Bearer ${this.token}`,
+                    'Content-Type': 'application/json',
+                },
+                params: { limit: take },
+                timeout: 10_000,
+            });
+            const raw = (response?.data as any)?.messages;
+            if (!Array.isArray(raw)) return null;
+            const sliced = raw.slice(0, take);
+
+            const candidates: Array<{ rawMode: unknown; updatedAt: unknown }> = [];
+            for (const msg of sliced) {
+                const createdAt = typeof msg?.createdAt === 'number' ? msg.createdAt : null;
+                if (createdAt === null) continue;
+                const content = msg?.content;
+                if (!content || content.t !== 'encrypted' || typeof content.c !== 'string') continue;
+
+                const decrypted = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(content.c)) as any;
+                if (decrypted?.role !== 'user') continue;
+
+                const meta = decrypted?.meta;
+                const rawMode = meta && typeof meta === 'object' ? (meta as any).permissionMode : null;
+                if (typeof rawMode !== 'string' || rawMode.trim().length === 0) continue;
+
+                candidates.push({ rawMode, updatedAt: createdAt });
+            }
+
+            const resolved = resolveLatestPermissionIntent(candidates);
+            if (!resolved) return null;
+            return { intent: resolved.intent as import('./types').PermissionMode, updatedAt: resolved.updatedAt };
+        } catch (error) {
+            logger.debug('[API] Failed to fetch transcript messages for permission intent resolution', { error });
+            return null;
+        }
+    }
+
     sendSessionEvent(event: {
         type: 'switch', mode: 'local' | 'remote'
     } | {
         type: 'message', message: string
     } | {
-        type: 'permission-mode-changed', mode: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan'
+        type: 'permission-mode-changed', mode: import('./types').PermissionMode
     } | {
         type: 'ready'
     }, id?: string) {
@@ -1613,6 +1711,7 @@ export class ApiSessionClient extends EventEmitter {
             this.userSocketDisconnectTimer = null;
         }
         this.pendingMaterializedLocalIds.clear();
+        this.pendingQueueMaterializedLocalIds.clear();
         this.pendingCommitRetryAttemptsByLocalId.clear();
         try {
             this.userSocket.close();
@@ -1622,79 +1721,48 @@ export class ApiSessionClient extends EventEmitter {
         this.socket.close();
     }
 
-    peekPendingMessageQueueV1Preview(opts?: { maxPreview?: number }): { count: number; preview: string[] } {
-        const maxPreview = opts?.maxPreview ?? 3;
-        if (!this.metadata) return { count: 0, preview: [] };
-        const mq = parseMessageQueueV1((this.metadata as any).messageQueueV1);
-        if (!mq) return { count: 0, preview: [] };
-
-        const items = [
-            ...(mq.inFlight ? [mq.inFlight] : []),
-            ...mq.queue,
-        ];
-
-        const preview: string[] = [];
-        for (const item of items.slice(0, maxPreview)) {
-            try {
-                const raw = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(item.message)) as any;
-                const displayText = raw?.meta?.displayText;
-                const text = raw?.content?.text;
-                const resolved = typeof displayText === 'string' ? displayText : typeof text === 'string' ? text : null;
-                preview.push(resolved ? resolved : '<unable to decode queued message>');
-            } catch {
-                preview.push('<unable to decode queued message>');
-            }
+    async listPendingMessageQueueV2LocalIds(): Promise<string[]> {
+        try {
+            const response = await axios.get(`${configuration.serverUrl}/v2/sessions/${this.sessionId}/pending`, {
+                headers: { Authorization: `Bearer ${this.token}` },
+                timeout: 10_000,
+            });
+            const data = response?.data as any;
+            const pending = Array.isArray(data?.pending) ? data.pending : [];
+            return pending
+                .map((row: any) => (typeof row?.localId === 'string' ? row.localId : null))
+                .filter((value: string | null): value is string => typeof value === 'string' && value.length > 0);
+        } catch {
+            return [];
         }
-
-        return { count: items.length, preview };
     }
 
-    async discardPendingMessageQueueV1All(opts: { reason: 'switch_to_local' | 'manual' }): Promise<number> {
-        if (!this.socket.connected) {
-            return 0;
+    async peekPendingMessageQueueV2Count(): Promise<number> {
+        const localIds = await this.listPendingMessageQueueV2LocalIds();
+        // Include materialized-but-not-yet-observed messages as "pending-ish" work.
+        // These are messages we already removed from the server pending queue but haven't
+        // seen broadcast into the transcript yet; switching modes during this window can
+        // silently drop user intent in non-interactive (no TTY) flows.
+        return localIds.length + this.pendingQueueMaterializedLocalIds.size;
+    }
+
+    async discardPendingMessageQueueV2All(opts: { reason: 'switch_to_local' | 'manual' }): Promise<number> {
+        const localIds = await this.listPendingMessageQueueV2LocalIds();
+        if (localIds.length === 0) return 0;
+        let discarded = 0;
+        for (const localId of localIds) {
+            try {
+                await axios.post(
+                    `${configuration.serverUrl}/v2/sessions/${this.sessionId}/pending/${encodeURIComponent(localId)}/discard`,
+                    { reason: opts.reason },
+                    { headers: { Authorization: `Bearer ${this.token}` }, timeout: 10_000 },
+                );
+                discarded += 1;
+            } catch {
+                // Best-effort discard; continue.
+            }
         }
-        if (!this.metadata) {
-            return 0;
-        }
-
-        let discardedCount = 0;
-
-        await this.metadataLock.inLock(async () => {
-            await backoff(async () => {
-                const current = this.metadata as unknown as Record<string, unknown>;
-                const result = discardMessageQueueV1All(current, { now: Date.now(), reason: opts.reason });
-                if (!result || result.discarded.length === 0) {
-                    discardedCount = 0;
-                    return;
-                }
-
-                const answer = await this.socket.emitWithAck('update-metadata', {
-                    sid: this.sessionId,
-                    expectedVersion: this.metadataVersion,
-                    metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, result.metadata)),
-                });
-
-                if (answer.result === 'success') {
-                    this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
-                    this.metadataVersion = answer.version;
-                    discardedCount = result.discarded.length;
-                    return;
-                }
-
-                if (answer.result === 'version-mismatch') {
-                    if (answer.version > this.metadataVersion) {
-                        this.metadataVersion = answer.version;
-                        this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
-                    }
-                    throw new Error('Metadata version mismatch');
-                }
-
-                // Hard error - ignore
-                discardedCount = 0;
-            });
-        });
-
-        return discardedCount;
+        return discarded;
     }
 
     async discardCommittedMessageLocalIds(opts: { localIds: string[]; reason: 'switch_to_local' | 'manual' }): Promise<number> {
@@ -1756,123 +1824,65 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     /**
-     * Materialize one metadata-backed queued message (messageQueueV1) into the normal session transcript.
+     * Materialize one server-backed queued message (pending queue V2) into the normal session transcript.
      *
-     * We claim the oldest queued item in encrypted session metadata, then emit it through
-     * the normal transcript message pipeline (idempotent via (sessionId, localId)).
-     *
-     * The inFlight marker is cleared only after we have evidence the message was persisted:
-     * either a post-commit server ACK, or transcript recovery (in case ACK/broadcast is missed).
+     * The server atomically:
+     * - selects the next queued pending message,
+     * - commits it into SessionMessage (idempotent via (sessionId, localId)),
+     * - removes it from the pending queue.
      */
     async popPendingMessage(): Promise<boolean> {
-        if (!this.socket.connected) {
-            return false;
-        }
-        if (!this.metadata) {
-            return false;
-        }
-        try {
-            const inFlight = await this.metadataLock.inLock<{ localId: string; message: string; wasExistingInFlight: boolean } | null>(async () => {
-                let claimedInFlight: { localId: string; message: string; wasExistingInFlight: boolean } | null = null;
-                await backoff(async () => {
-                    const current = this.metadata as unknown as Record<string, unknown>;
-                    const claimed = claimMessageQueueV1Next(current, Date.now());
-                    if (!claimed) {
-                        claimedInFlight = null;
-                        return;
-                    }
+        const trySocket = async (): Promise<
+            | { ok: true; didMaterialize: true; localId: string | null; didWrite: boolean }
+            | { ok: true; didMaterialize: false }
+            | { ok: false }
+        > => {
+            try {
+                const rawAck = await (this.socket as any).timeout(7_500).emitWithAck('pending-materialize-next', { sid: this.sessionId });
+                if (!rawAck || typeof rawAck !== 'object') return { ok: false };
+                if (rawAck.ok !== true) return { ok: false };
+                if (rawAck.didMaterialize !== true) return { ok: true, didMaterialize: false };
+                const localId = typeof rawAck?.message?.localId === 'string' ? String(rawAck.message.localId) : null;
+                const didWrite = rawAck.didWrite === true;
+                return { ok: true, didMaterialize: true, localId, didWrite };
+            } catch {
+                return { ok: false };
+            }
+        };
 
-                    // Persist claim (if needed) so other agents don't process the same queued item.
-                    const wasExistingInFlight = claimed.metadata === current;
-                    if (claimed.metadata !== current) {
-                        const answer = await this.socket.emitWithAck('update-metadata', {
-                            sid: this.sessionId,
-                            expectedVersion: this.metadataVersion,
-                            metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, claimed.metadata)),
-                        });
-                        if (answer.result === 'success') {
-                            this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
-                            this.metadataVersion = answer.version;
-                        } else if (answer.result === 'version-mismatch') {
-                            if (answer.version > this.metadataVersion) {
-                                this.metadataVersion = answer.version;
-                                this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
-                            }
-                            throw new Error('Metadata version mismatch');
-                        }
-                    }
-
-                    claimedInFlight = { localId: claimed.inFlight.localId, message: claimed.inFlight.message, wasExistingInFlight };
+        const tryHttp = async (): Promise<
+            | { ok: true; didMaterialize: true; localId: string | null; didWrite: boolean }
+            | { ok: true; didMaterialize: false }
+            | { ok: false }
+        > => {
+            try {
+                const response = await axios.post(`${configuration.serverUrl}/v2/sessions/${this.sessionId}/pending/materialize-next`, null, {
+                    headers: { Authorization: `Bearer ${this.token}` },
+                    timeout: 10_000,
                 });
-                return claimedInFlight;
-            });
-
-            if (!inFlight) {
-                return false;
+                const data = response?.data;
+                if (!data || typeof data !== 'object') return { ok: false };
+                if (data.ok !== true) return { ok: false };
+                if (data.didMaterialize !== true) return { ok: true, didMaterialize: false };
+                const localId = typeof data?.message?.localId === 'string' ? String(data.message.localId) : null;
+                const didWrite = data.didWrite === true || data.didWriteMessage === true;
+                return { ok: true, didMaterialize: true, localId, didWrite };
+            } catch {
+                return { ok: false };
             }
-            const inFlightLocalId = inFlight.localId;
+        };
 
-            // If the queue already had an inFlight item, we may have missed the socket update (or restarted)
-            // and re-emitting with the same localId will be idempotent server-side (no broadcast update).
-            // Recover by checking the transcript first.
-            if (inFlight.wasExistingInFlight) {
-                const recovered = await this.recoverMaterializedLocalId(inFlightLocalId, { maxWaitMs: 1_500 });
-                if (recovered) {
-                    return true;
-                }
-            }
+        const socketRes = this.socket.connected ? await trySocket() : ({ ok: false } as const);
+        const res = socketRes.ok ? socketRes : await tryHttp();
+        if (!res.ok) return false;
+        if (!res.didMaterialize) return false;
 
-            // Materialize the pending item into the transcript via the normal message pipeline.
-            // This is idempotent because SessionMessage has a unique (sessionId, localId) constraint.
-            this.pendingMaterializedLocalIds.add(inFlightLocalId);
-            const rawAck = await this.socket
-                .timeout(7_500)
-                .emitWithAck('message', {
-                    sid: this.sessionId,
-                    message: inFlight.message,
-                    localId: inFlightLocalId,
-                }) as unknown;
-
-            const ack = (() => {
-                const parsed = MessageAckResponseSchema.safeParse(rawAck);
-                return parsed.success ? parsed.data : null;
-            })();
-
-            if (ack && ack.ok === true) {
-                // We have a post-commit ACK from the server. We can safely clear the inFlight marker
-                // without waiting to observe the broadcast update, and we can inject a synthetic update
-                // so the agent processes the message immediately even if socket broadcasts are missed.
-                this.pendingMaterializedLocalIds.delete(inFlightLocalId);
-                this.maybeScheduleUserSocketDisconnect();
-                await this.maybeClearPendingInFlight(inFlightLocalId);
-
-                const update: Update = {
-                    id: `acked-${inFlightLocalId}`,
-                    seq: 0,
-                    createdAt: Date.now(),
-                    body: {
-                        t: 'new-message',
-                        sid: this.sessionId,
-                        message: {
-                            id: ack.id,
-                            seq: ack.seq,
-                            localId: ack.localId ?? undefined,
-                            content: { t: 'encrypted', c: inFlight.message },
-                        },
-                    },
-                } as Update;
-
-                this.handleUpdate(update, { source: 'session-scoped' });
-                return true;
-            }
-
-            // If the ACK fails or times out, fall back to the existing broadcast + transcript recovery path.
-            this.scheduleMaterializationRecovery(inFlightLocalId);
-
-            return true;
-        } catch (error) {
-            logger.debug('[API] popPendingMessage failed', { error });
-            return false;
+        if (res.didWrite && res.localId) {
+            // Best-effort: recover if we miss socket broadcasts for the committed transcript row.
+            this.pendingQueueMaterializedLocalIds.add(res.localId);
+            this.scheduleMaterializationRecovery(res.localId);
         }
+
+        return true;
     }
 }

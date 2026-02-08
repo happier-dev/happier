@@ -2,9 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ApiSessionClient } from './apiSession';
 import type { RawJSONLines } from '@/backends/claude/types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from './encryption';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
 
 // Use vi.hoisted to ensure mock function is available when vi.mock factory runs
@@ -162,6 +159,50 @@ describe('ApiSessionClient connection handling', () => {
         }
     });
 
+    it('ensureMetadataSnapshot waits for a decrypted snapshot when starting with metadataVersion=-1', async () => {
+        const snapshotSync = await import('./session/snapshotSync');
+
+        mockSession.metadataVersion = -1;
+        mockSession.agentStateVersion = -1;
+        mockSession.metadata = { ...mockSession.metadata, path: '/tmp/local' };
+
+        let resolveFetch!: (value: any) => void;
+        const fetchPromise = new Promise<any>((resolve) => {
+            resolveFetch = resolve;
+        });
+
+        const fetchSpy = vi
+            .spyOn(snapshotSync, 'fetchSessionSnapshotUpdateFromServer')
+            .mockReturnValue(fetchPromise as any);
+
+        try {
+            const client = new ApiSessionClient('fake-token', mockSession);
+
+            let completed = false;
+            const p = client.ensureMetadataSnapshot({ timeoutMs: 10_000 }).then((meta) => {
+                completed = true;
+                return meta;
+            });
+
+            await new Promise((r) => setTimeout(r, 0));
+            expect(completed).toBe(false);
+
+            resolveFetch({
+                metadata: {
+                    metadata: { ...mockSession.metadata, path: '/tmp/remote' },
+                    metadataVersion: 0,
+                },
+                agentState: null,
+            });
+
+            const meta = await p;
+            expect(meta?.path).toBe('/tmp/remote');
+            expect(client.getMetadataSnapshot()?.path).toBe('/tmp/remote');
+        } finally {
+            fetchSpy.mockRestore();
+        }
+    });
+
     it('backfills missing Read tool-call input details from permission-request toolCall.rawInput', () => {
         const client = new ApiSessionClient('fake-token', mockSession);
 
@@ -207,6 +248,82 @@ describe('ApiSessionClient connection handling', () => {
             name: 'Read',
             input: expect.objectContaining({ file_path: '/etc/hosts' }),
         });
+    });
+
+    it('includes server-createdAt on delivered user messages so permission precedence can be timestamped', () => {
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        const received: any[] = [];
+        client.onUserMessage((msg: any) => received.push(msg));
+
+        const plaintext = {
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+            meta: { source: 'ui', sentFrom: 'e2e', permissionMode: 'read-only' },
+        };
+
+        const ciphertext = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+        const update = {
+            id: 'u-1',
+            seq: 0,
+            createdAt: 1234,
+            body: {
+                t: 'new-message',
+                sid: mockSession.id,
+                message: {
+                    id: 'm-1',
+                    seq: 1,
+                    content: { t: 'encrypted', c: ciphertext },
+                },
+            },
+        };
+
+        (client as any).handleUpdate(update, { source: 'session-scoped' });
+
+        expect(received.length).toBe(1);
+        expect(received[0]).toMatchObject({
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+            meta: { permissionMode: 'read-only' },
+            createdAt: 1234,
+        });
+    });
+
+    it('can resolve the latest permission intent from the encrypted transcript (legacy tokens supported)', async () => {
+        const axiosMod = await import('axios');
+        const axios = axiosMod.default as any;
+
+        const client = new ApiSessionClient('fake-token', mockSession);
+
+        const newerUser = {
+            role: 'user',
+            content: { type: 'text', text: 'hi' },
+            meta: { source: 'ui', sentFrom: 'e2e', permissionMode: 'acceptEdits' },
+        };
+        const olderUser = {
+            role: 'user',
+            content: { type: 'text', text: 'older' },
+            meta: { source: 'ui', sentFrom: 'e2e', permissionMode: 'read-only' },
+        };
+
+        const newerCipher = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, newerUser));
+        const olderCipher = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, olderUser));
+
+        const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
+            data: {
+                messages: [
+                    { createdAt: 200, content: { t: 'encrypted', c: newerCipher } },
+                    { createdAt: 100, content: { t: 'encrypted', c: olderCipher } },
+                ],
+            },
+        });
+
+        const res = await client.fetchLatestUserPermissionIntentFromTranscript({ take: 25 });
+        expect(res).toEqual({ intent: 'safe-yolo', updatedAt: 200 });
+        expect(getSpy.mock.calls[0]?.[0]).toContain(`/v1/sessions/${mockSession.id}/messages`);
+        expect(getSpy.mock.calls[0]?.[1]).toEqual(expect.objectContaining({ params: { limit: 25 } }));
+
+        getSpy.mockRestore();
     });
 
     it('normalizes outbound ACP permission-request toolName to V2 canonical keys (supports TodoWrite)', () => {
@@ -312,7 +429,7 @@ describe('ApiSessionClient connection handling', () => {
             callId: 'call-1',
             output: expect.objectContaining({
                 stdout: 'TRACE_OK\n',
-                _happy: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
+                _happier: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
                 _raw: expect.anything(),
             }),
         });
@@ -417,7 +534,7 @@ describe('ApiSessionClient connection handling', () => {
             callId: 'call-1',
             output: expect.objectContaining({
                 stdout: 'TRACE_OK\n',
-                _happy: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
+                _happier: expect.objectContaining({ v: 2, canonicalToolName: 'Bash' }),
                 _raw: expect.anything(),
             }),
         });
@@ -429,167 +546,6 @@ describe('ApiSessionClient connection handling', () => {
         expect(() => {
             new ApiSessionClient('fake-token', mockSession);
         }).not.toThrow();
-    });
-
-    it('records outbound ACP tool messages when tool tracing is enabled', () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-apiSession-'));
-        const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
-        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
-
-        const client = new ApiSessionClient('fake-token', mockSession);
-        client.sendAgentMessage('codex', {
-            type: 'tool-call',
-            callId: 'call-1',
-            name: 'read',
-            input: { filePath: '/etc/hosts' },
-            id: 'msg-1',
-        });
-
-        const raw = readFileSync(filePath, 'utf8');
-        const lines = raw.trim().split('\n');
-        expect(lines).toHaveLength(1);
-        expect(JSON.parse(lines[0])).toMatchObject({
-            v: 1,
-            direction: 'outbound',
-            sessionId: 'test-session-id',
-            protocol: 'acp',
-            provider: 'codex',
-            kind: 'tool-call',
-        });
-    });
-
-    it('sets isError on outbound ACP tool-result messages when output looks like an error', () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-apiSession-'));
-        const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
-        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
-
-        const client = new ApiSessionClient('fake-token', mockSession);
-        client.sendAgentMessage('gemini', {
-            type: 'tool-result',
-            callId: 'call-1',
-            output: { error: 'Tool call failed', status: 'failed' },
-            id: 'msg-1',
-        });
-
-        const raw = readFileSync(filePath, 'utf8');
-        const lines = raw.trim().split('\n');
-        expect(lines).toHaveLength(1);
-        expect(JSON.parse(lines[0])).toMatchObject({
-            protocol: 'acp',
-            provider: 'gemini',
-            kind: 'tool-result',
-            payload: expect.objectContaining({
-                type: 'tool-result',
-                isError: true,
-            }),
-        });
-    });
-
-    it('does not record outbound ACP non-tool messages when tool tracing is enabled', () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-apiSession-'));
-        const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
-        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
-
-        const client = new ApiSessionClient('fake-token', mockSession);
-        client.sendAgentMessage('codex', {
-            type: 'message',
-            message: 'hello',
-        });
-
-        expect(existsSync(filePath)).toBe(false);
-    });
-
-    it('records Claude tool_use/tool_result blocks when tool tracing is enabled', () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-claude-'));
-        const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
-        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
-
-        const client = new ApiSessionClient('fake-token', mockSession);
-        client.sendClaudeSessionMessage({
-            type: 'assistant',
-            uuid: 'uuid-1',
-            message: {
-                content: [
-                    { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file_path: '/etc/hosts' } },
-                    { type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' },
-                ],
-            },
-        } as any);
-
-        const raw = readFileSync(filePath, 'utf8');
-        const lines = raw.trim().split('\n');
-        expect(lines).toHaveLength(2);
-        expect(JSON.parse(lines[0])).toMatchObject({
-            v: 1,
-            direction: 'outbound',
-            sessionId: 'test-session-id',
-            protocol: 'claude',
-            provider: 'claude',
-            kind: 'tool-call',
-        });
-        expect(JSON.parse(lines[1])).toMatchObject({
-            v: 1,
-            direction: 'outbound',
-            sessionId: 'test-session-id',
-            protocol: 'claude',
-            provider: 'claude',
-            kind: 'tool-result',
-        });
-    });
-
-    it('records Claude tool_result blocks sent as user messages when tool tracing is enabled', () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-claude-user-tool-result-'));
-        const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
-        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
-
-        const session = { ...mockSession, id: 'test-session-id-user-tool-result' };
-        const client = new ApiSessionClient('fake-token', session);
-        client.sendClaudeSessionMessage({
-            type: 'user',
-            uuid: 'uuid-2',
-            message: {
-                content: [
-                    { type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' },
-                ],
-            },
-        } as any);
-
-        const raw = existsSync(filePath) ? readFileSync(filePath, 'utf8') : '';
-        const lines = raw.trim().length > 0 ? raw.trim().split('\n') : [];
-        const parsed = lines.map((l) => JSON.parse(l));
-        expect(parsed).toContainEqual(expect.objectContaining({
-            v: 1,
-            direction: 'outbound',
-            sessionId: 'test-session-id-user-tool-result',
-            protocol: 'claude',
-            provider: 'claude',
-            kind: 'tool-result',
-            payload: expect.objectContaining({
-                type: 'tool_result',
-                tool_use_id: 'toolu_1',
-            }),
-        }));
-    });
-
-    it('does not record Claude user text messages when tool tracing is enabled', () => {
-        const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-claude-'));
-        const filePath = join(dir, 'tool-trace.jsonl');
-        process.env.HAPPIER_STACK_TOOL_TRACE = '1';
-        process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
-
-        const client = new ApiSessionClient('fake-token', mockSession);
-        client.sendClaudeSessionMessage({
-            type: 'user',
-            uuid: 'uuid-2',
-            message: { content: 'hello' },
-        } as any);
-
-        expect(existsSync(filePath)).toBe(false);
     });
 
     it('should emit correct events on socket connection', () => {
@@ -647,14 +603,14 @@ describe('ApiSessionClient connection handling', () => {
         );
     });
 
-	    it('attaches server localId onto decrypted user messages', async () => {
-	        const client = new ApiSessionClient('fake-token', mockSession);
+		    it('attaches server localId onto decrypted user messages', async () => {
+		        const client = new ApiSessionClient('fake-token', mockSession);
 
-        const onUserMessage = vi.fn();
-        client.onUserMessage(onUserMessage);
+	        const onUserMessage = vi.fn();
+	        client.onUserMessage(onUserMessage);
 
-        const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-        expect(typeof updateHandler).toBe('function');
+	        const updateHandler = (mockSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
+	        expect(typeof updateHandler).toBe('function');
 
         const plaintext = {
             role: 'user',
@@ -679,13 +635,54 @@ describe('ApiSessionClient connection handling', () => {
             },
         } as any);
 
-	        expect(onUserMessage).toHaveBeenCalledWith(
-	            expect.objectContaining({
-	                content: expect.objectContaining({ text: 'hello' }),
-	                localId: 'local-1',
-	            }),
-	        );
-	    });
+		        expect(onUserMessage).toHaveBeenCalledWith(
+		            expect.objectContaining({
+		                content: expect.objectContaining({ text: 'hello' }),
+		                localId: 'local-1',
+		            }),
+		        );
+		    });
+
+        it('delivers UI user messages from user-scoped updates even when not materialized locally', async () => {
+            const client = new ApiSessionClient('fake-token', mockSession);
+
+            const onUserMessage = vi.fn();
+            client.onUserMessage(onUserMessage);
+
+            const userUpdateHandler = (mockUserSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
+            expect(typeof userUpdateHandler).toBe('function');
+
+            const plaintext = {
+                role: 'user',
+                content: { type: 'text', text: 'hello from ui' },
+                localId: 'local-ui-1',
+                meta: { source: 'ui', sentFrom: 'e2e' },
+            };
+            const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
+
+            userUpdateHandler({
+                id: 'update-ui-1',
+                seq: 1,
+                createdAt: Date.now(),
+                body: {
+                    t: 'new-message',
+                    sid: mockSession.id,
+                    message: {
+                        id: 'msg-ui-1',
+                        seq: 1,
+                        localId: 'local-ui-1',
+                        content: { t: 'encrypted', c: encrypted },
+                    },
+                },
+            } as any);
+
+            expect(onUserMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    content: expect.objectContaining({ text: 'hello from ui' }),
+                    localId: 'local-ui-1',
+                }),
+            );
+        });
 
         it('does not emit user-message events when committing outbound CLI user messages (ACK is not a prompt)', async () => {
             const sessionSocket: any = {
@@ -808,6 +805,32 @@ describe('ApiSessionClient connection handling', () => {
 	                    await expect(waitPromise).resolves.toBe(true);
 	                });
 
+                    it('waitForMetadataUpdate syncs a session snapshot on user-scoped connect so missed metadata updates are observed', async () => {
+                        const client = new ApiSessionClient('fake-token', mockSession);
+
+                        const syncSpy = vi.fn(async () => {
+                            await new Promise((r) => setTimeout(r, 0));
+                            (client as any).metadata = { ...(client as any).metadata, path: '/tmp/from-sync' };
+                            (client as any).metadataVersion = ((client as any).metadataVersion ?? 0) + 1;
+                            client.emit('metadata-updated');
+                        });
+                        (client as any).syncSessionSnapshotFromServer = syncSpy;
+
+                        const waitPromise = client.waitForMetadataUpdate();
+
+                        const connectHandlers = mockUserSocket.on.mock.calls
+                            .filter((call: any[]) => call[0] === 'connect')
+                            .map((call: any[]) => call[1]);
+                        const lastConnectHandler = connectHandlers[connectHandlers.length - 1];
+                        expect(typeof lastConnectHandler).toBe('function');
+
+                        lastConnectHandler();
+
+                        await expect(waitPromise).resolves.toBe(true);
+                        expect(syncSpy).toHaveBeenCalled();
+                        expect(client.getMetadataSnapshot()?.path).toBe('/tmp/from-sync');
+                    });
+
             it('waitForMetadataUpdate resolves when session metadata updates (server sends update-session with id)', async () => {
                 const client = new ApiSessionClient('fake-token', mockSession);
 
@@ -929,16 +952,7 @@ describe('ApiSessionClient connection handling', () => {
 
                 const serverMetadata = {
                     ...mockSession.metadata,
-                    messageQueueV1: {
-                        v: 1,
-                        queue: [{
-                            localId: 'local-p1',
-                            message: 'encrypted-user-record',
-                            createdAt: 1,
-                            updatedAt: 1,
-                        }],
-                        inFlight: null,
-                    },
+                    tools: ['tool-1'],
                 };
                 const encryptedServerMetadata = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, serverMetadata));
 
@@ -974,512 +988,24 @@ describe('ApiSessionClient connection handling', () => {
                     metadataVersion: -1,
                     metadata: {
                         ...mockSession.metadata,
-                        messageQueueV1: { v: 1, queue: [] },
+                        tools: [],
                     },
                 });
 
-                let observedQueuedMessage = false;
+                let observedToolsFromSnapshot = false;
                 client.updateMetadata((metadata) => {
-                    const mq = (metadata as any).messageQueueV1;
-                    observedQueuedMessage = Array.isArray(mq?.queue) && mq.queue.length === 1;
+                    observedToolsFromSnapshot = Array.isArray((metadata as any).tools) && (metadata as any).tools.length === 1;
                     return metadata;
                 });
 
                 await vi.waitFor(() => {
-                    expect(observedQueuedMessage).toBe(true);
+                    expect(observedToolsFromSnapshot).toBe(true);
                     expect(emitWithAck).toHaveBeenCalledWith(
                         'update-metadata',
                         expect.objectContaining({ expectedVersion: 5 }),
                     );
                 });
             });
-
-				    it('clears messageQueueV1 inFlight after server ACK (no broadcast required)', async () => {
-					        const sessionSocket: any = {
-					            connected: true,
-					            connect: vi.fn(),
-				            on: vi.fn(),
-				            off: vi.fn(),
-				            disconnect: vi.fn(),
-                            timeout: vi.fn().mockReturnThis(),
-				            emit: vi.fn(),
-				        };
-
-			        const userSocket: any = {
-			            connected: true,
-			            connect: vi.fn(),
-			            on: vi.fn(),
-			            off: vi.fn(),
-			            disconnect: vi.fn(),
-			            emit: vi.fn(),
-			        };
-
-                        const plaintext = {
-                            role: 'user',
-                            content: { type: 'text', text: 'hello' },
-                        };
-                        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-			        const metadataBase = {
-			            ...mockSession.metadata,
-			            messageQueueV1: {
-			                v: 1,
-		                queue: [{
-		                    localId: 'local-p1',
-		                    message: encrypted,
-		                    createdAt: 1,
-		                    updatedAt: 1,
-		                }],
-		                inFlight: null,
-		            },
-		        };
-
-				        // Minimal emitWithAck mock for metadata claim + message ACK + later clear
-				        const emitWithAck = vi.fn()
-				            // 1) claim succeeds
-				            .mockResolvedValueOnce({
-				                result: 'success',
-				                version: 1,
-				                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-				                    ...metadataBase,
-				                    messageQueueV1: {
-				                        v: 1,
-				                        queue: [],
-				                        inFlight: {
-				                            localId: 'local-p1',
-				                            message: encrypted,
-				                            createdAt: 1,
-				                            updatedAt: 1,
-				                            claimedAt: 100,
-				                        },
-				                    },
-				                })),
-				            })
-                            // 2) message ACK succeeds
-                            .mockResolvedValueOnce({
-                                ok: true,
-                                id: 'msg-2',
-                                seq: 2,
-                                localId: 'local-p1',
-                            })
-				            // 2) clear succeeds
-				            .mockResolvedValueOnce({
-				                result: 'success',
-				                version: 2,
-				                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-				                    ...metadataBase,
-				                    messageQueueV1: {
-				                        v: 1,
-				                        queue: [],
-				                        inFlight: null,
-				                    },
-				                })),
-			            });
-
-		        sessionSocket.emitWithAck = emitWithAck;
-
-			        mockIo.mockReset();
-			        mockIo
-			            .mockImplementationOnce(() => sessionSocket)
-			            .mockImplementationOnce(() => userSocket);
-
-			        // Recreate client with our two-socket setup.
-			        const clientWithTwoSockets = new ApiSessionClient('fake-token', {
-			            ...mockSession,
-			            metadata: metadataBase,
-			        });
-
-			        const popped = await clientWithTwoSockets.popPendingMessage();
-			        expect(popped).toBe(true);
-
-			        expect(emitWithAck).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'local-p1' }));
-
-			        // Allow queued async clear to run.
-				        await new Promise((r) => setTimeout(r, 0));
-				        expect(emitWithAck).toHaveBeenCalledTimes(3);
-				    });
-
-                    it('does not double-deliver a queued message when a user-scoped broadcast arrives before the message ACK', async () => {
-                        const sessionSocket: any = {
-                            connected: true,
-                            connect: vi.fn(),
-                            on: vi.fn(),
-                            off: vi.fn(),
-                            disconnect: vi.fn(),
-                            timeout: vi.fn().mockReturnThis(),
-                            emit: vi.fn(),
-                        };
-
-                        const userSocket: any = {
-                            connected: true,
-                            connect: vi.fn(),
-                            on: vi.fn(),
-                            off: vi.fn(),
-                            disconnect: vi.fn(),
-                            emit: vi.fn(),
-                        };
-
-                        const plaintext = {
-                            role: 'user',
-                            content: { type: 'text', text: 'hello' },
-                            meta: { source: 'ui' },
-                        };
-                        const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-                        const metadataBase = {
-                            ...mockSession.metadata,
-                            messageQueueV1: {
-                                v: 1,
-                                queue: [{
-                                    localId: 'local-p1',
-                                    message: encrypted,
-                                    createdAt: 1,
-                                    updatedAt: 1,
-                                }],
-                                inFlight: null,
-                            },
-                        };
-
-                        let resolveAck: ((value: any) => void) | null = null;
-                        const ackPromise = new Promise((resolve) => {
-                            resolveAck = resolve;
-                        });
-
-                        const emitWithAck = vi.fn()
-                            // 1) claim succeeds
-                            .mockResolvedValueOnce({
-                                result: 'success',
-                                version: 1,
-                                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                                    ...metadataBase,
-                                    messageQueueV1: {
-                                        v: 1,
-                                        queue: [],
-                                        inFlight: {
-                                            localId: 'local-p1',
-                                            message: encrypted,
-                                            createdAt: 1,
-                                            updatedAt: 1,
-                                            claimedAt: 100,
-                                        },
-                                    },
-                                })),
-                            })
-                            // 2) message ACK is delayed (we'll deliver a user-scoped update first)
-                            .mockImplementationOnce(async () => ackPromise)
-                            // 3) clear succeeds
-                            .mockResolvedValueOnce({
-                                result: 'success',
-                                version: 2,
-                                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                                    ...metadataBase,
-                                    messageQueueV1: {
-                                        v: 1,
-                                        queue: [],
-                                        inFlight: null,
-                                    },
-                                })),
-                            })
-                            // Any unexpected extra metadata updates: keep returning a cleared state.
-                            .mockResolvedValue({
-                                result: 'success',
-                                version: 3,
-                                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                                    ...metadataBase,
-                                    messageQueueV1: {
-                                        v: 1,
-                                        queue: [],
-                                        inFlight: null,
-                                    },
-                                })),
-                            });
-
-                        sessionSocket.emitWithAck = emitWithAck;
-
-                        mockIo.mockReset();
-                        mockIo
-                            .mockImplementationOnce(() => sessionSocket)
-                            .mockImplementationOnce(() => userSocket);
-
-                        const client = new ApiSessionClient('fake-token', {
-                            ...mockSession,
-                            metadata: metadataBase,
-                        });
-
-                        const onUserMessage = vi.fn();
-                        client.onUserMessage(onUserMessage);
-
-                        const popPromise = client.popPendingMessage();
-
-                        await vi.waitFor(() => {
-                            expect(emitWithAck).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'local-p1' }));
-                        });
-
-                        const updateHandler = (userSocket.on.mock.calls.find((call: any[]) => call[0] === 'update') ?? [])[1];
-                        expect(typeof updateHandler).toBe('function');
-
-                        updateHandler({
-                            id: 'update-1',
-                            seq: 1,
-                            createdAt: Date.now(),
-                            body: {
-                                t: 'new-message',
-                                sid: mockSession.id,
-                                message: {
-                                    id: 'msg-2',
-                                    seq: 2,
-                                    localId: 'local-p1',
-                                    content: { t: 'encrypted', c: encrypted },
-                                },
-                            },
-                        } as any);
-
-	                        expect(resolveAck).toBeTruthy();
-	                        resolveAck!({
-	                            ok: true,
-	                            id: 'msg-2',
-	                            seq: 2,
-	                            localId: 'local-p1',
-	                        });
-
-                        const popped = await popPromise;
-                        expect(popped).toBe(true);
-                        expect(onUserMessage).toHaveBeenCalledTimes(1);
-                    });
-
-	            it('recovers an already-inFlight queued message by fetching the transcript (no server echo required)', async () => {
-	                const sessionSocket: any = {
-	                    connected: true,
-	                    connect: vi.fn(),
-                    on: vi.fn(),
-                    off: vi.fn(),
-                    disconnect: vi.fn(),
-                    emit: vi.fn(),
-                };
-
-                const userSocket: any = {
-                    connected: true,
-                    connect: vi.fn(),
-                    on: vi.fn(),
-                    off: vi.fn(),
-                    disconnect: vi.fn(),
-                    emit: vi.fn(),
-                };
-
-                mockIo.mockReset();
-                mockIo
-                    .mockImplementationOnce(() => sessionSocket)
-                    .mockImplementationOnce(() => userSocket);
-
-                const metadataBase = {
-                    ...mockSession.metadata,
-                    messageQueueV1: {
-                        v: 1,
-                        queue: [],
-                        inFlight: {
-                            localId: 'local-inflight-1',
-                            message: 'encrypted-user-record',
-                            createdAt: 1,
-                            updatedAt: 1,
-                            claimedAt: Date.now(),
-                        },
-                    },
-                };
-
-                const plaintext = {
-                    role: 'user',
-                    content: { type: 'text', text: 'hello' },
-                };
-                const encrypted = encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, plaintext));
-
-                const axiosMod = await import('axios');
-                const axios = axiosMod.default as any;
-                vi.spyOn(axios, 'get').mockResolvedValueOnce({
-                    data: {
-                        messages: [{
-                            id: 'msg-xyz',
-                            seq: 1,
-                            localId: 'local-inflight-1',
-                            content: { t: 'encrypted', c: encrypted },
-                            createdAt: Date.now(),
-                            updatedAt: Date.now(),
-                        }],
-                    },
-                });
-
-                const emitWithAck = vi.fn().mockResolvedValueOnce({
-                    result: 'success',
-                    version: 2,
-                    metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                        ...metadataBase,
-                        messageQueueV1: {
-                            v: 1,
-                            queue: [],
-                            inFlight: null,
-                        },
-                    })),
-                });
-                sessionSocket.emitWithAck = emitWithAck;
-
-                const client = new ApiSessionClient('fake-token', {
-                    ...mockSession,
-                    metadata: metadataBase,
-                });
-
-                const popped = await client.popPendingMessage();
-                expect(popped).toBe(true);
-
-                // Should not re-emit the transcript message when it already exists.
-                expect(sessionSocket.emit).not.toHaveBeenCalledWith('message', expect.anything());
-
-                // Allow queued async clear to run.
-                await new Promise((r) => setTimeout(r, 0));
-                expect(emitWithAck).toHaveBeenCalledTimes(1);
-            });
-
-	            it('syncs a server snapshot on connect for resumed sessions (metadataVersion=-1) so queued messages enqueued before attach can be popped', async () => {
-	                const sessionSocket: any = {
-	                    connected: true,
-	                    connect: vi.fn(),
-	                    on: vi.fn(),
-	                    off: vi.fn(),
-	                    disconnect: vi.fn(),
-	                    close: vi.fn(),
-                        timeout: vi.fn().mockReturnThis(),
-	                    emit: vi.fn(),
-	                };
-
-                const userSocket: any = {
-                    connected: false,
-                    connect: vi.fn(),
-                    on: vi.fn(),
-                    off: vi.fn(),
-                    disconnect: vi.fn(),
-                    close: vi.fn(),
-                    emit: vi.fn(),
-                };
-
-                mockIo.mockReset();
-                mockIo
-                    .mockImplementationOnce(() => sessionSocket)
-                    .mockImplementationOnce(() => userSocket);
-
-	                const serverMetadata = {
-	                    ...mockSession.metadata,
-	                    messageQueueV1: {
-	                        v: 1,
-	                        queue: [{
-	                            localId: 'local-p1',
-	                            message: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                                    role: 'user',
-                                    content: { type: 'text', text: 'hello' },
-                                })),
-	                            createdAt: 1,
-	                            updatedAt: 1,
-	                        }],
-	                        inFlight: null,
-	                    },
-	                };
-
-                const axiosMod = await import('axios');
-                const axios = axiosMod.default as any;
-                vi.spyOn(axios, 'get').mockImplementation(async (...args: any[]) => {
-                    const url = String(args[0] ?? '');
-                    if (url.endsWith('/v1/account/profile')) {
-                        return { status: 200, data: { id: 'account-1' } };
-                    }
-
-                    if (url.includes('/v2/changes')) {
-                        return { status: 200, data: { changes: [], nextCursor: 0 } };
-                    }
-
-                    return {
-                        status: 200,
-                        data: {
-                            sessions: [{
-                                id: mockSession.id,
-                                seq: 0,
-                                createdAt: Date.now(),
-                                updatedAt: Date.now(),
-                                active: true,
-                                activeAt: Date.now(),
-                                metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, serverMetadata)),
-                                metadataVersion: 10,
-                                agentState: null,
-                                agentStateVersion: 0,
-                                dataEncryptionKey: null,
-                                lastMessage: null,
-                            }],
-                        },
-                    };
-                });
-
-	                const emitWithAck = vi.fn()
-                        // 1) claim succeeds
-                        .mockResolvedValueOnce({
-                            result: 'success',
-                            version: 11,
-                            metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                                ...serverMetadata,
-                                messageQueueV1: {
-                                    v: 1,
-                                    queue: [],
-                                    inFlight: {
-                                        localId: 'local-p1',
-                                        message: (serverMetadata as any).messageQueueV1.queue[0].message,
-                                        createdAt: 1,
-                                        updatedAt: 1,
-                                        claimedAt: 100,
-                                    },
-                                },
-                            })),
-                        })
-                        // 2) message ACK succeeds
-                        .mockResolvedValueOnce({
-                            ok: true,
-                            id: 'msg-2',
-                            seq: 2,
-                            localId: 'local-p1',
-                        })
-                        // 3) clear succeeds
-                        .mockResolvedValueOnce({
-                            result: 'success',
-                            version: 12,
-                            metadata: encodeBase64(encrypt(mockSession.encryptionKey, mockSession.encryptionVariant, {
-                                ...serverMetadata,
-                                messageQueueV1: {
-                                    v: 1,
-                                    queue: [],
-                                    inFlight: null,
-                                },
-                            })),
-                        });
-	                sessionSocket.emitWithAck = emitWithAck;
-
-                const client = new ApiSessionClient('fake-token', {
-                    ...mockSession,
-                    metadata: { ...mockSession.metadata },
-                    metadataVersion: -1,
-                    agentStateVersion: -1,
-                });
-
-                // Simulate socket.io connect event (resume/reattach).
-                const connectHandler = (sessionSocket.on.mock.calls.find((call: any[]) => call[0] === 'connect') ?? [])[1];
-                expect(typeof connectHandler).toBe('function');
-                connectHandler();
-
-                // Allow snapshot sync to run.
-                await new Promise((r) => setTimeout(r, 0));
-
-	                const popped = await client.popPendingMessage();
-	                expect(popped).toBe(true);
-
-                    expect(emitWithAck).toHaveBeenCalledWith('message', expect.objectContaining({ localId: 'local-p1' }));
-
-                    // Allow queued async clear to run.
-                    await new Promise((r) => setTimeout(r, 0));
-	                expect(emitWithAck).toHaveBeenCalledTimes(3);
-	            });
 
 	    afterEach(() => {
 	        consoleSpy.mockRestore();

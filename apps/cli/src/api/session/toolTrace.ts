@@ -109,7 +109,8 @@ export function recordAcpToolTraceEventIfNeeded(opts: {
         opts.body?.type !== 'tool-result' &&
         opts.body?.type !== 'permission-request' &&
         opts.body?.type !== 'file-edit' &&
-        opts.body?.type !== 'terminal-output'
+        opts.body?.type !== 'terminal-output' &&
+        opts.body?.type !== 'task_complete'
     ) {
         return;
     }

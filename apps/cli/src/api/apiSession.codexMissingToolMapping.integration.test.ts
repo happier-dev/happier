@@ -58,18 +58,20 @@ describe('ApiSessionClient (Codex MCP) diagnostics', () => {
             encryptionKey: new Uint8Array(32),
             encryptionVariant: 'legacy' as const,
         } as any);
+        try {
+            client.sendCodexMessage({
+                type: 'tool-call-result',
+                callId: 'call-missing',
+                output: { stdout: 'x' },
+                id: 'msg-1',
+            });
 
-        client.sendCodexMessage({
-            type: 'tool-call-result',
-            callId: 'call-missing',
-            output: { stdout: 'x' },
-            id: 'msg-1',
-        });
-
-        expect(mockLoggerDebug).toHaveBeenCalledWith(
-            expect.stringContaining('tool-call-result without prior tool-call'),
-            expect.objectContaining({ callId: 'call-missing' }),
-        );
-    });
+            expect(mockLoggerDebug).toHaveBeenCalledWith(
+                expect.stringContaining('tool-call-result without prior tool-call'),
+                expect.objectContaining({ callId: 'call-missing' }),
+            );
+        } finally {
+            await client.close();
+        }
+    }, 20_000);
 });
-

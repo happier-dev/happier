@@ -124,7 +124,8 @@ export class ApiMachineClient {
     }
 
     connect(params?: { onConnect?: () => void | Promise<void> }) {
-        const serverUrl = configuration.serverUrl.replace(/^http/, 'ws');
+        // socket.io-client expects an http(s) URL (even when forcing websocket transport).
+        const serverUrl = configuration.serverUrl;
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
         this.socket = io(serverUrl, {
@@ -136,8 +137,11 @@ export class ApiMachineClient {
             },
             path: '/v1/updates',
             reconnection: true,
+            reconnectionAttempts: Infinity,
             reconnectionDelay: 1000,
-            reconnectionDelayMax: 5000
+            reconnectionDelayMax: 5000,
+            withCredentials: true,
+            autoConnect: false,
         });
 
         this.socket.on('connect', () => {
@@ -211,12 +215,27 @@ export class ApiMachineClient {
         });
 
         this.socket.on('connect_error', (error) => {
-            logger.debug(`[API MACHINE] Connection error: ${error.message}`);
+            const e: any = error;
+            logger.debug('[API MACHINE] Connection error', {
+                message: typeof e?.message === 'string' ? e.message : String(e),
+                data: e?.data,
+                description: e?.description,
+                context: e?.context,
+                stack: typeof e?.stack === 'string' ? e.stack : undefined,
+            });
         });
 
         this.socket.io.on('error', (error: any) => {
             logger.debug('[API MACHINE] Socket error:', error);
         });
+
+        // Connect (after handlers are registered)
+        const socketWithConnect = this.socket as unknown as { connect?: () => void; open?: () => void };
+        if (typeof socketWithConnect.connect === 'function') {
+            socketWithConnect.connect();
+        } else if (typeof socketWithConnect.open === 'function') {
+            socketWithConnect.open();
+        }
     }
 
     private startKeepAlive() {

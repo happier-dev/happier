@@ -37,9 +37,14 @@ export function registerMachineRpcHandlers(params: Readonly<{
       resume,
       permissionMode,
       permissionModeUpdatedAt,
+      modelId,
+      modelUpdatedAt,
+      windowsRemoteSessionConsole,
       experimentalCodexResume,
-      experimentalCodexAcp
+      experimentalCodexAcp,
     } = params || {};
+
+    const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId : undefined;
     const envKeys = environmentVariables && typeof environmentVariables === 'object'
       ? Object.keys(environmentVariables as Record<string, unknown>)
       : [];
@@ -56,6 +61,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
       terminal,
       permissionMode,
       permissionModeUpdatedAt: typeof permissionModeUpdatedAt === 'number' ? permissionModeUpdatedAt : undefined,
+      modelId: normalizedModelId,
+      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
       environmentVariableCount: envKeys.length,
       environmentVariableKeySample: envKeySample,
       environmentVariableKeysTruncated: envKeys.length > maxEnvKeysToLog,
@@ -117,6 +124,8 @@ export function registerMachineRpcHandlers(params: Readonly<{
         sessionEncryptionVariant,
         permissionMode,
         permissionModeUpdatedAt,
+        modelId: normalizedModelId,
+        modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
         experimentalCodexResume: Boolean(experimentalCodexResume),
         experimentalCodexAcp: Boolean(experimentalCodexAcp),
       });
@@ -146,8 +155,11 @@ export function registerMachineRpcHandlers(params: Readonly<{
       resume,
       permissionMode,
       permissionModeUpdatedAt,
+      modelId: normalizedModelId,
+      modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
+      windowsRemoteSessionConsole,
       experimentalCodexResume,
-      experimentalCodexAcp
+      experimentalCodexAcp,
     });
 
     switch (result.type) {

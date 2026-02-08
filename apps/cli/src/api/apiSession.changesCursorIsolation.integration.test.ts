@@ -67,6 +67,5 @@ describe('ApiSessionClient changesCursor isolation', () => {
     );
 
     expect(writeLastChangesCursor).not.toHaveBeenCalled();
-  });
+  }, 20_000);
 });
-

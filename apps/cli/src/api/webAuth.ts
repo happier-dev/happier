@@ -1,5 +1,6 @@
 import { encodeBase64 } from './encryption';
 import { configuration } from '@/configuration';
+import { buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
 
 /**
  * Generate a URL for web authentication
@@ -7,6 +8,10 @@ import { configuration } from '@/configuration';
  * @returns The web authentication URL
  */
 export function generateWebAuthUrl(publicKey: Uint8Array): string {
-    const publicKeyBase64 = encodeBase64(publicKey, 'base64url');
-    return `${configuration.webappUrl}/terminal/connect#key=${publicKeyBase64}`;
+    const publicKeyB64Url = encodeBase64(publicKey, 'base64url');
+    return buildTerminalConnectLinks({
+        webappUrl: configuration.webappUrl,
+        serverUrl: configuration.publicServerUrl,
+        publicKeyB64Url,
+    }).webUrl;
 }

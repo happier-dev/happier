@@ -95,8 +95,9 @@ describe('Api server error handling', () => {
             });
 
             expect(result).toBeNull();
+            expect(connectionState.isOffline()).toBe(true);
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happier server unreachable')
+                expect.stringContaining('server unreachable')
             );
 
             consoleSpy.mockRestore();
@@ -116,8 +117,9 @@ describe('Api server error handling', () => {
             });
 
             expect(result).toBeNull();
+            expect(connectionState.isOffline()).toBe(true);
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happier server unreachable')
+                expect.stringContaining('server unreachable')
             );
 
             consoleSpy.mockRestore();
@@ -137,8 +139,9 @@ describe('Api server error handling', () => {
             });
 
             expect(result).toBeNull();
+            expect(connectionState.isOffline()).toBe(true);
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happier server unreachable')
+                expect.stringContaining('server unreachable')
             );
 
             consoleSpy.mockRestore();
@@ -161,9 +164,10 @@ describe('Api server error handling', () => {
             });
 
             expect(result).toBeNull();
+            expect(connectionState.isOffline()).toBe(true);
             // New unified format via connectionState.fail()
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happier server unreachable')
+                expect.stringContaining('server unreachable')
             );
             expect(consoleSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Session creation failed: 404')
@@ -190,8 +194,9 @@ describe('Api server error handling', () => {
                 });
 
                 expect(result).toBeNull();
+                expect(connectionState.isOffline()).toBe(true);
                 expect(consoleSpy).toHaveBeenCalledWith(
-                    expect.stringContaining('⚠️  Happier server unreachable')
+                    expect.stringContaining('server unreachable')
                 );
             } finally {
                 consoleSpy.mockRestore();
@@ -216,8 +221,9 @@ describe('Api server error handling', () => {
                 });
 
                 expect(result).toBeNull();
+                expect(connectionState.isOffline()).toBe(true);
                 expect(consoleSpy).toHaveBeenCalledWith(
-                    expect.stringContaining('⚠️  Happier server unreachable')
+                    expect.stringContaining('server unreachable')
                 );
             } finally {
                 consoleSpy.mockRestore();
@@ -236,10 +242,11 @@ describe('Api server error handling', () => {
                 await expect(
                     api.getOrCreateSession({ tag: 'test-tag', metadata: testMetadata, state: null })
                 ).rejects.toThrow('Failed to get or create session: Invalid API key');
+                expect(connectionState.isOffline()).toBe(false);
 
                 // Should not show the offline mode message
                 expect(consoleSpy).not.toHaveBeenCalledWith(
-                    expect.stringContaining('⚠️  Happier server unreachable')
+                    expect.stringContaining('server unreachable')
                 );
             } finally {
                 consoleSpy.mockRestore();
@@ -276,9 +283,10 @@ describe('Api server error handling', () => {
                 },
                 daemonStateVersion: 0,
             });
+            expect(connectionState.isOffline()).toBe(true);
 
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happier server unreachable')
+                expect.stringContaining('server unreachable')
             );
 
             consoleSpy.mockRestore();
@@ -308,10 +316,11 @@ describe('Api server error handling', () => {
                 daemonState: null,
                 daemonStateVersion: 0,
             });
+            expect(connectionState.isOffline()).toBe(true);
 
             // New unified format via connectionState.fail()
             expect(consoleSpy).toHaveBeenCalledWith(
-                expect.stringContaining('⚠️  Happier server unreachable')
+                expect.stringContaining('server unreachable')
             );
             expect(consoleSpy).toHaveBeenCalledWith(
                 expect.stringContaining('Machine registration failed: 404')

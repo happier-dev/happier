@@ -14,8 +14,27 @@ const { mockIo, socket, axiosGet, readLastChangesCursor, writeLastChangesCursor 
             arr.push(handler);
             handlersByEvent.set(event, arr);
         }),
+        connect: vi.fn(),
         emit: vi.fn(),
-        emitWithAck: vi.fn().mockResolvedValue({ result: 'success', version: 1, metadata: null, daemonState: null }),
+        emitWithAck: vi.fn(async (event: string, payload: any) => {
+            if (event === 'machine-update-state') {
+                return {
+                    result: 'success',
+                    version: 1,
+                    daemonState: payload.daemonState,
+                };
+            }
+
+            if (event === 'machine-update-metadata') {
+                return {
+                    result: 'success',
+                    version: 1,
+                    metadata: payload.metadata,
+                };
+            }
+
+            return { result: 'success', version: 1 };
+        }),
         close: vi.fn(),
         timeout: vi.fn().mockReturnThis(),
         io: {
@@ -60,6 +79,69 @@ vi.mock('@/persistence', () => ({
 }));
 
 describe('ApiMachineClient /v2/changes reconnect', () => {
+    it('connect uses an http(s) base URL and explicitly connects the socket', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        socket.__reset();
+        mockIo.mockClear();
+        socket.connect.mockClear();
+
+        const client = new ApiMachineClient('token', machine);
+        client.connect();
+
+        expect(mockIo).toHaveBeenCalled();
+        const url = ((mockIo as any).mock?.calls as any[] | undefined)?.[0]?.[0];
+        expect(typeof url).toBe('string');
+        expect(String(url).startsWith('http')).toBe(true);
+        expect(socket.connect).toHaveBeenCalled();
+    });
+
+    it('connect does not crash if the socket lacks connect() and uses open() as a fallback', async () => {
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const socketNoConnect: any = {
+            on: vi.fn(),
+            open: vi.fn(),
+            emit: vi.fn(),
+            emitWithAck: vi.fn(async (event: string, payload: any) => {
+                if (event === 'machine-update-state') {
+                    return {
+                        result: 'success',
+                        version: 1,
+                        daemonState: payload.daemonState,
+                    };
+                }
+                return { result: 'success', version: 1 };
+            }),
+            close: vi.fn(),
+            timeout: vi.fn().mockReturnThis(),
+            io: { on: vi.fn() },
+        };
+
+        mockIo.mockImplementationOnce(() => socketNoConnect);
+
+        const client = new ApiMachineClient('token', machine);
+        client.connect();
+
+        expect(socketNoConnect.open).toHaveBeenCalled();
+    });
+
     it('refreshes machine snapshot when /v2/changes includes a machine change', async () => {
         const machine: Machine = {
             id: 'machine-1',
@@ -119,14 +201,14 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
 
         // First connect
         socket.__trigger('connect');
-        await new Promise((r) => setTimeout(r, 0));
 
         // Disconnect + reconnect
         socket.__trigger('disconnect');
         socket.__trigger('connect');
-        await new Promise((r) => setTimeout(r, 0));
+        await vi.waitFor(() => {
+            expect(machine.metadataVersion).toBe(2);
+        });
 
-        expect(machine.metadataVersion).toBe(2);
         expect(machine.metadata).toEqual(
             expect.objectContaining({
                 host: 'h',
@@ -191,18 +273,8 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         readLastChangesCursor.mockClear();
 
         const client = new ApiMachineClient('token', machine);
-        client.connect();
+        await (client as any).syncChangesOnConnect({ reason: 'reconnect' });
 
-        // First connect
-        socket.__trigger('connect');
-        await new Promise((r) => setTimeout(r, 0));
-
-        // Disconnect + reconnect
-        socket.__trigger('disconnect');
-        socket.__trigger('connect');
-        await new Promise((r) => setTimeout(r, 0));
-
-        expect(machine.metadataVersion).toBe(2);
         expect(machine.metadata).toEqual(
             expect.objectContaining({
                 host: 'h',

@@ -1,21 +1,28 @@
 import { z } from 'zod'
 import { UsageSchema } from '@/api/usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
-import {
+import { SentFromSchema } from '@happier-dev/protocol'
+
+export {
   EphemeralUpdateSchema,
   MessageAckResponseSchema,
+  UpdateMetadataAckResponseSchema,
+  UpdateStateAckResponseSchema,
+} from '@happier-dev/protocol/updates'
+
+import {
   SessionBroadcastContainerSchema,
   UpdateBodySchema as ProtocolUpdateBodySchema,
   UpdateContainerSchema as ProtocolUpdateContainerSchema,
-  UpdateMetadataAckResponseSchema,
-  UpdateStateAckResponseSchema,
-  type EphemeralUpdate,
-  type MessageAckResponse,
-  type SessionBroadcastContainer,
-  type UpdateBody as ProtocolUpdateBody,
-  type UpdateContainer as ProtocolUpdateContainer,
-  type UpdateMetadataAckResponse,
-  type UpdateStateAckResponse,
+} from '@happier-dev/protocol/updates'
+import type {
+  EphemeralUpdate,
+  MessageAckResponse,
+  SessionBroadcastContainer,
+  UpdateBody as ProtocolUpdateBody,
+  UpdateContainer as ProtocolUpdateContainer,
+  UpdateMetadataAckResponse,
+  UpdateStateAckResponse,
 } from '@happier-dev/protocol/updates'
 
 /**
@@ -154,13 +161,6 @@ export interface ClientToServerEvents {
   }) => void
 }
 
-export {
-  EphemeralUpdateSchema,
-  MessageAckResponseSchema,
-  UpdateMetadataAckResponseSchema,
-  UpdateStateAckResponseSchema,
-};
-
 /**
  * Session information
  */
@@ -237,7 +237,7 @@ export type SessionMessage = z.infer<typeof SessionMessageSchema>
  * Message metadata schema
  */
 export const MessageMetaSchema = z.object({
-  sentFrom: z.string().optional(), // Source identifier
+  sentFrom: SentFromSchema.optional(), // Source identifier
   /**
    * High-level origin of the message. This is used to prevent reliability features
    * (ACK, retries, local mirroring) from accidentally turning self-sent CLI writes
@@ -253,7 +253,7 @@ export const MessageMetaSchema = z.object({
   appendSystemPrompt: z.string().nullable().optional(), // Append to system prompt for this message (null = reset)
   allowedTools: z.array(z.string()).nullable().optional(), // Allowed tools for this message (null = reset)
   disallowedTools: z.array(z.string()).nullable().optional() // Disallowed tools for this message (null = reset)
-})
+}).passthrough()
 
 export type MessageMeta = z.infer<typeof MessageMetaSchema>
 
@@ -282,6 +282,13 @@ export const UserMessageSchema = z.object({
     type: z.literal('text'),
     text: z.string()
   }),
+  /**
+   * Server-created timestamp for this message (ms since epoch).
+   *
+   * This is *not* part of the encrypted message body; it is attached by the transport layer
+   * so consumers (CLI backends) can make timestamped precedence decisions (e.g. permissions).
+   */
+  createdAt: z.number().optional(),
   localId: z.string().nullish().optional(),
   localKey: z.string().optional(), // Mobile messages include this
   meta: MessageMetaSchema.optional()
@@ -335,12 +342,15 @@ export type Metadata = {
   },
   machineId?: string,
   claudeSessionId?: string, // Claude Code session ID
+  claudeTranscriptPath?: string | null, // Claude Code transcript path (hooks)
+  claudeLastCheckpointId?: string | null, // Claude SDK file checkpoint UUID (remote)
   codexSessionId?: string, // Codex session/conversation ID (uuid)
   geminiSessionId?: string, // Gemini ACP session ID (opaque)
   opencodeSessionId?: string, // OpenCode ACP session ID (opaque)
   auggieSessionId?: string, // Auggie ACP session ID (opaque)
   qwenSessionId?: string, // Qwen Code ACP session ID (opaque)
   kimiSessionId?: string, // Kimi ACP session ID (opaque)
+  kiloSessionId?: string, // Kilo ACP session ID (opaque)
   auggieAllowIndexing?: boolean, // Auggie indexing enablement (spawn-time)
   tools?: string[],
   slashCommands?: string[],
@@ -354,6 +364,87 @@ export type Metadata = {
     remoteSessionId: string,
     importedAt: number,
     lastImportedFingerprint?: string
+  },
+  /**
+   * ACP session modes (if supported by the provider's ACP agent).
+   *
+   * Used to expose provider-native "plan/code" style runtime modes to the UI.
+   */
+  acpSessionModesV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    currentModeId: string,
+    availableModes: Array<{
+      id: string,
+      name: string,
+      description?: string,
+    }>,
+  },
+  /**
+   * ACP session models (if supported by the provider's ACP agent).
+   *
+   * Used to expose provider-native model selection to the UI.
+   *
+   * NOTE: This is an UNSTABLE ACP feature and may be unsupported by some agents.
+   */
+  acpSessionModelsV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    currentModelId: string,
+    availableModels: Array<{
+      id: string,
+      name: string,
+      description?: string,
+    }>,
+  },
+  /**
+   * ACP session configuration options (if supported by the provider's ACP agent).
+   *
+   * Used to expose provider-native runtime configuration controls to the UI.
+   */
+  acpConfigOptionsV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    configOptions: Array<{
+      id: string,
+      name: string,
+      description?: string,
+      type: string,
+      currentValue: string | number | boolean | null,
+      options?: Array<{
+        value: string | number | boolean | null,
+        name: string,
+        description?: string,
+      }>,
+    }>,
+  },
+  /**
+   * Desired ACP session mode override selected by the user (UI/CLI).
+   *
+   * Distinct from `acpSessionModesV1` (which mirrors agent-reported current state).
+   */
+  acpSessionModeOverrideV1?: {
+    v: 1,
+    updatedAt: number,
+    modeId: string,
+  },
+  /**
+   * Desired ACP configuration option overrides selected by the user (UI/CLI).
+   *
+   * This is a best-effort mechanism to keep ACP "configOptions" selections consistent across devices.
+   */
+  acpConfigOptionOverridesV1?: {
+    v: 1,
+    updatedAt: number,
+    overrides: {
+      [configId: string]: {
+        updatedAt: number,
+        value: string | number | boolean | null,
+      },
+    },
   },
   homeDir: string,
   happyHomeDir: string,
@@ -376,27 +467,16 @@ export type Metadata = {
   /** Timestamp (ms) for permissionMode, used for "latest wins" arbitration across devices. */
   permissionModeUpdatedAt?: number,
   /**
-   * Encrypted, session-scoped pending queue (v1) stored in session metadata.
+   * Desired model override selected by the user (UI/CLI), if supported by the agent.
    *
-   * This queue is consumed by agents on the machine to materialize user messages into the
-   * server transcript when the user has chosen a "pending queue" send mode.
+   * This is session-scoped and should be applied by runners in a capability-driven way
+   * (some agents support live model switching; others may require a new session).
    */
-  messageQueueV1?: {
+  modelOverrideV1?: {
     v: 1,
-    queue: Array<{
-      localId: string,
-      message: string,
-      createdAt: number,
-      updatedAt: number
-    }>,
-    inFlight?: {
-      localId: string,
-      message: string,
-      createdAt: number,
-      updatedAt: number,
-      claimedAt: number
-    } | null
-  }
+    updatedAt: number,
+    modelId: string,
+  },
 };
 
 export type AgentState = {
