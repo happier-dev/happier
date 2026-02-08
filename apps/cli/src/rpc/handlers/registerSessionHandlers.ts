@@ -11,6 +11,8 @@ import { registerBashHandler } from './bash';
 import { registerFileSystemHandlers } from './fileSystem';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
+import { registerGitHandlers } from './git';
+import { registerVoiceMediatorHandlers } from './voiceMediator';
 
 /*
  * Spawn Session Options and Result
@@ -63,6 +65,14 @@ export interface SpawnSessionOptions {
      * Optional timestamp for permissionMode (ms). Used to order explicit UI selections across devices.
      */
     permissionModeUpdatedAt?: number;
+    /**
+     * Optional: session-wide model override to seed at startup (spawn/resume attach).
+     *
+     * When set, the spawned CLI process will publish `metadata.modelOverrideV1` so the model choice
+     * follows the session across devices.
+     */
+    modelId?: string;
+    modelUpdatedAt?: number;
     approvedNewDirectoryCreation?: boolean;
     agent?: CatalogAgentId;
     token?: string;
@@ -71,6 +81,15 @@ export interface SpawnSessionOptions {
      * Preferred over legacy TMUX_* env vars.
      */
     terminal?: TerminalSpawnOptions;
+    /**
+     * Windows-only: whether a daemon-spawned *remote* session should start in a visible console window.
+     *
+     * - `hidden` (default): no visible console window (best for background/remote usage; avoids flicker).
+     * - `visible`: open a new console window so the user can later interact locally on the machine.
+     *
+     * Note: this is intentionally scoped to daemon-spawned remote sessions and does not affect tool subprocesses.
+     */
+    windowsRemoteSessionConsole?: 'hidden' | 'visible';
     /**
      * Session-scoped profile identity for display/debugging across devices.
      * This is NOT the profile content; actual runtime behavior is still driven
@@ -100,7 +119,11 @@ export type SpawnSessionResult =
 /**
  * Register all session RPC handlers with the daemon
  */
-export function registerSessionHandlers(rpcHandlerManager: RpcHandlerManager, workingDirectory: string) {
+export function registerSessionHandlers(
+    rpcHandlerManager: RpcHandlerManager,
+    workingDirectory: string,
+    opts?: Readonly<{ flavor?: string }>,
+) {
     registerBashHandler(rpcHandlerManager, workingDirectory);
     // Checklist-based machine capability registry (replaces legacy detect-cli / detect-capabilities / dep-status).
     registerCapabilitiesHandlers(rpcHandlerManager);
@@ -108,4 +131,8 @@ export function registerSessionHandlers(rpcHandlerManager: RpcHandlerManager, wo
     registerFileSystemHandlers(rpcHandlerManager, workingDirectory);
     registerRipgrepHandler(rpcHandlerManager, workingDirectory);
     registerDifftasticHandler(rpcHandlerManager, workingDirectory);
+    registerGitHandlers(rpcHandlerManager, workingDirectory);
+    if (typeof opts?.flavor === 'string' && opts.flavor.trim().length > 0) {
+        registerVoiceMediatorHandlers(rpcHandlerManager, { cwd: workingDirectory, flavor: opts.flavor });
+    }
 }
