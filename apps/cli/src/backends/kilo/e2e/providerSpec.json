@@ -1,0 +1,74 @@
+{
+  "v": 1,
+  "id": "kilo",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_KILO",
+  "protocol": "acp",
+  "traceProvider": "kilo",
+  "requiredBinaries": ["kilo"],
+  "auth": {
+    "mode": "auto",
+    "env": {
+      "requiredAnyOf": [["OPENAI_API_KEY"]],
+      "env": {
+        "OPENCODE_CONFIG_CONTENT": "{\"$schema\":\"https://opencode.ai/config.json\",\"model\":\"openai/gpt-4o-mini\"}",
+        "OPENCODE_DISABLE_AUTOUPDATE": "1",
+        "OPENCODE_DISABLE_MODELS_FETCH": "1",
+        "OPENCODE_DISABLE_LSP_DOWNLOAD": "1"
+      }
+    },
+    "host": {
+      "envUnset": [
+        "OPENCODE_CONFIG_CONTENT",
+        "OPENCODE_DISABLE_AUTOUPDATE",
+        "OPENCODE_DISABLE_MODELS_FETCH",
+        "OPENCODE_DISABLE_LSP_DOWNLOAD"
+      ]
+    }
+  },
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": true,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "outsideWorkspaceRequireTaskCompleteByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": false,
+      "permissionSurfaceOutsideWorkspaceYolo": true
+    }
+  },
+  "cli": {
+    "subcommand": "kilo",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev"
+    },
+    "envFrom": {
+      "HAPPIER_KILO_PATH": "HAPPIER_E2E_PROVIDER_KILO_BIN"
+    }
+  }
+}

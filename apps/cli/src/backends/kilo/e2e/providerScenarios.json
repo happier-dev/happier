@@ -1,0 +1,27 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": ["execute_trace_ok", "execute_error_exit_2"],
+    "extended": [
+      "acp_resume_load_session",
+      "acp_resume_fresh_session_imports_history",
+      "read_known_file",
+      "search_known_token",
+      "glob_list_files",
+      "search_ls_equivalence",
+      "read_missing_file_in_workspace",
+      "edit_result_includes_diff",
+      "edit_write_file_and_cat",
+      "multi_file_edit_in_workspace",
+      "multi_file_edit_in_workspace_includes_diff",
+      "glob_tool_list_files",
+      "kilo_task_subagent_reply",
+      "delete_file_in_workspace",
+      "mcp_change_title",
+      "permission_mode_default_outside_workspace",
+      "permission_mode_safe_yolo_outside_workspace",
+      "permission_mode_read_only_outside_workspace",
+      "permission_mode_yolo_outside_workspace"
+    ]
+  }
+}
