@@ -8,12 +8,11 @@ export function isRunningOnMac(): boolean {
         return false;
     }
     
-    if (deviceType === 'Desktop') {
-        return true;
+    const isMacCatalyst = (Platform as any)?.constants?.isMacCatalyst;
+    if (typeof isMacCatalyst === 'boolean') {
+        return isMacCatalyst;
     }
-    
-    // Check if running on Mac Catalyst
-    // @ts-ignore - isPad is not in the type definitions but exists at runtime
-    return Platform.isPad && Platform.Version && typeof Platform.Version === 'string' && 
-           Platform.Version.includes('Mac');
+
+    // Fallback for environments where Platform.constants.isMacCatalyst is unavailable.
+    return deviceType === 'Desktop';
 }

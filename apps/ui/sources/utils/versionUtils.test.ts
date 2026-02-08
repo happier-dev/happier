@@ -40,6 +40,10 @@ describe('versionUtils', () => {
             expect(isVersionSupported('0.10.0')).toBe(true);
             expect(isVersionSupported('0.9.0')).toBe(false);
         });
+
+        it('returns false for invalid version input', () => {
+            expect(isVersionSupported('invalid', MINIMUM_CLI_VERSION)).toBe(false);
+        });
     });
 
     describe('parseVersion', () => {
@@ -53,6 +57,8 @@ describe('versionUtils', () => {
             expect(parseVersion('invalid')).toBe(null);
             expect(parseVersion('')).toBe(null);
             expect(parseVersion('1.a.3')).toBe(null);
+            expect(parseVersion('1.2')).toBe(null);
+            expect(parseVersion('1.2.NaN')).toBe(null);
         });
     });
 });

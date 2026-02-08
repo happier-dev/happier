@@ -79,4 +79,28 @@ describe('getSessionStatus', () => {
         const status = getSessionStatus(session, now, 0);
         expect(status.state).toBe('waiting');
     });
+
+    it('does not treat optimisticThinkingAt exactly at timeout as thinking', async () => {
+        const { getSessionStatus, OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS } = await import('./sessionUtils');
+        const now = 1_000_000;
+        const session = createBaseSession({ optimisticThinkingAt: now - OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS });
+        const status = getSessionStatus(session, now, 0);
+        expect(status.state).toBe('waiting');
+    });
+
+    it('prioritizes permission_required over thinking state', async () => {
+        const { getSessionStatus } = await import('./sessionUtils');
+        const session = createBaseSession({
+            thinking: true,
+            agentState: {
+                controlledByUser: false,
+                requests: {
+                    req1: { tool: 'tool', arguments: {}, createdAt: null },
+                },
+                completedRequests: null,
+            },
+        });
+        const status = getSessionStatus(session, 1_000, 0);
+        expect(status.state).toBe('permission_required');
+    });
 });

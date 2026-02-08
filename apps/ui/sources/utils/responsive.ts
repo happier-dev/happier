@@ -12,8 +12,7 @@ export function getHeaderHeight(isLandscape: boolean, deviceType: 'phone' | 'tab
     return calculateHeaderHeight({
         platform: Platform.OS,
         isLandscape,
-        // @ts-ignore - isPad is not in the type definitions but exists at runtime on iOS
-        isPad: Platform.OS === 'ios' ? Platform.isPad : undefined,
+        isPad: Platform.OS === 'ios' ? (Platform as any).isPad === true : undefined,
         deviceType: Platform.OS === 'android' ? deviceType : undefined,
         isMacCatalyst: isRunningOnMac()
     });
@@ -22,6 +21,7 @@ export function getHeaderHeight(isLandscape: boolean, deviceType: 'phone' | 'tab
 // Device type detection based on screen size and aspect ratio
 export function getDeviceType(): 'phone' | 'tablet' {
     const { width, height } = Dimensions.get('screen');
+    const isPad = Platform.OS === 'ios' ? (Platform as any).isPad === true : false;
 
     const dimensions = calculateDeviceDimensions({
         widthPoints: width,
@@ -32,8 +32,7 @@ export function getDeviceType(): 'phone' | 'tablet' {
     return determineDeviceType({
         diagonalInches: dimensions.diagonalInches,
         platform: Platform.OS,
-        // @ts-ignore - isPad is not in the type definitions but exists at runtime on iOS
-        isPad: Platform.OS === 'ios' ? Platform.isPad : false
+        isPad
     });
 }
 
@@ -42,6 +41,7 @@ export function useDeviceType(): 'phone' | 'tablet' {
     const { width, height } = useWindowDimensions();
     
     return useMemo(() => {
+        const isPad = Platform.OS === 'ios' ? (Platform as any).isPad === true : false;
         const dimensions = calculateDeviceDimensions({
             widthPoints: width,
             heightPoints: height,
@@ -51,8 +51,7 @@ export function useDeviceType(): 'phone' | 'tablet' {
         return determineDeviceType({
             diagonalInches: dimensions.diagonalInches,
             platform: Platform.OS,
-            // @ts-ignore - isPad is not in the type definitions but exists at runtime on iOS
-            isPad: Platform.OS === 'ios' ? Platform.isPad : false
+            isPad
         });
     }, [width, height]);
 }
@@ -78,8 +77,7 @@ export function useHeaderHeight(): number {
         return calculateHeaderHeight({
             platform: Platform.OS,
             isLandscape,
-            // @ts-ignore - isPad is not in the type definitions but exists at runtime on iOS
-            isPad: Platform.OS === 'ios' ? Platform.isPad : undefined,
+            isPad: Platform.OS === 'ios' ? (Platform as any).isPad === true : undefined,
             deviceType: Platform.OS === 'android' ? deviceType : undefined,
             isMacCatalyst: isRunningOnMac()
         });

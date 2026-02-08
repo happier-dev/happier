@@ -63,6 +63,16 @@ describe('extractEnvVarReferences', () => {
         ];
         expect(extractEnvVarReferences(envVars)).toEqual(['API_KEY']);
     });
+
+    it('ignores malformed substitution expressions', () => {
+        const envVars = [
+            { name: 'A', value: '${MISSING' },
+            { name: 'B', value: '$NOT_BRACED' },
+            { name: 'C', value: '${LOWER_case}' },
+            { name: 'D', value: '${UPPER_OK}' },
+        ];
+        expect(extractEnvVarReferences(envVars)).toEqual(['UPPER_OK']);
+    });
 });
 
 describe('resolveEnvVarSubstitution', () => {
@@ -93,6 +103,10 @@ describe('resolveEnvVarSubstitution', () => {
         expect(resolveEnvVarSubstitution('${EMPTY:-fallback}', daemonEnv)).toBe('fallback');
     });
 
+    it('preserves empty string for plain ${VAR}', () => {
+        expect(resolveEnvVarSubstitution('${EMPTY}', daemonEnv)).toBe('');
+    });
+
     it('returns literal for non-substitution values', () => {
         expect(resolveEnvVarSubstitution('literal-value', daemonEnv)).toBe('literal-value');
     });
@@ -119,5 +133,14 @@ describe('resolveEnvVarSubstitution', () => {
     it('handles complex default values with special characters', () => {
         expect(resolveEnvVarSubstitution('${URL:-https://api.example.com/v1?key=value&foo=bar}', {}))
             .toBe('https://api.example.com/v1?key=value&foo=bar');
+    });
+
+    it('returns empty-string default when using ${VAR:-}', () => {
+        expect(resolveEnvVarSubstitution('${MISSING:-}', daemonEnv)).toBe('');
+    });
+
+    it('returns malformed expressions as literals', () => {
+        expect(resolveEnvVarSubstitution('${MISSING', daemonEnv)).toBe('${MISSING');
+        expect(resolveEnvVarSubstitution('$MISSING', daemonEnv)).toBe('$MISSING');
     });
 });

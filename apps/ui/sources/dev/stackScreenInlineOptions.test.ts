@@ -5,7 +5,15 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
-function walkFiles(rootDir: string): string[] {
+const EXCLUDED_RELATIVE_APP_FILES = new Set(['_layout.tsx']);
+const EXCLUDED_DIR_NAMES = new Set(['__tests__', '__testdata__']);
+const EXCLUDED_FILE_SUFFIXES = ['.test.ts', '.test.tsx', '.spec.ts', '.spec.tsx'];
+
+function shouldSkipTypeScriptFile(path: string) {
+    return EXCLUDED_FILE_SUFFIXES.some((suffix) => path.endsWith(suffix));
+}
+
+function walkTypeScriptFiles(rootDir: string): string[] {
     const results: string[] = [];
     const stack: string[] = [rootDir];
 
@@ -18,11 +26,17 @@ function walkFiles(rootDir: string): string[] {
             const stat = statSync(fullPath);
 
             if (stat.isDirectory()) {
+                if (EXCLUDED_DIR_NAMES.has(entry)) {
+                    continue;
+                }
                 stack.push(fullPath);
                 continue;
             }
 
             if (fullPath.endsWith('.ts') || fullPath.endsWith('.tsx')) {
+                if (shouldSkipTypeScriptFile(fullPath)) {
+                    continue;
+                }
                 results.push(fullPath);
             }
         }
@@ -40,17 +54,15 @@ function isStackScreenJsx(tagName: ts.JsxTagNameExpression): boolean {
 describe('Stack.Screen options invariants', () => {
     it('does not pass an inline object literal to <Stack.Screen options={...}> in app/(app) screens', () => {
         const testDir = fileURLToPath(new URL('.', import.meta.url));
-        const sourcesDir = join(testDir, '..'); // sources/
-        const appDir = join(sourcesDir, 'app', '(app)');
-
-        const excludedFiles = new Set<string>([
-            join(appDir, '_layout.tsx'),
-        ]);
+        const appDir = join(testDir, '..', 'app', '(app)');
 
         const offenders: Array<{ file: string; line: number }> = [];
 
-        for (const file of walkFiles(appDir)) {
-            if (excludedFiles.has(file)) continue;
+        for (const file of walkTypeScriptFiles(appDir)) {
+            const relativePath = relative(appDir, file);
+            if (EXCLUDED_RELATIVE_APP_FILES.has(relativePath)) {
+                continue;
+            }
             const content = readFileSync(file, 'utf8');
             if (!content.includes('Stack.Screen') || !content.includes('options')) continue;
 

@@ -1,5 +1,5 @@
 import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/capabilitiesProtocol';
-import type { Settings } from '@/sync/settings';
+import type { KnownSettings } from '@/sync/settings';
 import type { TranslationKey } from '@/text';
 import type { CodexAcpDepData } from '@/sync/capabilitiesProtocol';
 import type { CodexMcpResumeDepData } from '@/sync/capabilitiesProtocol';
@@ -20,9 +20,11 @@ import {
     shouldPrefetchCodexAcpRegistry,
 } from './codexAcpDep';
 
+type SettingsKey = Extract<keyof KnownSettings, string>;
+
 export type InstallSpecSettingKey = {
-    [K in keyof Settings]: Settings[K] extends string | null ? K : never;
-}[keyof Settings] & string;
+    [K in SettingsKey]: KnownSettings[K] extends string | null ? K : never;
+}[SettingsKey];
 
 export type InstallableDepDataLike = {
     installed: boolean;
@@ -35,7 +37,7 @@ export type InstallableDepDataLike = {
 export type InstallableDepRegistryEntry = Readonly<{
     key: string;
     experimental: boolean;
-    enabledSettingKey: Extract<keyof Settings, string>;
+    enabledSettingKey: Extract<keyof KnownSettings, string>;
     depId: Extract<CapabilityId, `dep.${string}`>;
     depTitle: string;
     depIconName: string;

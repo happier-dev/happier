@@ -25,6 +25,20 @@ vi.mock('@/hooks/useMachineCapabilitiesCache', () => {
 });
 
 describe('useCLIDetection (hook)', () => {
+    function renderHookState(run: () => unknown) {
+        let latest: unknown = null;
+        function Test() {
+            latest = run();
+            return React.createElement('View');
+        }
+
+        act(() => {
+            renderer.create(React.createElement(Test));
+        });
+
+        return latest as any;
+    }
+
     it('includes tmux availability from capabilities results when present', async () => {
         useMachineCapabilitiesCacheMock.mockReturnValue({
             state: {
@@ -46,15 +60,7 @@ describe('useCLIDetection (hook)', () => {
 
         const { useCLIDetection } = await import('./useCLIDetection');
 
-        let latest: any = null;
-        function Test() {
-            latest = useCLIDetection('m1', { autoDetect: false });
-            return React.createElement('View');
-        }
-
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
 
         expect(latest?.tmux).toBe(true);
     });
@@ -79,15 +85,7 @@ describe('useCLIDetection (hook)', () => {
 
         const { useCLIDetection } = await import('./useCLIDetection');
 
-        let latest: any = null;
-        function Test() {
-            latest = useCLIDetection('m1', { autoDetect: false });
-            return React.createElement('View');
-        }
-
-        act(() => {
-            renderer.create(React.createElement(Test));
-        });
+        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
 
         expect(latest?.tmux).toBe(null);
     });
@@ -147,5 +145,34 @@ describe('useCLIDetection (hook)', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('requests login-status overrides when includeLoginStatus is enabled', async () => {
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: { status: 'loading' },
+            refresh: vi.fn(),
+        });
+
+        const { useCLIDetection } = await import('./useCLIDetection');
+        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false, includeLoginStatus: true }));
+
+        const firstCall = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0];
+        expect(firstCall?.request?.checklistId).toBeDefined();
+        expect(firstCall?.request?.overrides).toBeTruthy();
+        expect(latest?.isDetecting).toBe(true);
+        expect(Object.values(latest?.login ?? {}).every((value) => value === null)).toBe(true);
+    });
+
+    it('exposes an error marker when cache status is error and no snapshot exists', async () => {
+        useMachineCapabilitiesCacheMock.mockReturnValue({
+            state: { status: 'error' },
+            refresh: vi.fn(),
+        });
+
+        const { useCLIDetection } = await import('./useCLIDetection');
+        const latest = renderHookState(() => useCLIDetection('m1', { autoDetect: false }));
+
+        expect(latest?.error).toBe('Detection error');
+        expect(latest?.timestamp).toBe(0);
     });
 });

@@ -12,5 +12,13 @@ describe('linearBackoffDelay', () => {
             randomSpy.mockRestore();
         }
     });
-});
 
+    it('honors minimum delay even when jitter returns 0', () => {
+        const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
+        try {
+            expect(linearBackoffDelay(4, 250, 1000, 8)).toBe(250);
+        } finally {
+            randomSpy.mockRestore();
+        }
+    });
+});

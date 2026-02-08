@@ -28,6 +28,18 @@ describe('Text utilities', () => {
             const expected = 'Hello, 世界!';
             expect(decodeUTF8(input)).toBe(expected);
         });
+
+        it('replaces malformed UTF-8 byte sequences with replacement characters', () => {
+            const malformed = new Uint8Array([0xff, 0xfe, 0xfd]);
+            expect(decodeUTF8(malformed)).toBe('\uFFFD\uFFFD\uFFFD');
+        });
+    });
+
+    describe('roundtrip', () => {
+        it('roundtrips mixed unicode text through encode and decode', () => {
+            const input = 'Hello, 👋 世界 — café';
+            expect(decodeUTF8(encodeUTF8(input))).toBe(input);
+        });
     });
 
     describe('normalizeNFKD', () => {
@@ -56,6 +68,10 @@ describe('Text utilities', () => {
         it('should return unchanged string when no normalization needed', () => {
             const input = 'Hello, World!';
             expect(normalizeNFKD(input)).toBe(input);
+        });
+
+        it('returns empty string unchanged', () => {
+            expect(normalizeNFKD('')).toBe('');
         });
     });
 }); 

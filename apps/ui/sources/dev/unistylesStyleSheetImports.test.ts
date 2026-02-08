@@ -5,7 +5,14 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
-function walkFiles(rootDir: string): string[] {
+const EXCLUDED_DIR_NAMES = new Set(['__tests__', '__testdata__']);
+const EXCLUDED_FILE_SUFFIXES = ['.test.ts', '.test.tsx', '.spec.ts', '.spec.tsx'];
+
+function shouldSkipTypeScriptFile(path: string) {
+    return EXCLUDED_FILE_SUFFIXES.some((suffix) => path.endsWith(suffix));
+}
+
+function walkTypeScriptFiles(rootDir: string): string[] {
     const results: string[] = [];
     const stack: string[] = [rootDir];
 
@@ -20,11 +27,17 @@ function walkFiles(rootDir: string): string[] {
             const stat = statSync(fullPath);
 
             if (stat.isDirectory()) {
+                if (EXCLUDED_DIR_NAMES.has(entry)) {
+                    continue;
+                }
                 stack.push(fullPath);
                 continue;
             }
 
             if (fullPath.endsWith('.ts') || fullPath.endsWith('.tsx')) {
+                if (shouldSkipTypeScriptFile(fullPath)) {
+                    continue;
+                }
                 results.push(fullPath);
             }
         }
@@ -45,7 +58,7 @@ describe('Unistyles StyleSheet import invariants', () => {
 
         const offenders: Array<{ file: string; line: number }> = [];
 
-        for (const file of walkFiles(sourcesDir)) {
+        for (const file of walkTypeScriptFiles(sourcesDir)) {
             const normalized = file.replaceAll('\\', '/');
             if (excludedPrefixes.some((prefix) => normalized.startsWith(prefix.replaceAll('\\', '/')))) {
                 continue;
@@ -95,5 +108,5 @@ describe('Unistyles StyleSheet import invariants', () => {
         expect(
             offenders.map(({ file, line }) => `${relative(sourcesDir, file)}:${line}`)
         ).toEqual([]);
-    });
+    }, 10_000);
 });

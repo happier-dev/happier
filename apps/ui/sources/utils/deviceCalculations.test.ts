@@ -314,5 +314,18 @@ describe('responsive utilities', () => {
             });
             expect(height).toBe(50);
         });
+
+        it('should return dedicated heights for web and Mac Catalyst', () => {
+            expect(calculateHeaderHeight({
+                platform: 'web',
+                isLandscape: false
+            })).toBe(56);
+
+            expect(calculateHeaderHeight({
+                platform: 'ios',
+                isLandscape: false,
+                isMacCatalyst: true
+            })).toBe(56);
+        });
     });
 });

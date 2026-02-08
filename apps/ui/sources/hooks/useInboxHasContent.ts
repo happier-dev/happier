@@ -7,6 +7,7 @@ export function useInboxHasContent(): boolean {
     const { updateAvailable } = useUpdates();
     const friendRequests = useFriendRequests();
     const requestedFriends = useRequestedFriends();
+    const feedItems = useFeedItems();
     const changelog = useChangelog();
 
     // Show dot if there's any actionable content:
@@ -15,5 +16,11 @@ export function useInboxHasContent(): boolean {
     // - Outgoing friend requests pending
     // - Feed items (activity updates)
     // - Unread changelog entries
-    return updateAvailable || friendRequests.length > 0 || requestedFriends.length > 0 || (changelog.hasUnread === true);
+    return (
+        updateAvailable ||
+        friendRequests.length > 0 ||
+        requestedFriends.length > 0 ||
+        feedItems.length > 0 ||
+        (changelog.hasUnread === true)
+    );
 }

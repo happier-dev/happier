@@ -21,6 +21,7 @@ describe('storageScope', () => {
             expect(normalizeStorageScope(' pr272-107 ')).toBe('pr272-107');
             expect(normalizeStorageScope('a/b:c')).toBe('a_b_c');
             expect(normalizeStorageScope('a__b')).toBe('a_b');
+            expect(normalizeStorageScope('東京::stack///id')).toBe('_stack_id');
 
             const long = 'x'.repeat(100);
             expect(normalizeStorageScope(long)?.length).toBe(64);

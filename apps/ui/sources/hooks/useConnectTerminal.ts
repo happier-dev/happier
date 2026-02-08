@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { CameraView } from 'expo-camera';
+import * as Updates from 'expo-updates';
+import { router } from 'expo-router';
 import { useAuth } from '@/auth/AuthContext';
 import { decodeBase64 } from '@/encryption/base64';
 import { encryptBox } from '@/encryption/libsodium';
@@ -9,6 +11,9 @@ import { useCheckScannerPermissions } from '@/hooks/useCheckCameraPermissions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
+import { getServerUrl, setServerUrl } from '@/sync/serverConfig';
+import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/pendingTerminalConnect';
+import { parseTerminalConnectUrl } from '@/utils/terminalConnectUrl';
 
 interface UseConnectTerminalOptions {
     onSuccess?: () => void;
@@ -21,21 +26,62 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
     const checkScannerPermissions = useCheckScannerPermissions();
 
     const processAuthUrl = React.useCallback(async (url: string) => {
-        if (!url.startsWith('happier://terminal?')) {
+        const parsed = parseTerminalConnectUrl(url);
+        if (!parsed) {
             Modal.alert(t('common.error'), t('modals.invalidAuthUrl'), [{ text: t('common.ok') }]);
             return false;
         }
         
         setIsLoading(true);
         try {
-            const tail = url.slice('happier://terminal?'.length);
-            const publicKey = decodeBase64(tail, 'base64url');
+            if (parsed.serverUrl) {
+                const currentServerUrl = getServerUrl();
+                if (currentServerUrl !== parsed.serverUrl) {
+                    const confirmed = await Modal.confirm(
+                        t('server.changeServer'),
+                        t('terminal.switchServerToConnectTerminal', { serverUrl: parsed.serverUrl }),
+                        { confirmText: t('common.continue'), destructive: true }
+                    );
+                    if (!confirmed) return false;
+
+                    setPendingTerminalConnect({ publicKeyB64Url: parsed.publicKeyB64Url, serverUrl: parsed.serverUrl });
+                    setServerUrl(parsed.serverUrl);
+
+                    if (Platform.OS === 'web') {
+                        window.location.reload();
+                    } else {
+                        try {
+                            await Updates.reloadAsync();
+                        } catch {
+                            // In dev mode, reloadAsync can throw ERR_UPDATES_DISABLED.
+                        }
+                    }
+                    return true;
+                }
+            }
+
+            if (!auth.credentials) {
+                setPendingTerminalConnect({
+                    publicKeyB64Url: parsed.publicKeyB64Url,
+                    serverUrl: parsed.serverUrl ?? getServerUrl(),
+                });
+                await Modal.alert(t('terminal.connectTerminal'), t('modals.pleaseSignInFirst'), [
+                    { text: t('common.continue') },
+                ]);
+                router.replace('/');
+                return false;
+            }
+
+            const publicKey = decodeBase64(parsed.publicKeyB64Url, 'base64url');
             const responseV1 = encryptBox(decodeBase64(auth.credentials!.secret, 'base64url'), publicKey);
             let responseV2Bundle = new Uint8Array(sync.encryption.contentDataKey.length + 1);
             responseV2Bundle[0] = 0;
             responseV2Bundle.set(sync.encryption.contentDataKey, 1);
             const responseV2 = encryptBox(responseV2Bundle, publicKey);
             await authApprove(auth.credentials!.token, publicKey, responseV1, responseV2);
+
+            // If we successfully completed a pending connect, clear it.
+            clearPendingTerminalConnect();
             
             Modal.alert(t('common.success'), t('modals.terminalConnectedSuccessfully'), [
                 { 

@@ -98,4 +98,23 @@ describe('compareToolCalls', () => {
         const tool2 = { name: 'Test', arguments: { b: 2, a: 1 } };
         expect(compareToolCalls(tool1, tool2)).toBe(true);
     });
+
+    it('should return false for mismatched argument shapes', () => {
+        expect(compareToolCalls(
+            { name: 'Test', arguments: { a: 1 } },
+            { name: 'Test', arguments: [{ a: 1 }] }
+        )).toBe(false);
+    });
+
+    it('treats equal function references as equal and different references as not equal', () => {
+        const fn = () => 1;
+        expect(compareToolCalls(
+            { name: 'Test', arguments: fn },
+            { name: 'Test', arguments: fn }
+        )).toBe(true);
+        expect(compareToolCalls(
+            { name: 'Test', arguments: () => 1 },
+            { name: 'Test', arguments: () => 1 }
+        )).toBe(false);
+    });
 });

@@ -41,6 +41,17 @@ describe('toolErrorParser', () => {
             expect(result.isToolUseError).toBe(false);
             expect(result.errorMessage).toBe(null);
         });
+
+        it('should ignore partial or malformed tags', () => {
+            expect(parseToolUseError('<tool_use_error>oops')).toEqual({
+                isToolUseError: false,
+                errorMessage: null,
+            });
+            expect(parseToolUseError('</tool_use_error>oops')).toEqual({
+                isToolUseError: false,
+                errorMessage: null,
+            });
+        });
     });
 
     describe('parseAllToolUseErrors', () => {
@@ -56,6 +67,11 @@ describe('toolErrorParser', () => {
             const result = parseAllToolUseErrors(input);
             
             expect(result).toEqual([]);
+        });
+
+        it('should ignore malformed tags while still parsing valid ones', () => {
+            const input = '<tool_use_error>Good</tool_use_error> <tool_use_error>Broken';
+            expect(parseAllToolUseErrors(input)).toEqual(['Good']);
         });
     });
 

@@ -71,6 +71,22 @@ describe('debounce utilities', () => {
                 
                 expect(mockFn).toHaveBeenCalledTimes(8);
             });
+
+            it('should treat negative immediateCount as no immediate calls', () => {
+                const mockFn = vi.fn();
+                const debouncedFn = createCustomDebounce(mockFn, {
+                    delay: 1000,
+                    immediateCount: -1
+                });
+
+                debouncedFn('first');
+                debouncedFn('second');
+
+                expect(mockFn).not.toHaveBeenCalled();
+                vi.advanceTimersByTime(1000);
+                expect(mockFn).toHaveBeenCalledTimes(1);
+                expect(mockFn).toHaveBeenCalledWith('second');
+            });
         });
 
         describe('debounced execution', () => {
@@ -501,6 +517,19 @@ describe('debounce utilities', () => {
                 const { flush } = createAdvancedDebounce(mockFn, { delay: 1000 });
 
                 expect(() => flush()).not.toThrow();
+            });
+
+            it('should not execute pending value after cancel followed by flush', () => {
+                const mockFn = vi.fn();
+                const { debounced, cancel, flush } = createAdvancedDebounce(mockFn, { delay: 1000 });
+
+                debounced('first');
+                debounced('second');
+                debounced('third');
+                cancel();
+                flush();
+
+                expect(mockFn).toHaveBeenCalledTimes(2);
             });
 
             it('should allow new calls after flush', () => {

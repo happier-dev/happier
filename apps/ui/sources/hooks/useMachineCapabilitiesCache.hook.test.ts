@@ -2,10 +2,14 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
+import type { CapabilitiesDetectRequest } from '@/sync/capabilitiesProtocol';
+import { flushHookEffects } from './serverFeatureHookHarness.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('useMachineCapabilitiesCache (hook)', () => {
+    const newSessionRequest = (): CapabilitiesDetectRequest => ({ checklistId: CHECKLIST_IDS.NEW_SESSION });
+
     it('does not leave the cache stuck in loading when detection throws', async () => {
         vi.resetModules();
 
@@ -21,7 +25,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
         await expect(prefetchMachineCapabilities({
             machineId: 'm1',
-            request: { checklistId: CHECKLIST_IDS.NEW_SESSION } as any,
+            request: newSessionRequest(),
             timeoutMs: 1,
         })).resolves.toBeUndefined();
 
@@ -30,7 +34,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
             latest = useMachineCapabilitiesCache({
                 machineId: 'm1',
                 enabled: false,
-                request: { checklistId: CHECKLIST_IDS.NEW_SESSION } as any,
+                request: newSessionRequest(),
                 timeoutMs: 1,
             }).state;
             return React.createElement('View');
@@ -46,7 +50,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
     it('keeps refresh stable when request identity changes and uses latest request', async () => {
         vi.resetModules();
 
-        const machineCapabilitiesDetect = vi.fn(async (_machineId: string, _request: any) => {
+        const machineCapabilitiesDetect = vi.fn(async (_machineId: string, _request: CapabilitiesDetectRequest) => {
             return { supported: true, response: { protocolVersion: 1, results: {} } };
         });
 
@@ -58,12 +62,12 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
         const { useMachineCapabilitiesCache } = await import('./useMachineCapabilitiesCache');
 
-        const requestA = { checklistId: CHECKLIST_IDS.NEW_SESSION } as any;
-        const requestB = { checklistId: CHECKLIST_IDS.NEW_SESSION } as any;
+        const requestA = newSessionRequest();
+        const requestB = newSessionRequest();
 
         let latestRefresh: null | (() => void) = null;
 
-        function Test({ request }: { request: any }) {
+        function Test({ request }: { request: CapabilitiesDetectRequest }) {
             const { refresh } = useMachineCapabilitiesCache({
                 machineId: 'm1',
                 enabled: false,
@@ -89,7 +93,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
         await act(async () => {
             refreshA();
-            await new Promise((resolve) => setTimeout(resolve, 0));
+            await flushHookEffects();
         });
 
         expect(machineCapabilitiesDetect).toHaveBeenCalled();
@@ -99,7 +103,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
     it('uses a longer default timeout for machine-details detection', async () => {
         vi.resetModules();
 
-        const machineCapabilitiesDetect = vi.fn(async (_machineId: string, _request: any, _opts: any) => {
+        const machineCapabilitiesDetect = vi.fn(async (_machineId: string, _request: CapabilitiesDetectRequest, _opts: { timeoutMs?: number }) => {
             return { supported: true, response: { protocolVersion: 1, results: {} } };
         });
 
@@ -113,7 +117,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
         await prefetchMachineCapabilities({
             machineId: 'm1',
-            request: { checklistId: 'machine-details' } as any,
+            request: { checklistId: CHECKLIST_IDS.MACHINE_DETAILS },
         });
 
         expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
@@ -147,7 +151,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
 
         await prefetchMachineCapabilities({
             machineId: 'm1',
-            request: { checklistId: CHECKLIST_IDS.NEW_SESSION } as any,
+            request: newSessionRequest(),
         });
 
         expect(getMachineCapabilitiesSnapshot('m1')?.response.results).toEqual({
@@ -173,7 +177,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         await prefetchMachineCapabilitiesIfStale({
             machineId: 'm1',
             staleMs: 60_000,
-            request: { checklistId: CHECKLIST_IDS.NEW_SESSION } as any,
+            request: newSessionRequest(),
             timeoutMs: 1,
         });
         expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
@@ -182,7 +186,7 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         await prefetchMachineCapabilitiesIfStale({
             machineId: 'm1',
             staleMs: 60_000,
-            request: { checklistId: CHECKLIST_IDS.NEW_SESSION } as any,
+            request: newSessionRequest(),
             timeoutMs: 1,
         });
         expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
@@ -191,9 +195,49 @@ describe('useMachineCapabilitiesCache (hook)', () => {
         await prefetchMachineCapabilitiesIfStale({
             machineId: 'm1',
             staleMs: -1,
-            request: { checklistId: CHECKLIST_IDS.NEW_SESSION } as any,
+            request: newSessionRequest(),
             timeoutMs: 1,
         });
         expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not refetch when cache age is exactly the stale threshold', async () => {
+        vi.resetModules();
+        vi.useFakeTimers();
+
+        try {
+            vi.setSystemTime(1_000_000);
+            const machineCapabilitiesDetect = vi.fn(async () => {
+                return { supported: true, response: { protocolVersion: 1, results: {} } };
+            });
+
+            vi.doMock('@/sync/ops', () => {
+                return {
+                    machineCapabilitiesDetect,
+                };
+            });
+
+            const { prefetchMachineCapabilitiesIfStale } = await import('./useMachineCapabilitiesCache');
+            const staleMs = 60_000;
+
+            await prefetchMachineCapabilitiesIfStale({
+                machineId: 'm1',
+                staleMs,
+                request: newSessionRequest(),
+                timeoutMs: 1,
+            });
+            expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+
+            vi.setSystemTime(1_000_000 + staleMs);
+            await prefetchMachineCapabilitiesIfStale({
+                machineId: 'm1',
+                staleMs,
+                request: newSessionRequest(),
+                timeoutMs: 1,
+            });
+            expect(machineCapabilitiesDetect).toHaveBeenCalledTimes(1);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });

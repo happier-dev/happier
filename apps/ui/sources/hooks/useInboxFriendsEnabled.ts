@@ -1,10 +1,8 @@
-import { useSetting } from '@/sync/storage';
-import { isInboxFriendsEnabled } from '@/experiments/inboxFriends';
+import { useServerFeatureValue } from './useServerFeatures';
 
 export function useInboxFriendsEnabled(): boolean {
-    const experiments = useSetting('experiments');
-    const expInboxFriends = useSetting('expInboxFriends');
-
-    return isInboxFriendsEnabled({ experiments, expInboxFriends });
+    return useServerFeatureValue({
+        initial: true,
+        select: (features) => features?.features?.social?.friends?.enabled !== false,
+    });
 }
-

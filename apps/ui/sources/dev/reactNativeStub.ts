@@ -5,18 +5,26 @@
 // without having to mock `react-native` in every file.
 export const View = 'View' as any;
 export const Text = 'Text' as any;
+export const Image = 'Image' as any;
 export const ScrollView = 'ScrollView' as any;
 export const Pressable = 'Pressable' as any;
+export const TouchableOpacity = 'TouchableOpacity' as any;
 export const TextInput = 'TextInput' as any;
 export const ActivityIndicator = 'ActivityIndicator' as any;
+export const Switch = 'Switch' as any;
+export const Touchable = { Mixin: {} } as any;
+export const PanResponder = { create: () => ({ panHandlers: {} }) } as any;
 
 export const Dimensions = {
     get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
 } as const;
 
-export const Platform = { OS: 'node', select: (x: any) => x?.default } as const;
+export const Platform = { OS: 'node', select: (x: any) => x?.default ?? x?.web ?? x?.ios ?? x?.android } as const;
 export const AppState = { addEventListener: () => ({ remove: () => {} }) } as const;
 export const InteractionManager = { runAfterInteractions: (fn: () => void) => fn() } as const;
+export const StyleSheet = { create: (styles: any) => styles } as const;
+export const TurboModuleRegistry = { getEnforcing: () => ({}) } as const;
+export const registerCallableModule = () => {};
 
 export function useWindowDimensions() {
     return { width: 800, height: 600 };
