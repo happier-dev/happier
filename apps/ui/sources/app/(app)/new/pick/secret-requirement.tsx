@@ -4,6 +4,7 @@ import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-rout
 
 import { useSetting, useSettingMutable } from '@/sync/storage';
 import { getBuiltInProfile } from '@/sync/profileUtils';
+import type { AIBackendProfile } from '@/sync/settings';
 import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { storeTempData } from '@/utils/tempDataStore';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
@@ -70,7 +71,7 @@ export default React.memo(function SecretRequirementPickerScreen() {
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
 
     const profile =
-        profiles.find((p) => p.id === profileId) ??
+        profiles.find((p: AIBackendProfile) => p.id === profileId) ??
         (profileId ? getBuiltInProfile(profileId) : null);
 
     const secretEnvVarName = typeof params.secretEnvVarName === 'string'

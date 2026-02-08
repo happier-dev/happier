@@ -163,7 +163,7 @@ export default React.memo(function ProfileEditScreen() {
         const hasBuiltInNameConflict = builtInNames.includes(profileToSave.name.trim());
 
         // Duplicate name guard (same behavior as settings/profiles)
-        const isDuplicateName = profiles.some((p) => {
+        const isDuplicateName = profiles.some((p: AIBackendProfile) => {
             if (isBuiltIn) {
                 return p.name.trim() === profileToSave.name.trim();
             }
@@ -174,10 +174,10 @@ export default React.memo(function ProfileEditScreen() {
             return false;
         }
 
-        const existingIndex = profiles.findIndex((p) => p.id === profileToSave.id);
+        const existingIndex = profiles.findIndex((p: AIBackendProfile) => p.id === profileToSave.id);
         const isNewProfile = existingIndex < 0;
         const updatedProfiles = existingIndex >= 0
-            ? profiles.map((p, idx) => idx === existingIndex ? { ...profileToSave, updatedAt: Date.now() } : p)
+            ? profiles.map((p: AIBackendProfile, idx: number) => idx === existingIndex ? { ...profileToSave, updatedAt: Date.now() } : p)
             : [...profiles, profileToSave];
 
         setProfiles(updatedProfiles);

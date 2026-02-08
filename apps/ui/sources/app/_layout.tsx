@@ -23,6 +23,7 @@ import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
 import { CommandPaletteProvider } from '@/components/CommandPalette/CommandPaletteProvider';
 import { StatusBarProvider } from '@/components/StatusBarProvider';
+import { DesktopUpdateBanner } from '@/components/DesktopUpdateBanner';
 // import * as SystemUI from 'expo-system-ui';
 import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds } from '@/utils/remoteLogger';
 import { useUnistyles } from 'react-native-unistyles';
@@ -182,7 +183,6 @@ export default function RootLayout() {
                 await loadFonts();
                 await sodium.ready;
                 const credentials = await TokenStorage.getCredentials();
-                console.log('credentials', credentials);
                 if (credentials) {
                     await syncRestore(credentials);
                 }
@@ -229,7 +229,10 @@ export default function RootLayout() {
                                 <CommandPaletteProvider>
                                     <RealtimeProvider>
                                         <HorizontalSafeAreaWrapper>
-                                            <SidebarNavigator />
+                                            <DesktopUpdateBanner />
+                                            <View style={{ flex: 1 }}>
+                                                <SidebarNavigator />
+                                            </View>
                                         </HorizontalSafeAreaWrapper>
                                     </RealtimeProvider>
                                 </CommandPaletteProvider>

@@ -1,7 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { View, Text, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
-import { UserSearchResult } from '@/components/UserSearchResult';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { UserSearchResult } from '@/components/friends/UserSearchResult';
 import { searchUsersByUsername, sendFriendRequest } from '@/sync/apiFriends';
 import { useAuth } from '@/auth/AuthContext';
 import { UserProfile } from '@/sync/friendTypes';
@@ -12,8 +12,11 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useSearch } from '@/hooks/useSearch';
 import { useRequireInboxFriendsEnabled } from '@/hooks/useRequireInboxFriendsEnabled';
+import { HappyError } from '@/utils/errors';
+import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 
 export default function SearchFriendsScreen() {
+    const { theme } = useUnistyles();
     const enabled = useRequireInboxFriendsEnabled();
     const { credentials } = useAuth();
     const [searchQuery, setSearchQuery] = useState('');
@@ -41,12 +44,23 @@ export default function SearchFriendsScreen() {
 
             if (updatedProfile) {
                 trackFriendsConnect();
-                console.log(t('friends.requestSent'));
+                await Modal.alert(t('common.success'), t('friends.requestSent'));
             } else {
-                await Modal.alert(t('friends.bothMustHaveGithub'));
+                await Modal.alert(t('friends.userNotFound'));
             }
         } catch (error: any) {
-            console.error('Failed to send friend request:', error);
+            if (error instanceof HappyError && error.message === 'provider-required') {
+                await Modal.alert(t('friends.bothMustHaveGithub'));
+                return;
+            }
+            if (error instanceof HappyError && error.message === 'username-required') {
+                await Modal.alert(t('friends.username.required'));
+                return;
+            }
+            if (error instanceof HappyError && error.message === 'friends-disabled') {
+                await Modal.alert(t('friends.disabled'));
+                return;
+            }
             if (error.message?.includes('yourself')) {
                 await Modal.alert(t('friends.cannotAddYourself'));
             } else {
@@ -74,83 +88,85 @@ export default function SearchFriendsScreen() {
         searchError === 'searchFailed' ? t('errors.searchFailed') : null;
 
     return (
-        <KeyboardAvoidingView
-            style={styles.container}
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        >
-            <ItemList
-                style={{ paddingTop: 0 }}
-                keyboardShouldPersistTaps="handled"
+        <RequireFriendsIdentityForFriends>
+            <KeyboardAvoidingView
+                style={styles.container}
+                behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             >
-                <ItemGroup
-                    title={t('friends.searchInstructions')}
-                    style={styles.searchSection}
+                <ItemList
+                    style={{ paddingTop: 0 }}
+                    keyboardShouldPersistTaps="handled"
                 >
-                    <View style={styles.searchContainer}>
-                        <TextInput
-                            style={styles.searchInput}
-                            placeholder={t('friends.searchPlaceholder')}
-                            placeholderTextColor="#999999"
-                            value={searchQuery}
-                            onChangeText={setSearchQuery}
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            returnKeyType="search"
-                            editable={!processingUserId}
-                        />
-                        
-                        {isSearching && (
-                            <View style={styles.searchingIndicator}>
-                                <ActivityIndicator size="small" color="#2BACCC" />
-                            </View>
-                        )}
-                    </View>
-                    {searchErrorText ? (
-                        <Text style={styles.errorText}>{searchErrorText}</Text>
-                    ) : null}
-                </ItemGroup>
-
-                <ItemGroup
-                    style={styles.resultsGroup}
-                >
-                    <View style={styles.resultsSection}>
-                        {isSearching && searchResults.length === 0 ? (
-                            <View style={styles.loadingContainer}>
-                                <ActivityIndicator size="large" color="#2BACCC" />
-                                <Text style={styles.loadingText}>{t('friends.searching')}</Text>
-                            </View>
-                        ) : searchResults.length > 0 ? (
-                            <FlatList
-                                data={searchResults}
-                                renderItem={renderUserItem}
-                                ItemSeparatorComponent={renderSeparator}
-                                keyExtractor={(item) => item.id}
-                                scrollEnabled={false}
-                                contentContainerStyle={styles.resultsList}
+                    <ItemGroup
+                        title={t('friends.searchInstructions')}
+                        style={styles.searchSection}
+                    >
+                        <View style={styles.searchContainer}>
+                            <TextInput
+                                style={styles.searchInput}
+                                placeholder={t('friends.searchPlaceholder')}
+                                placeholderTextColor={theme.colors.input.placeholder}
+                                value={searchQuery}
+                                onChangeText={setSearchQuery}
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                returnKeyType="search"
+                                editable={!processingUserId}
                             />
-                        ) : hasSearched ? (
-                            <View style={styles.noResultsContainer}>
-                                <Text style={styles.noResultsText}>
-                                    {t('friends.noUserFound')}
-                                </Text>
-                                <Text style={styles.noResultsHint}>
-                                    {t('friends.checkUsername')}
-                                </Text>
-                            </View>
-                        ) : (
-                            <View style={styles.helpContainer}>
-                                <Text style={styles.helpTitle}>
-                                    {t('friends.howToFind')}
-                                </Text>
-                                <Text style={styles.helpText}>
-                                    {t('friends.findInstructions')}
-                                </Text>
-                            </View>
-                        )}
-                    </View>
-                </ItemGroup>
-            </ItemList>
-        </KeyboardAvoidingView>
+                            
+                            {isSearching && (
+                                <View style={styles.searchingIndicator}>
+                                    <ActivityIndicator size="small" color={theme.colors.textLink} />
+                                </View>
+                            )}
+                        </View>
+                        {searchErrorText ? (
+                            <Text style={styles.errorText}>{searchErrorText}</Text>
+                        ) : null}
+                    </ItemGroup>
+
+                    <ItemGroup
+                        style={styles.resultsGroup}
+                    >
+                        <View style={styles.resultsSection}>
+                            {isSearching && searchResults.length === 0 ? (
+                                <View style={styles.loadingContainer}>
+                                    <ActivityIndicator size="large" color={theme.colors.textLink} />
+                                    <Text style={styles.loadingText}>{t('friends.searching')}</Text>
+                                </View>
+                            ) : searchResults.length > 0 ? (
+                                <FlatList
+                                    data={searchResults}
+                                    renderItem={renderUserItem}
+                                    ItemSeparatorComponent={renderSeparator}
+                                    keyExtractor={(item) => item.id}
+                                    scrollEnabled={false}
+                                    contentContainerStyle={styles.resultsList}
+                                />
+                            ) : hasSearched ? (
+                                <View style={styles.noResultsContainer}>
+                                    <Text style={styles.noResultsText}>
+                                        {t('friends.noUserFound')}
+                                    </Text>
+                                    <Text style={styles.noResultsHint}>
+                                        {t('friends.checkUsername')}
+                                    </Text>
+                                </View>
+                            ) : (
+                                <View style={styles.helpContainer}>
+                                    <Text style={styles.helpTitle}>
+                                        {t('friends.howToFind')}
+                                    </Text>
+                                    <Text style={styles.helpText}>
+                                        {t('friends.findInstructions')}
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
+                    </ItemGroup>
+                </ItemList>
+            </KeyboardAvoidingView>
+        </RequireFriendsIdentityForFriends>
     );
 }
 

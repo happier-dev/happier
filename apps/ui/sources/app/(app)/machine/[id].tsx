@@ -8,7 +8,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
 import { useSessions, useAllMachines, useMachine, storage, useSetting, useSettingMutable, useSettings } from '@/sync/storage';
 import { Ionicons, Octicons } from '@expo/vector-icons';
-import type { Session } from '@/sync/storageTypes';
+import type { MachineMetadata, Session } from '@/sync/storageTypes';
 import {
     machineSpawnNewSession,
     machineStopDaemon,
@@ -26,6 +26,7 @@ import { MultiTextInput, type MultiTextInputHandle } from '@/components/MultiTex
 import { DetectedClisList } from '@/components/machines/DetectedClisList';
 import { useMachineCapabilitiesCache } from '@/hooks/useMachineCapabilitiesCache';
 import { resolveTerminalSpawnOptions } from '@/sync/terminalSettings';
+import { resolveWindowsRemoteSessionConsoleFromMachineMetadata } from '@/sync/windowsRemoteSessionConsole';
 import { Switch } from '@/components/Switch';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { InstallableDepInstaller } from '@/components/machines/InstallableDepInstaller';
@@ -116,12 +117,16 @@ export default function MachineDetailScreen() {
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isStoppingDaemon, setIsStoppingDaemon] = useState(false);
     const [isRenamingMachine, setIsRenamingMachine] = useState(false);
+    const [isUpdatingWindowsConsoleMode, setIsUpdatingWindowsConsoleMode] = useState(false);
     const [customPath, setCustomPath] = useState('');
     const [isSpawning, setIsSpawning] = useState(false);
     const inputRef = useRef<MultiTextInputHandle>(null);
     const [showAllPaths, setShowAllPaths] = useState(false);
     const isOnline = !!machine && isMachineOnline(machine);
     const metadata = machine?.metadata;
+    const isWindowsMachine = metadata?.platform === 'win32';
+    const windowsRemoteSessionConsoleVisible =
+        isWindowsMachine && (metadata?.windowsRemoteSessionConsole === 'visible');
 
     const terminalUseTmux = useSetting('sessionUseTmux');
     const terminalTmuxSessionName = useSetting('sessionTmuxSessionName');
@@ -423,6 +428,34 @@ export default function MachineDetailScreen() {
         }
     };
 
+    const setWindowsRemoteSessionConsoleVisible = useCallback(async (visible: boolean) => {
+        if (!machine || !machineId || !machine.metadata) return;
+        if (machine.metadata.platform !== 'win32') return;
+
+        setIsUpdatingWindowsConsoleMode(true);
+        try {
+            const { windowsRemoteSessionConsole: _prev, ...rest } = machine.metadata;
+            const updatedMetadata: MachineMetadata = {
+                ...rest,
+                windowsRemoteSessionConsole: visible ? 'visible' : 'hidden',
+            };
+
+            await machineUpdateMetadata(
+                machineId,
+                updatedMetadata,
+                machine.metadataVersion,
+            );
+        } catch (error) {
+            Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : t('machine.windows.remoteSessionConsoleUpdateFailed'),
+            );
+            await sync.refreshMachines();
+        } finally {
+            setIsUpdatingWindowsConsoleMode(false);
+        }
+    }, [machine, machineId]);
+
     const handleStartSession = async (approvedNewDirectoryCreation: boolean = false): Promise<void> => {
         if (!machine || !machineId) return;
         try {
@@ -439,6 +472,7 @@ export default function MachineDetailScreen() {
                 directory: absolutePath,
                 approvedNewDirectoryCreation,
                 terminal,
+                windowsRemoteSessionConsole: resolveWindowsRemoteSessionConsoleFromMachineMetadata(machine.metadata),
             });
             switch (result.type) {
                 case 'success':
@@ -749,6 +783,30 @@ export default function MachineDetailScreen() {
                                 )}
                             </>
                         )}
+                    </ItemGroup>
+                )}
+
+                {/* Windows-specific settings */}
+                {!!machineId && isWindowsMachine && (
+                    <ItemGroup title={t('machine.windows.title')}>
+                        <Item
+                            title={t('machine.windows.remoteSessionConsoleTitle')}
+                            subtitle={
+                                windowsRemoteSessionConsoleVisible
+                                    ? t('machine.windows.remoteSessionConsoleVisibleSubtitle')
+                                    : t('machine.windows.remoteSessionConsoleHiddenSubtitle')
+                            }
+                            rightElement={
+                                <Switch
+                                    value={windowsRemoteSessionConsoleVisible}
+                                    onValueChange={setWindowsRemoteSessionConsoleVisible}
+                                    disabled={isUpdatingWindowsConsoleMode}
+                                />
+                            }
+                            showChevron={false}
+                            disabled={isUpdatingWindowsConsoleMode}
+                            onPress={() => setWindowsRemoteSessionConsoleVisible(!windowsRemoteSessionConsoleVisible)}
+                        />
                     </ItemGroup>
                 )}
 

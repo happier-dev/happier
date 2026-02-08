@@ -308,7 +308,7 @@ export default React.memo(function ProfilePickerScreen() {
                     style: 'destructive',
                     onPress: () => {
                         // Only custom profiles live in `profiles` setting.
-                        const updatedProfiles = profiles.filter(p => p.id !== profile.id);
+                        const updatedProfiles = profiles.filter((p: AIBackendProfile) => p.id !== profile.id);
                         setProfiles(updatedProfiles);
                         if (selectedId === profile.id) setParamsOnPreviousAndClose({ profileId: '' });
                     },

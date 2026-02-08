@@ -18,6 +18,9 @@ import { trackFriendsConnect } from '@/track';
 import { Ionicons } from '@expo/vector-icons';
 import { useAllSessions } from '@/sync/storage';
 import { useSessionSharingSupport } from '@/hooks/useSessionSharingSupport';
+import { HappyError } from '@/utils/errors';
+import { getAuthProvider } from '@/auth/providers/registry';
+import { isSafeBadgeUrl } from '@/utils/urlSafety';
 
 export default function UserProfileScreen() {
     const { id } = useLocalSearchParams<{ id: string }>();
@@ -58,12 +61,28 @@ export default function UserProfileScreen() {
     const [addingFriend, addFriend] = useHappyAction(async () => {
         if (!credentials || !userProfile) return;
 
-        const updatedProfile = await sendFriendRequest(credentials, userProfile.id);
-        if (updatedProfile) {
-            trackFriendsConnect();
-            setUserProfile(updatedProfile);
-        } else {
-            Modal.alert(t('friends.bothMustHaveGithub'));
+        try {
+            const updatedProfile = await sendFriendRequest(credentials, userProfile.id);
+            if (updatedProfile) {
+                trackFriendsConnect();
+                setUserProfile(updatedProfile);
+            } else {
+                await Modal.alert(t('friends.userNotFound'));
+            }
+        } catch (e) {
+            if (e instanceof HappyError && e.message === 'provider-required') {
+                await Modal.alert(t('friends.bothMustHaveGithub'));
+                return;
+            }
+            if (e instanceof HappyError && e.message === 'username-required') {
+                await Modal.alert(t('friends.username.required'));
+                return;
+            }
+            if (e instanceof HappyError && e.message === 'friends-disabled') {
+                await Modal.alert(t('friends.disabled'));
+                return;
+            }
+            throw e;
         }
     });
 
@@ -237,22 +256,39 @@ export default function UserProfileScreen() {
                 </ItemGroup>
             )}
 
-            {/* GitHub Link */}
-
-            <ItemGroup>
-                <Item
-                    title={t('settings.github')}
-                    detail={`@${userProfile.username}`} 
-                    icon={<Ionicons name="logo-github" size={29} color={theme.colors.text} />}
-                    onPress={async () => {
-                        const url = `https://github.com/${userProfile.username}`;
-                        const supported = await Linking.canOpenURL(url);
-                        if (supported) {
-                            await Linking.openURL(url);
-                        }
-                    }}
-                />
-            </ItemGroup>
+            {userProfile.badges?.length ? (
+                <ItemGroup>
+                    {userProfile.badges.map((badge) => {
+                        const provider = getAuthProvider(badge.id);
+                        const iconName = provider?.badgeIconName ?? 'link-outline';
+                        const title = provider?.displayName ?? badge.id;
+                        return (
+                            <Item
+                                key={`${badge.id}:${badge.url}`}
+                                title={title}
+                                detail={badge.label}
+                                icon={<Ionicons name={iconName as any} size={29} color={theme.colors.text} />}
+                                onPress={async () => {
+                                    try {
+                                        if (!isSafeBadgeUrl(badge.url)) {
+                                            await Modal.alert(t('common.error'), t('errors.invalidShareLink'));
+                                            return;
+                                        }
+                                        const supported = await Linking.canOpenURL(badge.url);
+                                        if (!supported) {
+                                            await Modal.alert(t('common.error'), t('errors.invalidShareLink'));
+                                            return;
+                                        }
+                                        await Linking.openURL(badge.url);
+                                    } catch {
+                                        await Modal.alert(t('common.error'), t('errors.invalidShareLink'));
+                                    }
+                                }}
+                            />
+                        );
+                    })}
+                </ItemGroup>
+            ) : null}
 
             {/* Profile Details */}
             {/* <ItemGroup>

@@ -44,12 +44,12 @@ export default React.memo(function PreviewMachinePickerScreen() {
 
     const favoriteMachineList = React.useMemo(() => {
         const byId = new Map(machines.map((m) => [m.id, m] as const));
-        return favoriteMachines.map((id) => byId.get(id)).filter(Boolean) as typeof machines;
+        return favoriteMachines.map((id: string) => byId.get(id)).filter(Boolean) as typeof machines;
     }, [favoriteMachines, machines]);
 
     const toggleFavorite = React.useCallback((machineId: string) => {
         if (favoriteMachines.includes(machineId)) {
-            setFavoriteMachines(favoriteMachines.filter((id) => id !== machineId));
+            setFavoriteMachines(favoriteMachines.filter((id: string) => id !== machineId));
             return;
         }
         setFavoriteMachines([...favoriteMachines, machineId]);

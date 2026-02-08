@@ -155,7 +155,7 @@ export default React.memo(function MachinePickerScreen() {
                     onToggleFavorite={(machine) => {
                         const isInFavorites = favoriteMachines.includes(machine.id);
                         setFavoriteMachines(isInFavorites
-                            ? favoriteMachines.filter(id => id !== machine.id)
+                            ? favoriteMachines.filter((id: string) => id !== machine.id)
                             : [...favoriteMachines, machine.id]
                         );
                     }}

@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { View, Text, Pressable, Platform } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
+import { CommonActions } from '@react-navigation/native';
 import { Typography } from '@/constants/Typography';
 import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -47,13 +48,23 @@ export default React.memo(function PathPickerScreen() {
     const handleSelectPath = React.useCallback((pathOverride?: string) => {
         const rawPath = typeof pathOverride === 'string' ? pathOverride : customPath;
         const pathToUse = rawPath.trim() || machine?.metadata?.homeDir || '/home';
-        router.setParams({ path: pathToUse });
-        navigation.goBack();
+        const state = navigation.getState();
+        const previousRoute = state?.routes?.[state.index - 1];
+        if (state && state.index > 0 && previousRoute) {
+            // Set params on the previous route first, then navigate back.
+            navigation.dispatch({
+                ...CommonActions.setParams({ path: pathToUse }),
+                source: previousRoute.key,
+            });
+            router.back();
+        } else {
+            router.setParams({ path: pathToUse });
+        }
     }, [customPath, machine, navigation, router]);
 
     const handleBackPress = React.useCallback(() => {
-        navigation.goBack();
-    }, [navigation]);
+        router.back();
+    }, [router]);
 
     const headerTitle = t('newSession.selectPathTitle');
     const headerBackTitle = t('common.back');

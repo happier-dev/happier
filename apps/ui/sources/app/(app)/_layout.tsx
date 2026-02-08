@@ -1,30 +1,192 @@
 import { Stack, router, useSegments } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
+import * as Notifications from 'expo-notifications';
+import * as Updates from 'expo-updates';
 import { Typography } from '@/constants/Typography';
 import { createHeader } from '@/components/navigation/Header';
 import { Platform, TouchableOpacity, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { isRunningOnMac } from '@/utils/platform';
+import { coerceRelativeRoute } from '@/utils/routeUtils';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { useAuth } from '@/auth/AuthContext';
 import { isPublicRouteForUnauthenticated } from '@/auth/authRouting';
+import { useFriendsIdentityReadiness } from '@/hooks/useFriendsIdentityReadiness';
+import { VOICE_PROVIDER_IDS } from '@/voice/voiceProviders';
+import { getActiveServerUrl, setActiveServerId, upsertServerProfile } from '@/sync/serverProfiles';
+import { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotificationNav } from '@/sync/pendingNotificationNav';
+import { getPendingTerminalConnect } from '@/sync/pendingTerminalConnect';
 
 export const unstable_settings = {
     initialRouteName: 'index',
 };
 
+function normalizeUrl(raw: string): string {
+    return String(raw ?? '').trim().replace(/\/+$/, '');
+}
+
+function extractServerUrlFromNotificationData(data: unknown): string | null {
+    if (!data || typeof data !== 'object') return null;
+    const rec = data as Record<string, unknown>;
+    const serverUrl = typeof rec.serverUrl === 'string' ? rec.serverUrl : typeof rec.server === 'string' ? rec.server : '';
+    const normalized = normalizeUrl(serverUrl);
+    return normalized ? normalized : null;
+}
+
+function defaultServerName(rawUrl: string): string {
+    const url = normalizeUrl(rawUrl);
+    try {
+        const parsed = new URL(url);
+        const host = parsed.hostname;
+        if (!host) return url;
+        return parsed.port ? `${host}:${parsed.port}` : host;
+    } catch {
+        return url;
+    }
+}
+
 export default function RootLayout() {
     const auth = useAuth();
     const segments = useSegments();
     const { theme } = useUnistyles();
+    const friendsIdentityReadiness = useFriendsIdentityReadiness();
+    const friendsIdentityReady = friendsIdentityReadiness.isReady;
 
     const shouldRedirect = !auth.isAuthenticated && !isPublicRouteForUnauthenticated(segments);
+    const pendingTerminalHandledRef = React.useRef(false);
     React.useEffect(() => {
         if (!shouldRedirect) return;
         router.replace('/');
     }, [shouldRedirect]);
+
+    React.useEffect(() => {
+        if (!auth.isAuthenticated) {
+            pendingTerminalHandledRef.current = false;
+            return;
+        }
+
+        const pendingTerminalConnect = getPendingTerminalConnect();
+        if (pendingTerminalConnect) {
+            if (pendingTerminalHandledRef.current) return;
+
+            const active = normalizeUrl(getActiveServerUrl());
+            const target = normalizeUrl(pendingTerminalConnect.serverUrl);
+            if (target && target !== active) {
+                pendingTerminalHandledRef.current = true;
+                const profile = upsertServerProfile({
+                    serverUrl: pendingTerminalConnect.serverUrl,
+                    name: defaultServerName(pendingTerminalConnect.serverUrl),
+                });
+                setActiveServerId(profile.id, { scope: 'device' });
+                if (Platform.OS === 'web' && typeof window !== 'undefined') {
+                    window.location.reload();
+                } else {
+                    void Updates.reloadAsync().catch(() => {});
+                }
+                return;
+            }
+
+            pendingTerminalHandledRef.current = true;
+            const route = `/terminal/index?key=${encodeURIComponent(pendingTerminalConnect.publicKeyB64Url)}&server=${encodeURIComponent(pendingTerminalConnect.serverUrl)}`;
+            router.push(route);
+            return;
+        }
+
+        pendingTerminalHandledRef.current = false;
+        if (Platform.OS === 'web') return;
+
+        const pending = getPendingNotificationNav();
+        if (pending) {
+            const active = normalizeUrl(getActiveServerUrl());
+            if (normalizeUrl(pending.serverUrl) === active) {
+                clearPendingNotificationNav();
+                router.push(pending.route);
+                return;
+            }
+        }
+
+        const toRoute = (data: unknown): string | null => {
+            if (!data || typeof data !== 'object') return null;
+            const rec = data as Record<string, unknown>;
+            if (typeof rec.url === 'string' && rec.url.trim()) {
+                return coerceRelativeRoute(rec.url);
+            }
+            if (typeof rec.sessionId === 'string' && rec.sessionId.trim()) {
+                return `/session/${encodeURIComponent(rec.sessionId)}`;
+            }
+            return null;
+        };
+
+        const maybeRedirectFromResponse = (response: any) => {
+            if (!response || typeof response !== 'object') return;
+            if (response.actionIdentifier && response.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) {
+                return;
+            }
+            const notification = response.notification;
+            const data = notification?.request?.content?.data;
+            const route = toRoute(data);
+            if (route) {
+                const serverUrl = extractServerUrlFromNotificationData(data);
+                if (serverUrl) {
+                    const active = normalizeUrl(getActiveServerUrl());
+                    if (serverUrl !== active) {
+                        setPendingNotificationNav({ serverUrl, route });
+                        const profile = upsertServerProfile({ serverUrl, name: defaultServerName(serverUrl) });
+                        setActiveServerId(profile.id, { scope: 'device' });
+                        void Updates.reloadAsync().catch(() => {});
+                        return;
+                    }
+                }
+                router.push(route);
+            }
+        };
+
+        void Notifications.getLastNotificationResponseAsync()
+            .then(maybeRedirectFromResponse)
+            .catch(() => {});
+
+        const subscription = Notifications.addNotificationResponseReceivedListener((response) => {
+            maybeRedirectFromResponse(response);
+        });
+
+        return () => {
+            subscription.remove();
+        };
+    }, [auth.isAuthenticated]);
+
+    // Server capability gating: if the server doesn't support Happier Voice (misconfigured/disabled),
+    // default the user's voice mode to off (they can still choose BYO ElevenLabs in settings).
+    React.useEffect(() => {
+        if (!auth.isAuthenticated) return;
+        let cancelled = false;
+        void (async () => {
+            try {
+                // Defer loading sync/storage modules until needed to keep module evaluation light
+                // (important for test environments and faster route transitions).
+                const [{ getServerFeatures }, { storage }, { sync }] = await Promise.all([
+                    import('@/sync/apiFeatures'),
+                    import('@/sync/storage'),
+                    import('@/sync/sync'),
+                ]);
+
+                const features = await getServerFeatures();
+                if (cancelled) return;
+                if (!features) return;
+                if (features.features.voice.enabled !== false) return;
+                const currentProviderId =
+                    storage.getState().settings.voiceProviderId ?? VOICE_PROVIDER_IDS.HAPPIER_ELEVENLABS_AGENTS;
+                if (currentProviderId !== VOICE_PROVIDER_IDS.HAPPIER_ELEVENLABS_AGENTS) return;
+                sync.applySettings({ voiceProviderId: VOICE_PROVIDER_IDS.OFF });
+            } catch {
+                // Non-fatal: feature gating should never crash the root layout.
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [auth.isAuthenticated]);
 
     // Avoid rendering protected screens for a frame during redirect.
     if (shouldRedirect) {
@@ -68,6 +230,20 @@ export default function RootLayout() {
                     headerShown: false,
                     headerTitle: t('tabs.inbox'),
                     headerBackTitle: t('common.home')
+                }}
+            />
+            <Stack.Screen
+                name="friends/index"
+                options={{
+                    headerShown: false,
+                    headerTitle: t('tabs.inbox'),
+                    headerBackTitle: t('common.home')
+                }}
+            />
+            <Stack.Screen
+                name="oauth/[provider]"
+                options={{
+                    headerShown: false,
                 }}
             />
             <Stack.Screen
@@ -177,6 +353,14 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="restore/lost-access"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('connect.lostAccessTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="changelog"
                 options={{
                     headerShown: true,
@@ -223,21 +407,24 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
-                name="friends/index"
+                name="friends/manage"
                 options={({ navigation }) => ({
                     headerShown: true,
                     headerTitle: t('navigation.friends'),
                     headerBackTitle: t('common.back'),
-                    headerRight: () => (
-                        <TouchableOpacity
-                            onPress={() => navigation.navigate('friends/search' as never)}
-                            style={{ paddingHorizontal: 16 }}
-                        >
-                            <Text style={{ color: theme.colors.button.primary.tint, fontSize: 16 }}>
-                                {t('friends.addFriend')}
-                            </Text>
-                        </TouchableOpacity>
-                    ),
+                    headerRight: () =>
+                        (
+                            <TouchableOpacity
+                                onPress={() => navigation.navigate('friends/search' as never)}
+                                style={{ paddingHorizontal: 16, opacity: friendsIdentityReady ? 1 : 0.5 }}
+                                disabled={!friendsIdentityReady}
+                                accessibilityState={{ disabled: !friendsIdentityReady }}
+                            >
+                                <Text style={{ color: theme.colors.button.primary.tint, fontSize: 16 }}>
+                                    {t('friends.addFriend')}
+                                </Text>
+                            </TouchableOpacity>
+                        ),
                 })}
             />
             <Stack.Screen
