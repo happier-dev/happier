@@ -124,7 +124,12 @@ concurrency:
 
 jobs:
   promote:
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
+    outputs:
+      source_ref: ${{ steps.resolve.outputs.ref }}
+      release_sha: ${{ steps.release_sha.outputs.sha }}
     steps:
       - name: Resolve source ref
         id: resolve
@@ -195,7 +200,9 @@ jobs:
 
       - name: Run app tests
         if: inputs.run_tests
-        run: yarn --cwd apps/ui test
+        run: |
+          yarn --cwd apps/ui test:unit
+          yarn --cwd apps/ui test:integration
 
       - name: Commit version bump (source ref)
         if: steps.bump_app.outputs.skipped != 'true'
@@ -208,6 +215,23 @@ jobs:
             git add apps/ui/src-tauri || true
           fi
           git commit -m "chore(release): bump app to v${{ steps.bump_app.outputs.version }}"
+
+      - name: Push source ref (only for branches)
+        if: steps.bump_app.outputs.skipped != 'true'
+        run: |
+          set -euo pipefail
+          src="${{ steps.resolve.outputs.ref }}"
+          if git show-ref --verify --quiet "refs/remotes/origin/$src"; then
+            git push origin "HEAD:refs/heads/$src"
+          else
+            echo "Skipping push: '$src' is not a known branch ref."
+          fi
+
+      - name: Capture release SHA
+        id: release_sha
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Expo OTA update
         if: inputs.expo_action == 'ota'
@@ -273,13 +297,6 @@ jobs:
           fi
           cd apps/ui
           npx --yes eas-cli@latest submit --platform "${{ inputs.expo_platform }}" --latest --non-interactive
-
-      - name: Push source ref (only for branches)
-        if: steps.bump_app.outputs.skipped != 'true'
-        run: |
-          set -euo pipefail
-          src="${{ steps.resolve.outputs.ref }}"
-          git push origin "HEAD:refs/heads/$src"
 
       - name: Promote source ref to deploy branch (web)
         if: inputs.deploy_web
