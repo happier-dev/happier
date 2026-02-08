@@ -221,6 +221,8 @@ export function sessionRoutes(app: Fastify) {
                 agentState: true,
                 agentStateVersion: true,
                 dataEncryptionKey: true,
+                pendingCount: true,
+                pendingVersion: true,
                 active: true,
                 lastActiveAt: true,
                 shares: {
@@ -257,6 +259,8 @@ export function sessionRoutes(app: Fastify) {
                 metadataVersion: v.metadataVersion,
                 agentState: v.agentState,
                 agentStateVersion: v.agentStateVersion,
+                pendingCount: v.pendingCount,
+                pendingVersion: v.pendingVersion,
                 // For owned sessions, return the raw session DEK stored on the session row.
                 // For shared sessions, return the per-recipient encrypted DEK from the share row.
                 dataEncryptionKey: v.accountId === userId
@@ -297,6 +301,8 @@ export function sessionRoutes(app: Fastify) {
                         metadataVersion: z.number(),
                         agentState: z.string().nullable(),
                         agentStateVersion: z.number(),
+                        pendingCount: z.number().int().min(0),
+                        pendingVersion: z.number().int().min(0),
                         dataEncryptionKey: z.string().nullable(),
                         share: z
                             .object({
@@ -332,6 +338,8 @@ export function sessionRoutes(app: Fastify) {
                 agentState: true,
                 agentStateVersion: true,
                 dataEncryptionKey: true,
+                pendingCount: true,
+                pendingVersion: true,
                 active: true,
                 lastActiveAt: true,
                 shares: {
@@ -361,6 +369,8 @@ export function sessionRoutes(app: Fastify) {
                 metadataVersion: session.metadataVersion,
                 agentState: session.agentState,
                 agentStateVersion: session.agentStateVersion,
+                pendingCount: session.pendingCount,
+                pendingVersion: session.pendingVersion,
                 dataEncryptionKey: session.accountId === userId
                     ? (session.dataEncryptionKey ? Buffer.from(session.dataEncryptionKey).toString('base64') : null)
                     : (session.shares[0]?.encryptedDataKey ? Buffer.from(session.shares[0].encryptedDataKey).toString('base64') : null),
@@ -569,6 +579,7 @@ export function sessionRoutes(app: Fastify) {
             }),
             response: {
                 200: z.object({
+                    didWrite: z.boolean(),
                     message: z.object({
                         id: z.string(),
                         seq: z.number(),
@@ -623,6 +634,7 @@ export function sessionRoutes(app: Fastify) {
         }
 
         return reply.send({
+            didWrite: result.didWrite,
             message: {
                 id: result.message.id,
                 seq: result.message.seq,
