@@ -39,4 +39,27 @@ describe('sendPushNotification', () => {
       },
     ]);
   });
+
+  it('preserves zero timestamp metadata values', async () => {
+    const calls: unknown[] = [];
+    const api = {
+      push() {
+        return {
+          async sendToAllDevicesAsync(title: string, message: string, meta: unknown) {
+            calls.push({ title, message, meta });
+          },
+        };
+      },
+    };
+
+    await sendPushNotification({ api, title: 'T', message: 'M', nowMs: 0 });
+
+    expect(calls).toEqual([
+      {
+        title: 'T',
+        message: 'M',
+        meta: { source: 'cli', timestamp: 0 },
+      },
+    ]);
+  });
 });
