@@ -8,6 +8,7 @@ import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { logger } from '@/ui/logger';
 
 import { maybeUpdateKimiSessionIdMetadata } from '@/backends/kimi/utils/kimiSessionIdMetadata';
+import type { PermissionMode } from '@/api/types';
 
 export function createKimiAcpRuntime(params: {
   directory: string;
@@ -16,9 +17,9 @@ export function createKimiAcpRuntime(params: {
   mcpServers: Record<string, McpServerConfig>;
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
+  getPermissionMode?: () => PermissionMode | null | undefined;
 }) {
   const lastPublishedKimiSessionId = { value: null as string | null };
-  let backend: AgentBackend | null = null;
 
   return createAcpRuntime({
     provider: 'kimi',
@@ -29,15 +30,18 @@ export function createKimiAcpRuntime(params: {
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
     ensureBackend: async () => {
-      if (backend) return backend;
+      const permissionModeRaw =
+        params.getPermissionMode?.() ??
+        params.session.getMetadataSnapshot?.()?.permissionMode;
+      const permissionMode = typeof permissionModeRaw === 'string' ? permissionModeRaw : undefined;
       const created = await createCatalogAcpBackend('kimi', {
         cwd: params.directory,
         mcpServers: params.mcpServers,
         permissionHandler: params.permissionHandler,
+        permissionMode,
       });
-      backend = created.backend;
       logger.debug('[KimiACP] Backend created');
-      return backend;
+      return created.backend as unknown as AgentBackend;
     },
     onSessionIdChange: (nextSessionId) => {
       maybeUpdateKimiSessionIdMetadata({
@@ -48,4 +52,3 @@ export function createKimiAcpRuntime(params: {
     },
   });
 }
-

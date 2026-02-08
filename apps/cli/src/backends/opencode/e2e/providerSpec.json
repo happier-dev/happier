@@ -1,0 +1,63 @@
+{
+  "v": 1,
+  "id": "opencode",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_OPENCODE",
+  "protocol": "acp",
+  "traceProvider": "opencode",
+  "requiredBinaries": ["opencode"],
+  "auth": {
+    "mode": "auto",
+    "env": {
+      "requiredAnyOf": [["OPENAI_API_KEY"]],
+      "env": {
+        "OPENCODE_CONFIG_CONTENT": "{\"$schema\":\"https://opencode.ai/config.json\",\"model\":\"openai/gpt-4o-mini\"}"
+      }
+    },
+    "host": {
+      "envUnset": ["OPENCODE_CONFIG_CONTENT"]
+    }
+  },
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": true,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "outsideWorkspaceRequireTaskCompleteByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": false,
+      "permissionSurfaceOutsideWorkspaceYolo": true
+    }
+  },
+  "cli": {
+    "subcommand": "opencode",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev"
+    }
+  }
+}

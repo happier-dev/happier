@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": [],
+    "extended": ["acp_probe_models"]
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "v": 1,
+  "id": "qwen",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_QWEN",
+  "protocol": "acp",
+  "traceProvider": "qwen",
+  "requiredBinaries": [
+    {
+      "bin": "qwen",
+      "envOverride": "HAPPIER_E2E_PROVIDER_QWEN_BIN",
+      "requireExists": true
+    }
+  ],
+  "auth": {
+    "mode": "auto",
+    "env": {
+      "requiredAnyOf": [["OPENAI_API_KEY"], ["QWEN_API_KEY"]]
+    }
+  },
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": true,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": true,
+        "safe-yolo": true,
+        "read-only": false,
+        "yolo": true,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": false,
+      "permissionSurfaceOutsideWorkspaceYolo": true
+    }
+  },
+  "cli": {
+    "subcommand": "qwen",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev"
+    },
+    "envFrom": {
+      "HAPPIER_QWEN_PATH": "HAPPIER_E2E_PROVIDER_QWEN_BIN"
+    }
+  }
+}

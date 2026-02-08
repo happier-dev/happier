@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 
-import { CODEX_GEMINI_PERMISSION_MODES, isCodexGeminiPermissionMode } from '@/api/types';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { parseSessionStartArgs } from '@/cli/sessionStartArgs';
+import { applyDeprecatedSessionStartAliasesForAgent } from '@/cli/sessionStartArgs';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -10,18 +10,12 @@ export async function handleOpenCodeCliCommand(context: CommandContext): Promise
   try {
     const { runOpenCode } = await import('@/backends/opencode/runOpenCode');
 
-    const { startedBy, permissionMode, permissionModeUpdatedAt } = parseSessionStartArgs(context.args);
-    if (permissionMode && !isCodexGeminiPermissionMode(permissionMode)) {
-      console.error(
-        chalk.red(
-          `Invalid --permission-mode for opencode: ${permissionMode}. Valid values: ${CODEX_GEMINI_PERMISSION_MODES.join(
-            ', ',
-          )}`,
-        ),
-      );
-      console.error(chalk.gray('Tip: use --yolo for full bypass-like behavior.'));
-      process.exit(1);
+    const parsed = parseSessionStartArgs(context.args);
+    const resolved = applyDeprecatedSessionStartAliasesForAgent({ agentId: 'opencode', ...parsed });
+    for (const warning of resolved.warnings) {
+      console.error(chalk.yellow(warning));
     }
+    const { startedBy, permissionMode, permissionModeUpdatedAt, agentModeId, agentModeUpdatedAt, modelId, modelUpdatedAt } = resolved;
 
     const readFlagValue = (flag: string): string | undefined => {
       const idx = context.args.indexOf(flag);
@@ -41,6 +35,10 @@ export async function handleOpenCodeCliCommand(context: CommandContext): Promise
       terminalRuntime: context.terminalRuntime,
       permissionMode,
       permissionModeUpdatedAt,
+      agentModeId,
+      agentModeUpdatedAt,
+      modelId,
+      modelUpdatedAt,
       existingSessionId,
       resume,
     });
@@ -52,4 +50,3 @@ export async function handleOpenCodeCliCommand(context: CommandContext): Promise
     process.exit(1);
   }
 }
-

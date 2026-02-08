@@ -28,6 +28,7 @@ import {
   findToolNameFromInputFields,
   type ToolPatternWithInputFields,
 } from '@/agent/transport/utils/toolPatternInference';
+import { normalizeOpenCodeAcpPermissionRulesetActions } from './permissionRulesetCompat';
 
 export const OPENCODE_TIMEOUTS = {
   /**
@@ -44,7 +45,14 @@ export const OPENCODE_TIMEOUTS = {
 const OPENCODE_TOOL_PATTERNS: readonly ToolPatternWithInputFields[] = [
   {
     name: 'change_title',
-    patterns: ['change_title', 'change-title', 'happy__change_title', 'mcp__happy__change_title'],
+    patterns: [
+      'change_title',
+      'change-title',
+      'happy__change_title',
+      'mcp__happy__change_title',
+      'happier__change_title',
+      'mcp__happier__change_title',
+    ],
     inputFields: ['title'],
   },
   {
@@ -103,7 +111,9 @@ export class OpenCodeTransport implements TransportHandler {
   }
 
   filterStdoutLine(line: string): string | null {
-    return filterJsonObjectOrArrayLine(line);
+    const filtered = filterJsonObjectOrArrayLine(line);
+    if (!filtered) return filtered;
+    return normalizeOpenCodeAcpPermissionRulesetActions(filtered) ?? filtered;
   }
 
   handleStderr(text: string, context: StderrContext): StderrResult {
@@ -128,7 +138,7 @@ export class OpenCodeTransport implements TransportHandler {
       const errorMessage: AgentMessage = {
         type: 'status',
         status: 'error',
-        detail: 'Authentication error. Run `opencode auth login` to configure API keys.',
+        detail: 'Authentication error. Configure your OpenCode-compatible CLI credentials (for example: `opencode auth login`).',
       };
       return { message: errorMessage };
     }
@@ -138,7 +148,7 @@ export class OpenCodeTransport implements TransportHandler {
       const errorMessage: AgentMessage = {
         type: 'status',
         status: 'error',
-        detail: 'Model not found. Check available models with `opencode models`.',
+        detail: 'Model not found. Check available models in your CLI (for example: `opencode models`).',
       };
       return { message: errorMessage };
     }
@@ -171,6 +181,9 @@ export class OpenCodeTransport implements TransportHandler {
     input: Record<string, unknown>,
     _context: ToolNameContext
   ): string {
+    const directToolName = findToolNameFromId(toolName, OPENCODE_TOOL_PATTERNS, { preferLongestMatch: true });
+    if (directToolName) return directToolName;
+
     if (toolName !== 'other' && toolName !== 'Unknown tool') return toolName;
 
     // 1) Prefer toolCallId pattern matching (most reliable).
@@ -180,6 +193,20 @@ export class OpenCodeTransport implements TransportHandler {
     // 2) Fallback to input field signatures.
     const inputToolName = findToolNameFromInputFields(input, OPENCODE_TOOL_PATTERNS);
     if (inputToolName) return inputToolName;
+
+    // 3) Some agents wrap tools (e.g. `use_mcp_tool`) and include an explicit tool name hint.
+    // Prefer resolving that hint to a known tool name to avoid rendering generic "other" tool UIs.
+    const toolNameHintRaw = (() => {
+      const candidates = [input.tool_name, input.toolName, input.name];
+      for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+      }
+      return null;
+    })();
+    if (toolNameHintRaw) {
+      const hintToolName = findToolNameFromId(toolNameHintRaw, OPENCODE_TOOL_PATTERNS, { preferLongestMatch: true });
+      if (hintToolName) return hintToolName;
+    }
 
     if (toolName === 'other' || toolName === 'Unknown tool') {
       const inputKeys = input && typeof input === 'object' ? Object.keys(input) : [];

@@ -9,25 +9,31 @@
  */
 
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
+import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, McpServerConfig, AgentFactoryOptions } from '@/agent/core';
 import { openCodeTransport } from '@/backends/opencode/acp/transport';
 import { logger } from '@/ui/logger';
+import type { PermissionMode } from '@/api/types';
+import { buildOpenCodeFamilyPermissionEnv } from '@/backends/opencode/utils/opencodeFamilyPermissionEnv';
 
 export interface OpenCodeBackendOptions extends AgentFactoryOptions {
   /** MCP servers to make available to the agent */
   mcpServers?: Record<string, McpServerConfig>;
   /** Optional permission handler for tool approval */
   permissionHandler?: AcpPermissionHandler;
+  /** Optional Happier permission mode (applied to provider-native permissions). */
+  permissionMode?: PermissionMode;
 }
 
 export function createOpenCodeBackend(options: OpenCodeBackendOptions): AgentBackend {
   const backendOptions: AcpBackendOptions = {
     agentName: 'opencode',
     cwd: options.cwd,
-    command: 'opencode',
+    command: resolveCliPathOverride({ agentId: 'opencode' }) ?? 'opencode',
     args: ['acp'],
     env: {
       ...options.env,
+      ...buildOpenCodeFamilyPermissionEnv(options.permissionMode),
       // Keep output clean; ACP must own stdout.
       NODE_ENV: 'production',
       DEBUG: '',

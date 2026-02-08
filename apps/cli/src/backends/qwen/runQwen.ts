@@ -29,18 +29,25 @@ import {
   sendTerminalFallbackMessageIfNeeded,
 } from '@/agent/runtime/startupSideEffects';
 import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permissionModeMetadata';
-import { applyStartupMetadataUpdateToSession, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
+import { applyStartupMetadataUpdateToSession, buildAcpSessionModeOverride, buildModelOverride, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { stopCaffeinate } from '@/integrations/caffeinate';
-import { MessageQueue2 } from '@/utils/MessageQueue2';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
+import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permissionModeCanonical';
+import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
+import { createAcpSessionModeOverrideSynchronizer } from '@/agent/runtime/acpSessionModeOverrideSync';
+import { createAcpConfigOptionOverrideSynchronizer } from '@/agent/runtime/acpConfigOptionOverrideSync';
+import { createModelOverrideSynchronizer } from '@/agent/runtime/modelOverrideSync';
+import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
+import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
 
 import type { McpServerConfig } from '@/agent';
 import { QwenTerminalDisplay } from '@/backends/qwen/ui/QwenTerminalDisplay';
 
-import { QwenPermissionHandler } from './utils/permissionHandler';
 import { createQwenAcpRuntime } from './acp/runtime';
 import { waitForNextQwenMessage } from './utils/waitForNextQwenMessage';
 
@@ -50,10 +57,15 @@ export async function runQwen(opts: {
   terminalRuntime?: import('@/terminal/terminalRuntimeFlags').TerminalRuntimeFlags | null;
   permissionMode?: PermissionMode;
   permissionModeUpdatedAt?: number;
+  agentModeId?: string;
+  agentModeUpdatedAt?: number;
+  modelId?: string;
+  modelUpdatedAt?: number;
   existingSessionId?: string;
   resume?: string;
 }): Promise<void> {
   const sessionTag = randomUUID();
+  const explicitPermissionMode = opts.permissionMode;
 
   connectionState.setBackend('Qwen Code');
 
@@ -67,7 +79,7 @@ export async function runQwen(opts: {
   }
   await api.getOrCreateMachine({ machineId, metadata: initialMachineMetadata });
 
-  const initialPermissionMode = opts.permissionMode ?? 'default';
+  const initialPermissionMode = normalizePermissionModeToIntent(opts.permissionMode ?? 'default') ?? 'default';
   const { state, metadata } = createSessionMetadata({
     flavor: 'qwen',
     machineId,
@@ -75,11 +87,15 @@ export async function runQwen(opts: {
     terminalRuntime: opts.terminalRuntime ?? null,
     permissionMode: initialPermissionMode,
     permissionModeUpdatedAt: typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : Date.now(),
+    agentModeId: opts.agentModeId,
+    agentModeUpdatedAt: opts.agentModeUpdatedAt,
+    modelId: opts.modelId,
+    modelUpdatedAt: opts.modelUpdatedAt,
   });
 
   const terminal = metadata.terminal;
   let session: ApiSessionClient;
-  let permissionHandler: QwenPermissionHandler;
+  let permissionHandler: ProviderEnforcedPermissionHandler;
   let reconnectionHandle: { cancel: () => void } | null = null;
 
   if (typeof opts.existingSessionId === 'string' && opts.existingSessionId.trim()) {
@@ -88,15 +104,39 @@ export async function runQwen(opts: {
     const baseSession = await createBaseSessionForAttach({ existingSessionId: existingId, metadata, state });
     session = api.sessionSyncClient(baseSession);
 
-    applyStartupMetadataUpdateToSession({
-      session,
-      next: metadata,
-      nowMs: Date.now(),
-      permissionModeOverride: buildPermissionModeOverride({
-        permissionMode: opts.permissionMode,
-        permissionModeUpdatedAt: opts.permissionModeUpdatedAt,
-      }),
-    });
+    let snapshot: unknown = null;
+    try {
+      snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 });
+      if (!snapshot) {
+        logger.debug('[qwen] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)');
+      }
+    } catch (error) {
+      logger.debug(
+        '[qwen] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)',
+        error,
+      );
+    }
+
+    if (snapshot) {
+      applyStartupMetadataUpdateToSession({
+        session,
+        next: metadata,
+        nowMs: Date.now(),
+        permissionModeOverride: buildPermissionModeOverride({
+          permissionMode: opts.permissionMode,
+          permissionModeUpdatedAt: opts.permissionModeUpdatedAt,
+        }),
+        acpSessionModeOverride: buildAcpSessionModeOverride({
+          agentModeId: opts.agentModeId,
+          agentModeUpdatedAt: opts.agentModeUpdatedAt,
+        }),
+        modelOverride: buildModelOverride({
+          modelId: opts.modelId,
+          modelUpdatedAt: opts.modelUpdatedAt,
+        }),
+        mode: 'attach',
+      });
+    }
 
     primeAgentStateForUi(session, '[Qwen]');
     await reportSessionToDaemonIfRunning({ sessionId: existingId, metadata });
@@ -139,7 +179,9 @@ export async function runQwen(opts: {
   };
 
   let abortRequestedCallback: (() => void | Promise<void>) | null = null;
-  permissionHandler = new QwenPermissionHandler(session, {
+  permissionHandler = createProviderEnforcedPermissionHandler({
+    session,
+    logPrefix: '[Qwen]',
     onAbortRequested: () => abortRequestedCallback?.(),
   });
   permissionHandler.setPermissionMode(initialPermissionMode);
@@ -150,18 +192,25 @@ export async function runQwen(opts: {
   }));
 
   let currentPermissionMode: PermissionMode | undefined = initialPermissionMode;
+  let currentPermissionModeUpdatedAt: number =
+    typeof session.getMetadataSnapshot()?.permissionModeUpdatedAt === 'number'
+      ? (session.getMetadataSnapshot()?.permissionModeUpdatedAt as number)
+      : 0;
 
   session.onUserMessage((message) => {
     let messagePermissionMode = currentPermissionMode;
     if (message.meta?.permissionMode) {
-      const nextPermissionMode = message.meta.permissionMode as PermissionMode;
-      const res = maybeUpdatePermissionModeMetadata({
-        currentPermissionMode,
-        nextPermissionMode,
-        updateMetadata: (updater) => session.updateMetadata(updater),
-      });
-      currentPermissionMode = res.currentPermissionMode;
-      messagePermissionMode = currentPermissionMode;
+      const nextPermissionMode = normalizePermissionModeToIntent(message.meta.permissionMode);
+      if (nextPermissionMode) {
+        const res = maybeUpdatePermissionModeMetadata({
+          currentPermissionMode,
+          nextPermissionMode,
+          updateMetadata: (updater) => session.updateMetadata(updater),
+          nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
+        });
+        currentPermissionMode = res.currentPermissionMode;
+        messagePermissionMode = currentPermissionMode;
+      }
     }
 
     const mode = { permissionMode: messagePermissionMode || 'default' };
@@ -201,6 +250,7 @@ export async function runQwen(opts: {
     mcpServers,
     permissionHandler,
     onThinkingChange: (value) => { thinking = value; },
+    getPermissionMode: () => currentPermissionMode ?? 'default',
   });
 
   const handleAbort = async () => {
@@ -268,6 +318,45 @@ export async function runQwen(opts: {
     let currentModeHash: string | null = null;
     type QueuedMessage = { message: string; mode: { permissionMode: PermissionMode }; hash: string };
     let pending: QueuedMessage | null = null;
+    const modeSync = createAcpSessionModeOverrideSynchronizer({
+      session,
+      runtime,
+      isStarted: () => wasStarted,
+    });
+    const configOptionSync = createAcpConfigOptionOverrideSynchronizer({
+      session,
+      runtime,
+      isStarted: () => wasStarted,
+    });
+    const modelSync = createModelOverrideSynchronizer({
+      session,
+      runtime,
+      isStarted: () => wasStarted,
+    });
+
+    if (typeof explicitPermissionMode !== 'string') {
+      const seeded = await resolveStartupPermissionModeFromSession({ session, take: 50 });
+      if (seeded && seeded.updatedAt > currentPermissionModeUpdatedAt) {
+        currentPermissionModeUpdatedAt = seeded.updatedAt;
+        currentPermissionMode = seeded.mode;
+        permissionHandler.setPermissionMode(seeded.mode);
+      }
+    }
+
+    const syncPermissionModeFromMetadata = () => {
+      const resolved = resolvePermissionIntentFromMetadataSnapshot({
+        metadata: session.getMetadataSnapshot(),
+      });
+      if (!resolved) return;
+      if (resolved.updatedAt <= currentPermissionModeUpdatedAt) return;
+      currentPermissionModeUpdatedAt = resolved.updatedAt;
+      currentPermissionMode = resolved.intent;
+      permissionHandler.setPermissionMode(resolved.intent);
+    };
+
+    modeSync.syncFromMetadata();
+    configOptionSync.syncFromMetadata();
+    modelSync.syncFromMetadata();
 
     while (!shouldExit) {
       let message: QueuedMessage | null = pending;
@@ -278,6 +367,12 @@ export async function runQwen(opts: {
           messageQueue,
           abortSignal: abortController.signal,
           session,
+          onMetadataUpdate: () => {
+            syncPermissionModeFromMetadata();
+            modeSync.syncFromMetadata();
+            configOptionSync.syncFromMetadata();
+            modelSync.syncFromMetadata();
+          },
         });
         if (!next) continue;
         message = { message: next.message, mode: next.mode, hash: next.hash };
@@ -286,11 +381,23 @@ export async function runQwen(opts: {
 
       permissionHandler.setPermissionMode(message.mode.permissionMode);
 
-      if (currentModeHash && message.hash !== currentModeHash) {
+      if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
+        const resumeId = runtime.getSessionId();
         currentModeHash = message.hash;
-      } else {
-        currentModeHash = message.hash;
+        if (resumeId) storedSessionIdForResume = resumeId;
+
+        messageBuffer.addMessage('Restarting Qwen Code session (permission settings changed)…', 'status');
+        await runtime.reset();
+        wasStarted = false;
+        permissionHandler.reset();
+        thinking = false;
+        session.keepAlive(thinking, 'remote');
+
+        pending = message;
+        continue;
       }
+
+      currentModeHash = message.hash;
 
       messageBuffer.addMessage(message.message, 'user');
 
@@ -326,6 +433,9 @@ export async function runQwen(opts: {
             await runtime.startOrLoad({});
           }
           wasStarted = true;
+          await modeSync.flushPendingAfterStart();
+          await configOptionSync.flushPendingAfterStart();
+          await modelSync.flushPendingAfterStart();
         }
         await runtime.sendPrompt(message.message);
       } catch (error) {
@@ -333,6 +443,10 @@ export async function runQwen(opts: {
         session.sendAgentMessage('qwen', { type: 'message', message: `Error: ${error instanceof Error ? error.message : String(error)}` });
       } finally {
         runtime.flushTurn();
+        // Avoid missing ACP mode override updates that land while we're mid-turn.
+        modeSync.syncFromMetadata();
+        configOptionSync.syncFromMetadata();
+        modelSync.syncFromMetadata();
         thinking = false;
         session.keepAlive(thinking, 'remote');
         sendReady();

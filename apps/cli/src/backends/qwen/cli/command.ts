@@ -1,6 +1,5 @@
 import chalk from 'chalk';
 
-import { CODEX_GEMINI_PERMISSION_MODES, isCodexGeminiPermissionMode } from '@/api/types';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { parseSessionStartArgs } from '@/cli/sessionStartArgs';
 
@@ -10,18 +9,7 @@ export async function handleQwenCliCommand(context: CommandContext): Promise<voi
   try {
     const { runQwen } = await import('@/backends/qwen/runQwen');
 
-    const { startedBy, permissionMode, permissionModeUpdatedAt } = parseSessionStartArgs(context.args);
-    if (permissionMode && !isCodexGeminiPermissionMode(permissionMode)) {
-      console.error(
-        chalk.red(
-          `Invalid --permission-mode for qwen: ${permissionMode}. Valid values: ${CODEX_GEMINI_PERMISSION_MODES.join(
-            ', ',
-          )}`,
-        ),
-      );
-      console.error(chalk.gray('Tip: use --yolo for full bypass-like behavior.'));
-      process.exit(1);
-    }
+    const { startedBy, permissionMode, permissionModeUpdatedAt, agentModeId, agentModeUpdatedAt, modelId, modelUpdatedAt } = parseSessionStartArgs(context.args);
 
     const readFlagValue = (flag: string): string | undefined => {
       const idx = context.args.indexOf(flag);
@@ -41,6 +29,10 @@ export async function handleQwenCliCommand(context: CommandContext): Promise<voi
       terminalRuntime: context.terminalRuntime,
       permissionMode,
       permissionModeUpdatedAt,
+      agentModeId,
+      agentModeUpdatedAt,
+      modelId,
+      modelUpdatedAt,
       existingSessionId,
       resume,
     });
@@ -52,4 +44,3 @@ export async function handleQwenCliCommand(context: CommandContext): Promise<voi
     process.exit(1);
   }
 }
-
