@@ -6,6 +6,10 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
+const TEST_DIR = resolve(fileURLToPath(import.meta.url), '..');
+const REPO_ROOT = resolve(TEST_DIR, '..', '..', '..');
+let runLabelCounter = 0;
+
 function run(cmd, args, { cwd, env } = {}) {
   const res = spawnSync(cmd, args, { cwd, env, encoding: 'utf8' });
   if (res.status !== 0) {
@@ -62,6 +66,54 @@ async function seedRepoWithCommittedAndUncommittedChanges({ dir }) {
   return { baseSha };
 }
 
+function createRunLabel(prefix) {
+  runLabelCounter += 1;
+  return `${prefix}-${Date.now()}-${runLabelCounter}`;
+}
+
+async function writeReviewerStubs({ binDir }) {
+  await writeStubBin({ dir: binDir, name: 'codex' });
+  await writeStubBin({ dir: binDir, name: 'coderabbit' });
+  await writeStubBin({ dir: binDir, name: 'auggie' });
+}
+
+function createReviewTypeEnv({ binDir, homeDir, repoDir }) {
+  return {
+    ...process.env,
+    PATH: `${binDir}:${process.env.PATH ?? ''}`,
+    HOME: homeDir,
+    HAPPIER_STACK_REPO_DIR: repoDir,
+    HAPPIER_STACK_UPDATE_CHECK: '0',
+    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
+    HAPPIER_STACK_CODERABBIT_HOME_DIR: join(homeDir, 'coderabbit'),
+    HAPPIER_STACK_CODEX_HOME_DIR: join(homeDir, 'codex'),
+    HAPPIER_STACK_AUGMENT_CACHE_DIR: join(homeDir, 'augment'),
+  };
+}
+
+async function createReviewTypeFixture(t, { labelPrefix }) {
+  const tmp = await mkdtemp(join(tmpdir(), 'hstack-review-type-'));
+  const repoDir = join(tmp, 'repo');
+  const binDir = join(tmp, 'bin');
+  const homeDir = join(tmp, 'home');
+  await mkdir(repoDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(homeDir, { recursive: true });
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  await writeReviewerStubs({ binDir });
+  await initGitRepo({ dir: repoDir });
+  const { baseSha } = await seedRepoWithCommittedAndUncommittedChanges({ dir: repoDir });
+
+  return {
+    baseSha,
+    env: createReviewTypeEnv({ binDir, homeDir, repoDir }),
+    label: createRunLabel(labelPrefix),
+  };
+}
+
 function runHstack({ repoRoot, args, env }) {
   const hstackBin = resolve(repoRoot, 'apps', 'stack', 'bin', 'hstack.mjs');
   return spawnSync(process.execPath, [hstackBin, ...args], {
@@ -85,41 +137,12 @@ function findSingleReviewerResult(out, reviewer) {
 }
 
 test('review --type=uncommitted routes codex to --uncommitted in normal depth', async (t) => {
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-review-type-'));
-  const repoDir = join(tmp, 'repo');
-  const binDir = join(tmp, 'bin');
-  const homeDir = join(tmp, 'home');
-  const label = `test-uncommitted-codex-normal-${Date.now()}`;
-  await mkdir(repoDir, { recursive: true });
-  await mkdir(binDir, { recursive: true });
-  await mkdir(homeDir, { recursive: true });
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
+  const { baseSha, env, label } = await createReviewTypeFixture(t, {
+    labelPrefix: 'test-uncommitted-codex-normal',
   });
 
-  await writeStubBin({ dir: binDir, name: 'codex' });
-  await writeStubBin({ dir: binDir, name: 'coderabbit' });
-  await writeStubBin({ dir: binDir, name: 'auggie' });
-
-  await initGitRepo({ dir: repoDir });
-  const { baseSha } = await seedRepoWithCommittedAndUncommittedChanges({ dir: repoDir });
-
-  const testDir = resolve(fileURLToPath(import.meta.url), '..');
-  const repoRoot = resolve(testDir, '..', '..', '..');
-  const env = {
-    ...process.env,
-    PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    HOME: homeDir,
-    HAPPIER_STACK_REPO_DIR: repoDir,
-    HAPPIER_STACK_UPDATE_CHECK: '0',
-    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-    HAPPIER_STACK_CODERABBIT_HOME_DIR: join(homeDir, 'coderabbit'),
-    HAPPIER_STACK_CODEX_HOME_DIR: join(homeDir, 'codex'),
-    HAPPIER_STACK_AUGMENT_CACHE_DIR: join(homeDir, 'augment'),
-  };
-
   const res = runHstack({
-    repoRoot,
+    repoRoot: REPO_ROOT,
     env,
     args: [
       'tools',
@@ -141,41 +164,12 @@ test('review --type=uncommitted routes codex to --uncommitted in normal depth', 
 });
 
 test('review --type=uncommitted uses git diff HEAD in deep prompt mode for codex', async (t) => {
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-review-type-'));
-  const repoDir = join(tmp, 'repo');
-  const binDir = join(tmp, 'bin');
-  const homeDir = join(tmp, 'home');
-  const label = `test-uncommitted-codex-deep-${Date.now()}`;
-  await mkdir(repoDir, { recursive: true });
-  await mkdir(binDir, { recursive: true });
-  await mkdir(homeDir, { recursive: true });
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
+  const { baseSha, env, label } = await createReviewTypeFixture(t, {
+    labelPrefix: 'test-uncommitted-codex-deep',
   });
 
-  await writeStubBin({ dir: binDir, name: 'codex' });
-  await writeStubBin({ dir: binDir, name: 'coderabbit' });
-  await writeStubBin({ dir: binDir, name: 'auggie' });
-
-  await initGitRepo({ dir: repoDir });
-  const { baseSha } = await seedRepoWithCommittedAndUncommittedChanges({ dir: repoDir });
-
-  const testDir = resolve(fileURLToPath(import.meta.url), '..');
-  const repoRoot = resolve(testDir, '..', '..', '..');
-  const env = {
-    ...process.env,
-    PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    HOME: homeDir,
-    HAPPIER_STACK_REPO_DIR: repoDir,
-    HAPPIER_STACK_UPDATE_CHECK: '0',
-    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-    HAPPIER_STACK_CODERABBIT_HOME_DIR: join(homeDir, 'coderabbit'),
-    HAPPIER_STACK_CODEX_HOME_DIR: join(homeDir, 'codex'),
-    HAPPIER_STACK_AUGMENT_CACHE_DIR: join(homeDir, 'augment'),
-  };
-
   const res = runHstack({
-    repoRoot,
+    repoRoot: REPO_ROOT,
     env,
     args: [
       'tools',
@@ -197,41 +191,12 @@ test('review --type=uncommitted uses git diff HEAD in deep prompt mode for codex
 });
 
 test('review --type=uncommitted routes coderabbit to --type uncommitted without base', async (t) => {
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-review-type-'));
-  const repoDir = join(tmp, 'repo');
-  const binDir = join(tmp, 'bin');
-  const homeDir = join(tmp, 'home');
-  const label = `test-uncommitted-coderabbit-${Date.now()}`;
-  await mkdir(repoDir, { recursive: true });
-  await mkdir(binDir, { recursive: true });
-  await mkdir(homeDir, { recursive: true });
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
+  const { baseSha, env, label } = await createReviewTypeFixture(t, {
+    labelPrefix: 'test-uncommitted-coderabbit',
   });
 
-  await writeStubBin({ dir: binDir, name: 'codex' });
-  await writeStubBin({ dir: binDir, name: 'coderabbit' });
-  await writeStubBin({ dir: binDir, name: 'auggie' });
-
-  await initGitRepo({ dir: repoDir });
-  const { baseSha } = await seedRepoWithCommittedAndUncommittedChanges({ dir: repoDir });
-
-  const testDir = resolve(fileURLToPath(import.meta.url), '..');
-  const repoRoot = resolve(testDir, '..', '..', '..');
-  const env = {
-    ...process.env,
-    PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    HOME: homeDir,
-    HAPPIER_STACK_REPO_DIR: repoDir,
-    HAPPIER_STACK_UPDATE_CHECK: '0',
-    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-    HAPPIER_STACK_CODERABBIT_HOME_DIR: join(homeDir, 'coderabbit'),
-    HAPPIER_STACK_CODEX_HOME_DIR: join(homeDir, 'codex'),
-    HAPPIER_STACK_AUGMENT_CACHE_DIR: join(homeDir, 'augment'),
-  };
-
   const res = runHstack({
-    repoRoot,
+    repoRoot: REPO_ROOT,
     env,
     args: [
       'tools',
@@ -255,41 +220,12 @@ test('review --type=uncommitted routes coderabbit to --type uncommitted without 
 });
 
 test('review --type=uncommitted uses git diff HEAD in augment prompt', async (t) => {
-  const tmp = await mkdtemp(join(tmpdir(), 'hstack-review-type-'));
-  const repoDir = join(tmp, 'repo');
-  const binDir = join(tmp, 'bin');
-  const homeDir = join(tmp, 'home');
-  const label = `test-uncommitted-augment-${Date.now()}`;
-  await mkdir(repoDir, { recursive: true });
-  await mkdir(binDir, { recursive: true });
-  await mkdir(homeDir, { recursive: true });
-  t.after(async () => {
-    await rm(tmp, { recursive: true, force: true });
+  const { baseSha, env, label } = await createReviewTypeFixture(t, {
+    labelPrefix: 'test-uncommitted-augment',
   });
 
-  await writeStubBin({ dir: binDir, name: 'codex' });
-  await writeStubBin({ dir: binDir, name: 'coderabbit' });
-  await writeStubBin({ dir: binDir, name: 'auggie' });
-
-  await initGitRepo({ dir: repoDir });
-  const { baseSha } = await seedRepoWithCommittedAndUncommittedChanges({ dir: repoDir });
-
-  const testDir = resolve(fileURLToPath(import.meta.url), '..');
-  const repoRoot = resolve(testDir, '..', '..', '..');
-  const env = {
-    ...process.env,
-    PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    HOME: homeDir,
-    HAPPIER_STACK_REPO_DIR: repoDir,
-    HAPPIER_STACK_UPDATE_CHECK: '0',
-    HAPPIER_STACK_CLI_ROOT_DISABLE: '1',
-    HAPPIER_STACK_CODERABBIT_HOME_DIR: join(homeDir, 'coderabbit'),
-    HAPPIER_STACK_CODEX_HOME_DIR: join(homeDir, 'codex'),
-    HAPPIER_STACK_AUGMENT_CACHE_DIR: join(homeDir, 'augment'),
-  };
-
   const res = runHstack({
-    repoRoot,
+    repoRoot: REPO_ROOT,
     env,
     args: [
       'tools',

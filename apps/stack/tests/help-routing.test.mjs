@@ -20,97 +20,114 @@ function runHstack(args) {
   });
 }
 
-test('hstack stack -h prints stack root help', () => {
-  const res = runHstack(['stack', '-h']);
-  assert.equal(res.status, 0);
-  assert.match(res.stdout, /\[stack\] usage:/);
-  assert.ok(res.stdout.includes('hstack stack build <name>'));
-  assert.ok(res.stdout.includes('hstack stack new <name>'));
-});
+function assertOutputContains(stdout, needle) {
+  if (needle instanceof RegExp) {
+    assert.match(stdout, needle);
+    return;
+  }
+  assert.ok(stdout.includes(needle), `expected stdout to include ${JSON.stringify(needle)}\nstdout:\n${stdout}`);
+}
 
-test('hstack stack build -h prints build help (not root help)', () => {
-  const res = runHstack(['stack', 'build', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack stack build <name>'));
-  // Underlying build flags should be visible.
-  assert.ok(res.stdout.includes('--tauri'));
-  assert.ok(!res.stdout.includes('hstack stack new <name>'));
-});
+function assertOutputExcludes(stdout, needle) {
+  if (needle instanceof RegExp) {
+    assert.doesNotMatch(stdout, needle);
+    return;
+  }
+  assert.ok(!stdout.includes(needle), `expected stdout to exclude ${JSON.stringify(needle)}\nstdout:\n${stdout}`);
+}
 
-test('hstack stack build <stack> -h prints build help (not root help)', () => {
-  const res = runHstack(['stack', 'build', 'dev', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack stack build <name>'));
-  assert.ok(res.stdout.includes('--tauri'));
-  assert.ok(!res.stdout.includes('hstack stack new <name>'));
-});
+const helpScenarios = [
+  {
+    title: 'hstack stack -h prints stack root help',
+    args: ['stack', '-h'],
+    includes: [/\[stack\] usage:/, 'hstack stack build <name>', 'hstack stack new <name>'],
+    excludes: [],
+  },
+  {
+    title: 'hstack stack build -h prints build help (not root help)',
+    args: ['stack', 'build', '-h'],
+    includes: ['hstack stack build <name>', '--tauri'],
+    excludes: ['hstack stack new <name>'],
+  },
+  {
+    title: 'hstack stack test -h prints test help (not stack root help)',
+    args: ['stack', 'test', '-h'],
+    includes: ['[test] usage:', 'hstack test'],
+    excludes: ['hstack stack new <name>'],
+  },
+  {
+    title: 'hstack stack build <stack> -h prints build help (not root help)',
+    args: ['stack', 'build', 'dev', '-h'],
+    includes: ['hstack stack build <name>', '--tauri'],
+    excludes: ['hstack stack new <name>'],
+  },
+  {
+    title: 'hstack wt new -h prints new help (not root help)',
+    args: ['wt', 'new', '-h'],
+    includes: ['hstack wt new <slug>'],
+    excludes: ['hstack wt sync'],
+  },
+  {
+    title: 'hstack auth login -h prints login help (not root help)',
+    args: ['auth', 'login', '-h'],
+    includes: ['hstack auth login'],
+    excludes: ['hstack auth status'],
+  },
+  {
+    title: 'hstack tailscale enable -h prints enable help (not root help)',
+    args: ['tailscale', 'enable', '-h'],
+    includes: ['hstack tailscale enable'],
+    excludes: ['hstack tailscale status'],
+  },
+  {
+    title: 'hstack service status -h prints status help (not root help)',
+    args: ['service', 'status', '-h'],
+    includes: ['hstack service status'],
+    excludes: ['hstack service install', 'hstack service uninstall'],
+  },
+  {
+    title: 'hstack srv use -h prints use help (not root help)',
+    args: ['srv', 'use', '-h'],
+    includes: ['hstack srv use <happier-server-light|happier-server>'],
+    excludes: ['hstack srv status'],
+  },
+  {
+    title: 'hstack completion install -h prints install help (not root help)',
+    args: ['completion', 'install', '-h'],
+    includes: ['hstack completion install'],
+    excludes: ['hstack completion print'],
+  },
+  {
+    title: 'hstack self check -h prints check help (not root help)',
+    args: ['self', 'check', '-h'],
+    includes: ['hstack self check'],
+    excludes: ['hstack self status'],
+  },
+  {
+    title: 'hstack contrib sync -h prints sync help (not root help)',
+    args: ['contrib', 'sync', '-h'],
+    includes: ['hstack contrib sync'],
+    excludes: ['hstack contrib status'],
+  },
+  {
+    title: 'hstack menubar install -h prints install help (not root help)',
+    args: ['menubar', 'install', '-h'],
+    includes: ['hstack menubar install'],
+    excludes: ['hstack menubar uninstall'],
+  },
+  {
+    title: 'hstack monorepo port status -h prints status help (not root help)',
+    args: ['monorepo', 'port', 'status', '-h'],
+    includes: ['hstack monorepo port status'],
+    excludes: ['hstack monorepo port guide'],
+  },
+];
 
-test('hstack wt new -h prints new help (not root help)', () => {
-  const res = runHstack(['wt', 'new', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack wt new <slug>'));
-  assert.ok(!res.stdout.includes('hstack wt sync'));
-});
-
-test('hstack auth login -h prints login help (not root help)', () => {
-  const res = runHstack(['auth', 'login', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack auth login'));
-  assert.ok(!res.stdout.includes('hstack auth status'));
-});
-
-test('hstack tailscale enable -h prints enable help (not root help)', () => {
-  const res = runHstack(['tailscale', 'enable', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack tailscale enable'));
-  assert.ok(!res.stdout.includes('hstack tailscale status'));
-});
-
-test('hstack service status -h prints status help (not root help)', () => {
-  const res = runHstack(['service', 'status', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack service status'));
-  assert.ok(!res.stdout.includes('hstack service install|uninstall'));
-});
-
-test('hstack srv use -h prints use help (not root help)', () => {
-  const res = runHstack(['srv', 'use', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack srv use <happier-server-light|happier-server>'));
-  assert.ok(!res.stdout.includes('hstack srv status'));
-});
-
-test('hstack completion install -h prints install help (not root help)', () => {
-  const res = runHstack(['completion', 'install', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack completion install'));
-  assert.ok(!res.stdout.includes('hstack completion print'));
-});
-
-test('hstack self check -h prints check help (not root help)', () => {
-  const res = runHstack(['self', 'check', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack self check'));
-  assert.ok(!res.stdout.includes('hstack self status'));
-});
-
-test('hstack contrib sync -h prints sync help (not root help)', () => {
-  const res = runHstack(['contrib', 'sync', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack contrib sync'));
-  assert.ok(!res.stdout.includes('hstack contrib status'));
-});
-
-test('hstack menubar install -h prints install help (not root help)', () => {
-  const res = runHstack(['menubar', 'install', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack menubar install'));
-  assert.ok(!res.stdout.includes('hstack menubar uninstall'));
-});
-
-test('hstack monorepo port status -h prints status help (not root help)', () => {
-  const res = runHstack(['monorepo', 'port', 'status', '-h']);
-  assert.equal(res.status, 0);
-  assert.ok(res.stdout.includes('hstack monorepo port status'));
-  assert.ok(!res.stdout.includes('hstack monorepo port guide'));
-});
+for (const scenario of helpScenarios) {
+  test(scenario.title, () => {
+    const res = runHstack(scenario.args);
+    assert.equal(res.status, 0);
+    for (const needle of scenario.includes) assertOutputContains(res.stdout, needle);
+    for (const needle of scenario.excludes) assertOutputExcludes(res.stdout, needle);
+  });
+}
