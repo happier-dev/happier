@@ -21,8 +21,6 @@
     "tauri",
     "isolated-linux-vm",
     "edison",
-    "forking-and-branding",
-    "monorepo-port",
-    "codex-mcp-resume"
+    "monorepo-port"
   ]
 }

@@ -116,10 +116,22 @@ Dev mode:
 hstack stack dev exp1
 ```
 
+Dev mode (background):
+
+```bash
+hstack stack dev exp1 --background
+```
+
 Production-like mode:
 
 ```bash
 hstack stack start exp1
+```
+
+Production-like mode (background):
+
+```bash
+hstack stack start exp1 --background
 ```
 
 Build UI for a stack (server-light serving):
@@ -260,7 +272,7 @@ On startup, `hstack` loads env in this order:
 
 `hstack stack ...` sets `HAPPIER_STACK_ENV_FILE=~/.happier/stacks/<name>/env` and clears any already-exported `HAPPIER_STACK_*` variables so the stack env stays authoritative.
 
-For a full explanation of the different folders/paths (`home` vs `workspace` vs `runtime` vs stack storage) and the exact env precedence rules, see: `[docs/paths-and-env.md](docs/paths-and-env.md)`.
+For a full explanation of the different folders/paths (`home` vs `workspace` vs `runtime` vs stack storage) and the exact env precedence rules, see: [`/docs/hstack/paths-and-env`](/docs/hstack/paths-and-env).
 
 Cloned-repo fallback (before you run `hstack init`):
 

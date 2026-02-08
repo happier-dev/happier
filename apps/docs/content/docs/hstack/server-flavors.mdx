@@ -39,7 +39,7 @@ Optional DB providers (light):
 
 ### `happier-server` (full server)
 
-- Docker-managed infra per stack (Postgres + Redis + Minio/S3)
+- Docker-managed infra per stack (Postgres + Minio/S3; optional Redis for multi-replica realtime)
 - Closer to “production-like” behavior
 - Useful when you need Redis/S3 semantics or want to reproduce full-server-only issues
 
@@ -70,11 +70,13 @@ Under the hood, this sets `HAPPIER_DB_PROVIDER` in the stack env file. For `mysq
 
 `happier-server` requires:
 
-- Postgres (`DATABASE_URL`)
-- Redis (`REDIS_URL`)
-- S3-compatible object storage (`S3_*`)
+- A database (`DATABASE_URL`)
+- Public files backend (choose one):
+  - S3-compatible object storage (`S3_*`) with `HAPPIER_FILES_BACKEND=s3` (default)
+  - Local disk with `HAPPIER_FILES_BACKEND=local`
+- Optional: Redis fanout for multi-replica realtime (`REDIS_URL` + `HAPPIER_SOCKET_ADAPTER=redis-streams`)
 
-hstack can **manage this for you automatically per stack** using Docker Compose (Postgres + Redis + Minio),
+hstack can **manage this for you automatically per stack** using Docker Compose (Postgres + Minio — Redis when needed),
 so you **do not need AWS S3**.
 
 This happens automatically when you run `hstack start/dev --server=happier-server` (or when a stack uses `happier-server`),
@@ -84,7 +86,7 @@ unless you disable it with:
 export HAPPIER_STACK_MANAGED_INFRA=0
 ```
 
-If disabled, you must provide `DATABASE_URL`, `REDIS_URL`, and `S3_*` yourself.
+If disabled, you must provide `DATABASE_URL` and configure a public files backend (`S3_*` with `HAPPIER_FILES_BACKEND=s3`, or `HAPPIER_FILES_BACKEND=local`). `REDIS_URL` is only required for multi-replica realtime (`HAPPIER_SOCKET_ADAPTER=redis-streams`).
 
 ## UI serving with `happier-server`
 

@@ -101,3 +101,52 @@ Help:
 ```bash
 hstack auth --help
 ```
+
+---
+
+## Login (local-first)
+
+`hstack auth login` authenticates the current stack (defaults to `main`).
+
+In a TTY, `hstack auth login` is **local-first**:
+
+- it prefers authenticating against your **local stack** (not the hosted Happier app)
+- it guides you through opening the stack’s web UI and connecting your terminal
+- if the stack isn’t running, it can start it in the background for you
+
+Basic:
+
+```bash
+hstack auth login
+```
+
+If you’re working with a non-`main` stack:
+
+```bash
+hstack stack auth <stack> login
+```
+
+### Web app targeting
+
+Control what UI origin is used for the login browser flow:
+
+```bash
+hstack auth login --webapp=auto|stack|expo|public|hosted
+hstack auth login --webapp-url=http://localhost:8081
+```
+
+Notes:
+
+- `auto` (default): guided local-first in TTY contexts
+- `stack`: force using your stack’s web UI origin (env override → running Expo → stack server)
+- `expo`: use a running Expo dev server’s web UI (fails if no Expo web app is running)
+- `public`: use the stack’s public/server URL
+- `hosted`: use the happier-cli default web app URL (no stack override)
+
+### Starting the stack when needed
+
+If the stack isn’t running, `hstack auth login` will prompt to start it. To auto-start without prompting:
+
+```bash
+hstack auth login --start-if-needed
+```
