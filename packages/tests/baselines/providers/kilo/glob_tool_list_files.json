@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "providerId": "kilo",
+  "scenarioId": "glob_tool_list_files",
+  "createdAt": "2026-02-06T18:17:23.400Z",
+  "fixtureKeys": [
+    "acp/kilo/tool-call/CodeSearch",
+    "acp/kilo/tool-result/CodeSearch"
+  ],
+  "shapesByKey": {
+    "acp/kilo/tool-call/CodeSearch": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null},\"pattern\":{\"t\":\"string\"},\"query\":{\"t\":\"string\"}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/kilo/tool-result/CodeSearch": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"output\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"matches\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"excerpt\":{\"t\":\"string\"}}}},\"metadata\":{\"t\":\"object\",\"keys\":{\"count\":{\"t\":\"number\"},\"truncated\":{\"t\":\"boolean\"}}},\"output\":{\"t\":\"string\"}}},\"type\":{\"t\":\"string\"}}}"
+  }
+}

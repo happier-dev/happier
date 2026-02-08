@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "providerId": "kilo",
+  "scenarioId": "mcp_change_title",
+  "createdAt": "2026-02-06T18:07:24.918Z",
+  "fixtureKeys": [
+    "acp/kilo/tool-call/change_title",
+    "acp/kilo/tool-result/change_title"
+  ],
+  "shapesByKey": {
+    "acp/kilo/tool-call/change_title": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null},\"title\":{\"t\":\"string\"}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/kilo/tool-result/change_title": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"output\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"metadata\":{\"t\":\"object\",\"keys\":{\"truncated\":{\"t\":\"boolean\"}}},\"output\":{\"t\":\"string\"}}},\"type\":{\"t\":\"string\"}}}"
+  }
+}

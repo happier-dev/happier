@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "providerId": "kilo",
+  "scenarioId": "multi_file_edit_in_workspace",
+  "createdAt": "2026-02-06T17:30:41.977Z",
+  "fixtureKeys": [
+    "acp/kilo/tool-call/Write",
+    "acp/kilo/tool-result/Write"
+  ],
+  "shapesByKey": {
+    "acp/kilo/tool-call/Write": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"content\":{\"t\":\"string\"},\"filePath\":{\"t\":\"string\"},\"file_path\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"path\":{\"t\":\"string\"}}}}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/kilo/tool-result/Write": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"output\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"metadata\":{\"t\":\"object\",\"keys\":{\"diagnostics\":{\"t\":\"object\",\"keys\":{}},\"exists\":{\"t\":\"boolean\"},\"filepath\":{\"t\":\"string\"},\"truncated\":{\"t\":\"boolean\"}}},\"output\":{\"t\":\"string\"}}},\"type\":{\"t\":\"string\"}}}"
+  }
+}

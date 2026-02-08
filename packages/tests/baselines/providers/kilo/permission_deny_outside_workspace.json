@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "providerId": "kilo",
+  "scenarioId": "permission_deny_outside_workspace",
+  "createdAt": "2026-02-07T12:10:35.255Z",
+  "fixtureKeys": [],
+  "shapesByKey": {}
+}
