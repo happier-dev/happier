@@ -110,11 +110,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Validate inputs
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_NPM_TAG: ${{ inputs.npm_tag }}
+          INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
+          INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
+          INPUT_BUMP: ${{ inputs.bump }}
+          INPUT_STACK_BUMP: ${{ inputs.stack_bump }}
         run: |
           set -euo pipefail
-          if [ "${{ inputs.publish_cli }}" != "true" ] && [ "${{ inputs.publish_stack }}" != "true" ]; then
+          if [ "${INPUT_PUBLISH_CLI}" != "true" ] && [ "${INPUT_PUBLISH_STACK}" != "true" ]; then
             echo "At least one of publish_cli or publish_stack must be true." >&2
             exit 1
+          fi
+          expected_tag="latest"
+          if [ "${INPUT_CHANNEL}" = "preview" ]; then
+            expected_tag="next"
+          fi
+          if [ "${INPUT_NPM_TAG}" != "${expected_tag}" ]; then
+            echo "npm_tag must be '${expected_tag}' for channel='${INPUT_CHANNEL}' (got '${INPUT_NPM_TAG}')." >&2
+            exit 1
+          fi
+          if [ "${INPUT_CHANNEL}" = "preview" ]; then
+            if [ "${INPUT_BUMP}" != "none" ] || [ "${INPUT_STACK_BUMP}" != "none" ]; then
+              echo "::warning::Preview channel ignores bump/stack_bump (versions are set to X.Y.Z-preview.<run>.<attempt> in the working tree only)."
+            fi
           fi
 
       - name: Create GitHub App token
