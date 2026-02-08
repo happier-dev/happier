@@ -1,9 +1,11 @@
 import { z } from 'zod';
 import type { KnownCanonicalToolNameV2 } from './names.js';
-import { ToolHappierMetaV2Schema } from './meta.js';
+import { ToolHappyMetaV2Schema, ToolHappierMetaV2Schema } from './meta.js';
 
 const BaseEnvelopeSchema = z.object({
-  _happy: ToolHappierMetaV2Schema.optional(),
+  _happier: ToolHappierMetaV2Schema.optional(),
+  // Legacy envelope key accepted for migration back-compat.
+  _happy: ToolHappyMetaV2Schema.optional(),
   _raw: z.unknown().optional(),
 }).passthrough();
 
@@ -94,6 +96,35 @@ export const DeleteResultV2Schema = BaseEnvelopeSchema.extend({
 
 export const DiffInputV2Schema = BaseEnvelopeSchema.extend({
   unified_diff: z.string().optional(),
+  files: z.array(
+    z
+      .object({
+        file_path: FilePathSchema.optional(),
+        // Preferred representation: per-file unified diff block.
+        unified_diff: z.string().min(1).optional(),
+        // Alternate representation (no unified diff available): provide old/new text directly.
+        oldText: z.string().optional(),
+        newText: z.string().optional(),
+        old_text: z.string().optional(),
+        new_text: z.string().optional(),
+      })
+      .passthrough()
+      .refine(
+        (value) => {
+          const hasUnified = typeof value.unified_diff === 'string' && value.unified_diff.trim().length > 0;
+          const hasCamel =
+            typeof value.oldText === 'string' &&
+            typeof value.newText === 'string' &&
+            (value.oldText.length > 0 || value.newText.length > 0);
+          const hasSnake =
+            typeof value.old_text === 'string' &&
+            typeof value.new_text === 'string' &&
+            (value.old_text.length > 0 || value.new_text.length > 0);
+          return hasUnified || hasCamel || hasSnake;
+        },
+        { message: 'Diff.files entries must include unified_diff or old/new text pairs' },
+      ),
+  ).optional(),
 }).passthrough();
 
 export const PatchInputV2Schema = BaseEnvelopeSchema.extend({

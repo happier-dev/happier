@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { CanonicalToolNameV2Schema } from './names.js';
 
 export const ToolNormalizationProtocolSchema = z.enum(['acp', 'codex', 'claude']);
 export type ToolNormalizationProtocol = z.infer<typeof ToolNormalizationProtocolSchema>;
@@ -17,7 +16,20 @@ export const ToolHappierMetaV2Schema = z.object({
 
 export type ToolHappierMetaV2 = z.infer<typeof ToolHappierMetaV2Schema>;
 
-// Backward-compatible aliases: the on-the-wire metadata container is still named `_happy`
-// (for legacy client compatibility), but the project is now "happier".
+// Legacy alias accepted during the `_happy` -> `_happier` migration window.
 export const ToolHappyMetaV2Schema = ToolHappierMetaV2Schema;
 export type ToolHappyMetaV2 = ToolHappierMetaV2;
+
+export const ToolEnvelopeMetaContainerV2Schema = z.object({
+  _happier: ToolHappierMetaV2Schema.optional(),
+  _happy: ToolHappyMetaV2Schema.optional(),
+}).passthrough();
+
+export function resolveToolEnvelopeMetaV2(value: unknown): ToolHappierMetaV2 | null {
+  const parsed = ToolEnvelopeMetaContainerV2Schema.safeParse(value);
+  if (!parsed.success) return null;
+
+  // Canonical key wins if both are present.
+  const meta = parsed.data._happier ?? parsed.data._happy;
+  return meta ?? null;
+}

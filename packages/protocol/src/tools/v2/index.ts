@@ -7,11 +7,13 @@ export {
 } from './names.js';
 
 export {
-  ToolHappierMetaV2Schema,
   ToolHappyMetaV2Schema,
+  ToolHappierMetaV2Schema,
+  ToolEnvelopeMetaContainerV2Schema,
   ToolNormalizationProtocolSchema,
-  type ToolHappierMetaV2,
+  resolveToolEnvelopeMetaV2,
   type ToolHappyMetaV2,
+  type ToolHappierMetaV2,
   type ToolNormalizationProtocol,
 } from './meta.js';
 
