@@ -9,7 +9,7 @@ import { t } from '@/text';
 import { useSettingMutable } from '@/sync/storage';
 import { machineCapabilitiesInvoke } from '@/sync/ops';
 import type { CapabilityId } from '@/sync/capabilitiesProtocol';
-import type { Settings } from '@/sync/settings';
+import type { KnownSettings } from '@/sync/settings';
 import { compareVersions, parseVersion } from '@/utils/versionUtils';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -21,9 +21,11 @@ type InstallableDepData = {
     registry?: { ok: true; latestVersion: string | null } | { ok: false; errorMessage: string };
 };
 
+type SettingsKey = Extract<keyof KnownSettings, string>;
+
 type InstallSpecSettingKey = {
-    [K in keyof Settings]: Settings[K] extends string | null ? K : never;
-}[keyof Settings] & string;
+    [K in SettingsKey]: KnownSettings[K] extends string | null ? K : never;
+}[SettingsKey];
 
 function computeUpdateAvailable(data: InstallableDepData | null): boolean {
     if (!data?.installed) return false;

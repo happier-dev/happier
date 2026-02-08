@@ -5,11 +5,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { AIBackendProfile } from '@/sync/settings';
+import { AIBackendProfile, type SavedSecret } from '@/sync/settings';
 import { normalizeProfileDefaultPermissionMode, type PermissionMode } from '@/sync/permissionTypes';
 import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType, normalizePermissionModeForAgentType } from '@/sync/permissionModeOptions';
-import { inferSourceModeGroupForPermissionMode } from '@/sync/permissionDefaults';
-import { mapPermissionModeAcrossAgents } from '@/sync/permissionMapping';
 import { SessionTypeSelector } from '@/components/SessionTypeSelector';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -90,7 +88,7 @@ export function ProfileEditForm({
 
     const toggleFavoriteMachineId = React.useCallback((machineIdToToggle: string) => {
         if (favoriteMachines.includes(machineIdToToggle)) {
-            setFavoriteMachines(favoriteMachines.filter((id) => id !== machineIdToToggle));
+            setFavoriteMachines(favoriteMachines.filter((id: string) => id !== machineIdToToggle));
         } else {
             setFavoriteMachines([machineIdToToggle, ...favoriteMachines]);
         }
@@ -151,19 +149,13 @@ export function ProfileEditForm({
         const legacyRaw = profile.defaultPermissionMode as PermissionMode | undefined;
         const legacy = legacyRaw ? normalizeProfileDefaultPermissionMode(legacyRaw) : undefined;
         if (!legacy) return out;
-
-        const fromGroup = inferSourceModeGroupForPermissionMode(legacy);
-        const from =
-            enabledAgentIds.find((id) => getAgentCore(id).permissions.modeGroup === fromGroup) ??
-            enabledAgentIds[0] ??
-            DEFAULT_AGENT_ID;
         const compat = profile.compatibility ?? {};
 
         for (const agentId of enabledAgentIds) {
             const explicitCompat = compat[agentId];
             const isCompat = typeof explicitCompat === 'boolean' ? explicitCompat : (profile.isBuiltIn ? false : true);
             if (!isCompat) continue;
-            out[agentId] = normalizePermissionModeForAgentType(mapPermissionModeAcrossAgents(legacy, from, agentId), agentId);
+            out[agentId] = normalizePermissionModeForAgentType(legacy, agentId);
         }
 
         return out;
@@ -258,7 +250,11 @@ export function ProfileEditForm({
             const req = sourceRequirementsByName[envVarName];
             const keep = usedRequirementVarNames.has(envVarName) && Boolean(req?.useSecretVault);
             if (keep) {
-                nextBindings[envVarName] = secretId;
+                if (typeof secretId === 'string') {
+                    nextBindings[envVarName] = secretId;
+                } else {
+                    changed = true;
+                }
             } else {
                 changed = true;
             }
@@ -289,7 +285,7 @@ export function ProfileEditForm({
     const getDefaultSecretNameForSourceVar = React.useCallback((sourceVarName: string): string | null => {
         const id = secretBindingsByProfileId[profile.id]?.[sourceVarName] ?? null;
         if (!id) return null;
-        return secrets.find((s) => s.id === id)?.name ?? null;
+        return secrets.find((s: SavedSecret) => s.id === id)?.name ?? null;
     }, [profile.id, secretBindingsByProfileId, secrets]);
 
     const openDefaultSecretModalForSourceVar = React.useCallback((sourceVarName: string) => {

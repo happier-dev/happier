@@ -1,17 +1,35 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import type { AIBackendProfile } from '@/sync/settings';
+import { ProfileEditForm } from './ProfileEditForm';
 
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(
+    globalThis as typeof globalThis & {
+        IS_REACT_ACT_ENVIRONMENT?: boolean;
+    }
+).IS_REACT_ACT_ENVIRONMENT = true;
+
+const capture = vi.hoisted(() => ({
+    routerPush: vi.fn(),
+    modalShow: vi.fn(),
+    previewMachinePress: null as null | (() => void),
+    reset() {
+        this.routerPush.mockReset();
+        this.modalShow.mockReset();
+        this.previewMachinePress = null;
+    },
+}));
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-const routerPushMock = vi.fn();
-
 vi.mock('react-native', () => ({
-    Platform: { OS: 'ios', select: (spec: any) => (spec && 'ios' in spec ? spec.ios : spec?.default) },
+    Platform: {
+        OS: 'ios',
+        select: (spec: { ios?: unknown; default?: unknown }) => (spec && 'ios' in spec ? spec.ios : spec?.default),
+    },
     View: 'View',
     Text: 'Text',
     TextInput: 'TextInput',
@@ -21,7 +39,7 @@ vi.mock('react-native', () => ({
 }));
 
 vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: routerPushMock }),
+    useRouter: () => ({ push: capture.routerPush }),
     useLocalSearchParams: () => ({}),
 }));
 
@@ -47,9 +65,11 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-const modalShowMock = vi.fn();
 vi.mock('@/modal', () => ({
-    Modal: { show: (...args: any[]) => modalShowMock(...args), alert: vi.fn() },
+    Modal: {
+        show: (...args: unknown[]) => capture.modalShow(...args),
+        alert: vi.fn(),
+    },
 }));
 
 vi.mock('@/sync/storage', () => ({
@@ -57,10 +77,10 @@ vi.mock('@/sync/storage', () => ({
     useAllMachines: () => [{ id: 'm1', metadata: { displayName: 'M1' } }],
     useMachine: () => null,
     useSettingMutable: (key: string) => {
-        if (key === 'favoriteMachines') return [[], vi.fn()];
-        if (key === 'secrets') return [[], vi.fn()];
-        if (key === 'secretBindingsByProfileId') return [{}, vi.fn()];
-        return [[], vi.fn()];
+        if (key === 'favoriteMachines') return [[], vi.fn()] as const;
+        if (key === 'secrets') return [[], vi.fn()] as const;
+        if (key === 'secretBindingsByProfileId') return [{}, vi.fn()] as const;
+        return [[], vi.fn()] as const;
     },
 }));
 
@@ -97,18 +117,17 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
-    ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemList: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: ({ children }: any) => React.createElement(React.Fragment, null, children),
+    ItemGroup: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
 }));
 
-let capturedPreviewMachineItem: any = null;
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => {
-        if (props?.onPress && props?.title === 'profiles.previewMachine.itemTitle') {
-            capturedPreviewMachineItem = props;
+    Item: (props: { title?: string; onPress?: () => void }) => {
+        if (props?.title === 'profiles.previewMachine.itemTitle' && typeof props.onPress === 'function') {
+            capture.previewMachinePress = props.onPress;
         }
         return null;
     },
@@ -127,21 +146,13 @@ vi.mock('@/sync/profileUtils', () => ({
 }));
 
 vi.mock('@/sync/permissionTypes', () => ({
-    normalizeProfileDefaultPermissionMode: (x: any) => x,
+    normalizeProfileDefaultPermissionMode: <T,>(value: T) => value,
 }));
 
 vi.mock('@/sync/permissionModeOptions', () => ({
     getPermissionModeLabelForAgentType: () => '',
     getPermissionModeOptionsForAgentType: () => [],
-    normalizePermissionModeForAgentType: (x: any) => x,
-}));
-
-vi.mock('@/sync/permissionDefaults', () => ({
-    inferSourceModeGroupForPermissionMode: () => 'default',
-}));
-
-vi.mock('@/sync/permissionMapping', () => ({
-    mapPermissionModeAcrossAgents: (x: any) => x,
+    normalizePermissionModeForAgentType: <T,>(value: T) => value,
 }));
 
 vi.mock('@/components/layout', () => ({
@@ -156,28 +167,29 @@ vi.mock('@/components/secrets/requirements', () => ({
     SecretRequirementModal: () => null,
 }));
 
+function buildProfile(): AIBackendProfile {
+    return {
+        id: 'p1',
+        name: 'P',
+        environmentVariables: [],
+        defaultPermissionModeByAgent: {},
+        compatibility: { claude: true, codex: true, gemini: true },
+        envVarRequirements: [],
+        isBuiltIn: false,
+        createdAt: 0,
+        updatedAt: 0,
+        version: '1.0.0',
+    };
+}
+
 describe('ProfileEditForm (native preview machine picker)', () => {
     it('opens a picker screen instead of a modal overlay on native', async () => {
-        const { ProfileEditForm } = await import('@/components/profiles/edit');
-        capturedPreviewMachineItem = null;
-        routerPushMock.mockClear();
-        modalShowMock.mockClear();
+        capture.reset();
 
         await act(async () => {
             renderer.create(
                 React.createElement(ProfileEditForm, {
-                    profile: {
-                        id: 'p1',
-                        name: 'P',
-                        environmentVariables: [],
-                        defaultPermissionModeByAgent: {},
-                        compatibility: { claude: true, codex: true, gemini: true },
-                        envVarRequirements: [],
-                        isBuiltIn: false,
-                        createdAt: 0,
-                        updatedAt: 0,
-                        version: '1.0.0',
-                    },
+                    profile: buildProfile(),
                     machineId: null,
                     onSave: () => true,
                     onCancel: vi.fn(),
@@ -185,15 +197,15 @@ describe('ProfileEditForm (native preview machine picker)', () => {
             );
         });
 
-        expect(capturedPreviewMachineItem).toBeTruthy();
+        expect(capture.previewMachinePress).toBeTruthy();
 
         await act(async () => {
-            capturedPreviewMachineItem.onPress();
+            capture.previewMachinePress?.();
         });
 
-        expect(modalShowMock).not.toHaveBeenCalled();
-        expect(routerPushMock).toHaveBeenCalledTimes(1);
-        expect(routerPushMock).toHaveBeenCalledWith({
+        expect(capture.modalShow).not.toHaveBeenCalled();
+        expect(capture.routerPush).toHaveBeenCalledTimes(1);
+        expect(capture.routerPush).toHaveBeenCalledWith({
             pathname: '/new/pick/preview-machine',
             params: {},
         });
