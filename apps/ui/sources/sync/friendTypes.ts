@@ -1,78 +1,19 @@
-import * as z from 'zod';
-import { ImageRefSchema } from './profile';
+import type { RelationshipStatus, UserProfile } from '@happier-dev/protocol';
 
-//
-// Relationship Status
-//
-
-export const RelationshipStatusSchema = z.enum(['none', 'requested', 'pending', 'friend', 'rejected']);
-export type RelationshipStatus = z.infer<typeof RelationshipStatusSchema>;
-
-//
-// User Profile (Friend)
-//
-
-export const UserProfileSchema = z.object({
-    id: z.string(),
-    firstName: z.string(),
-    lastName: z.string().nullable(),
-    avatar: z.object({
-        path: z.string(),
-        url: z.string(),
-        width: z.number().optional(),
-        height: z.number().optional(),
-        thumbhash: z.string().optional()
-    }).nullable(),
-    username: z.string(),
-    bio: z.string().nullable(),
-    status: RelationshipStatusSchema,
-    publicKey: z.string(),
-    // Optional for backward compatibility with older servers.
-    contentPublicKey: z.string().nullable().optional(),
-    contentPublicKeySig: z.string().nullable().optional(),
-});
-
-export type UserProfile = z.infer<typeof UserProfileSchema>;
-
-// Friend Request type no longer used in new API
-
-//
-// Relationship Updated Event
-//
-
-export const RelationshipUpdatedEventSchema = z.object({
-    fromUserId: z.string(),
-    toUserId: z.string(),
-    status: RelationshipStatusSchema,
-    action: z.enum(['created', 'updated', 'deleted']),
-    fromUser: UserProfileSchema.optional(),
-    toUser: UserProfileSchema.optional(),
-    timestamp: z.number()
-});
-
-export type RelationshipUpdatedEvent = z.infer<typeof RelationshipUpdatedEventSchema>;
-
-//
-// API Response Types
-//
-
-export const UserResponseSchema = z.object({
-    user: UserProfileSchema
-});
-
-export type UserResponse = z.infer<typeof UserResponseSchema>;
-
-export const FriendsResponseSchema = z.object({
-    friends: z.array(UserProfileSchema)
-});
-
-export type FriendsResponse = z.infer<typeof FriendsResponseSchema>;
-
-export const UsersSearchResponseSchema = z.object({
-    users: z.array(UserProfileSchema)
-});
-
-export type UsersSearchResponse = z.infer<typeof UsersSearchResponseSchema>;
+export {
+    RelationshipStatusSchema,
+    type RelationshipStatus,
+    UserProfileSchema,
+    type UserProfile,
+    UserResponseSchema,
+    type UserResponse,
+    FriendsResponseSchema,
+    type FriendsResponse,
+    UsersSearchResponseSchema,
+    type UsersSearchResponse,
+    RelationshipUpdatedEventSchema,
+    type RelationshipUpdatedEvent,
+} from '@happier-dev/protocol';
 
 //
 // Utility functions

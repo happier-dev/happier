@@ -1,10 +1,15 @@
 import type { PermissionMode } from './permissionTypes';
-import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, normalizePermissionModeForGroup } from './permissionTypes';
-import { mapPermissionModeAcrossAgents } from './permissionMapping';
-import { AGENT_IDS, getAgentCore, type AgentId } from '@/agents/catalog';
-import { isPermissionMode } from './permissionTypes';
+import { normalizePermissionModeForGroup } from './permissionTypes';
+import { getAgentCore, type AgentId } from '@/agents/catalog';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 export type AccountPermissionDefaults = Readonly<Partial<Record<AgentId, PermissionMode>>>;
+
+function normalizeForAgentType(mode: PermissionMode, agentType: AgentId): PermissionMode {
+    const group = getAgentCore(agentType).permissions.modeGroup;
+    const normalized = (parsePermissionIntentAlias(mode) ?? 'default') as PermissionMode;
+    return normalizePermissionModeForGroup(normalized, group);
+}
 
 export function readAccountPermissionDefaults(
     raw: unknown,
@@ -14,23 +19,9 @@ export function readAccountPermissionDefaults(
     const out: Partial<Record<AgentId, PermissionMode>> = {};
     for (const agentId of enabledAgentIds) {
         const v = input[agentId];
-        out[agentId] = isPermissionMode(v) ? v : 'default';
+        out[agentId] = typeof v === 'string' ? normalizeForAgentType(v as PermissionMode, agentId) : 'default';
     }
     return out;
-}
-
-function normalizeForAgentType(mode: PermissionMode, agentType: AgentId): PermissionMode {
-    const group = getAgentCore(agentType).permissions.modeGroup;
-    return normalizePermissionModeForGroup(mode, group);
-}
-
-export function inferSourceModeGroupForPermissionMode(mode: PermissionMode): 'claude' | 'codexLike' {
-    // Modes unique to Codex/Gemini should map as codex-like; modes unique to Claude map as Claude.
-    // For shared 'default', the source agent doesn't matter.
-    if ((CODEX_LIKE_PERMISSION_MODES as readonly string[]).includes(mode) && !(CLAUDE_PERMISSION_MODES as readonly string[]).includes(mode)) {
-        return 'codexLike';
-    }
-    return 'claude';
 }
 
 export function resolveNewSessionDefaultPermissionMode(params: Readonly<{
@@ -47,12 +38,7 @@ export function resolveNewSessionDefaultPermissionMode(params: Readonly<{
     }
 
     if (legacyProfileDefaultPermissionMode) {
-        const fromGroup = inferSourceModeGroupForPermissionMode(legacyProfileDefaultPermissionMode);
-        const from =
-            AGENT_IDS.find((id) => getAgentCore(id).permissions.modeGroup === fromGroup) ??
-            agentType;
-        const mapped = mapPermissionModeAcrossAgents(legacyProfileDefaultPermissionMode, from, agentType);
-        return normalizeForAgentType(mapped, agentType);
+        return normalizeForAgentType(legacyProfileDefaultPermissionMode, agentType);
     }
 
     const raw = accountDefaults[agentType] ?? 'default';

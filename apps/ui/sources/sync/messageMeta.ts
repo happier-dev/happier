@@ -1,4 +1,5 @@
 import type { MessageMeta } from './typesMessageMeta';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 export function buildOutgoingMessageMeta(params: {
     sentFrom: string;
@@ -8,10 +9,12 @@ export function buildOutgoingMessageMeta(params: {
     appendSystemPrompt: string;
     displayText?: string;
 }): MessageMeta {
+    const permissionModeToken = typeof params.permissionMode === 'string' ? params.permissionMode : '';
+    const canonicalPermissionMode = parsePermissionIntentAlias(permissionModeToken) ?? 'default';
     return {
         source: 'ui',
         sentFrom: params.sentFrom,
-        permissionMode: params.permissionMode,
+        permissionMode: canonicalPermissionMode,
         appendSystemPrompt: params.appendSystemPrompt,
         ...(params.displayText !== undefined ? { displayText: params.displayText } : {}),
         ...(params.model !== undefined ? { model: params.model } : {}),

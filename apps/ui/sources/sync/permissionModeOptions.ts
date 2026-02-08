@@ -2,8 +2,10 @@ import { t } from '@/text';
 import type { TranslationKey } from '@/text';
 import type { AgentType } from './modelOptions';
 import type { PermissionMode } from './permissionTypes';
+import type { Metadata } from './storageTypes';
 import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES, normalizePermissionModeForGroup } from './permissionTypes';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 export type PermissionModeOption = Readonly<{
     value: PermissionMode;
@@ -23,9 +25,10 @@ const PERMISSION_MODE_KEY_SEGMENT: Record<PermissionMode, string> = {
 };
 
 const BADGE_KEY_SEGMENT_CLAUDE: Partial<Record<PermissionMode, string>> = {
-    acceptEdits: 'badgeAccept',
+    'read-only': 'badgeReadOnly',
+    'safe-yolo': 'badgeSafeYolo',
+    yolo: 'badgeYolo',
     plan: 'badgePlan',
-    bypassPermissions: 'badgeYolo',
 };
 
 const BADGE_KEY_SEGMENT_CODEX_LIKE: Partial<Record<PermissionMode, string>> = {
@@ -50,6 +53,12 @@ export function getPermissionModeLabelForAgentType(agentType: AgentType, mode: P
     return t(`${prefix}.${seg}` as TranslationKey);
 }
 
+function getPermissionModeDescriptionForAgentType(agentType: AgentType, mode: PermissionMode): string {
+    const prefix = getAgentPermissionModeI18nPrefix(agentType);
+    const seg = PERMISSION_MODE_KEY_SEGMENT[mode] ?? 'default';
+    return t(`${prefix}.${seg}` as TranslationKey);
+}
+
 export function getPermissionModesForAgentType(agentType: AgentType): readonly PermissionMode[] {
     const agentId = resolveAgentIdFromFlavor(agentType) ?? DEFAULT_AGENT_ID;
     const group = getAgentCore(agentId).permissions.modeGroup;
@@ -61,25 +70,33 @@ export function getPermissionModeOptionsForAgentType(agentType: AgentType): read
     const group = getAgentCore(agentId).permissions.modeGroup;
     if (group === 'codexLike') {
         return [
-            { value: 'default', label: getPermissionModeLabelForAgentType(agentType, 'default'), description: 'Use CLI permission settings', icon: 'shield-outline' },
-            { value: 'read-only', label: getPermissionModeLabelForAgentType(agentType, 'read-only'), description: 'Read-only mode', icon: 'eye-outline' },
-            { value: 'safe-yolo', label: getPermissionModeLabelForAgentType(agentType, 'safe-yolo'), description: 'Workspace write with approval', icon: 'shield-checkmark-outline' },
-            { value: 'yolo', label: getPermissionModeLabelForAgentType(agentType, 'yolo'), description: 'Full access, skip permissions', icon: 'flash-outline' },
+            { value: 'default', label: getPermissionModeLabelForAgentType(agentType, 'default'), description: getPermissionModeDescriptionForAgentType(agentType, 'default'), icon: 'shield-outline' },
+            { value: 'read-only', label: getPermissionModeLabelForAgentType(agentType, 'read-only'), description: getPermissionModeDescriptionForAgentType(agentType, 'read-only'), icon: 'eye-outline' },
+            { value: 'safe-yolo', label: getPermissionModeLabelForAgentType(agentType, 'safe-yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'safe-yolo'), icon: 'shield-checkmark-outline' },
+            { value: 'yolo', label: getPermissionModeLabelForAgentType(agentType, 'yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'yolo'), icon: 'flash-outline' },
         ];
     }
 
     return [
-        { value: 'default', label: getPermissionModeLabelForAgentType(agentType, 'default'), description: 'Ask for permissions', icon: 'shield-outline' },
-        { value: 'acceptEdits', label: getPermissionModeLabelForAgentType(agentType, 'acceptEdits'), description: 'Auto-approve edits', icon: 'checkmark-outline' },
-        { value: 'plan', label: getPermissionModeLabelForAgentType(agentType, 'plan'), description: 'Plan before executing', icon: 'list-outline' },
-        { value: 'bypassPermissions', label: getPermissionModeLabelForAgentType(agentType, 'bypassPermissions'), description: 'Skip all permissions', icon: 'flash-outline' },
+        { value: 'default', label: getPermissionModeLabelForAgentType(agentType, 'default'), description: getPermissionModeDescriptionForAgentType(agentType, 'default'), icon: 'shield-outline' },
+        { value: 'read-only', label: getPermissionModeLabelForAgentType(agentType, 'read-only'), description: getPermissionModeDescriptionForAgentType(agentType, 'read-only'), icon: 'eye-outline' },
+        { value: 'safe-yolo', label: getPermissionModeLabelForAgentType(agentType, 'safe-yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'safe-yolo'), icon: 'shield-checkmark-outline' },
+        { value: 'yolo', label: getPermissionModeLabelForAgentType(agentType, 'yolo'), description: getPermissionModeDescriptionForAgentType(agentType, 'yolo'), icon: 'flash-outline' },
+        { value: 'plan', label: getPermissionModeLabelForAgentType(agentType, 'plan'), description: getPermissionModeDescriptionForAgentType(agentType, 'plan'), icon: 'list-outline' },
     ];
+}
+
+export function getPermissionModeOptionsForSession(agentType: AgentType, metadata: Metadata | null): readonly PermissionModeOption[] {
+    // ACP session modes (e.g. OpenCode plan/build) are surfaced via a separate UI control.
+    // Permission modes represent approval/sandbox intent only.
+    return getPermissionModeOptionsForAgentType(agentType);
 }
 
 export function normalizePermissionModeForAgentType(mode: PermissionMode, agentType: AgentType): PermissionMode {
     const agentId = resolveAgentIdFromFlavor(agentType) ?? DEFAULT_AGENT_ID;
     const group = getAgentCore(agentId).permissions.modeGroup;
-    return normalizePermissionModeForGroup(mode, group);
+    const normalized = (parsePermissionIntentAlias(mode) ?? 'default') as PermissionMode;
+    return normalizePermissionModeForGroup(normalized, group);
 }
 
 export function getPermissionModeBadgeLabelForAgentType(agentType: AgentType, mode: PermissionMode): string {

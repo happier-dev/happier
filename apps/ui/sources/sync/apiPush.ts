@@ -3,8 +3,12 @@ import { backoff } from '@/utils/time';
 import { HappyError } from '@/utils/errors';
 import { getServerUrl } from './serverConfig';
 
-export async function registerPushToken(credentials: AuthCredentials, token: string): Promise<void> {
-    const API_ENDPOINT = getServerUrl();
+export async function registerPushToken(
+    credentials: AuthCredentials,
+    token: string,
+    opts: Readonly<{ apiEndpoint?: string }> = {},
+): Promise<void> {
+    const API_ENDPOINT = (opts.apiEndpoint ?? getServerUrl()).trim().replace(/\/+$/, '');
     await backoff(async () => {
         const response = await fetch(`${API_ENDPOINT}/v1/push-tokens`, {
             method: 'POST',

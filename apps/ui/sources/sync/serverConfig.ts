@@ -1,25 +1,34 @@
-import { MMKV } from 'react-native-mmkv';
-import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/storageScope';
+import { getActiveServerUrl, setActiveServerId, upsertServerProfile } from './serverProfiles';
 
-// Separate MMKV instance for server config that persists across logouts
-const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
-const serverConfigScope = isWebRuntime ? null : readStorageScopeFromEnv();
-const serverConfigStorage = new MMKV({ id: scopedStorageId('server-config', serverConfigScope) });
-
-const SERVER_KEY = 'custom-server-url';
 const DEFAULT_SERVER_URL = 'https://api.happier.dev';
+const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
 
 export function getServerUrl(): string {
-    return serverConfigStorage.getString(SERVER_KEY) || 
-           process.env.EXPO_PUBLIC_HAPPY_SERVER_URL || 
-           DEFAULT_SERVER_URL;
+    return getActiveServerUrl();
 }
 
 export function setServerUrl(url: string | null): void {
-    if (url && url.trim()) {
-        serverConfigStorage.set(SERVER_KEY, url.trim());
-    } else {
-        serverConfigStorage.delete(SERVER_KEY);
+    const normalized = String(url ?? '').trim().replace(/\/+$/, '');
+    if (!normalized) {
+        setActiveServerId('official', { scope: 'device' });
+        if (isWebRuntime) {
+            try {
+                setActiveServerId('official', { scope: 'tab' });
+            } catch {
+                // ignore
+            }
+        }
+        return;
+    }
+
+    const profile = upsertServerProfile({ serverUrl: normalized });
+    setActiveServerId(profile.id, { scope: 'device' });
+    if (isWebRuntime) {
+        try {
+            setActiveServerId(profile.id, { scope: 'tab' });
+        } catch {
+            // ignore
+        }
     }
 }
 

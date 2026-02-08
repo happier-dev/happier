@@ -156,6 +156,15 @@ export async function sendFriendRequest(
                 } catch {
                     // ignore
                 }
+                if (response.status === 400 && message === 'provider-required') {
+                    throw new HappyError(message, false, { status: 400, kind: 'auth' });
+                }
+                if (response.status === 400 && message === 'username-required') {
+                    throw new HappyError(message, false, { status: 400, kind: 'auth' });
+                }
+                if (response.status === 400 && message === 'friends-disabled') {
+                    throw new HappyError(message, false, { status: 400, kind: 'config' });
+                }
                 throw new HappyError(message, false);
             }
             throw new Error(`Failed to add friend: ${response.status}`);

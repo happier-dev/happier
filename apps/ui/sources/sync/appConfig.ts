@@ -6,9 +6,16 @@ export interface AppConfig {
     revenueCatAppleKey?: string;
     revenueCatGoogleKey?: string;
     revenueCatStripeKey?: string;
-    elevenLabsAgentIdDev?: string;
-    elevenLabsAgentIdProd?: string;
     serverUrl?: string;
+    enableDevPushTokenRegistration?: boolean;
+}
+
+function parseBooleanEnv(value: string | undefined): boolean | undefined {
+    if (!value) return undefined;
+    const v = value.trim().toLowerCase();
+    if (v === '1' || v === 'true' || v === 'yes' || v === 'on') return true;
+    if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
+    return undefined;
 }
 
 /**
@@ -42,7 +49,7 @@ export function loadAppConfig(): AppConfig {
             const appConfig = exponentManifest?.extra?.app;
             if (appConfig && typeof appConfig === 'object') {
                 Object.assign(config, appConfig);
-                console.log('[loadAppConfig] Loaded from ExponentConstants:', Object.keys(config));
+                if (__DEV__) console.log('[loadAppConfig] Loaded from ExponentConstants:', Object.keys(config));
             }
         }
     } catch (e) {
@@ -55,46 +62,42 @@ export function loadAppConfig(): AppConfig {
             const appConfig = Constants.expoConfig.extra.app;
             if (typeof appConfig === 'object') {
                 Object.assign(config, appConfig);
-                console.log('[loadAppConfig] Loaded from Constants.expoConfig:', Object.keys(config));
+                if (__DEV__) console.log('[loadAppConfig] Loaded from Constants.expoConfig:', Object.keys(config));
             }
         }
     } catch (e) {
         console.warn('[loadAppConfig] Error accessing Constants.expoConfig:', e);
     }
 
-    console.log('[loadAppConfig] Final merged config:', JSON.stringify(config, null, 2));
-
     // Override with EXPO_PUBLIC_* env vars if present at runtime and different
     // Why: Native config is baked at prebuild time, but EXPO_PUBLIC_* vars
     // are available at runtime via process.env. This allows devs to change
     // keys without rebuilding native code.
     if (process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE && config.revenueCatAppleKey !== process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE) {
-        console.log('[loadAppConfig] Override revenueCatAppleKey from EXPO_PUBLIC_REVENUE_CAT_APPLE');
+        if (__DEV__) console.log('[loadAppConfig] Override revenueCatAppleKey from EXPO_PUBLIC_REVENUE_CAT_APPLE');
         config.revenueCatAppleKey = process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE;
     }
     if (process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE && config.revenueCatGoogleKey !== process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE) {
-        console.log('[loadAppConfig] Override revenueCatGoogleKey from EXPO_PUBLIC_REVENUE_CAT_GOOGLE');
+        if (__DEV__) console.log('[loadAppConfig] Override revenueCatGoogleKey from EXPO_PUBLIC_REVENUE_CAT_GOOGLE');
         config.revenueCatGoogleKey = process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE;
     }
     if (process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE && config.revenueCatStripeKey !== process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE) {
-        console.log('[loadAppConfig] Override revenueCatStripeKey from EXPO_PUBLIC_REVENUE_CAT_STRIPE');
+        if (__DEV__) console.log('[loadAppConfig] Override revenueCatStripeKey from EXPO_PUBLIC_REVENUE_CAT_STRIPE');
         config.revenueCatStripeKey = process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE;
     }
     if (process.env.EXPO_PUBLIC_POSTHOG_KEY && config.postHogKey !== process.env.EXPO_PUBLIC_POSTHOG_KEY) {
-        console.log('[loadAppConfig] Override postHogKey from EXPO_PUBLIC_POSTHOG_KEY');
+        if (__DEV__) console.log('[loadAppConfig] Override postHogKey from EXPO_PUBLIC_POSTHOG_KEY');
         config.postHogKey = process.env.EXPO_PUBLIC_POSTHOG_KEY;
     }
-    if (process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID_DEV && config.elevenLabsAgentIdDev !== process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID_DEV) {
-        console.log('[loadAppConfig] Override elevenLabsAgentIdDev from EXPO_PUBLIC_ELEVENLABS_AGENT_ID_DEV');
-        config.elevenLabsAgentIdDev = process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID_DEV;
-    }
-    if (process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID_PROD && config.elevenLabsAgentIdProd !== process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID_PROD) {
-        console.log('[loadAppConfig] Override elevenLabsAgentIdProd from EXPO_PUBLIC_ELEVENLABS_AGENT_ID_PROD');
-        config.elevenLabsAgentIdProd = process.env.EXPO_PUBLIC_ELEVENLABS_AGENT_ID_PROD;
-    }
     if (process.env.EXPO_PUBLIC_SERVER_URL && config.serverUrl !== process.env.EXPO_PUBLIC_SERVER_URL) {
-        console.log('[loadAppConfig] Override serverUrl from EXPO_PUBLIC_SERVER_URL');
+        if (__DEV__) console.log('[loadAppConfig] Override serverUrl from EXPO_PUBLIC_SERVER_URL');
         config.serverUrl = process.env.EXPO_PUBLIC_SERVER_URL;
+    }
+
+    const enableDevPushFromEnv = parseBooleanEnv(process.env.EXPO_PUBLIC_ENABLE_DEV_PUSH_TOKEN_REGISTRATION);
+    if (enableDevPushFromEnv !== undefined && config.enableDevPushTokenRegistration !== enableDevPushFromEnv) {
+        if (__DEV__) console.log('[loadAppConfig] Override enableDevPushTokenRegistration from EXPO_PUBLIC_ENABLE_DEV_PUSH_TOKEN_REGISTRATION');
+        config.enableDevPushTokenRegistration = enableDevPushFromEnv;
     }
 
     return config as AppConfig;

@@ -1,39 +1,12 @@
 import { getServerUrl } from './serverConfig';
 
-export type ServerFeatures = {
-    features: {
-        sessionSharing: boolean;
-        publicSharing: boolean;
-        contentKeys: boolean;
-    };
-};
+import { FeaturesResponseSchema, type FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 
 let cached: { value: ServerFeatures | null; at: number } | null = null;
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
 function parseServerFeatures(raw: unknown): ServerFeatures | null {
-    if (!isPlainObject(raw)) return null;
-    const features = raw.features;
-    if (!isPlainObject(features)) return null;
-
-    const sessionSharing = features.sessionSharing;
-    const publicSharing = features.publicSharing;
-    const contentKeys = features.contentKeys;
-
-    if (typeof sessionSharing !== 'boolean') return null;
-    if (typeof publicSharing !== 'boolean') return null;
-    if (typeof contentKeys !== 'boolean') return null;
-
-    return {
-        features: {
-            sessionSharing,
-            publicSharing,
-            contentKeys,
-        },
-    };
+    const parsed = FeaturesResponseSchema.safeParse(raw);
+    return parsed.success ? parsed.data : null;
 }
 
 export async function getServerFeatures(params?: { timeoutMs?: number; force?: boolean }): Promise<ServerFeatures | null> {
@@ -74,8 +47,16 @@ export async function getServerFeatures(params?: { timeoutMs?: number; force?: b
     }
 }
 
-export async function isSessionSharingSupported(params?: { timeoutMs?: number }): Promise<boolean> {
-    const features = await getServerFeatures({ timeoutMs: params?.timeoutMs });
-    return features?.features.sessionSharing === true;
+export function getCachedServerFeatures(): ServerFeatures | null {
+    return cached?.value ?? null;
 }
 
+export async function isSessionSharingSupported(params?: { timeoutMs?: number }): Promise<boolean> {
+    const features = await getServerFeatures({ timeoutMs: params?.timeoutMs });
+    return features?.features?.sharing?.session?.enabled === true;
+}
+
+export async function isHappierVoiceSupported(params?: { timeoutMs?: number }): Promise<boolean> {
+    const features = await getServerFeatures({ timeoutMs: params?.timeoutMs });
+    return features?.features?.voice?.enabled === true;
+}
