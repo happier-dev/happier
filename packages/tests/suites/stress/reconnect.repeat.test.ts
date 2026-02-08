@@ -1,20 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
+import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
+
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { createSession, fetchAllMessages } from '../../src/testkit/sessions';
+import { countDuplicateLocalIds, createSession, fetchAllMessages, maxMessageSeq } from '../../src/testkit/sessions';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
-import { writeTestManifest } from '../../src/testkit/manifest';
+import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { waitFor } from '../../src/testkit/timing';
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const n = value ? Number.parseInt(value, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+import { parsePositiveInt } from '../../src/testkit/numbers';
 
 const run = createRunDirs({ runLabel: 'stress' });
 
@@ -34,8 +32,8 @@ describe('stress: reconnect repeat', () => {
   });
 
   it('repeats multi-device disconnect/reconnect and verifies transcript head convergence', async () => {
-    const repeats = parsePositiveInt(process.env.HAPPY_E2E_REPEAT, 5);
-    const saveArtifactsOnSuccess = envFlag('HAPPY_E2E_SAVE_ARTIFACTS', false);
+    const repeats = parsePositiveInt(process.env.HAPPIER_E2E_REPEAT ?? process.env.HAPPY_E2E_REPEAT, 5);
+    const saveArtifactsOnSuccess = envFlag(['HAPPIER_E2E_SAVE_ARTIFACTS', 'HAPPY_E2E_SAVE_ARTIFACTS'], false);
     const startedAt = new Date().toISOString();
 
     for (let i = 1; i <= repeats; i++) {
@@ -45,16 +43,16 @@ describe('stress: reconnect repeat', () => {
       const deviceA = createUserScopedSocketCollector(server.baseUrl, token);
       const deviceB = createUserScopedSocketCollector(server.baseUrl, token);
 
-      writeTestManifest(testDir, {
+      writeTestManifestForServer({
+        testDir,
+        server,
         startedAt,
         runId: run.runId,
         testName: `repeat-${i}`,
-        baseUrl: server.baseUrl,
-        ports: { server: server.port },
         sessionIds: [sessionId],
         env: {
-          HAPPY_E2E_REPEAT: process.env.HAPPY_E2E_REPEAT,
-          HAPPY_E2E_SAVE_ARTIFACTS: process.env.HAPPY_E2E_SAVE_ARTIFACTS,
+          HAPPIER_E2E_REPEAT: process.env.HAPPIER_E2E_REPEAT ?? process.env.HAPPY_E2E_REPEAT,
+          HAPPIER_E2E_SAVE_ARTIFACTS: process.env.HAPPIER_E2E_SAVE_ARTIFACTS ?? process.env.HAPPY_E2E_SAVE_ARTIFACTS,
         },
       });
 
@@ -68,11 +66,18 @@ describe('stress: reconnect repeat', () => {
       deviceB.connect();
       await waitFor(() => deviceA.isConnected() && deviceB.isConnected(), { timeoutMs: 20_000 });
 
+      const expectedSeqs: number[] = [];
+      const expectedLocalIds: string[] = [];
       const send = async (label: string) => {
         const ciphertext = Buffer.from(label, 'utf8').toString('base64');
         const localId = randomUUID();
-        const ack = await deviceA.emitWithAck<{ ok: boolean; seq?: number }>('message', { sid: sessionId, message: ciphertext, localId });
+        const rawAck = await deviceA.emitWithAck<any>('message', { sid: sessionId, message: ciphertext, localId });
+        const ack = MessageAckResponseSchema.parse(rawAck);
         expect(ack.ok).toBe(true);
+        if (ack.ok === true) {
+          expectedSeqs.push(ack.seq);
+        }
+        expectedLocalIds.push(localId);
       };
 
       await send(`r${i}-m1`);
@@ -94,6 +99,12 @@ describe('stress: reconnect repeat', () => {
 
         // The exact number may be >5 if the server creates side effects; require at least what we sent.
         expect(transcript.length).toBeGreaterThanOrEqual(5);
+        expect(countDuplicateLocalIds(transcript)).toBe(0);
+        expect(maxMessageSeq(transcript)).toBeGreaterThanOrEqual(Math.max(...expectedSeqs));
+        const seqSet = new Set(transcript.map((m) => m.seq));
+        for (const seq of expectedSeqs) expect(seqSet.has(seq)).toBe(true);
+        const localIdSet = new Set(transcript.map((m) => m.localId).filter((v): v is string => typeof v === 'string'));
+        for (const localId of expectedLocalIds) expect(localIdSet.has(localId)).toBe(true);
         passed = true;
       } finally {
         await artifacts.dumpAll(testDir, { onlyIf: saveArtifactsOnSuccess || !passed });

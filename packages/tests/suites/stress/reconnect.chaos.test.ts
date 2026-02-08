@@ -8,14 +8,11 @@ import { createSession, fetchAllMessages, countDuplicateLocalIds, maxMessageSeq 
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
-import { writeTestManifest } from '../../src/testkit/manifest';
+import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { sleep, waitFor } from '../../src/testkit/timing';
 import { mulberry32, parseOptionalInt, pickOne, randomIntInclusive } from '../../src/testkit/seed';
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const n = value ? Number.parseInt(value, 10) : NaN;
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
+import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
+import { parsePositiveInt } from '../../src/testkit/numbers';
 
 const run = createRunDirs({ runLabel: 'stress' });
 
@@ -35,11 +32,11 @@ describe('stress: seeded reconnection chaos', () => {
   });
 
   it('injects seeded disconnects/reconnects and asserts transcript convergence invariants', async () => {
-    const repeats = parsePositiveInt(process.env.HAPPY_E2E_REPEAT, 10);
-    const saveArtifactsOnSuccess = envFlag('HAPPY_E2E_SAVE_ARTIFACTS', false);
-    const allowFlakeRetry = envFlag('HAPPY_E2E_FLAKE_RETRY', false);
+    const repeats = parsePositiveInt(process.env.HAPPIER_E2E_REPEAT ?? process.env.HAPPY_E2E_REPEAT, 10);
+    const saveArtifactsOnSuccess = envFlag(['HAPPIER_E2E_SAVE_ARTIFACTS', 'HAPPY_E2E_SAVE_ARTIFACTS'], false);
+    const allowFlakeRetry = envFlag(['HAPPIER_E2E_FLAKE_RETRY', 'HAPPY_E2E_FLAKE_RETRY'], false);
 
-    const seedFromEnv = parseOptionalInt(process.env.HAPPY_E2E_SEED);
+    const seedFromEnv = parseOptionalInt(process.env.HAPPIER_E2E_SEED ?? process.env.HAPPY_E2E_SEED);
     const globalSeed = seedFromEnv ?? (Date.now() & 0xffffffff);
     const startedAt = new Date().toISOString();
 
@@ -51,19 +48,19 @@ describe('stress: seeded reconnection chaos', () => {
       const testDir = run.testDir(`chaos-${i}-${scenario}-seed-${iterSeed}`);
       const { sessionId } = await createSession(server.baseUrl, token);
 
-      writeTestManifest(testDir, {
+      writeTestManifestForServer({
+        testDir,
+        server,
         startedAt,
         runId: run.runId,
         testName: `chaos-${i}`,
         seed: iterSeed,
-        baseUrl: server.baseUrl,
-        ports: { server: server.port },
         sessionIds: [sessionId],
         env: {
-          HAPPY_E2E_REPEAT: process.env.HAPPY_E2E_REPEAT,
-          HAPPY_E2E_SEED: process.env.HAPPY_E2E_SEED,
-          HAPPY_E2E_FLAKE_RETRY: process.env.HAPPY_E2E_FLAKE_RETRY,
-          HAPPY_E2E_SAVE_ARTIFACTS: process.env.HAPPY_E2E_SAVE_ARTIFACTS,
+          HAPPIER_E2E_REPEAT: process.env.HAPPIER_E2E_REPEAT ?? process.env.HAPPY_E2E_REPEAT,
+          HAPPIER_E2E_SEED: process.env.HAPPIER_E2E_SEED ?? process.env.HAPPY_E2E_SEED,
+          HAPPIER_E2E_FLAKE_RETRY: process.env.HAPPIER_E2E_FLAKE_RETRY ?? process.env.HAPPY_E2E_FLAKE_RETRY,
+          HAPPIER_E2E_SAVE_ARTIFACTS: process.env.HAPPIER_E2E_SAVE_ARTIFACTS ?? process.env.HAPPY_E2E_SAVE_ARTIFACTS,
         },
       });
 
@@ -82,10 +79,26 @@ describe('stress: seeded reconnection chaos', () => {
         const sendFromA = async (label: string) => {
           const ciphertext = Buffer.from(label, 'utf8').toString('base64');
           const localId = randomUUID();
-          const ack = await deviceA.emitWithAck<{ ok: boolean; seq: number }>('message', { sid: sessionId, message: ciphertext, localId });
+          const raw = await deviceA.emitWithAck<any>('message', { sid: sessionId, message: ciphertext, localId });
+          const ack = MessageAckResponseSchema.parse(raw);
           expect(ack.ok).toBe(true);
-          expectedSeqs.push(ack.seq);
+          if (ack.ok === true) {
+            expectedSeqs.push(ack.seq);
+          }
           expectedLocalIds.push(localId);
+
+          // Occasionally resend the same localId to simulate client retry noise.
+          // This must be safe (idempotent) and should not create duplicate transcript rows.
+          if (randomIntInclusive(rng, 1, 10) === 1) {
+            const rawRetry = await deviceA.emitWithAck<any>('message', { sid: sessionId, message: ciphertext, localId });
+            const retryAck = MessageAckResponseSchema.parse(rawRetry);
+            expect(retryAck.ok).toBe(true);
+            if (ack.ok === true && retryAck.ok === true) {
+              expect(retryAck.seq).toBe(ack.seq);
+              // Prefer didWrite=false on idempotent duplicates.
+              expect(retryAck.didWrite).toBe(false);
+            }
+          }
         };
 
         let passed = false;
@@ -174,4 +187,3 @@ describe('stress: seeded reconnection chaos', () => {
     }
   });
 });
-
