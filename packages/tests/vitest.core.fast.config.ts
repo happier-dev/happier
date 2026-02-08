@@ -10,6 +10,7 @@ export default defineConfig({
       'src/testkit/env.spec.ts',
       'src/testkit/daemon/daemon.statePath.spec.ts',
     ],
+    exclude: ['suites/core-e2e/**/*.slow.e2e.test.ts'],
     testTimeout: 180_000,
     hookTimeout: 180_000,
     globals: false,
