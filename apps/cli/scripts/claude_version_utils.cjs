@@ -3,12 +3,12 @@
  * Used by both local and remote launchers
  *
  * Supports multiple installation methods:
- * 1. npm global: npm install -g @anthropic-ai/claude-code
- * 2. Homebrew: brew install claude-code
- * 3. Native installer:
+ * 1. Native installer (recommended):
  *    - macOS/Linux: curl -fsSL https://claude.ai/install.sh | bash
  *    - PowerShell:  irm https://claude.ai/install.ps1 | iex
- *    - Windows CMD: curl -fsSL https://claude.ai/install.cmd | cmd
+ *    - Windows CMD: curl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd
+ * 2. Homebrew (macOS/Linux): brew install --cask claude-code
+ * 3. npm global (deprecated upstream): npm install -g @anthropic-ai/claude-code
  * 4. PATH fallback: bun, pnpm, or any other package manager
  */
 
@@ -16,6 +16,7 @@ const { execSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { withWindowsHide } = require('./childProcessOptions.cjs');
 
 /**
  * Safely resolve symlink or return path if it exists
@@ -38,7 +39,7 @@ function resolvePathSafe(filePath) {
  */
 function findNpmGlobalCliPath() {
     try {
-        const globalRoot = execSync('npm root -g', { encoding: 'utf8' }).trim();
+        const globalRoot = execSync('npm root -g', withWindowsHide({ encoding: 'utf8' })).trim();
         const globalCliPath = path.join(globalRoot, '@anthropic-ai', 'claude-code', 'cli.js');
         if (fs.existsSync(globalCliPath)) {
             return globalCliPath;
@@ -59,10 +60,10 @@ function findClaudeInPath() {
         // Cross-platform: 'where' on Windows, 'which' on Unix
         const command = process.platform === 'win32' ? 'where claude' : 'which claude';
         // stdio suppression for cleaner execution (from tiann/PR#83)
-        const result = execSync(command, {
+        const result = execSync(command, withWindowsHide({
             encoding: 'utf8',
             stdio: ['pipe', 'pipe', 'pipe']
-        }).trim();
+        })).trim();
 
         const claudePath = result.split('\n')[0].trim(); // Take first match
         if (!claudePath) return null;
@@ -189,7 +190,7 @@ function findBunGlobalCliPath() {
     // First check if bun command exists (cross-platform)
     try {
         const bunCheckCommand = process.platform === 'win32' ? 'where bun' : 'which bun';
-        execSync(bunCheckCommand, { encoding: 'utf8' });
+        execSync(bunCheckCommand, withWindowsHide({ encoding: 'utf8' }));
     } catch (e) {
         return null; // bun not installed
     }
@@ -382,7 +383,7 @@ function findLatestVersionBinary(versionsDir, binaryName = null) {
 
 /**
  * Find path to globally installed Claude Code CLI
- * Priority: HAPPIER_CLAUDE_PATH env var > PATH > npm > Bun > Homebrew > Native
+ * Priority: HAPPIER_CLAUDE_PATH env var > PATH > Native > Homebrew > Bun > npm (deprecated)
  * @returns {{path: string, source: string}|null} Path and source, or null if not found
  */
 function findGlobalClaudeCliPath() {
@@ -397,18 +398,19 @@ function findGlobalClaudeCliPath() {
     const pathResult = findClaudeInPath();
     if (pathResult) return pathResult;
 
-    // 3. Fall back to package manager detection
-    const npmPath = findNpmGlobalCliPath();
-    if (npmPath) return { path: npmPath, source: 'npm' };
-
-    const bunPath = findBunGlobalCliPath();
-    if (bunPath) return { path: bunPath, source: 'Bun' };
+    // 3. Prefer native installer locations when PATH isn't configured (common for daemons / non-login shells)
+    const nativePath = findNativeInstallerCliPath();
+    if (nativePath) return { path: nativePath, source: 'native installer' };
 
     const homebrewPath = findHomebrewCliPath();
     if (homebrewPath) return { path: homebrewPath, source: 'Homebrew' };
 
-    const nativePath = findNativeInstallerCliPath();
-    if (nativePath) return { path: nativePath, source: 'native installer' };
+    const bunPath = findBunGlobalCliPath();
+    if (bunPath) return { path: bunPath, source: 'Bun' };
+
+    // Deprecated upstream, but keep as a best-effort fallback for legacy setups.
+    const npmPath = findNpmGlobalCliPath();
+    if (npmPath) return { path: npmPath, source: 'npm' };
 
     return null;
 }
@@ -452,19 +454,40 @@ function compareVersions(a, b) {
  * @throws {Error} If no global installation found
  */
 function getClaudeCliPath() {
+    const happierOverrideRaw = (process.env.HAPPIER_CLAUDE_PATH || '').trim();
+    const happyOverrideRaw = (process.env.HAPPY_CLAUDE_PATH || '').trim();
+    const envVarName = happierOverrideRaw ? 'HAPPIER_CLAUDE_PATH' : happyOverrideRaw ? 'HAPPY_CLAUDE_PATH' : null;
+    const overrideRaw = (happierOverrideRaw || happyOverrideRaw || '').trim();
+    if (overrideRaw) {
+        if (overrideRaw === 'claude') {
+            console.error(`\x1b[90mUsing Claude Code from ${envVarName ?? 'HAPPIER_CLAUDE_PATH'}=claude\x1b[0m`);
+            return 'claude';
+        }
+
+        const resolvedOverride = resolvePathSafe(overrideRaw) || overrideRaw;
+        if (!fs.existsSync(resolvedOverride)) {
+            console.error(`\n\x1b[1m\x1b[33mClaude Code path not found\x1b[0m\n`);
+            console.error(`${envVarName ?? 'HAPPIER_CLAUDE_PATH'} points to a missing file: ${overrideRaw}\n`);
+            process.exit(1);
+        }
+
+        console.error(`\x1b[90mUsing Claude Code from ${envVarName ?? 'HAPPIER_CLAUDE_PATH'} (${resolvedOverride})\x1b[0m`);
+        return resolvedOverride;
+    }
+
     const result = findGlobalClaudeCliPath();
     if (!result) {
         console.error('\n\x1b[1m\x1b[33mClaude Code is not installed\x1b[0m\n');
         console.error('Please install Claude Code using one of these methods:\n');
-        console.error('\x1b[1mOption 1 - npm (recommended, highest priority):\x1b[0m');
-        console.error('  \x1b[36mnpm install -g @anthropic-ai/claude-code\x1b[0m\n');
-        console.error('\x1b[1mOption 2 - Homebrew (macOS/Linux):\x1b[0m');
-        console.error('  \x1b[36mbrew install claude-code\x1b[0m\n');
-        console.error('\x1b[1mOption 3 - Native installer:\x1b[0m');
+        console.error('\x1b[1mOption 1 - Native installer (recommended):\x1b[0m');
         console.error('  \x1b[90mmacOS/Linux:\x1b[0m  \x1b[36mcurl -fsSL https://claude.ai/install.sh | bash\x1b[0m');
         console.error('  \x1b[90mPowerShell:\x1b[0m   \x1b[36mirm https://claude.ai/install.ps1 | iex\x1b[0m');
         console.error('  \x1b[90mWindows CMD:\x1b[0m  \x1b[36mcurl -fsSL https://claude.ai/install.cmd -o install.cmd && install.cmd && del install.cmd\x1b[0m\n');
-        console.error('\x1b[90mNote: If multiple installations exist, npm takes priority.\x1b[0m\n');
+        console.error('\x1b[1mOption 2 - Homebrew (macOS/Linux):\x1b[0m');
+        console.error('  \x1b[36mbrew install --cask claude-code\x1b[0m\n');
+        console.error('\x1b[1mOption 3 - npm global (deprecated upstream):\x1b[0m');
+        console.error('  \x1b[36mnpm install -g @anthropic-ai/claude-code\x1b[0m\n');
+        console.error("\x1b[90mTip: If the daemon can't find `claude`, ensure it's on PATH or set HAPPIER_CLAUDE_PATH.\x1b[0m\n");
         process.exit(1);
     }
 
@@ -516,10 +539,10 @@ function runClaudeCli(cliPath) {
         // Note: Interceptors won't work with binary files, but that's acceptable
         // as binary files are self-contained and don't need interception
         const args = process.argv.slice(2);
-        const child = spawn(cliPath, args, {
+        const child = spawn(cliPath, args, withWindowsHide({
             stdio: 'inherit',
             env: process.env
-        });
+        }));
 
         // Forward signals to child process so it gets killed when parent is killed.
         // This prevents orphaned Claude processes when switching between local/remote modes.

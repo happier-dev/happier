@@ -54,6 +54,7 @@ export function runTsc(tsconfigPath, opts) {
 
 export function main() {
   runTsc(resolve(repoRoot, 'packages', 'agents', 'tsconfig.json'));
+  runTsc(resolve(repoRoot, 'packages', 'cli-common', 'tsconfig.json'));
   runTsc(resolve(repoRoot, 'packages', 'protocol', 'tsconfig.json'));
 
   const protocolDist = resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js');

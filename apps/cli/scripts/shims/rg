@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+# Compatibility shim for ripgrep invocations coming from external agents/tools.
+#
+# Some providers use the non-existent `--fixed-string` flag. ripgrep uses
+# `--fixed-strings` (plural). Translate and forward to the packaged `rg`.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+REAL_RG="$SCRIPT_DIR/../../tools/unpacked/rg"
+
+args=()
+for arg in "$@"; do
+  if [[ "$arg" == "--fixed-string" ]]; then
+    args+=("--fixed-strings")
+  else
+    args+=("$arg")
+  fi
+done
+
+if ((${#args[@]})); then
+  exec "$REAL_RG" "${args[@]}"
+fi
+exec "$REAL_RG"

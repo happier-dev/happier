@@ -13,6 +13,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { withWindowsHide } = require('./childProcessOptions.cjs');
 
 // Runtime detection (minimal, focused)
 function detectRuntime() {
@@ -38,10 +39,10 @@ function findSystemRipgrep() {
 
     for (const { cmd, args } of commands) {
         try {
-            const result = execFileSync(cmd, args, {
+            const result = execFileSync(cmd, args, withWindowsHide({
                 encoding: 'utf8',
                 stdio: ['ignore', 'pipe', 'ignore']
-            });
+            }));
 
             if (result) {
                 const paths = result.trim().split('\n').filter(Boolean);
@@ -89,10 +90,10 @@ function createRipgrepWrapper(binaryPath) {
     return {
         ripgrepMain: (args) => {
             const { spawnSync } = require('child_process');
-            const result = spawnSync(binaryPath, args, {
+            const result = spawnSync(binaryPath, args, withWindowsHide({
                 stdio: 'inherit',
                 cwd: process.cwd()
-            });
+            }));
             if (typeof result.status === 'number') return result.status;
             if (result.signal) return 1;
             return 0;

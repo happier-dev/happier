@@ -17,6 +17,7 @@
 const { execFileSync } = require('child_process');
 const { join, dirname } = require('path');
 const fs = require('fs');
+const { withWindowsHide } = require('./childProcessOptions.cjs');
 
 const projectRoot = dirname(__dirname);
 const binSource = join(projectRoot, 'bin', 'happier-dev.mjs');
@@ -28,7 +29,7 @@ const targetBins = ['happier-dev'];
 function getGlobalBinDir() {
     // Try npm global bin first using execFileSync (safer than execSync)
     try {
-        const npmBin = execFileSync('npm', ['bin', '-g'], { encoding: 'utf8' }).trim();
+        const npmBin = execFileSync('npm', ['bin', '-g'], withWindowsHide({ encoding: 'utf8' })).trim();
         if (fs.existsSync(npmBin)) {
             return npmBin;
         }
