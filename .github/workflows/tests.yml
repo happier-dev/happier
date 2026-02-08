@@ -6,22 +6,27 @@ on:
   workflow_dispatch:
     inputs:
       run_ui:
-        description: "Unit — Run UI tests (apps/ui)"
+        description: "UI — Run UI tests (apps/ui, unit + integration)"
         required: true
         default: true
         type: boolean
       run_server:
-        description: "Unit — Run Server tests (apps/server)"
+        description: "Server — Run Server tests (apps/server, unit + integration)"
+        required: true
+        default: true
+        type: boolean
+      run_server_db_contract:
+        description: "Server — Run DB contract suite (Postgres)"
         required: true
         default: true
         type: boolean
       run_cli:
-        description: "Unit — Run CLI tests (apps/cli)"
+        description: "CLI — Run CLI tests (apps/cli, unit + integration)"
         required: true
         default: true
         type: boolean
       run_stack:
-        description: "Unit — Run Stack tests (apps/stack)"
+        description: "Stack — Run Stack tests (apps/stack, unit + integration)"
         required: true
         default: true
         type: boolean
@@ -113,6 +118,10 @@ on:
         required: false
         default: true
         type: boolean
+      run_server_db_contract:
+        required: false
+        default: true
+        type: boolean
       run_cli:
         required: false
         default: true
@@ -185,7 +194,7 @@ concurrency:
 jobs:
   ui:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_ui }}
-    name: UI Tests
+    name: UI Tests (unit + integration)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -217,12 +226,15 @@ jobs:
           npm_config_production: "false"
         run: yarn install --frozen-lockfile
 
-      - name: Run tests
-        run: yarn workspace @happier-dev/app test
+      - name: Run unit tests
+        run: yarn workspace @happier-dev/app test:unit
+
+      - name: Run integration tests
+        run: yarn workspace @happier-dev/app test:integration
 
   server:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_server }}
-    name: Server Tests
+    name: Server Tests (unit + integration)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -254,12 +266,74 @@ jobs:
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
-      - name: Run tests
-        run: yarn workspace @happier-dev/server test
+      - name: Run unit tests
+        run: yarn workspace @happier-dev/server test:unit
+
+      - name: Run integration tests
+        run: yarn workspace @happier-dev/server test:integration
+
+  server-db-contract:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_server_db_contract }}
+    name: Server DB Contract (Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: happier
+          POSTGRES_USER: happier
+          POSTGRES_PASSWORD: happier
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd="pg_isready -U happier -d happier"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node (GitHub Actions)
+        if: env.ACT != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Node (act)
+        if: env.ACT == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Migrate (Postgres)
+        env:
+          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
+        run: yarn -s workspace @happier-dev/server prisma migrate deploy
+
+      - name: Run db contract suite (Postgres)
+        env:
+          HAPPIER_DB_PROVIDER: postgres
+          DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
+        run: yarn workspace @happier-dev/server test:server:db-contract
 
   cli:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_cli }}
-    name: CLI Tests (incl. tmux integration)
+    name: CLI Tests (unit + integration)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -331,12 +405,15 @@ jobs:
             sed -i 's/^DEBUG=.*/DEBUG=/' apps/cli/.env.integration-test
           fi
 
-      - name: Run tests
-        run: yarn workspace @happier-dev/cli test
+      - name: Run unit tests
+        run: yarn workspace @happier-dev/cli test:unit
+
+      - name: Run integration tests
+        run: yarn workspace @happier-dev/cli test:integration
 
   stack:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_stack }}
-    name: Stack Tests
+    name: Stack Tests (unit + integration)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -361,8 +438,11 @@ jobs:
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
-      - name: Run tests
-        run: yarn --cwd apps/stack test
+      - name: Run unit tests
+        run: yarn --cwd apps/stack test:unit
+
+      - name: Run integration tests
+        run: yarn --cwd apps/stack test:integration
 
   typecheck:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_typecheck }}
