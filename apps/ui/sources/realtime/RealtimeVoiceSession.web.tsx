@@ -17,31 +17,22 @@ function debugLog(...args: unknown[]) {
 // Global voice session implementation
 class RealtimeVoiceSessionImpl implements VoiceSession {
 
-    async startSession(config: VoiceSessionConfig): Promise<void> {
+    async startSession(config: VoiceSessionConfig): Promise<string | null> {
         debugLog('[RealtimeVoiceSessionImpl] startSession');
         if (!conversationInstance) {
             console.warn('Realtime voice session not initialized - conversationInstance is null');
-            return;
+            throw new Error('Realtime voice session not initialized');
         }
 
         try {
             storage.getState().setRealtimeStatus('connecting');
 
-            // Request microphone permission first
-            try {
-                await navigator.mediaDevices.getUserMedia({ audio: true });
-            } catch (error) {
-                console.error('Failed to get microphone permission:', error);
-                storage.getState().setRealtimeStatus('error');
-                return;
-            }
-
             // Get user's preferred language for voice assistant
             const userLanguagePreference = storage.getState().settings.voiceAssistantLanguage;
             const elevenLabsLanguage = getElevenLabsCodeFromPreference(userLanguagePreference);
             
-            if (!config.token && !config.agentId) {
-                throw new Error('Neither token nor agentId provided');
+            if (!config.token) {
+                throw new Error('Missing conversation token');
             }
             
             const sessionConfig: any = {
@@ -55,15 +46,28 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
                         language: elevenLabsLanguage
                     }
                 },
-                ...(config.token ? { conversationToken: config.token } : { agentId: config.agentId })
+                conversationToken: config.token,
             };
             
-            const conversationId = await conversationInstance.startSession(sessionConfig);
+            const rawConversationId = await conversationInstance.startSession(sessionConfig);
+            const conversationId =
+                (typeof rawConversationId === 'string' && rawConversationId.trim().length > 0
+                    ? rawConversationId
+                    : (conversationInstance.getId() ?? null));
+            if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
+                debugLog('[RealtimeVoiceSessionImpl] startSession returned no valid conversationId', {
+                    rawConversationId,
+                    fallbackConversationId: conversationInstance.getId?.(),
+                });
+                return null;
+            }
 
             debugLog('Started conversation');
+            return conversationId;
         } catch (error) {
             console.error('Failed to start realtime session:', error);
             storage.getState().setRealtimeStatus('error');
+            throw error;
         }
     }
 

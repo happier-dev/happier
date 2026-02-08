@@ -21,7 +21,7 @@ export const realtimeClientTools = {
         const parsedMessage = messageSchema.safeParse(parameters);
 
         if (!parsedMessage.success) {
-            console.error('❌ Invalid message parameter:', parsedMessage.error);
+            console.error('Invalid message parameter:', parsedMessage.error);
             return "error (invalid message parameter)";
         }
 
@@ -29,12 +29,10 @@ export const realtimeClientTools = {
         const sessionId = getCurrentRealtimeSessionId();
         
         if (!sessionId) {
-            console.error('❌ No active session');
+            console.error('No active session');
             return "error (no active session)";
         }
         
-        console.log('🔍 messageClaudeCode called with:', message);
-        console.log('📤 Sending message to session:', sessionId);
         sync.sendMessage(sessionId, message);
         return "sent [DO NOT say anything else, simply say 'sent']";
     },
@@ -49,7 +47,7 @@ export const realtimeClientTools = {
         const parsedMessage = messageSchema.safeParse(parameters);
 
         if (!parsedMessage.success) {
-            console.error('❌ Invalid decision parameter:', parsedMessage.error);
+            console.error('Invalid decision parameter:', parsedMessage.error);
             return "error (invalid decision parameter, expected 'allow' or 'deny')";
         }
 
@@ -57,18 +55,16 @@ export const realtimeClientTools = {
         const sessionId = getCurrentRealtimeSessionId();
         
         if (!sessionId) {
-            console.error('❌ No active session');
+            console.error('No active session');
             return "error (no active session)";
         }
-        
-        console.log('🔍 processPermissionRequest called with:', decision);
         
         // Get the current session to check for permission requests
         const session = storage.getState().sessions[sessionId];
         const requests = session?.agentState?.requests;
         
         if (!requests || Object.keys(requests).length === 0) {
-            console.error('❌ No active permission request');
+            console.error('No active permission request');
             return "error (no active permission request)";
         }
         
@@ -84,7 +80,7 @@ export const realtimeClientTools = {
             }
             return "done [DO NOT say anything else, simply say 'done']";
         } catch (error) {
-            console.error('❌ Failed to process permission:', error);
+            console.error('Failed to process permission:', error);
             return `error (failed to ${decision} permission)`;
         }
     }

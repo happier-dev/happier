@@ -17,10 +17,10 @@ function debugLog(...args: unknown[]) {
 // Global voice session implementation
 class RealtimeVoiceSessionImpl implements VoiceSession {
     
-    async startSession(config: VoiceSessionConfig): Promise<void> {
+    async startSession(config: VoiceSessionConfig): Promise<string | null> {
         if (!conversationInstance) {
             console.warn('Realtime voice session not initialized');
-            return;
+            throw new Error('Realtime voice session not initialized');
         }
 
         try {
@@ -30,11 +30,12 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
             const userLanguagePreference = storage.getState().settings.voiceAssistantLanguage;
             const elevenLabsLanguage = getElevenLabsCodeFromPreference(userLanguagePreference);
             
-            if (!config.token && !config.agentId) {
-                throw new Error('Neither token nor agentId provided');
+            if (!config.token) {
+                throw new Error('Missing conversation token');
             }
             
             const sessionConfig: any = {
+                connectionType: 'webrtc',
                 dynamicVariables: {
                     sessionId: config.sessionId,
                     initialConversationContext: config.initialContext || ''
@@ -44,13 +45,19 @@ class RealtimeVoiceSessionImpl implements VoiceSession {
                         language: elevenLabsLanguage
                     }
                 },
-                ...(config.token ? { conversationToken: config.token } : { agentId: config.agentId })
+                conversationToken: config.token,
             };
             
             await conversationInstance.startSession(sessionConfig);
+            const conversationId = conversationInstance.getId();
+            if (typeof conversationId !== 'string' || conversationId.trim().length === 0) {
+                return null;
+            }
+            return conversationId;
         } catch (error) {
             console.error('Failed to start realtime session:', error);
             storage.getState().setRealtimeStatus('error');
+            throw error;
         }
     }
 

@@ -1,16 +1,15 @@
 export interface VoiceSessionConfig {
     sessionId: string;
     initialContext?: string;
-    token?: string;
-    agentId?: string;
+    token: string;
 }
 
 export interface VoiceSession {
-    startSession(config: VoiceSessionConfig): Promise<void>;
+    startSession(config: VoiceSessionConfig): Promise<string | null>;
     endSession(): Promise<void>;
     sendTextMessage(message: string): void;
     sendContextualUpdate(update: string): void;
 }
 
 export type ConversationStatus = 'disconnected' | 'connecting' | 'connected';
-export type ConversationMode = 'speaking' | 'listening';
+export type ConversationMode = 'idle' | 'speaking' | 'listening';

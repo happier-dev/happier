@@ -1,4 +1,3 @@
-import { getCurrentRealtimeSessionId, getVoiceSession, isVoiceSessionStarted } from '../RealtimeSession';
 import {
     formatNewMessages,
     formatNewSingleMessage,
@@ -12,6 +11,7 @@ import {
 import { storage } from '@/sync/storage';
 import { Message } from '@/sync/typesMessage';
 import { VOICE_CONFIG } from '../voiceConfig';
+import { getVoiceContextSinkForSession } from '@/voice/context/getVoiceContextSinkForSession';
 
 /**
  * Centralized voice assistant hooks for multi-session context updates.
@@ -28,30 +28,35 @@ interface SessionMetadata {
 let shownSessions = new Set<string>();
 let lastFocusSession: string | null = null;
 
-function reportContextualUpdate(update: string | null | undefined) {
+function getVoiceContextPrefs() {
+    const settings = storage.getState().settings as any;
+    return {
+        voiceShareSessionSummary: settings.voiceShareSessionSummary,
+        voiceShareRecentMessages: settings.voiceShareRecentMessages,
+        voiceRecentMessagesCount: settings.voiceRecentMessagesCount,
+        voiceShareToolNames: settings.voiceShareToolNames,
+        voiceShareFilePaths: settings.voiceShareFilePaths,
+    };
+}
+
+function reportContextualUpdate(sessionId: string, update: string | null | undefined) {
     if (VOICE_CONFIG.ENABLE_DEBUG_LOGGING) {
         console.log('🎤 Voice: Reporting contextual update:', update);
     }
     if (!update) return;
-    const voice = getVoiceSession();
-    if (VOICE_CONFIG.ENABLE_DEBUG_LOGGING) {
-        console.log('🎤 Voice: Voice session:', voice);
-    }
-    if (!voice || !isVoiceSessionStarted()) return;
-    voice.sendContextualUpdate(update);
+    const sink = getVoiceContextSinkForSession(sessionId);
+    if (!sink) return;
+    sink.sendContextualUpdate(sessionId, update);
 }
 
-function reportTextUpdate(update: string | null | undefined) {
+function reportTextUpdate(sessionId: string, update: string | null | undefined) {
     if (VOICE_CONFIG.ENABLE_DEBUG_LOGGING) {
         console.log('🎤 Voice: Reporting text update:', update);
     }
     if (!update) return;
-    const voice = getVoiceSession();
-    if (VOICE_CONFIG.ENABLE_DEBUG_LOGGING) {
-        console.log('🎤 Voice: Voice session:', voice);
-    }
-    if (!voice || !isVoiceSessionStarted()) return;
-    voice.sendTextMessage(update);
+    const sink = getVoiceContextSinkForSession(sessionId);
+    if (!sink) return;
+    sink.sendTextMessage(sessionId, update);
 }
 
 function reportSession(sessionId: string) {
@@ -60,8 +65,8 @@ function reportSession(sessionId: string) {
     const session = storage.getState().sessions[sessionId];
     if (!session) return;
     const messages = storage.getState().sessionMessages[sessionId]?.messages ?? [];
-    const contextUpdate = formatSessionFull(session, messages);
-    reportContextualUpdate(contextUpdate);
+    const contextUpdate = formatSessionFull(session, messages, getVoiceContextPrefs());
+    reportContextualUpdate(sessionId, contextUpdate);
 }
 
 export const voiceHooks = {
@@ -74,7 +79,7 @@ export const voiceHooks = {
         
         reportSession(sessionId);
         const contextUpdate = formatSessionOnline(sessionId, metadata);
-        reportContextualUpdate(contextUpdate);
+        reportContextualUpdate(sessionId, contextUpdate);
     },
 
     /**
@@ -85,7 +90,7 @@ export const voiceHooks = {
         
         reportSession(sessionId);
         const contextUpdate = formatSessionOffline(sessionId, metadata);
-        reportContextualUpdate(contextUpdate);
+        reportContextualUpdate(sessionId, contextUpdate);
     },
 
 
@@ -97,7 +102,7 @@ export const voiceHooks = {
         if (lastFocusSession === sessionId) return;
         lastFocusSession = sessionId;
         reportSession(sessionId);
-        reportContextualUpdate(formatSessionFocus(sessionId, metadata));
+        reportContextualUpdate(sessionId, formatSessionFocus(sessionId, metadata));
     },
 
     /**
@@ -105,9 +110,10 @@ export const voiceHooks = {
      */
     onPermissionRequested(sessionId: string, requestId: string, toolName: string, toolArgs: any) {
         if (VOICE_CONFIG.DISABLE_PERMISSION_REQUESTS) return;
+        if (storage.getState().settings.voiceSharePermissionRequests === false) return;
         
         reportSession(sessionId);
-        reportTextUpdate(formatPermissionRequest(sessionId, requestId, toolName, toolArgs));
+        reportTextUpdate(sessionId, formatPermissionRequest(sessionId, requestId, toolName, toolArgs));
     },
 
     /**
@@ -115,9 +121,10 @@ export const voiceHooks = {
      */
     onMessages(sessionId: string, messages: Message[]) {
         if (VOICE_CONFIG.DISABLE_MESSAGES) return;
+        if (storage.getState().settings.voiceShareRecentMessages === false) return;
         
         reportSession(sessionId);
-        reportContextualUpdate(formatNewMessages(sessionId, messages));
+        reportContextualUpdate(sessionId, formatNewMessages(sessionId, messages, getVoiceContextPrefs()));
     },
 
     /**
@@ -129,7 +136,7 @@ export const voiceHooks = {
         }
         shownSessions.clear();
         let prompt = '';
-        prompt += 'THIS IS AN ACTIVE SESSION: \n\n' + formatSessionFull(storage.getState().sessions[sessionId], storage.getState().sessionMessages[sessionId]?.messages ?? []);
+        prompt += 'THIS IS AN ACTIVE SESSION: \n\n' + formatSessionFull(storage.getState().sessions[sessionId], storage.getState().sessionMessages[sessionId]?.messages ?? [], getVoiceContextPrefs());
         shownSessions.add(sessionId);
         // prompt += 'Another active sessions: \n\n';
         // for (let s of storage.getState().getActiveSessions()) {
@@ -146,7 +153,7 @@ export const voiceHooks = {
         if (VOICE_CONFIG.DISABLE_READY_EVENTS) return;
         
         reportSession(sessionId);
-        reportTextUpdate(formatReadyEvent(sessionId));
+        reportTextUpdate(sessionId, formatReadyEvent(sessionId));
     },
 
     /**
