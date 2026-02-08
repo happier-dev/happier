@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
+import { createTestMetadata } from '@/backends/testHelpers/sessionMetadata.testHelpers';
 import { maybeUpdateCodexSessionIdMetadata } from './codexSessionIdMetadata';
 
 describe('maybeUpdateCodexSessionIdMetadata', () => {
@@ -20,12 +21,28 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
     expect(lastPublished.value).toBeNull();
   });
 
+  it('no-ops when thread id is whitespace-only', () => {
+    const lastPublished = { value: null as string | null };
+    let called = 0;
+
+    maybeUpdateCodexSessionIdMetadata({
+      getCodexThreadId: () => '   ',
+      updateHappySessionMetadata: () => {
+        called++;
+      },
+      lastPublished,
+    });
+
+    expect(called).toBe(0);
+    expect(lastPublished.value).toBeNull();
+  });
+
   it('publishes codexSessionId once per new thread id and preserves other metadata', () => {
     const lastPublished = { value: null as string | null };
     const updates: Metadata[] = [];
 
     const apply = (updater: (m: Metadata) => Metadata) => {
-      const base = { path: '/tmp', flavor: 'codex' } as unknown as Metadata;
+      const base = createTestMetadata({ path: '/tmp' });
       updates.push(updater(base));
     };
 
@@ -48,9 +65,25 @@ describe('maybeUpdateCodexSessionIdMetadata', () => {
     });
 
     expect(updates).toEqual([
-      { path: '/tmp', flavor: 'codex', codexSessionId: 'thread-1' } as unknown as Metadata,
-      { path: '/tmp', flavor: 'codex', codexSessionId: 'thread-2' } as unknown as Metadata,
+      createTestMetadata({ path: '/tmp', codexSessionId: 'thread-1' }),
+      createTestMetadata({ path: '/tmp', codexSessionId: 'thread-2' }),
+    ]);
+  });
+
+  it('overwrites prior codexSessionId while preserving unrelated metadata', () => {
+    const lastPublished = { value: null as string | null };
+    const updates: Metadata[] = [];
+
+    maybeUpdateCodexSessionIdMetadata({
+      getCodexThreadId: () => 'thread-next',
+      updateHappySessionMetadata: (updater) => {
+        updates.push(updater(createTestMetadata({ codexSessionId: 'thread-old', name: 'keep-name' })));
+      },
+      lastPublished,
+    });
+
+    expect(updates).toEqual([
+      createTestMetadata({ codexSessionId: 'thread-next', name: 'keep-name' }),
     ]);
   });
 });
-
