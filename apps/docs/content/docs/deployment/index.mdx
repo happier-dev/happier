@@ -14,13 +14,14 @@ This section describes how to deploy **your own Happier Server** (the sync backe
 
 - **Docker** (recommended starting point): build from this repo’s `Dockerfile` and run with Docker / Docker Compose.
   - See: [Docker](./docker)
+- **Configuration reference**: see [Environment variables](./env) for common settings, including optional voice configuration.
 - **HStack** (stack CLI): a guided workflow that can run the server for you (documentation maintained separately).
 
 ## Server flavors (high level)
 
 Happier Server supports two “flavors” that share the same API + internal logic; the difference is which storage backends are used:
 
-- **Full**: external Postgres (default) or MySQL 8+ + S3/Minio-compatible storage; optional Redis for multi-replica realtime.
+- **Full**: external Postgres (default) or MySQL 8+ + S3/Minio-compatible storage (default) or local files (`HAPPIER_FILES_BACKEND=local`); optional Redis for multi-replica realtime.
 - **Light**: embedded Postgres (PGlite, default) or SQLite stored on disk; local file storage served by the server at `GET /files/*`.
 
 If you’re deploying a shared server for multiple users/devices, you likely want **full**. If you want the easiest single-node setup, start with **light**.
@@ -33,7 +34,7 @@ You can run the server in one process (simple), or split into roles:
 - `SERVER_ROLE=api`: API + realtime only (clients connect here).
 - `SERVER_ROLE=worker`: background work only (no HTTP).
 
-For multi-replica API deployments, enable Redis fanout (`REDIS_URL` + `HAPPIER_SOCKET_REDIS_ADAPTER=1`) and configure sticky sessions at your load balancer.
+For multi-replica API deployments, enable Redis fanout (`REDIS_URL` + `HAPPIER_SOCKET_ADAPTER=redis-streams`) and configure sticky sessions at your load balancer.
 
 See [Docker](./docker) for concrete examples.
 

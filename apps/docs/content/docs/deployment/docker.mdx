@@ -46,14 +46,16 @@ Happier Server supports two “flavors” that share the same API + internal log
 
 ### Full flavor (recommended for production)
 
-Use this if you want a production setup: an external database, S3/Minio-compatible storage for public files, and optional Redis for multi-replica Socket.IO.
+Use this if you want a production setup: an external database, and optional Redis for multi-replica Socket.IO. By default, full flavor uses S3/Minio for public files, but you can opt into local disk storage with `HAPPIER_FILES_BACKEND=local`.
 
 **You will need:**
 
 - A database (`DATABASE_URL`)
-- S3/Minio-compatible storage (the `S3_*` env vars)
+- Public files backend (choose one):
+  - S3/Minio-compatible storage (the `S3_*` env vars) with `HAPPIER_FILES_BACKEND=s3` (default)
+  - Local disk with `HAPPIER_FILES_BACKEND=local` (stores files under `HAPPIER_SERVER_LIGHT_DATA_DIR`)
 - A stable secret (`HANDY_MASTER_SECRET`)
-- Optional: Redis for scaling realtime across multiple API replicas (`REDIS_URL` + `HAPPIER_SOCKET_REDIS_ADAPTER=1`)
+- Optional: Redis for scaling realtime across multiple API replicas (`REDIS_URL` + `HAPPIER_SOCKET_ADAPTER=redis-streams`)
 
 ### Light flavor (single-node / testing)
 
@@ -86,6 +88,7 @@ docker run --rm -p 3005:3005 \
   -e PORT=3005 \
   -e DATABASE_URL='postgresql://user:pass@db:5432/happier?sslmode=require' \
   -e HANDY_MASTER_SECRET='change-me-to-a-long-random-string' \
+  -e HAPPIER_FILES_BACKEND=s3 \
   -e S3_HOST='minio' \
   -e S3_PORT='9000' \
   -e S3_USE_SSL='false' \
@@ -104,6 +107,7 @@ docker run --rm -p 3005:3005 \
   -e HAPPIER_DB_PROVIDER=mysql \
   -e DATABASE_URL='mysql://user:pass@db:3306/happier' \
   -e HANDY_MASTER_SECRET='change-me-to-a-long-random-string' \
+  -e HAPPIER_FILES_BACKEND=s3 \
   -e S3_HOST='minio' \
   -e S3_PORT='9000' \
   -e S3_USE_SSL='false' \
@@ -115,6 +119,21 @@ docker run --rm -p 3005:3005 \
 ```
 
 Production note: remove `--rm` and add `--restart unless-stopped` (or your platform’s equivalent), and prefer `--env-file` over long `-e ...` lists.
+
+### Full flavor (local files backend)
+
+If you don’t want S3/Minio, you can store public files on local disk:
+
+```bash
+docker run --rm -p 3005:3005 \
+  -e PORT=3005 \
+  -e DATABASE_URL='postgresql://user:pass@db:5432/happier?sslmode=require' \
+  -e HANDY_MASTER_SECRET='change-me-to-a-long-random-string' \
+  -e HAPPIER_FILES_BACKEND=local \
+  -e HAPPIER_SERVER_LIGHT_DATA_DIR=/data/happier \
+  -v happier-server-data:/data/happier \
+  happier-server
+```
 
 ### Light flavor (PGlite, default)
 
@@ -182,6 +201,7 @@ services:
       PORT: "3005"
       DATABASE_URL: postgresql://happier:change-me@db:5432/happier
       HANDY_MASTER_SECRET: change-me-to-a-long-random-string
+      HAPPIER_FILES_BACKEND: s3
       S3_HOST: minio
       S3_PORT: "9000"
       S3_USE_SSL: "false"
@@ -237,6 +257,7 @@ services:
       HAPPIER_DB_PROVIDER: mysql
       DATABASE_URL: mysql://root:change-me@db:3306/happier
       HANDY_MASTER_SECRET: change-me-to-a-long-random-string
+      HAPPIER_FILES_BACKEND: s3
       S3_HOST: minio
       S3_PORT: "9000"
       S3_USE_SSL: "false"
@@ -296,7 +317,7 @@ If you split roles, run:
 - API container(s) with `SERVER_ROLE=api`
 - Worker container with `SERVER_ROLE=worker`
 
-With more than one API replica, enable Redis fanout (`REDIS_URL` + `HAPPIER_SOCKET_REDIS_ADAPTER=1`) and configure sticky sessions at your load balancer.
+With more than one API replica, enable Redis fanout (`REDIS_URL` + `HAPPIER_SOCKET_ADAPTER=redis-streams`) and configure sticky sessions at your load balancer.
 
 Minimal example (add this on top of the full-flavor compose above):
 
@@ -312,7 +333,7 @@ services:
     environment:
       SERVER_ROLE: api
       REDIS_URL: redis://redis:6379
-      HAPPIER_SOCKET_REDIS_ADAPTER: "1"
+      HAPPIER_SOCKET_ADAPTER: redis-streams
     depends_on:
       - db
       - minio
@@ -324,7 +345,7 @@ services:
       target: server-worker
     environment:
       REDIS_URL: redis://redis:6379
-      HAPPIER_SOCKET_REDIS_ADAPTER: "1"
+      HAPPIER_SOCKET_ADAPTER: redis-streams
     depends_on:
       - db
       - minio
