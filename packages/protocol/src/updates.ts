@@ -47,6 +47,14 @@ export const UpdateBodySchema = z.discriminatedUnion('t', [
     agentState: VersionedNullableStringSchema.optional(),
   }).passthrough(),
   z.object({
+    t: z.literal('pending-changed'),
+    sid: z.string(),
+    sessionId: z.string().optional(),
+    pendingVersion: z.number().int().min(0),
+    pendingCount: z.number().int().min(0),
+    changedByAccountId: z.string().optional(),
+  }).passthrough(),
+  z.object({
     t: z.literal('delete-session'),
     sid: z.string(),
   }).passthrough(),
@@ -242,6 +250,15 @@ export const MessageAckResponseSchema = z.union([
     id: z.string(),
     seq: z.number().int().min(0),
     localId: z.string().nullable(),
+    /**
+     * Whether the server actually created a new transcript row.
+     *
+     * - true: new message created + broadcast emitted (subject to sender-skip rules).
+     * - false: idempotent duplicate (sessionId, localId) already existed; no broadcast is emitted.
+     *
+     * Optional for backward compatibility with older servers.
+     */
+    didWrite: z.boolean().optional(),
   }).strict(),
   z.object({
     ok: z.literal(false),

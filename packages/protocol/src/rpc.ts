@@ -10,6 +10,17 @@ export const RPC_METHODS = {
   GET_DIRECTORY_TREE: 'getDirectoryTree',
   RIPGREP: 'ripgrep',
   DIFFTASTIC: 'difftastic',
+  GIT_STATUS_SNAPSHOT: 'git.status.snapshot',
+  GIT_DIFF_FILE: 'git.diff.file',
+  GIT_DIFF_COMMIT: 'git.diff.commit',
+  GIT_STAGE_APPLY: 'git.stage.apply',
+  GIT_UNSTAGE_APPLY: 'git.unstage.apply',
+  GIT_COMMIT_CREATE: 'git.commit.create',
+  GIT_LOG_LIST: 'git.log.list',
+  GIT_COMMIT_REVERT: 'git.commit.revert',
+  GIT_REMOTE_FETCH: 'git.remote.fetch',
+  GIT_REMOTE_PUSH: 'git.remote.push',
+  GIT_REMOTE_PULL: 'git.remote.pull',
   KILL_SESSION: 'killSession',
   CAPABILITIES_DESCRIBE: 'capabilities.describe',
   CAPABILITIES_DETECT: 'capabilities.detect',
@@ -27,6 +38,15 @@ export type RpcErrorCode = (typeof RPC_ERROR_CODES)[keyof typeof RPC_ERROR_CODES
 
 export const RPC_ERROR_MESSAGES = {
   METHOD_NOT_FOUND: 'Method not found',
+} as const;
+
+// Session-scoped RPC method names (used with `${sessionId}:${method}` over socket RPC).
+export const SESSION_RPC_METHODS = {
+  VOICE_MEDIATOR_START: 'voice.mediator.start',
+  VOICE_MEDIATOR_SEND_TURN: 'voice.mediator.sendTurn',
+  VOICE_MEDIATOR_COMMIT: 'voice.mediator.commit',
+  VOICE_MEDIATOR_STOP: 'voice.mediator.stop',
+  VOICE_MEDIATOR_GET_MODELS: 'voice.mediator.getModels',
 } as const;
 
 export function isRpcMethodNotFoundResult(value: unknown): value is { error: string; errorCode?: string } {
