@@ -5,9 +5,14 @@ import { getPublicUrl } from "@/storage/files";
 import { z } from "zod";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { log } from "@/utils/log";
-import { AccountProfile } from "@/types";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { Context } from "@/context";
+import { UsernameTakenError, usernameUpdate } from "@/app/social/usernameUpdate";
+import { resolveFriendsPolicyFromEnv } from "@/app/social/friendsPolicy";
+import { validateUsername } from "@/app/social/usernamePolicy";
+import { fetchLinkedProvidersForAccount } from "@/app/auth/providers/linkedProviders";
+import { findIdentityProviderById } from "@/app/auth/providers/identityProviders/registry";
 
 export function accountRoutes(app: Fastify) {
     app.get('/v1/account/profile', {
@@ -21,10 +26,10 @@ export function accountRoutes(app: Fastify) {
                 lastName: true,
                 username: true,
                 avatar: true,
-                githubUser: true
             }
         });
         const connectedVendors = new Set((await db.serviceAccountToken.findMany({ where: { accountId: userId } })).map(t => t.vendor));
+        const linkedProviders = await fetchLinkedProvidersForAccount({ tx: db as any, accountId: userId });
         return reply.send({
             id: userId,
             timestamp: Date.now(),
@@ -32,9 +37,132 @@ export function accountRoutes(app: Fastify) {
             lastName: user.lastName,
             username: user.username,
             avatar: user.avatar ? { ...user.avatar, url: getPublicUrl(user.avatar.path) } : null,
-            github: user.githubUser ? user.githubUser.profile : null,
+            linkedProviders,
             connectedServices: Array.from(connectedVendors)
         });
+    });
+
+    app.patch('/v1/account/identity/:provider', {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({ provider: z.string() }),
+            body: z.object({ showOnProfile: z.boolean() }),
+            response: {
+                200: z.object({ success: z.literal(true) }),
+                404: z.object({ error: z.enum(['unsupported-provider', 'not-connected']) }),
+            },
+        },
+    }, async (request, reply) => {
+        const providerId = request.params.provider.toString().trim().toLowerCase();
+        const provider = findIdentityProviderById(process.env, providerId);
+        if (!provider) return reply.code(404).send({ error: 'unsupported-provider' });
+
+        const result = await inTx(async (tx) => {
+            const { count } = await tx.accountIdentity.updateMany({
+                where: { accountId: request.userId, provider: providerId },
+                data: { showOnProfile: request.body.showOnProfile },
+            });
+
+            if (count === 0) {
+                return { type: "not-connected" as const };
+            }
+
+            const linkedProviders = await fetchLinkedProvidersForAccount({ tx: tx as any, accountId: request.userId });
+            const cursor = await markAccountChanged(tx, {
+                accountId: request.userId,
+                kind: "account",
+                entityId: "self",
+                hint: { linkedProviders: true },
+            });
+
+            afterTx(tx, () => {
+                const updatePayload = buildUpdateAccountUpdate(
+                    request.userId,
+                    { linkedProviders },
+                    cursor,
+                    randomKeyNaked(12),
+                );
+                eventRouter.emitUpdate({
+                    userId: request.userId,
+                    payload: updatePayload,
+                    recipientFilter: { type: "user-scoped-only" },
+                });
+            });
+
+            return { type: "ok" as const };
+        });
+
+        if (result.type === "not-connected") {
+            return reply.code(404).send({ error: "not-connected" });
+        }
+
+        return reply.send({ success: true });
+    });
+
+    app.post('/v1/account/username', {
+        preHandler: app.authenticate,
+        schema: {
+            body: z.object({
+                username: z.string(),
+            }),
+            response: {
+                200: z.object({ username: z.string() }),
+                400: z.object({ error: z.enum(['invalid-username', 'username-disabled', 'friends-disabled']) }),
+                409: z.object({ error: z.literal('username-taken') }),
+            },
+        },
+    }, async (request, reply) => {
+        const friendsPolicy = resolveFriendsPolicyFromEnv(process.env);
+        if (!friendsPolicy.enabled) {
+            return reply.code(400).send({ error: 'friends-disabled' });
+        }
+        if (!friendsPolicy.allowUsername) {
+            if (!friendsPolicy.requiredIdentityProviderId) {
+                return reply.code(400).send({ error: 'username-disabled' });
+            }
+            const current = await db.account.findUnique({
+                where: { id: request.userId },
+                select: {
+                    AccountIdentity: {
+                        where: { provider: friendsPolicy.requiredIdentityProviderId },
+                        select: { id: true },
+                        take: 1,
+                    },
+                },
+            });
+            if (!current || current.AccountIdentity.length === 0) {
+                return reply.code(400).send({ error: 'username-disabled' });
+            }
+        }
+
+        const validation = validateUsername(request.body.username, process.env);
+        if (!validation.ok) {
+            return reply.code(400).send({ error: 'invalid-username' });
+        }
+        const username = validation.username;
+
+        // Fast pre-check for friendlier errors; rely on unique index as final arbiter.
+        const existing = await db.account.findFirst({
+            where: {
+                username,
+                NOT: { id: request.userId },
+            },
+            select: { id: true },
+        });
+        if (existing) {
+            return reply.code(409).send({ error: 'username-taken' });
+        }
+
+        try {
+            await usernameUpdate(Context.create(request.userId), username);
+        } catch (e) {
+            if (e instanceof UsernameTakenError) {
+                return reply.code(409).send({ error: 'username-taken' });
+            }
+            throw e;
+        }
+
+        return reply.send({ username });
     });
 
     // Get Account Settings API
