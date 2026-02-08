@@ -1,426 +1,340 @@
 import * as React from 'react';
-import { View, ActivityIndicator, Platform, TextInput } from 'react-native';
+import { View, ActivityIndicator } from 'react-native';
 import { t } from '@/text';
 import { useRoute } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { Octicons } from '@expo/vector-icons';
 import { Text } from '@/components/StyledText';
-import { Item } from '@/components/ui/lists/Item';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
-import { getGitStatusFiles, GitFileStatus, GitStatusFiles } from '@/sync/gitStatusFiles';
+import { GitFileStatus } from '@/sync/git/gitStatusFiles';
+import { getDefaultChangedFilesViewMode } from '@/sync/git/gitAttribution';
+import { normalizeFilePath } from './files/utils';
+import { FilesToolbar } from './files/components/FilesToolbar';
+import { GitBranchSummary } from './files/components/GitBranchSummary';
+import { GitOperationsPanel } from './files/components/GitOperationsPanel';
 import { searchFiles, FileItem } from '@/sync/suggestionFile';
-import { useSessionGitStatus, useSessionProjectGitStatus } from '@/sync/storage';
+import { SearchResultsList } from './files/components/content/SearchResultsList';
+import { ChangedFilesList } from './files/components/content/ChangedFilesList';
+import {
+    storage,
+    useSessionProjectGitOperationLog,
+    useSessionProjectGitInFlightOperation,
+    useSessionProjectGitSnapshot,
+    useSessionProjectGitTouchedPaths,
+    useProjectForSession,
+    useProjectSessions,
+    useSetting,
+} from '@/sync/storage';
+import { gitStatusSync } from '@/sync/git/gitStatusSync';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/layout';
-import { FileIcon } from '@/components/FileIcon';
+import { useGitCommitHistory } from './files/hooks/useGitCommitHistory';
+import { useChangedFilesData } from './files/hooks/useChangedFilesData';
+import { useFilesGitOperations } from './files/hooks/useFilesGitOperations';
+import { shouldShowGitOperationsPanel } from './files/hooks/useGitOperationsVisibility';
+import { resolveGitWriteEnabled } from '@/sync/git/operations/featureFlags';
 
 export default function FilesScreen() {
     const route = useRoute();
     const router = useRouter();
     const sessionId = (route.params! as any).id as string;
-    
-    const [gitStatusFiles, setGitStatusFiles] = React.useState<GitStatusFiles | null>(null);
-    const [isLoading, setIsLoading] = React.useState(true);
+
+    const gitSnapshot = useSessionProjectGitSnapshot(sessionId);
+    const touchedPaths = useSessionProjectGitTouchedPaths(sessionId);
+    const operationLog = useSessionProjectGitOperationLog(sessionId);
+    const inFlightGitOperation = useSessionProjectGitInFlightOperation(sessionId);
+    const project = useProjectForSession(sessionId);
+    const projectSessionIds = useProjectSessions(project?.id ?? null);
+
+    const [isRefreshing, setIsRefreshing] = React.useState(true);
     const [searchQuery, setSearchQuery] = React.useState('');
     const [searchResults, setSearchResults] = React.useState<FileItem[]>([]);
     const [isSearching, setIsSearching] = React.useState(false);
-    // Use project git status first, fallback to session git status for backward compatibility
-    const projectGitStatus = useSessionProjectGitStatus(sessionId);
-    const sessionGitStatus = useSessionGitStatus(sessionId);
-    const gitStatus = projectGitStatus || sessionGitStatus;
+    const [showAllRepositoryFiles, setShowAllRepositoryFiles] = React.useState(false);
+    const [changedFilesViewMode, setChangedFilesViewMode] = React.useState(getDefaultChangedFilesViewMode);
+
     const { theme } = useUnistyles();
-    
-    // Load git status files
-    const loadGitStatusFiles = React.useCallback(async () => {
-        try {
-            setIsLoading(true);
-            const result = await getGitStatusFiles(sessionId);
-            setGitStatusFiles(result);
-        } catch (error) {
-            console.error('Failed to load git status files:', error);
-            setGitStatusFiles(null);
-        } finally {
-            setIsLoading(false);
-        }
-    }, [sessionId]);
+    const experiments = useSetting('experiments');
+    const expGitOperations = useSetting('expGitOperations');
+    const gitWriteEnabled = resolveGitWriteEnabled({
+        experiments,
+        expGitOperations,
+    });
+    const sessionPath = storage.getState().sessions[sessionId]?.metadata?.path ?? null;
+    const hasConflicts = gitSnapshot?.hasConflicts === true;
+    const hasGlobalOperationInFlight = Boolean(inFlightGitOperation);
+    const showGitOperationsPanel = shouldShowGitOperationsPanel({
+        isRefreshing,
+        isGitRepo: gitSnapshot?.repo.isGitRepo === true,
+        gitWriteEnabled,
+    });
 
-    // Load on mount
+    const {
+        attributionReliability,
+        showSessionViewToggle,
+        gitStatusFiles,
+        changedFilesCount,
+        shouldShowAllFiles,
+        allRepositoryChangedFiles,
+        sessionAttributedFiles,
+        repositoryOnlyFiles,
+        suppressedInferredCount,
+    } = useChangedFilesData({
+        sessionId,
+        gitSnapshot,
+        touchedPaths,
+        operationLog,
+        projectSessionIds,
+        searchQuery,
+        showAllRepositoryFiles,
+    });
+
     React.useEffect(() => {
-        loadGitStatusFiles();
-    }, [loadGitStatusFiles]);
+        if (!showSessionViewToggle && changedFilesViewMode === 'session') {
+            setChangedFilesViewMode('repository');
+        }
+    }, [changedFilesViewMode, showSessionViewToggle]);
 
-    // Refresh when screen is focused
+    const {
+        historyEntries,
+        historyLoading,
+        historyHasMore,
+        loadCommitHistory,
+    } = useGitCommitHistory({
+        sessionId,
+        gitWriteEnabled,
+        sessionPath,
+    });
+
+    const refreshGitData = React.useCallback(async () => {
+        setIsRefreshing(true);
+        try {
+            await gitStatusSync.getSync(sessionId).invalidateAndAwait();
+            await loadCommitHistory({ reset: true });
+        } finally {
+            setIsRefreshing(false);
+        }
+    }, [loadCommitHistory, sessionId]);
+
     useFocusEffect(
         React.useCallback(() => {
-            loadGitStatusFiles();
-        }, [loadGitStatusFiles])
+            const refresh = async () => {
+                await refreshGitData();
+            };
+
+            refresh();
+
+            return () => {};
+        }, [refreshGitData])
     );
 
-    // Handle search and file loading
+    const {
+        gitOperationBusy,
+        gitOperationStatus,
+        commitPreflight,
+        pullPreflight,
+        pushPreflight,
+        runRemoteOperation,
+        createCommit,
+    } = useFilesGitOperations({
+        sessionId,
+        sessionPath,
+        gitSnapshot,
+        gitWriteEnabled,
+        refreshGitData,
+        loadCommitHistory,
+    });
+    const commitAllowed = commitPreflight.allowed;
+    const pullAllowed = pullPreflight.allowed;
+    const pushAllowed = pushPreflight.allowed;
+
     React.useEffect(() => {
+        let cancelled = false;
+
         const loadFiles = async () => {
-            if (!sessionId) return;
-            
+            if (!sessionId || !shouldShowAllFiles || isRefreshing) {
+                return;
+            }
+
             try {
                 setIsSearching(true);
                 const results = await searchFiles(sessionId, searchQuery, { limit: 100 });
-                setSearchResults(results);
-            } catch (error) {
-                console.error('Failed to search files:', error);
-                setSearchResults([]);
+                if (!cancelled) {
+                    setSearchResults(results);
+                }
+            } catch {
+                if (!cancelled) {
+                    setSearchResults([]);
+                }
             } finally {
-                setIsSearching(false);
+                if (!cancelled) {
+                    setIsSearching(false);
+                }
             }
         };
 
-        // Load files when searching or when repo is clean
-        const shouldShowAllFiles = searchQuery || 
-            (gitStatusFiles?.totalStaged === 0 && gitStatusFiles?.totalUnstaged === 0);
-        
-        if (shouldShowAllFiles && !isLoading) {
-            loadFiles();
-        } else if (!searchQuery) {
-            setSearchResults([]);
-            setIsSearching(false);
-        }
-    }, [searchQuery, gitStatusFiles, sessionId, isLoading]);
+        loadFiles();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isRefreshing, searchQuery, sessionId, shouldShowAllFiles]);
 
     const handleFilePress = React.useCallback((file: GitFileStatus | FileItem) => {
-        // Navigate to file viewer with the file path (base64 encoded for special characters)
-        const encodedPath = btoa(file.fullPath);
-        router.push(`/session/${sessionId}/file?path=${encodedPath}`);
+        if ('fileType' in file && file.fileType === 'folder') {
+            return;
+        }
+
+        const safePath = normalizeFilePath(file.fullPath);
+        const encodedPath = encodeURIComponent(safePath);
+        router.push({
+            pathname: '/session/[id]/file',
+            params: {
+                id: sessionId,
+                path: encodedPath,
+            },
+        } as any);
     }, [router, sessionId]);
-
-    const renderFileIcon = (file: GitFileStatus) => {
-        return <FileIcon fileName={file.fileName} size={32} />;
-    };
-
-    const renderStatusIcon = (file: GitFileStatus) => {
-        let statusColor: string;
-        let statusIcon: string;
-
-        switch (file.status) {
-            case 'modified':
-                statusColor = "#FF9500";
-                statusIcon = "diff-modified";
-                break;
-            case 'added':
-                statusColor = "#34C759";
-                statusIcon = "diff-added";
-                break;
-            case 'deleted':
-                statusColor = "#FF3B30";
-                statusIcon = "diff-removed";
-                break;
-            case 'renamed':
-                statusColor = "#007AFF";
-                statusIcon = "arrow-right";
-                break;
-            case 'untracked':
-                statusColor = theme.dark ? "#b0b0b0" : "#8E8E93";
-                statusIcon = "file";
-                break;
-            default:
-                return null;
-        }
-
-        return <Octicons name={statusIcon as any} size={16} color={statusColor} />;
-    };
-
-    const renderLineChanges = (file: GitFileStatus) => {
-        const parts = [];
-        if (file.linesAdded > 0) {
-            parts.push(`+${file.linesAdded}`);
-        }
-        if (file.linesRemoved > 0) {
-            parts.push(`-${file.linesRemoved}`);
-        }
-        return parts.length > 0 ? parts.join(' ') : '';
-    };
-
-    const renderFileSubtitle = (file: GitFileStatus) => {
-        const lineChanges = renderLineChanges(file);
-        const pathPart = file.filePath || t('files.projectRoot');
-        return lineChanges ? `${pathPart} • ${lineChanges}` : pathPart;
-    };
-
-    const renderFileIconForSearch = (file: FileItem) => {
-        if (file.fileType === 'folder') {
-            return <Octicons name="file-directory" size={29} color="#007AFF" />;
-        }
-        
-        return <FileIcon fileName={file.fileName} size={29} />;
-    };
 
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
-            
-            {/* Search Input - Always Visible */}
-            <View style={{
-                padding: 16,
-                borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                borderBottomColor: theme.colors.divider
-            }}>
-                <View style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    backgroundColor: theme.colors.input.background,
-                    borderRadius: 10,
-                    paddingHorizontal: 12,
-                    paddingVertical: 8
-                }}>
-                    <Octicons name="search" size={16} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
-                    <TextInput
-                        value={searchQuery}
-                        onChangeText={setSearchQuery}
-                        placeholder={t('files.searchPlaceholder')}
-                        style={{
-                            flex: 1,
-                            fontSize: 16,
-                            ...Typography.default()
-                        }}
-                        placeholderTextColor={theme.colors.input.placeholder}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                    />
-                </View>
-            </View>
-            
-            {/* Header with branch info */}
-            {!isLoading && gitStatusFiles && (
-                <View style={{
-                    padding: 16,
-                    borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                    borderBottomColor: theme.colors.divider
-                }}>
-                    <View style={{
-                        flexDirection: 'row',
-                        alignItems: 'center',
-                        marginBottom: 8
-                    }}>
-                        <Octicons name="git-branch" size={16} color={theme.colors.textSecondary} style={{ marginRight: 6 }} />
-                        <Text style={{
-                            fontSize: 16,
-                            fontWeight: '600',
-                            color: theme.colors.text,
-                            ...Typography.default()
-                        }}>
-                            {gitStatusFiles.branch || t('files.detachedHead')}
-                        </Text>
-                    </View>
-                    <Text style={{
-                        fontSize: 12,
-                        color: theme.colors.textSecondary,
-                        ...Typography.default()
-                    }}>
-                        {t('files.summary', { staged: gitStatusFiles.totalStaged, unstaged: gitStatusFiles.totalUnstaged })}
-                    </Text>
-                </View>
+            <FilesToolbar
+                theme={theme}
+                searchQuery={searchQuery}
+                onSearchQueryChange={setSearchQuery}
+                showAllRepositoryFiles={showAllRepositoryFiles}
+                onShowChangedFiles={() => setShowAllRepositoryFiles(false)}
+                onShowAllRepositoryFiles={() => setShowAllRepositoryFiles(true)}
+                changedFilesCount={changedFilesCount}
+                changedFilesViewMode={changedFilesViewMode}
+                showSessionViewToggle={showSessionViewToggle}
+                onChangedFilesViewMode={setChangedFilesViewMode}
+            />
+
+            {!isRefreshing && gitStatusFiles && <GitBranchSummary theme={theme} gitStatusFiles={gitStatusFiles} />}
+
+            {showGitOperationsPanel && (
+                <GitOperationsPanel
+                    theme={theme}
+                    currentSessionId={sessionId}
+                    hasConflicts={hasConflicts}
+                    gitOperationBusy={gitOperationBusy}
+                    hasGlobalOperationInFlight={hasGlobalOperationInFlight}
+                    inFlightGitOperation={inFlightGitOperation}
+                    gitOperationStatus={gitOperationStatus}
+                    commitAllowed={commitAllowed}
+                    commitBlockedMessage={commitAllowed ? null : commitPreflight.message}
+                    pullAllowed={pullAllowed}
+                    pullBlockedMessage={pullAllowed ? null : pullPreflight.message}
+                    pushAllowed={pushAllowed}
+                    pushBlockedMessage={pushAllowed ? null : pushPreflight.message}
+                    onCreateCommit={createCommit}
+                    onFetch={() => {
+                        void runRemoteOperation('fetch');
+                    }}
+                    onPull={() => {
+                        void runRemoteOperation('pull');
+                    }}
+                    onPush={() => {
+                        void runRemoteOperation('push');
+                    }}
+                    historyLoading={historyLoading}
+                    historyEntries={historyEntries}
+                    historyHasMore={historyHasMore}
+                    onLoadMoreHistory={() => {
+                        void loadCommitHistory();
+                    }}
+                    onOpenCommit={(sha) => {
+                        router.push({
+                            pathname: '/session/[id]/commit',
+                            params: {
+                                id: sessionId,
+                                sha: encodeURIComponent(sha),
+                            },
+                        } as any);
+                    }}
+                    operationLog={operationLog}
+                />
             )}
 
-            {/* Git Status List */}
             <ItemList style={{ flex: 1 }}>
-                {isLoading ? (
-                    <View style={{ 
-                        flex: 1, 
-                        justifyContent: 'center', 
-                        alignItems: 'center',
-                        paddingTop: 40
-                    }}>
+                {isRefreshing ? (
+                    <View
+                        style={{
+                            flex: 1,
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            paddingTop: 40,
+                        }}
+                    >
                         <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                     </View>
-                ) : !gitStatusFiles ? (
-                    <View style={{ 
-                        flex: 1, 
-                        justifyContent: 'center', 
-                        alignItems: 'center',
-                        paddingTop: 40,
-                        paddingHorizontal: 20
-                    }}>
+                ) : gitSnapshot && !gitSnapshot.repo.isGitRepo ? (
+                    <View
+                        style={{
+                            flex: 1,
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            paddingTop: 40,
+                            paddingHorizontal: 20,
+                        }}
+                    >
                         <Octicons name="git-branch" size={48} color={theme.colors.textSecondary} />
-                        <Text style={{
-                            fontSize: 16,
-                            color: theme.colors.textSecondary,
-                            textAlign: 'center',
-                            marginTop: 16,
-                            ...Typography.default()
-                        }}>
+                        <Text
+                            style={{
+                                fontSize: 16,
+                                color: theme.colors.textSecondary,
+                                textAlign: 'center',
+                                marginTop: 16,
+                                ...Typography.default(),
+                            }}
+                        >
                             {t('files.notRepo')}
                         </Text>
-                        <Text style={{
-                            fontSize: 14,
-                            color: theme.colors.textSecondary,
-                            textAlign: 'center',
-                            marginTop: 8,
-                            ...Typography.default()
-                        }}>
+                        <Text
+                            style={{
+                                fontSize: 14,
+                                color: theme.colors.textSecondary,
+                                textAlign: 'center',
+                                marginTop: 8,
+                                ...Typography.default(),
+                            }}
+                        >
                             {t('files.notUnderGit')}
                         </Text>
                     </View>
-                ) : searchQuery || (gitStatusFiles.totalStaged === 0 && gitStatusFiles.totalUnstaged === 0) ? (
-                    // Show search results or all files when clean repo
-                    isSearching ? (
-                        <View style={{ 
-                            flex: 1, 
-                            justifyContent: 'center', 
-                            alignItems: 'center',
-                            paddingTop: 40
-                        }}>
-                            <ActivityIndicator size="small" color={theme.colors.textSecondary} />
-                            <Text style={{
-                                fontSize: 16,
-                                color: theme.colors.textSecondary,
-                                textAlign: 'center',
-                                marginTop: 16,
-                                ...Typography.default()
-                            }}>
-                                {t('files.searching')}
-                            </Text>
-                        </View>
-                    ) : searchResults.length === 0 ? (
-                        <View style={{ 
-                            flex: 1, 
-                            justifyContent: 'center', 
-                            alignItems: 'center',
-                            paddingTop: 40,
-                            paddingHorizontal: 20
-                        }}>
-                            <Octicons name={searchQuery ? "search" : "file-directory"} size={48} color={theme.colors.textSecondary} />
-                            <Text style={{
-                                fontSize: 16,
-                                color: theme.colors.textSecondary,
-                                textAlign: 'center',
-                                marginTop: 16,
-                                ...Typography.default()
-                            }}>
-                                {searchQuery ? t('files.noFilesFound') : t('files.noFilesInProject')}
-                            </Text>
-                            {searchQuery && (
-                                <Text style={{
-                                    fontSize: 14,
-                                    color: theme.colors.textSecondary,
-                                    textAlign: 'center',
-                                    marginTop: 8,
-                                    ...Typography.default()
-                                }}>
-                                    {t('files.tryDifferentTerm')}
-                                </Text>
-                            )}
-                        </View>
-                    ) : (
-                        // Show search results or all files
-                        <>
-                            {searchQuery && (
-                                <View style={{
-                                    backgroundColor: theme.colors.surfaceHigh,
-                                    paddingHorizontal: 16,
-                                    paddingVertical: 12,
-                                    borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                                    borderBottomColor: theme.colors.divider
-                                }}>
-                                    <Text style={{
-                                        fontSize: 14,
-                                        fontWeight: '600',
-                                        color: theme.colors.textLink,
-                                        ...Typography.default()
-                                    }}>
-                                        {t('files.searchResults', { count: searchResults.length })}
-                                    </Text>
-                                </View>
-                            )}
-                            {searchResults.map((file, index) => (
-                                <Item
-                                    key={`file-${file.fullPath}-${index}`}
-                                    title={file.fileName}
-                                    subtitle={file.filePath || t('files.projectRoot')}
-                                    icon={renderFileIconForSearch(file)}
-                                    onPress={() => handleFilePress(file)}
-                                    showDivider={index < searchResults.length - 1}
-                                />
-                            ))}
-                        </>
-                    )
-                ) : (
-                    <>
-                        {/* Staged Changes Section */}
-                        {gitStatusFiles.stagedFiles.length > 0 && (
-                            <>
-                                <View style={{
-                                    backgroundColor: theme.colors.surfaceHigh,
-                                    paddingHorizontal: 16,
-                                    paddingVertical: 12,
-                                    borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                                    borderBottomColor: theme.colors.divider
-                                }}>
-                                    <Text style={{
-                                        fontSize: 14,
-                                        fontWeight: '600',
-                                        color: theme.colors.success,
-                                        ...Typography.default()
-                                    }}>
-                                        {t('files.stagedChanges', { count: gitStatusFiles.stagedFiles.length })}
-                                    </Text>
-                                </View>
-                                {gitStatusFiles.stagedFiles.map((file, index) => (
-                                    <Item
-                                        key={`staged-${file.fullPath}-${index}`}
-                                        title={file.fileName}
-                                        subtitle={renderFileSubtitle(file)}
-                                        icon={renderFileIcon(file)}
-                                        rightElement={renderStatusIcon(file)}
-                                        onPress={() => handleFilePress(file)}
-                                        showDivider={index < gitStatusFiles.stagedFiles.length - 1 || gitStatusFiles.unstagedFiles.length > 0}
-                                    />
-                                ))}
-                            </>
-                        )}
-
-                        {/* Unstaged Changes Section */}
-                        {gitStatusFiles.unstagedFiles.length > 0 && (
-                            <>
-                                <View style={{
-                                    backgroundColor: theme.colors.surfaceHigh,
-                                    paddingHorizontal: 16,
-                                    paddingVertical: 12,
-                                    borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
-                                    borderBottomColor: theme.colors.divider
-                                }}>
-                                    <Text style={{
-                                        fontSize: 14,
-                                        fontWeight: '600',
-                                        color: theme.colors.warning,
-                                        ...Typography.default()
-                                    }}>
-                                        {t('files.unstagedChanges', { count: gitStatusFiles.unstagedFiles.length })}
-                                    </Text>
-                                </View>
-                                {gitStatusFiles.unstagedFiles.map((file, index) => (
-                                    <Item
-                                        key={`unstaged-${file.fullPath}-${index}`}
-                                        title={file.fileName}
-                                        subtitle={renderFileSubtitle(file)}
-                                        icon={renderFileIcon(file)}
-                                        rightElement={renderStatusIcon(file)}
-                                        onPress={() => handleFilePress(file)}
-                                        showDivider={index < gitStatusFiles.unstagedFiles.length - 1}
-                                    />
-                                ))}
-                            </>
-                        )}
-                    </>
-                )}
+                ) : shouldShowAllFiles ? (
+                    <SearchResultsList
+                        theme={theme}
+                        isSearching={isSearching}
+                        searchQuery={searchQuery}
+                        searchResults={searchResults}
+                        onFilePress={handleFilePress}
+                    />
+                ) : gitStatusFiles ? (
+                    <ChangedFilesList
+                        theme={theme}
+                        changedFilesViewMode={changedFilesViewMode}
+                        attributionReliability={attributionReliability}
+                        allRepositoryChangedFiles={allRepositoryChangedFiles}
+                        sessionAttributedFiles={sessionAttributedFiles}
+                        repositoryOnlyFiles={repositoryOnlyFiles}
+                        suppressedInferredCount={suppressedInferredCount}
+                        onFilePress={handleFilePress}
+                    />
+                ) : null}
             </ItemList>
         </View>
     );
 }
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create(() => ({
     container: {
         flex: 1,
         maxWidth: layout.maxWidth,
         alignSelf: 'center',
         width: '100%',
-    }
+    },
 }));
