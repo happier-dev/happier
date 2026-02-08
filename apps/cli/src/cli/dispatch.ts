@@ -4,21 +4,35 @@ import type { TerminalRuntimeFlags } from '@/terminal/terminalRuntimeFlags';
 import { commandRegistry } from '@/cli/commandRegistry';
 import { AGENTS } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
+import { shouldEnsureDaemonForInvocation } from '@/daemon/ensureDaemon';
+import { applyEphemeralServerSelectionFromPrefixArgs } from '@/server/serverSelection';
 
 export async function dispatchCli(params: Readonly<{
   args: string[];
   terminalRuntime: TerminalRuntimeFlags | null;
   rawArgv: string[];
 }>): Promise<void> {
-  const { args, terminalRuntime, rawArgv } = params;
+  let args = [...params.args];
+  const { terminalRuntime, rawArgv } = params;
 
   // If --version is passed - do not log, its likely daemon inquiring about our version
   if (!args.includes('--version')) {
     logger.debug('Starting happy CLI with args: ', rawArgv);
   }
 
+  try {
+    args = await applyEphemeralServerSelectionFromPrefixArgs(args);
+  } catch (error) {
+    console.error(chalk.red('Error:'), error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
   // Check if first argument is a subcommand
   const subcommand = args[0];
+
+  if (shouldEnsureDaemonForInvocation({ args })) {
+    process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '1';
+  }
 
   // Headless tmux launcher (CLI flow)
   if (args.includes('--tmux')) {
@@ -27,7 +41,7 @@ export async function dispatchCli(params: Readonly<{
       const idx = args.indexOf('--tmux');
       if (idx !== -1) args.splice(idx, 1);
     } else {
-      const disallowed = new Set(['doctor', 'auth', 'connect', 'notify', 'daemon', 'install', 'uninstall', 'logout', 'attach']);
+      const disallowed = new Set(['doctor', 'auth', 'connect', 'notify', 'daemon', 'install', 'uninstall', 'logout', 'attach', 'self', 'server']);
       if (subcommand && disallowed.has(subcommand)) {
         console.error(chalk.red('Error:'), '--tmux can only be used when starting a session.');
         process.exit(1);

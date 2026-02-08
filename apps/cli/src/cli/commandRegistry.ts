@@ -9,6 +9,8 @@ import { handleDaemonCliCommand } from './commands/daemon';
 import { handleDoctorCliCommand } from './commands/doctor';
 import { handleLogoutCliCommand } from './commands/logout';
 import { handleNotifyCliCommand } from './commands/notify';
+import { handleServerCliCommand } from './commands/server';
+import { handleSelfCliCommand } from './commands/self';
 
 export type CommandContext = Readonly<{
   args: string[];
@@ -40,5 +42,7 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   doctor: handleDoctorCliCommand,
   logout: handleLogoutCliCommand,
   notify: handleNotifyCliCommand,
+  server: handleServerCliCommand,
+  self: handleSelfCliCommand,
   ...buildAgentCommandRegistry(),
 };

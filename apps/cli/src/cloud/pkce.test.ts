@@ -27,5 +27,22 @@ describe('generatePkceCodes', () => {
     const { verifier } = generatePkceCodes();
     expect(verifier).toMatch(/^[A-Za-z0-9._~-]+$/);
   });
-});
 
+  it.each([
+    { bytes: 32, expectedLength: 43 },
+    { bytes: 96, expectedLength: 128 },
+  ])('respects canonical verifier length boundary for bytes=$bytes', ({ bytes, expectedLength }) => {
+    const { verifier } = generatePkceCodes(bytes);
+    expect(verifier.length).toBe(expectedLength);
+  });
+
+  it('treats non-finite byte input as default length', () => {
+    const { verifier } = generatePkceCodes(Number.NaN);
+    expect(verifier.length).toBe(43);
+  });
+
+  it('returns challenge using base64url-safe characters', () => {
+    const { challenge } = generatePkceCodes();
+    expect(challenge).toMatch(/^[A-Za-z0-9_-]+$/);
+  });
+});

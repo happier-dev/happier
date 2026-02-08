@@ -2,12 +2,22 @@ import { execFile } from 'child_process';
 import type { ExecOptions } from 'child_process';
 import { constants as fsConstants } from 'fs';
 import { access } from 'fs/promises';
+import { homedir } from 'os';
 import { join, delimiter as PATH_DELIMITER } from 'path';
 import { promisify } from 'util';
 
 import { AGENTS, type CatalogAgentId, type CliDetectSpec } from '@/backends/catalog';
 
 const execFileAsync = promisify(execFile);
+
+function resolveHomeDir(): string {
+    const envHome =
+        process.platform === 'win32'
+            ? (process.env.USERPROFILE || process.env.HOME)
+            : process.env.HOME;
+    const trimmed = typeof envHome === 'string' ? envHome.trim() : '';
+    return trimmed.length > 0 ? trimmed : homedir();
+}
 
 export type DetectCliName = CatalogAgentId;
 
@@ -79,6 +89,65 @@ async function resolveCommandOnPath(command: string, pathEnv: string | null): Pr
     return null;
 }
 
+async function resolveClaudeOutsidePath(): Promise<string | null> {
+    const isWindows = process.platform === 'win32';
+    const accessMode = isWindows ? fsConstants.F_OK : fsConstants.X_OK;
+
+    const override = typeof process.env.HAPPIER_CLAUDE_PATH === 'string' ? process.env.HAPPIER_CLAUDE_PATH.trim() : '';
+    if (override) {
+        try {
+            await access(override, accessMode);
+            return override;
+        } catch {
+            // ignore
+        }
+    }
+
+    const homeDir = resolveHomeDir();
+    const candidates: string[] = [];
+
+    if (isWindows) {
+        const localAppData = process.env.LOCALAPPDATA || join(homeDir, 'AppData', 'Local');
+        candidates.push(join(localAppData, 'Claude', 'claude.exe'));
+        candidates.push(join(homeDir, '.claude', 'claude.exe'));
+    } else {
+        // Native installer default location (may not be on PATH for daemons/non-login shells)
+        candidates.push(join(homeDir, '.local', 'bin', 'claude'));
+
+        // Common Homebrew locations (in case the daemon PATH is minimal)
+        candidates.push('/opt/homebrew/bin/claude');
+        candidates.push('/usr/local/bin/claude');
+        candidates.push('/home/linuxbrew/.linuxbrew/bin/claude');
+        candidates.push(join(homeDir, '.linuxbrew', 'bin', 'claude'));
+    }
+
+    for (const candidate of candidates) {
+        try {
+            await access(candidate, accessMode);
+            return candidate;
+        } catch {
+            // continue
+        }
+    }
+
+    return null;
+}
+
+async function resolveCliOverridePath(name: DetectCliName): Promise<string | null> {
+    const isWindows = process.platform === 'win32';
+    const accessMode = isWindows ? fsConstants.F_OK : fsConstants.X_OK;
+    const envKey = `HAPPIER_${name.toUpperCase()}_PATH`;
+    const override = typeof process.env[envKey] === 'string' ? String(process.env[envKey]).trim() : '';
+    if (!override) return null;
+
+    try {
+        await access(override, accessMode);
+        return override;
+    } catch {
+        return null;
+    }
+}
+
 function getFirstLine(value: string): string | null {
     const normalized = value.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
     if (!normalized) return null;
@@ -142,6 +211,7 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
         const timeoutMs = 1200;
         const isWindows = process.platform === 'win32';
         const isCmdScript = isWindows && /\.(cmd|bat)$/i.test(params.resolvedPath);
+        const isJsFile = /\.(c?js)$/i.test(params.resolvedPath);
 
         const asString = (value: unknown): string => {
             if (typeof value === 'string') return value;
@@ -163,15 +233,28 @@ async function detectCliVersion(params: { name: DetectCliName; resolvedPath: str
             }
         };
 
+        if (isJsFile) {
+            for (const args of argsToTry) {
+                const { stdout, stderr } = await execFileBestEffort(process.execPath, [params.resolvedPath, ...args], {
+                    timeout: timeoutMs,
+                    windowsHide: true,
+                });
+                const combined = `${stdout}\n${stderr}`;
+                const firstLine = getFirstLine(combined);
+                const semver = extractSemver(firstLine) ?? extractSemver(combined);
+                if (semver) return semver;
+            }
+            return null;
+        }
+
         if (isCmdScript) {
             // .cmd/.bat require cmd.exe (best-effort, only --version is supported here)
             const primary = argsToTry.find((args) => args.includes('--version')) ?? ['--version'];
-            const { stdout, stderr } = await execFileBestEffort('cmd.exe', [
-                '/d',
-                '/s',
-                '/c',
-                `"${params.resolvedPath}" ${primary.join(' ')}`,
-            ], { timeout: timeoutMs, windowsHide: true });
+            const { stdout, stderr } = await execFileBestEffort(
+                'cmd.exe',
+                ['/d', '/s', '/c', `"${params.resolvedPath}" ${primary.join(' ')}`],
+                { timeout: timeoutMs, windowsHide: true },
+            );
             return extractSemver(getFirstLine(`${stdout}\n${stderr}`));
         }
 
@@ -283,7 +366,10 @@ export async function detectCliSnapshotOnDaemonPath(data: DetectCliRequest): Pro
 
     const pairs = await Promise.all(
         names.map(async (name) => {
-            const resolvedPath = await resolveCommandOnPath(name, pathEnv);
+            const resolvedPath =
+                (await resolveCliOverridePath(name))
+                ?? (await resolveCommandOnPath(name, pathEnv))
+                ?? (name === 'claude' ? await resolveClaudeOutsidePath() : null);
             if (!resolvedPath) {
                 const entry: DetectCliEntry = { available: false };
                 return [name, entry] as const;

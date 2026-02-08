@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { readCredentials, clearCredentials, clearMachineId, readSettings } from '@/persistence';
+import { readCredentials, clearCredentials, readSettings, updateSettings, clearDaemonState, clearMachineId } from '@/persistence';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { configuration } from '@/configuration';
 import { existsSync, rmSync } from 'node:fs';
@@ -7,6 +7,8 @@ import { createInterface } from 'node:readline';
 import { stopDaemon, checkIfDaemonRunningAndCleanupStaleState } from '@/daemon/controlClient';
 import { logger } from '@/ui/logger';
 import os from 'node:os';
+import { applyServerSelectionFromArgs } from '@/server/serverSelection';
+import { stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
 
 export async function handleAuthCommand(args: string[]): Promise<void> {
   const subcommand = args[0];
@@ -21,7 +23,7 @@ export async function handleAuthCommand(args: string[]): Promise<void> {
       await handleAuthLogin(args.slice(1));
       break;
     case 'logout':
-      await handleAuthLogout();
+      await handleAuthLogout(args.slice(1));
       break;
     case 'status':
       await handleAuthStatus();
@@ -38,14 +40,21 @@ function showAuthHelp(): void {
 ${chalk.bold('happier auth')} - Authentication management
 
 ${chalk.bold('Usage:')}
-  happier auth login [--no-open] [--force]    Authenticate with Happier
-  happier auth logout             Remove authentication and machine data
+  happier auth login [--no-open] [--force] [--method web|mobile] [--server <name-or-id> | --server-url <url> [--webapp-url <url>] [--persist|--no-persist]]    Authenticate with Happier
+  happier auth logout [--all]     Log out (active server by default)
   happier auth status             Show authentication status
   happier auth help               Show this help message
 
 ${chalk.bold('Options:')}
   --no-open  Do not attempt to open a browser (prints URL instead)
   --force    Clear credentials, machine ID, and stop daemon before re-auth
+  --method   Force authentication method (web|mobile). Useful for headless/non-TTY.
+  --all      When used with logout, remove local data for all servers
+  --server      Use an existing saved server profile
+  --server-url  Use a specific server URL (defaults to persisting as a new profile)
+  --webapp-url  Override web app URL for this server profile
+  --persist     Persist --server-url as the active server profile (default)
+  --no-persist  Use --server-url for this invocation only
 
 ${chalk.gray('PS: Your master secret never leaves your mobile/web device. Each CLI machine')}
 ${chalk.gray('receives only a derived key for per-machine encryption, so backup codes')}
@@ -53,9 +62,39 @@ ${chalk.gray('cannot be displayed from the CLI.')}
 `);
 }
 
+function resolveAuthMethodFlag(args: string[]): 'web' | 'mobile' | null {
+  const idx = args.findIndex((a) => a === '--method');
+  if (idx !== -1) {
+    const value = (args[idx + 1] ?? '').toString().trim().toLowerCase();
+    if (!value) throw new Error('Missing value for --method (expected: web|mobile)');
+    if (value === 'web' || value === 'mobile') return value;
+    throw new Error(`Invalid --method value: ${value} (expected: web|mobile)`);
+  }
+
+  const withEq = args.find((a) => a.startsWith('--method='));
+  if (withEq) {
+    const value = withEq.slice('--method='.length).trim().toLowerCase();
+    if (!value) throw new Error('Missing value for --method (expected: web|mobile)');
+    if (value === 'web' || value === 'mobile') return value;
+    throw new Error(`Invalid --method value: ${value} (expected: web|mobile)`);
+  }
+
+  return null;
+}
+
 async function handleAuthLogin(args: string[]): Promise<void> {
+  args = await applyServerSelectionFromArgs(args);
+
   const forceAuth = args.includes('--force') || args.includes('-f');
   const noOpen = args.includes('--no-open') || args.includes('--no-browser') || args.includes('--no-browser-open');
+  let method: 'web' | 'mobile' | null = null;
+  try {
+    method = resolveAuthMethodFlag(args);
+  } catch (error) {
+    console.error(chalk.red(error instanceof Error ? error.message : 'Invalid --method flag'));
+    process.exit(1);
+  }
+  if (method) process.env.HAPPIER_AUTH_METHOD = method;
 
   if (noOpen) {
     // Used by the auth UI layer to skip automatic browser open attempts.
@@ -121,18 +160,25 @@ async function handleAuthLogin(args: string[]): Promise<void> {
   }
 }
 
-async function handleAuthLogout(): Promise<void> {
-  // "auth logout will essentially clear the private key that originally came from the phone"
+async function handleAuthLogout(args: string[]): Promise<void> {
+  const logoutAll = args.includes('--all');
   const happyDir = configuration.happyHomeDir;
+  const targetServerId = configuration.activeServerId;
 
   // Check if authenticated
-  const credentials = await readCredentials();
-  if (!credentials) {
-    console.log(chalk.yellow('Not currently authenticated'));
-    return;
+  if (!logoutAll) {
+    const credentials = await readCredentials();
+    if (!credentials) {
+      console.log(chalk.yellow('Not currently authenticated'));
+      return;
+    }
   }
 
-  console.log(chalk.blue('This will log you out of Happier'));
+  if (logoutAll) {
+    console.log(chalk.blue('This will log you out of Happier on all servers and remove local data'));
+  } else {
+    console.log(chalk.blue(`This will log you out of Happier for server: ${targetServerId}`));
+  }
   console.log(chalk.yellow('⚠️  You will need to re-authenticate to use Happier again'));
 
   // Ask for confirmation
@@ -142,22 +188,57 @@ async function handleAuthLogout(): Promise<void> {
   });
 
   const answer = await new Promise<string>((resolve) => {
-    rl.question(chalk.yellow('Are you sure you want to log out? (y/N): '), resolve);
+    rl.question(
+      chalk.yellow(logoutAll ? 'Are you sure you want to log out everywhere and delete local data? (y/N): ' : 'Are you sure you want to log out? (y/N): '),
+      resolve,
+    );
   });
 
   rl.close();
 
   if (answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes') {
     try {
-      // Stop daemon if running
-      try {
-        await stopDaemon();
-        console.log(chalk.gray('Stopped daemon'));
-      } catch { }
+      if (logoutAll) {
+        try {
+          await stopAllDaemonsBestEffort();
+        } catch {
+          // best-effort
+        }
+        if (existsSync(happyDir)) {
+          rmSync(happyDir, { recursive: true, force: true });
+        }
+      } else {
+        // Stop daemon for this server (best-effort).
+        try {
+          await stopDaemon();
+          console.log(chalk.gray('Stopped daemon'));
+        } catch {
+          // ignore
+        }
 
-      // Remove entire happy directory (as current logout does)
-      if (existsSync(happyDir)) {
-        rmSync(happyDir, { recursive: true, force: true });
+        // Clear credentials for this server only.
+        await clearCredentials();
+
+        // Clear daemon state/lock for this server only.
+        await clearDaemonState().catch(() => {});
+
+        // Clear machine IDs and reconnect cursors for this server only (multi-server safe).
+        await updateSettings((settings) => {
+          const nextMachineIds = { ...(settings.machineIdByServerId ?? {}) };
+          const nextMachineConfirmed = { ...(settings.machineIdConfirmedByServerByServerId ?? {}) };
+          const nextCursors = { ...(settings.lastChangesCursorByServerIdByAccountId ?? {}) };
+
+          if (targetServerId in nextMachineIds) delete nextMachineIds[targetServerId];
+          if (targetServerId in nextMachineConfirmed) delete nextMachineConfirmed[targetServerId];
+          if (targetServerId in nextCursors) delete nextCursors[targetServerId];
+
+          return {
+            ...settings,
+            machineIdByServerId: Object.keys(nextMachineIds).length ? nextMachineIds : {},
+            machineIdConfirmedByServerByServerId: Object.keys(nextMachineConfirmed).length ? nextMachineConfirmed : {},
+            lastChangesCursorByServerIdByAccountId: Object.keys(nextCursors).length ? nextCursors : {},
+          };
+        });
       }
 
       console.log(chalk.green('✓ Successfully logged out'));

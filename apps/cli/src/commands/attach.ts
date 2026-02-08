@@ -51,6 +51,7 @@ export async function handleAttachCommand(argv: string[]): Promise<void> {
   const plan = createTerminalAttachPlan({
     terminal: info.terminal,
     insideTmux: Boolean(process.env.TMUX),
+    currentTmuxSocketPath: typeof process.env.TMUX === 'string' ? process.env.TMUX.split(',')[0]?.trim() || null : null,
   });
 
   if (plan.type === 'not-attachable') {
