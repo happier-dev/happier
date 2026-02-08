@@ -1,6 +1,5 @@
 import chalk from 'chalk';
 
-import { CODEX_PERMISSION_MODES, isCodexPermissionMode } from '@/api/types';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { parseSessionStartArgs } from '@/cli/sessionStartArgs';
 
@@ -8,18 +7,7 @@ import type { CommandContext } from '@/cli/commandRegistry';
 
 export async function handleCodexCliCommand(context: CommandContext): Promise<void> {
   try {
-    const { runCodex } = await import('@/backends/codex/runCodex');
-
-    const { startedBy, permissionMode, permissionModeUpdatedAt } = parseSessionStartArgs(context.args);
-    if (permissionMode && !isCodexPermissionMode(permissionMode)) {
-      console.error(
-        chalk.red(
-          `Invalid --permission-mode for codex: ${permissionMode}. Valid values: ${CODEX_PERMISSION_MODES.join(', ')}`,
-        ),
-      );
-      console.error(chalk.gray('Tip: use --yolo for full bypass-like behavior.'));
-      process.exit(1);
-    }
+    const { startedBy, permissionMode, permissionModeUpdatedAt, agentModeId, agentModeUpdatedAt, modelId, modelUpdatedAt } = parseSessionStartArgs(context.args);
 
     const readFlagValue = (flag: string): string | undefined => {
       const idx = context.args.indexOf(flag);
@@ -31,7 +19,15 @@ export async function handleCodexCliCommand(context: CommandContext): Promise<vo
 
     const existingSessionId = readFlagValue('--existing-session');
     const resume = readFlagValue('--resume');
+    const startingModeRaw = readFlagValue('--happy-starting-mode');
+    const startingMode =
+      startingModeRaw === 'local' || startingModeRaw === 'remote' ? startingModeRaw : undefined;
+    if (startingModeRaw && !startingMode) {
+      console.error(chalk.red(`Invalid --happy-starting-mode: ${startingModeRaw}. Use "local" or "remote".`));
+      process.exit(1);
+    }
 
+    const { runCodex } = await import('@/backends/codex/runCodex');
     const { credentials } = await authAndSetupMachineIfNeeded();
     await runCodex({
       credentials,
@@ -39,8 +35,13 @@ export async function handleCodexCliCommand(context: CommandContext): Promise<vo
       terminalRuntime: context.terminalRuntime,
       permissionMode,
       permissionModeUpdatedAt,
+      agentModeId,
+      agentModeUpdatedAt,
+      modelId,
+      modelUpdatedAt,
       existingSessionId,
       resume,
+      startingMode,
     });
   } catch (error) {
     console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');

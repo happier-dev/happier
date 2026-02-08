@@ -1,12 +1,13 @@
 /**
  * Diff Processor - Handles turn_diff messages and tracks unified_diff changes
  * 
- * This processor tracks changes to the unified_diff field in turn_diff messages
- * and sends CodexDiff tool calls when the diff changes from its previous value.
+ * This processor tracks the latest unified_diff snapshot for a turn and emits a
+ * single CodexDiff tool call at turn completion.
  */
 
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
+import { TurnDiffEmitter } from '@/agent/tools/diff/turnDiffEmitter';
 
 export interface DiffToolCall {
     type: 'tool-call';
@@ -28,53 +29,47 @@ export interface DiffToolResult {
 }
 
 export class DiffProcessor {
-    private previousDiff: string | null = null;
+    private readonly emitter = new TurnDiffEmitter({ snapshotUnifiedDiff: true });
     private onMessage: ((message: any) => void) | null = null;
 
     constructor(onMessage?: (message: any) => void) {
         this.onMessage = onMessage || null;
+        this.emitter.beginTurn();
     }
 
     /**
-     * Process a turn_diff message and check if the unified_diff has changed
+     * Capture the latest unified diff snapshot for the current turn.
      */
     processDiff(unifiedDiff: string): void {
-        // Check if the diff has changed from the previous value
-        if (this.previousDiff !== unifiedDiff) {
-            logger.debug('[DiffProcessor] Unified diff changed, sending CodexDiff tool call');
-            
-            // Generate a unique call ID for this diff
-            const callId = randomUUID();
-            
-            // Send tool call for the diff change
-            const toolCall: DiffToolCall = {
-                type: 'tool-call',
-                name: 'CodexDiff',
-                callId: callId,
-                input: {
-                    unified_diff: unifiedDiff
-                },
-                id: randomUUID()
-            };
-            
-            this.onMessage?.(toolCall);
-            
-            // Immediately send the tool result to mark it as completed
-            const toolResult: DiffToolResult = {
-                type: 'tool-call-result',
-                callId: callId,
-                output: {
-                    status: 'completed'
-                },
-                id: randomUUID()
-            };
-            
-            this.onMessage?.(toolResult);
-        }
-        
-        // Update the stored diff value
-        this.previousDiff = unifiedDiff;
-        logger.debug('[DiffProcessor] Updated stored diff');
+        this.emitter.observeUnifiedDiffSnapshot({ unifiedDiff });
+        logger.debug('[DiffProcessor] Captured unified diff snapshot');
+    }
+
+    /**
+     * Emit the aggregated diff tool call for the current turn (if any).
+     */
+    flushTurn(): void {
+        const input = this.emitter.flushTurn();
+        const unifiedDiff = input.unified_diff;
+        if (!unifiedDiff) return;
+
+        const callId = randomUUID();
+        const toolCall: DiffToolCall = {
+            type: 'tool-call',
+            name: 'CodexDiff',
+            callId,
+            input: { unified_diff: unifiedDiff },
+            id: randomUUID(),
+        };
+        this.onMessage?.(toolCall);
+
+        const toolResult: DiffToolResult = {
+            type: 'tool-call-result',
+            callId,
+            output: { status: 'completed' },
+            id: randomUUID(),
+        };
+        this.onMessage?.(toolResult);
     }
 
     /**
@@ -82,7 +77,7 @@ export class DiffProcessor {
      */
     reset(): void {
         logger.debug('[DiffProcessor] Resetting diff state');
-        this.previousDiff = null;
+        this.emitter.beginTurn();
     }
 
     /**
@@ -95,7 +90,5 @@ export class DiffProcessor {
     /**
      * Get the current diff value
      */
-    getCurrentDiff(): string | null {
-        return this.previousDiff;
-    }
+    // Intentionally no getters for turn state; use tool-tracing fixtures/tests for validation.
 }

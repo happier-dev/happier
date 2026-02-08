@@ -1,0 +1,28 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": ["execute_trace_ok"],
+    "extended": [
+      "read_in_workspace",
+      "acp_probe_models",
+      "search_known_token",
+      "write_in_workspace",
+      "glob_list_files",
+      "search_ls_equivalence",
+      "read_missing_file_in_workspace",
+      "permission_mode_default_outside_workspace",
+      "permission_mode_safe_yolo_outside_workspace",
+      "permission_mode_read_only_outside_workspace",
+      "permission_mode_yolo_outside_workspace",
+      "permission_surface_patch_apply",
+      "permission_abort_patch_apply",
+      "permission_deny_outside_workspace",
+      "patch_includes_diff",
+      "edit_result_includes_diff",
+      "multi_file_edit_in_workspace",
+      "multi_file_edit_in_workspace_includes_diff",
+      "acp_resume_load_session",
+      "acp_resume_fresh_session_imports_history"
+    ]
+  }
+}
