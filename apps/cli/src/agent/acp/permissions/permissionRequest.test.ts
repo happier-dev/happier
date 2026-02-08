@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractPermissionInputWithFallback } from './permissionRequest';
+import { extractPermissionInputWithFallback, extractPermissionToolNameHint } from './permissionRequest';
 
 describe('extractPermissionInputWithFallback', () => {
   it('uses params input when present', () => {
@@ -28,3 +28,40 @@ describe('extractPermissionInputWithFallback', () => {
   });
 });
 
+describe('extractPermissionToolNameHint', () => {
+  it('prefers title-derived tool name when kind is generic and title is more specific', () => {
+    expect(
+      extractPermissionToolNameHint({
+        toolCall: {
+          kind: 'other',
+          toolName: 'Read',
+          title: 'Edit file outside working directory: /tmp/outside.txt',
+        },
+      })
+    ).toBe('Edit');
+  });
+
+  it('does not downgrade a dangerous toolName based on a safer-looking title', () => {
+    expect(
+      extractPermissionToolNameHint({
+        toolCall: {
+          kind: 'other',
+          toolName: 'Bash',
+          title: 'Read file outside working directory: /tmp/outside.txt',
+        },
+      })
+    ).toBe('Bash');
+  });
+
+  it('does not override toolName with non-tool title prefixes', () => {
+    expect(
+      extractPermissionToolNameHint({
+        toolCall: {
+          kind: 'other',
+          toolName: 'Read',
+          title: 'Access to file outside working directory: /tmp/outside.txt',
+        },
+      })
+    ).toBe('Read');
+  });
+});
