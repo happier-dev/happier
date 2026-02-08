@@ -172,18 +172,23 @@ export function normalizeCodeSearchResult(rawOutput: unknown): UnknownRecord {
         return { matches: (record as any).matches };
     }
 
+    const metadata = asRecord((record as any).metadata);
     const textCandidate =
-        typeof (record as any).aggregated_output === 'string'
-            ? (record as any).aggregated_output
-            : typeof (record as any).formatted_output === 'string'
-                ? (record as any).formatted_output
-                : typeof (record as any).stdout === 'string'
-                    ? (record as any).stdout
-                    : typeof (record as any).text === 'string'
-                        ? (record as any).text
-                        : typeof (record as any).value === 'string'
-                            ? (record as any).value
-                            : null;
+        typeof (record as any).output === 'string'
+            ? (record as any).output
+            : typeof metadata?.output === 'string'
+                ? metadata.output
+                : typeof (record as any).aggregated_output === 'string'
+                    ? (record as any).aggregated_output
+                    : typeof (record as any).formatted_output === 'string'
+                        ? (record as any).formatted_output
+                        : typeof (record as any).stdout === 'string'
+                            ? (record as any).stdout
+                            : typeof (record as any).text === 'string'
+                                ? (record as any).text
+                                : typeof (record as any).value === 'string'
+                                    ? (record as any).value
+                                    : null;
 
     if (typeof textCandidate === 'string' && textCandidate.trim().length > 0) {
         const parsed = parseOpenCodeSearch(textCandidate);

@@ -88,8 +88,13 @@ export function normalizeBashResult(rawOutput: unknown): UnknownRecord {
     const out: UnknownRecord = { ...record };
 
     if (typeof out.stdout !== 'string') {
+        const metadata = asRecord(out.metadata);
         const candidate =
-            typeof out.formatted_output === 'string'
+            typeof out.output === 'string'
+                ? out.output
+                : typeof metadata?.output === 'string'
+                    ? metadata.output
+                    : typeof out.formatted_output === 'string'
                 ? out.formatted_output
                 : typeof out.aggregated_output === 'string'
                     ? out.aggregated_output
@@ -116,6 +121,8 @@ export function normalizeBashResult(rawOutput: unknown): UnknownRecord {
             ? out.exit_code
             : typeof out.exitCode === 'number'
                 ? out.exitCode
+                : typeof (asRecord(out.metadata)?.exit) === 'number'
+                    ? (asRecord(out.metadata)?.exit as number)
                 : null;
     if (exitCode != null) out.exit_code = exitCode;
 

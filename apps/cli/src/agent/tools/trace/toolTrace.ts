@@ -24,6 +24,9 @@ export class ToolTraceWriter {
     constructor(params: { filePath: string }) {
         this.filePath = params.filePath;
         mkdirSync(dirname(this.filePath), { recursive: true });
+        // Touch the file so that "tool trace enabled" is observable even before the first event.
+        // appendFileSync creates the file if it does not exist and is a no-op for empty content.
+        appendFileSync(this.filePath, '', 'utf8');
     }
 
     record(event: ToolTraceEventV1): void {
@@ -64,6 +67,22 @@ let cachedWriter: ToolTraceWriter | null = null;
 let cachedFilePath: string | null = null;
 let cachedDefaultTraceFilePath: string | null = null;
 let cachedDefaultTraceDir: string | null = null;
+
+/**
+ * Initialize the tool trace writer when tracing is enabled.
+ *
+ * This touches the trace file so test harnesses (and developers) can reliably
+ * detect that tracing is enabled even if no tool events have been emitted yet.
+ */
+export function initToolTraceIfEnabled(): void {
+    if (!isToolTraceEnabled()) return;
+
+    const filePath = resolveToolTraceFilePath();
+    if (!cachedWriter || cachedFilePath !== filePath) {
+        cachedFilePath = filePath;
+        cachedWriter = new ToolTraceWriter({ filePath });
+    }
+}
 
 export function recordToolTraceEvent(params: Omit<ToolTraceEventV1, 'v' | 'ts'> & { ts?: number }): void {
     if (!isToolTraceEnabled()) return;

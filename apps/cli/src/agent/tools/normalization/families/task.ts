@@ -46,6 +46,13 @@ function coerceTextFromContentBlocks(content: unknown): string | null {
     return parts.length > 0 ? parts.join('\n') : null;
 }
 
+function stripTaskMetadataBlocks(text: string): string {
+    // OpenCode Task tool often embeds metadata in a pseudo-XML block:
+    // <task_metadata>\n...\n</task_metadata>
+    // Strip this for display output.
+    return text.replace(/<task_metadata>[\s\S]*?<\/task_metadata>/g, '').trim();
+}
+
 export function normalizeTaskResult(rawOutput: unknown): UnknownRecord {
     if (Array.isArray(rawOutput)) {
         const fromBlocks = coerceTextFromContentBlocks(rawOutput);
@@ -54,9 +61,9 @@ export function normalizeTaskResult(rawOutput: unknown): UnknownRecord {
     }
 
     if (typeof rawOutput === 'string') {
-        const trimmed = rawOutput.trim();
-        if (trimmed.length === 0) return {};
-        return { content: rawOutput };
+        const content = stripTaskMetadataBlocks(rawOutput);
+        if (content.length === 0) return {};
+        return { content };
     }
 
     const fromBlocks = coerceTextFromContentBlocks(rawOutput);
@@ -64,6 +71,13 @@ export function normalizeTaskResult(rawOutput: unknown): UnknownRecord {
 
     const record = asRecord(rawOutput);
     if (!record) return { value: rawOutput };
+
+    // OpenCode Task results commonly return { output: string, metadata: {...} }.
+    // Normalize into Task.content (while keeping the original output field for backward compatibility).
+    if (typeof (record as any).output === 'string') {
+        const content = stripTaskMetadataBlocks(String((record as any).output));
+        if (content.length > 0) return { ...record, content };
+    }
 
     const nested = coerceTextFromContentBlocks((record as any).content);
     if (nested) return { ...record, content: nested };

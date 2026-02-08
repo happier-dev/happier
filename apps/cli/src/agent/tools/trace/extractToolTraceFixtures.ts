@@ -20,7 +20,16 @@ function isRecordableKind(kind: string): boolean {
 function getToolNameForKey(event: ToolTraceEventV1): string | null {
     if (event.kind === 'tool-call') {
         const payload = event.payload as any;
+        const canonical = payload?.input?._happier?.canonicalToolName;
+        if (typeof canonical === 'string' && canonical.length > 0) return canonical;
         const name = payload?.name;
+        return typeof name === 'string' && name.length > 0 ? name : null;
+    }
+    if (event.kind === 'tool-result' || event.kind === 'tool-call-result') {
+        const payload = event.payload as any;
+        const canonical = payload?.output?._happier?.canonicalToolName;
+        if (typeof canonical === 'string' && canonical.length > 0) return canonical;
+        const name = payload?.name ?? payload?.toolName;
         return typeof name === 'string' && name.length > 0 ? name : null;
     }
     if (event.kind === 'permission-request') {

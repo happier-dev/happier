@@ -90,7 +90,7 @@ function scoreEvent(event: ToolTraceEventV1): number {
         const input = payload.input;
         const inputRec = asRecord(input);
         if (inputRec) {
-            const keys = Object.keys(inputRec).filter((k) => k !== '_raw' && k !== '_happy');
+            const keys = Object.keys(inputRec).filter((k) => k !== '_raw' && k !== '_happier');
             if (keys.length > 0) score += 2;
             if (typeof inputRec.file_path === 'string' || typeof inputRec.filePath === 'string' || typeof inputRec.path === 'string') {
                 score += 5;

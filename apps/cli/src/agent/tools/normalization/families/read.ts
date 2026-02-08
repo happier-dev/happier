@@ -142,6 +142,28 @@ export function normalizeReadResult(rawOutput: unknown): UnknownRecord {
 
     const out: UnknownRecord = { ...record };
 
+    // Kilo/OpenCode-style tool results may wrap the file output under `output` (and sometimes `metadata.output`).
+    // Normalize those to the canonical `{ file: { content } }` shape.
+    const wrappedText = (() => {
+        if (typeof out.output === 'string' && out.output.trimEnd().length > 0) return out.output;
+        const metadata = asRecord(out.metadata);
+        if (typeof metadata?.output === 'string' && metadata.output.trimEnd().length > 0) return metadata.output;
+        return null;
+    })();
+    if (wrappedText) {
+        const parsed = parseOpencodeFileWrapper(wrappedText);
+        const text = parsed?.content ?? wrappedText.trimEnd();
+        if (text.length > 0) {
+            out.file = {
+                content: text,
+                ...(typeof parsed?.startLine === 'number' ? { startLine: parsed.startLine } : null),
+                ...(typeof parsed?.numLines === 'number' ? { numLines: parsed.numLines } : null),
+                ...(typeof parsed?.totalLines === 'number' ? { totalLines: parsed.totalLines } : null),
+            };
+            return out;
+        }
+    }
+
     const fileRecord = asRecord(out.file);
     if (fileRecord) {
         out.file = { ...fileRecord };
