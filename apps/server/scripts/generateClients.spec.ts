@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMainModule, resolveBuildDbProvidersFromEnv } from "./generateClients";
+import { isMainModule, prismaGenerateDatabaseUrlForProvider, resolveBuildDbProvidersFromEnv } from "./generateClients";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -56,5 +56,13 @@ describe("isMainModule", () => {
 
     it("returns false when argv1 is a relative path", () => {
         expect(isMainModule("file:///tmp/x.js", "./scripts/generateClients.ts")).toBe(false);
+    });
+});
+
+describe("prismaGenerateDatabaseUrlForProvider", () => {
+    it("returns provider-compatible URL schemes", () => {
+        expect(prismaGenerateDatabaseUrlForProvider("postgres")).toMatch(/^postgresql:\/\//);
+        expect(prismaGenerateDatabaseUrlForProvider("mysql")).toMatch(/^mysql:\/\//);
+        expect(prismaGenerateDatabaseUrlForProvider("sqlite")).toMatch(/^file:/);
     });
 });
