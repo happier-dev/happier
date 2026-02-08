@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { installLocalStorageMock, type LocalStorageMockHandle } from './tokenStorage.web.testHelpers';
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'web' },
@@ -6,36 +7,15 @@ vi.mock('react-native', () => ({
 
 vi.mock('expo-secure-store', () => ({}));
 
-function installLocalStorage() {
-    const previousDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
-    const store = new Map<string, string>();
-    const getItem = vi.fn((key: string) => store.get(key) ?? null);
-    const setItem = vi.fn((key: string, value: string) => {
-        store.set(key, value);
-    });
-    const removeItem = vi.fn((key: string) => {
-        store.delete(key);
-    });
-
-    Object.defineProperty(globalThis, 'localStorage', {
-        value: { getItem, setItem, removeItem },
-        configurable: true,
-    });
-
-    const restore = () => {
-        if (previousDescriptor) {
-            Object.defineProperty(globalThis, 'localStorage', previousDescriptor);
-            return;
-        }
-        // @ts-expect-error localStorage may not exist in this runtime.
-        delete globalThis.localStorage;
-    };
-
-    return { store, getItem, setItem, removeItem, restore };
-}
-
 describe('TokenStorage (web)', () => {
     let restoreLocalStorage: (() => void) | null = null;
+    let localStorageHandle: LocalStorageMockHandle | null = null;
+
+    function installStorage() {
+        localStorageHandle = installLocalStorageMock();
+        restoreLocalStorage = localStorageHandle.restore;
+        return localStorageHandle;
+    }
 
     beforeEach(() => {
         vi.resetModules();
@@ -46,21 +26,20 @@ describe('TokenStorage (web)', () => {
         vi.restoreAllMocks();
         restoreLocalStorage?.();
         restoreLocalStorage = null;
+        localStorageHandle = null;
     });
 
     it('returns null when localStorage JSON is invalid', async () => {
-        const { setItem, restore } = installLocalStorage();
-        restoreLocalStorage = restore;
-        setItem('auth_credentials', '{not valid json');
+        const storage = installStorage();
+        storage.setItemMock('auth_credentials', '{not valid json');
 
         const { TokenStorage } = await import('./tokenStorage');
         await expect(TokenStorage.getCredentials()).resolves.toBeNull();
     });
 
     it('returns false when localStorage.setItem throws', async () => {
-        const { restore } = installLocalStorage();
-        restoreLocalStorage = restore;
-        (globalThis.localStorage.setItem as any).mockImplementation(() => {
+        const storage = installStorage();
+        storage.setItemMock.mockImplementation(() => {
             throw new Error('QuotaExceededError');
         });
 
@@ -69,9 +48,8 @@ describe('TokenStorage (web)', () => {
     });
 
     it('returns false when localStorage.removeItem throws', async () => {
-        const { restore } = installLocalStorage();
-        restoreLocalStorage = restore;
-        (globalThis.localStorage.removeItem as any).mockImplementation(() => {
+        const storage = installStorage();
+        storage.removeItemMock.mockImplementation(() => {
             throw new Error('SecurityError');
         });
 
@@ -80,12 +58,11 @@ describe('TokenStorage (web)', () => {
     });
 
     it('calls localStorage.getItem at most once per getCredentials call', async () => {
-        const { getItem, setItem, restore } = installLocalStorage();
-        restoreLocalStorage = restore;
-        setItem('auth_credentials', JSON.stringify({ token: 't', secret: 's' }));
+        const storage = installStorage();
+        storage.setItemMock('auth_credentials', JSON.stringify({ token: 't', secret: 's' }));
 
         const { TokenStorage } = await import('./tokenStorage');
         await TokenStorage.getCredentials();
-        expect(getItem).toHaveBeenCalledTimes(1);
+        expect(storage.getItemMock).toHaveBeenCalledTimes(1);
     });
 });

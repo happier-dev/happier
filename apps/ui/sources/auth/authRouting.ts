@@ -8,6 +8,12 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
     // Home (welcome / login / create account)
     if (first === 'index') return true;
 
+    // Server configuration must be reachable before authentication.
+    if (first === 'server') return true;
+
+    // Terminal connect links must be reachable before authentication so users can sign in and continue.
+    if (first === 'terminal') return true;
+
     // Restore / link account flows must work unauthenticated.
     if (first === 'restore') return true;
 
