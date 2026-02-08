@@ -111,7 +111,18 @@ Happier is designed with privacy as a foundation, not an afterthought.
 npm install -g @happier-dev/cli
 ```
 
-### Step 3: Start using `happier` instead of `claude`, `codex` or `opencode`
+### Step 3: Authenticate (recommended: mobile-first)
+
+```bash
+happier auth login
+```
+
+Recommended first run:
+- Choose the mobile path (QR/deep link) so account creation/login and terminal linking happen in one flow.
+- If you already use Happier on another device, sign in with that same account.
+- If you open the terminal-connect link while logged out, Happier will send you through sign in/create account and then return you to terminal approval.
+
+### Step 4: Start using `happier` instead of `claude`, `codex` or `opencode`
 
 ```bash
 
@@ -132,7 +143,7 @@ happier opencode
 
 ```
 
-### Step 4: Be a Happier developer
+### Step 5: Be a Happier developer
 
 Code solo, or invite a friend to jump into the session with you.
 Happier acts as a secure bridge between your local development environment and your other devices.
