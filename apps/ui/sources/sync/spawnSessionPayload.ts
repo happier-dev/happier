@@ -25,6 +25,12 @@ export interface SpawnSessionOptions {
     permissionMode?: PermissionMode;
     permissionModeUpdatedAt?: number;
     /**
+     * Optional: seed a session-wide model override at spawn time.
+     * This is persisted to session metadata so the model choice follows the session across devices.
+     */
+    modelId?: string;
+    modelUpdatedAt?: number;
+    /**
      * Experimental: allow Codex vendor resume.
      * Only relevant when agent === 'codex' and resume is set.
      */
@@ -35,6 +41,11 @@ export interface SpawnSessionOptions {
      */
     experimentalCodexAcp?: boolean;
     terminal?: TerminalSpawnOptions | null;
+    /**
+     * Windows-only: when starting a session remotely via the daemon, optionally open a visible console window
+     * on the machine so the user can later interact locally.
+     */
+    windowsRemoteSessionConsole?: 'hidden' | 'visible';
 }
 
 export type SpawnHappySessionRpcParams = {
@@ -48,13 +59,23 @@ export type SpawnHappySessionRpcParams = {
     resume?: string
     permissionMode?: PermissionMode
     permissionModeUpdatedAt?: number
+    modelId?: string
+    modelUpdatedAt?: number
     experimentalCodexResume?: boolean
     experimentalCodexAcp?: boolean
     terminal?: TerminalSpawnOptions
+    windowsRemoteSessionConsole?: 'hidden' | 'visible'
 };
 
 export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): SpawnHappySessionRpcParams {
-    const { directory, approvedNewDirectoryCreation = false, token, agent, environmentVariables, profileId, resume, permissionMode, permissionModeUpdatedAt, experimentalCodexResume, experimentalCodexAcp, terminal } = options;
+    const { directory, approvedNewDirectoryCreation = false, token, agent, environmentVariables, profileId, resume, permissionMode, permissionModeUpdatedAt, modelId, modelUpdatedAt, experimentalCodexResume, experimentalCodexAcp, terminal, windowsRemoteSessionConsole } = options;
+
+    const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
+    const includeModelOverride =
+        normalizedModelId.length > 0 &&
+        normalizedModelId !== 'default' &&
+        typeof modelUpdatedAt === 'number' &&
+        Number.isFinite(modelUpdatedAt);
 
     const params: SpawnHappySessionRpcParams = {
         type: 'spawn-in-directory',
@@ -67,12 +88,16 @@ export function buildSpawnHappySessionRpcParams(options: SpawnSessionOptions): S
         resume,
         permissionMode,
         permissionModeUpdatedAt,
+        ...(includeModelOverride ? { modelId: normalizedModelId, modelUpdatedAt } : {}),
         experimentalCodexResume,
         experimentalCodexAcp,
     };
 
     if (terminal) {
         params.terminal = terminal;
+    }
+    if (windowsRemoteSessionConsole === 'hidden' || windowsRemoteSessionConsole === 'visible') {
+        params.windowsRemoteSessionConsole = windowsRemoteSessionConsole;
     }
 
     return params;

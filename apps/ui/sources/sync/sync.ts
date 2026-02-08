@@ -11,7 +11,7 @@ import { InvalidateSync } from '@/utils/sync';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
 import { Platform, AppState } from 'react-native';
-import { isRunningOnMac } from '@/utils/platform';
+import { resolveSentFrom } from './sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './settings';
 import { Profile } from './profile';
@@ -30,7 +30,7 @@ import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, tr
 import { getServerUrl } from './serverConfig';
 import { config } from '@/config';
 import { log } from '@/log';
-import { gitStatusSync } from './gitStatusSync';
+import { gitStatusSync } from './git/gitStatusSync';
 import { projectManager } from './projectManager';
 import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { Message } from './typesMessage';
@@ -38,7 +38,6 @@ import { EncryptionCache } from './encryption/encryptionCache';
 import { systemPrompt } from './prompt/systemPrompt';
 import { nowServerMs } from './time';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
-import { computePendingActivityAt } from './unread';
 import { computeNextReadStateV1 } from './readStateV1';
 import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './updateSessionMetadataWithRetry';
 import type { DecryptedArtifact } from './artifactTypes';
@@ -46,13 +45,14 @@ import { getFriendsList, getUserProfile } from './apiFriends';
 import { kvBulkGet } from './apiKv';
 import { FeedItem } from './feedTypes';
 import { UserProfile } from './friendTypes';
-import { buildOutgoingMessageMeta } from './messageMeta';
+import { buildSendMessageMeta } from './buildSendMessageMeta';
 import { HappyError } from '@/utils/errors';
 import { dbgSettings, isSettingsSyncDebugEnabled, summarizeSettings, summarizeSettingsDelta } from './debugSettings';
 import { deriveSettingsSecretsKey, decryptSecretValue, encryptSecretString, sealSecretsDeep } from './secretSettings';
 import { didControlReturnToMobile } from './controlledByUserTransitions';
 import { chooseSubmitMode } from './submitMode';
 import type { SavedSecret } from './settings';
+import type { PermissionMode } from './permissionTypes';
 import { scheduleDebouncedPendingSettingsFlush } from './engine/pendingSettings';
 import { applySettingsLocalDelta, syncSettings as syncSettingsEngine } from './engine/settings';
 import { getOfferings as getOfferingsEngine, presentPaywall as presentPaywallEngine, purchaseProduct as purchaseProductEngine, syncPurchases as syncPurchasesEngine } from './engine/purchases';
@@ -74,6 +74,10 @@ import { planSyncActionsFromChanges } from './changesPlanner';
 import { applyPlannedChangeActions } from './changesApplier';
 import { runSocketReconnectCatchUpViaChanges } from './socketReconnectViaChanges';
 import { socketEmitWithAckFallback } from './engine/socketEmitWithAckFallback';
+import { publishPermissionModeToMetadata as publishPermissionModeToMetadataEngine } from './engine/permissionModePublish';
+import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrideToMetadataEngine } from './engine/acpSessionModeOverridePublish';
+import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/modelOverridePublish';
+import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/acpConfigOptionOverridePublish';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
 import {
     buildUpdatedSessionFromSocketUpdate,
@@ -81,17 +85,20 @@ import {
     fetchAndApplyMessages,
     fetchAndApplyNewerMessages,
     fetchAndApplyOlderMessages,
-    fetchAndApplyPendingMessages as fetchAndApplyPendingMessagesEngine,
     handleDeleteSessionSocketUpdate,
     handleNewMessageSocketUpdate,
-    enqueuePendingMessage as enqueuePendingMessageEngine,
-    updatePendingMessage as updatePendingMessageEngine,
-    deletePendingMessage as deletePendingMessageEngine,
-    discardPendingMessage as discardPendingMessageEngine,
-    restoreDiscardedPendingMessage as restoreDiscardedPendingMessageEngine,
-    deleteDiscardedPendingMessage as deleteDiscardedPendingMessageEngine,
     repairInvalidReadStateV1 as repairInvalidReadStateV1Engine,
 } from './engine/sessions';
+import {
+    deleteDiscardedPendingMessageV2,
+    deletePendingMessageV2,
+    discardPendingMessageV2,
+    enqueuePendingMessageV2,
+    fetchAndApplyPendingMessagesV2,
+    reorderPendingMessagesV2,
+    restoreDiscardedPendingMessageV2,
+    updatePendingMessageV2,
+} from './engine/pendingQueueV2';
 import {
     flushActivityUpdates as flushActivityUpdatesEngine,
     handleEphemeralSocketUpdate,
@@ -101,6 +108,19 @@ import {
 } from './engine/socket';
 
 const SESSION_MESSAGES_PAGE_SIZE = 150;
+
+export type SyncMessageTransport = Readonly<{
+    emitWithAck: <T = unknown>(event: string, payload: unknown, opts?: { timeoutMs?: number }) => Promise<T>;
+    send: (event: string, payload: unknown) => unknown;
+}>;
+
+function createDefaultMessageTransport(): SyncMessageTransport {
+    return {
+        emitWithAck: <T>(event: string, payload: unknown, opts?: { timeoutMs?: number }) =>
+            apiSocket.emitWithAck<T>(event, payload, opts),
+        send: (event: string, payload: unknown) => apiSocket.send(event, payload),
+    };
+}
 
 class Sync {
     // Spawned agents (especially in spawn mode) can take noticeable time to connect.
@@ -150,6 +170,7 @@ class Sync {
     private lastSocketDisconnectedAtMs: number | null = null;
     revenueCatInitialized = false;
     private settingsSecretsKey: Uint8Array | null = null;
+    private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
 
     // Generic locking mechanism
     private recalculationLockCount = 0;
@@ -192,7 +213,7 @@ class Sync {
         this.todosSync = new InvalidateSync(this.fetchTodos);
 
         const registerPushToken = async () => {
-            if (__DEV__) {
+            if (__DEV__ && config.enableDevPushTokenRegistration !== true) {
                 return;
             }
             await this.registerPushToken();
@@ -237,6 +258,14 @@ class Sync {
                 }
             }
         });
+    }
+
+    setMessageTransport(transport: SyncMessageTransport): void {
+        this.messageTransport = transport;
+    }
+
+    resetMessageTransport(): void {
+        this.messageTransport = createDefaultMessageTransport();
     }
 
     private schedulePendingSettingsFlush = () => {
@@ -422,22 +451,7 @@ class Sync {
             // Generate local ID
             const localId = randomUUID();
 
-            // Determine sentFrom based on platform
-            let sentFrom: string;
-            if (Platform.OS === 'web') {
-                sentFrom = 'web';
-            } else if (Platform.OS === 'android') {
-                sentFrom = 'android';
-            } else if (Platform.OS === 'ios') {
-                // Check if running on Mac (Catalyst or Designed for iPad on Mac)
-                if (isRunningOnMac()) {
-                    sentFrom = 'mac';
-                } else {
-                    sentFrom = 'ios';
-                }
-            } else {
-                sentFrom = 'web'; // fallback
-            }
+            const sentFrom = resolveSentFrom();
 
             const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
             // Create user message content with metadata
@@ -447,12 +461,15 @@ class Sync {
                     type: 'text',
                     text
                 },
-                meta: buildOutgoingMessageMeta({
+                meta: buildSendMessageMeta({
                     sentFrom,
                     permissionMode: permissionMode || 'default',
                     model,
                     appendSystemPrompt: systemPrompt,
                     displayText,
+                    agentId,
+                    settings: storage.getState().settings,
+                    session,
                 })
             };
             const encryptedRawRecord = await encryption.encryptRawRecord(content);
@@ -485,8 +502,9 @@ class Sync {
             };
 
             const rawAck = await socketEmitWithAckFallback<MessageAckResponse>({
-                emitWithAck: (event, payload, opts) => apiSocket.emitWithAck<MessageAckResponse>(event, payload, opts),
-                send: (event, payload) => apiSocket.send(event, payload),
+                emitWithAck: (event, payload, opts) =>
+                    this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
+                send: (event, payload) => this.messageTransport.send(event, payload),
                 event: 'message',
                 payload,
                 timeoutMs: 7_500,
@@ -530,6 +548,38 @@ class Sync {
                     }
                 ]);
             }
+
+            // For "next prompt" apply timing, the permission mode change is intentionally not published
+            // immediately when the user toggles the picker. Instead, once the user actually sends a message,
+            // we publish the newer local selection as the session-wide permission mode so it propagates
+            // across devices.
+            const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
+            if (settingsApplyTiming === 'next_prompt') {
+                const latestSession = storage.getState().sessions[sessionId] ?? null;
+                const localUpdatedAt = latestSession?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAtRaw = latestSession?.metadata?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAt =
+                    typeof metadataUpdatedAtRaw === 'number' && Number.isFinite(metadataUpdatedAtRaw)
+                        ? metadataUpdatedAtRaw
+                        : 0;
+
+                if (typeof localUpdatedAt === 'number' && Number.isFinite(localUpdatedAt) && localUpdatedAt > metadataUpdatedAt) {
+                    const modeToPublish = (latestSession?.permissionMode ?? 'default') as PermissionMode;
+                    try {
+                        await this.publishSessionPermissionModeToMetadata({
+                            sessionId,
+                            permissionMode: modeToPublish,
+                            permissionModeUpdatedAt: localUpdatedAt,
+                        });
+                    } catch {
+                        // Best-effort only: sending messages must not fail due to metadata publish failures.
+                    }
+                }
+            }
+
+            // Server ACK means the transcript write is committed (or idempotently confirmed).
+            // Clear optimistic thinking so we don't rely solely on the timeout to reset UI state.
+            storage.getState().clearSessionOptimisticThinking(sessionId);
         } catch (e) {
             storage.getState().clearSessionOptimisticThinking(sessionId);
             throw e;
@@ -592,7 +642,9 @@ class Sync {
 
             const rawAck = await (async () => {
                 try {
-                    return await apiSocket.emitWithAck<MessageAckResponse>('message', payload, { timeoutMs: 7_500 });
+                    return await this.messageTransport.emitWithAck<MessageAckResponse>('message', payload, {
+                        timeoutMs: 7_500,
+                    });
                 } catch {
                     return null;
                 }
@@ -627,7 +679,7 @@ class Sync {
                 return;
             }
 
-            if (ack && typeof ack === 'object' && ack.ok === false) {
+            if (ack?.success && ack.data.ok === false) {
                 storage.getState().removePendingMessage(params.sessionId, params.localId);
                 const existing = this.pendingMessageCommitRetryTimers.get(key);
                 if (existing) {
@@ -734,7 +786,8 @@ class Sync {
         if (!session?.metadata) return;
 
         const sessionSeq = opts?.sessionSeq ?? session.seq ?? 0;
-        const pendingActivityAt = opts?.pendingActivityAt ?? computePendingActivityAt(session.metadata);
+        // Pending queue does not affect unread; keep pendingActivityAt at 0 for backwards compatibility.
+        const pendingActivityAt = 0;
         const existing = session.metadata.readStateV1;
         const existingSeq = existing?.sessionSeq ?? 0;
         const needsRepair = existingSeq > sessionSeq;
@@ -759,35 +812,93 @@ class Sync {
         });
     }
 
+    async publishSessionPermissionModeToMetadata(params: {
+        sessionId: string;
+        permissionMode: PermissionMode;
+        permissionModeUpdatedAt: number;
+    }): Promise<void> {
+        await publishPermissionModeToMetadataEngine({
+            sessionId: params.sessionId,
+            permissionMode: params.permissionMode,
+            permissionModeUpdatedAt: params.permissionModeUpdatedAt,
+            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+        });
+    }
+
+    async publishSessionAcpSessionModeOverrideToMetadata(params: {
+        sessionId: string;
+        modeId: string;
+        updatedAt: number;
+    }): Promise<void> {
+        await publishAcpSessionModeOverrideToMetadataEngine({
+            sessionId: params.sessionId,
+            modeId: params.modeId,
+            updatedAt: params.updatedAt,
+            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+        });
+    }
+
+    async publishSessionModelOverrideToMetadata(params: {
+        sessionId: string;
+        modelId: string;
+        updatedAt: number;
+    }): Promise<void> {
+        await publishModelOverrideToMetadataEngine({
+            sessionId: params.sessionId,
+            modelId: params.modelId,
+            updatedAt: params.updatedAt,
+            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+        });
+    }
+
+    async publishSessionAcpConfigOptionOverrideToMetadata(params: {
+        sessionId: string;
+        configId: string;
+        value: AcpConfigOptionOverrideValueId;
+        updatedAt: number;
+    }): Promise<void> {
+        await publishAcpConfigOptionOverrideToMetadataEngine({
+            sessionId: params.sessionId,
+            configId: params.configId,
+            value: params.value,
+            updatedAt: params.updatedAt,
+            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+        });
+    }
+
     async fetchPendingMessages(sessionId: string): Promise<void> {
-        await fetchAndApplyPendingMessagesEngine({ sessionId, encryption: this.encryption });
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption: this.encryption,
+            request: (path, init) => apiSocket.request(path, init),
+        });
     }
 
     async enqueuePendingMessage(sessionId: string, text: string, displayText?: string): Promise<void> {
-        await enqueuePendingMessageEngine({
+        await enqueuePendingMessageV2({
             sessionId,
             text,
             displayText,
             encryption: this.encryption,
-            updateSessionMetadataWithRetry: (id, updater) => this.updateSessionMetadataWithRetry(id, updater),
+            request: (path, init) => apiSocket.request(path, init),
         });
     }
 
     async updatePendingMessage(sessionId: string, pendingId: string, text: string): Promise<void> {
-        await updatePendingMessageEngine({
+        await updatePendingMessageV2({
             sessionId,
             pendingId,
             text,
             encryption: this.encryption,
-            updateSessionMetadataWithRetry: (id, updater) => this.updateSessionMetadataWithRetry(id, updater),
+            request: (path, init) => apiSocket.request(path, init),
         });
     }
 
     async deletePendingMessage(sessionId: string, pendingId: string): Promise<void> {
-        await deletePendingMessageEngine({
+        await deletePendingMessageV2({
             sessionId,
             pendingId,
-            updateSessionMetadataWithRetry: (id, updater) => this.updateSessionMetadataWithRetry(id, updater),
+            request: (path, init) => apiSocket.request(path, init),
         });
     }
 
@@ -796,30 +907,39 @@ class Sync {
         pendingId: string,
         opts?: { reason?: 'switch_to_local' | 'manual' }
     ): Promise<void> {
-        await discardPendingMessageEngine({
+        await discardPendingMessageV2({
             sessionId,
             pendingId,
-            opts,
+            reason: opts?.reason ?? 'manual',
             encryption: this.encryption,
-            updateSessionMetadataWithRetry: (id, updater) => this.updateSessionMetadataWithRetry(id, updater),
+            request: (path, init) => apiSocket.request(path, init),
         });
     }
 
     async restoreDiscardedPendingMessage(sessionId: string, pendingId: string): Promise<void> {
-        await restoreDiscardedPendingMessageEngine({
+        await restoreDiscardedPendingMessageV2({
             sessionId,
             pendingId,
             encryption: this.encryption,
-            updateSessionMetadataWithRetry: (id, updater) => this.updateSessionMetadataWithRetry(id, updater),
+            request: (path, init) => apiSocket.request(path, init),
         });
     }
 
     async deleteDiscardedPendingMessage(sessionId: string, pendingId: string): Promise<void> {
-        await deleteDiscardedPendingMessageEngine({
+        await deleteDiscardedPendingMessageV2({
             sessionId,
             pendingId,
             encryption: this.encryption,
-            updateSessionMetadataWithRetry: (id, updater) => this.updateSessionMetadataWithRetry(id, updater),
+            request: (path, init) => apiSocket.request(path, init),
+        });
+    }
+
+    async reorderPendingMessages(sessionId: string, orderedLocalIds: string[]): Promise<void> {
+        await reorderPendingMessagesV2({
+            sessionId,
+            orderedLocalIds,
+            encryption: this.encryption,
+            request: (path, init) => apiSocket.request(path, init),
         });
     }
 

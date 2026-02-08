@@ -18,6 +18,7 @@ import {
     PaywallResult,
     PaywallOptions
 } from './types';
+import { hasRequiredEntitlement } from './requiredEntitlements';
 
 class RevenueCatWeb implements RevenueCatInterface {
     private purchases: Purchases | null = null;
@@ -162,7 +163,8 @@ class RevenueCatWeb implements RevenueCatInterface {
         // Check if user has the required entitlement
         try {
             const customerInfo = await this.getCustomerInfo();
-            const hasEntitlement = customerInfo.entitlements.all[options?.requiredEntitlementIdentifier || 'pro']?.isActive;
+            const required = options?.requiredEntitlementIdentifier || 'voice';
+            const hasEntitlement = hasRequiredEntitlement(customerInfo, required);
             
             if (hasEntitlement) {
                 // User already has the entitlement, no need to show paywall

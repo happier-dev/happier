@@ -11,6 +11,7 @@ import { sync } from '../sync';
 import type { MachineMetadata } from '../storageTypes';
 import { buildSpawnHappySessionRpcParams, type SpawnHappySessionRpcParams, type SpawnSessionOptions } from '../spawnSessionPayload';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
+import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 
 export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from '../spawnSessionPayload';
 export { buildSpawnHappySessionRpcParams } from '../spawnSessionPayload';
@@ -253,12 +254,10 @@ export async function machineUpdateMetadata(
             currentVersion = result.version!;
             const latestMetadata = await machineEncryption.decryptRaw(result.metadata!) as MachineMetadata;
 
-            // Merge our changes with the latest metadata
-            // Preserve the displayName we're trying to set, but use latest values for other fields
-            currentMetadata = {
-                ...latestMetadata,
-                displayName: metadata.displayName // Keep our intended displayName change
-            };
+            currentMetadata = mergeMachineMetadataForVersionMismatch({
+                latest: latestMetadata,
+                intended: currentMetadata,
+            });
 
             retryCount++;
 

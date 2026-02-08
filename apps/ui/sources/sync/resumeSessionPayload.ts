@@ -12,6 +12,8 @@ export type ResumeHappySessionRpcParams = {
     sessionEncryptionVariant: 'dataKey';
     permissionMode?: PermissionMode;
     permissionModeUpdatedAt?: number;
+    modelId?: string;
+    modelUpdatedAt?: number;
     experimentalCodexResume?: boolean;
     experimentalCodexAcp?: boolean;
 };
@@ -26,14 +28,25 @@ const ResumeHappySessionRpcParamsSchema = z.object({
     sessionEncryptionVariant: z.literal('dataKey'),
     permissionMode: z.string().refine((value) => isPermissionMode(value)).optional(),
     permissionModeUpdatedAt: z.number().optional(),
+    modelId: z.string().min(1).optional(),
+    modelUpdatedAt: z.number().optional(),
     experimentalCodexResume: z.boolean().optional(),
     experimentalCodexAcp: z.boolean().optional(),
 });
 
 export function buildResumeHappySessionRpcParams(input: Omit<ResumeHappySessionRpcParams, 'type'>): ResumeHappySessionRpcParams {
+    const { modelId, modelUpdatedAt, ...rest } = input;
+    const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
+    const includeModelOverride =
+        normalizedModelId.length > 0 &&
+        normalizedModelId !== 'default' &&
+        typeof modelUpdatedAt === 'number' &&
+        Number.isFinite(modelUpdatedAt);
+
     const params: ResumeHappySessionRpcParams = {
         type: 'resume-session',
-        ...input,
+        ...rest,
+        ...(includeModelOverride ? { modelId: normalizedModelId, modelUpdatedAt } : {}),
     };
     // Validate shape early to avoid accidentally sending secrets in wrong fields.
     ResumeHappySessionRpcParamsSchema.parse(params);

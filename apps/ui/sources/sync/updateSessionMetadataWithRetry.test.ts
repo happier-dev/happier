@@ -6,7 +6,7 @@ type Metadata = {
     path: string;
     host: string;
     readStateV1?: { v: 1; sessionSeq: number; pendingActivityAt: number; updatedAt: number };
-    messageQueueV1?: { v: 1; queue: any[]; inFlight?: any | null };
+    tools?: string[];
 };
 
 describe('updateSessionMetadataWithRetry', () => {
@@ -34,7 +34,7 @@ describe('updateSessionMetadataWithRetry', () => {
                 return {
                     result: 'version-mismatch' as const,
                     version: 2,
-                    metadata: JSON.stringify({ path: '/tmp', host: 'h', messageQueueV1: { v: 1, queue: [{ localId: 'a' }], inFlight: null } }),
+                    metadata: JSON.stringify({ path: '/tmp', host: 'h', tools: ['a'] }),
                 };
             }
 
@@ -42,7 +42,7 @@ describe('updateSessionMetadataWithRetry', () => {
                 return {
                     result: 'version-mismatch' as const,
                     version: 3,
-                    metadata: JSON.stringify({ path: '/tmp', host: 'h', messageQueueV1: { v: 1, queue: [{ localId: 'a' }, { localId: 'b' }], inFlight: null } }),
+                    metadata: JSON.stringify({ path: '/tmp', host: 'h', tools: ['a', 'b'] }),
                 };
             }
 
@@ -76,6 +76,6 @@ describe('updateSessionMetadataWithRetry', () => {
         expect(calls.map((c) => c.expectedVersion)).toEqual([1, 2, 3]);
         expect(sessions[sessionId]?.metadataVersion).toBe(4);
         expect(sessions[sessionId]?.metadata.readStateV1?.sessionSeq).toBe(5);
-        expect(sessions[sessionId]?.metadata.messageQueueV1?.queue.length).toBe(2);
+        expect(sessions[sessionId]?.metadata.tools?.length).toBe(2);
     });
 });

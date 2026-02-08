@@ -220,30 +220,33 @@ const rawAgentRecordSchema = z.discriminatedUnion('type', [z.object({
     provider: z.enum(AGENT_IDS),
     data: z.discriminatedUnion('type', [
         // Core message types
-        z.object({ type: z.literal('reasoning'), message: z.string() }),
-        z.object({ type: z.literal('message'), message: z.string() }),
-        z.object({ type: z.literal('thinking'), text: z.string() }),
+        z.object({ type: z.literal('reasoning'), message: z.string(), sidechainId: z.string().optional() }),
+        z.object({ type: z.literal('message'), message: z.string(), sidechainId: z.string().optional() }),
+        z.object({ type: z.literal('thinking'), text: z.string(), sidechainId: z.string().optional() }),
         // Tool interactions
         z.object({
             type: z.literal('tool-call'),
             callId: z.string(),
             input: z.any(),
             name: z.string(),
-            id: z.string()
+            id: z.string(),
+            sidechainId: z.string().optional()
         }),
         z.object({
             type: z.literal('tool-result'),
             callId: z.string(),
             output: z.any(),
             id: z.string(),
-            isError: z.boolean().optional()
+            isError: z.boolean().optional(),
+            sidechainId: z.string().optional()
         }),
         // Hyphenated tool-call-result (for backwards compatibility with CLI)
         z.object({
             type: z.literal('tool-call-result'),
             callId: z.string(),
             output: z.any(),
-            id: z.string()
+            id: z.string(),
+            sidechainId: z.string().optional()
         }),
         // File operations
         z.object({
@@ -253,28 +256,31 @@ const rawAgentRecordSchema = z.discriminatedUnion('type', [z.object({
             diff: z.string().optional(),
             oldContent: z.string().optional(),
             newContent: z.string().optional(),
-            id: z.string()
+            id: z.string(),
+            sidechainId: z.string().optional()
         }).passthrough(),
         // Terminal/command output
         z.object({
             type: z.literal('terminal-output'),
             data: z.string(),
-            callId: z.string()
+            callId: z.string(),
+            sidechainId: z.string().optional()
         }).passthrough(),
         // Task lifecycle events
-        z.object({ type: z.literal('task_started'), id: z.string() }),
-        z.object({ type: z.literal('task_complete'), id: z.string() }),
-        z.object({ type: z.literal('turn_aborted'), id: z.string() }),
+        z.object({ type: z.literal('task_started'), id: z.string(), sidechainId: z.string().optional() }),
+        z.object({ type: z.literal('task_complete'), id: z.string(), sidechainId: z.string().optional() }),
+        z.object({ type: z.literal('turn_aborted'), id: z.string(), sidechainId: z.string().optional() }),
         // Permissions
         z.object({
             type: z.literal('permission-request'),
             permissionId: z.string(),
             toolName: z.string(),
             description: z.string(),
-            options: z.any().optional()
+            options: z.any().optional(),
+            sidechainId: z.string().optional()
         }).passthrough(),
         // Usage/metrics
-        z.object({ type: z.literal('token_count') }).passthrough()
+        z.object({ type: z.literal('token_count'), sidechainId: z.string().optional() }).passthrough()
     ])
 })]);
 

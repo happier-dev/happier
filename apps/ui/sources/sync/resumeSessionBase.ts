@@ -4,6 +4,7 @@ import type { ResumeCapabilityOptions } from '@/agents/resumeCapabilities';
 import { canAgentResume, getAgentVendorResumeId } from '@/agents/resumeCapabilities';
 import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
 import type { PermissionModeOverrideForSpawn } from '@/sync/permissionModeOverride';
+import type { ModelOverrideForSpawn } from '@/sync/modelOverride';
 
 export type ResumeSessionBaseOptions = Omit<
     ResumeSessionOptions,
@@ -15,8 +16,9 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
     session: Session;
     resumeCapabilityOptions: ResumeCapabilityOptions;
     permissionOverride?: PermissionModeOverrideForSpawn | null;
+    modelOverride?: ModelOverrideForSpawn | null;
 }): ResumeSessionBaseOptions | null {
-    const { sessionId, session, resumeCapabilityOptions, permissionOverride } = opts;
+    const { sessionId, session, resumeCapabilityOptions, permissionOverride, modelOverride } = opts;
 
     const machineId = session.metadata?.machineId;
     const directory = session.metadata?.path;
@@ -39,5 +41,6 @@ export function buildResumeSessionBaseOptionsFromSession(opts: {
         agent: getAgentCore(agentId).cli.spawnAgent,
         ...(resume ? { resume } : {}),
         ...(permissionOverride ? permissionOverride : {}),
+        ...(modelOverride ? modelOverride : {}),
     };
 }

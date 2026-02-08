@@ -16,6 +16,7 @@ import {
     PaywallResult,
     PaywallOptions
 } from './types';
+import { hasRequiredEntitlement } from './requiredEntitlements';
 
 // Map native log levels to our common ones
 const logLevelMap = {
@@ -111,6 +112,13 @@ class RevenueCatNative implements RevenueCatInterface {
 
     async presentPaywallIfNeeded(options?: PaywallOptions & { requiredEntitlementIdentifier: string }): Promise<PaywallResult> {
         try {
+            const required = options?.requiredEntitlementIdentifier || 'voice';
+            // Migration-safe: treat `pro` and `voice` as equivalent entitlements.
+            const info = await this.getCustomerInfo();
+            if (hasRequiredEntitlement(info, required)) {
+                return PaywallResult.NOT_PRESENTED;
+            }
+
             // If offering is provided, we need to get the native offering object
             let nativeOffering = undefined;
             if (options?.offering) {
@@ -121,7 +129,7 @@ class RevenueCatNative implements RevenueCatInterface {
             
             const nativeResult = await RevenueCatUI.presentPaywallIfNeeded({
                 offering: nativeOffering,
-                requiredEntitlementIdentifier: options?.requiredEntitlementIdentifier || 'pro'
+                requiredEntitlementIdentifier: required
             });
             
             // Map native paywall result to our enum

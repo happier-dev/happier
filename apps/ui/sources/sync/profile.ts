@@ -1,39 +1,10 @@
-import * as z from 'zod';
+import { AccountProfileSchema, type AccountProfile } from '@happier-dev/protocol';
 
 //
-// Schema
+// Types
 //
 
-export const GitHubProfileSchema = z.object({
-    id: z.number(),
-    login: z.string(),
-    name: z.string(),
-    avatar_url: z.string(),
-    email: z.string().optional(),
-    bio: z.string().nullable()
-});
-
-export const ImageRefSchema = z.object({
-    width: z.number(),
-    height: z.number(),
-    thumbhash: z.string(),
-    path: z.string(),
-    url: z.string()
-});
-
-export const ProfileSchema = z.object({
-    id: z.string(),
-    timestamp: z.number(),
-    firstName: z.string().nullable(),
-    lastName: z.string().nullable(),
-    avatar: ImageRefSchema.nullable(),
-    github: GitHubProfileSchema.nullable(),
-    connectedServices: z.array(z.string()).default([])
-});
-
-export type GitHubProfile = z.infer<typeof GitHubProfileSchema>;
-export type ImageRef = z.infer<typeof ImageRefSchema>;
-export type Profile = z.infer<typeof ProfileSchema>;
+export type Profile = AccountProfile;
 
 //
 // Defaults
@@ -44,9 +15,10 @@ export const profileDefaults: Profile = {
     timestamp: 0,
     firstName: null,
     lastName: null,
+    username: null,
     avatar: null,
-    github: null,
-    connectedServices: []
+    linkedProviders: [],
+    connectedServices: [],
 };
 Object.freeze(profileDefaults);
 
@@ -55,7 +27,7 @@ Object.freeze(profileDefaults);
 //
 
 export function profileParse(profile: unknown): Profile {
-    const parsed = ProfileSchema.safeParse(profile);
+    const parsed = AccountProfileSchema.safeParse(profile);
     if (!parsed.success) {
         console.error('Failed to parse profile:', parsed.error);
         return { ...profileDefaults };
@@ -67,16 +39,21 @@ export function profileParse(profile: unknown): Profile {
 // Utility functions
 //
 
+function getPrimaryLinkedProvider(profile: Profile) {
+    for (const provider of profile.linkedProviders) {
+        if (provider.displayName || provider.login || provider.avatarUrl) return provider;
+    }
+    return profile.linkedProviders[0] ?? null;
+}
+
 export function getDisplayName(profile: Profile): string | null {
     if (profile.firstName || profile.lastName) {
         return [profile.firstName, profile.lastName].filter(Boolean).join(' ');
     }
-    if (profile.github?.name) {
-        return profile.github.name;
-    }
-    if (profile.github?.login) {
-        return profile.github.login;
-    }
+    const primary = getPrimaryLinkedProvider(profile);
+    if (primary?.displayName) return primary.displayName;
+    if (primary?.login) return primary.login;
+    if (profile.username) return profile.username;
     return null;
 }
 
@@ -84,12 +61,19 @@ export function getAvatarUrl(profile: Profile): string | null {
     if (profile.avatar?.url) {
         return profile.avatar.url;
     }
-    if (profile.github?.avatar_url) {
-        return profile.github.avatar_url;
-    }
+    const primary = getPrimaryLinkedProvider(profile);
+    return primary?.avatarUrl ?? null;
+}
+
+export function getBio(_profile: Profile): string | null {
     return null;
 }
 
-export function getBio(profile: Profile): string | null {
-    return profile.github?.bio || null;
+export function getLinkedProvider(profile: Profile, providerId: string) {
+    const normalized = providerId.toString().trim().toLowerCase();
+    return profile.linkedProviders.find((p) => p.id.toString().trim().toLowerCase() === normalized) ?? null;
+}
+
+export function hasLinkedProvider(profile: Profile, providerId: string): boolean {
+    return Boolean(getLinkedProvider(profile, providerId));
 }

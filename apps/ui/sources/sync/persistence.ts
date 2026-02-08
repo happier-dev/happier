@@ -16,6 +16,7 @@ const NEW_SESSION_DRAFT_KEY = 'new-session-draft-v1';
 const SESSION_MATERIALIZED_MAX_SEQ_KEY = 'session-materialized-max-seq-v1';
 const LAST_CHANGES_CURSOR_BY_ACCOUNT_ID_KEY = 'last-changes-cursor-by-account-id-v1';
 const CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX = 'changes-cursor-by-account-id-v1:';
+const SESSION_MODEL_MODE_UPDATED_ATS_KEY = 'session-model-mode-updated-ats-v1';
 
 export type NewSessionSessionType = 'simple' | 'worktree';
 export type NewSessionAgentType = AgentId;
@@ -154,7 +155,7 @@ function parsePendingSettings(raw: unknown): Partial<Settings> {
     const input = raw as Record<string, unknown>;
     const out: Partial<Settings> = {};
 
-    (Object.keys(SettingsSchema.shape) as Array<keyof typeof SettingsSchema.shape>).forEach((key) => {
+    (Object.keys(SettingsSchema.shape) as Array<Extract<keyof typeof SettingsSchema.shape, string>>).forEach((key) => {
         if (!Object.prototype.hasOwnProperty.call(input, key)) return;
         const schema = SettingsSchema.shape[key];
         const parsed = schema.safeParse(input[key]);
@@ -296,7 +297,7 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             ? parsed.permissionMode
             : 'default';
         const modelMode: ModelMode = isModelMode(parsed.modelMode)
-            ? parsed.modelMode
+            ? String(parsed.modelMode).trim()
             : 'default';
         const sessionType: NewSessionSessionType = parsed.sessionType === 'worktree' ? 'worktree' : 'simple';
         const resumeSessionId = typeof parsed.resumeSessionId === 'string' ? parsed.resumeSessionId : undefined;
@@ -434,9 +435,10 @@ export function loadSessionModelModes(): Record<string, ModelMode> {
 
             const result: Record<string, ModelMode> = {};
             Object.entries(parsed as Record<string, unknown>).forEach(([sessionId, mode]) => {
-                if (isModelMode(mode)) {
-                    result[sessionId] = mode;
-                }
+                if (!isModelMode(mode)) return;
+                const normalized = String(mode).trim();
+                if (!normalized) return;
+                result[sessionId] = normalized;
             });
             return result;
         } catch (e) {
@@ -449,6 +451,34 @@ export function loadSessionModelModes(): Record<string, ModelMode> {
 
 export function saveSessionModelModes(modes: Record<string, ModelMode>) {
     mmkv.set('session-model-modes', JSON.stringify(modes));
+}
+
+export function loadSessionModelModeUpdatedAts(): Record<string, number> {
+    const raw = mmkv.getString(SESSION_MODEL_MODE_UPDATED_ATS_KEY);
+    if (raw) {
+        try {
+            const parsed: unknown = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                return {};
+            }
+
+            const result: Record<string, number> = {};
+            for (const [sessionId, value] of Object.entries(parsed as Record<string, unknown>)) {
+                if (typeof value === 'number' && Number.isFinite(value)) {
+                    result[sessionId] = value;
+                }
+            }
+            return result;
+        } catch (e) {
+            console.error('Failed to parse session model mode updatedAts', e);
+            return {};
+        }
+    }
+    return {};
+}
+
+export function saveSessionModelModeUpdatedAts(data: Record<string, number>) {
+    mmkv.set(SESSION_MODEL_MODE_UPDATED_ATS_KEY, JSON.stringify(data));
 }
 
 export function loadSessionMaterializedMaxSeqById(): Record<string, number> {

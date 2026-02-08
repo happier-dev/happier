@@ -96,6 +96,7 @@ export function runSidechainsPhase(params: Readonly<{
 
                     let mid = allocateId();
                     let toolCall: ToolCall = {
+                        id: c.id,
                         name: c.name,
                         state: 'running' as const,
                         input: c.input,
@@ -233,14 +234,11 @@ export function runSidechainsPhase(params: Readonly<{
         // Update the sidechain in state
         state.sidechains.set(msg.sidechainId, existingSidechain);
 
-        // Find the Task tool message that owns this sidechain and mark it as changed
-        // msg.sidechainId is the realID of the Task message
-        for (const [internalId, message] of state.messages) {
-            if (message.realID === msg.sidechainId && message.tool) {
-                changed.add(internalId);
-                break;
-            }
+        // Find the Task tool message that owns this sidechain and mark it as changed.
+        // Provider-agnostic contract: msg.sidechainId is the originating Task tool-call id.
+        const parentMessageId = state.toolIdToMessageId.get(msg.sidechainId);
+        if (parentMessageId) {
+            changed.add(parentMessageId);
         }
     }
 }
-

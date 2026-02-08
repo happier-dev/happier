@@ -3,7 +3,7 @@
  * Groups sessions by machine ID and path to create project entities
  */
 
-import { Session, MachineMetadata, GitStatus } from "./storageTypes";
+import { Session, MachineMetadata, GitStatus, GitWorkingSnapshot } from "./storageTypes";
 
 /**
  * Unique project identifier based on machine ID and path
@@ -12,6 +12,39 @@ export interface ProjectKey {
     machineId: string;
     path: string;
 }
+
+export type GitProjectOperationKind =
+    | 'refresh'
+    | 'stage'
+    | 'unstage'
+    | 'commit'
+    | 'fetch'
+    | 'pull'
+    | 'push'
+    | 'revert';
+
+export type GitProjectOperationStatus = 'success' | 'failed';
+
+export interface GitProjectOperationLogEntry {
+    id: string;
+    timestamp: number;
+    sessionId: string;
+    operation: GitProjectOperationKind;
+    status: GitProjectOperationStatus;
+    path?: string;
+    detail?: string;
+}
+
+export interface GitProjectInFlightOperation {
+    id: string;
+    startedAt: number;
+    sessionId: string;
+    operation: GitProjectOperationKind;
+}
+
+export type BeginGitProjectOperationResult =
+    | { started: true; operation: GitProjectInFlightOperation }
+    | { started: false; reason: 'missing_project' | 'operation_in_flight'; inFlight: GitProjectInFlightOperation | null };
 
 /**
  * Project entity that groups sessions by location
@@ -27,6 +60,14 @@ export interface Project {
     machineMetadata?: MachineMetadata | null;
     /** Git status for this project (shared across all sessions) */
     gitStatus?: GitStatus | null;
+    /** Canonical Git working snapshot for this project */
+    gitSnapshot?: GitWorkingSnapshot | null;
+    /** Paths touched by each session (sessionId -> path -> timestamp) */
+    gitTouchedPathsBySession?: Record<string, Record<string, number>>;
+    /** Bounded operation log for auditability */
+    gitOperationLog?: GitProjectOperationLogEntry[];
+    /** Single in-flight write operation lock */
+    gitOperationInFlight?: GitProjectInFlightOperation | null;
     /** Timestamp when git status was last updated */
     lastGitStatusUpdate?: number;
     /** Project creation timestamp */
@@ -39,6 +80,7 @@ export interface Project {
  * In-memory project manager
  */
 class ProjectManager {
+    private static readonly MAX_GIT_OPERATION_LOG = 200;
     private projects: Map<string, Project> = new Map();
     private projectKeyToId: Map<string, string> = new Map();
     private sessionToProject: Map<string, string> = new Map();
@@ -120,6 +162,9 @@ class ProjectManager {
                 const index = previousProject.sessionIds.indexOf(session.id);
                 if (index !== -1) {
                     previousProject.sessionIds.splice(index, 1);
+                    if (previousProject.gitOperationInFlight?.sessionId === session.id) {
+                        previousProject.gitOperationInFlight = null;
+                    }
                     previousProject.updatedAt = Date.now();
                     
                     // Remove empty projects
@@ -158,7 +203,14 @@ class ProjectManager {
         const index = project.sessionIds.indexOf(sessionId);
         if (index !== -1) {
             project.sessionIds.splice(index, 1);
+            if (project.gitOperationInFlight?.sessionId === sessionId) {
+                project.gitOperationInFlight = null;
+            }
             project.updatedAt = Date.now();
+        }
+
+        if (project.gitTouchedPathsBySession) {
+            delete project.gitTouchedPathsBySession[sessionId];
         }
 
         this.sessionToProject.delete(sessionId);
@@ -271,6 +323,22 @@ class ProjectManager {
     }
 
     /**
+     * Update git snapshot for a project (identified by project key)
+     */
+    updateProjectGitSnapshot(projectKey: ProjectKey, gitSnapshot: GitWorkingSnapshot | null): void {
+        const keyString = this.getProjectKeyString(projectKey);
+        const projectId = this.projectKeyToId.get(keyString);
+        if (!projectId) return;
+
+        const project = this.projects.get(projectId);
+        if (!project) return;
+
+        project.gitSnapshot = gitSnapshot;
+        project.lastGitStatusUpdate = Date.now();
+        project.updatedAt = Date.now();
+    }
+
+    /**
      * Update git status for a project (identified by project ID)
      */
     updateProjectGitStatusById(projectId: string, gitStatus: GitStatus | null): void {
@@ -285,11 +353,31 @@ class ProjectManager {
     }
 
     /**
+     * Update git snapshot for a project (identified by project ID)
+     */
+    updateProjectGitSnapshotById(projectId: string, gitSnapshot: GitWorkingSnapshot | null): void {
+        const project = this.projects.get(projectId);
+        if (!project) return;
+
+        project.gitSnapshot = gitSnapshot;
+        project.lastGitStatusUpdate = Date.now();
+        project.updatedAt = Date.now();
+    }
+
+    /**
      * Get git status for a project
      */
     getProjectGitStatus(projectId: string): GitStatus | null {
         const project = this.projects.get(projectId);
         return project?.gitStatus || null;
+    }
+
+    /**
+     * Get git snapshot for a project
+     */
+    getProjectGitSnapshot(projectId: string): GitWorkingSnapshot | null {
+        const project = this.projects.get(projectId);
+        return project?.gitSnapshot || null;
     }
 
     /**
@@ -299,6 +387,7 @@ class ProjectManager {
         const project = this.projects.get(projectId);
         if (project) {
             project.gitStatus = null;
+            project.gitSnapshot = null;
             project.lastGitStatusUpdate = Date.now();
             project.updatedAt = Date.now();
         }
@@ -313,6 +402,14 @@ class ProjectManager {
     }
 
     /**
+     * Get git snapshot for a session via its project
+     */
+    getSessionProjectGitSnapshot(sessionId: string): GitWorkingSnapshot | null {
+        const project = this.getProjectForSession(sessionId);
+        return project?.gitSnapshot || null;
+    }
+
+    /**
      * Update git status for a session's project
      */
     updateSessionProjectGitStatus(sessionId: string, gitStatus: GitStatus | null): void {
@@ -320,6 +417,155 @@ class ProjectManager {
         if (project) {
             this.updateProjectGitStatusById(project.id, gitStatus);
         }
+    }
+
+    /**
+     * Update git snapshot for a session's project
+     */
+    updateSessionProjectGitSnapshot(sessionId: string, gitSnapshot: GitWorkingSnapshot | null): void {
+        const project = this.getProjectForSession(sessionId);
+        if (project) {
+            this.updateProjectGitSnapshotById(project.id, gitSnapshot);
+        }
+    }
+
+    /**
+     * Mark file paths as touched by a session in its current project.
+     */
+    markSessionProjectGitTouchedPaths(sessionId: string, paths: string[], touchedAt: number = Date.now()): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        if (paths.length === 0) return;
+
+        if (!project.gitTouchedPathsBySession) {
+            project.gitTouchedPathsBySession = {};
+        }
+        if (!project.gitTouchedPathsBySession[sessionId]) {
+            project.gitTouchedPathsBySession[sessionId] = {};
+        }
+
+        for (const path of paths) {
+            if (!path) continue;
+            project.gitTouchedPathsBySession[sessionId]![path] = touchedAt;
+        }
+        project.updatedAt = Date.now();
+    }
+
+    /**
+     * Return touched paths for a session in its current project.
+     */
+    getSessionProjectGitTouchedPaths(sessionId: string): string[] {
+        const project = this.getProjectForSession(sessionId);
+        if (!project?.gitTouchedPathsBySession?.[sessionId]) return [];
+        return Object.keys(project.gitTouchedPathsBySession[sessionId]!).sort((a, b) => a.localeCompare(b));
+    }
+
+    /**
+     * Remove touched paths that are no longer active in the current git snapshot.
+     */
+    pruneSessionProjectGitTouchedPaths(sessionId: string, activePaths: Set<string>): void {
+        const project = this.getProjectForSession(sessionId);
+        const touched = project?.gitTouchedPathsBySession?.[sessionId];
+        if (!project || !touched) return;
+
+        for (const path of Object.keys(touched)) {
+            if (!activePaths.has(path)) {
+                delete touched[path];
+            }
+        }
+
+        if (Object.keys(touched).length === 0 && project.gitTouchedPathsBySession) {
+            delete project.gitTouchedPathsBySession[sessionId];
+        }
+        project.updatedAt = Date.now();
+    }
+
+    appendSessionProjectGitOperation(
+        sessionId: string,
+        entry: Omit<GitProjectOperationLogEntry, 'id' | 'sessionId'>,
+    ): GitProjectOperationLogEntry | null {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return null;
+
+        if (!project.gitOperationLog) {
+            project.gitOperationLog = [];
+        }
+
+        const next: GitProjectOperationLogEntry = {
+            id: `${entry.timestamp}-${Math.random().toString(36).slice(2, 10)}`,
+            sessionId,
+            operation: entry.operation,
+            status: entry.status,
+            timestamp: entry.timestamp,
+            ...(entry.path ? { path: entry.path } : {}),
+            ...(entry.detail ? { detail: entry.detail } : {}),
+        };
+
+        project.gitOperationLog.push(next);
+        if (project.gitOperationLog.length > ProjectManager.MAX_GIT_OPERATION_LOG) {
+            project.gitOperationLog = project.gitOperationLog.slice(
+                project.gitOperationLog.length - ProjectManager.MAX_GIT_OPERATION_LOG
+            );
+        }
+
+        project.updatedAt = Date.now();
+        return next;
+    }
+
+    beginSessionProjectGitOperation(
+        sessionId: string,
+        operation: GitProjectOperationKind,
+        startedAt: number = Date.now(),
+    ): BeginGitProjectOperationResult {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) {
+            return {
+                started: false,
+                reason: 'missing_project',
+                inFlight: null,
+            };
+        }
+
+        if (project.gitOperationInFlight) {
+            return {
+                started: false,
+                reason: 'operation_in_flight',
+                inFlight: project.gitOperationInFlight,
+            };
+        }
+
+        const inFlight: GitProjectInFlightOperation = {
+            id: `${startedAt}-${Math.random().toString(36).slice(2, 10)}`,
+            startedAt,
+            sessionId,
+            operation,
+        };
+        project.gitOperationInFlight = inFlight;
+        project.updatedAt = startedAt;
+        return {
+            started: true,
+            operation: inFlight,
+        };
+    }
+
+    finishSessionProjectGitOperation(sessionId: string, operationId: string): boolean {
+        const project = this.getProjectForSession(sessionId);
+        if (!project?.gitOperationInFlight) return false;
+        if (project.gitOperationInFlight.id !== operationId) return false;
+        project.gitOperationInFlight = null;
+        project.updatedAt = Date.now();
+        return true;
+    }
+
+    getSessionProjectGitInFlightOperation(sessionId: string): GitProjectInFlightOperation | null {
+        const project = this.getProjectForSession(sessionId);
+        return project?.gitOperationInFlight ?? null;
+    }
+
+    getSessionProjectGitOperationLog(sessionId: string): GitProjectOperationLogEntry[] {
+        const project = this.getProjectForSession(sessionId);
+        if (!project?.gitOperationLog) return [];
+        return [...project.gitOperationLog].sort((a, b) => b.timestamp - a.timestamp);
     }
 
     /**

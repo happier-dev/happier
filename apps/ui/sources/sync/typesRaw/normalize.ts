@@ -63,6 +63,9 @@ export type NormalizedMessage = ({
     localId: string | null,
     createdAt: number,
     isSidechain: boolean,
+    // Provider-emitted identifier linking sidechain messages to their originating tool call.
+    // Used to group sub-agent threads (e.g. Claude Task sidechains) in a provider-agnostic way.
+    sidechainId?: string,
     meta?: MessageMeta,
     usage?: UsageData,
 };
@@ -201,12 +204,16 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         } as NormalizedAgentContent);
                     }
                 }
+                const sidechainId =
+                    typeof (raw.content.data as any).sidechainId === 'string' ? (raw.content.data as any).sidechainId : undefined;
+                const legacyIsSidechain = raw.content.data.isSidechain ?? false;
                 return {
                     id,
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: raw.content.data.isSidechain ?? false,
+                    sidechainId,
+                    isSidechain: Boolean(sidechainId) || legacyIsSidechain,
                     content,
                     meta: raw.meta,
                     usage: raw.content.data.message.usage
@@ -225,6 +232,7 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         createdAt,
                         role: 'agent',
                         isSidechain: true,
+                        sidechainId: typeof (raw.content.data as any).sidechainId === 'string' ? (raw.content.data as any).sidechainId : undefined,
                         content: [{
                             type: 'sidechain',
                             uuid: raw.content.data.uuid,
@@ -377,13 +385,18 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
         }
         // ACP (Agent Communication Protocol) - unified format for all agent providers
         if (raw.content.type === 'acp') {
+            const sidechainId = typeof (raw.content.data as any).sidechainId === 'string' ? (raw.content.data as any).sidechainId : undefined;
+            const legacyIsSidechain = typeof (raw.content.data as any).isSidechain === 'boolean' ? (raw.content.data as any).isSidechain : false;
+            const isSidechain = Boolean(sidechainId) || legacyIsSidechain;
+
             if (raw.content.data.type === 'message') {
                 return {
                     id,
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: false,
+                    isSidechain,
+                    ...(sidechainId ? { sidechainId } : {}),
                     content: [{
                         type: 'text',
                         text: raw.content.data.message,
@@ -399,7 +412,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: false,
+                    isSidechain,
+                    ...(sidechainId ? { sidechainId } : {}),
                     content: [{
                         type: 'text',
                         text: raw.content.data.message,
@@ -426,7 +440,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: false,
+                    isSidechain,
+                    ...(sidechainId ? { sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
                         id: raw.content.data.callId,
@@ -446,7 +461,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: false,
+                    isSidechain,
+                    ...(sidechainId ? { sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
                         tool_use_id: raw.content.data.callId,
@@ -466,7 +482,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: false,
+                    isSidechain,
+                    ...(sidechainId ? { sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
                         tool_use_id: raw.content.data.callId,
@@ -484,7 +501,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: false,
+                    isSidechain,
+                    ...(sidechainId ? { sidechainId } : {}),
                     content: [{
                         type: 'thinking',
                         thinking: raw.content.data.text,
@@ -501,7 +519,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: false,
+                    isSidechain,
+                    ...(sidechainId ? { sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
                         id: raw.content.data.id,
@@ -527,7 +546,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: false,
+                    isSidechain,
+                    ...(sidechainId ? { sidechainId } : {}),
                     content: [{
                         type: 'tool-result',
                         tool_use_id: raw.content.data.callId,
@@ -546,7 +566,8 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                     localId,
                     createdAt,
                     role: 'agent',
-                    isSidechain: false,
+                    isSidechain,
+                    ...(sidechainId ? { sidechainId } : {}),
                     content: [{
                         type: 'tool-call',
                         id: raw.content.data.permissionId,

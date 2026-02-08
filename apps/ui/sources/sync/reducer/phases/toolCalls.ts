@@ -42,6 +42,9 @@ export function runToolCallsPhase(params: Readonly<{
                         const message = state.messages.get(existingMessageId);
                         if (message?.tool) {
                             message.realID = msg.id;
+                            if (!message.tool.id) {
+                                message.tool.id = c.id;
+                            }
                             message.tool.description = c.description;
                             message.tool.startedAt = msg.createdAt;
 
@@ -117,6 +120,7 @@ export function runToolCallsPhase(params: Readonly<{
                         const permission = state.permissions.get(c.id);
 
                         let toolCall: ToolCall = {
+                            id: c.id,
                             name: c.name,
                             state: 'running' as const,
                             input: permission ? permission.arguments : c.input,  // Use permission args if available
@@ -195,4 +199,3 @@ export function runToolCallsPhase(params: Readonly<{
         }
     }
 }
-

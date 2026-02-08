@@ -8,8 +8,9 @@ import type { Profile } from '../profile';
 import { profileParse } from '../profile';
 import { settingsParse, SUPPORTED_SCHEMA_VERSION } from '../settings';
 import { getServerUrl } from '../serverConfig';
-import type { AuthCredentials } from '@/auth/tokenStorage';
+import { TokenStorage, type AuthCredentials } from '@/auth/tokenStorage';
 import { HappyError } from '@/utils/errors';
+import { listServerProfiles } from '../serverProfiles';
 
 export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
@@ -27,8 +28,14 @@ export async function handleUpdateAccountSocketUpdate(params: {
         ...currentProfile,
         firstName: accountUpdate.firstName !== undefined ? accountUpdate.firstName : currentProfile.firstName,
         lastName: accountUpdate.lastName !== undefined ? accountUpdate.lastName : currentProfile.lastName,
+        username: accountUpdate.username !== undefined ? accountUpdate.username : currentProfile.username,
         avatar: accountUpdate.avatar !== undefined ? accountUpdate.avatar : currentProfile.avatar,
-        github: accountUpdate.github !== undefined ? accountUpdate.github : currentProfile.github,
+        linkedProviders:
+            accountUpdate.linkedProviders !== undefined ? accountUpdate.linkedProviders : currentProfile.linkedProviders,
+        connectedServices:
+            accountUpdate.connectedServices !== undefined
+                ? accountUpdate.connectedServices
+                : currentProfile.connectedServices,
         timestamp: updateCreatedAt, // Update timestamp to latest
     };
 
@@ -103,30 +110,69 @@ export async function registerPushTokenIfAvailable(params: {
     // Request permission
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
-    log.log('existingStatus: ' + JSON.stringify(existingStatus));
 
     if (existingStatus !== 'granted') {
         const { status } = await Notifications.requestPermissionsAsync();
         finalStatus = status;
     }
-    log.log('finalStatus: ' + JSON.stringify(finalStatus));
 
     if (finalStatus !== 'granted') {
-        log.log('Failed to get push token for push notification!');
         return;
     }
 
-    // Get push token
+    // Get push token (avoid logging token contents)
     const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
-
-    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-    log.log('tokenData: ' + JSON.stringify(tokenData));
+    let tokenData: { data: string };
+    try {
+        tokenData = projectId
+            ? await Notifications.getExpoPushTokenAsync({ projectId })
+            : await Notifications.getExpoPushTokenAsync();
+    } catch (error) {
+        const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+        log.log('Failed to get Expo push token: ' + message);
+        return;
+    }
 
     // Register with server
     try {
-        await registerPushTokenApi(credentials, tokenData.data);
+        const profiles = listServerProfiles();
+        const token = tokenData.data;
+        const normalizeServerUrl = (serverUrl: string) => serverUrl.replace(/\/+$/, '');
+        let activeServerUrl: string | null = null;
+        try {
+            activeServerUrl = normalizeServerUrl(getServerUrl());
+        } catch {
+            activeServerUrl = null;
+        }
+
+        let didRegisterActiveServer = false;
+        for (const profile of profiles) {
+            let serverCredentials: AuthCredentials | null = null;
+            try {
+                serverCredentials = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+            } catch {
+                serverCredentials = null;
+            }
+            if (!serverCredentials) continue;
+
+            try {
+                await registerPushTokenApi(serverCredentials, token, { apiEndpoint: profile.serverUrl });
+                if (activeServerUrl && normalizeServerUrl(profile.serverUrl) === activeServerUrl) {
+                    didRegisterActiveServer = true;
+                }
+            } catch (error) {
+                const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+                log.log(`Failed to register push token for ${profile.serverUrl}: ${message}`);
+            }
+        }
+
+        // Back-compat: if the active server isn't included in profiles for some reason, still try the passed credentials.
+        if (!didRegisterActiveServer) {
+            await registerPushTokenApi(credentials, token);
+        }
         log.log('Push token registered successfully');
     } catch (error) {
-        log.log('Failed to register push token: ' + JSON.stringify(error));
+        const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+        log.log('Failed to register push token: ' + message);
     }
 }

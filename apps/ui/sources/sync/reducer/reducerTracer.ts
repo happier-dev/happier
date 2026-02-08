@@ -19,17 +19,20 @@
 // 3. Message Relationships: Each message can have:
 //    - A UUID: Unique identifier for the message
 //    - A parentUUID: Reference to its parent message (for nested responses)
-//    - A sidechainId: The message ID of the Task tool call that spawned it
+//    - A sidechainId: The tool-call id of the Task tool call that spawned it
 //
 // How It Works:
 // -------------
 // 1. Task Detection: When a Task tool call is encountered, we store it in
-//    taskTools indexed by the message ID (not the tool ID). We also index
-//    by prompt for quick lookup when matching sidechain roots.
+//    taskTools indexed by the message ID. We also index by prompt to the
+//    Task tool-call id for quick lookup when matching sidechain roots.
 //
 // 2. Sidechain Root Matching: When a sidechain message arrives with a prompt
 //    that matches a known Task prompt, it's identified as a sidechain root
-//    and assigned the Task's message ID as its sidechainId.
+//    and assigned the Task tool-call id as its sidechainId.
+//
+//    Provider-agnostic override: if a message already carries a `sidechainId`,
+//    we treat it as authoritative and do not rely on prompt matching.
 //
 // 3. Parent-Child Linking: Sidechain messages can reference parent messages
 //    via parentUUID. Children inherit the sidechainId from their parent.
@@ -45,9 +48,9 @@
 // -------------
 // 1. Message "msg1" contains Task tool call with prompt "Search for files"
 // 2. Sidechain message "sc1" arrives with type="sidechain" and same prompt
-//    -> sc1 gets sidechainId="msg1"
+//    -> sc1 gets sidechainId="<task tool-call id>"
 // 3. Message "sc2" arrives with parentUUID="sc1"
-//    -> sc2 inherits sidechainId="msg1" from its parent
+//    -> sc2 inherits sidechainId="<task tool-call id>" from its parent
 // 4. Any orphans waiting for "sc1" or "sc2" are processed recursively
 //
 // This tracking enables the UI to group related messages together and show
@@ -58,22 +61,31 @@
 
 import { NormalizedMessage } from '../typesRaw';
 
+type OrphanBucket = {
+    updatedAt: number;
+    messages: NormalizedMessage[];
+};
+
+const ORPHAN_TTL_MS = 10 * 60_000;
+const MAX_ORPHANS_PER_PARENT = 50;
+const MAX_TOTAL_ORPHANS = 500;
+
 // Extended message type with sidechain ID for tracking message relationships
 export type TracedMessage = NormalizedMessage & {
-    sidechainId?: string;  // ID of the Task message that initiated this sidechain
+    sidechainId?: string;  // ID of the Task tool-call that initiated this sidechain
 }
 
 // Tracer state for tracking message relationships and sidechain processing
 export interface TracerState {
     // Task tracking - stores Task tool calls by their message ID
-    taskTools: Map<string, { messageId: string; prompt: string }>;  // messageId -> Task info
-    promptToTaskId: Map<string, string>;  // prompt -> task message ID (for matching sidechains)
+    taskTools: Map<string, { toolCallId: string; prompt: string }>;  // messageId -> Task info
+    promptToTaskId: Map<string, string>;  // prompt -> task tool-call ID (for matching sidechains)
     
-    // Sidechain tracking - maps message UUIDs to their originating Task message ID
-    uuidToSidechainId: Map<string, string>;  // uuid -> sidechain ID (originating task message ID)
+    // Sidechain tracking - maps message UUIDs to their originating Task tool-call ID
+    uuidToSidechainId: Map<string, string>;  // uuid -> sidechain ID (originating task tool-call ID)
     
     // Buffering for out-of-order messages that arrive before their parent
-    orphanMessages: Map<string, NormalizedMessage[]>;  // parentUuid -> orphan messages waiting for parent
+    orphanMessages: Map<string, OrphanBucket>;  // parentUuid -> orphan messages waiting for parent
     
     // Track already processed messages to avoid duplicates
     processedIds: Set<string>;
@@ -88,6 +100,48 @@ export function createTracer(): TracerState {
         orphanMessages: new Map(),
         processedIds: new Set()
     };
+}
+
+function pruneOrphans(state: TracerState, now = Date.now()): void {
+    // TTL eviction.
+    for (const [parentUuid, bucket] of state.orphanMessages) {
+        if (now - bucket.updatedAt > ORPHAN_TTL_MS) {
+            state.orphanMessages.delete(parentUuid);
+        }
+    }
+
+    let total = 0;
+    for (const bucket of state.orphanMessages.values()) {
+        total += bucket.messages.length;
+    }
+
+    if (total <= MAX_TOTAL_ORPHANS) return;
+
+    // Global cap: drop oldest buckets first.
+    const buckets = [...state.orphanMessages.entries()]
+        .map(([parentUuid, bucket]) => ({ parentUuid, updatedAt: bucket.updatedAt, count: bucket.messages.length }))
+        .sort((a, b) => a.updatedAt - b.updatedAt);
+
+    for (const bucket of buckets) {
+        if (total <= MAX_TOTAL_ORPHANS) break;
+        state.orphanMessages.delete(bucket.parentUuid);
+        total -= bucket.count;
+    }
+}
+
+function addOrphan(state: TracerState, parentUuid: string, message: NormalizedMessage): void {
+    const now = Date.now();
+    pruneOrphans(state, now);
+
+    const bucket = state.orphanMessages.get(parentUuid) ?? { updatedAt: now, messages: [] };
+    bucket.updatedAt = now;
+    bucket.messages.push(message);
+    if (bucket.messages.length > MAX_ORPHANS_PER_PARENT) {
+        bucket.messages.splice(0, bucket.messages.length - MAX_ORPHANS_PER_PARENT);
+    }
+    state.orphanMessages.set(parentUuid, bucket);
+
+    pruneOrphans(state, now);
 }
 
 // Extract UUID from the first content item of an agent message
@@ -115,9 +169,9 @@ function getParentUuid(message: NormalizedMessage): string | null {
 // Process orphan messages recursively when their parent becomes available
 function processOrphans(state: TracerState, parentUuid: string, sidechainId: string): TracedMessage[] {
     const results: TracedMessage[] = [];
-    const orphans = state.orphanMessages.get(parentUuid);
+    const bucket = state.orphanMessages.get(parentUuid);
     
-    if (!orphans) {
+    if (!bucket) {
         return results;
     }
     
@@ -125,7 +179,7 @@ function processOrphans(state: TracerState, parentUuid: string, sidechainId: str
     state.orphanMessages.delete(parentUuid);
     
     // Process each orphan
-    for (const orphan of orphans) {
+    for (const orphan of bucket.messages) {
         const uuid = getMessageUuid(orphan);
         
         // Mark as processed
@@ -156,6 +210,7 @@ function processOrphans(state: TracerState, parentUuid: string, sidechainId: str
 // Main tracer function - processes messages and assigns sidechain IDs based on Task relationships
 export function traceMessages(state: TracerState, messages: NormalizedMessage[]): TracedMessage[] {
     const results: TracedMessage[] = [];
+    pruneOrphans(state);
     
     for (const message of messages) {
         // Skip if already processed
@@ -168,12 +223,17 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
             for (const content of message.content) {
                 if (content.type === 'tool-call' && content.name === 'Task') {
                     if (content.input && typeof content.input === 'object' && 'prompt' in content.input) {
-                        // Store Task info indexed by message ID (not tool ID)
+                        const toolCallId =
+                            typeof content.id === 'string' && content.id ? content.id : message.id;
+                        if (!toolCallId) continue;
+                        const prompt = (content.input as any).prompt;
+                        if (typeof prompt !== 'string' || !prompt) continue;
+                        // Store Task info indexed by message ID (and map prompt -> tool-call id).
                         state.taskTools.set(message.id, {
-                            messageId: message.id,
-                            prompt: content.input.prompt
+                            toolCallId,
+                            prompt
                         });
-                        state.promptToTaskId.set(content.input.prompt, message.id);
+                        state.promptToTaskId.set(prompt, toolCallId);
                     }
                 }
             }
@@ -193,12 +253,13 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
         const uuid = getMessageUuid(message);
         const parentUuid = getParentUuid(message);
         
-        // Check if this is a sidechain root by matching its prompt to a known Task
+        // Provider-agnostic: prefer explicit sidechainId if present on the message.
+        const explicitSidechainId = message.sidechainId;
         let isSidechainRoot = false;
-        let sidechainId: string | undefined;
+        let sidechainId: string | undefined = explicitSidechainId;
         
-        // Look for sidechain content type with a prompt that matches a Task
-        if (message.role === 'agent') {
+        // If not provided explicitly, look for sidechain content type with a prompt that matches a Task.
+        if (!sidechainId && message.role === 'agent') {
             for (const content of message.content) {
                 if (content.type === 'sidechain' && content.prompt) {
                     const taskId = state.promptToTaskId.get(content.prompt);
@@ -211,7 +272,7 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
             }
         }
         
-        if (isSidechainRoot && uuid && sidechainId) {
+        if ((explicitSidechainId || isSidechainRoot) && uuid && sidechainId) {
             // This is a sidechain root - mark it and process any waiting orphans
             state.processedIds.add(message.id);
             state.uuidToSidechainId.set(uuid, sidechainId);
@@ -249,9 +310,7 @@ export function traceMessages(state: TracerState, messages: NormalizedMessage[])
                 }
             } else {
                 // Parent not yet processed - buffer this message as an orphan
-                const orphans = state.orphanMessages.get(parentUuid) || [];
-                orphans.push(message);
-                state.orphanMessages.set(parentUuid, orphans);
+                addOrphan(state, parentUuid, message);
             }
         } else {
             // Sidechain message with no parent and not a root - process as standalone

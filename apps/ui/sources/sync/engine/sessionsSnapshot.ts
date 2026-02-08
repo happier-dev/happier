@@ -30,6 +30,8 @@ export async function fetchAndApplySessions(params: {
     const sessions: Array<{
         id: string;
         seq: number;
+        pendingVersion?: number;
+        pendingCount?: number;
         metadata: string;
         metadataVersion: number;
         agentState: string | null;

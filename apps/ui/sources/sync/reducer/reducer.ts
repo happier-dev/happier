@@ -422,13 +422,14 @@ function processUsageData(state: ReducerState, usage: UsageData, timestamp: numb
 
 function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: ReducerState): Message | null {
     if (reducerMsg.role === 'user' && reducerMsg.text !== null) {
+        const displayText = typeof reducerMsg.meta?.displayText === 'string' ? reducerMsg.meta.displayText : undefined;
         return {
             id: reducerMsg.id,
             localId: null,
             createdAt: reducerMsg.createdAt,
             kind: 'user-text',
             text: reducerMsg.text,
-            ...(reducerMsg.meta?.displayText && { displayText: reducerMsg.meta.displayText }),
+            ...(displayText !== undefined ? { displayText } : {}),
             meta: reducerMsg.meta
         };
     } else if (reducerMsg.role === 'agent' && reducerMsg.text !== null) {
@@ -444,7 +445,12 @@ function convertReducerMessageToMessage(reducerMsg: ReducerMessage, state: Reduc
     } else if (reducerMsg.role === 'agent' && reducerMsg.tool !== null) {
         // Convert children recursively
         let childMessages: Message[] = [];
-        let children = reducerMsg.realID ? state.sidechains.get(reducerMsg.realID) || [] : [];
+        const toolId = typeof reducerMsg.tool.id === 'string' ? reducerMsg.tool.id.trim() : '';
+        const sidechainKey =
+            toolId.length > 0
+                ? (!state.sidechains.has(toolId) && reducerMsg.realID ? reducerMsg.realID : toolId)
+                : reducerMsg.realID ?? null;
+        let children = sidechainKey ? state.sidechains.get(sidechainKey) || [] : [];
         for (let child of children) {
             let childMessage = convertReducerMessageToMessage(child, state);
             if (childMessage) {

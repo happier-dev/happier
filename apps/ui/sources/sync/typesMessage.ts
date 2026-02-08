@@ -2,6 +2,9 @@ import { AgentEvent } from "./typesRaw";
 import { MessageMeta } from "./typesMessageMeta";
 
 export type ToolCall = {
+    // Provider-side identifier for this tool call (e.g. ACP callId, Claude tool_use id).
+    // Optional for backward compatibility with older sessions and unit tests.
+    id?: string;
     name: string;
     state: 'running' | 'completed' | 'error';
     input: any;

@@ -1,6 +1,6 @@
-import { PERMISSION_MODES } from '@/constants/PermissionModes';
 import type { PermissionMode } from '@/sync/permissionTypes';
 import { isMutableTool } from '@/components/tools/knownTools';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
 import type { Message } from '../../typesMessage';
@@ -29,6 +29,25 @@ type MessagesDomainDependencies = {
     sessions: Record<string, Session>;
     sessionPending: Record<string, SessionPending>;
 };
+
+export function inferLatestUserPermissionModeFromMessages(messages: ReadonlyArray<Message>): { mode: PermissionMode; updatedAt: number } | null {
+    for (const message of messages) {
+        if (message.kind !== 'user-text') continue;
+        const rawMode = message.meta?.permissionMode;
+        const modeStr = typeof rawMode === 'string' ? rawMode : null;
+        if (!modeStr) continue;
+
+        const parsed = parsePermissionIntentAlias(modeStr);
+        if (!parsed) continue;
+
+        const at = message.createdAt;
+        if (typeof at !== 'number' || !Number.isFinite(at)) continue;
+
+        // parsed is a PermissionIntent (subset) but assignable to PermissionMode for now.
+        return { mode: parsed as PermissionMode, updatedAt: at };
+    }
+    return null;
+}
 
 export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDependencies>({
     set,
@@ -93,20 +112,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                 const messagesArray = Object.values(mergedMessagesMap)
                     .sort((a, b) => b.createdAt - a.createdAt);
 
-                // Infer session permission mode from the most recent user message meta.
-                // This makes permission mode "follow" the session across devices/machines without adding server fields.
-                // Local user changes should win until the next user message is sent (tracked by permissionModeUpdatedAt).
-                let inferredPermissionMode: PermissionMode | null = null;
-                let inferredPermissionModeAt: number | null = null;
-                for (const message of messagesArray) {
-                    if (message.kind !== 'user-text') continue;
-                    const rawMode = message.meta?.permissionMode;
-                    if (!rawMode || !PERMISSION_MODES.includes(rawMode as any)) continue;
-                    const mode = rawMode as PermissionMode;
-                    inferredPermissionMode = mode;
-                    inferredPermissionModeAt = message.createdAt;
-                    break;
-                }
+                const inferred = inferLatestUserPermissionModeFromMessages(messagesArray);
+                const inferredPermissionMode = inferred?.mode ?? null;
+                const inferredPermissionModeAt = inferred?.updatedAt ?? null;
 
                 // Clear server-pending items once we see the corresponding user message in the transcript.
                 // We key this off localId, which is preserved when a pending item is materialized into a SessionMessage.
@@ -143,6 +151,9 @@ export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDe
                     session &&
                     inferredPermissionMode &&
                     inferredPermissionModeAt &&
+                    // If the session has a canonical permission mode in metadata, that is the source of truth.
+                    // Message-level permissionMode is per-turn and must not rewrite the session's stored mode.
+                    !(typeof (session.metadata as any)?.permissionMode === 'string' && (session.metadata as any).permissionMode.trim().length > 0) &&
                     // NOTE: inferredPermissionModeAt comes from message.createdAt (server timestamp for remote messages,
                     // and best-effort server-aligned timestamp for locally-created optimistic messages).
                     // permissionModeUpdatedAt is stamped using nowServerMs() for clock-safe ordering across devices.

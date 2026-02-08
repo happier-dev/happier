@@ -60,6 +60,12 @@ export function customerInfoToPurchases(customerInfo: CustomerInfo): Purchases {
         entitlements[id] = entitlement.isActive;
     });
 
+    const voiceActive = Boolean(entitlements.voice || entitlements.pro);
+    if (voiceActive) {
+        entitlements.voice = true;
+        entitlements.pro = true;
+    }
+
     return {
         activeSubscriptions,
         entitlements

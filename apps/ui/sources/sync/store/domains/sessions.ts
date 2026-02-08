@@ -1,17 +1,23 @@
-import type { GitStatus, Machine, Session } from '../../storageTypes';
+import type { GitStatus, GitWorkingSnapshot, Machine, Session } from '../../storageTypes';
 import { createReducer, reducer } from '../../reducer/reducer';
 import type { NormalizedMessage } from '../../typesRaw';
 import { buildSessionListViewData, type SessionListViewItem } from '../../sessionListViewData';
 import { nowServerMs } from '../../time';
-import { loadSessionDrafts, loadSessionLastViewed, loadSessionModelModes, loadSessionPermissionModeUpdatedAts, loadSessionPermissionModes, saveSessionDrafts, saveSessionLastViewed, saveSessionModelModes, saveSessionPermissionModeUpdatedAts, saveSessionPermissionModes } from '../../persistence';
+import { loadSessionDrafts, loadSessionLastViewed, loadSessionModelModeUpdatedAts, loadSessionModelModes, loadSessionPermissionModeUpdatedAts, loadSessionPermissionModes, saveSessionDrafts, saveSessionLastViewed, saveSessionModelModeUpdatedAts, saveSessionModelModes, saveSessionPermissionModeUpdatedAts, saveSessionPermissionModes } from '../../persistence';
 import { projectManager } from '../../projectManager';
 import { getCurrentRealtimeSessionId, getVoiceSession } from '@/realtime/RealtimeSession';
-import type { PermissionMode } from '@/sync/permissionTypes';
+import { isModelMode, type PermissionMode } from '@/sync/permissionTypes';
+import { isModelSelectableForSession } from '@/sync/modelOptions';
+import { resolveAgentIdFromFlavor } from '@/agents/catalog';
+import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 
 import type { StoreGet, StoreSet } from './_shared';
 import type { SessionMessages } from './messages';
 
 type SessionModelMode = NonNullable<Session['modelMode']>;
+type GitOperationLogEntry = import('../../projectManager').GitProjectOperationLogEntry;
+type GitInFlightOperation = import('../../projectManager').GitProjectInFlightOperation;
+type BeginGitOperationResult = import('../../projectManager').BeginGitProjectOperationResult;
 
 export type SessionsDomain = {
     sessions: Record<string, Session>;
@@ -42,6 +48,23 @@ export type SessionsDomain = {
     getProjectGitStatus: (projectId: string) => GitStatus | null;
     getSessionProjectGitStatus: (sessionId: string) => GitStatus | null;
     updateSessionProjectGitStatus: (sessionId: string, status: GitStatus | null) => void;
+    getProjectGitSnapshot: (projectId: string) => GitWorkingSnapshot | null;
+    getSessionProjectGitSnapshot: (sessionId: string) => GitWorkingSnapshot | null;
+    updateSessionProjectGitSnapshot: (sessionId: string, snapshot: GitWorkingSnapshot | null) => void;
+    getSessionProjectGitTouchedPaths: (sessionId: string) => string[];
+    markSessionProjectGitTouchedPaths: (sessionId: string, paths: string[]) => void;
+    pruneSessionProjectGitTouchedPaths: (sessionId: string, activePaths: Set<string>) => void;
+    getSessionProjectGitOperationLog: (sessionId: string) => GitOperationLogEntry[];
+    appendSessionProjectGitOperation: (
+        sessionId: string,
+        entry: Omit<GitOperationLogEntry, 'id' | 'sessionId'>,
+    ) => void;
+    getSessionProjectGitInFlightOperation: (sessionId: string) => GitInFlightOperation | null;
+    beginSessionProjectGitOperation: (
+        sessionId: string,
+        operation: import('../../projectManager').GitProjectOperationKind,
+    ) => BeginGitOperationResult;
+    finishSessionProjectGitOperation: (sessionId: string, operationId: string) => boolean;
 
     deleteSession: (sessionId: string) => void;
 };
@@ -120,6 +143,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
     let sessionPermissionModes = loadSessionPermissionModes();
     let sessionModelModes = loadSessionModelModes();
     let sessionPermissionModeUpdatedAts = loadSessionPermissionModeUpdatedAts();
+    let sessionModelModeUpdatedAts = loadSessionModelModeUpdatedAts();
     let sessionLastViewed = loadSessionLastViewed();
 
     return {
@@ -139,6 +163,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const savedPermissionModes = Object.keys(state.sessions).length === 0 ? sessionPermissionModes : {};
             const savedModelModes = Object.keys(state.sessions).length === 0 ? sessionModelModes : {};
             const savedPermissionModeUpdatedAts = Object.keys(state.sessions).length === 0 ? sessionPermissionModeUpdatedAts : {};
+            const savedModelModeUpdatedAts = Object.keys(state.sessions).length === 0 ? sessionModelModeUpdatedAts : {};
 
             // Merge new sessions with existing ones
             const mergedSessions: Record<string, Session> = { ...state.sessions };
@@ -157,12 +182,15 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const savedModelMode = savedModelModes[session.id];
                 const existingPermissionModeUpdatedAt = state.sessions[session.id]?.permissionModeUpdatedAt;
                 const savedPermissionModeUpdatedAt = savedPermissionModeUpdatedAts[session.id];
+                const existingModelModeUpdatedAt = state.sessions[session.id]?.modelModeUpdatedAt;
+                const savedModelModeUpdatedAt = savedModelModeUpdatedAts[session.id];
                 const existingOptimisticThinkingAt = state.sessions[session.id]?.optimisticThinkingAt ?? null;
 
                 // CLI may publish a session permission mode in encrypted metadata for local-only starts.
                 // This is a fallback signal for when there are no app-sent user messages carrying meta.permissionMode yet.
-                const metadataPermissionMode = session.metadata?.permissionMode ?? null;
-                const metadataPermissionModeUpdatedAt = session.metadata?.permissionModeUpdatedAt ?? null;
+                const metadataPermission = resolvePermissionIntentFromSessionMetadata(session.metadata);
+                const metadataCanonicalPermissionMode = metadataPermission?.intent ?? null;
+                const metadataPermissionModeUpdatedAt = metadataPermission?.updatedAt ?? null;
 
                 let mergedPermissionMode =
                     existingPermissionMode ||
@@ -175,11 +203,50 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     savedPermissionModeUpdatedAt ??
                     null;
 
-                if (metadataPermissionMode && typeof metadataPermissionModeUpdatedAt === 'number') {
+                if (metadataCanonicalPermissionMode && typeof metadataPermissionModeUpdatedAt === 'number') {
                     const localUpdatedAt = mergedPermissionModeUpdatedAt ?? 0;
                     if (metadataPermissionModeUpdatedAt > localUpdatedAt) {
-                        mergedPermissionMode = metadataPermissionMode;
+                        mergedPermissionMode = metadataCanonicalPermissionMode;
                         mergedPermissionModeUpdatedAt = metadataPermissionModeUpdatedAt;
+                    }
+                }
+
+                const modelOverride = resolveMetadataStringOverrideV1(session.metadata, 'modelOverrideV1', 'modelId');
+                const metadataModelId = modelOverride?.value ?? null;
+                const metadataModelUpdatedAt = modelOverride?.updatedAt ?? null;
+
+                let mergedModelMode =
+                    existingModelMode ||
+                    savedModelMode ||
+                    session.modelMode ||
+                    'default';
+
+                let mergedModelModeUpdatedAt: number | null =
+                    existingModelModeUpdatedAt ??
+                    savedModelModeUpdatedAt ??
+                    null;
+
+                if (typeof metadataModelId === 'string' && isModelMode(metadataModelId) && typeof metadataModelUpdatedAt === 'number') {
+                    const localUpdatedAt = mergedModelModeUpdatedAt ?? 0;
+                    if (metadataModelUpdatedAt > localUpdatedAt) {
+                        mergedModelMode = metadataModelId as any;
+                        mergedModelModeUpdatedAt = metadataModelUpdatedAt;
+                    }
+                }
+
+                const resolvedAgentId = resolveAgentIdFromFlavor(session.metadata?.flavor);
+                if (
+                    resolvedAgentId &&
+                    mergedModelMode !== 'default' &&
+                    !isModelSelectableForSession(resolvedAgentId, session.metadata, mergedModelMode)
+                ) {
+                    mergedModelMode = 'default';
+                    if (typeof mergedModelModeUpdatedAt !== 'number' || !Number.isFinite(mergedModelModeUpdatedAt)) {
+                        if (typeof metadataModelUpdatedAt === 'number' && Number.isFinite(metadataModelUpdatedAt)) {
+                            mergedModelModeUpdatedAt = metadataModelUpdatedAt;
+                        } else {
+                            mergedModelModeUpdatedAt = nowServerMs();
+                        }
                     }
                 }
 
@@ -191,7 +258,8 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     permissionMode: mergedPermissionMode,
                     // Preserve local coordination timestamp (not synced to server)
                     permissionModeUpdatedAt: mergedPermissionModeUpdatedAt,
-                    modelMode: existingModelMode || savedModelMode || session.modelMode || 'default',
+                    modelMode: mergedModelMode,
+                    modelModeUpdatedAt: mergedModelModeUpdatedAt,
                 };
             });
 
@@ -486,13 +554,14 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             if (!session) return state;
 
             const now = nowServerMs();
+            const canonicalMode = (typeof mode === 'string' ? (parsePermissionIntentAlias(mode) as PermissionMode | null) : null) ?? 'default';
 
             // Update the session with the new permission mode
             const updatedSessions = {
                 ...state.sessions,
                 [sessionId]: {
                     ...session,
-                    permissionMode: mode,
+                    permissionMode: canonicalMode,
                     // Mark as locally updated so older message-based inference cannot override this selection.
                     // Newer user messages (from any device) will still take over.
                     permissionModeUpdatedAt: now
@@ -511,28 +580,45 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessions: updatedSessions
             };
         }),
-        updateSessionModelMode: (sessionId: string, mode: SessionModelMode) => set((state) => {
-            const session = state.sessions[sessionId];
-            if (!session) return state;
-
-            // Update the session with the new model mode
-            const updatedSessions = {
-                ...state.sessions,
-                [sessionId]: {
-                    ...session,
-                    modelMode: mode
-                }
-            };
+	        updateSessionModelMode: (sessionId: string, mode: SessionModelMode) => set((state) => {
+	            const session = state.sessions[sessionId];
+	            if (!session) return state;
+	
+	            const now = nowServerMs();
+                const normalized = typeof mode === 'string' ? mode.trim() : '';
+                const candidate: SessionModelMode = (normalized || 'default') as any;
+                const resolvedAgentId = resolveAgentIdFromFlavor(session.metadata?.flavor);
+                const effectiveMode: SessionModelMode =
+                    resolvedAgentId && candidate !== 'default' && !isModelSelectableForSession(resolvedAgentId, session.metadata, candidate)
+                        ? 'default'
+                        : candidate;
+	
+	            // Update the session with the new model mode
+	            const updatedSessions = {
+	                ...state.sessions,
+	                [sessionId]: {
+	                    ...session,
+	                    modelMode: effectiveMode,
+	                    modelModeUpdatedAt: now,
+	                }
+	            };
 
             // Collect all model modes for persistence (only non-default values to save space)
             const allModes: Record<string, SessionModelMode> = {};
+            const allUpdatedAts: Record<string, number> = {};
             Object.entries(updatedSessions).forEach(([id, sess]) => {
                 if (sess.modelMode && sess.modelMode !== 'default') {
                     allModes[id] = sess.modelMode;
                 }
+                if (typeof (sess as any).modelModeUpdatedAt === 'number') {
+                    allUpdatedAts[id] = (sess as any).modelModeUpdatedAt;
+                }
             });
 
             saveSessionModelModes(allModes);
+            saveSessionModelModeUpdatedAts(allUpdatedAts);
+            sessionModelModes = allModes as any;
+            sessionModelModeUpdatedAts = allUpdatedAts;
 
             // No need to rebuild sessionListViewData since model mode doesn't affect the list display
             return {
@@ -552,6 +638,49 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             projectManager.updateSessionProjectGitStatus(sessionId, status);
             // Trigger a state update to notify hooks
             set((state) => ({ ...state }));
+        },
+        getProjectGitSnapshot: (projectId: string) => projectManager.getProjectGitSnapshot(projectId),
+        getSessionProjectGitSnapshot: (sessionId: string) => projectManager.getSessionProjectGitSnapshot(sessionId),
+        updateSessionProjectGitSnapshot: (sessionId: string, snapshot: GitWorkingSnapshot | null) => {
+            projectManager.updateSessionProjectGitSnapshot(sessionId, snapshot);
+            // Trigger a state update to notify hooks
+            set((state) => ({ ...state }));
+        },
+        getSessionProjectGitTouchedPaths: (sessionId: string) => projectManager.getSessionProjectGitTouchedPaths(sessionId),
+        markSessionProjectGitTouchedPaths: (sessionId: string, paths: string[]) => {
+            projectManager.markSessionProjectGitTouchedPaths(sessionId, paths);
+            set((state) => ({ ...state }));
+        },
+        pruneSessionProjectGitTouchedPaths: (sessionId: string, activePaths: Set<string>) => {
+            projectManager.pruneSessionProjectGitTouchedPaths(sessionId, activePaths);
+            set((state) => ({ ...state }));
+        },
+        getSessionProjectGitOperationLog: (sessionId: string) => projectManager.getSessionProjectGitOperationLog(sessionId),
+        appendSessionProjectGitOperation: (
+            sessionId: string,
+            entry: Omit<GitOperationLogEntry, 'id' | 'sessionId'>,
+        ) => {
+            projectManager.appendSessionProjectGitOperation(sessionId, entry);
+            set((state) => ({ ...state }));
+        },
+        getSessionProjectGitInFlightOperation: (sessionId: string) =>
+            projectManager.getSessionProjectGitInFlightOperation(sessionId),
+        beginSessionProjectGitOperation: (
+            sessionId: string,
+            operation: import('../../projectManager').GitProjectOperationKind,
+        ) => {
+            const result = projectManager.beginSessionProjectGitOperation(sessionId, operation);
+            if (result.started || result.reason === 'operation_in_flight') {
+                set((state) => ({ ...state }));
+            }
+            return result;
+        },
+        finishSessionProjectGitOperation: (sessionId: string, operationId: string) => {
+            const finished = projectManager.finishSessionProjectGitOperation(sessionId, operationId);
+            if (finished) {
+                set((state) => ({ ...state }));
+            }
+            return finished;
         },
         deleteSession: (sessionId: string) => set((state) => {
 	            const optimisticTimeout = optimisticThinkingTimeoutBySessionId.get(sessionId);
@@ -588,6 +717,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             delete modelModes[sessionId];
             saveSessionModelModes(modelModes);
             sessionModelModes = modelModes;
+
+            const modelUpdatedAts = loadSessionModelModeUpdatedAts();
+            delete modelUpdatedAts[sessionId];
+            saveSessionModelModeUpdatedAts(modelUpdatedAts);
+            sessionModelModeUpdatedAts = modelUpdatedAts;
 
             delete sessionLastViewed[sessionId];
             saveSessionLastViewed(sessionLastViewed);

@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 import type {
   DiscardedPendingMessage,
   GitStatus,
+  GitWorkingSnapshot,
   Machine,
   PendingMessage,
   Session,
@@ -13,7 +14,7 @@ import type { LocalSettings } from '../localSettings';
 import type { Message } from '../typesMessage';
 import type { Settings } from '../settings';
 import type { SessionListViewItem } from '../sessionListViewData';
-import { computeHasUnreadActivity, computePendingActivityAt } from '../unread';
+import { computeHasUnreadActivity } from '../unread';
 import { sync } from '../sync';
 
 import { getStorage } from '../storage';
@@ -47,11 +48,10 @@ export function useHasUnreadMessages(sessionId: string): boolean {
   return getStorage()((state) => {
     const session = state.sessions[sessionId];
     if (!session) return false;
-    const pendingActivityAt = computePendingActivityAt(session.metadata);
     const readState = session.metadata?.readStateV1;
     return computeHasUnreadActivity({
       sessionSeq: session.seq ?? 0,
-      pendingActivityAt,
+      pendingActivityAt: 0,
       lastViewedSessionSeq: readState?.sessionSeq,
       lastViewedPendingActivityAt: readState?.pendingActivityAt,
     });
@@ -183,6 +183,36 @@ export function useProjectGitStatus(projectId: string | null) {
 export function useSessionProjectGitStatus(sessionId: string | null) {
   return getStorage()(
     useShallow((state) => (sessionId ? state.getSessionProjectGitStatus(sessionId) : null))
+  );
+}
+
+export function useProjectGitSnapshot(projectId: string | null): GitWorkingSnapshot | null {
+  return getStorage()(
+    useShallow((state) => (projectId ? state.getProjectGitSnapshot(projectId) : null))
+  );
+}
+
+export function useSessionProjectGitSnapshot(sessionId: string | null): GitWorkingSnapshot | null {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectGitSnapshot(sessionId) : null))
+  );
+}
+
+export function useSessionProjectGitTouchedPaths(sessionId: string | null): string[] {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectGitTouchedPaths(sessionId) : []))
+  );
+}
+
+export function useSessionProjectGitOperationLog(sessionId: string | null) {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectGitOperationLog(sessionId) : []))
+  );
+}
+
+export function useSessionProjectGitInFlightOperation(sessionId: string | null) {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectGitInFlightOperation(sessionId) : null))
   );
 }
 

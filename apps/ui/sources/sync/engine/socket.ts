@@ -5,7 +5,7 @@ import type { Session } from '../storageTypes';
 import type { Machine } from '../storageTypes';
 import { storage } from '../storage';
 import { projectManager } from '../projectManager';
-import { gitStatusSync } from '../gitStatusSync';
+import { gitStatusSync } from '../git/gitStatusSync';
 import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { didControlReturnToMobile } from '../controlledByUserTransitions';
 import {
@@ -181,6 +181,20 @@ export async function handleUpdateContainer(params: {
             clearGitStatusForSession: (sessionId) => gitStatusSync.clearForSession(sessionId),
             log,
         });
+    } else if (updateData.body.t === 'pending-changed') {
+        const sessionId = updateData.body.sid;
+        const session = storage.getState().sessions[sessionId];
+        if (!session) {
+            // If we don't have the session locally yet, sessions sync will pick it up later.
+            invalidateSessions();
+            return;
+        }
+
+        applySessions([{
+            ...session,
+            pendingCount: updateData.body.pendingCount,
+            pendingVersion: updateData.body.pendingVersion,
+        }]);
     } else if (updateData.body.t === 'update-session') {
         const session = storage.getState().sessions[updateData.body.id];
         if (session) {

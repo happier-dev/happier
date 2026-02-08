@@ -1,9 +1,20 @@
 import { z } from 'zod';
 import { PERMISSION_MODES } from '@/constants/PermissionModes';
 
+const DANGEROUS_META_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function sanitizeMessageMetaObject(meta: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(meta)) {
+        if (DANGEROUS_META_KEYS.has(key)) continue;
+        out[key] = value;
+    }
+    return out;
+}
+
 // Shared message metadata schema
 export const MessageMetaSchema = z.object({
-    sentFrom: z.string().optional(), // Source identifier
+    sentFrom: z.string().optional(), // Source identifier (forward-compatible)
     /**
      * High-level origin of the message, used by agents to avoid treating
      * self-sent client traffic as a "new prompt" event.
@@ -19,6 +30,6 @@ export const MessageMetaSchema = z.object({
     allowedTools: z.array(z.string()).nullable().optional(), // Allowed tools for this message (null = reset)
     disallowedTools: z.array(z.string()).nullable().optional(), // Disallowed tools for this message (null = reset)
     displayText: z.string().optional() // Optional text to display in UI instead of actual message text
-});
+}).passthrough().transform((meta) => sanitizeMessageMetaObject(meta as Record<string, unknown>));
 
 export type MessageMeta = z.infer<typeof MessageMetaSchema>;

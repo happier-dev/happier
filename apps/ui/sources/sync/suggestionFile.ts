@@ -28,7 +28,6 @@ interface SessionCache {
 
 class FileSearchCache {
     private sessions = new Map<string, SessionCache>();
-    private cacheTimeout = 5 * 60 * 1000; // 5 minutes
 
     private getOrCreateSessionCache(sessionId: string): SessionCache {
         let cache = this.sessions.get(sessionId);
@@ -70,10 +69,9 @@ class FileSearchCache {
 
     private async ensureCacheValid(sessionId: string): Promise<void> {
         const cache = this.getOrCreateSessionCache(sessionId);
-        const now = Date.now();
-        
-        // Check if cache needs refresh
-        if (now - cache.lastRefresh <= this.cacheTimeout && cache.files.length > 0) {
+        // Cache is now invalidated explicitly by git snapshot updates.
+        // Only refresh when we have no index yet for this session.
+        if (cache.files.length > 0) {
             return; // Cache is still valid
         }
 
@@ -85,8 +83,6 @@ class FileSearchCache {
                 return;
             }
 
-            console.log(`FileSearchCache: Refreshing file cache for session ${sessionId}...`);
-
             // Use ripgrep to get all files in the project
             const response = await sessionRipgrep(
                 sessionId,
@@ -95,8 +91,6 @@ class FileSearchCache {
             );
 
             if (!response.success || !response.stdout) {
-                console.error('FileSearchCache: Failed to fetch files', response.error);
-                console.log(response);
                 return;
             }
 
@@ -149,8 +143,6 @@ class FileSearchCache {
 
             cache.lastRefresh = Date.now();
             this.initializeFuse(cache);
-
-            console.log(`FileSearchCache: Cached ${cache.files.length} files and directories for session ${sessionId}`);
         });
     }
 

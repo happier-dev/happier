@@ -8,8 +8,26 @@ import { isRpcMethodNotAvailableError } from '../rpcErrors';
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../resumeSessionPayload';
 import type { AgentId } from '@/agents/catalog';
 import type { PermissionMode } from '@/sync/permissionTypes';
-import type { SpawnSessionResult } from '@happier-dev/protocol';
-import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import type {
+    GitCommitCreateRequest,
+    GitCommitCreateResponse,
+    GitCommitRevertRequest,
+    GitCommitRevertResponse,
+    GitDiffCommitRequest,
+    GitDiffCommitResponse,
+    GitDiffFileRequest,
+    GitDiffFileResponse,
+    GitLogListRequest,
+    GitLogListResponse,
+    GitPatchApplyRequest,
+    GitPatchApplyResponse,
+    GitRemoteRequest,
+    GitRemoteResponse,
+    GitStatusSnapshotRequest,
+    GitStatusSnapshotResponse,
+    SpawnSessionResult
+} from '@happier-dev/protocol';
+import { GIT_OPERATION_ERROR_CODES, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
 
@@ -50,6 +68,15 @@ interface SessionBashResponse {
     stderr: string;
     exitCode: number;
     error?: string;
+}
+
+function gitFallbackError<T extends { success: boolean; error?: string; errorCode?: string }>(error: unknown): T {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return {
+        success: false,
+        error: message,
+        errorCode: GIT_OPERATION_ERROR_CODES.COMMAND_FAILED,
+    } as T;
 }
 
 // Read file operation types
@@ -168,6 +195,14 @@ export interface ResumeSessionOptions {
     permissionMode?: PermissionMode;
     permissionModeUpdatedAt?: number;
     /**
+     * Optional: publish an explicit UI-selected model override at resume time.
+     * Use only when the UI selection is newer than metadata.modelOverrideV1.updatedAt.
+     *
+     * NOTE: this should never be the sentinel "default" (that value is represented by omitting the override).
+     */
+    modelId?: string;
+    modelUpdatedAt?: number;
+    /**
      * Experimental: allow Codex vendor resume when agent === 'codex'.
      * Ignored for other agents.
      */
@@ -184,7 +219,7 @@ export interface ResumeSessionOptions {
  * to the existing Happy session and resumes the agent.
  */
 export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
-    const { sessionId, machineId, directory, agent, resume, sessionEncryptionKeyBase64, sessionEncryptionVariant, permissionMode, permissionModeUpdatedAt, experimentalCodexResume, experimentalCodexAcp } = options;
+    const { sessionId, machineId, directory, agent, resume, sessionEncryptionKeyBase64, sessionEncryptionVariant, permissionMode, permissionModeUpdatedAt, modelId, modelUpdatedAt, experimentalCodexResume, experimentalCodexAcp } = options;
 
     try {
         const params: ResumeHappySessionRpcParams = buildResumeHappySessionRpcParams({
@@ -196,6 +231,8 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             sessionEncryptionVariant,
             ...(permissionMode ? { permissionMode } : {}),
             ...(typeof permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt } : {}),
+            ...(modelId ? { modelId } : {}),
+            ...(typeof modelUpdatedAt === 'number' ? { modelUpdatedAt } : {}),
             experimentalCodexResume,
             experimentalCodexAcp,
         });
@@ -430,6 +467,171 @@ export async function sessionRipgrep(
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error'
         };
+    }
+}
+
+export async function sessionGitStatusSnapshot(
+    sessionId: string,
+    request: GitStatusSnapshotRequest
+): Promise<GitStatusSnapshotResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitStatusSnapshotResponse, GitStatusSnapshotRequest>(
+            sessionId,
+            RPC_METHODS.GIT_STATUS_SNAPSHOT,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitStatusSnapshotResponse>(error);
+    }
+}
+
+export async function sessionGitDiffFile(
+    sessionId: string,
+    request: GitDiffFileRequest
+): Promise<GitDiffFileResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitDiffFileResponse, GitDiffFileRequest>(
+            sessionId,
+            RPC_METHODS.GIT_DIFF_FILE,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitDiffFileResponse>(error);
+    }
+}
+
+export async function sessionGitDiffCommit(
+    sessionId: string,
+    request: GitDiffCommitRequest
+): Promise<GitDiffCommitResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitDiffCommitResponse, GitDiffCommitRequest>(
+            sessionId,
+            RPC_METHODS.GIT_DIFF_COMMIT,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitDiffCommitResponse>(error);
+    }
+}
+
+export async function sessionGitStageApply(
+    sessionId: string,
+    request: GitPatchApplyRequest
+): Promise<GitPatchApplyResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitPatchApplyResponse, GitPatchApplyRequest>(
+            sessionId,
+            RPC_METHODS.GIT_STAGE_APPLY,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitPatchApplyResponse>(error);
+    }
+}
+
+export async function sessionGitUnstageApply(
+    sessionId: string,
+    request: GitPatchApplyRequest
+): Promise<GitPatchApplyResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitPatchApplyResponse, GitPatchApplyRequest>(
+            sessionId,
+            RPC_METHODS.GIT_UNSTAGE_APPLY,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitPatchApplyResponse>(error);
+    }
+}
+
+export async function sessionGitCommitCreate(
+    sessionId: string,
+    request: GitCommitCreateRequest
+): Promise<GitCommitCreateResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitCommitCreateResponse, GitCommitCreateRequest>(
+            sessionId,
+            RPC_METHODS.GIT_COMMIT_CREATE,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitCommitCreateResponse>(error);
+    }
+}
+
+export async function sessionGitLogList(
+    sessionId: string,
+    request: GitLogListRequest
+): Promise<GitLogListResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitLogListResponse, GitLogListRequest>(
+            sessionId,
+            RPC_METHODS.GIT_LOG_LIST,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitLogListResponse>(error);
+    }
+}
+
+export async function sessionGitCommitRevert(
+    sessionId: string,
+    request: GitCommitRevertRequest
+): Promise<GitCommitRevertResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitCommitRevertResponse, GitCommitRevertRequest>(
+            sessionId,
+            RPC_METHODS.GIT_COMMIT_REVERT,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitCommitRevertResponse>(error);
+    }
+}
+
+export async function sessionGitRemoteFetch(
+    sessionId: string,
+    request: GitRemoteRequest
+): Promise<GitRemoteResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitRemoteResponse, GitRemoteRequest>(
+            sessionId,
+            RPC_METHODS.GIT_REMOTE_FETCH,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitRemoteResponse>(error);
+    }
+}
+
+export async function sessionGitRemotePush(
+    sessionId: string,
+    request: GitRemoteRequest
+): Promise<GitRemoteResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitRemoteResponse, GitRemoteRequest>(
+            sessionId,
+            RPC_METHODS.GIT_REMOTE_PUSH,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitRemoteResponse>(error);
+    }
+}
+
+export async function sessionGitRemotePull(
+    sessionId: string,
+    request: GitRemoteRequest
+): Promise<GitRemoteResponse> {
+    try {
+        return await apiSocket.sessionRPC<GitRemoteResponse, GitRemoteRequest>(
+            sessionId,
+            RPC_METHODS.GIT_REMOTE_PULL,
+            request
+        );
+    } catch (error) {
+        return gitFallbackError<GitRemoteResponse>(error);
     }
 }
 

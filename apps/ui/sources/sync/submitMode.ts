@@ -1,4 +1,5 @@
 import type { Session } from './storageTypes';
+import { isVersionSupported, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/versionUtils';
 
 export type MessageSendMode = 'agent_queue' | 'interrupt' | 'server_pending';
 
@@ -10,8 +11,20 @@ export function chooseSubmitMode(opts: {
     if (mode !== 'agent_queue') return mode;
 
     const session = opts.session;
-    const supportsQueue = Boolean(session?.metadata?.messageQueueV1);
+    // Server-side pending queue V2 support is negotiated via session summary fields.
+    // Mixed-version safety: older servers won't include these fields.
+    const supportsQueue = typeof (session as any)?.pendingVersion === 'number';
     if (!supportsQueue) return mode;
+
+    // If we have an explicit CLI version published, gate server_pending on it to avoid
+    // stranded pending messages when an older agent is attached.
+    const cliVersion = session?.metadata?.version;
+    const trimmedCliVersion = typeof cliVersion === 'string' ? cliVersion.trim() : '';
+    if (trimmedCliVersion) {
+        if (!isVersionSupported(trimmedCliVersion, MINIMUM_CLI_PENDING_QUEUE_V2_VERSION)) {
+            return mode;
+        }
+    }
 
     const controlledByUser = Boolean(session?.agentState?.controlledByUser);
     const isBusy = Boolean(session?.thinking);

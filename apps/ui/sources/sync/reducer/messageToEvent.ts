@@ -9,6 +9,11 @@
 import { NormalizedMessage } from "../typesRaw";
 import { AgentEvent } from "../typesRaw";
 
+const CHANGE_TITLE_TOOL_NAMES = new Set([
+    'mcp__happier__change_title',
+    'mcp__happy__change_title',
+]);
+
 /**
  * Parses a normalized message to determine if it should be converted to an event.
  * 
@@ -44,8 +49,8 @@ export function parseMessageAsEvent(msg: NormalizedMessage): AgentEvent | null {
                 
             }
             
-            // Check for mcp__happy__change_title tool calls
-            if (content.type === 'tool-call' && content.name === 'mcp__happy__change_title') {
+            // Check for change_title tool calls (new + legacy names during migration)
+            if (content.type === 'tool-call' && CHANGE_TITLE_TOOL_NAMES.has(content.name)) {
                 const title = content.input?.title;
                 if (typeof title === 'string') {
                     return {
