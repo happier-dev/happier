@@ -83,9 +83,15 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     },
     rightContainer: {
         marginLeft: 'auto',
-        alignItems: 'flex-end',
+        alignItems: 'center',
         flexDirection: 'row',
-        gap: 8,
+        gap: 4,
+    },
+    iconButton: {
+        width: 32,
+        height: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     settingsButton: {
         color: theme.colors.header.tint,
@@ -283,6 +289,7 @@ export const SidebarView = React.memo(() => {
                             <Pressable
                                 onPress={() => router.push('/(app)/zen')}
                                 hitSlop={15}
+                                style={styles.iconButton}
                             >
                                 <Image
                                     source={require('@/assets/images/brutalist/Brutalism 3.png')}
@@ -294,16 +301,11 @@ export const SidebarView = React.memo(() => {
                         )}
                         {inboxFriendsEnabled && (
                             <Pressable
-                                onPress={() => router.push('/(app)/inbox')}
+                                onPress={() => router.push('/(app)/friends')}
                                 hitSlop={15}
-                                style={styles.notificationButton}
+                                style={[styles.iconButton, styles.notificationButton]}
                             >
-                                <Image
-                                    source={require('@/assets/images/brutalist/Brutalism 27.png')}
-                                    contentFit="contain"
-                                    style={[{ width: 32, height: 32 }]}
-                                    tintColor={theme.colors.header.tint}
-                                />
+                                <Ionicons name="people-outline" size={24} color={theme.colors.header.tint} />
                                 {friendRequests.length > 0 && (
                                     <View style={styles.badge}>
                                         <Text style={styles.badgeText}>
@@ -319,19 +321,20 @@ export const SidebarView = React.memo(() => {
                         <Pressable
                             onPress={() => router.push('/settings')}
                             hitSlop={15}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('settings.title')}
+                            style={styles.iconButton}
                         >
-                            <Image
-                                source={require('@/assets/images/brutalist/Brutalism 9.png')}
-                                contentFit="contain"
-                                style={[{ width: 32, height: 32 }]}
-                                tintColor={theme.colors.header.tint}
-                            />
+                            <Ionicons name="cog-outline" size={24} color={theme.colors.header.tint} />
                         </Pressable>
                         <Pressable
                             onPress={handleNewSession}
                             hitSlop={15}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('newSession.title')}
+                            style={styles.iconButton}
                         >
-                            <Ionicons name="add-outline" size={28} color={theme.colors.header.tint} />
+                            <Ionicons name="add-outline" size={24} color={theme.colors.header.tint} />
                         </Pressable>
                     </View>
 

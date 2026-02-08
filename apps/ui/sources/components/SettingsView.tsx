@@ -21,14 +21,13 @@ import { isMachineOnline } from '@/utils/machineUtils';
 import { useUnistyles } from 'react-native-unistyles';
 import { layout } from '@/components/layout';
 import { useHappyAction } from '@/hooks/useHappyAction';
-import { getGitHubOAuthParams, disconnectGitHub } from '@/sync/apiGithub';
-import { disconnectService } from '@/sync/apiServices';
+import { disconnectVendorToken } from '@/sync/apiVendorTokens';
 import { getDisplayName, getAvatarUrl, getBio } from '@/sync/profile';
 import { Avatar } from '@/components/Avatar';
 import { t } from '@/text';
 import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
-import { HappyError } from '@/utils/errors';
 import { DEFAULT_AGENT_ID, getAgentCore, getAgentIconSource, getAgentIconTintColor, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog';
+import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -36,7 +35,8 @@ export const SettingsView = React.memo(function SettingsView() {
     const appVersion = Constants.expoConfig?.version || '1.0.0';
     const auth = useAuth();
     const [devModeEnabled, setDevModeEnabled] = useLocalSettingMutable('devModeEnabled');
-    const isPro = __DEV__ || useEntitlement('pro');
+    const voiceEntitlement = useEntitlement('voice');
+    const isPro = __DEV__ || voiceEntitlement;
     const experiments = useSetting('experiments');
     const expUsageReporting = useSetting('expUsageReporting');
     const useProfiles = useSetting('useProfiles');
@@ -46,7 +46,6 @@ export const SettingsView = React.memo(function SettingsView() {
     const displayName = getDisplayName(profile);
     const avatarUrl = getAvatarUrl(profile);
     const bio = getBio(profile);
-    const [githubUnavailableReason, setGithubUnavailableReason] = React.useState<string | null>(null);
 
     const anthropicAgentId = resolveAgentIdFromConnectedServiceId('anthropic') ?? DEFAULT_AGENT_ID;
     const anthropicAgentCore = getAgentCore(anthropicAgentId);
@@ -116,10 +115,17 @@ export const SettingsView = React.memo(function SettingsView() {
         trackPaywallButtonClicked();
         const result = await sync.presentPaywall();
         if (!result.success) {
-            console.error('Failed to present paywall:', result.error);
-        } else if (result.purchased) {
-            console.log('Purchase successful!');
+            Modal.alert(t('common.error'), result.error || t('errors.unknownError'));
         }
+    };
+
+    const handleSupportUs = async () => {
+        const action = resolveSupportUsAction({ isPro });
+        if (action === 'github') {
+            await handleGitHub();
+            return;
+        }
+        await handleSubscribe();
     };
 
     // Use the multi-click hook for version clicks
@@ -131,40 +137,13 @@ export const SettingsView = React.memo(function SettingsView() {
             t('modals.developerMode'),
             newDevMode ? t('modals.developerModeEnabled') : t('modals.developerModeDisabled')
         );
-	    }, {
-	        requiredClicks: 10,
-	        resetTimeout: 2000
-	    });
+    }, {
+        requiredClicks: 10,
+        resetTimeout: 2000,
+    });
 
     // Connection status
-    const isGitHubConnected = !!profile.github;
     const isAnthropicConnected = profile.connectedServices?.includes('anthropic') || false;
-
-    // GitHub connection
-    const [connectingGitHub, connectGitHub] = useHappyAction(async () => {
-        setGithubUnavailableReason(null);
-        try {
-            const params = await getGitHubOAuthParams(auth.credentials!);
-            await Linking.openURL(params.url);
-        } catch (e) {
-            if (e instanceof HappyError && e.canTryAgain === false) {
-                setGithubUnavailableReason(e.message);
-            }
-            throw e;
-        }
-    });
-
-    // GitHub disconnection
-    const [disconnectingGitHub, handleDisconnectGitHub] = useHappyAction(async () => {
-        const confirmed = await Modal.confirm(
-            t('modals.disconnectGithub'),
-            t('modals.disconnectGithubConfirm'),
-            { confirmText: t('modals.disconnect'), destructive: true }
-        );
-        if (confirmed) {
-            await disconnectGitHub(auth.credentials!);
-        }
-    });
 
     // Anthropic connection
     const [connectingAnthropic, connectAnthropic] = useHappyAction(async () => {
@@ -175,24 +154,25 @@ export const SettingsView = React.memo(function SettingsView() {
     });
 
     // Anthropic disconnection
-    const [disconnectingAnthropic, handleDisconnectAnthropic] = useHappyAction(async () => {
-        const serviceName = anthropicAgentCore.connectedService.name;
-        const confirmed = await Modal.confirm(
-            t('modals.disconnectService', { service: serviceName }),
+	    const [disconnectingAnthropic, handleDisconnectAnthropic] = useHappyAction(async () => {
+	        const serviceName = anthropicAgentCore.connectedService.name;
+	        const confirmed = await Modal.confirm(
+	            t('modals.disconnectService', { service: serviceName }),
             t('modals.disconnectServiceConfirm', { service: serviceName }),
             { confirmText: t('modals.disconnect'), destructive: true }
-        );
-        if (confirmed) {
-            await disconnectService(auth.credentials!, 'anthropic');
-            await sync.refreshProfile();
-        }
-    });
+	        );
+	        if (confirmed) {
+	            if (!auth.credentials) {
+	                Modal.alert(t('common.error'), t('errors.unknownError'), [{ text: t('common.ok') }]);
+	                return;
+	            }
+	            await disconnectVendorToken(auth.credentials, 'anthropic');
+	            await sync.refreshProfile();
+	        }
+	    });
 
-
-
-	    return (
-
-	        <ItemList style={{ paddingTop: 0 }}>
+    return (
+        <ItemList style={{ paddingTop: 0 }}>
             {/* App Info Header */}
             <View style={{ maxWidth: layout.maxWidth, alignSelf: 'center', width: '100%' }}>
                 <View style={{ alignItems: 'center', paddingVertical: 24, backgroundColor: theme.colors.surface, marginTop: 16, borderRadius: 12, marginHorizontal: 16 }}>
@@ -222,7 +202,7 @@ export const SettingsView = React.memo(function SettingsView() {
                             <Image
                                 source={theme.dark ? require('@/assets/images/logotype-light.png') : require('@/assets/images/logotype-dark.png')}
                                 contentFit="contain"
-                                style={{ width: 300, height: 90, marginBottom: 12 }}
+                                style={{ width: 300, height: 90 }}
                             />
                         </>
                     )}
@@ -257,70 +237,50 @@ export const SettingsView = React.memo(function SettingsView() {
                         }}
                         showChevron={false}
                     />
-	                </ItemGroup>
-	            )}
+                </ItemGroup>
+            )}
 
-	            {/* Hidden / unfinished buttons (toggle via Developer Mode) */}
-	            {showHiddenSettingsButtons && (
-	                <>
-	                    {/* Support Us */}
-	                    <ItemGroup>
-	                        <Item
-	                            title={t('settings.supportUs')}
-	                            subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
-	                            icon={<Ionicons name="heart" size={29} color="#FF3B30" />}
-	                            showChevron={false}
-	                            onPress={isPro ? undefined : handleSubscribe}
-	                        />
-	                    </ItemGroup>
+            {/* Hidden / unfinished buttons (toggle via Developer Mode) */}
+            {showHiddenSettingsButtons && (
+                <>
+                    {/* Support Us */}
+                    <ItemGroup>
+                        <Item
+                            title={t('settings.supportUs')}
+                            subtitle={isPro ? t('settings.supportUsSubtitlePro') : t('settings.supportUsSubtitle')}
+                            icon={<Ionicons name="heart" size={29} color="#FF3B30" />}
+                            showChevron={false}
+                            onPress={handleSupportUs}
+                        />
+                    </ItemGroup>
 
-	                    <ItemGroup title={t('settings.connectedAccounts')}>
-	                        <Item
-	                            title={anthropicAgentCore.connectedService.name}
-	                            subtitle={isAnthropicConnected
-	                                ? t('settingsAccount.statusActive')
-	                                : t('settings.connectAccount')
-	                            }
-	                            icon={
-	                                <Image
-	                                    source={getAgentIconSource(anthropicAgentId)}
-	                                    style={{ width: 29, height: 29 }}
-	                                    tintColor={getAgentIconTintColor(anthropicAgentId, theme)}
-	                                    contentFit="contain"
-	                                />
-	                            }
-	                            onPress={isAnthropicConnected ? handleDisconnectAnthropic : connectAnthropic}
-	                            loading={connectingAnthropic || disconnectingAnthropic}
-	                            showChevron={false}
-	                        />
-	                        <Item
-	                            title={t('settings.github')}
-	                            subtitle={isGitHubConnected
-	                                ? t('settings.githubConnected', { login: profile.github?.login! })
-	                                : (githubUnavailableReason ?? t('settings.connectGithubAccount'))
-	                            }
-	                            icon={
-	                                <Ionicons
-	                                    name="logo-github"
-	                                    size={29}
-	                                    color={isGitHubConnected ? theme.colors.status.connected : theme.colors.textSecondary}
-	                                />
-	                            }
-	                            onPress={isGitHubConnected
-	                                ? handleDisconnectGitHub
-	                                : (githubUnavailableReason ? undefined : connectGitHub)
-	                            }
-	                            loading={connectingGitHub || disconnectingGitHub}
-	                            showChevron={false}
-	                        />
-	                    </ItemGroup>
-	                </>
-	            )}
+                    <ItemGroup title={t('settings.connectedAccounts')}>
+                        <Item
+                            title={anthropicAgentCore.connectedService.name}
+                            subtitle={isAnthropicConnected
+                                ? t('settingsAccount.statusActive')
+                                : t('settings.connectAccount')
+                            }
+                            icon={
+                                <Image
+                                    source={getAgentIconSource(anthropicAgentId)}
+                                    style={{ width: 29, height: 29 }}
+                                    tintColor={getAgentIconTintColor(anthropicAgentId, theme)}
+                                    contentFit="contain"
+                                />
+                            }
+                            onPress={isAnthropicConnected ? handleDisconnectAnthropic : connectAnthropic}
+                            loading={connectingAnthropic || disconnectingAnthropic}
+                            showChevron={false}
+                        />
+                    </ItemGroup>
+                </>
+            )}
 
-	            {/* Social */}
-	            {/* <ItemGroup title={t('settings.social')}>
-	                <Item
-	                    title={t('navigation.friends')}
+            {/* Social */}
+            {/* <ItemGroup title={t('settings.social')}>
+                <Item
+                    title={t('navigation.friends')}
                     subtitle={t('friends.manageFriends')}
                     icon={<Ionicons name="people-outline" size={29} color="#007AFF" />}
                     onPress={() => router.push('/friends')}
@@ -422,6 +382,12 @@ export const SettingsView = React.memo(function SettingsView() {
                     subtitle={terminalUseTmux ? t('settings.sessionSubtitleTmuxEnabled') : t('settings.sessionSubtitleMessageSendingAndTmux')}
                     icon={<Ionicons name="terminal-outline" size={29} color="#5856D6" />}
                     onPress={() => router.push('/(app)/settings/session')}
+                />
+                <Item
+                    title={t('settingsProviders.title')}
+                    subtitle={t('settingsProviders.entrySubtitle')}
+                    icon={<Ionicons name="sparkles-outline" size={29} color="#FF9500" />}
+                    onPress={() => router.push('/(app)/settings/providers')}
                 />
                 {useProfiles && (
                     <Item

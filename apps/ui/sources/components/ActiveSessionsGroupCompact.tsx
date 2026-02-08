@@ -19,7 +19,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { useIsTablet } from '@/utils/responsive';
-import { ProjectGitStatus } from './ProjectGitStatus';
+import { ProjectGitStatus } from './git';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { HappyError } from '@/utils/errors';
 

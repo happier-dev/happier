@@ -23,6 +23,7 @@ import { isUsingCustomServer } from '@/sync/serverConfig';
 import { trackFriendsSearch } from '@/track';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useInboxFriendsEnabled } from '@/hooks/useInboxFriendsEnabled';
+import { useFriendsIdentityReadiness } from '@/hooks/useFriendsIdentityReadiness';
 
 interface MainViewProps {
     variant: 'phone' | 'sidebar';
@@ -129,6 +130,8 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
     const router = useRouter();
     const { theme } = useUnistyles();
     const isCustomServer = isUsingCustomServer();
+    const friendsIdentityReadiness = useFriendsIdentityReadiness();
+    const friendsIdentityReady = friendsIdentityReadiness.isReady;
 
     if (activeTab === 'sessions') {
         return (
@@ -150,7 +153,9 @@ const HeaderRight = React.memo(({ activeTab }: { activeTab: ActiveTabType }) => 
                     router.push('/friends/search');
                 }}
                 hitSlop={15}
-                style={styles.headerButton}
+                style={[styles.headerButton, { opacity: friendsIdentityReady ? 1 : 0.5 }]}
+                disabled={!friendsIdentityReady}
+                accessibilityState={{ disabled: !friendsIdentityReady }}
             >
                 <Ionicons name="person-add-outline" size={24} color={theme.colors.header.tint} />
             </Pressable>

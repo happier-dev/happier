@@ -1,12 +1,15 @@
 import * as React from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useAcceptedFriends, useFriendRequests, useRequestedFriends, useFeedItems, useFeedLoaded, useFriendsLoaded, useRealtimeStatus } from '@/sync/storage';
+import { useAcceptedFriends, useFriendRequests, useRequestedFriends, useFeedItems, useFeedLoaded, useFriendsLoaded, useRealtimeStatus, useAllSessions } from '@/sync/storage';
+import { storage as syncStorage } from '@/sync/storageStore';
 import { UserCard } from '@/components/UserCard';
 import { t } from '@/text';
 import { trackFriendsSearch, trackFriendsProfileView } from '@/track';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Item } from '@/components/ui/lists/Item';
 import { UpdateBanner } from './UpdateBanner';
+import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { Typography } from '@/constants/Typography';
 import { useRouter } from 'expo-router';
 import { layout } from '@/components/layout';
@@ -16,6 +19,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { FeedItemCard } from './FeedItemCard';
 import { VoiceAssistantStatusBar } from './VoiceAssistantStatusBar';
+import { RequireFriendsIdentityForFriends } from './friends/RequireFriendsIdentityForFriends';
+import { useFriendsIdentityReadiness } from '@/hooks/useFriendsIdentityReadiness';
 
 const styles = StyleSheet.create((theme) => ({
     container: {
@@ -77,6 +82,13 @@ function HeaderTitleTablet() {
 function HeaderRightTablet() {
     const router = useRouter();
     const { theme } = useUnistyles();
+    const friendsIdentityReadiness = useFriendsIdentityReadiness();
+    const friendsIdentityReady = friendsIdentityReadiness.isReady;
+
+    if (!friendsIdentityReady) {
+        return <View style={{ width: 32, height: 32 }} />;
+    }
+
     return (
         <Pressable
             onPress={() => {
@@ -107,9 +119,47 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
     const { theme } = useUnistyles();
     const isTablet = useIsTablet();
     const realtimeStatus = useRealtimeStatus();
+    const friendsIdentityReadiness = useFriendsIdentityReadiness();
+    const friendsIdentityReady = friendsIdentityReadiness.isReady;
+    const myId = syncStorage((state) => state.profile.id);
+    const sessions = useAllSessions();
+
+    const sharedSessions = React.useMemo(() => {
+        if (!myId) return [];
+        return sessions.filter((s) => s.owner && s.owner !== myId);
+    }, [sessions, myId]);
 
     const isLoading = !feedLoaded || !friendsLoaded;
-    const isEmpty = !isLoading && friendRequests.length === 0 && requestedFriends.length === 0 && friends.length === 0 && feedItems.length === 0;
+    const isEmpty = !isLoading &&
+        friendRequests.length === 0 &&
+        requestedFriends.length === 0 &&
+        friends.length === 0 &&
+        sharedSessions.length === 0 &&
+        feedItems.length === 0;
+
+    if (!friendsIdentityReady) {
+        return (
+            <View style={styles.container}>
+                {isTablet && (
+                    <View style={{ backgroundColor: theme.colors.groupped.background }}>
+                        <Header
+                            title={<HeaderTitleTablet />}
+                            headerRight={() => <HeaderRightTablet />}
+                            headerLeft={() => null}
+                            headerShadowVisible={false}
+                            headerTransparent={true}
+                        />
+                        {realtimeStatus !== 'disconnected' && (
+                            <VoiceAssistantStatusBar variant="full" />
+                        )}
+                    </View>
+                )}
+                <RequireFriendsIdentityForFriends>
+                    <View />
+                </RequireFriendsIdentityForFriends>
+            </View>
+        );
+    }
 
     if (isLoading) {
         return (
@@ -128,6 +178,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                         )}
                     </View>
                 )}
+                <RecoveryKeyReminderBanner />
                 <UpdateBanner />
                 <View style={styles.emptyContainer}>
                     <ActivityIndicator size="large" color={theme.colors.textSecondary} />
@@ -153,6 +204,7 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                         )}
                     </View>
                 )}
+                <RecoveryKeyReminderBanner />
                 <UpdateBanner />
                 <View style={styles.emptyContainer}>
                     <Image
@@ -189,21 +241,9 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                 alignSelf: 'center',
                 width: '100%'
             }}>
+                <RecoveryKeyReminderBanner />
                 <UpdateBanner />
-                
-                {feedItems.length > 0 && (
-                    <>
-                        <ItemGroup title={t('inbox.updates')}>
-                            {feedItems.map((item) => (
-                                <FeedItemCard
-                                    key={item.id}
-                                    item={item}
-                                />
-                            ))}
-                        </ItemGroup>
-                    </>
-                )}
-                
+
                 {friendRequests.length > 0 && (
                     <>
                         <ItemGroup title={t('friends.pendingRequests')}>
@@ -232,6 +272,38 @@ export const InboxView = React.memo(({}: InboxViewProps) => {
                                         trackFriendsProfileView();
                                         router.push(`/user/${friend.id}`);
                                     }}
+                                />
+                            ))}
+                        </ItemGroup>
+                    </>
+                )}
+
+                {sharedSessions.length > 0 && (
+                    <>
+                        <ItemGroup title={t('friends.sharedSessions')}>
+                            {sharedSessions.map((session) => {
+                                const title = session.metadata?.name || session.metadata?.path || session.id;
+                                const subtitle = session.ownerProfile?.username ? `@${session.ownerProfile.username}` : undefined;
+                                return (
+                                    <Item
+                                        key={session.id}
+                                        title={title}
+                                        subtitle={subtitle}
+                                        onPress={() => router.push(`/session/${session.id}`)}
+                                    />
+                                );
+                            })}
+                        </ItemGroup>
+                    </>
+                )}
+
+                {feedItems.length > 0 && (
+                    <>
+                        <ItemGroup title={t('inbox.updates')}>
+                            {feedItems.map((item) => (
+                                <FeedItemCard
+                                    key={item.id}
+                                    item={item}
                                 />
                             ))}
                         </ItemGroup>

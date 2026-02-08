@@ -1,5 +1,5 @@
 import * as React from "react";
-import { View, Text, Pressable } from "react-native";
+import { View, Text, Pressable, Platform } from "react-native";
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
@@ -15,6 +15,7 @@ import { sync } from '@/sync/sync';
 import { Option } from './markdown/MarkdownView';
 import { useSetting } from "@/sync/storage";
 import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommittedMessages";
+import { shouldShowMessageCopyButton } from '@/components/messageCopyVisibility';
 
 export const MessageView = (props: {
   message: Message;
@@ -89,6 +90,8 @@ function UserTextBlock(props: {
   sessionId: string;
   canSendMessages: boolean;
 }) {
+  const [isHovered, setIsHovered] = React.useState(false);
+  const isWeb = Platform.OS === 'web';
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
   const handleOptionPress = React.useCallback((option: Option) => {
     void (async () => {
@@ -104,20 +107,36 @@ function UserTextBlock(props: {
     })();
   }, [props.canSendMessages, props.sessionId]);
 
+  const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isHovered });
+
   return (
     <View style={styles.userMessageContainer}>
-      <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
-        <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
-        {isDiscarded && (
-          <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
-        )}
-        <View style={styles.messageActionsRow}>
+      <Pressable
+        style={styles.userMessageWrapper}
+        onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
+        onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
+      >
+        <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
+          <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
+          {isDiscarded && (
+            <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+          )}
+          {/* {__DEV__ && (
+            <Text style={styles.debugText}>{JSON.stringify(props.message.meta)}</Text>
+          )} */}
+        </View>
+        <View
+          pointerEvents={showCopyButton ? 'auto' : 'none'}
+          accessibilityElementsHidden={!showCopyButton}
+          importantForAccessibility={showCopyButton ? 'auto' : 'no-hide-descendants'}
+          style={[
+            styles.messageActionContainer,
+            !showCopyButton && styles.messageActionContainerHidden,
+          ]}
+        >
           <CopyMessageButton markdown={props.message.displayText || props.message.text} />
         </View>
-        {/* {__DEV__ && (
-          <Text style={styles.debugText}>{JSON.stringify(props.message.meta)}</Text>
-        )} */}
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -127,6 +146,8 @@ function AgentTextBlock(props: {
   sessionId: string;
   canSendMessages: boolean;
 }) {
+  const [isHovered, setIsHovered] = React.useState(false);
+  const isWeb = Platform.OS === 'web';
   const experiments = useSetting('experiments');
   const expShowThinkingMessages = useSetting('expShowThinkingMessages');
   const showThinkingMessages = experiments && expShowThinkingMessages;
@@ -149,13 +170,27 @@ function AgentTextBlock(props: {
     return null;
   }
 
+  const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isHovered });
+
   return (
-    <View style={styles.agentMessageContainer}>
+    <Pressable
+      style={styles.agentMessageContainer}
+      onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
+      onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
+    >
       <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} />
-      <View style={styles.messageActionsRow}>
+      <View
+        pointerEvents={showCopyButton ? 'auto' : 'none'}
+        accessibilityElementsHidden={!showCopyButton}
+        importantForAccessibility={showCopyButton ? 'auto' : 'no-hide-descendants'}
+        style={[
+          styles.messageActionContainer,
+          !showCopyButton && styles.messageActionContainerHidden,
+        ]}
+      >
         <CopyMessageButton markdown={props.message.text} />
       </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -211,7 +246,7 @@ function CopyMessageButton(props: { markdown: string }) {
     >
       <Ionicons
         name={copied ? "checkmark-outline" : "copy-outline"}
-        size={14}
+        size={12}
         color={copied ? theme.colors.success : theme.colors.textSecondary}
       />
     </Pressable>
@@ -308,12 +343,17 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: 'flex-end',
     paddingHorizontal: 16,
   },
+  userMessageWrapper: {
+    maxWidth: '100%',
+    alignSelf: 'flex-end',
+    position: 'relative',
+    paddingBottom: 18,
+  },
   userMessageBubble: {
     backgroundColor: theme.colors.userMessageBackground,
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
-    marginBottom: 12,
     maxWidth: '100%',
   },
   userMessageBubbleDiscarded: {
@@ -326,9 +366,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   agentMessageContainer: {
     marginHorizontal: 16,
-    marginBottom: 12,
+    paddingBottom: 18,
     borderRadius: 16,
     alignSelf: 'flex-start',
+    position: 'relative',
+    maxWidth: '100%',
   },
   agentEventContainer: {
     marginHorizontal: 8,
@@ -342,14 +384,20 @@ const styles = StyleSheet.create((theme) => ({
   toolContainer: {
     marginHorizontal: 8,
   },
-  messageActionsRow: {
+  messageActionContainer: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    marginTop: 6,
+    zIndex: 10,
+  },
+  messageActionContainerHidden: {
+    opacity: 0,
   },
   copyMessageButton: {
-    padding: 4,
-    borderRadius: 8,
+    padding: 2,
+    borderRadius: 6,
     opacity: 0.6,
     cursor: 'pointer',
   },

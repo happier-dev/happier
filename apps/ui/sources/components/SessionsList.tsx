@@ -19,6 +19,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/responsive';
 import { requestReview } from '@/utils/requestReview';
 import { UpdateBanner } from './UpdateBanner';
+import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { layout } from '@/components/layout';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { t } from '@/text';
@@ -28,6 +29,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { sessionDelete } from '@/sync/ops';
 import { HappyError } from '@/utils/errors';
+import { formatPendingCountBadge } from '@/components/sessions/pendingBadge';
 import { Modal } from '@/modal';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -72,18 +74,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: 2,
         ...Typography.default(),
     },
-    sessionItem: {
-        height: 88,
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 16,
-        backgroundColor: theme.colors.surface,
-    },
-    sessionItemContainer: {
-        marginHorizontal: 16,
-        marginBottom: 1,
-        overflow: 'hidden',
-    },
+        sessionItem: {
+            height: 88,
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: 16,
+            backgroundColor: theme.colors.surface,
+        },
+        sessionItemCompact: {
+            height: 72,
+            paddingHorizontal: 14,
+        },
+        sessionItemContainer: {
+            marginHorizontal: 16,
+            marginBottom: 1,
+            overflow: 'hidden',
+        },
     sessionItemFirst: {
         borderTopLeftRadius: 12,
         borderTopRightRadius: 12,
@@ -111,68 +117,121 @@ const stylesheet = StyleSheet.create((theme) => ({
     sessionItemSelected: {
         backgroundColor: theme.colors.surfaceSelected,
     },
-    sessionContent: {
-        flex: 1,
-        marginLeft: 16,
-        justifyContent: 'center',
-    },
+        sessionContent: {
+            flex: 1,
+            marginLeft: 16,
+            justifyContent: 'center',
+        },
+        sessionContentCompact: {
+            marginLeft: 12,
+        },
     sessionTitleRow: {
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 2,
     },
-    sessionTitle: {
-        fontSize: 15,
-        fontWeight: '500',
-        flex: 1,
-        ...Typography.default('semiBold'),
-    },
+        sessionTitle: {
+            fontSize: 15,
+            fontWeight: '500',
+            flex: 1,
+            ...Typography.default('semiBold'),
+        },
+        sessionTitleCompact: {
+            fontSize: 14,
+        },
     sessionTitleConnected: {
         color: theme.colors.text,
     },
     sessionTitleDisconnected: {
         color: theme.colors.textSecondary,
     },
-    sessionSubtitle: {
-        fontSize: 13,
-        color: theme.colors.textSecondary,
-        marginBottom: 4,
-        ...Typography.default(),
-    },
+        sessionSubtitle: {
+            fontSize: 13,
+            color: theme.colors.textSecondary,
+            marginBottom: 4,
+            ...Typography.default(),
+        },
+        sessionSubtitleCompact: {
+            fontSize: 12,
+            marginBottom: 3,
+        },
     statusRow: {
         flexDirection: 'row',
         alignItems: 'center',
     },
-    statusDotContainer: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        height: 16,
-        marginTop: 2,
-        marginRight: 4,
-    },
-    statusText: {
-        fontSize: 12,
-        fontWeight: '500',
-        lineHeight: 16,
-        ...Typography.default(),
-    },
-    avatarContainer: {
-        position: 'relative',
-        width: 48,
-        height: 48,
-    },
-    draftIconContainer: {
-        position: 'absolute',
-        bottom: -2,
-        right: -2,
-        width: 18,
+        statusDotContainer: {
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: 16,
+            marginTop: 2,
+            marginRight: 4,
+        },
+        statusDotContainerCompact: {
+            marginTop: 1,
+        },
+        statusText: {
+            fontSize: 12,
+            fontWeight: '500',
+            lineHeight: 16,
+            ...Typography.default(),
+        },
+        statusTextCompact: {
+            fontSize: 11,
+            lineHeight: 14,
+        },
+        avatarContainer: {
+            position: 'relative',
+            width: 48,
+            height: 48,
+        },
+        avatarContainerCompact: {
+            width: 40,
+            height: 40,
+        },
+        pendingCountContainer: {
+            position: 'absolute',
+            top: -4,
+            right: -6,
+            minWidth: 18,
+            height: 18,
+            paddingHorizontal: 6,
+            borderRadius: 999,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: theme.colors.input.background,
+            borderWidth: 1,
+            borderColor: theme.colors.groupped?.background ?? 'transparent',
+        },
+        pendingCountContainerCompact: {
+            top: -3,
+            right: -5,
+            minWidth: 16,
+            height: 16,
+            paddingHorizontal: 5,
+        },
+        pendingCountText: {
+            fontSize: 11,
+            color: theme.colors.textSecondary,
+            ...Typography.default('semiBold'),
+        },
+        draftIconContainer: {
+            position: 'absolute',
+            bottom: -2,
+            right: -2,
+            width: 18,
         height: 18,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    draftIconOverlay: {
-        color: theme.colors.textSecondary,
-    },
+        draftIconOverlay: {
+            color: theme.colors.textSecondary,
+        },
+        draftIconContainerCompact: {
+            width: 16,
+            height: 16,
+            bottom: -1,
+            right: -1,
+        },
     artifactsSection: {
         paddingHorizontal: 16,
         paddingBottom: 12,
@@ -234,7 +293,7 @@ export function SessionsList() {
         }
     }, []);
 
-    const renderItem = React.useCallback(({ item, index }: { item: SessionListViewItem & { selected?: boolean }, index: number }) => {
+        const renderItem = React.useCallback(({ item, index }: { item: SessionListViewItem & { selected?: boolean }, index: number }) => {
         switch (item.type) {
             case 'header':
                 return (
@@ -273,7 +332,7 @@ export function SessionsList() {
                     </View>
                 );
 
-            case 'session':
+                case 'session':
                 // Determine card styling based on position within date group
                 const prevItem = index > 0 && dataWithSelected ? dataWithSelected[index - 1] : null;
                 const nextItem = index < (dataWithSelected?.length || 0) - 1 && dataWithSelected ? dataWithSelected[index + 1] : null;
@@ -282,18 +341,19 @@ export function SessionsList() {
                 const isLast = nextItem?.type === 'header' || nextItem?.type === 'project-group' || nextItem == null || nextItem?.type === 'active-sessions';
                 const isSingle = isFirst && isLast;
 
-                return (
-                    <SessionItem
-                        session={item.session}
-                        selected={item.selected}
-                        isFirst={isFirst}
-                        isLast={isLast}
-                        isSingle={isSingle}
-                        variant={item.variant}
-                    />
-                );
-        }
-    }, [pathname, dataWithSelected, compactSessionView]);
+                    return (
+                        <SessionItem
+                            session={item.session}
+                            selected={item.selected}
+                            isFirst={isFirst}
+                            isLast={isLast}
+                            isSingle={isSingle}
+                            variant={item.variant}
+                            compact={compactSessionView}
+                        />
+                    );
+            }
+        }, [pathname, dataWithSelected, compactSessionView]);
 
 
     // Remove this section as we'll use FlatList for all items now
@@ -301,7 +361,10 @@ export function SessionsList() {
 
     const HeaderComponent = React.useCallback(() => {
         return (
-            <UpdateBanner />
+            <View>
+                <RecoveryKeyReminderBanner />
+                <UpdateBanner />
+            </View>
         );
     }, []);
 
@@ -323,14 +386,15 @@ export function SessionsList() {
 }
 
 // Sub-component that handles session message logic
-const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, variant }: {
-    session: Session;
-    selected?: boolean;
-    isFirst?: boolean;
-    isLast?: boolean;
-    isSingle?: boolean;
-    variant?: 'default' | 'no-path';
-}) => {
+const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, variant, compact }: {
+        session: Session;
+        selected?: boolean;
+        isFirst?: boolean;
+        isLast?: boolean;
+        isSingle?: boolean;
+        variant?: 'default' | 'no-path';
+        compact?: boolean;
+    }) => {
     const styles = stylesheet;
     const sessionStatus = useSessionStatus(session);
     const sessionName = getSessionName(session);
@@ -367,16 +431,19 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, 
         return getSessionAvatarId(session);
     }, [session]);
     const hasUnreadMessages = useHasUnreadMessages(session.id);
+    const pendingCount = session.pendingCount ?? 0;
+    const pendingBadge = formatPendingCountBadge(pendingCount);
 
-    const itemContent = (
-        <Pressable
-            style={[
-                styles.sessionItem,
-                selected && styles.sessionItemSelected,
-                isSingle ? styles.sessionItemSingle :
-                    isFirst ? styles.sessionItemFirst :
-                        isLast ? styles.sessionItemLast : {}
-            ]}
+        const itemContent = (
+            <Pressable
+                style={[
+                    styles.sessionItem,
+                    compact ? styles.sessionItemCompact : null,
+                    selected && styles.sessionItemSelected,
+                    isSingle ? styles.sessionItemSingle :
+                        isFirst ? styles.sessionItemFirst :
+                            isLast ? styles.sessionItemLast : {}
+                ]}
             onPressIn={() => {
                 if (isTablet) {
                     navigateToSession(session.id);
@@ -387,58 +454,67 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, 
                     navigateToSession(session.id);
                 }
             }}
-        >
-            <View style={styles.avatarContainer}>
-                <Avatar
-                    id={avatarId}
-                    size={48}
-                    monochrome={!sessionStatus.isConnected}
-                    flavor={session.metadata?.flavor}
-                    hasUnreadMessages={hasUnreadMessages}
-                />
-                {session.draft && (
-                    <View style={styles.draftIconContainer}>
-                        <Ionicons
-                            name="create-outline"
-                            size={12}
-                            style={styles.draftIconOverlay}
-                        />
-                    </View>
-                )}
-            </View>
-            <View style={styles.sessionContent}>
-                {/* Title line */}
-                <View style={styles.sessionTitleRow}>
-                    <Text style={[
-                        styles.sessionTitle,
-                        sessionStatus.isConnected ? styles.sessionTitleConnected : styles.sessionTitleDisconnected
-                    ]} numberOfLines={1}> {/* {variant !== 'no-path' ? 1 : 2} - issue is we don't have anything to take this space yet and it looks strange - if summaries were more reliably generated, we can add this. While no summary - add something like "New session" or "Empty session", and extend summary to 2 lines once we have it */}
-                        {sessionName}
-                    </Text>
+            >
+                <View style={[styles.avatarContainer, compact ? styles.avatarContainerCompact : null]}>
+                    <Avatar
+                        id={avatarId}
+                        size={compact ? 40 : 48}
+                        monochrome={!sessionStatus.isConnected}
+                        flavor={session.metadata?.flavor}
+                        hasUnreadMessages={hasUnreadMessages}
+                    />
+                    {pendingBadge && (
+                        <View style={[styles.pendingCountContainer, compact ? styles.pendingCountContainerCompact : null]}>
+                            <Text style={styles.pendingCountText} numberOfLines={1}>
+                                {pendingBadge}
+                            </Text>
+                        </View>
+                    )}
+                    {session.draft && (
+                        <View style={[styles.draftIconContainer, compact ? styles.draftIconContainerCompact : null]}>
+                            <Ionicons
+                                name="create-outline"
+                                size={compact ? 11 : 12}
+                                style={styles.draftIconOverlay}
+                            />
+                        </View>
+                    )}
                 </View>
-
-                {/* Subtitle line */}
-                {variant !== 'no-path' && (
-                    <Text style={styles.sessionSubtitle} numberOfLines={1}>
-                        {sessionSubtitle}
-                    </Text>
-                )}
-
-                {/* Status line with dot */}
-                <View style={styles.statusRow}>
-                    <View style={styles.statusDotContainer}>
-                        <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} />
+                <View style={[styles.sessionContent, compact ? styles.sessionContentCompact : null]}>
+                    {/* Title line */}
+                    <View style={styles.sessionTitleRow}>
+                        <Text style={[
+                            styles.sessionTitle,
+                            compact ? styles.sessionTitleCompact : null,
+                            sessionStatus.isConnected ? styles.sessionTitleConnected : styles.sessionTitleDisconnected
+                        ]} numberOfLines={1}> {/* {variant !== 'no-path' ? 1 : 2} - issue is we don't have anything to take this space yet and it looks strange - if summaries were more reliably generated, we can add this. While no summary - add something like "New session" or "Empty session", and extend summary to 2 lines once we have it */}
+                            {sessionName}
+                        </Text>
                     </View>
-                    <Text style={[
-                        styles.statusText,
-                        { color: sessionStatus.statusColor }
-                    ]}>
-                        {sessionStatus.statusText}
-                    </Text>
+    
+                    {/* Subtitle line */}
+                    {variant !== 'no-path' && (
+                        <Text style={[styles.sessionSubtitle, compact ? styles.sessionSubtitleCompact : null]} numberOfLines={1}>
+                            {sessionSubtitle}
+                        </Text>
+                    )}
+    
+                    {/* Status line with dot */}
+                    <View style={styles.statusRow}>
+                        <View style={[styles.statusDotContainer, compact ? styles.statusDotContainerCompact : null]}>
+                            <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} />
+                        </View>
+                        <Text style={[
+                            styles.statusText,
+                            compact ? styles.statusTextCompact : null,
+                            { color: sessionStatus.statusColor }
+                        ]}>
+                            {sessionStatus.statusText}
+                        </Text>
+                    </View>
                 </View>
-            </View>
-        </Pressable>
-    );
+            </Pressable>
+        );
 
     const containerStyles = [
         styles.sessionItemContainer,
