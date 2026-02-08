@@ -43,8 +43,7 @@ describe('terminalAttachmentInfo', () => {
         sessionId,
         terminal: {
           mode: 'plain',
-          plain: { command: 'echo hi', cwd: '/tmp' },
-        } as any,
+        },
       });
 
       const encodedFileName = `${encodeURIComponent(sessionId)}.json`;
@@ -54,6 +53,32 @@ describe('terminalAttachmentInfo', () => {
 
       const info = await readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId });
       expect(info?.sessionId).toBe(sessionId);
+    } finally {
+      dir.removeCallback();
+    }
+  });
+
+  it('returns null for malformed or unsupported attachment file content', async () => {
+    const dir = tmp.dirSync({ unsafeCleanup: true });
+    try {
+      const sessionId = 'sess_bad';
+      await mkdir(join(dir.name, 'terminal', 'sessions'), { recursive: true });
+
+      const encodedPath = join(dir.name, 'terminal', 'sessions', `${encodeURIComponent(sessionId)}.json`);
+      await writeFile(encodedPath, 'not-json', 'utf8');
+      expect(await readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId })).toBeNull();
+
+      await writeFile(
+        encodedPath,
+        JSON.stringify({
+          version: 2,
+          sessionId,
+          terminal: { mode: 'tmux', tmux: { target: 'happy:win-1' } },
+          updatedAt: Date.now(),
+        }),
+        'utf8',
+      );
+      expect(await readTerminalAttachmentInfo({ happyHomeDir: dir.name, sessionId })).toBeNull();
     } finally {
       dir.removeCallback();
     }

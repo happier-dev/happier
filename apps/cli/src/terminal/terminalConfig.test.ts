@@ -76,5 +76,40 @@ describe('resolveTerminalRequestFromSpawnOptions', () => {
 
     expect(resolved).toEqual({ requested: 'plain' });
   });
-});
 
+  it('preserves explicit empty typed sessionName and null tmpDir when isolated=false', () => {
+    const resolved = resolveTerminalRequestFromSpawnOptions({
+      happyHomeDir: '/home/user/.happy',
+      terminal: {
+        mode: 'tmux',
+        tmux: {
+          sessionName: '',
+          isolated: false,
+          tmpDir: '   ',
+        },
+      },
+      environmentVariables: {},
+    });
+
+    expect(resolved).toEqual({
+      requested: 'tmux',
+      tmux: {
+        sessionName: '',
+        isolated: false,
+        tmpDir: null,
+        source: 'typed',
+      },
+    });
+  });
+
+  it('ignores legacy TMUX_TMPDIR when TMUX_SESSION_NAME is absent', () => {
+    const resolved = resolveTerminalRequestFromSpawnOptions({
+      happyHomeDir: '/home/user/.happy',
+      environmentVariables: {
+        TMUX_TMPDIR: '/tmp/legacy',
+      },
+    });
+
+    expect(resolved).toEqual({ requested: null });
+  });
+});

@@ -1,5 +1,6 @@
 import type { Metadata } from '@/api/types';
 import { parseTmuxSessionIdentifier } from '@/integrations/tmux';
+import { join } from 'node:path';
 
 export type TerminalAttachPlan =
   | { type: 'not-attachable'; reason: string }
@@ -25,6 +26,16 @@ export type TerminalAttachPlan =
 export function createTerminalAttachPlan(params: {
   terminal: NonNullable<Metadata['terminal']>;
   insideTmux: boolean;
+  /**
+   * When inside tmux, pass the current tmux socket path (from $TMUX env var).
+   * If it matches the session's isolated tmux server, we can avoid forcing an attach-session.
+   */
+  currentTmuxSocketPath?: string | null;
+  /**
+   * Optional explicit uid for deterministic tests/callers. When omitted, this is resolved
+   * from process.getuid() when available.
+   */
+  currentUid?: number | null;
 }): TerminalAttachPlan {
   if (params.terminal.mode === 'plain') {
     return {
@@ -55,9 +66,30 @@ export function createTerminalAttachPlan(params: {
   const tmuxCommandEnv: Record<string, string> =
     typeof tmpDir === 'string' && tmpDir.trim().length > 0 ? { TMUX_TMPDIR: tmpDir } : {};
 
-  const shouldUnsetTmuxEnv = Object.prototype.hasOwnProperty.call(tmuxCommandEnv, 'TMUX_TMPDIR');
+  const hasTmpDir = Object.prototype.hasOwnProperty.call(tmuxCommandEnv, 'TMUX_TMPDIR');
 
-  const shouldAttach = !params.insideTmux || shouldUnsetTmuxEnv;
+  let shouldUnsetTmuxEnv = hasTmpDir;
+  let shouldAttach = !params.insideTmux || shouldUnsetTmuxEnv;
+
+  // If the session was started in an isolated tmux server (TMUX_TMPDIR),
+  // we historically forced `tmux attach-session` even when already inside tmux.
+  //
+  // However, when the current process is already inside that *same* isolated server
+  // (TMUX socket path matches), selecting the window is sufficient and avoids
+  // unnecessary/interactive attach behavior.
+  if (params.insideTmux && hasTmpDir && typeof params.currentTmuxSocketPath === 'string' && params.currentTmuxSocketPath.trim().length > 0) {
+    const processUid = typeof process.getuid === 'function' ? process.getuid() : null;
+    const uid = typeof params.currentUid === 'number' ? params.currentUid : processUid;
+    if (typeof uid === 'number') {
+      const expectedSocketPath = join(tmpDir as string, `tmux-${uid}`, 'default');
+      if (params.currentTmuxSocketPath === expectedSocketPath) {
+        shouldUnsetTmuxEnv = false;
+        shouldAttach = false;
+        // No need to force TMUX_TMPDIR for tmux commands; they can use the current tmux server via $TMUX.
+        for (const k of Object.keys(tmuxCommandEnv)) delete tmuxCommandEnv[k];
+      }
+    }
+  }
 
   return {
     type: 'tmux',

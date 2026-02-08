@@ -39,6 +39,10 @@ function readPositiveIntegerEnv(name: string, fallback: number): number {
     return value <= 0 ? fallback : value;
 }
 
+export function resolveTmuxCommandTimeoutMs(): number {
+    return readPositiveIntegerEnv('HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS', 15_000);
+}
+
 function isTmuxWindowIndexConflict(stderr: string | undefined): boolean {
     return /index\s+\d+\s+in\s+use/i.test(stderr ?? '');
 }
@@ -534,7 +538,7 @@ export class TmuxUtilities {
 
             const child = spawn(args[0], args.slice(1), {
                 stdio: ['ignore', 'pipe', 'pipe'],
-                timeout: 5000,
+                timeout: resolveTmuxCommandTimeoutMs(),
                 shell: false,
                 ...options,
                 env: mergedEnv,

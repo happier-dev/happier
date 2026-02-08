@@ -24,6 +24,17 @@ describe('ensureRemoteStartingModeArgs', () => {
     );
   });
 
+  it('fails closed when any duplicate --happy-starting-mode value is local', () => {
+    expect(() =>
+      ensureRemoteStartingModeArgs([
+        '--happy-starting-mode',
+        'remote',
+        '--happy-starting-mode',
+        'local',
+      ]),
+    ).toThrow('Headless tmux sessions require remote mode');
+  });
+
   it('throws a helpful error when --happy-starting-mode is missing a value', () => {
     expect(() => ensureRemoteStartingModeArgs(['--happy-starting-mode'])).toThrow(/--happy-starting-mode/);
   });

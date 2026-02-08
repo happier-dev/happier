@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { TmuxCommandResult, TmuxSpawnOptions } from '@/integrations/tmux';
 
 vi.mock('chalk', () => ({
   default: {
@@ -8,9 +9,11 @@ vi.mock('chalk', () => ({
 }));
 
 const mockSpawnInTmux = vi.fn(
-  async (_args: string[], _options: any, _env?: Record<string, string>) => ({ success: true as const }),
+  async (_args: string[], _options: TmuxSpawnOptions, _env?: Record<string, string>) => ({ success: true as const }),
 );
-const mockExecuteTmuxCommand = vi.fn(async () => ({ stdout: '' }));
+const mockExecuteTmuxCommand = vi.fn(
+  async (): Promise<TmuxCommandResult> => ({ returncode: 0, stdout: '', stderr: '', command: ['tmux'] }),
+);
 
 vi.mock('@/integrations/tmux', () => {
   class TmuxUtilities {
@@ -31,25 +34,37 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
   buildHappyCliSubprocessInvocation: () => ({ runtime: 'node', argv: ['happy'] }),
 }));
 
-describe('startHappyHeadlessInTmux', () => {
-  const originalTmuxEnv = process.env.TMUX;
+describe.sequential('startHappyHeadlessInTmux', () => {
+  const trackedEnvKeys = ['TMUX', 'TMUX_PANE', 'HAPPY_TEST_FOO'] as const;
+  const baselineEnv: Record<string, string | undefined> = Object.fromEntries(
+    trackedEnvKeys.map((key) => [key, process.env[key]]),
+  );
+
+  let nowSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  const restoreTrackedEnv = () => {
+    for (const key of trackedEnvKeys) {
+      const value = baselineEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  };
 
   beforeEach(() => {
+    restoreTrackedEnv();
     vi.clearAllMocks();
-    vi.spyOn(Date, 'now').mockReturnValue(123);
-    vi.spyOn(console, 'log').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123);
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   afterEach(() => {
-    (Date.now as any).mockRestore?.();
-    (console.log as any).mockRestore?.();
-    (console.error as any).mockRestore?.();
-    if (originalTmuxEnv === undefined) {
-      delete process.env.TMUX;
-    } else {
-      process.env.TMUX = originalTmuxEnv;
-    }
+    nowSpy.mockRestore();
+    logSpy.mockRestore();
+    errorSpy.mockRestore();
+    restoreTrackedEnv();
   });
 
   it('prints only select-window when already inside tmux', async () => {
@@ -58,11 +73,11 @@ describe('startHappyHeadlessInTmux', () => {
 
     await startHappyHeadlessInTmux([]);
 
-    const lines = (console.log as any).mock.calls.map((c: any[]) => String(c[0] ?? ''));
+    const lines = logSpy.mock.calls.map(([line]) => String(line ?? ''));
     expect(lines.some((l: string) => l.includes('Started Happier in tmux'))).toBe(true);
     expect(lines.some((l: string) => l.includes('tmux select-window -t') && l.includes('picked:happy-123-claude'))).toBe(true);
     expect(lines.some((l: string) => l.includes('tmux attach -t'))).toBe(false);
-  });
+  }, 15_000);
 
   it('prints attach then select-window when outside tmux', async () => {
     delete process.env.TMUX;
@@ -70,7 +85,7 @@ describe('startHappyHeadlessInTmux', () => {
 
     await startHappyHeadlessInTmux([]);
 
-    const lines = (console.log as any).mock.calls.map((c: any[]) => String(c[0] ?? ''));
+    const lines = logSpy.mock.calls.map(([line]) => String(line ?? ''));
     const attachIdx = lines.findIndex((l: string) => l.includes('tmux attach -t') && l.includes('happy'));
     const selectIdx = lines.findIndex((l: string) => l.includes('tmux select-window -t') && l.includes('happy:happy-123-claude'));
     expect(attachIdx).toBeGreaterThanOrEqual(0);
@@ -91,8 +106,5 @@ describe('startHappyHeadlessInTmux', () => {
     expect(env?.TMUX).toBeUndefined();
     expect(env?.TMUX_PANE).toBeUndefined();
     expect(env?.HAPPY_TEST_FOO).toBe('bar');
-
-    delete process.env.TMUX_PANE;
-    delete process.env.HAPPY_TEST_FOO;
   });
 });

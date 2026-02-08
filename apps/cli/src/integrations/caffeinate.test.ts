@@ -1,20 +1,23 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import type { ChildProcess } from 'child_process';
 
-const { spawnMock } = vi.hoisted(() => ({
+const { spawnMock, caffeinateConfig } = vi.hoisted(() => ({
     spawnMock: vi.fn(),
+    caffeinateConfig: {
+        disableCaffeinate: false,
+    },
 }));
 
-vi.mock('child_process', async () => {
-    const actual = await vi.importActual<any>('child_process');
-    return {
-        ...actual,
-        spawn: spawnMock,
-    };
-});
+vi.mock('child_process', () => ({
+    spawn: spawnMock,
+}));
 
 vi.mock('@/configuration', () => ({
     configuration: {
-        disableCaffeinate: false,
+        get disableCaffeinate() {
+            return caffeinateConfig.disableCaffeinate;
+        },
     },
 }));
 
@@ -26,42 +29,91 @@ vi.mock('@/ui/logger', () => ({
     },
 }));
 
-import { startCaffeinate, stopCaffeinate } from './caffeinate';
+type FakeChildProcess = EventEmitter & {
+    pid: number;
+    killed: boolean;
+    kill: (signal?: NodeJS.Signals) => boolean;
+};
+
+function createFakeChildProcess(pid = 123): ChildProcess {
+    const child = new EventEmitter() as FakeChildProcess;
+    child.pid = pid;
+    child.killed = false;
+    child.kill = (_signal?: NodeJS.Signals) => {
+        child.killed = true;
+        return true;
+    };
+    return child as unknown as ChildProcess;
+}
 
 describe('caffeinate', () => {
     const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
-    let processOnSpy: any;
 
     beforeEach(() => {
         Object.defineProperty(process, 'platform', { value: 'darwin' });
-        processOnSpy = vi.spyOn(process, 'on').mockImplementation(() => process as any);
+        vi.spyOn(process, 'on').mockImplementation(((..._args: unknown[]) => process) as typeof process.on);
+        spawnMock.mockReset();
+        caffeinateConfig.disableCaffeinate = false;
     });
 
     afterEach(() => {
-        processOnSpy?.mockRestore?.();
-        if (originalPlatform) Object.defineProperty(process, 'platform', originalPlatform);
-        spawnMock.mockReset();
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+        if (originalPlatform) {
+            Object.defineProperty(process, 'platform', originalPlatform);
+        }
+    });
+
+    async function importCaffeinateModule() {
+        vi.resetModules();
+        return await import('./caffeinate');
+    }
+
+    it('returns false when disabled via configuration', async () => {
+        caffeinateConfig.disableCaffeinate = true;
+        const { startCaffeinate } = await importCaffeinateModule();
+
+        expect(startCaffeinate()).toBe(false);
+        expect(spawnMock).not.toHaveBeenCalled();
+    });
+
+    it('returns false on non-darwin platforms', async () => {
+        Object.defineProperty(process, 'platform', { value: 'linux' });
+        const { startCaffeinate } = await importCaffeinateModule();
+
+        expect(startCaffeinate()).toBe(false);
+        expect(spawnMock).not.toHaveBeenCalled();
+    });
+
+    it('spawns caffeinate on darwin and avoids duplicate spawn when already running', async () => {
+        const fakeChild = createFakeChildProcess(777);
+        spawnMock.mockReturnValue(fakeChild);
+        const { startCaffeinate, isCaffeinateRunning } = await importCaffeinateModule();
+
+        expect(startCaffeinate()).toBe(true);
+        expect(startCaffeinate()).toBe(true);
+        expect(isCaffeinateRunning()).toBe(true);
+        expect(spawnMock).toHaveBeenCalledTimes(1);
+        expect(spawnMock).toHaveBeenCalledWith('caffeinate', ['-im'], {
+            stdio: 'ignore',
+            detached: false,
+        });
     });
 
     it('unrefs the stop grace-period timer so shutdown is not delayed', async () => {
-        const kill = vi.fn();
-        const child: any = {
-            pid: 123,
-            killed: false,
-            on: vi.fn(),
-            kill: vi.fn((signal: any) => {
-                kill(signal);
-                child.killed = true;
-                return true;
-            }),
-        };
-        spawnMock.mockReturnValue(child);
+        const fakeChild = createFakeChildProcess(123);
+        spawnMock.mockReturnValue(fakeChild);
+        const { startCaffeinate, stopCaffeinate } = await importCaffeinateModule();
 
         const unrefSpy = vi.fn();
-        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation((fn: any) => {
-            fn();
-            return { unref: unrefSpy } as any;
-        });
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+            ((handler: Parameters<typeof setTimeout>[0]) => {
+                if (typeof handler === 'function') {
+                    handler();
+                }
+                return { unref: unrefSpy } as unknown as ReturnType<typeof setTimeout>;
+            }) as typeof setTimeout,
+        );
 
         try {
             expect(startCaffeinate()).toBe(true);

@@ -46,5 +46,45 @@ describe('parseAndStripTerminalRuntimeFlags', () => {
       argv: ['--foo', 'bar'],
     });
   });
-});
 
+  it('does not swallow following flags when runtime flags are missing values', () => {
+    const parsed = parseAndStripTerminalRuntimeFlags([
+      '--happy-terminal-mode',
+      '--foo',
+      'bar',
+    ]);
+
+    expect(parsed).toEqual({
+      terminal: null,
+      argv: ['--foo', 'bar'],
+    });
+  });
+
+  it('does not consume single-dash tokens as runtime flag values', () => {
+    const parsed = parseAndStripTerminalRuntimeFlags([
+      '--happy-terminal-mode',
+      '-v',
+      'claude',
+    ]);
+
+    expect(parsed).toEqual({
+      terminal: null,
+      argv: ['-v', 'claude'],
+    });
+  });
+
+  it('strips unknown runtime values while keeping non-runtime args', () => {
+    const parsed = parseAndStripTerminalRuntimeFlags([
+      '--happy-terminal-mode',
+      'invalid-mode',
+      '--happy-terminal-requested',
+      'invalid-requested',
+      '--verbose',
+    ]);
+
+    expect(parsed).toEqual({
+      terminal: null,
+      argv: ['--verbose'],
+    });
+  });
+});

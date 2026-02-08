@@ -13,6 +13,14 @@ function parseTerminalMode(value: string | undefined): TerminalMode | undefined 
   return undefined;
 }
 
+function consumeFlagValue(argv: string[], index: number): { value: string | undefined; nextIndex: number } {
+  const next = argv[index + 1];
+  if (typeof next === 'string' && !next.startsWith('-')) {
+    return { value: next, nextIndex: index + 1 };
+  }
+  return { value: undefined, nextIndex: index };
+}
+
 export function parseAndStripTerminalRuntimeFlags(argv: string[]): {
   terminal: TerminalRuntimeFlags | null;
   argv: string[];
@@ -24,29 +32,39 @@ export function parseAndStripTerminalRuntimeFlags(argv: string[]): {
     const arg = argv[i];
 
     if (arg === '--happy-terminal-mode') {
-      terminal.mode = parseTerminalMode(argv[++i]);
+      const consumed = consumeFlagValue(argv, i);
+      i = consumed.nextIndex;
+      terminal.mode = parseTerminalMode(consumed.value);
       continue;
     }
     if (arg === '--happy-terminal-requested') {
-      terminal.requested = parseTerminalMode(argv[++i]);
+      const consumed = consumeFlagValue(argv, i);
+      i = consumed.nextIndex;
+      terminal.requested = parseTerminalMode(consumed.value);
       continue;
     }
     if (arg === '--happy-terminal-fallback-reason') {
-      const value = argv[++i];
+      const consumed = consumeFlagValue(argv, i);
+      i = consumed.nextIndex;
+      const value = consumed.value;
       if (typeof value === 'string' && value.trim().length > 0) {
         terminal.fallbackReason = value;
       }
       continue;
     }
     if (arg === '--happy-tmux-target') {
-      const value = argv[++i];
+      const consumed = consumeFlagValue(argv, i);
+      i = consumed.nextIndex;
+      const value = consumed.value;
       if (typeof value === 'string' && value.trim().length > 0) {
         terminal.tmuxTarget = value;
       }
       continue;
     }
     if (arg === '--happy-tmux-tmpdir') {
-      const value = argv[++i];
+      const consumed = consumeFlagValue(argv, i);
+      i = consumed.nextIndex;
+      const value = consumed.value;
       if (typeof value === 'string' && value.trim().length > 0) {
         terminal.tmuxTmpDir = value;
       }
@@ -65,4 +83,3 @@ export function parseAndStripTerminalRuntimeFlags(argv: string[]): {
 
   return { terminal: hasAny ? terminal : null, argv: remaining };
 }
-
