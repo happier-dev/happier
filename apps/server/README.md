@@ -47,32 +47,38 @@ That said, Happier Server is open source and self-hostable if you prefer running
 
 ## Server flavors
 
-Happier Server supports two flavors that share the same API + internal logic. The only difference is which infrastructure backends are used for storage.
+Happier Server supports two flavors that share the same API + internal logic. Flavors are **presets** (defaults); you can override individual backends via env vars.
 
-- **full** (default, recommended for production): Postgres (default) or MySQL 8+ + optional Redis (for multi-replica Socket.IO) + S3/Minio-compatible public file storage.
+- **full** (default, recommended for production): Postgres (default) or MySQL 8+ + Redis (required for multi-replica Socket.IO) + S3/Minio-compatible public file storage (default) or local files (`HAPPIER_FILES_BACKEND=local`).
 - **light** (recommended for self-hosting/testing): embedded Postgres via PGlite (default) or SQLite + local public file storage served by the server under `GET /files/*`.
 
 ## Required environment (full flavor)
 
 The full flavor expects these env vars to be set:
 
-- `HAPPIER_DB_PROVIDER` (optional, defaults to `postgres`). Supported: `postgres`, `mysql`.
+- `HAPPIER_DB_PROVIDER` (optional, defaults to `postgres`). Supported: `postgres`, `mysql`, `pglite`, `sqlite`.
 - `DATABASE_URL`, for example:
   - Postgres: `postgresql://user:pass@db.example.com:5432/happy?sslmode=require`
   - MySQL 8+: `mysql://user:pass@db.example.com:3306/happy`
 - `HANDY_MASTER_SECRET` (used to derive auth/encryption secrets)
-- Public file storage (S3/Minio):
-  - `S3_HOST`
-  - `S3_PORT` (optional)
-  - `S3_USE_SSL` (`true`/`false`, defaults to `true`)
-  - `S3_BUCKET`
-  - `S3_PUBLIC_URL` (base URL used to build file URLs)
-  - `S3_ACCESS_KEY`
-  - `S3_SECRET_KEY`
+- Public file storage:
+  - Choose a backend via `HAPPIER_FILES_BACKEND=local|s3` (default: `s3` in full flavor, `local` in light flavor)
+  - If `HAPPIER_FILES_BACKEND=local` (filesystem-backed public files), the server stores files under `~/.happier/server-light/files` by default.
+    - Override the directory with `HAPPIER_SERVER_LIGHT_FILES_DIR=/absolute/path`.
+    - Files are served by the API under `GET /files/*` (same public route used by light flavor).
+    - Ensure the server process has read/write permissions for the selected directory.
+  - If `HAPPIER_FILES_BACKEND=s3` (S3/Minio), configure:
+    - `S3_HOST`
+    - `S3_PORT` (optional)
+    - `S3_USE_SSL` (`true`/`false`, defaults to `true`)
+    - `S3_BUCKET`
+    - `S3_PUBLIC_URL` (base URL used to build file URLs)
+    - `S3_ACCESS_KEY`
+    - `S3_SECRET_KEY`
 
 Optional (recommended for multi-core / multi-replica):
 
-- `REDIS_URL` + `HAPPIER_SOCKET_REDIS_ADAPTER=1`
+- `REDIS_URL` + `HAPPIER_SOCKET_ADAPTER=redis-streams`
 
 ### Example `.env` (full flavor, production)
 
@@ -83,6 +89,7 @@ DATABASE_URL=postgresql://happy:happy@127.0.0.1:5432/happy?sslmode=require
 HANDY_MASTER_SECRET=change-me-to-a-long-random-string
 
 # Required: public file storage (S3 / Minio)
+HAPPIER_FILES_BACKEND=s3
 S3_HOST=127.0.0.1
 S3_PORT=9000
 S3_USE_SSL=false
@@ -94,7 +101,7 @@ S3_SECRET_KEY=minioadmin
 # Optional: enable multi-replica Socket.IO fanout + cluster RPC routing
 # (required if you run more than one API replica)
 REDIS_URL=redis://127.0.0.1:6379
-HAPPIER_SOCKET_REDIS_ADAPTER=1
+HAPPIER_SOCKET_ADAPTER=redis-streams
 
 # Optional: process role when scaling (unset => "all")
 # SERVER_ROLE=api
@@ -161,11 +168,11 @@ Recommended production topology:
 When running more than one API process/replica, enable the Socket.IO Redis Streams adapter:
 
 - `REDIS_URL=redis://...`
-- `HAPPIER_SOCKET_REDIS_ADAPTER=1`
+- `HAPPIER_SOCKET_ADAPTER=redis-streams`
 
-To explicitly disable it (single-process mode / light flavor), leave it unset or set:
+To explicitly disable it (single-process mode), leave it unset or set:
 
-- `HAPPIER_SOCKET_REDIS_ADAPTER=0`
+- `HAPPIER_SOCKET_ADAPTER=memory`
 
 This enables:
 
@@ -188,11 +195,11 @@ For a quick local production-like test (requires Redis):
 
 ```bash
 # Worker (no HTTP server; publishes events via Redis adapter; runs background loops)
-SERVER_ROLE=worker HAPPIER_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 METRICS_PORT=0 yarn start
+SERVER_ROLE=worker HAPPIER_SOCKET_ADAPTER=redis-streams REDIS_URL=redis://127.0.0.1:6379 METRICS_PORT=0 yarn start
 
 # API replicas (different PORTs on the same host; put a load balancer in front in real deployments)
-SERVER_ROLE=api HAPPIER_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 PORT=3005 METRICS_PORT=0 yarn start
-SERVER_ROLE=api HAPPIER_SOCKET_REDIS_ADAPTER=1 REDIS_URL=redis://127.0.0.1:6379 PORT=3006 METRICS_PORT=0 yarn start
+SERVER_ROLE=api HAPPIER_SOCKET_ADAPTER=redis-streams REDIS_URL=redis://127.0.0.1:6379 PORT=3005 METRICS_PORT=0 yarn start
+SERVER_ROLE=api HAPPIER_SOCKET_ADAPTER=redis-streams REDIS_URL=redis://127.0.0.1:6379 PORT=3006 METRICS_PORT=0 yarn start
 ```
 
 ### Sticky sessions (required for websocket load balancing)
@@ -309,6 +316,17 @@ Migrations are provider-specific:
 - MySQL 8+:
   - migrations: `prisma/mysql/migrations/*`
   - deploy: `yarn migrate:mysql:deploy`
+
+DB portability contract suite:
+
+- Spec location: `sources/storage/dbcontract/portability.dbcontract.spec.ts`
+- Run only contract tests (not the full server suite):
+  - Preferred local (Docker-provisioned):
+    - Postgres: `yarn test:server:db-contract:postgres:docker` (repo root)
+    - MySQL: `yarn test:server:db-contract:mysql:docker` (repo root)
+  - Direct package command (existing DB URL):
+    - Postgres: `HAPPIER_DB_PROVIDER=postgres DATABASE_URL=postgresql://... yarn test:server:db-contract`
+    - MySQL: `HAPPIER_DB_PROVIDER=mysql DATABASE_URL=mysql://... yarn test:server:db-contract`
 
 Light flavor note (SQLite vs PGlite):
 

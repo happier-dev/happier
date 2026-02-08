@@ -42,14 +42,16 @@ spec:
           value: "3005"
         - name: SERVER_ROLE
           value: api
-        - name: HAPPY_SOCKET_REDIS_ADAPTER
-          value: "1"
+        - name: HAPPIER_SOCKET_ADAPTER
+          value: redis-streams
         - name: HAPPY_INSTANCE_ID
           valueFrom:
             fieldRef:
               fieldPath: metadata.uid
         - name: REDIS_URL
           value: redis://happy-redis:6379
+        - name: HAPPIER_FILES_BACKEND
+          value: s3
         - name: S3_PUBLIC_URL
           value: https://files.cluster-fluster.com/happy
         envFrom:
@@ -112,14 +114,16 @@ spec:
           value: production
         - name: SERVER_ROLE
           value: worker
-        - name: HAPPY_SOCKET_REDIS_ADAPTER
-          value: "1"
+        - name: HAPPIER_SOCKET_ADAPTER
+          value: redis-streams
         - name: HAPPY_INSTANCE_ID
           valueFrom:
             fieldRef:
               fieldPath: metadata.uid
         - name: REDIS_URL
           value: redis://happy-redis:6379
+        - name: HAPPIER_FILES_BACKEND
+          value: s3
         - name: S3_PUBLIC_URL
           value: https://files.cluster-fluster.com/happy
         envFrom:

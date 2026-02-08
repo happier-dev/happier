@@ -196,6 +196,7 @@ The project includes a multi-stage Dockerfile:
 #### Auth Flow Debugging
 - CLI must hit `/v1/auth/request` to create auth request
 - Mobile scans QR and hits `/v1/auth/response` to approve
+- Modern CLI polling uses `/v1/auth/request/status` and then `/v1/auth/request/claim` to fetch the bearer token (token is not returned by `/v1/auth/request` when claim-gated).
 - **Tell**: 404 on `/v1/auth/response` = server likely restarted/crashed
 - **Tell**: "Auth failed - user not found" = token issue or user doesn't exist
 
