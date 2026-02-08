@@ -117,8 +117,7 @@ describe('sessionUpdateHandlers tool call tracking', () => {
       kind: 'read',
       title: 'Read /tmp/a.txt',
       // Gemini-style: result may be carried in a non-standard field.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ...( { result: { content: 'hello' } } as any ),
+      result: { content: 'hello' },
     };
 
     handleToolCallUpdate(completedUpdate, ctx);
@@ -126,5 +125,45 @@ describe('sessionUpdateHandlers tool call tracking', () => {
     const toolResult = ctx.emitted.find((m) => m.type === 'tool-result' && m.callId === 'read_file-1');
     expect(toolResult).toBeTruthy();
     expect(toolResult.result).toMatchObject({ content: 'hello' });
+  });
+
+  it('merges existing _acp metadata when attaching ACP fields', () => {
+    const ctx = createCtx();
+
+    const update: SessionUpdate = {
+      sessionUpdate: 'tool_call',
+      toolCallId: 'call_test_1',
+      status: 'in_progress',
+      kind: 'execute',
+      title: 'Run echo hello',
+      content: { command: ['/bin/zsh', '-lc', 'echo hello'], _acp: { custom: true } },
+    };
+
+    handleToolCall(update, ctx);
+
+    const toolCall = ctx.emitted.find((m) => m.type === 'tool-call');
+    expect(toolCall).toBeTruthy();
+    expect(toolCall.args?._acp?.custom).toBe(true);
+
+    handleToolCallUpdate(
+      {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'call_test_1',
+        status: 'in_progress',
+        kind: 'execute',
+        title: 'Run echo hello again',
+        content: { command: ['/bin/zsh', '-lc', 'echo hello'], _acp: { custom: true } },
+        meta: {},
+      },
+      ctx,
+    );
+
+    const refreshed = ctx.emitted
+      .filter((m) => m.type === 'tool-call' && m.callId === 'call_test_1')
+      .slice(-1)[0];
+
+    expect(refreshed).toBeTruthy();
+    expect(refreshed.args?._acp?.custom).toBe(true);
+    expect(refreshed.args?._acp?.kind).toBe('execute');
   });
 });

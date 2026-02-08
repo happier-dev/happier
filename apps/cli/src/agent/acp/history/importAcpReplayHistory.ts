@@ -1,11 +1,16 @@
 import { createHash } from 'node:crypto';
 
-import type { ACPProvider, ApiSessionClient } from '@/api/apiSession';
+import type { ACPProvider } from '@/api/apiSession';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import type { AcpReplayEvent } from './acpReplayCapture';
 import { logger } from '@/ui/logger';
+import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 
 type TranscriptTextItem = { role: 'user' | 'agent'; text: string };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
 
 function normalizeTextForMatch(text: string): string {
   return text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ').trim();
@@ -67,16 +72,23 @@ function computeBestTailOverlap(existing: TranscriptTextItem[], replay: Transcri
   return { ok: false, reason: 'no_overlap' };
 }
 
-function extractReplayTextItems(replay: AcpReplayEvent[]): {
+function extractReplayTextItems(replay: ReadonlyArray<unknown>): {
   messages: TranscriptTextItem[];
   hasToolEvents: boolean;
 } {
   const messages: TranscriptTextItem[] = [];
   let hasToolEvents = false;
   for (const event of replay) {
-    if (event.type === 'message') {
-      messages.push({ role: event.role, text: event.text });
-    } else if (event.type === 'tool_call' || event.type === 'tool_result') {
+    const record = asRecord(event);
+    if (!record) continue;
+    const type = record.type;
+    if (type === 'message') {
+      const role = record.role;
+      const text = record.text;
+      if ((role === 'user' || role === 'agent') && typeof text === 'string') {
+        messages.push({ role, text });
+      }
+    } else if (type === 'tool_call' || type === 'tool_result') {
       hasToolEvents = true;
     }
   }
@@ -103,11 +115,25 @@ function isSafeRemoteSessionId(remoteSessionId: string): boolean {
   return true;
 }
 
+function safeStringifyForKey(value: unknown): string {
+  try {
+    const seen = new WeakSet<object>();
+    return JSON.stringify(value, (_key, current) => {
+      if (!current || typeof current !== 'object') return current;
+      if (seen.has(current as object)) return '[Circular]';
+      seen.add(current as object);
+      return current;
+    });
+  } catch {
+    return '[Unserializable]';
+  }
+}
+
 export async function importAcpReplayHistoryV1(params: {
-  session: ApiSessionClient;
+  session: AcpReplayHistorySessionClient;
   provider: ACPProvider;
   remoteSessionId: string;
-  replay: AcpReplayEvent[];
+  replay: ReadonlyArray<unknown>;
   permissionHandler: AcpPermissionHandler;
 }): Promise<void> {
   if (!isSafeRemoteSessionId(params.remoteSessionId)) {
@@ -187,7 +213,7 @@ export async function importAcpReplayHistoryV1(params: {
 
 async function importMessageDeltas(
   params: {
-    session: ApiSessionClient;
+    session: AcpReplayHistorySessionClient;
     provider: ACPProvider;
     remoteSessionId: string;
   },
@@ -235,69 +261,83 @@ async function importMessageDeltas(
 
 async function importFullReplay(
   params: {
-    session: ApiSessionClient;
+    session: AcpReplayHistorySessionClient;
     provider: ACPProvider;
     remoteSessionId: string;
   },
-  replay: AcpReplayEvent[],
+  replay: ReadonlyArray<unknown>,
 ): Promise<void> {
   for (let i = 0; i < replay.length; i++) {
-    const event = replay[i];
-    if (event.type === 'message') {
+    const record = asRecord(replay[i]);
+    if (!record) continue;
+    const type = record.type;
+    if (type === 'message') {
+      const role = record.role;
+      const text = record.text;
+      if (typeof role !== 'string' || typeof text !== 'string') continue;
       const localId = makeImportEventLocalId({
         provider: params.provider,
         remoteSessionId: params.remoteSessionId,
         index: i,
-        key: `${event.role}:${event.text}`,
+        key: `${role}:${text}`,
       });
-      if (event.role === 'user') {
-        await params.session.sendUserTextMessageCommitted(event.text, { localId, meta: { importedFrom: 'acp-history' } });
+      if (role === 'user') {
+        await params.session.sendUserTextMessageCommitted(text, { localId, meta: { importedFrom: 'acp-history' } });
       } else {
         await params.session.sendAgentMessageCommitted(
           params.provider,
-          { type: 'message', message: event.text },
+          { type: 'message', message: text },
           { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
         );
       }
       continue;
     }
 
-    if (event.type === 'tool_call') {
+    if (type === 'tool_call') {
+      const toolCallId = record.toolCallId;
+      if (typeof toolCallId !== 'string' || toolCallId.trim().length === 0) continue;
+      const kind = typeof record.kind === 'string' ? record.kind : null;
+      const title = typeof record.title === 'string' ? record.title : null;
+      const rawInput = record.rawInput ?? {};
       const localId = makeImportEventLocalId({
         provider: params.provider,
         remoteSessionId: params.remoteSessionId,
         index: i,
-        key: `tool_call:${event.toolCallId}:${event.kind ?? ''}:${JSON.stringify(event.rawInput ?? null)}`,
+        key: `tool_call:${toolCallId}:${kind ?? ''}:${safeStringifyForKey(rawInput ?? null)}`,
       });
       await params.session.sendAgentMessageCommitted(
         params.provider,
         {
           type: 'tool-call',
-          callId: event.toolCallId,
-          name: event.kind ?? event.title ?? 'tool',
-          input: event.rawInput ?? {},
-          id: `import-${event.toolCallId}`,
+          callId: toolCallId,
+          name: kind ?? title ?? 'tool',
+          input: rawInput ?? {},
+          id: `import-${toolCallId}`,
         },
         { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },
       );
       continue;
     }
 
-    if (event.type === 'tool_result') {
+    if (type === 'tool_result') {
+      const toolCallId = record.toolCallId;
+      if (typeof toolCallId !== 'string' || toolCallId.trim().length === 0) continue;
+      const status = typeof record.status === 'string' ? record.status : '';
+      const rawOutput = record.rawOutput ?? record.content ?? null;
       const localId = makeImportEventLocalId({
         provider: params.provider,
         remoteSessionId: params.remoteSessionId,
         index: i,
-        key: `tool_result:${event.toolCallId}:${event.status ?? ''}:${JSON.stringify(event.rawOutput ?? event.content ?? null)}`,
+        key: `tool_result:${toolCallId}:${status}:${safeStringifyForKey(rawOutput)}`,
       });
-      const isError = event.status === 'error' || event.status === 'failed';
+      const isError = status === 'error' || status === 'failed' || status === 'cancelled';
       await params.session.sendAgentMessageCommitted(
         params.provider,
         {
           type: 'tool-result',
-          callId: event.toolCallId,
-          output: event.rawOutput ?? event.content ?? null,
-          id: `import-${event.toolCallId}-result`,
+          callId: toolCallId,
+          output: rawOutput,
+          id: `import-${toolCallId}-result`,
           isError,
         },
         { localId, meta: { importedFrom: 'acp-history', remoteSessionId: params.remoteSessionId } },

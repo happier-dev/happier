@@ -1,15 +1,17 @@
 import type { AgentMessage } from '@/agent/core';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 
-type AgentKey = Parameters<ApiSessionClient['sendAgentMessage']>[0];
-type AgentPayload = Parameters<ApiSessionClient['sendAgentMessage']>[1];
-type SessionWithKeepAlive = Pick<ApiSessionClient, 'keepAlive' | 'sendAgentMessage'>;
-type SessionWithSendOnly = Pick<ApiSessionClient, 'sendAgentMessage'>;
+type AgentKey = Parameters<AcpRuntimeSessionClient['sendAgentMessage']>[0];
+type AgentPayload = Parameters<AcpRuntimeSessionClient['sendAgentMessage']>[1];
+type SessionWithKeepAlive = Pick<AcpRuntimeSessionClient, 'keepAlive' | 'sendAgentMessage'>;
+type SessionWithSendOnly = Pick<AcpRuntimeSessionClient, 'sendAgentMessage'>;
+type MessageBufferForModelOutput = Pick<MessageBuffer, 'removeLastMessage' | 'addMessage' | 'updateLastMessage'>;
+type MessageBufferForStatus = Pick<MessageBuffer, 'addMessage'>;
 
 export function handleAcpModelOutputDelta(params: {
   delta: string;
-  messageBuffer: MessageBuffer;
+  messageBuffer: MessageBufferForModelOutput;
   getIsResponseInProgress: () => boolean;
   setIsResponseInProgress: (value: boolean) => void;
   appendToAccumulatedResponse: (delta: string) => void;
@@ -31,7 +33,7 @@ export function handleAcpModelOutputDelta(params: {
 export function handleAcpStatusRunning(params: {
   session: SessionWithKeepAlive;
   agent: AgentKey;
-  messageBuffer: MessageBuffer;
+  messageBuffer: MessageBufferForStatus;
   onThinkingChange: (thinking: boolean) => void;
   getTaskStartedSent: () => boolean;
   setTaskStartedSent: (value: boolean) => void;
@@ -104,7 +106,7 @@ export function forwardAcpPermissionRequest(params: {
 
 export function forwardAcpTerminalOutput(params: {
   msg: AgentMessage;
-  messageBuffer: MessageBuffer;
+  messageBuffer: MessageBufferForStatus;
   session: SessionWithSendOnly;
   agent: AgentKey;
   getCallId: (msg: AgentMessage) => string;

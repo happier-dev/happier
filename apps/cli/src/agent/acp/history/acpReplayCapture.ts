@@ -1,5 +1,5 @@
-import type { SessionUpdate } from '../sessionUpdateHandlers';
-import { extractTextFromContentBlock } from '../sessionUpdateHandlers';
+import type { SessionUpdate } from '../updates/types';
+import { extractTextFromContentBlock } from '../updates/content';
 
 export type AcpReplayEvent =
   | { type: 'message'; role: 'user' | 'agent'; text: string }
@@ -22,6 +22,7 @@ export class AcpReplayCapture {
   private currentRole: 'user' | 'agent' | null = null;
   private currentText = '';
   private events: AcpReplayEvent[] = [];
+  private seenToolCallIds = new Set<string>();
 
   private flushMessage(): void {
     if (!this.currentRole) return;
@@ -61,9 +62,10 @@ export class AcpReplayCapture {
       this.flushMessage();
       const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : '';
       if (!toolCallId) return;
-      const title = typeof (update as any).title === 'string' ? (update as any).title : undefined;
-      const toolKind = typeof (update as any).kind === 'string' ? (update as any).kind : undefined;
-      const rawInput = (update as any).rawInput;
+      const title = typeof update.title === 'string' ? update.title : undefined;
+      const toolKind = typeof update.kind === 'string' ? update.kind : undefined;
+      const rawInput = update.rawInput;
+      this.seenToolCallIds.add(toolCallId);
       this.events.push({
         type: 'tool_call',
         toolCallId,
@@ -77,9 +79,26 @@ export class AcpReplayCapture {
     if (kind === 'tool_call_update') {
       const toolCallId = typeof update.toolCallId === 'string' ? update.toolCallId : '';
       if (!toolCallId) return;
-      const status = typeof (update as any).status === 'string' ? (update as any).status : undefined;
-      const rawOutput = (update as any).rawOutput;
-      const content = (update as any).content;
+      const status = typeof update.status === 'string' ? update.status : undefined;
+      // Some ACP providers never send an explicit tool_call event, only tool_call_update. When we see
+      // the first update for a toolCallId, seed a synthetic tool_call so downstream consumers (history
+      // import, UI normalization) have enough context to associate tool results to tool names.
+      if (!this.seenToolCallIds.has(toolCallId)) {
+        this.flushMessage();
+        this.seenToolCallIds.add(toolCallId);
+        const title = typeof update.title === 'string' ? update.title : undefined;
+        const toolKind = typeof update.kind === 'string' ? update.kind : undefined;
+        const rawInput = update.rawInput ?? update.content;
+        this.events.push({
+          type: 'tool_call',
+          toolCallId,
+          title,
+          kind: toolKind,
+          rawInput,
+        });
+      }
+      const rawOutput = update.rawOutput;
+      const content = update.content;
       // Only record results when status indicates completion/error or when rawOutput is present.
       if (status && (status === 'completed' || status === 'error' || status === 'failed' || status === 'cancelled')) {
         this.flushMessage();

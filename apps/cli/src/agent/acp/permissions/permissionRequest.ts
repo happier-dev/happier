@@ -1,6 +1,7 @@
 export type PermissionToolCallLike = {
   kind?: unknown;
   toolName?: unknown;
+  title?: unknown;
   rawInput?: unknown;
   input?: unknown;
   arguments?: unknown;
@@ -15,6 +16,50 @@ export type PermissionRequestLike = {
   arguments?: unknown;
   content?: unknown;
 };
+
+const ALLOWED_TITLE_TOOL_INFERENCES = new Set([
+  'read',
+  'write',
+  'edit',
+  'delete',
+  'search',
+  'execute',
+  'bash',
+  'glob',
+  'grep',
+  'fetch',
+  'task',
+  'websearch',
+  'webfetch',
+]);
+
+const TOOL_INFERENCE_RISK: Record<string, number> = {
+  // Read-ish
+  read: 1,
+  search: 1,
+  glob: 1,
+  grep: 1,
+  fetch: 1,
+  websearch: 1,
+  webfetch: 1,
+
+  // Mutations
+  edit: 2,
+  write: 2,
+  delete: 3,
+
+  // Execution
+  execute: 4,
+  bash: 4,
+
+  // Task can encompass arbitrary actions depending on provider.
+  task: 5,
+};
+
+function inferenceRisk(toolLower: string): number | null {
+  const v = TOOL_INFERENCE_RISK[toolLower];
+  return typeof v === 'number' ? v : null;
+}
 
 export function extractPermissionInput(params: PermissionRequestLike): Record<string, unknown> {
   const toolCall = params.toolCall ?? undefined;
@@ -49,12 +94,40 @@ export function extractPermissionToolNameHint(params: PermissionRequestLike): st
   const toolCall = params.toolCall ?? undefined;
   const kind = typeof toolCall?.kind === 'string' ? toolCall.kind.trim() : '';
   const toolName = typeof toolCall?.toolName === 'string' ? toolCall.toolName.trim() : '';
+  const title = typeof toolCall?.title === 'string' ? toolCall.title.trim() : '';
   const paramsKind = typeof params.kind === 'string' ? params.kind.trim() : '';
 
   // ACP agents may send `kind: other` for permission prompts while also providing a more specific `toolName`.
   // Prefer the more specific name when kind is generic.
   const genericKind = kind.toLowerCase();
   if (kind && genericKind !== 'other' && genericKind !== 'unknown') return kind;
+
+  if (genericKind === 'other' || genericKind === 'unknown') {
+    if (title) {
+      const match = title.match(/^([A-Za-z][A-Za-z0-9_-]*)\b/);
+      const inferred = match ? match[1] : null;
+      const inferredLower = inferred?.toLowerCase() ?? '';
+      const toolLower = toolName.toLowerCase();
+      const inferredRisk = inferenceRisk(inferredLower);
+      const toolRisk = toolLower ? inferenceRisk(toolLower) : null;
+
+      // Only override a real toolName when it cannot make permissions less strict.
+      // If toolName is unknown/generic, allow inference from the title (used for many ACP permission prompts).
+      const toolNameIsGeneric =
+        toolLower === '' ||
+        toolLower === 'unknown' ||
+        toolLower === 'unknown tool' ||
+        toolLower === 'other';
+      const canOverride =
+        toolNameIsGeneric ||
+        (inferredRisk !== null && toolRisk !== null && inferredRisk >= toolRisk);
+
+      if (inferred && ALLOWED_TITLE_TOOL_INFERENCES.has(inferredLower) && inferredLower !== toolLower && canOverride) {
+        return inferred;
+      }
+    }
+  }
+
   if (toolName) return toolName;
   if (paramsKind) return paramsKind;
   return 'Unknown tool';

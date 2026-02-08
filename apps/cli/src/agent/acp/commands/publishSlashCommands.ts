@@ -1,5 +1,5 @@
-import type { ApiSessionClient } from '@/api/apiSession';
 import { logger } from '@/ui/logger';
+import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';
 
 export type SlashCommandDetail = {
   command: string;
@@ -34,7 +34,7 @@ export function normalizeAvailableCommands(input: unknown): SlashCommandDetail[]
 }
 
 export function publishSlashCommandsToMetadata(params: {
-  session: ApiSessionClient;
+  session: Pick<AcpReplayHistorySessionClient, 'updateMetadata'>;
   details: SlashCommandDetail[];
 }): void {
   const { session, details } = params;
@@ -58,4 +58,3 @@ export function publishSlashCommandsToMetadata(params: {
     logger.debug('[ACP] Failed to publish slash commands to metadata (non-fatal)', { error });
   }
 }
-
