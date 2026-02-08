@@ -29,8 +29,9 @@ describe('readDaemonState', () => {
                     {
                         pid: 123,
                         httpPort: 5173,
-                        startTime: new Date().toISOString(),
+                        startedAt: Date.now(),
                         startedWithCliVersion: '0.0.0-test',
+                        controlToken: 'token-123',
                     },
                     null,
                     2
@@ -41,5 +42,37 @@ describe('readDaemonState', () => {
 
         const state = await readDaemonState();
         expect(state?.pid).toBe(123);
+    });
+
+    it('accepts legacy startTime fields and normalizes to startedAt', async () => {
+        const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-state-legacy-'));
+
+        vi.resetModules();
+        process.env.HAPPIER_HOME_DIR = homeDir;
+
+        const [{ configuration }, { readDaemonState }] = await Promise.all([
+            import('./configuration'),
+            import('./persistence'),
+        ]);
+
+        const legacyStarted = new Date().toISOString();
+        writeFileSync(
+            configuration.daemonStateFile,
+            JSON.stringify(
+                {
+                    pid: 123,
+                    httpPort: 5173,
+                    startTime: legacyStarted,
+                    startedWithCliVersion: '0.0.0-test',
+                },
+                null,
+                2
+            ),
+            'utf-8'
+        );
+
+        const state = await readDaemonState();
+        expect(state?.pid).toBe(123);
+        expect(typeof state?.startedAt).toBe('number');
     });
 });

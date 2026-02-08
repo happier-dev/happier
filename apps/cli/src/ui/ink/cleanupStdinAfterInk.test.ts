@@ -1,23 +1,37 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanupStdinAfterInk } from './cleanupStdinAfterInk';
 
-function createFakeStdin() {
-  const listeners = new Map<string, Set<(...args: any[]) => void>>();
-  const calls: Array<{ name: string; args: any[] }> = [];
+type DataListener = (chunk: unknown) => void;
+type StdinCallName = 'on' | 'off' | 'resume' | 'pause' | 'setRawMode';
 
-  const api = {
+interface FakeStdin {
+  isTTY: boolean;
+  on: (event: 'data', fn: DataListener) => FakeStdin;
+  off: (event: 'data', fn: DataListener) => FakeStdin;
+  resume: () => void;
+  pause: () => void;
+  setRawMode: (value: boolean) => void;
+  __calls: Array<{ name: StdinCallName; args: unknown[] }>;
+  __listenerCount: (event: 'data') => number;
+}
+
+function createFakeStdin(): FakeStdin {
+  const listeners = new Map<'data', Set<DataListener>>();
+  const calls: Array<{ name: StdinCallName; args: unknown[] }> = [];
+
+  const api: FakeStdin = {
     isTTY: true,
-    on: (event: string, fn: (...args: any[]) => void) => {
+    on: (event, fn) => {
       calls.push({ name: 'on', args: [event] });
-      const set = listeners.get(event) ?? new Set();
+      const set = listeners.get(event) ?? new Set<DataListener>();
       set.add(fn);
       listeners.set(event, set);
-      return api as any;
+      return api;
     },
-    off: (event: string, fn: (...args: any[]) => void) => {
+    off: (event, fn) => {
       calls.push({ name: 'off', args: [event] });
       listeners.get(event)?.delete(fn);
-      return api as any;
+      return api;
     },
     resume: () => {
       calls.push({ name: 'resume', args: [] });
@@ -29,7 +43,7 @@ function createFakeStdin() {
       calls.push({ name: 'setRawMode', args: [value] });
     },
     __calls: calls,
-    __listenerCount: (event: string) => listeners.get(event)?.size ?? 0,
+    __listenerCount: (event: 'data') => listeners.get(event)?.size ?? 0,
   };
 
   return api;
@@ -44,20 +58,33 @@ describe('cleanupStdinAfterInk', () => {
     vi.useFakeTimers();
     const stdin = createFakeStdin();
 
-    const promise = cleanupStdinAfterInk({ stdin: stdin as any, drainMs: 50 });
+    const promise = cleanupStdinAfterInk({ stdin, drainMs: 50 });
+    expect(stdin.__listenerCount('data')).toBe(1);
     await vi.advanceTimersByTimeAsync(60);
     await promise;
 
-    expect(stdin.__calls.some((c) => c.name === 'setRawMode' && c.args[0] === false)).toBe(true);
-    expect(stdin.__calls.some((c) => c.name === 'resume')).toBe(true);
-    expect(stdin.__calls.some((c) => c.name === 'pause')).toBe(true);
+    const callNames = stdin.__calls.map((call) => call.name);
+    expect(callNames).toContain('setRawMode');
+    expect(callNames).toContain('resume');
+    expect(callNames).toContain('pause');
+    expect(callNames.indexOf('resume')).toBeLessThan(callNames.indexOf('pause'));
     expect(stdin.__listenerCount('data')).toBe(0);
+  });
+
+  it('pauses immediately when drainMs is zero', async () => {
+    const stdin = createFakeStdin();
+    await cleanupStdinAfterInk({ stdin, drainMs: 0 });
+
+    const callNames = stdin.__calls.map((call) => call.name);
+    expect(callNames).toContain('pause');
+    expect(callNames).not.toContain('resume');
+    expect(callNames).not.toContain('on');
   });
 
   it('is a no-op when stdin is not a TTY', async () => {
     const stdin = createFakeStdin();
-    (stdin as any).isTTY = false;
-    await cleanupStdinAfterInk({ stdin: stdin as any, drainMs: 50 });
+    stdin.isTTY = false;
+    await cleanupStdinAfterInk({ stdin, drainMs: 50 });
     expect(stdin.__calls.length).toBe(0);
   });
 });

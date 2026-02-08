@@ -1,5 +1,14 @@
 import { describe, it, expect } from 'vitest';
 
+function expectedRuntimeForCurrentProcess(): 'node' | 'bun' | 'deno' | 'unknown' {
+    if (typeof (globalThis as { Bun?: unknown }).Bun !== 'undefined') return 'bun';
+    if (typeof (globalThis as { Deno?: unknown }).Deno !== 'undefined') return 'deno';
+    if (process.versions?.bun) return 'bun';
+    if (process.versions?.deno) return 'deno';
+    if (process.versions?.node) return 'node';
+    return 'unknown';
+}
+
 describe('Runtime Integration Tests', () => {
     it('runtime detection is consistent across imports', async () => {
         const { getRuntime } = await import('../runtime.js');
@@ -15,25 +24,11 @@ describe('Runtime Integration Tests', () => {
 
     it('runtime detection works in actual execution environment', async () => {
         const { getRuntime, isNode, isBun, isDeno } = await import('../runtime.js');
-
         const runtime = getRuntime();
-
-        if (process.versions.node && !process.versions.bun && !process.versions.deno) {
-            expect(runtime).toBe('node');
-            expect(isNode()).toBe(true);
-            expect(isBun()).toBe(false);
-            expect(isDeno()).toBe(false);
-        } else if (process.versions.bun) {
-            expect(runtime).toBe('bun');
-            expect(isNode()).toBe(false);
-            expect(isBun()).toBe(true);
-            expect(isDeno()).toBe(false);
-        } else if (process.versions.deno) {
-            expect(runtime).toBe('deno');
-            expect(isNode()).toBe(false);
-            expect(isBun()).toBe(false);
-            expect(isDeno()).toBe(true);
-        }
+        expect(runtime).toBe(expectedRuntimeForCurrentProcess());
+        expect(isNode()).toBe(runtime === 'node');
+        expect(isBun()).toBe(runtime === 'bun');
+        expect(isDeno()).toBe(runtime === 'deno');
     });
 
     it('runtime utilities can be imported correctly', async () => {
@@ -45,11 +40,5 @@ describe('Runtime Integration Tests', () => {
         expect(typeof runtimeModule.isNode).toBe('function');
         expect(typeof runtimeModule.isDeno).toBe('function');
         expect(typeof runtimeModule.getRuntime()).toBe('string');
-    });
-
-    it('provides correct runtime type', async () => {
-        const { getRuntime } = await import('../runtime.js');
-        const runtime = getRuntime();
-        expect(['node', 'bun', 'deno', 'unknown']).toContain(runtime);
     });
 });
