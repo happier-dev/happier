@@ -37,11 +37,37 @@
         "APP_ENV": "preview"
       }
     },
+    "preview-apk": {
+      "extends": "base",
+      "environment": "preview",
+      "autoIncrement": true,
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "APP_ENV": "preview"
+      }
+    },
     "production": {
       "extends": "base",
       "environment": "production",
       "autoIncrement": true,
       "channel": "production",
+      "env": {
+        "APP_ENV": "production"
+      }
+    },
+    "production-apk": {
+      "extends": "base",
+      "environment": "production",
+      "autoIncrement": true,
+      "distribution": "internal",
+      "channel": "production",
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
         "APP_ENV": "production"
       }

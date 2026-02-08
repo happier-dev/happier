@@ -5,14 +5,28 @@ export default defineConfig({
     define: {
         __DEV__: false,
     },
+    optimizeDeps: {
+        // Workspace packages (like `@happier-dev/protocol`) can change frequently during development.
+        // Excluding them ensures Vitest doesn't keep using stale optimized dependency caches.
+        exclude: ['@happier-dev/protocol'],
+    },
     test: {
         // Ensure per-file module isolation so test-local `vi.mock(...)` does not leak
         // across unrelated test files (especially important for our React Native stubs).
         isolate: true,
+        // Our UI test suite is occasionally CPU-bound on developer machines / CI runners.
+        // Increase the default timeout so unrelated load doesn't cause spurious failures.
+        testTimeout: 20_000,
         globals: false,
         environment: 'node',
         setupFiles: [resolve('./sources/dev/vitestSetup.ts')],
         include: ['sources/**/*.{spec,test}.{ts,tsx}'],
+        exclude: [
+            'sources/**/*.integration.test.{ts,tsx}',
+            'sources/**/*.real.integration.test.{ts,tsx}',
+            'sources/**/*.integration.spec.{ts,tsx}',
+            'sources/**/*.e2e.test.{ts,tsx}',
+        ],
         coverage: {
             provider: 'v8',
             reporter: ['text', 'json', 'html'],
@@ -43,12 +57,26 @@ export default defineConfig({
             { find: 'react-native-gesture-handler', replacement: resolve('./sources/dev/reactNativeGestureHandlerStub.ts') },
             // `react-native-webview` depends on RN native modules and internals.
             { find: 'react-native-webview', replacement: resolve('./sources/dev/reactNativeWebviewStub.ts') },
+            // Some dependencies accidentally pull in `expo` (which expects bundler-only runtime modules).
+            { find: /^expo$/, replacement: resolve('./sources/dev/expoStub.ts') },
+            // `expo-notifications` executes side-effectful native registration at import time.
+            { find: 'expo-notifications', replacement: resolve('./sources/dev/expoNotificationsStub.ts') },
+            // `expo-audio` is native and throws in node/Vitest.
+            { find: 'expo-audio', replacement: resolve('./sources/dev/expoAudioStub.ts') },
             // `expo-clipboard` expects native modules in node/Vitest.
             { find: 'expo-clipboard', replacement: resolve('./sources/dev/expoClipboardStub.ts') },
             // `react-native-device-info` is native and pulls in RN internals.
             { find: 'react-native-device-info', replacement: resolve('./sources/dev/reactNativeDeviceInfoStub.ts') },
             // `@react-native/virtualized-lists` ships Flow sources (`import typeof`) that Node can't parse.
             { find: /^@react-native\/virtualized-lists(\/.*)?$/, replacement: resolve('./sources/dev/reactNativeVirtualizedListsStub.ts') },
+            // Some deps import the abort-controller polyfill, which uses extensionless ESM imports that Node can't resolve.
+            { find: /^abort-controller\/polyfill$/, replacement: resolve('./sources/dev/abortControllerPolyfillStub.ts') },
+            { find: /^abort-controller\/polyfill\.mjs$/, replacement: resolve('./sources/dev/abortControllerPolyfillStub.ts') },
+            // `rn-encryption` selects a native implementation in node tests and can pull in React Native's Flow sources.
+            { find: 'rn-encryption', replacement: resolve('./sources/dev/rnEncryptionStub.ts') },
+            // RevenueCat native SDKs depend on RN native modules.
+            { find: 'react-native-purchases', replacement: resolve('./sources/dev/reactNativePurchasesStub.ts') },
+            { find: 'react-native-purchases-ui', replacement: resolve('./sources/dev/reactNativePurchasesUiStub.ts') },
             // Use libsodium-wrappers in tests instead of the RN native binding.
             { find: '@more-tech/react-native-libsodium', replacement: 'libsodium-wrappers' },
             // Use node-safe platform adapters in tests (avoid static expo-crypto imports).

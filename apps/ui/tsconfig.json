@@ -7,7 +7,9 @@
       "@/*": [
         "./sources/*"
       ],
-      "hello-world": [ "../hello-world" ]
+      "hello-world": [
+        "../hello-world"
+      ]
     },
     "jsx": "react-jsx",
     "esModuleInterop": true,
@@ -15,7 +17,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -32,9 +38,9 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
-    ".expo/types/**/*.ts",
     "expo-env.d.ts",
-    "nativewind-env.d.ts"
+    "nativewind-env.d.ts",
+    ".expo/types/**/*.ts"
   ],
   "exclude": [
     "sources/trash/**/*",
