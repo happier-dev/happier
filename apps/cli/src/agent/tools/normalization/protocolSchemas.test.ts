@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
     KNOWN_CANONICAL_TOOL_NAMES_V2,
     ToolHappierMetaV2Schema,
-    ToolHappyMetaV2Schema,
     getToolInputSchemaV2,
     getToolResultSchemaV2,
 } from '@happier-dev/protocol';
@@ -24,9 +23,7 @@ describe('protocol tool v2 schemas', () => {
         expect(KNOWN_CANONICAL_TOOL_NAMES_V2).toContain('change_title');
     });
 
-    it('parses v2 _happy metadata', () => {
-        // Ensure the "happier" naming exists (project rename), while keeping the
-        // wire-level `_happy` field stable for backward compatibility.
+    it('parses v2 _happier metadata', () => {
         expect(ToolHappierMetaV2Schema).toBeDefined();
 
         const parsed = ToolHappierMetaV2Schema.parse({
@@ -41,7 +38,7 @@ describe('protocol tool v2 schemas', () => {
         expect(parsed.canonicalToolName).toBe('Bash');
     });
 
-    it('allows forward-compatible canonical tool names in _happy metadata', () => {
+    it('allows forward-compatible canonical tool names in _happier metadata', () => {
         const parsed = ToolHappierMetaV2Schema.parse({
             v: 2,
             protocol: 'acp',
@@ -61,5 +58,14 @@ describe('protocol tool v2 schemas', () => {
         const bashResultSchema = getToolResultSchemaV2('Bash');
         const parsedResult = bashResultSchema.parse({ stdout: 'hello\n', exit_code: 0 });
         expect(parsedResult.exit_code).toBe(0);
+    });
+
+    it('rejects Diff.files entries with empty old/new text pairs', () => {
+        const diffInputSchema = getToolInputSchemaV2('Diff');
+        expect(() =>
+            diffInputSchema.parse({
+                files: [{ file_path: 'foo.txt', oldText: '', newText: '' }],
+            }),
+        ).toThrow();
     });
 });
