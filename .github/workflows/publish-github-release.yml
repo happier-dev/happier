@@ -1,0 +1,193 @@
+name: PUBLISH — GitHub Release
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      title:
+        required: true
+        type: string
+      target_sha:
+        required: true
+        type: string
+      prerelease:
+        required: true
+        type: boolean
+      rolling_tag:
+        required: true
+        type: boolean
+      generate_notes:
+        required: true
+        type: boolean
+      notes:
+        required: false
+        default: ""
+        type: string
+      assets:
+        required: false
+        default: ""
+        type: string
+      assets_dir:
+        required: false
+        default: ""
+        type: string
+      assets_artifact:
+        required: false
+        default: ""
+        type: string
+      assets_artifact_path:
+        required: false
+        default: dist/release-assets
+        type: string
+      clobber:
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-github-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub App token (release bot)
+        env:
+          RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
+          RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+        if: ${{ env.RELEASE_BOT_APP_ID != '' && env.RELEASE_BOT_PRIVATE_KEY != '' }}
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+
+      - name: Configure git remote auth (release bot)
+        if: ${{ steps.app_token.outcome == 'success' && steps.app_token.outputs.token != '' }}
+        env:
+          TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+      - name: Download release assets artifact
+        if: ${{ inputs.assets_artifact != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.assets_artifact }}
+          path: ${{ inputs.assets_artifact_path }}
+
+      - name: Move rolling tag
+        if: inputs.rolling_tag
+        env:
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --tags origin >/dev/null 2>&1 || echo "::warning::git fetch --tags origin failed; proceeding with local refs."
+          if ! git cat-file -e "${SHA}^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "${SHA}" >/dev/null 2>&1 || true
+          fi
+          if ! git cat-file -e "${SHA}^{commit}" 2>/dev/null; then
+            echo "Missing target commit object for rolling tag: ${SHA}" >&2
+            exit 1
+          fi
+          git tag -f "${TAG}" "${SHA}"
+          git push origin "refs/tags/${TAG}" --force
+
+      - name: Ensure release exists
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
+          SHA: ${{ inputs.target_sha }}
+          PRERELEASE: ${{ inputs.prerelease }}
+          GENERATE_NOTES: ${{ inputs.generate_notes }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          prerelease_flag=""
+          if [ "${PRERELEASE}" = "true" ]; then
+            prerelease_flag="--prerelease"
+          fi
+
+          if [ "${GENERATE_NOTES}" = "true" ]; then
+            # shellcheck disable=SC2086
+            gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --generate-notes
+            exit 0
+          fi
+
+          if [ -z "${NOTES:-}" ]; then
+            echo "notes is required when generate_notes=false" >&2
+            exit 1
+          fi
+
+          # shellcheck disable=SC2086
+          gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --notes "${NOTES}"
+
+      - name: Upload assets
+        if: ${{ inputs.assets != '' || inputs.assets_dir != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          TAG: ${{ inputs.tag }}
+          ASSETS: ${{ inputs.assets }}
+          ASSETS_DIR: ${{ inputs.assets_dir }}
+          CLOBBER: ${{ inputs.clobber }}
+        run: |
+          set -euo pipefail
+
+          clobber_flag=""
+          if [ "${CLOBBER}" = "true" ]; then
+            clobber_flag="--clobber"
+          fi
+
+          upload_one() {
+            local spec="$1"
+            if [ -z "${spec}" ]; then
+              return 0
+            fi
+            # shellcheck disable=SC2086
+            gh release upload "${TAG}" "${spec}" ${clobber_flag}
+          }
+
+          if [ -n "${ASSETS_DIR:-}" ]; then
+            if [ ! -d "${ASSETS_DIR}" ]; then
+              echo "assets_dir does not exist: ${ASSETS_DIR}" >&2
+              exit 1
+            fi
+            shopt -s nullglob
+            mapfile -t files < <(find "${ASSETS_DIR}" -maxdepth 10 -type f)
+            if [ "${#files[@]}" -eq 0 ]; then
+              echo "No files found in assets_dir: ${ASSETS_DIR}" >&2
+              exit 1
+            fi
+            for f in "${files[@]}"; do
+              upload_one "${f}"
+            done
+          fi
+
+          if [ -n "${ASSETS:-}" ]; then
+            while IFS= read -r line; do
+              spec="$(echo "${line}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+              if [ -z "${spec}" ]; then
+                continue
+              fi
+              upload_one "${spec}"
+            done <<< "${ASSETS}"
+          fi

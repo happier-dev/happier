@@ -1,0 +1,72 @@
+name: PUBLISH — UI Release (GitHub)
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      title:
+        required: true
+        type: string
+      target_sha:
+        required: true
+        type: string
+      prerelease:
+        required: true
+        type: boolean
+      rolling_tag:
+        required: true
+        type: boolean
+      generate_notes:
+        required: true
+        type: boolean
+      notes:
+        required: false
+        default: ""
+        type: string
+      assets:
+        required: false
+        default: ""
+        type: string
+      assets_dir:
+        required: false
+        default: ""
+        type: string
+      assets_artifact:
+        required: false
+        default: ""
+        type: string
+      assets_artifact_path:
+        required: false
+        default: dist/release-assets
+        type: string
+      clobber:
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-ui-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    uses: ./.github/workflows/publish-github-release.yml
+    secrets: inherit
+    with:
+      tag: ${{ inputs.tag }}
+      title: ${{ inputs.title }}
+      target_sha: ${{ inputs.target_sha }}
+      prerelease: ${{ inputs.prerelease }}
+      rolling_tag: ${{ inputs.rolling_tag }}
+      generate_notes: ${{ inputs.generate_notes }}
+      notes: ${{ inputs.notes }}
+      assets: ${{ inputs.assets }}
+      assets_dir: ${{ inputs.assets_dir }}
+      assets_artifact: ${{ inputs.assets_artifact }}
+      assets_artifact_path: ${{ inputs.assets_artifact_path }}
+      clobber: ${{ inputs.clobber }}
