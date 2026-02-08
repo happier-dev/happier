@@ -24,8 +24,10 @@ vi.mock('./ChangeTitleView', () => ({ ChangeTitleView: () => null }));
 
 describe('toolViewRegistry (execute/codexbash)', () => {
     it('maps execute and CodexBash to the generic Bash renderer', async () => {
-        const { getToolViewComponent } = await import('./_registry');
-        const { BashView } = await import('./BashView');
+        const [{ getToolViewComponent }, { BashView }] = await Promise.all([
+            import('./_registry'),
+            import('./BashView'),
+        ]);
 
         expect(getToolViewComponent('execute')).toBe(BashView);
         expect(getToolViewComponent('CodexBash')).toBe(BashView);

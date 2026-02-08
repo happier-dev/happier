@@ -2,6 +2,8 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolViewProps } from '../ToolView.testHelpers';
+import { makeCompletedTool, normalizedHostText } from './truncationView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,26 +25,25 @@ vi.mock('../../tools/ToolSectionView', () => ({
 }));
 
 describe('ReadView', () => {
-    it('truncates long reads by default', async () => {
+    async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { ReadView } = await import('./ReadView');
-
-        const content = Array.from({ length: 100 }, (_, i) => `line-${i}`).join('\n');
-        const tool: ToolCall = {
-            name: 'Read',
-            state: 'completed',
-            input: { file_path: '/tmp/a.txt' } as any,
-            result: { content } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(ReadView, { tool, metadata: null } as any));
+            tree = renderer.create(
+                React.createElement(
+                    ReadView,
+                    makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
+                ),
+            );
         });
+        return tree;
+    }
+
+    it('truncates long reads by default', async () => {
+        const content = Array.from({ length: 100 }, (_, i) => `line-${i}`).join('\n');
+        const tree = await renderView(
+            makeCompletedTool('Read', { file_path: '/tmp/a.txt' }, { content }),
+        );
 
         const codeNodes = tree.root.findAllByType('CodeView' as any);
         expect(codeNodes).toHaveLength(1);
@@ -51,30 +52,15 @@ describe('ReadView', () => {
         expect(codeNodes[0].props.code).not.toContain('line-20');
 
         // Ellipsis marker should be shown when truncated.
-        const textNodes = tree.root.findAllByType('Text' as any);
-        expect(textNodes.map((n) => n.props.children).join('')).toContain('…');
+        expect(normalizedHostText(tree)).toContain('…');
     });
 
     it('shows substantially more content when detailLevel=full', async () => {
-        const { ReadView } = await import('./ReadView');
-
         const content = Array.from({ length: 100 }, (_, i) => `line-${i}`).join('\n');
-        const tool: ToolCall = {
-            name: 'Read',
-            state: 'completed',
-            input: { file_path: '/tmp/a.txt' } as any,
-            result: { content } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(ReadView, { tool, metadata: null, detailLevel: 'full' } as any));
-        });
+        const tree = await renderView(
+            makeCompletedTool('Read', { file_path: '/tmp/a.txt' }, { content }),
+            'full',
+        );
 
         const codeNodes = tree.root.findAllByType('CodeView' as any);
         expect(codeNodes).toHaveLength(1);
@@ -82,8 +68,19 @@ describe('ReadView', () => {
         expect(codeNodes[0].props.code).toContain('line-99');
         expect(codeNodes[0].props.code).not.toContain('…');
 
-        const textNodes = tree.root.findAllByType('Text' as any);
-        expect(textNodes.map((n) => n.props.children).join('')).not.toContain('…');
+        expect(normalizedHostText(tree)).not.toContain('…');
+    });
+
+    it('renders string results and returns null for malformed completed payloads', async () => {
+        const stringTree = await renderView(
+            makeCompletedTool('Read', { file_path: '/tmp/a.txt' }, 'direct string result'),
+        );
+        expect(stringTree.root.findAllByType('CodeView' as any)).toHaveLength(1);
+        expect(stringTree.root.findAllByType('CodeView' as any)[0].props.code).toContain('direct string result');
+
+        const malformedTree = await renderView(
+            makeCompletedTool('Read', { file_path: '/tmp/a.txt' }, { content: 123 }),
+        );
+        expect(malformedTree.root.findAllByType('CodeView' as any)).toHaveLength(0);
     });
 });
-

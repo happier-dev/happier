@@ -2,6 +2,8 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolViewProps } from '../ToolView.testHelpers';
+import { makeCompletedTool, normalizedHostText } from './truncationView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -19,97 +21,64 @@ vi.mock('../../tools/ToolSectionView', () => ({
 }));
 
 describe('TodoView', () => {
-    it('renders todos from TodoRead result.todos', async () => {
+    function makeTodoList(count: number) {
+        return Array.from({ length: count }).map((_, i) => ({ content: `Item ${i + 1}`, status: 'pending' as const }));
+    }
+
+    async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
         const { TodoView } = await import('./TodoView');
-
-        const tool: ToolCall = {
-            name: 'TodoRead',
-            state: 'completed',
-            input: {},
-            result: { todos: [{ content: 'Hello', status: 'pending' }] } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
-            tree = renderer.create(React.createElement(TodoView, { tool, metadata: null, messages: [] } as any));
+            tree = renderer.create(
+                React.createElement(
+                    TodoView,
+                    makeToolViewProps(tool, { messages: [], ...(detailLevel ? { detailLevel } : {}) }),
+                ),
+            );
         });
+        return tree!;
+    }
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts.flatMap((c: any) => Array.isArray(c) ? c : [c]).filter((c: any) => typeof c === 'string');
-        expect(flattened.join(' ')).toContain('Hello');
+    it('renders todos from TodoRead result.todos', async () => {
+        const tree = await renderView(
+            makeCompletedTool('TodoRead', {}, { todos: [{ content: 'Hello', status: 'pending' }] }),
+        );
+
+        expect(normalizedHostText(tree)).toContain('Hello');
     });
 
     it('renders a compact summary by default and shows a +more indicator', async () => {
-        const { TodoView } = await import('./TodoView');
+        const tree = await renderView(
+            makeCompletedTool('TodoRead', {}, { todos: makeTodoList(10) }),
+        );
 
-        const tool: ToolCall = {
-            name: 'TodoRead',
-            state: 'completed',
-            input: {},
-            result: {
-                todos: Array.from({ length: 10 }).map((_, i) => ({ content: `Item ${i + 1}`, status: 'pending' })),
-            } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(TodoView, { tool, metadata: null, messages: [] } as any));
-        });
-
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts
-            .flatMap((c: any) => Array.isArray(c) ? c : [c])
-            .filter((c: any) => typeof c === 'string' || typeof c === 'number')
-            .map((c: any) => String(c));
-        const joined = flattened.join(' ');
-        const normalizedJoined = joined.replace(/\s+/g, ' ').trim();
-
-        expect(normalizedJoined).toContain('Item 1');
-        expect(normalizedJoined).toContain('Item 6');
-        expect(normalizedJoined).not.toContain('Item 7');
-        expect(normalizedJoined).toContain('+ 4 more');
+        const text = normalizedHostText(tree);
+        expect(text).toContain('Item 1');
+        expect(text).toContain('Item 6');
+        expect(text).not.toContain('Item 7');
+        expect(text).toContain('+ 4 more');
     });
 
     it('renders more items when detailLevel=full', async () => {
-        const { TodoView } = await import('./TodoView');
+        const tree = await renderView(
+            makeCompletedTool('TodoRead', {}, { todos: makeTodoList(10) }),
+            'full',
+        );
 
-        const tool: ToolCall = {
-            name: 'TodoRead',
-            state: 'completed',
-            input: {},
-            result: {
-                todos: Array.from({ length: 10 }).map((_, i) => ({ content: `Item ${i + 1}`, status: 'pending' })),
-            } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        const text = normalizedHostText(tree);
+        expect(text).toContain('Item 10');
+        expect(text).not.toContain('more');
+    });
 
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(TodoView, { tool, metadata: null, messages: [], detailLevel: 'full' } as any));
-        });
+    it('supports legacy/new fallback todo payload locations', async () => {
+        const fromLegacy = await renderView(
+            makeCompletedTool('TodoRead', {}, { newTodos: [{ content: 'Legacy', status: 'pending' }] }),
+        );
+        expect(normalizedHostText(fromLegacy)).toContain('Legacy');
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts
-            .flatMap((c: any) => Array.isArray(c) ? c : [c])
-            .filter((c: any) => typeof c === 'string' || typeof c === 'number')
-            .map((c: any) => String(c));
-        const joined = flattened.join(' ');
-
-        expect(joined).toContain('Item 10');
-        expect(joined).not.toContain('more');
+        const fromInput = await renderView(
+            makeCompletedTool('TodoRead', { todos: [{ content: 'FromInput', status: 'pending' }] }, {}),
+        );
+        expect(normalizedHostText(fromInput)).toContain('FromInput');
     });
 });

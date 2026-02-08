@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/typesMessage';
+import { collectHostText, makeToolCall, makeToolViewProps } from '../ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,86 +35,72 @@ vi.mock('@/sync/storage', () => ({
 }));
 
 describe('WriteView', () => {
-    it('truncates long writes by default', async () => {
-        diffSpy.mockClear();
-        const { WriteView } = await import('./WriteView');
-
-        const content = Array.from({ length: 100 }, (_, i) => `line-${i}`).join('\n');
-        const tool: ToolCall = {
+    function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
+        return makeToolCall({
             name: 'Write',
             state: 'completed',
-            input: { file_path: '/tmp/a.txt', content } as any,
+            input: { file_path: '/tmp/a.txt', content: Array.from({ length: 100 }, (_, i) => `line-${i}`).join('\n') },
             result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
-        await act(async () => {
-            renderer.create(React.createElement(WriteView as any, { tool, metadata: null }));
+            ...overrides,
         });
+    }
+
+    async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
+        const { WriteView } = await import('./WriteView');
+        let tree!: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(
+                    WriteView,
+                    makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
+                ),
+            );
+        });
+        return tree;
+    }
+
+    it('truncates long writes by default', async () => {
+        diffSpy.mockClear();
+        await renderView(makeTool());
 
         expect(diffSpy).toHaveBeenCalledTimes(1);
         const last = diffSpy.mock.calls.at(-1)?.[0];
         expect(last.newText).toContain('line-0');
         expect(last.newText).toContain('line-19');
         expect(last.newText).not.toContain('line-20');
+        expect(last.showLineNumbers).toBe(false);
+        expect(last.showPlusMinusSymbols).toBe(false);
     });
 
     it('shows substantially more content when detailLevel=full', async () => {
         diffSpy.mockClear();
-        const { WriteView } = await import('./WriteView');
-
-        const content = Array.from({ length: 100 }, (_, i) => `line-${i}`).join('\n');
-        const tool: ToolCall = {
-            name: 'Write',
-            state: 'completed',
-            input: { file_path: '/tmp/a.txt', content } as any,
-            result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
-        await act(async () => {
-            renderer.create(React.createElement(WriteView as any, { tool, metadata: null, detailLevel: 'full' }));
-        });
+        await renderView(makeTool(), 'full');
 
         expect(diffSpy).toHaveBeenCalledTimes(1);
         const last = diffSpy.mock.calls.at(-1)?.[0];
         expect(last.newText).toContain('line-0');
         expect(last.newText).toContain('line-99');
+        expect(last.showLineNumbers).toBe(true);
+        expect(last.showPlusMinusSymbols).toBe(true);
     });
 
     it('renders a one-line preview when detailLevel=title', async () => {
         diffSpy.mockClear();
-        const { WriteView } = await import('./WriteView');
-
-        const content = Array.from({ length: 10 }, (_, i) => `line-${i}`).join('\n');
-        const tool: ToolCall = {
-            name: 'Write',
-            state: 'completed',
-            input: { file_path: '/tmp/a.txt', content } as any,
-            result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(React.createElement(WriteView as any, { tool, metadata: null, detailLevel: 'title' }));
-        });
+        const tree = await renderView(
+            makeTool({ input: { file_path: '/tmp/a.txt', content: Array.from({ length: 10 }, (_, i) => `line-${i}`).join('\n') } }),
+            'title',
+        );
 
         expect(diffSpy).toHaveBeenCalledTimes(0);
-        const textNodes = tree.root.findAllByType('Text' as any);
-        expect(textNodes.map((n) => String(n.props.children)).join('')).toContain('line-0');
+        expect(collectHostText(tree).join(' ')).toContain('line-0');
+    });
+
+    it('falls back to placeholder content when input schema is malformed', async () => {
+        diffSpy.mockClear();
+        await renderView(makeTool({ input: { file_path: '/tmp/a.txt', content: 123 } }));
+
+        expect(diffSpy).toHaveBeenCalledTimes(1);
+        const last = diffSpy.mock.calls.at(-1)?.[0];
+        expect(last.newText).toContain('<no contents>');
     });
 });
-

@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/typesMessage';
+import { collectHostText, makeToolCall, makeToolViewProps } from '../ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -44,11 +45,8 @@ vi.mock('@/sync/storage', () => ({
 }));
 
 describe('MultiEditView', () => {
-    it('renders a compact summary by default (first edit only)', async () => {
-        diffSpy.mockClear();
-        const { MultiEditView } = await import('./MultiEditView');
-
-        const tool: ToolCall = {
+    function makeTool(overrides: Partial<ToolCall> = {}): ToolCall {
+        return makeToolCall({
             name: 'MultiEdit',
             state: 'completed',
             input: {
@@ -57,67 +55,57 @@ describe('MultiEditView', () => {
                     { old_string: 'c', new_string: 'd', replace_all: true },
                     { old_string: 'e', new_string: 'f' },
                 ],
-            } as any,
+            },
             result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+            ...overrides,
+        });
+    }
 
+    async function renderView(tool: ToolCall, detailLevel?: 'title' | 'summary' | 'full') {
+        const { MultiEditView } = await import('./MultiEditView');
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(MultiEditView as any, { tool, metadata: null }));
+            tree = renderer.create(
+                React.createElement(
+                    MultiEditView,
+                    makeToolViewProps(tool, detailLevel ? { detailLevel } : {}),
+                ),
+            );
         });
+        return tree;
+    }
+
+    it('renders a compact summary by default (first edit only)', async () => {
+        diffSpy.mockClear();
+        const tree = await renderView(makeTool());
 
         expect(diffSpy).toHaveBeenCalledTimes(1);
-        const textNodes = tree.root.findAllByType('Text' as any);
-        const renderedText = textNodes
-            .map((n) => (Array.isArray(n.props.children) ? n.props.children.join('') : String(n.props.children)))
-            .join('\n');
+        expect(diffSpy.mock.calls[0]?.[0]).toMatchObject({
+            oldText: 'a',
+            newText: 'b',
+            showLineNumbers: false,
+            wrapLines: true,
+        });
+        const renderedText = collectHostText(tree).join('\n').replace(/\s+/g, ' ');
         expect(renderedText).toContain('+2 more');
         expect(renderedText).not.toContain('Replace all');
     });
 
     it('renders all edits with headers when detailLevel=full', async () => {
         diffSpy.mockClear();
-        const { MultiEditView } = await import('./MultiEditView');
-
-        const tool: ToolCall = {
-            name: 'MultiEdit',
-            state: 'completed',
-            input: {
-                edits: [
-                    { old_string: 'a', new_string: 'b' },
-                    { old_string: 'c', new_string: 'd', replace_all: true },
-                    { old_string: 'e', new_string: 'f' },
-                ],
-            } as any,
-            result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
-        let tree!: renderer.ReactTestRenderer;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(MultiEditView as any, { tool, metadata: null, detailLevel: 'full' })
-            );
-        });
+        const tree = await renderView(makeTool(), 'full');
 
         expect(diffSpy).toHaveBeenCalledTimes(3);
-        const textNodes = tree.root.findAllByType('Text' as any);
-        const renderedText = textNodes
-            .map((n) => (Array.isArray(n.props.children) ? n.props.children.join('') : String(n.props.children)))
-            .join('\n');
+        expect(diffSpy.mock.calls[0]?.[0]).toMatchObject({
+            oldText: 'a',
+            newText: 'b',
+            showLineNumbers: true,
+            wrapLines: true,
+        });
+        const renderedText = collectHostText(tree).join('\n').replace(/\s+/g, ' ');
         expect(renderedText).toContain('Edit 1/3');
         expect(renderedText).toContain('Edit 2/3');
         expect(renderedText).toContain('Replace all');
         expect(renderedText).not.toContain('+2 more');
     });
 });
-

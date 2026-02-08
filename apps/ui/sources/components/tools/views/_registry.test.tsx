@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { ToolViewComponent } from './_registry';
 
-// `_registry` imports every tool view module. For this unit test we only care about the
-// `read` → `ReadView` mapping, so we stub the rest to keep the import surface minimal.
+// `_registry` imports every tool view module. For these mapping tests we only care
+// about registry behavior, so all views are mocked to keep imports light and deterministic.
 vi.mock('./EditView', () => ({ EditView: () => null }));
 vi.mock('./BashView', () => ({ BashView: () => null }));
 vi.mock('./WriteView', () => ({ WriteView: () => null }));
@@ -30,55 +31,23 @@ vi.mock('./MCPToolView', () => ({
     formatMCPSubtitle: () => '',
 }));
 
+async function loadRegistry() {
+    const [{ getToolViewComponent }, views] = await Promise.all([import('./_registry'), import('./_registry')]);
+    return {
+        getToolViewComponent: getToolViewComponent as (name: string) => ToolViewComponent | null,
+        views,
+    };
+}
+
 describe('toolViewRegistry', () => {
     it('registers a Read view for lowercase read tool name', async () => {
-        // Import lazily so Vitest can apply stubs/mocks before module evaluation.
-        let getToolViewComponent: (name: string) => any;
-        let ReadView: any;
-        try {
-            ({ getToolViewComponent } = await import('./_registry'));
-            ({ ReadView } = await import('./ReadView'));
-        } catch (e: any) {
-            // Re-throw with a stack that includes the failing module path (Vitest can sometimes
-            // drop module-load context for syntax errors).
-            throw new Error(e?.stack ? String(e.stack) : String(e));
-        }
-
+        const [{ getToolViewComponent }, { ReadView }] = await Promise.all([import('./_registry'), import('./ReadView')]);
         expect(getToolViewComponent('read')).toBe(ReadView);
     });
 
-    it('maps legacy provider tool names to the canonical renderer (CodexBash → BashView)', async () => {
-        let getToolViewComponent: (name: string) => any;
-        let BashView: any;
-        try {
-            ({ getToolViewComponent } = await import('./_registry'));
-            ({ BashView } = await import('./BashView'));
-        } catch (e: any) {
-            throw new Error(e?.stack ? String(e.stack) : String(e));
-        }
-
-        expect(getToolViewComponent('CodexBash')).toBe(BashView);
-    });
-
     it('maps ACP lowercase tool names to canonical renderers (search/glob/grep/ls/write/delete)', async () => {
-        let getToolViewComponent: (name: string) => any;
-        let CodeSearchView: any;
-        let GlobView: any;
-        let GrepView: any;
-        let LSView: any;
-        let WriteView: any;
-        let DeleteView: any;
-        try {
-            ({ getToolViewComponent } = await import('./_registry'));
-            ({ CodeSearchView } = await import('./CodeSearchView'));
-            ({ GlobView } = await import('./GlobView'));
-            ({ GrepView } = await import('./GrepView'));
-            ({ LSView } = await import('./LSView'));
-            ({ WriteView } = await import('./WriteView'));
-            ({ DeleteView } = await import('./DeleteView'));
-        } catch (e: any) {
-            throw new Error(e?.stack ? String(e.stack) : String(e));
-        }
+        const [{ getToolViewComponent, CodeSearchView, GlobView, GrepView, LSView, DeleteView }, { WriteView }] =
+            await Promise.all([import('./_registry'), import('./WriteView')]);
 
         expect(getToolViewComponent('search')).toBe(CodeSearchView);
         expect(getToolViewComponent('glob')).toBe(GlobView);
@@ -90,14 +59,7 @@ describe('toolViewRegistry', () => {
     });
 
     it('maps Claude task helper tools to TaskView (TaskCreate/TaskList/TaskUpdate)', async () => {
-        let getToolViewComponent: (name: string) => any;
-        let TaskView: any;
-        try {
-            ({ getToolViewComponent } = await import('./_registry'));
-            ({ TaskView } = await import('./TaskView'));
-        } catch (e: any) {
-            throw new Error(e?.stack ? String(e.stack) : String(e));
-        }
+        const [{ getToolViewComponent }, { TaskView }] = await Promise.all([import('./_registry'), import('./_registry')]);
 
         expect(getToolViewComponent('TaskCreate')).toBe(TaskView);
         expect(getToolViewComponent('TaskList')).toBe(TaskView);
@@ -105,39 +67,17 @@ describe('toolViewRegistry', () => {
     });
 
     it('returns a renderer for canonical Patch tools', async () => {
-        let getToolViewComponent: (name: string) => any;
-        try {
-            ({ getToolViewComponent } = await import('./_registry'));
-        } catch (e: any) {
-            throw new Error(e?.stack ? String(e.stack) : String(e));
-        }
-
+        const { getToolViewComponent } = await loadRegistry();
         expect(getToolViewComponent('Patch')).not.toBeNull();
     });
 
     it('uses the MCP tool renderer for any mcp__* tool name', async () => {
-        let getToolViewComponent: (name: string) => any;
-        let MCPToolView: any;
-        try {
-            ({ getToolViewComponent } = await import('./_registry'));
-            ({ MCPToolView } = await import('./MCPToolView'));
-        } catch (e: any) {
-            throw new Error(e?.stack ? String(e.stack) : String(e));
-        }
-
+        const [{ getToolViewComponent }, { MCPToolView }] = await Promise.all([import('./_registry'), import('./MCPToolView')]);
         expect(getToolViewComponent('mcp__linear__create_issue')).toBe(MCPToolView);
     });
 
-    it('falls back to a generic renderer for unknown tool names (do not drop tool cards)', async () => {
-        let getToolViewComponent: (name: string) => any;
-        let UnknownToolView: any;
-        try {
-            ({ getToolViewComponent } = await import('./_registry'));
-            ({ UnknownToolView } = await import('./UnknownToolView'));
-        } catch (e: any) {
-            throw new Error(e?.stack ? String(e.stack) : String(e));
-        }
-
+    it('falls back to a generic renderer for unknown tool names', async () => {
+        const [{ getToolViewComponent }, { UnknownToolView }] = await Promise.all([import('./_registry'), import('./UnknownToolView')]);
         expect(getToolViewComponent('TotallyNewToolFromFutureProvider')).toBe(UnknownToolView);
     });
 });
