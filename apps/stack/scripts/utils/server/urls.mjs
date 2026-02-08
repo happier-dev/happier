@@ -58,8 +58,9 @@ export function getWebappUrlEnvOverride({ env = process.env, stackName = null } 
 
   let envWebappUrl = (env.HAPPIER_WEBAPP_URL ?? '').toString().trim() || '';
 
-  // Safety: for non-main stacks, ignore a global HAPPIER_WEBAPP_URL unless it was explicitly set in the stack env file.
-  if (name !== 'main' && envWebappUrl && !stackEnvExplicitlySetsWebappUrl({ env, stackName: name })) {
+  // Safety: ignore a global HAPPIER_WEBAPP_URL unless it was explicitly set in the stack env file.
+  // This prevents surprising launches of the hosted app due to shell env leakage.
+  if (envWebappUrl && !stackEnvExplicitlySetsWebappUrl({ env, stackName: name })) {
     envWebappUrl = '';
   }
 

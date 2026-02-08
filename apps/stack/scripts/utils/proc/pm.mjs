@@ -238,6 +238,8 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
   const modeRaw = (process.env.HAPPIER_STACK_CLI_BUILD_MODE ?? 'auto').trim().toLowerCase();
   const mode = modeRaw === 'always' || modeRaw === 'auto' || modeRaw === 'never' ? modeRaw : 'auto';
   const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+  const distDir = join(cliDir, 'dist');
+  const distBackupDir = join(cliDir, '.dist.hstack-backup');
   const buildStatePath = resolveBuildStatePath({ label: 'happier-cli', dir: cliDir });
   const gitSig = await computeGitWorktreeSignature(cliDir);
   const prev = await readJsonIfExists(buildStatePath);
@@ -268,18 +270,35 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
     console.log('[local] building happier-cli...');
   }
   const pm = await getComponentPm(cliDir, envIn);
-  await run(pm.cmd, ['build'], { cwd: cliDir, env: envIn, stdio: quiet ? 'ignore' : 'inherit' });
+  const hadDistBeforeBuild = await pathExists(distDir);
+  if (hadDistBeforeBuild) {
+    await rm(distBackupDir, { recursive: true, force: true });
+    await rename(distDir, distBackupDir);
+  }
 
-  // Sanity check: happier-cli daemon entrypoint must exist after a successful build.
-  // Without this, watch-based rebuilds can restart the daemon into a MODULE_NOT_FOUND crash,
-  // which looks like the UI "dies out of nowhere" even though the root cause is missing build output.
-  if (!(await pathExists(distEntrypoint))) {
-    throw new Error(
-      `[local] happier-cli build finished but did not produce expected entrypoint.\n` +
-        `Expected: ${distEntrypoint}\n` +
-        `Fix: run the component build directly and inspect its output:\n` +
-        `  cd "${cliDir}" && ${pm.cmd} build`
-    );
+  try {
+    await run(pm.cmd, ['build'], { cwd: cliDir, env: envIn, stdio: quiet ? 'ignore' : 'inherit' });
+
+    // Sanity check: happier-cli daemon entrypoint must exist after a successful build.
+    // Without this, watch-based rebuilds can restart the daemon into a MODULE_NOT_FOUND crash,
+    // which looks like the UI "dies out of nowhere" even though the root cause is missing build output.
+    if (!(await pathExists(distEntrypoint))) {
+      throw new Error(
+        `[local] happier-cli build finished but did not produce expected entrypoint.\n` +
+          `Expected: ${distEntrypoint}\n` +
+          `Fix: run the component build directly and inspect its output:\n` +
+          `  cd "${cliDir}" && ${pm.cmd} build`
+      );
+    }
+    if (hadDistBeforeBuild) {
+      await rm(distBackupDir, { recursive: true, force: true });
+    }
+  } catch (error) {
+    if (hadDistBeforeBuild && (await pathExists(distBackupDir))) {
+      await rm(distDir, { recursive: true, force: true });
+      await rename(distBackupDir, distDir);
+    }
+    throw error;
   }
 
   // Persist new build state (best-effort).
@@ -413,7 +432,12 @@ export async function pmSpawnBin(dir, label, bin, args, { env = process.env } = 
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: componentDir, env: effectiveEnv, quiet });
   }
-  return spawnProc(componentLabel, pm.cmd, ['run', componentBin, ...componentArgs], effectiveEnv, { cwd: componentDir, ...options });
+  const kind = (effectiveEnv.HAPPIER_STACK_PROCESS_KIND ?? '').toString().trim();
+  const envForChild =
+    kind || !(effectiveEnv.HAPPIER_STACK_ENV_FILE ?? '').toString().trim()
+      ? effectiveEnv
+      : { ...effectiveEnv, HAPPIER_STACK_PROCESS_KIND: 'infra' };
+  return spawnProc(componentLabel, pm.cmd, ['run', componentBin, ...componentArgs], envForChild, { cwd: componentDir, ...options });
 }
 
 export async function pmSpawnScript(dir, label, script, args, { env = process.env } = {}) {
@@ -431,5 +455,10 @@ export async function pmSpawnScript(dir, label, script, args, { env = process.en
   if (pm.name === 'yarn') {
     await ensureYarnReady({ dir: componentDir, env: effectiveEnv, quiet });
   }
-  return spawnProc(componentLabel, pm.cmd, ['run', componentScript, ...componentArgs], effectiveEnv, { cwd: componentDir, ...options });
+  const kind = (effectiveEnv.HAPPIER_STACK_PROCESS_KIND ?? '').toString().trim();
+  const envForChild =
+    kind || !(effectiveEnv.HAPPIER_STACK_ENV_FILE ?? '').toString().trim()
+      ? effectiveEnv
+      : { ...effectiveEnv, HAPPIER_STACK_PROCESS_KIND: 'infra' };
+  return spawnProc(componentLabel, pm.cmd, ['run', componentScript, ...componentArgs], envForChild, { cwd: componentDir, ...options });
 }

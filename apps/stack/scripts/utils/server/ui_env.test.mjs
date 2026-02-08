@@ -27,6 +27,18 @@ test('resolveServerUiEnv returns empty when UI build dir is missing', () => {
   );
 });
 
+test('resolveServerUiEnv returns empty when UI build dir is empty', () => {
+  assert.deepEqual(
+    resolveServerUiEnv({
+      serveUi: true,
+      uiBuildDir: '',
+      uiPrefix: '/',
+      uiBuildDirExists: true,
+    }),
+    {}
+  );
+});
+
 test('resolveServerUiEnv sets both full and light env keys when enabled', () => {
   assert.deepEqual(
     resolveServerUiEnv({

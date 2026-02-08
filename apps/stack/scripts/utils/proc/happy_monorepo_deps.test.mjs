@@ -6,8 +6,11 @@ import { join } from 'node:path';
 
 import { ensureHappyMonorepoNestedDepsInstalled } from './happy_monorepo_deps.mjs';
 
-async function mkMonorepoRoot() {
+async function mkMonorepoRoot(t) {
   const root = await mkdtemp(join(tmpdir(), 'hs-mono-deps-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
   await mkdir(join(root, 'apps', 'ui'), { recursive: true });
   await mkdir(join(root, 'apps', 'cli'), { recursive: true });
   await mkdir(join(root, 'apps', 'server'), { recursive: true });
@@ -18,10 +21,7 @@ async function mkMonorepoRoot() {
 }
 
 test('ensureHappyMonorepoNestedDepsInstalled installs cli/server deps when running tests at the monorepo root', async (t) => {
-  const root = await mkMonorepoRoot();
-  t.after(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
+  const root = await mkMonorepoRoot(t);
 
   const calls = [];
   const ensureDepsInstalled = async (dir, label) => {
@@ -45,10 +45,7 @@ test('ensureHappyMonorepoNestedDepsInstalled installs cli/server deps when runni
 });
 
 test('ensureHappyMonorepoNestedDepsInstalled is a no-op when invoked from inside a package directory', async (t) => {
-  const root = await mkMonorepoRoot();
-  t.after(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
+  const root = await mkMonorepoRoot(t);
 
   const calls = [];
   const ensureDepsInstalled = async (dir, label) => {
@@ -65,4 +62,28 @@ test('ensureHappyMonorepoNestedDepsInstalled is a no-op when invoked from inside
   assert.equal(out.monorepoRoot, root);
   assert.deepEqual(out.ensured, []);
   assert.equal(calls.length, 0);
+});
+
+test('ensureHappyMonorepoNestedDepsInstalled is a no-op outside monorepo roots', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-mono-deps-non-root-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(join(root, 'random', 'folder'), { recursive: true });
+  const out = await ensureHappyMonorepoNestedDepsInstalled({
+    happyTestDir: join(root, 'random', 'folder'),
+    quiet: true,
+    env: { ...process.env },
+    ensureDepsInstalled: async () => {},
+  });
+  assert.equal(out.monorepoRoot, null);
+  assert.deepEqual(out.ensured, []);
+});
+
+test('ensureHappyMonorepoNestedDepsInstalled throws when ensureDepsInstalled is missing for monorepo root', async (t) => {
+  const root = await mkMonorepoRoot(t);
+  await assert.rejects(
+    () => ensureHappyMonorepoNestedDepsInstalled({ happyTestDir: root, quiet: true, env: { ...process.env } }),
+    /missing ensureDepsInstalled implementation/i
+  );
 });

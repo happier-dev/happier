@@ -14,40 +14,53 @@ async function writeJson(path, obj) {
   await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
 }
 
-test('importPrismaClientFromNodeModules imports PrismaClient via node_modules resolution', async () => {
+async function withPrismaFixture(run) {
   const dir = await mkdtemp(join(tmpdir(), 'hs-prisma-import-'));
   try {
-    await mkdir(join(dir, 'node_modules', '@prisma', 'client'), { recursive: true });
-    await writeJson(join(dir, 'node_modules', '@prisma', 'client', 'package.json'), { name: '@prisma/client', type: 'module', main: './index.js' });
-    await writeFile(join(dir, 'node_modules', '@prisma', 'client', 'index.js'), 'export class PrismaClient {}\n', 'utf-8');
-
-    const PrismaClient = await importPrismaClientFromNodeModules({ dir });
-    assert.equal(typeof PrismaClient, 'function');
-    assert.equal(PrismaClient.name, 'PrismaClient');
+    await run(dir);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+async function writeModulePackageJson(dir) {
+  await writeJson(join(dir, 'package.json'), { type: 'module' });
+}
+
+async function writePrismaNodeModule(dir, body = 'export class PrismaClient {}\n') {
+  await mkdir(join(dir, 'node_modules', '@prisma', 'client'), { recursive: true });
+  await writeJson(join(dir, 'node_modules', '@prisma', 'client', 'package.json'), {
+    name: '@prisma/client',
+    type: 'module',
+    main: './index.js',
+  });
+  await writeFile(join(dir, 'node_modules', '@prisma', 'client', 'index.js'), body, 'utf-8');
+}
+
+test('importPrismaClientFromNodeModules imports PrismaClient via node_modules resolution', async () => {
+  await withPrismaFixture(async (dir) => {
+    await writePrismaNodeModule(dir);
+    const PrismaClient = await importPrismaClientFromNodeModules({ dir });
+    assert.equal(typeof PrismaClient, 'function');
+    assert.equal(PrismaClient.name, 'PrismaClient');
+  });
 });
 
 test('importPrismaClientFromGeneratedSqlite imports PrismaClient from generated/sqlite-client', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'hs-prisma-import-'));
-  try {
-    await writeJson(join(dir, 'package.json'), { type: 'module' });
+  await withPrismaFixture(async (dir) => {
+    await writeModulePackageJson(dir);
     await mkdir(join(dir, 'generated', 'sqlite-client'), { recursive: true });
     await writeFile(join(dir, 'generated', 'sqlite-client', 'index.js'), 'export class PrismaClient {}\n', 'utf-8');
 
     const PrismaClient = await importPrismaClientFromGeneratedSqlite({ dir });
     assert.equal(typeof PrismaClient, 'function');
     assert.equal(PrismaClient.name, 'PrismaClient');
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  });
 });
 
 test('importPrismaClientForHappyServerLight uses node_modules Prisma client even if legacy sqlite artifacts exist', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'hs-prisma-import-'));
-  try {
-    await writeJson(join(dir, 'package.json'), { type: 'module' });
+  await withPrismaFixture(async (dir) => {
+    await writeModulePackageJson(dir);
     await mkdir(join(dir, 'prisma', 'sqlite'), { recursive: true });
     await writeFile(join(dir, 'prisma', 'sqlite', 'schema.prisma'), 'datasource db { provider = "sqlite" }\n', 'utf-8');
 
@@ -55,15 +68,11 @@ test('importPrismaClientForHappyServerLight uses node_modules Prisma client even
     await writeFile(join(dir, 'generated', 'sqlite-client', 'index.js'), 'export class PrismaClient {}\n', 'utf-8');
 
     // Also create a node_modules PrismaClient; the light flavor should use it.
-    await mkdir(join(dir, 'node_modules', '@prisma', 'client'), { recursive: true });
-    await writeJson(join(dir, 'node_modules', '@prisma', 'client', 'package.json'), { name: '@prisma/client', type: 'module', main: './index.js' });
-    await writeFile(join(dir, 'node_modules', '@prisma', 'client', 'index.js'), 'export class PrismaClient { static which = "node_modules"; }\n', 'utf-8');
+    await writePrismaNodeModule(dir, 'export class PrismaClient { static which = "node_modules"; }\n');
 
     const PrismaClient = await importPrismaClientForHappyServerLight({ serverDir: dir });
     assert.equal(typeof PrismaClient, 'function');
     assert.equal(PrismaClient.name, 'PrismaClient');
     assert.equal(PrismaClient.which, 'node_modules');
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  });
 });

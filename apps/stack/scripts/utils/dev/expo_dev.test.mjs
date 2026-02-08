@@ -6,6 +6,7 @@ import { buildExpoStartArgs, resolveExpoDevHost } from './expo_dev.mjs';
 test('resolveExpoDevHost defaults to lan and normalizes values', () => {
   assert.equal(resolveExpoDevHost({ env: {} }), 'lan');
   assert.equal(resolveExpoDevHost({ env: { HAPPIER_STACK_EXPO_HOST: 'LAN' } }), 'lan');
+  assert.equal(resolveExpoDevHost({ env: { HAPPIER_STACK_EXPO_HOST: '  TuNnEl  ' } }), 'tunnel');
   assert.equal(resolveExpoDevHost({ env: { HAPPIER_STACK_EXPO_HOST: 'localhost' } }), 'localhost');
   assert.equal(resolveExpoDevHost({ env: { HAPPIER_STACK_EXPO_HOST: 'tunnel' } }), 'tunnel');
   assert.equal(resolveExpoDevHost({ env: { HAPPIER_STACK_EXPO_HOST: 'nope' } }), 'lan');
@@ -45,6 +46,19 @@ test('buildExpoStartArgs omits --scheme when empty', () => {
     clearCache: false,
   });
   assert.deepEqual(args, ['start', '--dev-client', '--host', 'lan', '--port', '8081']);
+});
+
+test('buildExpoStartArgs accepts numeric port strings and does not add --clear when disabled', () => {
+  const args = buildExpoStartArgs({
+    port: '8082',
+    host: 'localhost',
+    wantWeb: true,
+    wantDevClient: false,
+    scheme: '',
+    clearCache: false,
+  });
+  assert.deepEqual(args, ['start', '--web', '--host', 'localhost', '--port', '8082']);
+  assert.equal(args.includes('--clear'), false);
 });
 
 test('buildExpoStartArgs throws on invalid requests', () => {

@@ -32,32 +32,45 @@ async function writeSchemas({ dir, schemaPrisma, schemaSqlitePrisma }) {
   }
 }
 
-test('assertServerPrismaProviderMatches accepts happier-server-light when schema.prisma is postgresql', async () => {
+async function withValidateDir(run) {
   const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
   try {
-    await writeSchemas({ dir, schemaPrisma: PG_SCHEMA, schemaSqlitePrisma: SQLITE_SCHEMA });
-    assert.doesNotThrow(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server-light', serverDir: dir }));
+    await run(dir);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+test('assertServerPrismaProviderMatches accepts happier-server-light when schema.prisma is postgresql', async () => {
+  await withValidateDir(async (dir) => {
+    await writeSchemas({ dir, schemaPrisma: PG_SCHEMA, schemaSqlitePrisma: SQLITE_SCHEMA });
+    assert.doesNotThrow(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server-light', serverDir: dir }));
+  });
 });
 
 test('assertServerPrismaProviderMatches rejects happier-server-light when schema.prisma is sqlite', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
-  try {
+  await withValidateDir(async (dir) => {
     await writeSchemas({ dir, schemaPrisma: SQLITE_SCHEMA, schemaSqlitePrisma: SQLITE_SCHEMA });
     assert.throws(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server-light', serverDir: dir }));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  });
 });
 
 test('assertServerPrismaProviderMatches rejects happier-server when schema.prisma is sqlite', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'hs-validate-'));
-  try {
+  await withValidateDir(async (dir) => {
     await writeSchemas({ dir, schemaPrisma: SQLITE_SCHEMA, schemaSqlitePrisma: null });
     assert.throws(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server', serverDir: dir }));
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  });
+});
+
+test('assertServerPrismaProviderMatches accepts happier-server when schema.prisma is postgresql', async () => {
+  await withValidateDir(async (dir) => {
+    await writeSchemas({ dir, schemaPrisma: PG_SCHEMA, schemaSqlitePrisma: null });
+    assert.doesNotThrow(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server', serverDir: dir }));
+  });
+});
+
+test('assertServerPrismaProviderMatches is a no-op when schema.prisma is missing', async () => {
+  await withValidateDir(async (dir) => {
+    assert.doesNotThrow(() => assertServerPrismaProviderMatches({ serverComponentName: 'happier-server-light', serverDir: dir }));
+  });
 });

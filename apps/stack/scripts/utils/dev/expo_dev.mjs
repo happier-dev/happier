@@ -378,8 +378,15 @@ export async function ensureDevExpoServer({
     // eslint-disable-next-line no-console
     console.log(`[local] expo: starting Expo (${expoModeLabel({ wantWeb, wantDevClient })}, metro port=${metroPort}, host=${host})`);
   }
+  // Some auth flows historically passed `stdio: ['ignore','ignore','ignore']` which drops Expo output entirely.
+  // For reliability, treat that as "use default pipes" so errors remain debuggable (and verbose can stream).
+  const normalizedSpawnOptions = { ...(spawnOptions ?? {}) };
+  const stdio = normalizedSpawnOptions.stdio;
+  if (Array.isArray(stdio) && stdio[1] === 'ignore' && stdio[2] === 'ignore') {
+    delete normalizedSpawnOptions.stdio;
+  }
   // Run the Expo CLI from the runner dir (where deps/bins live), but target the actual Expo project dir.
-  const proc = await expoSpawn({ label: 'expo', dir: uiDir, projectDir, args, env, options: spawnOptions, quiet });
+  const proc = await expoSpawn({ label: 'expo', dir: uiDir, projectDir, args, env, options: normalizedSpawnOptions, quiet });
   children.push(proc);
 
   // Start Tailscale forwarder if enabled

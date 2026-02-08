@@ -1,5 +1,6 @@
 import { runCapture } from './proc.mjs';
 import { killPid } from '../expo/expo.mjs';
+import { terminateProcessGroup } from './terminate.mjs';
 
 export async function getPsEnvLine(pid) {
   const n = Number(pid);
@@ -17,6 +18,19 @@ export async function getPsEnvLine(pid) {
   }
 }
 
+export async function getPidStartTime(pid) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 1) return null;
+  if (process.platform === 'win32') return null;
+  try {
+    const out = await runCapture('ps', ['-o', 'lstart=', '-p', String(n)]);
+    const v = String(out ?? '').trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function listPidsWithEnvNeedle(needle) {
   const n = String(needle ?? '').trim();
   if (!n) return [];
@@ -27,6 +41,30 @@ export async function listPidsWithEnvNeedle(needle) {
     const pids = [];
     for (const line of out.split('\n')) {
       if (!line.includes(n)) continue;
+      const m = line.trim().match(/^(\d+)\s+/);
+      if (!m) continue;
+      const pid = Number(m[1]);
+      if (Number.isFinite(pid) && pid > 1) {
+        pids.push(pid);
+      }
+    }
+    return Array.from(new Set(pids));
+  } catch {
+    return [];
+  }
+}
+
+export async function listPidsWithEnvNeedles(needles) {
+  const raw = Array.isArray(needles) ? needles : [];
+  const ns = raw.map((n) => String(n ?? '').trim()).filter(Boolean);
+  if (ns.length === 0) return [];
+  if (process.platform === 'win32') return [];
+  try {
+    // Include environment variables (eww) so we can match on HAPPIER_STACK_ENV_FILE=/.../env safely.
+    const out = await runCapture('ps', ['eww', '-ax', '-o', 'pid=,command=']);
+    const pids = [];
+    for (const line of out.split('\n')) {
+      if (!ns.every((n) => line.includes(n))) continue;
       const m = line.trim().match(/^(\d+)\s+/);
       if (!m) continue;
       const pid = Number(m[1]);
@@ -99,7 +137,7 @@ export async function killPidOwnedByStack(pid, { stackName, envPath, cliHomeDir,
 
 export async function killProcessGroupOwnedByStack(
   pid,
-  { stackName, envPath, cliHomeDir, label = 'process-group', json = false, signal = 'SIGTERM' } = {}
+  { stackName, envPath, cliHomeDir, label = 'process-group', json = false, signal = 'SIGTERM', graceMs = 800 } = {}
 ) {
   const ok = await isPidOwnedByStack(pid, { stackName, envPath, cliHomeDir });
   if (!ok) {
@@ -114,21 +152,9 @@ export async function killProcessGroupOwnedByStack(
     await killPid(pid);
     return { killed: true, reason: 'killed_pid_only' };
   }
-  try {
-    process.kill(-pgid, signal);
-  } catch {
-    // ignore
+  const terminated = await terminateProcessGroup(pgid, { graceMs, signal });
+  if (!terminated.ok) {
+    return { killed: false, reason: 'kill_timeout', pgid, signal: terminated.signal ?? 'SIGKILL' };
   }
-  // Escalate if still alive.
-  try {
-    process.kill(pid, 0);
-    try {
-      process.kill(-pgid, 'SIGKILL');
-    } catch {
-      // ignore
-    }
-  } catch {
-    // exited
-  }
-  return { killed: true, reason: 'killed_pgid', pgid };
+  return { killed: true, reason: 'killed_pgid', pgid, signal: terminated.signal ?? 'SIGKILL' };
 }

@@ -6,17 +6,44 @@ import { watchDebounced } from '../proc/watch.mjs';
 import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded } from '../stack/startup.mjs';
 import { startLocalDaemonWithAuth } from '../../daemon.mjs';
 
-export async function ensureDevCliReady({ cliDir, buildCli }) {
-  await ensureDepsInstalled(cliDir, 'happier-cli');
-  const res = await ensureCliBuilt(cliDir, { buildCli });
+export async function ensureDevCliReady(
+  { cliDir, buildCli, env = process.env },
+  { logger = console } = {}
+) {
+  await ensureDepsInstalled(cliDir, 'happier-cli', { env });
+  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+
+  const keepExistingDistOnBuildFailure = (error) => {
+    if (!existsSync(distEntrypoint)) return null;
+    const msg = error instanceof Error ? error.stack || error.message : String(error);
+    logger.warn(
+      `[local] happier-cli build failed; keeping previous build output at ${distEntrypoint}.`
+    );
+    logger.warn(msg);
+    return { built: false, reason: 'build_failed_using_existing_dist' };
+  };
+
+  let res;
+  try {
+    res = await ensureCliBuilt(cliDir, { buildCli, env });
+  } catch (error) {
+    const fallback = keepExistingDistOnBuildFailure(error);
+    if (fallback) return fallback;
+    throw error;
+  }
 
   // Fail closed: dev mode must never start the daemon without a usable happier-cli build output.
   // Even if the user disabled CLI builds globally (or build mode is "never"), missing dist will
   // cause an immediate MODULE_NOT_FOUND crash when spawning the daemon.
-  const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
   if (!existsSync(distEntrypoint)) {
     // Last-chance recovery: force a build once.
-    await ensureCliBuilt(cliDir, { buildCli: true });
+    try {
+      await ensureCliBuilt(cliDir, { buildCli: true, env });
+    } catch (error) {
+      const fallback = keepExistingDistOnBuildFailure(error);
+      if (fallback) return fallback;
+      throw error;
+    }
     if (!existsSync(distEntrypoint)) {
       throw new Error(
         `[local] happier-cli build output is missing.\n` +
@@ -73,15 +100,23 @@ export async function startDevDaemon({
   publicServerUrl,
   restart,
   isShuttingDown,
-}) {
+  env = process.env,
+  stackName = null,
+  cliIdentity = 'default',
+}, {
+  startLocalDaemonWithAuthImpl = startLocalDaemonWithAuth,
+} = {}) {
   if (!startDaemon) return;
-  await startLocalDaemonWithAuth({
+  await startLocalDaemonWithAuthImpl({
     cliBin,
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
     isShuttingDown,
     forceRestart: Boolean(restart),
+    env,
+    stackName,
+    cliIdentity,
   });
 }
 
@@ -95,10 +130,20 @@ export function watchHappyCliAndRestartDaemon({
   internalServerUrl,
   publicServerUrl,
   isShuttingDown,
-}) {
+  env = process.env,
+  stackName = null,
+  cliIdentity = 'default',
+}, {
+  watchDebouncedImpl = watchDebounced,
+  ensureCliBuiltImpl = ensureCliBuilt,
+  startLocalDaemonWithAuthImpl = startLocalDaemonWithAuth,
+  existsSyncImpl = existsSync,
+  logger = console,
+} = {}) {
   if (!enabled || !startDaemon) return null;
 
   let inFlight = false;
+  let pending = false;
 
   // IMPORTANT:
   // Watch only source/config paths, not build outputs. Watching the whole repo can
@@ -113,47 +158,71 @@ export function watchHappyCliAndRestartDaemon({
     join(cliDir, 'tsconfig.build.json'),
     join(cliDir, 'pkgroll.config.mjs'),
     join(cliDir, 'yarn.lock'),
-  ].filter((p) => existsSync(p));
+  ].filter((p) => existsSyncImpl(p));
 
-  return watchDebounced({
+  return watchDebouncedImpl({
     paths: (watchPaths.length ? watchPaths : [cliDir]).map((p) => resolve(p)),
     debounceMs: 500,
     onChange: async () => {
       if (isShuttingDown?.()) return;
-      if (inFlight) return;
+      if (inFlight) {
+        pending = true;
+        return;
+      }
       inFlight = true;
       try {
-        // eslint-disable-next-line no-console
-        console.log('[local] watch: happier-cli changed → rebuilding + restarting daemon...');
-        try {
-          await ensureCliBuilt(cliDir, { buildCli });
-        } catch (e) {
-          // IMPORTANT:
-          // - A rebuild can legitimately fail while an agent is mid-edit (e.g. TS errors).
-          // - In that case we must NOT restart the daemon (we'd just restart into a broken build),
-          //   and we must NOT crash the parent dev process. Keep watching for the next change.
-          const msg = e instanceof Error ? e.stack || e.message : String(e);
-          // eslint-disable-next-line no-console
-          console.error('[local] watch: happier-cli rebuild failed; keeping daemon running (will retry on next change).');
-          // eslint-disable-next-line no-console
-          console.error(msg);
-          return;
-        }
-        const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
-        if (!existsSync(distEntrypoint)) {
-          console.warn(
-            `[local] watch: happier-cli build did not produce ${distEntrypoint}; refusing to restart daemon to avoid downtime.`
-          );
-          return;
-        }
-        await startLocalDaemonWithAuth({
-          cliBin,
-          cliHomeDir,
-          internalServerUrl,
-          publicServerUrl,
-          isShuttingDown,
-          forceRestart: true,
-        });
+        do {
+          pending = false;
+          if (isShuttingDown?.()) return;
+
+          logger.log('[local] watch: happier-cli changed → rebuilding + restarting daemon...');
+          try {
+            await ensureCliBuiltImpl(cliDir, { buildCli });
+          } catch (e) {
+            // IMPORTANT:
+            // - A rebuild can legitimately fail while an agent is mid-edit (e.g. TS errors).
+            // - In that case we must NOT restart the daemon (we'd just restart into a broken build),
+            //   and we must NOT crash the parent dev process. Keep watching for the next change.
+            const msg = e instanceof Error ? e.stack || e.message : String(e);
+            logger.error('[local] watch: happier-cli rebuild failed; keeping daemon running (will retry on next change).');
+            logger.error(msg);
+            if (pending) continue;
+            break;
+          }
+
+          const distEntrypoint = join(cliDir, 'dist', 'index.mjs');
+          if (!existsSyncImpl(distEntrypoint)) {
+            logger.warn(
+              `[local] watch: happier-cli build did not produce ${distEntrypoint}; refusing to restart daemon to avoid downtime.`
+            );
+            if (pending) continue;
+            break;
+          }
+
+          try {
+            await startLocalDaemonWithAuthImpl({
+              cliBin,
+              cliHomeDir,
+              internalServerUrl,
+              publicServerUrl,
+              isShuttingDown,
+              forceRestart: true,
+              env,
+              stackName,
+              cliIdentity,
+            });
+          } catch (e) {
+            const msg = e instanceof Error ? e.stack || e.message : String(e);
+            logger.error('[local] watch: daemon restart failed; keeping dev runner alive (will retry on next change).');
+            logger.error(msg);
+            if (pending) continue;
+            break;
+          }
+        } while (pending);
+      } catch (e) {
+        const msg = e instanceof Error ? e.stack || e.message : String(e);
+        logger.error('[local] watch: unexpected watcher error (continuing):');
+        logger.error(msg);
       } finally {
         inFlight = false;
       }

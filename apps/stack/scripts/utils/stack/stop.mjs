@@ -7,8 +7,9 @@ import { isPidAlive, readPidState } from '../expo/expo.mjs';
 import { stopLocalDaemon } from '../../daemon.mjs';
 import { stopHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
 import { deleteStackRuntimeStateFile, getStackRuntimeStatePath, readStackRuntimeStateFile } from './runtime_state.mjs';
-import { killPidOwnedByStack, killProcessGroupOwnedByStack, listPidsWithEnvNeedle } from '../proc/ownership.mjs';
+import { killPidOwnedByStack, killProcessGroupOwnedByStack, listPidsWithEnvNeedles } from '../proc/ownership.mjs';
 import { coercePort } from '../server/port.mjs';
+import { resolvePreferredStackDaemonStatePaths } from '../auth/credentials_paths.mjs';
 
 function resolveServerComponentFromStackEnv(env) {
   const v =
@@ -36,9 +37,9 @@ async function daemonControlPost({ httpPort, path, body = {} }) {
   }
 }
 
-async function stopDaemonTrackedSessions({ cliHomeDir, json }) {
+async function stopDaemonTrackedSessions({ cliHomeDir, serverUrl, json }) {
   // Read daemon state file written by happier-cli; needed to call control server (/list, /stop-session).
-  const statePath = join(cliHomeDir, 'daemon.state.json');
+  const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl });
   if (!existsSync(statePath)) {
     return { ok: true, skipped: true, reason: 'missing_state', stoppedSessionIds: [] };
   }
@@ -116,7 +117,17 @@ async function stopExpoStateDir({ stackName, baseDir, kind, stateFileName, envPa
   return killed;
 }
 
-export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json, noDocker = false, aggressive = false, sweepOwned = false }) {
+export async function stopStackWithEnv({
+  rootDir,
+  stackName,
+  baseDir,
+  env,
+  json,
+  noDocker = false,
+  aggressive = false,
+  sweepOwned = false,
+  autoSweep = true,
+}) {
   const actions = {
     stackName,
     baseDir,
@@ -136,6 +147,7 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
   const serverComponent = resolveServerComponentFromStackEnv(env);
   const port = coercePort(env.HAPPIER_STACK_SERVER_PORT);
   const backendPort = coercePort(env.HAPPIER_STACK_SERVER_BACKEND_PORT);
+  const internalServerUrl = port ? `http://127.0.0.1:${port}` : 'http://127.0.0.1:3005';
   const cliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(baseDir, 'cli')).toString();
   const cliDir = getComponentDir(rootDir, 'happier-cli', env);
   const cliBin = join(cliDir, 'bin', 'happier.mjs');
@@ -166,14 +178,13 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
 
   if (aggressive) {
     try {
-      actions.daemonSessionsStopped = await stopDaemonTrackedSessions({ cliHomeDir, json });
+      actions.daemonSessionsStopped = await stopDaemonTrackedSessions({ cliHomeDir, serverUrl: internalServerUrl, json });
     } catch (e) {
       actions.errors.push({ step: 'daemon-sessions', error: e instanceof Error ? e.message : String(e) });
     }
   }
 
   try {
-    const internalServerUrl = port ? `http://127.0.0.1:${port}` : 'http://127.0.0.1:3005';
     await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir });
     actions.daemonStopped = true;
   } catch (e) {
@@ -227,11 +238,33 @@ export async function stopStackWithEnv({ rootDir, stackName, baseDir, env, json,
   }
 
   // Last resort: sweep any remaining processes that still carry this stack env file in their environment.
-  // This is still safe because envPath is unique per stack; we also exclude our own PID.
-  const shouldAutoSweep = !runtimeState && envPath;
+  // IMPORTANT:
+  // This must NOT kill daemon-spawned sessions/LLM/agent processes. Those should survive infra restarts.
+  //
+  // We only target infra processes by requiring HAPPIER_STACK_PROCESS_KIND=infra in addition to the stack env file.
+  // We also exclude our own PID.
+  const autoSweepFromEnvRaw = (env?.HAPPIER_STACK_STOP_AUTO_SWEEP ?? '').toString().trim();
+  const autoSweepFromEnv = autoSweepFromEnvRaw ? autoSweepFromEnvRaw !== '0' : null;
+  const autoSweepResolved = typeof autoSweepFromEnv === 'boolean' ? autoSweepFromEnv : Boolean(autoSweep);
+
+  // If the runtime state exists but its owner PID is stale (e.g. runner was Ctrl+C'd),
+  // treat it like "missing" and fall back to a safe infra-only sweep.
+  const runtimeStateUsable = Boolean(runtimeState) && Number.isFinite(runnerPid) && runnerPid > 1 && isPidAlive(runnerPid);
+  const shouldAutoSweep = autoSweepResolved && envPath && !runtimeStateUsable;
   if ((sweepOwned || shouldAutoSweep) && envPath) {
-    const needle1 = `HAPPIER_STACK_ENV_FILE=${envPath}`;
-    const pids = [...(await listPidsWithEnvNeedle(needle1))]
+    const envNeedle = `HAPPIER_STACK_ENV_FILE=${envPath}`;
+    const infraTagged = await listPidsWithEnvNeedles([envNeedle, 'HAPPIER_STACK_PROCESS_KIND=infra']);
+
+    // Compatibility sweep for older stacks: some long-running infra (notably server dev loops)
+    // may not have been started with HAPPIER_STACK_PROCESS_KIND=infra yet. We restrict this
+    // fallback to npm/yarn managed server processes to avoid touching daemon-spawned sessions.
+    const legacyServer = await listPidsWithEnvNeedles([
+      envNeedle,
+      'npm_lifecycle_event=',
+      'npm_package_name=@happier-dev/server',
+    ]);
+
+    const pids = [...new Set([...infraTagged, ...legacyServer])]
       .filter((pid) => pid !== process.pid)
       .filter((pid) => Number.isFinite(pid) && pid > 1);
 

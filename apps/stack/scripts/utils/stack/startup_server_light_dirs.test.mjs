@@ -17,57 +17,50 @@ async function writeEsmPkg({ dir, name, body }) {
   await writeFile(join(dir, 'index.js'), body.trim() + '\n', 'utf-8');
 }
 
-test('ensureServerLightSchemaReady creates light data dirs before probing', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'hs-startup-light-dirs-'));
-  t.after(async () => {
-    await rm(root, { recursive: true, force: true });
-  });
-
-  const serverDir = join(root, 'server');
-  await mkdir(serverDir, { recursive: true });
-  await writeJson(join(serverDir, 'package.json'), { name: 'server', version: '0.0.0' });
-  await writeFile(join(serverDir, 'yarn.lock'), '# yarn\n', 'utf-8');
-  await mkdir(join(serverDir, 'node_modules'), { recursive: true });
-  await writeFile(join(serverDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
-
-  // Stub deps used by the pglite probe (node runs with cwd=serverDir).
-  await writeEsmPkg({
-    dir: join(serverDir, 'node_modules', '@electric-sql', 'pglite'),
-    name: '@electric-sql/pglite',
-    body: `
+async function writeServerLightProbeStubs(serverDir) {
+  const packages = [
+    {
+      path: join(serverDir, 'node_modules', '@electric-sql', 'pglite'),
+      name: '@electric-sql/pglite',
+      body: `
 export class PGlite {
   constructor(_dir) { this.waitReady = Promise.resolve(); }
   async close() {}
 }
-`.trim(),
-  });
-  await writeEsmPkg({
-    dir: join(serverDir, 'node_modules', '@electric-sql', 'pglite-socket'),
-    name: '@electric-sql/pglite-socket',
-    body: `
+`,
+    },
+    {
+      path: join(serverDir, 'node_modules', '@electric-sql', 'pglite-socket'),
+      name: '@electric-sql/pglite-socket',
+      body: `
 export class PGLiteSocketServer {
   constructor(_opts) {}
   async start() {}
   getServerConn() { return '127.0.0.1:54321'; }
   async stop() {}
 }
-`.trim(),
-  });
-  await writeEsmPkg({
-    dir: join(serverDir, 'node_modules', '@prisma', 'client'),
-    name: '@prisma/client',
-    body: `
+`,
+    },
+    {
+      path: join(serverDir, 'node_modules', '@prisma', 'client'),
+      name: '@prisma/client',
+      body: `
 export class PrismaClient {
   constructor() { this.account = { count: async () => 0 }; }
   async $disconnect() {}
 }
-`.trim(),
-  });
+`,
+    },
+  ];
 
-  // Minimal stub `yarn` so commandExists('yarn') succeeds.
-  const binDir = join(root, 'bin');
-  await mkdir(binDir, { recursive: true });
+  for (const pkg of packages) {
+    await writeEsmPkg({ dir: pkg.path, name: pkg.name, body: pkg.body });
+  }
+}
+
+async function writeYarnVersionShim(binDir) {
   const yarnPath = join(binDir, 'yarn');
+  await mkdir(binDir, { recursive: true });
   await writeFile(
     yarnPath,
     [
@@ -79,6 +72,29 @@ export class PrismaClient {
     'utf-8'
   );
   await chmod(yarnPath, 0o755);
+}
+
+async function createServerLightProbeFixture(root) {
+  const serverDir = join(root, 'server');
+  await mkdir(serverDir, { recursive: true });
+  await writeJson(join(serverDir, 'package.json'), { name: 'server', version: '0.0.0', type: 'module' });
+  await writeFile(join(serverDir, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await mkdir(join(serverDir, 'node_modules'), { recursive: true });
+  await writeFile(join(serverDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+  await writeServerLightProbeStubs(serverDir);
+
+  const binDir = join(root, 'bin');
+  await writeYarnVersionShim(binDir);
+  return { serverDir, binDir };
+}
+
+test('ensureServerLightSchemaReady creates light data dirs before probing', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-startup-light-dirs-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const { serverDir, binDir } = await createServerLightProbeFixture(root);
 
   const dataDir = join(root, 'data');
   const filesDir = join(dataDir, 'files');

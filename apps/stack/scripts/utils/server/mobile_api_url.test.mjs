@@ -38,3 +38,21 @@ test('resolveMobileReachableServerUrl does not rewrite non-local URLs', () => {
   });
   assert.equal(out, 'https://my-machine.tailnet.ts.net');
 });
+
+test('resolveMobileReachableServerUrl falls back to LAN IP:port when serverUrl is empty', () => {
+  const out = resolveMobileReachableServerUrl({
+    env: { HAPPIER_STACK_LAN_IP: '10.1.2.3' },
+    serverUrl: '',
+    serverPort: 3010,
+  });
+  assert.equal(out, 'http://10.1.2.3:3010');
+});
+
+test('resolveMobileReachableServerUrl preserves invalid URL-like input strings', () => {
+  const out = resolveMobileReachableServerUrl({
+    env: { HAPPIER_STACK_LAN_IP: '10.1.2.3' },
+    serverUrl: 'localhost:3005',
+    serverPort: 3005,
+  });
+  assert.equal(out, 'localhost:3005');
+});

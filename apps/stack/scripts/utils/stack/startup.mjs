@@ -4,16 +4,31 @@ import { isSandboxed, sandboxAllowsGlobalSideEffects } from '../env/sandbox.mjs'
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
-import { resolvePrismaClientImportForServerComponent } from '../server/flavor_scripts.mjs';
+import { resolvePrismaClientImportForDbProvider, resolvePrismaClientImportForServerComponent } from '../server/flavor_scripts.mjs';
+import { findAnyCredentialPathInCliHome } from '../auth/credentials_paths.mjs';
 
 function looksLikeMissingTableError(msg) {
   const s = String(msg ?? '').toLowerCase();
   return s.includes('does not exist') || s.includes('no such table');
 }
 
-async function probeAccountCount({ serverComponentName, serverDir, env }) {
+function firstNonEmptyEnv(...values) {
+  for (const value of values) {
+    const normalized = String(value ?? '').trim();
+    if (normalized) return normalized;
+  }
+  return '';
+}
+
+function resolveLightDbProviderFromEnv(env) {
+  const raw = (env?.HAPPIER_DB_PROVIDER ?? env?.HAPPY_DB_PROVIDER ?? '').toString().trim().toLowerCase();
+  if (raw === 'pglite') return 'pglite';
+  return 'sqlite';
+}
+
+async function probeAccountCount({ serverComponentName, serverDir, env, lightDbProvider = 'sqlite' }) {
   const probe =
-    serverComponentName === 'happier-server-light'
+    serverComponentName === 'happier-server-light' && lightDbProvider === 'pglite'
       ? `
 		let db;
 	  let pglite;
@@ -22,8 +37,10 @@ async function probeAccountCount({ serverComponentName, serverDir, env }) {
 	    const { PGlite } = await import('@electric-sql/pglite');
 	    const { PGLiteSocketServer } = await import('@electric-sql/pglite-socket');
 	    const { PrismaClient } = await import('@prisma/client');
-	    const dbDir = (process.env.HAPPY_SERVER_LIGHT_DB_DIR ?? process.env.HAPPIER_SERVER_LIGHT_DB_DIR ?? '').toString().trim();
-	    if (!dbDir) throw new Error('Missing HAPPY_SERVER_LIGHT_DB_DIR/HAPPIER_SERVER_LIGHT_DB_DIR for pglite probe');
+	    const dbDirPrimary = (process.env.HAPPIER_SERVER_LIGHT_DB_DIR ?? '').toString().trim();
+	    const dbDirLegacy = (process.env.HAPPY_SERVER_LIGHT_DB_DIR ?? '').toString().trim();
+	    const dbDir = dbDirPrimary || dbDirLegacy;
+	    if (!dbDir) throw new Error('Missing HAPPIER_SERVER_LIGHT_DB_DIR or HAPPY_SERVER_LIGHT_DB_DIR for pglite probe');
 	    pglite = new PGlite(dbDir);
 	    await pglite.waitReady;
 	    server = new PGLiteSocketServer({ db: pglite, host: '127.0.0.1', port: 0 });
@@ -63,6 +80,41 @@ async function probeAccountCount({ serverComponentName, serverDir, env }) {
 	    try {
 	      await pglite?.close();
 	    } catch {}
+		}
+		`.trim()
+      : serverComponentName === 'happier-server-light'
+      ? `
+	 	let db;
+		try {
+		  const { PrismaClient } = await import(${JSON.stringify(
+        resolvePrismaClientImportForDbProvider({ serverDir, provider: 'sqlite' })
+      )});
+      const dataDirPrimary = (process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
+      const dataDirLegacy = (process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
+      const dataDir = dataDirPrimary || dataDirLegacy;
+      const fromEnv = (process.env.DATABASE_URL ?? '').toString().trim();
+      const url = fromEnv || (dataDir ? \`file:\${dataDir}/happier-server-light.sqlite\` : '');
+      if (!url) throw new Error('Missing DATABASE_URL and HAPPIER_SERVER_LIGHT_DATA_DIR or HAPPY_SERVER_LIGHT_DATA_DIR for sqlite probe');
+      process.env.DATABASE_URL = url;
+		  db = new PrismaClient();
+		  const accountCount = await db.account.count();
+		  console.log(JSON.stringify({ accountCount }));
+		} catch (e) {
+		  console.log(
+		    JSON.stringify({
+		      error: {
+		        name: e?.name,
+		        message: e?.message,
+		        code: e?.code,
+		      },
+		    })
+		  );
+		} finally {
+		  try {
+		    await db?.$disconnect();
+		  } catch {
+		    // ignore
+		  }
 		}
 		`.trim()
       : `
@@ -133,11 +185,10 @@ export function resolveAuthSeedFromEnv(env) {
 export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort = false }) {
   await ensureDepsInstalled(serverDir, 'happier-server-light', { env });
 
-  const dataDir = (env?.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').toString().trim();
-  const filesDir = (env?.HAPPIER_SERVER_LIGHT_FILES_DIR ?? '').toString().trim() || (dataDir ? join(dataDir, 'files') : '');
-  const dbDir =
-    (env?.HAPPIER_SERVER_LIGHT_DB_DIR ?? env?.HAPPY_SERVER_LIGHT_DB_DIR ?? '').toString().trim() ||
-    (dataDir ? join(dataDir, 'pglite') : '');
+  const lightDbProvider = resolveLightDbProviderFromEnv(env);
+  const dataDir = firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_DATA_DIR, env?.HAPPY_SERVER_LIGHT_DATA_DIR);
+  const filesDir = firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_FILES_DIR, dataDir ? join(dataDir, 'files') : '');
+  const dbDir = firstNonEmptyEnv(env?.HAPPIER_SERVER_LIGHT_DB_DIR, env?.HAPPY_SERVER_LIGHT_DB_DIR, dataDir ? join(dataDir, 'pglite') : '');
   if (dataDir) {
     try {
       await mkdir(dataDir, { recursive: true });
@@ -162,15 +213,26 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
     }
   }
 
-  const probe = async () => await probeAccountCount({ serverComponentName: 'happier-server-light', serverDir, env });
-  // Current light flavor uses embedded Postgres via PGlite.
-  // Apply migrations via the server package script (it spins a temporary pglite socket and runs prisma migrate deploy).
+  if (
+    lightDbProvider === 'sqlite' &&
+    dataDir &&
+    !(env?.DATABASE_URL ?? '').toString().trim()
+  ) {
+    env.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+  }
+
+  const probe = async () =>
+    await probeAccountCount({ serverComponentName: 'happier-server-light', serverDir, env, lightDbProvider });
+  // Apply provider-specific light migrations:
+  // - sqlite: prisma/sqlite/schema.prisma
+  // - pglite: embedded Postgres + pglite socket
   //
   // IMPORTANT:
-  // If the server is already running, it may hold the pglite DB open (single-connection).
+  // If the server is already running with pglite, it may hold the DB open (single-connection).
   // When bestEffort=true (used for heuristics), skip migrations and only probe.
+  const migrateScript = lightDbProvider === 'pglite' ? 'migrate:light:deploy' : 'migrate:sqlite:deploy';
   if (!bestEffort) {
-    await run('yarn', ['-s', 'migrate:light:deploy'], { cwd: serverDir, env });
+    await run('yarn', ['-s', migrateScript], { cwd: serverDir, env });
   }
 
   // 2) Probe account count (used for auth seeding heuristics).
@@ -183,7 +245,7 @@ export async function ensureServerLightSchemaReady({ serverDir, env, bestEffort 
       if (bestEffort) {
         return { ok: false, migrated: true, accountCount: null, error: 'server-light schema not ready (missing tables)' };
       }
-      throw new Error(`[server-light] schema not ready after migrate:light:deploy (missing tables).`);
+      throw new Error(`[server-light] schema not ready after ${migrateScript} (missing tables).`);
     }
     if (bestEffort) {
       return { ok: false, migrated: true, accountCount: null, error: msg };
@@ -245,8 +307,7 @@ export async function maybeAutoCopyAuthFromMainIfNeeded({
   quiet = false,
   authEnv = null,
 }) {
-  const accessKeyPath = join(cliHomeDir, 'access.key');
-  const hasAccessKey = existsSync(accessKeyPath);
+  const hasAccessKey = Boolean(findAnyCredentialPathInCliHome({ cliHomeDir }));
 
   // "Initialized" heuristic:
   // - if we have credentials AND (when known) at least one Account row, we don't need to seed from main.

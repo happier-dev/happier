@@ -202,10 +202,11 @@ export async function runCapture(cmd, args, options = {}) {
 }
 
 export async function runCaptureResult(cmd, args, options = {}) {
-  const { timeoutMs, streamLabel, teeFile, teeLabel, ...spawnOptions } = options ?? {};
+  const { timeoutMs, streamLabel, teeFile, teeLabel, input, heartbeatMs, ...spawnOptions } = options ?? {};
   const startedAt = Date.now();
   return await new Promise((resolvePromise) => {
-    const proc = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], shell: false, ...spawnOptions });
+    const stdio = input != null ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'];
+    const proc = spawn(cmd, args, { stdio, shell: false, ...spawnOptions });
     let out = '';
     let err = '';
     const label = String(streamLabel ?? '').trim();
@@ -225,6 +226,12 @@ export async function runCaptureResult(cmd, args, options = {}) {
       return '';
     })();
     const teeStream = shouldTee ? createWriteStream(teePath, { flags: 'a' }) : null;
+    const keepaliveEveryMs = Number.isFinite(heartbeatMs) && heartbeatMs > 0 ? heartbeatMs : 0;
+
+    function writeKeepaliveLine(line) {
+      if (shouldStream) process.stdout.write(`${prefix}${line}\n`);
+      if (shouldTee && teeStream) teeStream.write(`${teePrefix}${line}\n`);
+    }
 
     function resolveWith(res) {
       if (shouldStream) {
@@ -241,7 +248,15 @@ export async function runCaptureResult(cmd, args, options = {}) {
         }
       }
       resolvePromise(res);
-    }    const t =
+    }
+    const hb =
+      keepaliveEveryMs > 0
+        ? setInterval(() => {
+            const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+            writeKeepaliveLine(`still running (elapsed ${elapsedSec}s, pid=${proc.pid})`);
+          }, keepaliveEveryMs)
+        : null;
+    const t =
       Number.isFinite(timeoutMs) && timeoutMs > 0
         ? setTimeout(() => {
             try {
@@ -249,6 +264,7 @@ export async function runCaptureResult(cmd, args, options = {}) {
             } catch {
               // ignore
             }
+            if (hb) clearInterval(hb);
             resolveWith({
               ok: false,
               exitCode: null,
@@ -272,8 +288,18 @@ export async function runCaptureResult(cmd, args, options = {}) {
       if (shouldStream) writeWithPrefix(process.stderr, prefix, errState, d);
       if (shouldTee && teeStream) writeWithPrefix(teeStream, teePrefix, teeErrState, d);
     });
+
+    if (input != null && proc.stdin) {
+      try {
+        proc.stdin.write(String(input));
+        proc.stdin.end();
+      } catch {
+        // ignore
+      }
+    }
     proc.on('error', (e) => {
       if (t) clearTimeout(t);
+      if (hb) clearInterval(hb);
       resolveWith({
         ok: false,
         exitCode: null,
@@ -288,6 +314,7 @@ export async function runCaptureResult(cmd, args, options = {}) {
     });
     proc.on('close', (code, signal) => {
       if (t) clearTimeout(t);
+      if (hb) clearInterval(hb);
       resolveWith({
         ok: code === 0,
         exitCode: code,

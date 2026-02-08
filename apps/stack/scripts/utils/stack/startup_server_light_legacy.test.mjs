@@ -1,103 +1,79 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ensureServerLightSchemaReady } from './startup.mjs';
+import { buildServerLightEnv, createServerLightFixture } from './startup_server_light.test_helper.mjs';
 
-async function writeJson(path, obj) {
-  await writeFile(path, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
-}
-
-async function writeEsmPkg({ dir, name, body }) {
-  await mkdir(dir, { recursive: true });
-  await writeJson(join(dir, 'package.json'), { name, type: 'module', main: './index.js' });
-  await writeFile(join(dir, 'index.js'), body.trim() + '\n', 'utf-8');
-}
-
-test('ensureServerLightSchemaReady bestEffort=true skips migrate:light:deploy', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'hs-startup-light-best-effort-'));
-  t.after(async () => {
-    await rm(root, { recursive: true, force: true });
+test('ensureServerLightSchemaReady bestEffort=true skips migrate:sqlite:deploy by default', async (t) => {
+  const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
+    prefix: 'hs-startup-light-best-effort-',
+    socketPort: 54323,
   });
-
-  const serverDir = join(root, 'server');
-  await mkdir(serverDir, { recursive: true });
-  await writeJson(join(serverDir, 'package.json'), { name: 'server', version: '0.0.0', type: 'module' });
-  await writeFile(join(serverDir, 'yarn.lock'), '# yarn\n', 'utf-8');
-
-  // Mark deps as installed so ensureDepsInstalled doesn't attempt a real install.
-  await mkdir(join(serverDir, 'node_modules'), { recursive: true });
-  await writeFile(join(serverDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
-
-  // Stub deps used by the pglite probe (node runs with cwd=serverDir).
-  await writeEsmPkg({
-    dir: join(serverDir, 'node_modules', '@electric-sql', 'pglite'),
-    name: '@electric-sql/pglite',
-    body: `
-export class PGlite {
-  constructor(_dir) { this.waitReady = Promise.resolve(); }
-  async close() {}
-}
-`.trim(),
-  });
-  await writeEsmPkg({
-    dir: join(serverDir, 'node_modules', '@electric-sql', 'pglite-socket'),
-    name: '@electric-sql/pglite-socket',
-    body: `
-export class PGLiteSocketServer {
-  constructor(_opts) {}
-  async start() {}
-  getServerConn() { return '127.0.0.1:54323'; }
-  async stop() {}
-}
-`.trim(),
-  });
-  await writeEsmPkg({
-    dir: join(serverDir, 'node_modules', '@prisma', 'client'),
-    name: '@prisma/client',
-    body: `
-export class PrismaClient {
-  constructor() { this.account = { count: async () => 0 }; }
-  async $disconnect() {}
-}
-`.trim(),
-  });
-
-  const marker = join(root, 'called-migrate-light-deploy.txt');
-
-  // Provide a stub `yarn` in PATH so migrate:light:deploy can be observed.
-  const binDir = join(root, 'bin');
-  await mkdir(binDir, { recursive: true });
-  const yarnPath = join(binDir, 'yarn');
-  await writeFile(
-    yarnPath,
-    [
-      '#!/usr/bin/env node',
-      "const fs = require('node:fs');",
-      'const args = process.argv.slice(2);',
-      "if (args.includes('--version')) { console.log('1.22.22'); process.exit(0); }",
-      `if (args[0] === '-s' && args[1] === 'migrate:light:deploy') { fs.writeFileSync(${JSON.stringify(marker)}, 'ok\\n', 'utf-8'); process.exit(0); }`,
-      'process.exit(0);',
-    ].join('\n') + '\n',
-    'utf-8'
-  );
-  await chmod(yarnPath, 0o755);
-
-  const env = {
-    ...process.env,
-    PATH: `${binDir}:${process.env.PATH ?? ''}`,
-    HAPPIER_SERVER_LIGHT_DATA_DIR: join(root, 'data'),
-    HAPPIER_SERVER_LIGHT_FILES_DIR: join(root, 'data', 'files'),
-    HAPPIER_SERVER_LIGHT_DB_DIR: join(root, 'data', 'pglite'),
-  };
+  const env = buildServerLightEnv({ binDir, root });
 
   const res = await ensureServerLightSchemaReady({ serverDir, env, bestEffort: true });
   assert.equal(res.ok, true);
   assert.equal(res.migrated, true);
   assert.equal(res.accountCount, 0);
-  assert.equal(existsSync(marker), false, `expected bestEffort to skip migrate:light:deploy (${marker})`);
+  assert.equal(existsSync(markerPath), false, `expected bestEffort to skip migrate:sqlite:deploy (${markerPath})`);
 });
 
+test('ensureServerLightSchemaReady honors HAPPY_SERVER_LIGHT_DATA_DIR legacy fallback', async (t) => {
+  const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
+    prefix: 'hs-startup-light-legacy-data-dir-',
+    socketPort: 54324,
+  });
+
+  const dataDir = join(root, 'legacy-data');
+  const env = buildServerLightEnv({
+    binDir,
+    root,
+    extraEnv: {
+      HAPPIER_SERVER_LIGHT_DATA_DIR: undefined,
+      HAPPIER_SERVER_LIGHT_FILES_DIR: undefined,
+      HAPPIER_SERVER_LIGHT_DB_DIR: undefined,
+      HAPPY_SERVER_LIGHT_DATA_DIR: dataDir,
+      DATABASE_URL: undefined,
+    },
+  });
+
+  assert.equal(existsSync(dataDir), false);
+  assert.equal(Boolean(env.DATABASE_URL), false);
+
+  const res = await ensureServerLightSchemaReady({ serverDir, env });
+  assert.equal(res.ok, true);
+  assert.equal(existsSync(dataDir), true);
+  assert.equal(env.DATABASE_URL, `file:${join(dataDir, 'happier-server-light.sqlite')}`);
+  assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
+});
+
+test('ensureServerLightSchemaReady falls back to HAPPY_SERVER_LIGHT_DATA_DIR when HAPPIER value is empty', async (t) => {
+  const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {
+    prefix: 'hs-startup-light-empty-prefers-legacy-',
+    socketPort: 54325,
+  });
+
+  const dataDir = join(root, 'legacy-data-empty-fallback');
+  const env = buildServerLightEnv({
+    binDir,
+    root,
+    extraEnv: {
+      HAPPIER_SERVER_LIGHT_DATA_DIR: '',
+      HAPPIER_SERVER_LIGHT_FILES_DIR: '',
+      HAPPIER_SERVER_LIGHT_DB_DIR: '',
+      HAPPY_SERVER_LIGHT_DATA_DIR: dataDir,
+      DATABASE_URL: undefined,
+    },
+  });
+
+  assert.equal(existsSync(dataDir), false);
+  assert.equal(Boolean(env.DATABASE_URL), false);
+
+  const res = await ensureServerLightSchemaReady({ serverDir, env });
+  assert.equal(res.ok, true);
+  assert.equal(existsSync(dataDir), true);
+  assert.equal(env.DATABASE_URL, `file:${join(dataDir, 'happier-server-light.sqlite')}`);
+  assert.equal(existsSync(markerPath), true, `expected migrate:sqlite:deploy to be invoked (${markerPath})`);
+});
