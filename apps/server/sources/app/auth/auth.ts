@@ -10,14 +10,30 @@ interface TokenCacheEntry {
 interface AuthTokens {
     generator: Awaited<ReturnType<typeof privacyKit.createPersistentTokenGenerator>>;
     verifier: Awaited<ReturnType<typeof privacyKit.createPersistentTokenVerifier>>;
-    githubVerifier: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenVerifier>>;
-    githubGenerator: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenGenerator>>;
+    oauthStateVerifier: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenVerifier>>;
+    oauthStateGenerator: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenGenerator>>;
 }
+
+type OAuthStatePayload = Readonly<{
+    flow: "connect" | "auth";
+    provider: string;
+    sid?: string | null;
+    userId?: string | null;
+    publicKey?: string | null;
+}>;
 
 class AuthModule {
     private tokenCache = new Map<string, TokenCacheEntry>();
     private tokens: AuthTokens | null = null;
     
+    private resolveOauthStateTtlMsFromEnv(env: NodeJS.ProcessEnv): number {
+        const raw = (env.OAUTH_STATE_TTL_SECONDS ?? "").toString().trim();
+        const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+        const seconds = Number.isFinite(parsed) && parsed > 0 ? parsed : 600;
+        const clampedSeconds = Math.max(60, Math.min(3600, seconds));
+        return clampedSeconds * 1000;
+    }
+
     async init(): Promise<void> {
         if (this.tokens) {
             return; // Already initialized
@@ -36,19 +52,19 @@ class AuthModule {
             publicKey: Uint8Array.from(generator.publicKey)
         });
         
-        const githubGenerator = await privacyKit.createEphemeralTokenGenerator({
-            service: 'github-happy',
+        const oauthStateGenerator = await privacyKit.createEphemeralTokenGenerator({
+            service: "happier-oauth-state",
             seed: process.env.HANDY_MASTER_SECRET!,
-            ttl: 5 * 60 * 1000 // 5 minutes
+            ttl: this.resolveOauthStateTtlMsFromEnv(process.env),
         });
 
-        const githubVerifier = await privacyKit.createEphemeralTokenVerifier({
-            service: 'github-happy',
-            publicKey: Uint8Array.from(githubGenerator.publicKey),
+        const oauthStateVerifier = await privacyKit.createEphemeralTokenVerifier({
+            service: "happier-oauth-state",
+            publicKey: Uint8Array.from(oauthStateGenerator.publicKey),
         });
 
 
-        this.tokens = { generator, verifier, githubVerifier, githubGenerator };
+        this.tokens = { generator, verifier, oauthStateVerifier, oauthStateGenerator };
         
         log({ module: 'auth' }, 'Auth module initialized');
     }
@@ -148,31 +164,72 @@ class AuthModule {
         };
     }
     
-    async createGithubToken(userId: string): Promise<string> {
+    async createOauthStateToken(payload: OAuthStatePayload): Promise<string> {
         if (!this.tokens) {
-            throw new Error('Auth module not initialized');
+            throw new Error("Auth module not initialized");
         }
-        
-        const payload = { user: userId, purpose: 'github-oauth' };
-        const token = await this.tokens.githubGenerator.new(payload);
-        
-        return token;
+
+        const provider = payload.provider?.toString().trim().toLowerCase() ?? "";
+        if (!provider) {
+            throw new Error("Invalid OAuth provider");
+        }
+
+        const flow = payload.flow;
+        if (flow !== "auth" && flow !== "connect") {
+            throw new Error(`Invalid OAuth flow: ${String(flow)}`);
+        }
+        const sid = payload.sid?.toString().trim() || null;
+        const userId = payload.userId?.toString().trim() || null;
+        const publicKey = payload.publicKey?.toString().trim() || null;
+
+        return await this.tokens.oauthStateGenerator.new({
+            user: "oauth-state",
+            extras: {
+                provider,
+                flow,
+                sid,
+                userId,
+                publicKey,
+            },
+        });
     }
 
-    async verifyGithubToken(token: string): Promise<{ userId: string } | null> {
+    async verifyOauthStateToken(token: string): Promise<{
+        flow: "connect" | "auth";
+        provider: string;
+        sid: string | null;
+        userId: string | null;
+        publicKey: string | null;
+    } | null> {
         if (!this.tokens) {
-            throw new Error('Auth module not initialized');
+            throw new Error("Auth module not initialized");
         }
-        
+
         try {
-            const verified = await this.tokens.githubVerifier.verify(token);
+            const verified: any = await this.tokens.oauthStateVerifier.verify(token);
             if (!verified) {
                 return null;
             }
-            
-            return { userId: verified.user as string };
+
+            if (verified.user !== "oauth-state") return null;
+            const extras = verified.extras ?? {};
+            const provider = typeof extras.provider === "string" ? extras.provider.trim().toLowerCase() : "";
+            const flow = extras.flow === "auth" ? "auth" : extras.flow === "connect" ? "connect" : null;
+            if (!provider || !flow) return null;
+
+            return {
+                flow,
+                provider,
+                sid: typeof extras.sid === "string" && extras.sid.trim() ? extras.sid.trim() : null,
+                userId: typeof extras.userId === "string" && extras.userId.trim() ? extras.userId.trim() : null,
+                publicKey:
+                    typeof extras.publicKey === "string" && extras.publicKey.trim()
+                        ? extras.publicKey.trim()
+                        : null,
+            };
         } catch (error) {
-            log({ module: 'auth', level: 'error' }, `GitHub token verification failed: ${error}`);
+            // Avoid logging the raw token or verifier error payloads (which can include sensitive details).
+            log({ module: "auth", level: "error" }, "OAuth state token verification failed");
             return null;
         }
     }
