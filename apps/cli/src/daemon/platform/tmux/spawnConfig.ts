@@ -5,8 +5,23 @@ export function buildTmuxWindowEnv(
   daemonEnv: NodeJS.ProcessEnv,
   extraEnv: Record<string, string>,
 ): Record<string, string> {
+  const essentialKeys = [
+    'PATH',
+    'HOME',
+    'SHELL',
+    'LANG',
+    'LC_ALL',
+    'LC_CTYPE',
+    'TERM',
+    'TMPDIR',
+    'USER',
+    'LOGNAME',
+  ] as const;
+
   const filteredDaemonEnv = Object.fromEntries(
-    Object.entries(daemonEnv).filter(([, value]) => typeof value === 'string'),
+    essentialKeys
+      .map((key) => [key, daemonEnv[key]] as const)
+      .filter(([, value]) => typeof value === 'string' && value.length > 0),
   ) as Record<string, string>;
 
   return { ...filteredDaemonEnv, ...extraEnv };

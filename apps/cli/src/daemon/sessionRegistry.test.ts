@@ -14,6 +14,7 @@ describe('sessionRegistry', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (existsSync(happyHomeDir)) {
       rmSync(happyHomeDir, { recursive: true, force: true });
     }
@@ -25,6 +26,8 @@ describe('sessionRegistry', () => {
   });
 
   it('should write a marker and preserve createdAt across updates', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
     const { configuration } = await import('@/configuration');
     const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
 
@@ -46,8 +49,7 @@ describe('sessionRegistry', () => {
     const createdAt1 = markers1[0].createdAt;
     const updatedAt1 = markers1[0].updatedAt;
 
-    // Ensure updatedAt changes even on fast machines.
-    await new Promise((r) => setTimeout(r, 2));
+    vi.setSystemTime(updatedAt1 + 1_000);
 
     await writeSessionMarker({
       pid: 12345,
@@ -59,7 +61,7 @@ describe('sessionRegistry', () => {
     const markers2 = await listSessionMarkers();
     expect(markers2).toHaveLength(1);
     expect(markers2[0].createdAt).toBe(createdAt1);
-    expect(markers2[0].updatedAt).toBeGreaterThanOrEqual(updatedAt1);
+    expect(markers2[0].updatedAt).toBeGreaterThan(updatedAt1);
     expect(markers2[0].happySessionId).toBe('sess-2');
   });
 

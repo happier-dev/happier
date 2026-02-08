@@ -7,48 +7,14 @@
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
-import { spawn } from 'node:child_process';
 import { isPidSafeHappySessionProcess } from './pidSafety';
 import { findHappyProcessByPid } from './doctor';
 import { hashProcessCommand } from './sessionRegistry';
-
-function shouldRunDaemonReattachIntegration(): boolean {
-  return process.env.HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION === '1';
-}
-
-function spawnHappyLookingProcess(): { pid: number; kill: () => void } {
-  // Important: We need `ps-list` to classify this as a Happy session process.
-  // `doctor.classifyHappyProcess` considers a process "happy" if cmd includes "bin/happier.mjs",
-  // and marks it as daemon-spawned-session if cmd includes "--started-by daemon".
-  const child = spawn(
-    process.execPath,
-    // Put the identifying strings early in the command line. On some platforms `ps` output can be
-    // truncated, which would otherwise make `ps-list` miss tail argv entries.
-    ['-e', '/* bin/happier.mjs --started-by daemon */ setInterval(() => {}, 1_000_000)'],
-    { stdio: 'ignore' },
-  );
-  if (!child.pid) throw new Error('Failed to spawn test process');
-  return {
-    pid: child.pid,
-    kill: () => {
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        // ignore
-      }
-    },
-  };
-}
-
-async function waitForHappyProcess(pid: number, timeoutMs: number): Promise<Awaited<ReturnType<typeof findHappyProcessByPid>>> {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    const proc = await findHappyProcessByPid(pid);
-    if (proc) return proc;
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  return null;
-}
+import {
+  shouldRunDaemonReattachIntegration,
+  spawnHappyLookingProcess,
+  waitForPidInspection,
+} from './testHelpers/realIntegration.testHelpers';
 
 describe.skipIf(!shouldRunDaemonReattachIntegration())('pidSafety (real) integration tests (opt-in)', { timeout: 20_000 }, () => {
   const spawned: Array<() => void> = [];
@@ -61,7 +27,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())('pidSafety (real) integra
     const p = spawnHappyLookingProcess();
     spawned.push(p.kill);
 
-    const proc = await waitForHappyProcess(p.pid, 5_000);
+    const proc = await waitForPidInspection(findHappyProcessByPid, p.pid);
     expect(proc).not.toBeNull();
     if (!proc) return;
 
@@ -73,7 +39,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())('pidSafety (real) integra
     const p = spawnHappyLookingProcess();
     spawned.push(p.kill);
 
-    const proc = await waitForHappyProcess(p.pid, 5_000);
+    const proc = await waitForPidInspection(findHappyProcessByPid, p.pid);
     expect(proc).not.toBeNull();
     if (!proc) return;
 

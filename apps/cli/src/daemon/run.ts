@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import os from 'os';
+import { randomBytes } from 'node:crypto';
 
 import { ApiClient } from '@/api/api';
 import type { ApiMachineClient } from '@/api/apiMachine';
@@ -12,7 +13,7 @@ import { configuration } from '@/configuration';
 import { startCaffeinate, stopCaffeinate } from '@/integrations/caffeinate';
 import packageJson from '../../package.json';
 import { getEnvironmentInfo } from '@/ui/doctor';
-import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
+import { buildHappyCliSubprocessInvocation, spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { AGENTS, getVendorResumeSupport, resolveAgentCliSubcommand, resolveCatalogAgentId } from '@/backends/catalog';
 import {
   writeDaemonState,
@@ -33,6 +34,7 @@ import { findRunningTrackedSessionById } from './findRunningTrackedSessionById';
 import { reattachTrackedSessionsFromMarkers } from './sessions/reattachFromMarkers';
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
 import { createOnChildExited } from './sessions/onChildExited';
+import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSpawnWaiter';
 import { createStopSession } from './sessions/stopSession';
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
 import { projectPath } from '@/projectPath';
@@ -46,7 +48,10 @@ export { initialMachineMetadata } from './machine/metadata';
 import { createDaemonShutdownController } from './lifecycle/shutdown';
 import { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
 export { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
+import { resolveWindowsRemoteSessionConsoleMode } from './platform/windows/windowsSessionConsoleMode';
+import { startHappySessionInVisibleWindowsConsole } from './platform/windows/spawnHappyCliVisibleConsole';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
+import { buildHappySessionControlArgs } from './sessionSpawnArgs';
 export async function startDaemon(): Promise<void> {
   // We don't have cleanup function at the time of server construction
   // Control flow is:
@@ -61,6 +66,10 @@ export async function startDaemon(): Promise<void> {
   logger.debugLargeJson('[DAEMON RUN] Environment', getEnvironmentInfo());
 
   const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const waitForAuthEnabled = ['1', 'true', 'yes'].includes((process.env.HAPPIER_DAEMON_WAIT_FOR_AUTH ?? '').toLowerCase());
+  const waitForAuthTimeoutMsRaw = Number(process.env.HAPPIER_DAEMON_WAIT_FOR_AUTH_TIMEOUT_MS ?? '');
+  const waitForAuthTimeoutMs =
+    Number.isFinite(waitForAuthTimeoutMsRaw) && waitForAuthTimeoutMsRaw >= 0 ? waitForAuthTimeoutMsRaw : 10 * 60_000;
 
   // Check if already running
   // Check if running daemon version matches current CLI version
@@ -74,28 +83,77 @@ export async function startDaemon(): Promise<void> {
     process.exit(0);
   }
 
-  // If this daemon is started detached (no TTY) and credentials are missing, we cannot safely
-  // run the interactive auth selector UI. In that case, fail fast and let the parent/orchestrator
-  // run `happier auth login` in an interactive terminal.
-  if (!isInteractive) {
-    const credentials = await readCredentials();
-    if (!credentials) {
-      logger.debug('[AUTH] No credentials found');
-      logger.debug('[DAEMON RUN] Non-interactive mode: refusing to start auth UI. Run: happier auth login');
-      process.exit(1);
-    }
-  }
-
   let daemonLockHandle: Awaited<ReturnType<typeof acquireDaemonLock>> = null;
 
   try {
+    // If this daemon is started detached (no TTY) and credentials are missing, we cannot safely
+    // run the interactive auth selector UI. In that case, either:
+    // - fail fast (default), or
+    // - wait for credentials to appear (service mode), while holding the daemon lock.
+    if (!isInteractive) {
+      const credentials = await readCredentials();
+      if (!credentials) {
+        if (!waitForAuthEnabled) {
+          logger.debug('[AUTH] No credentials found');
+          logger.debug('[DAEMON RUN] Non-interactive mode: refusing to start auth UI. Run: happier auth login');
+          process.exit(1);
+        }
+
+        // Acquire lock early to avoid concurrent "waiting" daemons.
+        daemonLockHandle = await acquireDaemonLock(5, 200);
+        if (!daemonLockHandle) {
+          logger.debug('[DAEMON RUN] Daemon lock file already held, another daemon is running');
+          process.exit(0);
+        }
+
+        const credentialsPath = configuration.privateKeyFile;
+        logger.debug(`[DAEMON RUN] Waiting for credentials at ${credentialsPath}...`);
+
+        let shutdownRequested = false;
+        resolvesWhenShutdownRequested.then(() => {
+          shutdownRequested = true;
+        });
+
+        const startWait = Date.now();
+        while (true) {
+          if (shutdownRequested) {
+            logger.debug('[DAEMON RUN] Shutdown requested while waiting for credentials');
+            try {
+              if (daemonLockHandle) {
+                await releaseDaemonLock(daemonLockHandle);
+                daemonLockHandle = null;
+              }
+            } catch {
+              // ignore
+            }
+            return;
+          }
+
+          const credsNow = await readCredentials();
+          if (credsNow) {
+            logger.debug('[DAEMON RUN] Credentials detected, continuing daemon startup');
+            break;
+          }
+
+          if (waitForAuthTimeoutMs > 0 && Date.now() - startWait > waitForAuthTimeoutMs) {
+            logger.debug('[DAEMON RUN] Timed out waiting for credentials');
+            throw new Error('Timed out waiting for credentials');
+          }
+
+          await new Promise((r) => setTimeout(r, 250));
+        }
+      }
+    }
+
     // Ensure auth and machine registration BEFORE we take the daemon lock.
     // This prevents stuck lock files when auth is interrupted or cannot proceed.
     const { credentials, machineId } = await authAndSetupMachineIfNeeded();
     logger.debug('[DAEMON RUN] Auth and machine setup complete');
 
     // Acquire exclusive lock (proves daemon is running)
-    daemonLockHandle = await acquireDaemonLock(5, 200);
+    if (!daemonLockHandle) {
+      daemonLockHandle = await acquireDaemonLock(5, 200);
+    }
     if (!daemonLockHandle) {
       logger.debug('[DAEMON RUN] Daemon lock file already held, another daemon is running');
       process.exit(0);
@@ -133,20 +191,21 @@ export async function startDaemon(): Promise<void> {
 	        ? Object.keys(options.environmentVariables as Record<string, unknown>)
 	        : [];
 	      const environmentVariablesValidation = validateEnvVarRecordStrict(options.environmentVariables);
-	      logger.debugLargeJson('[DAEMON RUN] Spawning session', {
-	        directory: options.directory,
-	        sessionId: options.sessionId,
-	        machineId: options.machineId,
-	        approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
-	        agent: options.agent,
-	        profileId: options.profileId,
-	        hasToken: !!options.token,
-	        hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
-	        environmentVariableCount: envKeysPreview.length,
-	        environmentVariableKeys: envKeysPreview,
-	        environmentVariablesValid: environmentVariablesValidation.ok,
-	        environmentVariablesError: environmentVariablesValidation.ok ? null : environmentVariablesValidation.error,
-	      });
+		      logger.debugLargeJson('[DAEMON RUN] Spawning session', {
+		        directory: options.directory,
+		        sessionId: options.sessionId,
+		        machineId: options.machineId,
+		        approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
+		        agent: options.agent,
+		        profileId: options.profileId,
+		        hasToken: !!options.token,
+		        hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
+		        windowsRemoteSessionConsole: options.windowsRemoteSessionConsole,
+		        environmentVariableCount: envKeysPreview.length,
+		        environmentVariableKeys: envKeysPreview,
+		        environmentVariablesValid: environmentVariablesValidation.ok,
+		        environmentVariablesError: environmentVariablesValidation.ok ? null : environmentVariablesValidation.error,
+		      });
 
 	      if (!environmentVariablesValidation.ok) {
 	        return {
@@ -167,6 +226,8 @@ export async function startDaemon(): Promise<void> {
 			        sessionEncryptionVariant,
 			        permissionMode,
 			        permissionModeUpdatedAt,
+              modelId,
+              modelUpdatedAt,
 			        experimentalCodexResume,
 			        experimentalCodexAcp
 			      } = options;
@@ -490,12 +551,14 @@ export async function startDaemon(): Promise<void> {
 		            tmuxCommandEnv,
 		            extraArgs: [
 		              ...terminalRuntimeArgs,
-		              ...(permissionMode ? ['--permission-mode', permissionMode] : []),
-		              ...(typeof permissionModeUpdatedAt === 'number'
-		                ? ['--permission-mode-updated-at', `${permissionModeUpdatedAt}`]
-		                : []),
-		              ...(effectiveResume ? ['--resume', effectiveResume] : []),
-		              ...(normalizedExistingSessionId ? ['--existing-session', normalizedExistingSessionId] : []),
+                  ...buildHappySessionControlArgs({
+                    resume: effectiveResume,
+                    existingSessionId: normalizedExistingSessionId,
+                    permissionMode,
+                    permissionModeUpdatedAt,
+                    modelId,
+                    modelUpdatedAt,
+                  }),
 		            ],
 		          });
 	          const tmux = new TmuxUtilities(resolvedTmuxSessionName, tmuxCommandEnv);
@@ -613,23 +676,111 @@ export async function startDaemon(): Promise<void> {
 	            );
 	          }
 
-		          if (effectiveResume) {
-		            args.push('--resume', effectiveResume);
-		          }
-		          if (normalizedExistingSessionId) {
-		            args.push('--existing-session', normalizedExistingSessionId);
-		          }
-		          if (permissionMode) {
-		            args.push('--permission-mode', permissionMode);
-		          }
-		          if (typeof permissionModeUpdatedAt === 'number') {
-		            args.push('--permission-mode-updated-at', `${permissionModeUpdatedAt}`);
-		          }
+              args.push(...buildHappySessionControlArgs({
+                resume: effectiveResume,
+                existingSessionId: normalizedExistingSessionId,
+                permissionMode,
+                permissionModeUpdatedAt,
+                modelId,
+                modelUpdatedAt,
+              }));
 
-	          // NOTE: sessionId is reserved for future Happy session resume; we currently ignore it.
-	          const happyProcess = spawnHappyCLI(args, {
-	            cwd: directory,
-	            detached: true,  // Sessions stay alive when daemon stops
+		          const windowsConsoleMode = resolveWindowsRemoteSessionConsoleMode({
+		            platform: process.platform,
+		            requested: options.windowsRemoteSessionConsole,
+		            env: process.env,
+		          });
+
+		          if (windowsConsoleMode === 'visible') {
+		            const { runtime, argv } = buildHappyCliSubprocessInvocation(args);
+		            const filePath = runtime === 'node' ? process.execPath : runtime;
+
+		            const started = await startHappySessionInVisibleWindowsConsole({
+		              filePath,
+		              args: argv,
+		              workingDirectory: directory,
+		              env: {
+		                ...process.env,
+		                ...extraEnvForChildWithMessage,
+		              },
+		            });
+
+		            if (!started.ok) {
+		              logger.debug('[DAEMON RUN] Failed to spawn visible Windows console session', { error: started.errorMessage });
+		              if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
+		                spawnResourceCleanupOnFailure();
+		                spawnResourceCleanupOnFailure = null;
+		                spawnResourceCleanupOnExit = null;
+		              }
+		              if (sessionAttachCleanup) {
+		                await sessionAttachCleanup();
+		                sessionAttachCleanup = null;
+		              }
+		              return {
+		                type: 'error',
+		                errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+		                errorMessage: started.errorMessage,
+		              };
+		            }
+
+		            const pid = started.pid;
+		            logger.debug(`[DAEMON RUN] Spawned visible-console session with PID ${pid}`);
+
+		            if (sessionAttachCleanup) {
+		              sessionAttachCleanupByPid.set(pid, sessionAttachCleanup);
+		              sessionAttachCleanup = null;
+		            }
+
+		            const trackedSession: TrackedSession = {
+		              startedBy: 'daemon',
+		              pid,
+		              vendorResumeId: effectiveResume || undefined,
+		              directoryCreated,
+		              message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
+		            };
+		            pidToTrackedSession.set(pid, trackedSession);
+
+		            if (spawnResourceCleanupOnExit) {
+		              spawnResourceCleanupByPid.set(pid, spawnResourceCleanupOnExit);
+		              spawnResourceCleanupArmed = true;
+		            }
+
+		            // Best-effort: poll for exit so we can run cleanup hooks (e.g. Codex tmp CODEX_HOME).
+		            const pollMsRaw = typeof process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS === 'string'
+		              ? process.env.HAPPIER_DAEMON_VISIBLE_CONSOLE_EXIT_POLL_MS.trim()
+		              : '';
+		            const pollMsParsed = pollMsRaw ? Number(pollMsRaw) : NaN;
+		            const pollMs = Number.isFinite(pollMsParsed) && pollMsParsed > 0 ? pollMsParsed : 5000;
+
+			            // Wait for webhook to populate session with happySessionId
+			            logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${pid} (visible console)`);
+
+			            return waitForVisibleConsoleSessionWebhook({
+			              pid,
+			              pollMs,
+			              pidToAwaiter,
+			              pidToSpawnResultResolver,
+			              pidToSpawnWebhookTimeout,
+			              onChildExited,
+			            }).then((result) => {
+			              if (result.type === 'success') {
+			                logger.debug(
+			                  `[DAEMON RUN] Session ${result.sessionId} fully spawned with webhook (visible console)`,
+			                );
+			              } else if (
+			                result.type === 'error' &&
+			                result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+			              ) {
+			                logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${pid} (visible console)`);
+			              }
+			              return result;
+			            });
+			          }
+
+		          // NOTE: sessionId is reserved for future Happy session resume; we currently ignore it.
+		          const happyProcess = spawnHappyCLI(args, {
+		            cwd: directory,
+		            detached: true,  // Sessions stay alive when daemon stops
 	            stdio: ['ignore', 'pipe', 'pipe'],  // Capture stdout/stderr for debugging
 	            env: {
 	              ...process.env,
@@ -797,6 +948,8 @@ export async function startDaemon(): Promise<void> {
 	      getApiMachineForSessions: () => apiMachineForSessions,
 	    });
 
+    const controlToken = randomBytes(32).toString('base64url');
+
     // Start control server
     const { port: controlPort, stop: stopControlServer } = await startDaemonControlServer({
       getChildren: getCurrentChildren,
@@ -804,15 +957,18 @@ export async function startDaemon(): Promise<void> {
       spawnSession,
       requestShutdown: () => requestShutdown('happier-cli'),
       onHappySessionWebhook
+      ,
+      controlToken,
     });
 
     // Write initial daemon state (no lock needed for state file)
     const fileState: DaemonLocallyPersistedState = {
       pid: process.pid,
       httpPort: controlPort,
-      startTime: new Date().toLocaleString(),
+      startedAt: Date.now(),
       startedWithCliVersion: packageJson.version,
-      daemonLogPath: logger.logFilePath
+      daemonLogPath: logger.logFilePath,
+      controlToken,
     };
     writeDaemonState(fileState);
     logger.debug('[DAEMON RUN] Daemon state written');

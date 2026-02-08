@@ -10,33 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import type { Metadata } from '@/api/types';
-
-function shouldRunDaemonReattachIntegration(): boolean {
-  return process.env.HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION === '1';
-}
-
-function spawnHappyLookingProcess(): { pid: number; kill: () => void } {
-  const child = spawn(
-    process.execPath,
-    // Put the identifying strings early in the command line. On some platforms `ps` output can be
-    // truncated, which would otherwise make `ps-list` miss tail argv entries.
-    ['-e', '/* bin/happier.mjs --started-by daemon */ setInterval(() => {}, 1_000_000)'],
-    { stdio: 'ignore' },
-  );
-  if (!child.pid) throw new Error('Failed to spawn test process');
-  return {
-    pid: child.pid,
-    kill: () => {
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        // ignore
-      }
-    },
-  };
-}
+import type { TrackedSession } from './types';
+import {
+  shouldRunDaemonReattachIntegration,
+  spawnHappyLookingProcess,
+  waitForPidInspection,
+} from './testHelpers/realIntegration.testHelpers';
 
 describe.skipIf(!shouldRunDaemonReattachIntegration())(
   'reattach (real) integration tests (opt-in)',
@@ -74,14 +54,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
       const p = spawnHappyLookingProcess();
       spawned.push(p.kill);
 
-      // Wait for ps-list to see it (best-effort).
-      const start = Date.now();
-      let proc = null as Awaited<ReturnType<typeof findHappyProcessByPid>>;
-      while (Date.now() - start < 5_000) {
-        proc = await findHappyProcessByPid(p.pid);
-        if (proc) break;
-        await new Promise((r) => setTimeout(r, 100));
-      }
+      const proc = await waitForPidInspection(findHappyProcessByPid, p.pid);
       expect(proc).not.toBeNull();
       if (!proc) return;
 
@@ -111,7 +84,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
       expect(markers).toHaveLength(1);
 
       const happyProcesses = await findAllHappyProcesses();
-      const map = new Map<number, any>();
+      const map = new Map<number, TrackedSession>();
       const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, pidToTrackedSession: map });
       expect(adopted).toBe(1);
       expect(map.get(p.pid)?.reattachedFromDiskMarker).toBe(true);
@@ -126,14 +99,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
       const p = spawnHappyLookingProcess();
       spawned.push(p.kill);
 
-      // Wait until ps-list sees the process (avoid flakiness).
-      const start = Date.now();
-      let proc = null as Awaited<ReturnType<typeof findHappyProcessByPid>>;
-      while (Date.now() - start < 5_000) {
-        proc = await findHappyProcessByPid(p.pid);
-        if (proc) break;
-        await new Promise((r) => setTimeout(r, 100));
-      }
+      const proc = await waitForPidInspection(findHappyProcessByPid, p.pid);
       expect(proc).not.toBeNull();
       if (!proc) return;
 
@@ -147,7 +113,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
 
       const markers = await listSessionMarkers();
       const happyProcesses = await findAllHappyProcesses();
-      const map = new Map<number, any>();
+      const map = new Map<number, TrackedSession>();
       const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, pidToTrackedSession: map });
       expect(adopted).toBe(0);
       expect(map.size).toBe(0);

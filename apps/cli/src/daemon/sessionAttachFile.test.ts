@@ -1,14 +1,36 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve, sep } from 'node:path';
 
 describe('createSessionAttachFile', () => {
-  test('writes a 0600 attach file under HAPPIER_HOME_DIR and cleanup deletes it', async () => {
-    const { mkdtemp, readFile, stat } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const { join, resolve, sep } = await import('node:path');
+  const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+  const tempDirs: string[] = [];
 
+  afterEach(async () => {
+    for (const dir of tempDirs.splice(0)) {
+      await rm(dir, { recursive: true, force: true });
+    }
+    if (originalHappyHomeDir === undefined) {
+      delete process.env.HAPPIER_HOME_DIR;
+    } else {
+      process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
+    }
+    vi.resetModules();
+  });
+
+  async function createHappyHomeFixture(): Promise<{ dir: string; baseDir: string }> {
     const dir = await mkdtemp(join(tmpdir(), 'happy-home-'));
+    tempDirs.push(dir);
     process.env.HAPPIER_HOME_DIR = dir;
-    const baseDir = resolve(join(dir, 'tmp', 'session-attach'));
+    return {
+      dir,
+      baseDir: resolve(join(dir, 'tmp', 'session-attach')),
+    };
+  }
+
+  test('writes a 0600 attach file under HAPPIER_HOME_DIR and cleanup deletes it', async () => {
+    const { baseDir } = await createHappyHomeFixture();
 
     vi.resetModules();
 
@@ -33,19 +55,12 @@ describe('createSessionAttachFile', () => {
       const s = await stat(filePath);
       expect(s.mode & 0o077).toBe(0);
     }
-
     await cleanup();
     await expect(stat(filePath)).rejects.toBeTruthy();
   });
 
   test('prevents path traversal in happySessionId (always stays within base dir)', async () => {
-    const { mkdtemp, stat } = await import('node:fs/promises');
-    const { tmpdir } = await import('node:os');
-    const { basename, join, resolve, sep } = await import('node:path');
-
-    const dir = await mkdtemp(join(tmpdir(), 'happy-home-'));
-    process.env.HAPPIER_HOME_DIR = dir;
-    const baseDir = resolve(join(dir, 'tmp', 'session-attach'));
+    const { dir, baseDir } = await createHappyHomeFixture();
 
     vi.resetModules();
 

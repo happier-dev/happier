@@ -16,4 +16,14 @@ describe('daemon shutdown policy', () => {
   it('uses a non-trivial watchdog timeout', () => {
     expect(getDaemonShutdownWatchdogTimeoutMs()).toBeGreaterThanOrEqual(5_000);
   });
+
+  it('uses a stable watchdog timeout contract', () => {
+    expect(getDaemonShutdownWatchdogTimeoutMs()).toBe(15_000);
+  });
+
+  it('keeps watchdog timeout finite and positive', () => {
+    const timeoutMs = getDaemonShutdownWatchdogTimeoutMs();
+    expect(Number.isFinite(timeoutMs)).toBe(true);
+    expect(timeoutMs).toBeGreaterThan(0);
+  });
 });

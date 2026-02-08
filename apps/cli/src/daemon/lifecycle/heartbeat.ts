@@ -179,14 +179,15 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       const updatedState: DaemonLocallyPersistedState = {
         pid: process.pid,
         httpPort: controlPort,
-        startTime: fileState.startTime,
+        startedAt: fileState.startedAt,
         startedWithCliVersion: fileState.startedWithCliVersion,
-        lastHeartbeat: new Date().toLocaleString(),
-        daemonLogPath: fileState.daemonLogPath
+        lastHeartbeatAt: Date.now(),
+        daemonLogPath: fileState.daemonLogPath,
+        controlToken: fileState.controlToken,
       };
       writeDaemonState(updatedState);
       if (process.env.DEBUG) {
-        logger.debug(`[DAEMON RUN] Health check completed at ${updatedState.lastHeartbeat}`);
+        logger.debug(`[DAEMON RUN] Health check completed at ${new Date(updatedState.lastHeartbeatAt ?? Date.now()).toISOString()}`);
       }
     } catch (error) {
       logger.debug('[DAEMON RUN] Failed to write heartbeat', error);

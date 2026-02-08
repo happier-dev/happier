@@ -1,23 +1,14 @@
 /**
- * Integration tests for daemon HTTP control system
- * 
- * Tests the full flow of daemon startup, session tracking, and shutdown
- * 
- * IMPORTANT: These tests MUST be run with the integration test environment:
- * yarn test:integration-test-env
- * 
- * DO NOT run with regular 'npm test' or 'yarn test' - it will use the wrong environment
- * and the daemon will not work properly!
- * 
- * The integration test environment uses .env.integration-test which sets:
- * - HAPPIER_HOME_DIR=~/.happier-dev-test (DIFFERENT from dev's ~/.happier-dev!)
- * - HAPPIER_SERVER_URL=http://localhost:3005 (local dev server)
+ * Integration tests for daemon HTTP control system.
+ *
+ * Recommended execution:
+ * - `yarn test:integration-test-env`
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execSync, spawn } from 'child_process';
-import { existsSync, unlinkSync, readFileSync, writeFileSync, readdirSync } from 'fs';
-import path, { join } from 'path';
+import { existsSync, readFileSync, readdirSync } from 'fs';
+import { join } from 'path';
 import { configuration } from '@/configuration';
 import { 
   listDaemonSessions, 
@@ -27,23 +18,181 @@ import {
   notifyDaemonSessionStarted, 
   stopDaemon
 } from '@/daemon/controlClient';
-import { readDaemonState, clearDaemonState } from '@/persistence';
+import { readDaemonState, clearDaemonState, writeDaemonState } from '@/persistence';
 import { Metadata } from '@/api/types';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { getLatestDaemonLog } from '@/ui/logger';
 
-// Utility to wait for condition
+type WaitForOptions = {
+  timeoutMs: number;
+  intervalMs?: number;
+  label: string;
+  debug?: () => string;
+};
+
+type DaemonSessionRecord = {
+  startedBy: string;
+  happySessionId: string;
+  pid: number;
+};
+
+const DAEMON_READY_WAIT: WaitForOptions = {
+  timeoutMs: 10_000,
+  intervalMs: 250,
+  label: 'daemon startup state',
+};
+
+const SESSION_CONSISTENCY_WAIT: WaitForOptions = {
+  timeoutMs: 30_000,
+  intervalMs: 250,
+  label: 'session list consistency',
+};
+
+const STRESS_SESSION_WAIT: WaitForOptions = {
+  timeoutMs: 60_000,
+  intervalMs: 500,
+  label: 'stress-session list consistency',
+};
+
+const PROCESS_EXIT_WAIT: WaitForOptions = {
+  timeoutMs: 15_000,
+  intervalMs: 250,
+  label: 'daemon process exit',
+};
+
+function debugIntegrationPreflight(message: string): void {
+  if (process.env.HAPPIER_CLI_DAEMON_INTEGRATION_DEBUG === '1') {
+    process.stderr.write(`[daemon.integration preflight] ${message}\n`);
+  }
+}
+
 async function waitFor(
   condition: () => Promise<boolean>,
-  timeout = 5000,
-  interval = 100
+  opts: WaitForOptions
 ): Promise<void> {
+  const intervalMs = opts.intervalMs ?? 100;
   const start = Date.now();
-  while (Date.now() - start < timeout) {
+  while (Date.now() - start < opts.timeoutMs) {
     if (await condition()) return;
-    await new Promise(resolve => setTimeout(resolve, interval));
+    await new Promise(resolve => setTimeout(resolve, intervalMs));
   }
-  throw new Error('Timeout waiting for condition');
+  const debug = opts.debug ? `\n${opts.debug()}` : '';
+  throw new Error(`Timed out waiting for ${opts.label} after ${opts.timeoutMs}ms${debug}`);
+}
+
+async function listDaemonSessionsTyped(): Promise<DaemonSessionRecord[]> {
+  return (await listDaemonSessions()) as DaemonSessionRecord[];
+}
+
+function startDaemonProcessForStartSync(): ReturnType<typeof spawn> {
+  return spawn(process.execPath, ['--import', 'tsx', 'src/index.ts', 'daemon', 'start-sync'], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+function captureChildOutput(child: ReturnType<typeof spawn>): { output: () => string } {
+  let output = '';
+  child.stdout?.on('data', (data) => {
+    output += data.toString();
+  });
+  child.stderr?.on('data', (data) => {
+    output += data.toString();
+  });
+  return {
+    output: () => output,
+  };
+}
+
+async function waitForChildExit(child: ReturnType<typeof spawn>, timeoutMs = 30_000): Promise<number | null> {
+  if (child.exitCode !== null) {
+    return child.exitCode;
+  }
+
+  return await new Promise<number | null>((resolve, reject) => {
+    const onExit = (code: number | null) => {
+      clearTimeout(timer);
+      child.off('error', onError);
+      resolve(code);
+    };
+    const onError = (error: Error) => {
+      clearTimeout(timer);
+      child.off('exit', onExit);
+      reject(error);
+    };
+    const timer = setTimeout(() => {
+      child.off('exit', onExit);
+      child.off('error', onError);
+      reject(new Error(`Timed out waiting for child process exit after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.once('exit', onExit);
+    child.once('error', onError);
+  });
+}
+
+describe('waitForChildExit helper', () => {
+  it('resolves for children that already exited before listeners attach', async () => {
+    const child = spawn(process.execPath, ['-e', 'process.exit(0)'], {
+      stdio: 'ignore',
+    });
+    await new Promise<void>((resolve) => {
+      child.once('exit', () => resolve());
+    });
+    await expect(waitForChildExit(child, 50)).resolves.toBe(0);
+  });
+});
+
+async function waitForDaemonStateWithDifferentPid(initialPid: number, expectedVersion: string): Promise<void> {
+  await waitFor(
+    async () => {
+      const finalState = await readDaemonState();
+      return Boolean(
+        finalState &&
+          finalState.pid &&
+          finalState.pid !== initialPid &&
+          finalState.startedWithCliVersion === expectedVersion,
+      );
+    },
+    {
+      timeoutMs: 20_000,
+      intervalMs: 300,
+      label: 'daemon restart with updated version metadata',
+    },
+  );
+}
+
+async function waitForDaemonReadyState(): Promise<void> {
+  await waitFor(
+    async () => {
+      const state = await readDaemonState();
+      return Boolean(state && typeof state.pid === 'number' && typeof state.httpPort === 'number' && state.httpPort > 0);
+    },
+    DAEMON_READY_WAIT,
+  );
+}
+
+async function waitForSessionCount(count: number, opts: WaitForOptions): Promise<void> {
+  await waitFor(async () => {
+    const sessions = await listDaemonSessionsTyped();
+    return sessions.length === count;
+  }, opts);
+}
+
+async function waitForSessionById(sessionId: string, opts: WaitForOptions): Promise<void> {
+  await waitFor(async () => {
+    const sessions = await listDaemonSessionsTyped();
+    return sessions.some((session) => session.happySessionId === sessionId);
+  }, opts);
+}
+
+async function waitForDaemonExit(pid: number, opts: WaitForOptions): Promise<void> {
+  await waitFor(async () => !isProcessAlive(pid), opts);
+}
+
+async function waitForDaemonStateFileCleanup(opts: WaitForOptions): Promise<void> {
+  await waitFor(async () => !existsSync(configuration.daemonStateFile), opts);
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -72,21 +221,24 @@ async function isServerHealthy(): Promise<boolean> {
       signal: AbortSignal.timeout(3000)
     });
     if (!response.ok) {
-      console.log('[TEST] Server health check failed:', response.status, response.statusText);
+      debugIntegrationPreflight(`health endpoint failed with ${response.status} ${response.statusText}`);
       return false;
     }
     
     // Check if we have test credentials
     const testCredentials = existsSync(join(configuration.happyHomeDir, 'access.key'));
     if (!testCredentials) {
-      console.log('[TEST] No test credentials found in', configuration.happyHomeDir);
-      console.log('[TEST] Run "happier auth login" with HAPPIER_HOME_DIR=~/.happier-dev-test first');
+      debugIntegrationPreflight(`missing test credentials at ${configuration.happyHomeDir}`);
       return false;
     }
     
     return true;
   } catch (error) {
-    console.log('[TEST] Server not reachable:', error);
+    if (error instanceof Error) {
+      debugIntegrationPreflight(`server unreachable: ${error.name}: ${error.message}`);
+    } else {
+      debugIntegrationPreflight('server unreachable');
+    }
     return false;
   }
 }
@@ -104,11 +256,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
       stdio: 'ignore'
     });
     
-    // Wait for daemon to write its state file (it needs to auth, setup, and start HTTP control server)
-    await waitFor(async () => {
-      const state = await readDaemonState();
-      return !!(state && typeof state.pid === 'number' && typeof state.httpPort === 'number' && state.httpPort > 0);
-    }, 10_000, 250); // Wait up to 10 seconds, checking every 250ms
+    await waitForDaemonReadyState();
     
     const daemonState = await readDaemonState();
     if (!daemonState?.pid || !daemonState?.httpPort) {
@@ -116,8 +264,6 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     }
     daemonPid = daemonState.pid;
 
-    console.log(`[TEST] Daemon started for test: PID=${daemonPid}`);
-    console.log(`[TEST] Daemon log file: ${daemonState?.daemonLogPath}`);
   });
 
   afterEach(async () => {
@@ -125,7 +271,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
   });
 
   it('should list sessions (initially empty)', async () => {
-    const sessions = await listDaemonSessions();
+    const sessions = await listDaemonSessionsTyped();
     expect(sessions).toEqual([]);
   });
 
@@ -146,12 +292,12 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     await notifyDaemonSessionStarted('test-session-123', mockMetadata);
 
     // Verify session is tracked
-    await waitFor(async () => {
-      const sessions = await listDaemonSessions();
-      return sessions.length === 1;
-    }, 10_000, 250);
+    await waitForSessionCount(1, {
+      ...DAEMON_READY_WAIT,
+      label: 'single tracked session after webhook',
+    });
 
-    const sessions = await listDaemonSessions();
+    const sessions = await listDaemonSessionsTyped();
     
     const tracked = sessions[0];
     expect(tracked.startedBy).toBe('happy directly - likely by user from terminal');
@@ -166,21 +312,18 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     expect(response).toHaveProperty('sessionId');
 
     // Verify session is tracked
-    await waitFor(async () => {
-      const sessions = await listDaemonSessions();
-      return sessions.some((s: any) => s.happySessionId === response.sessionId);
-    }, 30_000, 250);
+    await waitForSessionById(response.sessionId, SESSION_CONSISTENCY_WAIT);
 
-    const sessions = await listDaemonSessions();
-    const spawnedSession = sessions.find(
-      (s: any) => s.happySessionId === response.sessionId
-    );
+    const sessions = await listDaemonSessionsTyped();
+    const spawnedSession = sessions.find((session) => session.happySessionId === response.sessionId);
     
     expect(spawnedSession).toBeDefined();
+    if (!spawnedSession) {
+      throw new Error('spawned session not found after successful spawn response');
+    }
     expect(spawnedSession.startedBy).toBe('daemon');
     
     // Clean up - stop the spawned session
-    expect(spawnedSession.happySessionId).toBeDefined();
     await stopDaemonSession(spawnedSession.happySessionId);
   });
 
@@ -199,27 +342,28 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     });
     const sessionIds = results.map(r => r.sessionId);
 
-    await waitFor(async () => {
-      const sessions = await listDaemonSessions();
-      return sessions.length === sessionCount;
-    }, 60_000, 500);
+    await waitForSessionCount(sessionCount, STRESS_SESSION_WAIT);
 
     // Stop all sessions
     const stopResults = await Promise.all(sessionIds.map(sessionId => stopDaemonSession(sessionId)));
     expect(stopResults.every(r => r), 'Not all sessions reported stopped').toBe(true);
 
     // Verify all sessions are stopped
-    await waitFor(async () => {
-      const emptySessions = await listDaemonSessions();
-      return emptySessions.length === 0;
-    }, 60_000, 500);
+    await waitForSessionCount(0, {
+      ...STRESS_SESSION_WAIT,
+      label: 'all stress sessions stopped',
+    });
   });
 
   it('should handle daemon stop request gracefully', async () => {    
     await stopDaemonHttp();
 
     // Verify metadata file is cleaned up
-    await waitFor(async () => !existsSync(configuration.daemonStateFile), 1000);
+    await waitForDaemonStateFileCleanup({
+      timeoutMs: 1_000,
+      intervalMs: 100,
+      label: 'daemon state cleanup after HTTP stop',
+    });
   });
 
   it('should track both daemon-spawned and terminal sessions', { timeout: 60_000 }, async () => {
@@ -237,45 +381,52 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     }
     // Give time to start & report itself
     await waitFor(async () => {
-      const sessions = await listDaemonSessions();
-      return sessions.some((s: any) => s.startedBy !== 'daemon');
-    }, 30_000, 500);
+      const sessions = await listDaemonSessionsTyped();
+      return sessions.some((session) => session.startedBy !== 'daemon');
+    }, {
+      timeoutMs: 30_000,
+      intervalMs: 500,
+      label: 'terminal-started session discovery',
+    });
 
     // Spawn a daemon session
     const spawnResponse = await spawnDaemonSession('/tmp', 'daemon-session-bbb');
 
     // List all sessions
-    await waitFor(async () => {
-      const sessions = await listDaemonSessions();
-      return sessions.length === 2;
-    }, 30_000, 500);
-    const sessions = await listDaemonSessions();
+    await waitForSessionCount(2, {
+      timeoutMs: 30_000,
+      intervalMs: 500,
+      label: 'two sessions tracked',
+    });
+    const sessions = await listDaemonSessionsTyped();
 
     // Verify we have one of each type
     const terminalSession =
-      sessions.find((s: any) => s.pid === terminalHappyProcess.pid)
-      ?? sessions.find((s: any) => s.startedBy !== 'daemon');
-    const daemonSession = sessions.find(
-      (s: any) => s.happySessionId === spawnResponse.sessionId
-    );
+      sessions.find((session) => session.pid === terminalHappyProcess.pid)
+      ?? sessions.find((session) => session.startedBy !== 'daemon');
+    const daemonSession = sessions.find((session) => session.happySessionId === spawnResponse.sessionId);
 
     expect(terminalSession).toBeDefined();
+    if (!terminalSession) {
+      throw new Error('terminal session not found');
+    }
     expect(terminalSession.startedBy).toBe('happy directly - likely by user from terminal');
     
     expect(daemonSession).toBeDefined();
+    if (!daemonSession) {
+      throw new Error('daemon session not found');
+    }
     expect(daemonSession.startedBy).toBe('daemon');
 
     // Clean up both sessions
-    expect(terminalSession?.happySessionId).toBeDefined();
     await stopDaemonSession(terminalSession.happySessionId);
 
-    expect(daemonSession?.happySessionId).toBeDefined();
     await stopDaemonSession(daemonSession.happySessionId);
     
     // Also kill the terminal process directly to be sure
     try {
       terminalHappyProcess.kill('SIGTERM');
-    } catch (e) {
+    } catch {
       // Process might already be dead
     }
   });
@@ -285,10 +436,11 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     const spawnResponse = await spawnDaemonSession('/tmp');
 
     // Verify webhook was processed (session ID updated)
-    await waitFor(async () => {
-      const sessions = await listDaemonSessions();
-      return sessions.some((s: any) => s.happySessionId === spawnResponse.sessionId);
-    }, 30_000, 250);
+    await waitForSessionById(spawnResponse.sessionId, {
+      timeoutMs: 30_000,
+      intervalMs: 250,
+      label: 'session metadata webhook propagation',
+    });
 
     // Clean up
     await stopDaemonSession(spawnResponse.sessionId);
@@ -301,28 +453,9 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     const initialPid = initialState!.pid;
 
     // Try to start another daemon
-    const secondChild = spawn('yarn', ['tsx', 'src/index.ts', 'daemon', 'start-sync'], {
-      cwd: process.cwd(),
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-
-    let output = '';
-    secondChild.stdout?.on('data', (data) => {
-      output += data.toString();
-    });
-    secondChild.stderr?.on('data', (data) => {
-      output += data.toString();
-    });
-
-    // Wait for the second daemon to exit
-    let exitCode: number | null = null;
-    await new Promise<void>((resolve) => {
-      secondChild.on('exit', (code) => {
-        exitCode = code;
-        resolve();
-      });
-    });
+    const secondChild = startDaemonProcessForStartSync();
+    const captured = captureChildOutput(secondChild);
+    const exitCode = await waitForChildExit(secondChild);
 
     // Should not have replaced the running daemon
     expect(exitCode).toBe(0);
@@ -331,7 +464,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     expect(finalState!.pid).toBe(initialPid);
 
     // Optional: keep message flexible
-    expect(output.toLowerCase()).toMatch(/already running|lock|another daemon/i);
+    expect(captured.output().toLowerCase()).toMatch(/already running|lock|another daemon/i);
   });
 
   it('should handle concurrent session operations', { timeout: 60_000 }, async () => {
@@ -356,16 +489,19 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
 
     // List should show all sessions
     await waitFor(async () => {
-      const sessions = await listDaemonSessions();
+      const sessions = await listDaemonSessionsTyped();
       const daemonSessions = sessions.filter(
-        (s: any) => s.startedBy === 'daemon' && spawnedSessionIds.includes(s.happySessionId)
+        (session) => session.startedBy === 'daemon' && spawnedSessionIds.includes(session.happySessionId),
       );
       return daemonSessions.length >= 3;
-    }, 30_000, 250);
+    }, {
+      ...SESSION_CONSISTENCY_WAIT,
+      label: 'three daemon-spawned sessions tracked',
+    });
 
-    const sessions = await listDaemonSessions();
+    const sessions = await listDaemonSessionsTyped();
     const daemonSessions = sessions.filter(
-      (s: any) => s.startedBy === 'daemon' && spawnedSessionIds.includes(s.happySessionId)
+      (session) => session.startedBy === 'daemon' && spawnedSessionIds.includes(session.happySessionId),
     );
 
     // Stop all spawned sessions
@@ -378,7 +514,6 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
   it('should die with logs when SIGKILL is sent', async () => {
     // SIGKILL test - daemon should die immediately
     const logsDir = configuration.logsDir;
-    const { readdirSync } = await import('fs');
     
     // Get initial log files
     const initialLogs = readdirSync(logsDir).filter(f => f.endsWith('-daemon.log'));
@@ -387,7 +522,11 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     process.kill(daemonPid, 'SIGKILL');
     
     // Wait for process to die
-    await waitFor(async () => !isProcessAlive(daemonPid), 10_000, 250);
+    await waitForDaemonExit(daemonPid, {
+      timeoutMs: 10_000,
+      intervalMs: 250,
+      label: 'daemon exit after SIGKILL',
+    });
     
     // Check if process is dead
     expect(isProcessAlive(daemonPid)).toBe(false);
@@ -395,9 +534,6 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     // Check that log file exists (it was created when daemon started)
     const finalLogs = readdirSync(logsDir).filter(f => f.endsWith('-daemon.log'));
     expect(finalLogs.length).toBeGreaterThanOrEqual(initialLogs.length);
-    
-    // The daemon won't have time to write cleanup logs with SIGKILL
-    console.log('[TEST] Daemon killed with SIGKILL - no cleanup logs expected');
     
     // Clean up state file manually since daemon couldn't do it
     await clearDaemonState();
@@ -414,7 +550,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     process.kill(daemonPid, 'SIGTERM');
     
     // Wait for graceful shutdown
-    await waitFor(async () => !isProcessAlive(daemonPid), 15_000, 250);
+    await waitForDaemonExit(daemonPid, PROCESS_EXIT_WAIT);
     
     // Check if process is dead
     expect(isProcessAlive(daemonPid)).toBe(false);
@@ -426,102 +562,36 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     expect(logContent).toContain('SIGTERM');
     expect(logContent).toContain('cleanup');
     
-    console.log('[TEST] Daemon terminated gracefully with SIGTERM - cleanup logs written');
-    
     // Clean up state file if it still exists (should have been cleaned by SIGTERM handler)
     await clearDaemonState();
   });
 
-  /**
-   * Version mismatch detection test - control flow:
-   * 
-   * 1. Test starts daemon with original version (e.g., 0.9.0-6) compiled into dist/
-   * 2. Test modifies package.json to new version (e.g., 0.0.0-integration-test-*)
-   * 3. Test runs `yarn build` to recompile with new version
-   * 4. Daemon's heartbeat (every 30s) reads package.json and compares to its compiled version
-   * 5. Daemon detects mismatch: package.json != configuration.currentCliVersion
-   * 6. Daemon spawns new daemon via spawnHappyCLI(['daemon', 'start'])
-   * 7. New daemon starts, reads daemon.state.json, sees old version != its compiled version
-   * 8. New daemon calls stopDaemon() to kill old daemon, then takes over
-   * 
-   * This simulates what happens during a CLI upgrade:
-   * - Running daemon has OLD version loaded in memory (configuration.currentCliVersion)
-   * - the package manager replaces the installed CLI package with NEW version files
-   * - package.json on disk now has NEW version
-   * - Daemon reads package.json, detects mismatch, triggers self-update
-   * - Key difference: npm atomically replaces the entire module directory, while
-   *   our test must carefully rebuild to avoid missing entrypoint errors
-   * 
-   * Critical timing constraints:
-   * - Heartbeat must be long enough (30s) for yarn build to complete before daemon tries to spawn
-   * - If heartbeat fires during rebuild, spawn fails (dist/index.mjs missing) and test fails
-   * - pkgroll doesn't reliably update compiled version, must use full yarn build
-   * - Test modifies package.json BEFORE rebuild to ensure new version is compiled in
-   * 
-   * Common failure modes:
-   * - Heartbeat too short: daemon tries to spawn while dist/ is being rebuilt
-   * - Using pkgroll alone: doesn't update compiled configuration.currentCliVersion
-   * - Modifying package.json after daemon starts: triggers immediate version check on startup
-   */
-  it('[takes 1 minute to run] should detect version mismatch and kill old daemon', { timeout: 100_000 }, async () => {
-    // Read current package.json to get version
-    const packagePath = path.join(process.cwd(), 'package.json');
-    const packageJsonOriginalRawText = readFileSync(packagePath, 'utf8');
-    const originalPackage = JSON.parse(packageJsonOriginalRawText);
-    const originalVersion = originalPackage.version;
-    const testVersion = `0.0.0-integration-test-should-be-auto-cleaned-up-${Math.floor(Math.random() * 100000).toString().padStart(5, '0')}`;
-
-    expect(originalVersion, 'Your current cli version was not cleaned up from previous test it seems').not.toBe(testVersion);
-    
-    // Modify package.json version
-    const modifiedPackage = { ...originalPackage, version: testVersion };
-    writeFileSync(packagePath, JSON.stringify(modifiedPackage, null, 2));
-
-    try {
-      // Get initial daemon state
-      const initialState = await readDaemonState();
-      expect(initialState).toBeDefined();
-      expect(initialState!.startedWithCliVersion).toBe(originalVersion);
-      const initialPid = initialState!.pid;
-
-      // Re-build the CLI - so it will import the new package.json in its configuartion.ts
-      // and think it is a new version
-      // We are not using yarn build here because it cleans out dist/
-      // and we want to avoid that, 
-      // otherwise daemon will spawn a non existing happy js script.
-      // We need to remove index, but not the other files, otherwise some of our code might fail when called from within the daemon.
-      execSync('yarn build', { stdio: 'ignore' });
-      
-      console.log(`[TEST] Current daemon running with version ${originalVersion}, PID: ${initialPid}`);
-      
-      console.log(`[TEST] Changed package.json version to ${testVersion}`);
-
-      // The daemon should automatically detect the version mismatch and restart itself.
-      const heartbeatMs = parseInt(process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL || '30000');
-      await waitFor(async () => {
-        const finalState = await readDaemonState();
-        return !!(finalState && finalState.startedWithCliVersion === testVersion && finalState.pid && finalState.pid !== initialPid);
-      }, Math.min(90_000, heartbeatMs + 70_000), 1000);
-
-      // Check that the daemon is running with the new version
-      const finalState = await readDaemonState();
-      expect(finalState).toBeDefined();
-      expect(finalState!.startedWithCliVersion).toBe(testVersion);
-      expect(finalState!.pid).not.toBe(initialPid);
-      console.log('[TEST] Daemon version mismatch detection successful');
-    } finally {
-      // CRITICAL: Restore original package.json version
-      writeFileSync(packagePath, packageJsonOriginalRawText);
-      console.log(`[TEST] Restored package.json version to ${originalVersion}`);
-
-      // Lets rebuild it so we keep it as we found it
-      execSync('yarn build', { stdio: 'ignore' });
+  it('should detect daemon version mismatch and restart without workspace mutation', { timeout: 60_000 }, async () => {
+    const initialState = await readDaemonState();
+    expect(initialState).toBeDefined();
+    if (!initialState) {
+      return;
     }
-  });
 
-  // TODO: Add a test to see if a corrupted file will work
-  
-  // TODO: Test uninstall scenario - daemon should gracefully handle when the CLI package is uninstalled
-  // Current behavior: daemon tries to spawn new daemon on version mismatch but dist/index.mjs is gone
-  // Expected: daemon should detect missing entrypoint and either exit cleanly or at minimum not respawn infinitely
+    const initialPid = initialState.pid;
+    const currentVersion = initialState.startedWithCliVersion;
+    const staleVersion = `${currentVersion}-stale-${Date.now()}`;
+    writeDaemonState({
+      ...initialState,
+      startedWithCliVersion: staleVersion,
+    });
+
+    const secondChild = startDaemonProcessForStartSync();
+    const captured = captureChildOutput(secondChild);
+    const exitCode = await waitForChildExit(secondChild);
+
+    expect(exitCode).toBe(0);
+    await waitForDaemonStateWithDifferentPid(initialPid, currentVersion);
+
+    const finalState = await readDaemonState();
+    expect(finalState).toBeDefined();
+    expect(finalState?.startedWithCliVersion).toBe(currentVersion);
+    expect(finalState?.pid).not.toBe(initialPid);
+    expect(captured.output().toLowerCase()).toMatch(/version mismatch|restarting|already running|daemon/);
+  });
 });

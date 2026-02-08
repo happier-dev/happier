@@ -33,9 +33,13 @@ async function daemonPost(path: string, body?: any): Promise<{ error?: string } 
 
   try {
     const timeout = process.env.HAPPIER_DAEMON_HTTP_TIMEOUT ? parseInt(process.env.HAPPIER_DAEMON_HTTP_TIMEOUT) : 10_000;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (state.controlToken) {
+      headers['x-happier-daemon-token'] = state.controlToken;
+    }
     const response = await fetch(`http://127.0.0.1:${state.httpPort}${path}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body || {}),
       // Mostly increased for stress test
       signal: AbortSignal.timeout(timeout)
@@ -85,35 +89,15 @@ export async function spawnDaemonSession(directory: string, sessionId?: string):
 }
 
 export async function stopDaemonHttp(): Promise<void> {
-  await daemonPost('/stop');
+  const result = await daemonPost('/stop');
+  if (result?.error) {
+    throw new Error(result.error);
+  }
 }
 
 /**
- * The version check is still quite naive.
- * For instance we are not handling the case where we upgraded happy,
- * the daemon is still running, and it recieves a new message to spawn a new session.
- * This is a tough case - we need to somehow figure out to restart ourselves,
- * yet still handle the original request.
- * 
- * Options:
- * 1. Periodically check during the health checks whether our version is the same as CLIs version. If not - restart.
- * 2. Wait for a command from the machine session, or any other signal to
- * check for version & restart.
- *   a. Handle the request first
- *   b. Let the request fail, restart and rely on the client retrying the request
- * 
- * I like option 1 a little better.
- * Maybe we can ... wait for it ... have another daemon to make sure 
- * our daemon is always alive and running the latest version.
- * 
- * That seems like an overkill and yet another process to manage - lets not do this :D
- * 
- * TODO: This function should return a state object with
- * clear state - if it is running / or errored out or something else.
- * Not just a boolean.
- * 
- * We can destructure the response on the caller for richer output.
- * For instance when running `happier daemon status` we can show more information.
+ * Best-effort health check for a running daemon.
+ * Returns false and clears stale state when the PID is dead or (when available) the control token cannot /ping.
  */
 export async function checkIfDaemonRunningAndCleanupStaleState(): Promise<boolean> {
   const state = await readDaemonState();
@@ -124,6 +108,17 @@ export async function checkIfDaemonRunningAndCleanupStaleState(): Promise<boolea
   // Check if the daemon is running
   try {
     process.kill(state.pid, 0);
+    // If the daemon state includes a control token, also verify that the control server responds.
+    // This prevents PID reuse + stale port files from being treated as a healthy daemon.
+    if (state.controlToken) {
+      const ping = await daemonPost('/ping');
+      if (ping?.error) {
+        logger.debug('[DAEMON RUN] Daemon control server did not respond to /ping, cleaning up state');
+        await cleanupDaemonState();
+        return false;
+      }
+    }
+
     return true;
   } catch {
     logger.debug('[DAEMON RUN] Daemon PID not running, cleaning up state');
@@ -161,23 +156,6 @@ export async function isDaemonRunningCurrentlyInstalledHappyVersion(): Promise<b
     
     logger.debug(`[DAEMON CONTROL] Current CLI version: ${currentCliVersion}, Daemon started with version: ${state.startedWithCliVersion}`);
     return currentCliVersion === state.startedWithCliVersion;
-    
-    // PREVIOUS IMPLEMENTATION - Keeping this commented in case we need it
-    // Kirill does not understand how the upgrade of npm packages happen and whether
-    // we will get a new path or not when the CLI package is upgraded globally.
-    // If reading package.json doesn't work correctly after npm upgrades, 
-    // we can revert to spawning a process (but should add timeout and cleanup!)
-    /*
-    const { spawnHappyCLI } = await import('@/utils/spawnHappyCLI');
-    const happyProcess = spawnHappyCLI(['--version'], { stdio: 'pipe' });
-    let version: string | null = null;
-    happyProcess.stdout?.on('data', (data) => {
-      version = data.toString().trim();
-    });
-    await new Promise(resolve => happyProcess.stdout?.on('close', resolve));
-    logger.debug(`[DAEMON CONTROL] Current CLI version: ${version}, Daemon started with version: ${state.startedWithCliVersion}`);
-    return version === state.startedWithCliVersion;
-    */
   } catch (error) {
     logger.debug('[DAEMON CONTROL] Error checking daemon version', error);
     return false;
@@ -215,10 +193,26 @@ export async function stopDaemon() {
       logger.debug('HTTP stop failed, will force kill', error);
     }
 
-    // Force kill
+    const { findHappyProcessByPid } = await import('@/daemon/doctor');
+    const proc = await findHappyProcessByPid(state.pid);
+    const safeToKill = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
+    if (!safeToKill) {
+      logger.warn(`[CONTROL CLIENT] Refusing to force-kill PID ${state.pid} (does not look like a happier daemon process)`);
+      await cleanupDaemonState();
+      return;
+    }
+
+    // Force kill (best-effort; prefer SIGTERM first).
     try {
-      process.kill(state.pid, 'SIGKILL');
-      logger.debug('Force killed daemon');
+      process.kill(state.pid, 'SIGTERM');
+      await waitForProcessDeath(state.pid, 2000).catch(() => {});
+      try {
+        process.kill(state.pid, 0);
+        process.kill(state.pid, 'SIGKILL');
+      } catch {
+        // already exited
+      }
+      logger.debug('Force killed daemon (SIGTERM/SIGKILL)');
     } catch (error) {
       logger.debug('Daemon already dead');
     }
