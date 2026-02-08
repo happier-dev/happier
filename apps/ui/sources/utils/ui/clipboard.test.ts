@@ -26,5 +26,16 @@ describe('getClipboardStringTrimmedSafe', () => {
         const { getClipboardStringTrimmedSafe } = await import('./clipboard');
         await expect(getClipboardStringTrimmedSafe()).resolves.toBe('');
     });
-});
 
+    it('returns empty string when clipboard contents are whitespace only', async () => {
+        vi.resetModules();
+        vi.doMock('expo-clipboard', () => {
+            return {
+                getStringAsync: vi.fn(async () => ' \n\t '),
+            };
+        });
+
+        const { getClipboardStringTrimmedSafe } = await import('./clipboard');
+        await expect(getClipboardStringTrimmedSafe()).resolves.toBe('');
+    });
+});

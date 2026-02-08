@@ -17,5 +17,10 @@ describe('isCommittedMessageDiscarded', () => {
   it('returns false when localId is not included in discardedCommittedMessageLocalIds', () => {
     expect(isCommittedMessageDiscarded({ discardedCommittedMessageLocalIds: ['a'] } as any, 'b')).toBe(false);
   });
-});
 
+  it('returns false when discardedCommittedMessageLocalIds is not an array', () => {
+    expect(
+      isCommittedMessageDiscarded({ discardedCommittedMessageLocalIds: 'a' as any } as any, 'a'),
+    ).toBe(false);
+  });
+});

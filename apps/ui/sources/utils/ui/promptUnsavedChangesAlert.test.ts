@@ -52,4 +52,20 @@ describe('promptUnsavedChangesAlert', () => {
 
         await expect(promise).resolves.toBe('keepEditing');
     });
+
+    it('provides exactly three action buttons with expected styles', () => {
+        let capturedButtons: AlertButton[] = [];
+        promptUnsavedChangesAlert(
+            (_title, _message, buttons) => {
+                capturedButtons = buttons ?? [];
+            },
+            basePromptOptions,
+        );
+
+        expect(capturedButtons.map((button) => [button.text, button.style])).toEqual([
+            ['Discard', 'destructive'],
+            ['Save', 'default'],
+            ['Keep editing', 'cancel'],
+        ]);
+    });
 });

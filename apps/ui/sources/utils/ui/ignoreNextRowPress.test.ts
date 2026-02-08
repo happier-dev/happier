@@ -16,4 +16,20 @@ describe('ignoreNextRowPress', () => {
             vi.useRealTimers();
         }
     });
+
+    it('remains ignored through repeated calls until timers flush', () => {
+        vi.useFakeTimers();
+        try {
+            const ref = { current: false };
+
+            ignoreNextRowPress(ref);
+            ignoreNextRowPress(ref);
+            expect(ref.current).toBe(true);
+
+            vi.runOnlyPendingTimers();
+            expect(ref.current).toBe(false);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });

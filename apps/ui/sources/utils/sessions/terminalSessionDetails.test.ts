@@ -37,4 +37,27 @@ describe('terminalSessionDetails', () => {
             fallbackReason: 'tmux not found',
         } as any)).toBe('tmux not found');
     });
+
+    it('returns null attach command when tmux metadata is malformed', () => {
+        expect(getAttachCommandForSession({
+            sessionId: 's1',
+            terminal: {
+                mode: 'tmux',
+                tmux: {} as any,
+            },
+        } as any)).toBeNull();
+    });
+
+    it('returns null tmux fallback reason when terminal mode/request do not match fallback path', () => {
+        expect(getTmuxFallbackReason({
+            mode: 'plain',
+            requested: 'plain',
+            fallbackReason: 'ignored',
+        } as any)).toBeNull();
+        expect(getTmuxFallbackReason({
+            mode: 'tmux',
+            requested: 'tmux',
+            fallbackReason: 'ignored',
+        } as any)).toBeNull();
+    });
 });
