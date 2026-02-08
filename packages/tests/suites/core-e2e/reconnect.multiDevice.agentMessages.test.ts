@@ -1,6 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
+import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
+
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
@@ -9,7 +11,7 @@ import { fetchChanges, fetchCursor } from '../../src/testkit/changes';
 import { createSessionScopedSocketCollector, createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
-import { writeTestManifest } from '../../src/testkit/manifest';
+import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -23,7 +25,7 @@ describe('core e2e: session-scoped agent messages + multi-device reconnect catch
 
   it('device B disconnects while agent writes; on reconnect, /v2/changes hints + messages(afterSeq) catch up to agent messages', async () => {
     const testDir = run.testDir('agent-messages-multi-device-reconnect');
-    const saveArtifactsOnSuccess = envFlag('HAPPY_E2E_SAVE_ARTIFACTS', false);
+    const saveArtifactsOnSuccess = envFlag(['HAPPIER_E2E_SAVE_ARTIFACTS', 'HAPPY_E2E_SAVE_ARTIFACTS'], false);
     const startedAt = new Date().toISOString();
 
     server = await startServerLight({ testDir });
@@ -34,16 +36,16 @@ describe('core e2e: session-scoped agent messages + multi-device reconnect catch
     const uiB = createUserScopedSocketCollector(server.baseUrl, auth.token);
     const agent = createSessionScopedSocketCollector(server.baseUrl, auth.token, sessionId);
 
-    writeTestManifest(testDir, {
+    writeTestManifestForServer({
+      testDir,
+      server,
       startedAt,
       runId: run.runId,
       testName: 'agent-messages-multi-device-reconnect',
-      baseUrl: server.baseUrl,
-      ports: { server: server.port },
       sessionIds: [sessionId],
       env: {
         CI: process.env.CI,
-        HAPPY_E2E_SAVE_ARTIFACTS: process.env.HAPPY_E2E_SAVE_ARTIFACTS,
+        HAPPIER_E2E_SAVE_ARTIFACTS: process.env.HAPPIER_E2E_SAVE_ARTIFACTS ?? process.env.HAPPY_E2E_SAVE_ARTIFACTS,
       },
     });
 
@@ -66,13 +68,14 @@ describe('core e2e: session-scoped agent messages + multi-device reconnect catch
     const sendFromAgent = async (label: string) => {
       const ciphertext = Buffer.from(label, 'utf8').toString('base64');
       const localId = randomUUID();
-      const ack = await agent.emitWithAck<{ ok: boolean; seq: number; localId: string | null }>('message', {
+      const rawAck = await agent.emitWithAck<any>('message', {
         sid: sessionId,
         message: ciphertext,
         localId,
       });
+      const ack = MessageAckResponseSchema.parse(rawAck);
       expect(ack.ok).toBe(true);
-      sent.push({ label, seq: ack.seq, localId });
+      if (ack.ok === true) sent.push({ label, seq: ack.seq, localId });
     };
 
     try {
@@ -138,4 +141,3 @@ describe('core e2e: session-scoped agent messages + multi-device reconnect catch
     }
   });
 });
-

@@ -1,6 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
+import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
+
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
@@ -9,7 +11,7 @@ import { fetchChanges, fetchCursor } from '../../src/testkit/changes';
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
-import { writeTestManifest } from '../../src/testkit/manifest';
+import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -23,7 +25,7 @@ describe('core e2e: /v2/changes catch-up hints for session messages', () => {
 
   it('offline device can use /v2/changes hints to detect missing session messages', async () => {
     const testDir = run.testDir('changes-catchup-hints');
-    const saveArtifactsOnSuccess = envFlag('HAPPY_E2E_SAVE_ARTIFACTS', false);
+    const saveArtifactsOnSuccess = envFlag(['HAPPIER_E2E_SAVE_ARTIFACTS', 'HAPPY_E2E_SAVE_ARTIFACTS'], false);
     const startedAt = new Date().toISOString();
 
     server = await startServerLight({ testDir });
@@ -33,16 +35,16 @@ describe('core e2e: /v2/changes catch-up hints for session messages', () => {
     const deviceA = createUserScopedSocketCollector(server.baseUrl, auth.token);
     const deviceB = createUserScopedSocketCollector(server.baseUrl, auth.token);
 
-    writeTestManifest(testDir, {
+    writeTestManifestForServer({
+      testDir,
+      server,
       startedAt,
       runId: run.runId,
       testName: 'changes-catchup-hints',
-      baseUrl: server.baseUrl,
-      ports: { server: server.port },
       sessionIds: [sessionId],
       env: {
         CI: process.env.CI,
-        HAPPY_E2E_SAVE_ARTIFACTS: process.env.HAPPY_E2E_SAVE_ARTIFACTS,
+        HAPPIER_E2E_SAVE_ARTIFACTS: process.env.HAPPIER_E2E_SAVE_ARTIFACTS ?? process.env.HAPPY_E2E_SAVE_ARTIFACTS,
       },
     });
 
@@ -67,9 +69,10 @@ describe('core e2e: /v2/changes catch-up hints for session messages', () => {
       for (let i = 0; i < 6; i++) {
         const ciphertext = Buffer.from(`msg-${i}`, 'utf8').toString('base64');
         const localId = randomUUID();
-        const ack = await deviceA.emitWithAck<{ ok: boolean; seq: number }>('message', { sid: sessionId, message: ciphertext, localId });
+        const rawAck = await deviceA.emitWithAck<any>('message', { sid: sessionId, message: ciphertext, localId });
+        const ack = MessageAckResponseSchema.parse(rawAck);
         expect(ack.ok).toBe(true);
-        expectedSeqs.push(ack.seq);
+        if (ack.ok === true) expectedSeqs.push(ack.seq);
       }
 
       const maxSeq = Math.max(...expectedSeqs);
@@ -97,4 +100,3 @@ describe('core e2e: /v2/changes catch-up hints for session messages', () => {
     }
   });
 });
-

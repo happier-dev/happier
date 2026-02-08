@@ -1,6 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 
+import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
+
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
@@ -8,7 +10,7 @@ import { countDuplicateLocalIds, createSession, fetchAllMessages, maxMessageSeq 
 import { createUserScopedSocketCollector } from '../../src/testkit/socketClient';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
-import { writeTestManifest } from '../../src/testkit/manifest';
+import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -22,7 +24,7 @@ describe('core e2e: mid-stream message storm + reconnect convergence', () => {
 
   it('device B disconnects mid-storm; on reconnect, transcript converges to expected head seq', async () => {
     const testDir = run.testDir('midstream-storm-reconnect');
-    const saveArtifactsOnSuccess = envFlag('HAPPY_E2E_SAVE_ARTIFACTS', false);
+    const saveArtifactsOnSuccess = envFlag(['HAPPIER_E2E_SAVE_ARTIFACTS', 'HAPPY_E2E_SAVE_ARTIFACTS'], false);
     const startedAt = new Date().toISOString();
     server = await startServerLight({ testDir });
     const auth = await createTestAuth(server.baseUrl);
@@ -41,16 +43,16 @@ describe('core e2e: mid-stream message storm + reconnect convergence', () => {
     deviceB.connect();
     await waitFor(() => deviceA.isConnected() && deviceB.isConnected(), { timeoutMs: 20_000 });
 
-    writeTestManifest(testDir, {
+    writeTestManifestForServer({
+      testDir,
+      server,
       startedAt,
       runId: run.runId,
       testName: 'midstream-storm-reconnect',
-      baseUrl: server.baseUrl,
-      ports: { server: server.port },
       sessionIds: [sessionId],
       env: {
         CI: process.env.CI,
-        HAPPY_E2E_SAVE_ARTIFACTS: process.env.HAPPY_E2E_SAVE_ARTIFACTS,
+        HAPPIER_E2E_SAVE_ARTIFACTS: process.env.HAPPIER_E2E_SAVE_ARTIFACTS ?? process.env.HAPPY_E2E_SAVE_ARTIFACTS,
       },
     });
 
@@ -60,10 +62,13 @@ describe('core e2e: mid-stream message storm + reconnect convergence', () => {
     const sendFromA = async (label: string) => {
       const ciphertext = Buffer.from(label, 'utf8').toString('base64');
       const localId = randomUUID();
-      const ack = await deviceA.emitWithAck<{ ok: boolean; seq: number }>('message', { sid: sessionId, message: ciphertext, localId });
+      const rawAck = await deviceA.emitWithAck<any>('message', { sid: sessionId, message: ciphertext, localId });
+      const ack = MessageAckResponseSchema.parse(rawAck);
       expect(ack.ok).toBe(true);
-      expectedSeqs.push(ack.seq);
-      expectedLocalIds.push(localId);
+      if (ack.ok === true) {
+        expectedSeqs.push(ack.seq);
+        expectedLocalIds.push(localId);
+      }
     };
 
     // Send a few while both are connected.
