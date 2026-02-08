@@ -12,6 +12,9 @@
     "extras/",
     "scripts/"
   ],
+  "bundledDependencies": [
+    "@happier-dev/cli-common"
+  ],
   "scripts": {
     "setup": "node ./scripts/setup.mjs",
     "init": "node ./scripts/init.mjs",
@@ -55,10 +58,14 @@
     "menubar:install": "node ./scripts/menubar.mjs install",
     "menubar:uninstall": "node ./scripts/menubar.mjs uninstall",
     "menubar:open": "bash -lc 'DIR=\"$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)\"; if [[ -z \"$DIR\" ]]; then DIR=\"$HOME/Library/Application Support/SwiftBar/Plugins\"; fi; open \"$DIR\"'",
-    "test": "node ./scripts/test_ci.mjs",
-    "test:ci": "node ./scripts/test_ci.mjs"
+    "prepack": "node ./scripts/bundleWorkspaceDeps.mjs",
+    "test": "yarn -s test:unit",
+    "test:unit": "node ./scripts/test_ci.mjs",
+    "test:integration": "node ./scripts/test_integration.mjs",
+    "test:ci": "yarn -s test:unit"
   },
   "dependencies": {
+    "@happier-dev/cli-common": "0.0.0",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0"
   }
