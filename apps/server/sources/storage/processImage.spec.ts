@@ -1,9 +1,9 @@
-import { processImage } from './processImage';
-import { describe, expect, it } from 'vitest';
-import sharp from 'sharp';
+import sharp from "sharp";
+import { describe, expect, it } from "vitest";
+import { processImage } from "./processImage";
 
-describe('processImage', () => {
-    it('resizes pixel data and returns original dimensions', async () => {
+describe("processImage", () => {
+    it("resizes pixel data and returns original dimensions", async () => {
         const originalWidth = 200;
         const originalHeight = 100;
         const targetWidth = 100;
@@ -21,7 +21,7 @@ describe('processImage', () => {
             .toBuffer();
 
         const result = await processImage(img);
-        expect(result.format).toBe('jpeg');
+        expect(result.format).toBe("jpeg");
         expect(result.width).toBe(originalWidth);
         expect(result.height).toBe(originalHeight);
         expect(result.pixels.length).toBe(targetWidth * targetHeight * 4);

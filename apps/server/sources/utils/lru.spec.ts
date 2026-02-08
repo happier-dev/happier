@@ -1,46 +1,40 @@
-import { describe, it, expect } from 'vitest';
-import { LRUSet } from './lru';
+import { describe, expect, it } from "vitest";
+import { LRUSet } from "./lru";
 
-describe('LRUSet', () => {
-    it('should throw error when maxSize is 0 or negative', () => {
-        expect(() => new LRUSet(0)).toThrow('LRUSet maxSize must be greater than 0');
-        expect(() => new LRUSet(-1)).toThrow('LRUSet maxSize must be greater than 0');
-    });
+describe("LRUSet", () => {
+    it.each([0, -1])(
+        "throws when maxSize is %i",
+        (maxSize) => {
+            expect(() => new LRUSet(maxSize)).toThrow(/maxSize must be greater than 0/i);
+        },
+    );
 
-    it('should create LRUSet with positive maxSize', () => {
+    it("creates set with positive maxSize", () => {
         const lru = new LRUSet(3);
         expect(lru.size).toBe(0);
     });
 
-    it('should add values to the set', () => {
+    it("adds values and deduplicates repeated inserts", () => {
         const lru = new LRUSet<number>(3);
         lru.add(1);
         lru.add(2);
         lru.add(3);
-        
+        lru.add(1);
+        lru.add(1);
+
         expect(lru.size).toBe(3);
         expect(lru.has(1)).toBe(true);
         expect(lru.has(2)).toBe(true);
         expect(lru.has(3)).toBe(true);
     });
 
-    it('should not duplicate values', () => {
-        const lru = new LRUSet<number>(3);
-        lru.add(1);
-        lru.add(1);
-        lru.add(1);
-        
-        expect(lru.size).toBe(1);
-        expect(lru.has(1)).toBe(true);
-    });
-
-    it('should evict least recently used item when capacity exceeded', () => {
+    it("evicts least recently used item when capacity is exceeded", () => {
         const lru = new LRUSet<number>(3);
         lru.add(1);
         lru.add(2);
         lru.add(3);
-        lru.add(4); // Should evict 1
-        
+        lru.add(4);
+
         expect(lru.size).toBe(3);
         expect(lru.has(1)).toBe(false);
         expect(lru.has(2)).toBe(true);
@@ -48,153 +42,125 @@ describe('LRUSet', () => {
         expect(lru.has(4)).toBe(true);
     });
 
-    it('should move accessed items to front', () => {
+    it.each([
+        {
+            label: "moves has()-accessed item to front",
+            touch: (lru: LRUSet<number>) => {
+                lru.has(1);
+            },
+        },
+        {
+            label: "moves re-added item to front",
+            touch: (lru: LRUSet<number>) => {
+                lru.add(1);
+            },
+        },
+    ])("$label", ({ touch }) => {
         const lru = new LRUSet<number>(3);
         lru.add(1);
         lru.add(2);
         lru.add(3);
-        
-        // Access 1, moving it to front
-        lru.has(1);
-        
-        // Add 4, should evict 2 (least recently used)
+
+        touch(lru);
         lru.add(4);
-        
+
         expect(lru.has(1)).toBe(true);
         expect(lru.has(2)).toBe(false);
         expect(lru.has(3)).toBe(true);
         expect(lru.has(4)).toBe(true);
     });
 
-    it('should move re-added items to front', () => {
+    it("deletes values and returns deletion status", () => {
         const lru = new LRUSet<number>(3);
         lru.add(1);
         lru.add(2);
         lru.add(3);
-        
-        // Re-add 1, moving it to front
-        lru.add(1);
-        
-        // Add 4, should evict 2 (least recently used)
-        lru.add(4);
-        
-        expect(lru.has(1)).toBe(true);
-        expect(lru.has(2)).toBe(false);
-        expect(lru.has(3)).toBe(true);
-        expect(lru.has(4)).toBe(true);
-    });
 
-    it('should delete values', () => {
-        const lru = new LRUSet<number>(3);
-        lru.add(1);
-        lru.add(2);
-        lru.add(3);
-        
         expect(lru.delete(2)).toBe(true);
         expect(lru.size).toBe(2);
         expect(lru.has(2)).toBe(false);
-        
-        expect(lru.delete(2)).toBe(false); // Already deleted
+        expect(lru.delete(2)).toBe(false);
     });
 
-    it('should handle delete of head node', () => {
-        const lru = new LRUSet<number>(3);
-        lru.add(1);
-        lru.add(2);
-        lru.add(3); // 3 is head
-        
-        expect(lru.delete(3)).toBe(true);
-        expect(lru.size).toBe(2);
-        expect(lru.toArray()).toEqual([2, 1]);
-    });
-
-    it('should handle delete of tail node', () => {
-        const lru = new LRUSet<number>(3);
-        lru.add(1); // 1 is tail
-        lru.add(2);
-        lru.add(3);
-        
-        expect(lru.delete(1)).toBe(true);
-        expect(lru.size).toBe(2);
-        expect(lru.toArray()).toEqual([3, 2]);
-    });
-
-    it('should clear all values', () => {
+    it.each([
+        { label: "head", deleteValue: 3, expected: [2, 1] },
+        { label: "tail", deleteValue: 1, expected: [3, 2] },
+    ])("handles delete of $label node", ({ deleteValue, expected }) => {
         const lru = new LRUSet<number>(3);
         lru.add(1);
         lru.add(2);
         lru.add(3);
-        
+
+        expect(lru.delete(deleteValue)).toBe(true);
+        expect(lru.size).toBe(2);
+        expect(lru.toArray()).toEqual(expected);
+    });
+
+    it("clears all values", () => {
+        const lru = new LRUSet<number>(3);
+        lru.add(1);
+        lru.add(2);
+        lru.add(3);
+
         lru.clear();
-        
+
         expect(lru.size).toBe(0);
-        expect(lru.has(1)).toBe(false);
-        expect(lru.has(2)).toBe(false);
-        expect(lru.has(3)).toBe(false);
+        expect(lru.toArray()).toEqual([]);
+        expect(Array.from(lru.values())).toEqual([]);
     });
 
-    it('should iterate values in order from most to least recently used', () => {
+    it("iterates and serializes in most-recent-first order", () => {
         const lru = new LRUSet<number>(4);
         lru.add(1);
         lru.add(2);
         lru.add(3);
         lru.add(4);
-        
-        const values = Array.from(lru.values());
-        expect(values).toEqual([4, 3, 2, 1]);
-    });
 
-    it('should convert to array in order from most to least recently used', () => {
-        const lru = new LRUSet<number>(4);
-        lru.add(1);
-        lru.add(2);
-        lru.add(3);
-        lru.add(4);
-        
+        expect(Array.from(lru.values())).toEqual([4, 3, 2, 1]);
         expect(lru.toArray()).toEqual([4, 3, 2, 1]);
     });
 
-    it('should work with string values', () => {
+    it("works with string values", () => {
         const lru = new LRUSet<string>(3);
-        lru.add('a');
-        lru.add('b');
-        lru.add('c');
-        lru.add('d');
-        
-        expect(lru.has('a')).toBe(false);
-        expect(lru.has('b')).toBe(true);
-        expect(lru.has('c')).toBe(true);
-        expect(lru.has('d')).toBe(true);
+        lru.add("a");
+        lru.add("b");
+        lru.add("c");
+        lru.add("d");
+
+        expect(lru.has("a")).toBe(false);
+        expect(lru.has("b")).toBe(true);
+        expect(lru.has("c")).toBe(true);
+        expect(lru.has("d")).toBe(true);
     });
 
-    it('should work with object values', () => {
-        const lru = new LRUSet<{id: number}>(2);
-        const obj1 = {id: 1};
-        const obj2 = {id: 2};
-        const obj3 = {id: 3};
-        
+    it("works with object identity values", () => {
+        const lru = new LRUSet<{ id: number }>(2);
+        const obj1 = { id: 1 };
+        const obj2 = { id: 2 };
+        const obj3 = { id: 3 };
+
         lru.add(obj1);
         lru.add(obj2);
         lru.add(obj3);
-        
+
         expect(lru.has(obj1)).toBe(false);
         expect(lru.has(obj2)).toBe(true);
         expect(lru.has(obj3)).toBe(true);
     });
 
-    it('should handle single item capacity', () => {
+    it("handles single item capacity", () => {
         const lru = new LRUSet<number>(1);
         lru.add(1);
         lru.add(2);
-        
+
         expect(lru.size).toBe(1);
         expect(lru.has(1)).toBe(false);
         expect(lru.has(2)).toBe(true);
     });
 
-    it('should handle operations on empty set', () => {
+    it("handles operations on empty set", () => {
         const lru = new LRUSet<number>(3);
-        
+
         expect(lru.size).toBe(0);
         expect(lru.has(1)).toBe(false);
         expect(lru.delete(1)).toBe(false);

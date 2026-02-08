@@ -9,6 +9,14 @@ beforeEach(() => {
     initiateShutdown.mockClear();
 });
 
+function restoreEnvVar(name: string, value: string | undefined) {
+    if (value === undefined) {
+        delete process.env[name];
+        return;
+    }
+    process.env[name] = value;
+}
+
 function registerAndCaptureNewListeners() {
     const events = ["uncaughtException", "unhandledRejection", "warning", "exit"] as const;
     const beforeByEvent = new Map<string, any[]>();
@@ -57,26 +65,29 @@ describe("registerProcessHandlers", () => {
 
         const originalNodeEnv = process.env.NODE_ENV;
         const originalExitOnFatal = process.env.HAPPY_EXIT_ON_FATAL;
-        process.env.NODE_ENV = "production";
-        process.env.HAPPY_EXIT_ON_FATAL = "1";
+        try {
+            process.env.NODE_ENV = "production";
+            process.env.HAPPY_EXIT_ON_FATAL = "1";
 
-        vi.resetModules();
-        const { registerProcessHandlers } = await import("./processHandlers");
-        registerProcessHandlers();
+            vi.resetModules();
+            const { registerProcessHandlers } = await import("./processHandlers");
+            registerProcessHandlers();
 
-        addedListeners = capture.afterCapture();
-        const handler = addedListeners.find((v) => v.event === "uncaughtException")?.handler;
-        expect(typeof handler).toBe("function");
+            addedListeners = capture.afterCapture();
+            const handler = addedListeners.find((v) => v.event === "uncaughtException")?.handler;
+            expect(typeof handler).toBe("function");
 
-        handler!(new Error("boom"));
-        await new Promise((r) => setImmediate(r));
+            handler!(new Error("boom"));
+            await new Promise((r) => setImmediate(r));
 
-        expect(initiateShutdown).toHaveBeenCalledWith("fatal:uncaughtException");
-        expect(process.exitCode).toBe(1);
-        expect(exitSpy).toHaveBeenCalledWith(1);
-        exitSpy.mockRestore();
-        process.env.NODE_ENV = originalNodeEnv;
-        process.env.HAPPY_EXIT_ON_FATAL = originalExitOnFatal;
+            expect(initiateShutdown).toHaveBeenCalledWith("fatal:uncaughtException");
+            expect(process.exitCode).toBe(1);
+            expect(exitSpy).toHaveBeenCalledWith(1);
+        } finally {
+            exitSpy.mockRestore();
+            restoreEnvVar("NODE_ENV", originalNodeEnv);
+            restoreEnvVar("HAPPY_EXIT_ON_FATAL", originalExitOnFatal);
+        }
     });
 
     it("initiates shutdown and does not hard-exit in test mode", async () => {
@@ -87,23 +98,26 @@ describe("registerProcessHandlers", () => {
         }) as any);
 
         const originalNodeEnv = process.env.NODE_ENV;
-        process.env.NODE_ENV = "test";
+        try {
+            process.env.NODE_ENV = "test";
 
-        vi.resetModules();
-        const { registerProcessHandlers } = await import("./processHandlers");
-        registerProcessHandlers();
+            vi.resetModules();
+            const { registerProcessHandlers } = await import("./processHandlers");
+            registerProcessHandlers();
 
-        addedListeners = capture.afterCapture();
-        const handler = addedListeners.find((v) => v.event === "unhandledRejection")?.handler;
-        expect(typeof handler).toBe("function");
+            addedListeners = capture.afterCapture();
+            const handler = addedListeners.find((v) => v.event === "unhandledRejection")?.handler;
+            expect(typeof handler).toBe("function");
 
-        handler!("nope", Promise.resolve());
-        await new Promise((r) => setImmediate(r));
+            handler!("nope", Promise.resolve());
+            await new Promise((r) => setImmediate(r));
 
-        expect(initiateShutdown).toHaveBeenCalledWith("fatal:unhandledRejection");
-        expect(process.exitCode).toBe(1);
-        expect(exitSpy).not.toHaveBeenCalled();
-        exitSpy.mockRestore();
-        process.env.NODE_ENV = originalNodeEnv;
+            expect(initiateShutdown).toHaveBeenCalledWith("fatal:unhandledRejection");
+            expect(process.exitCode).toBe(1);
+            expect(exitSpy).not.toHaveBeenCalled();
+        } finally {
+            exitSpy.mockRestore();
+            restoreEnvVar("NODE_ENV", originalNodeEnv);
+        }
     });
 });

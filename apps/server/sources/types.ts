@@ -1,12 +1,12 @@
-import { GitHubProfile } from "./app/api/types";
 import { ImageRef } from "./storage/files";
+import type { LinkedProvider } from "./app/auth/providers/linkedProviders";
 
 export type AccountProfile = {
     firstName: string | null;
     lastName: string | null;
     username: string | null;
     avatar: ImageRef | null;
-    github: GitHubProfile | null;
+    linkedProviders: LinkedProvider[];
     settings: {
         value: string | null;
         version: number;

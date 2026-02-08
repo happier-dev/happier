@@ -5,12 +5,19 @@ import { auth } from '@/app/auth/auth';
 import { activityCache } from '@/app/presence/sessionCache';
 import { startTimeout } from '@/app/presence/timeout';
 import { initEncrypt } from '@/modules/encrypt';
-import { initGithub } from '@/modules/github';
+import { initGithub } from '@/app/auth/providers/github/webhooks';
 import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/files';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres, initDbPglite, initDbSqlite, shutdownDbPglite } from '@/storage/db';
 import { log } from '@/utils/log';
 import { awaitShutdown, onShutdown } from '@/utils/shutdown';
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from '@/flavors/light/env';
+import {
+    getFilesBackendFromEnv,
+    getSocketAdapterFromEnv,
+    isRedisStreamsEnabled,
+    resolveDefaultFilesBackend,
+    resolveDefaultSocketAdapter,
+} from '@/config/backends';
 import http from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-streams-adapter';
@@ -20,6 +27,8 @@ import { startAccountChangeCleanupFromEnv } from '@/app/changes/accountChangeCle
 import { shouldConsumePresenceFromRedis, shouldEnableLocalPresenceDbFlush } from '@/app/presence/presenceMode';
 import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { startVoiceSessionLeaseCleanupFromEnv } from '@/app/voice/voiceSessionLeaseCleanup';
 
 export type ServerFlavor = 'full' | 'light';
 export type ServerRole = 'all' | 'api' | 'worker';
@@ -32,14 +41,8 @@ export function getServerRoleFromEnv(env: NodeJS.ProcessEnv): ServerRole {
 }
 
 function shouldEnableRedisAdapterFromEnv(env: NodeJS.ProcessEnv, flavor: ServerFlavor): boolean {
-    const adapter =
-        (env.HAPPIER_SOCKET_REDIS_ADAPTER ?? env.HAPPY_SOCKET_REDIS_ADAPTER ?? '').toString().trim().toLowerCase();
-    return (
-        flavor !== 'light' &&
-        (adapter === 'true' || adapter === '1') &&
-        typeof env.REDIS_URL === 'string' &&
-        env.REDIS_URL.trim().length > 0
-    );
+    const socketAdapter = getSocketAdapterFromEnv(env, resolveDefaultSocketAdapter(flavor));
+    return isRedisStreamsEnabled(env, socketAdapter);
 }
 
 export async function startServer(flavor: ServerFlavor): Promise<void> {
@@ -47,32 +50,50 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     process.env.HAPPIER_SERVER_FLAVOR = flavor;
     const role = getServerRoleFromEnv(process.env);
     const shouldEnableRedisAdapter = shouldEnableRedisAdapterFromEnv(process.env, flavor);
-    const dbProvider = getDbProviderFromEnv(process.env, flavor === 'light' ? 'pglite' : 'postgres');
+    const dbProvider = getDbProviderFromEnv(process.env, flavor === 'light' ? 'sqlite' : 'postgres');
+    process.env.HAPPY_DB_PROVIDER = dbProvider;
+    process.env.HAPPIER_DB_PROVIDER = dbProvider;
 
-    if (flavor === 'light') {
+    const filesBackend = getFilesBackendFromEnv(process.env, resolveDefaultFilesBackend(flavor));
+    process.env.HAPPY_FILES_BACKEND = filesBackend;
+    process.env.HAPPIER_FILES_BACKEND = filesBackend;
+
+    const socketAdapter = getSocketAdapterFromEnv(process.env, resolveDefaultSocketAdapter(flavor));
+    process.env.HAPPY_SOCKET_ADAPTER = socketAdapter;
+    process.env.HAPPIER_SOCKET_ADAPTER = socketAdapter;
+
+    const shouldApplyLocalDefaults = filesBackend === 'local' || dbProvider === 'pglite' || dbProvider === 'sqlite';
+    if (shouldApplyLocalDefaults) {
         applyLightDefaultEnv(process.env);
         await ensureHandyMasterSecret(process.env);
-        if (dbProvider === 'pglite') {
-            await initDbPglite();
-        } else if (dbProvider === 'sqlite') {
-            if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) {
-                const dataDir = process.env.HAPPY_SERVER_LIGHT_DATA_DIR!;
-                process.env.DATABASE_URL = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
+    }
+
+    if (dbProvider === 'postgres') {
+        // initDbPostgres is synchronous (unlike other provider initializers).
+        initDbPostgres();
+    } else if (dbProvider === 'mysql') {
+        await initDbMysql();
+    } else if (dbProvider === 'pglite') {
+        await initDbPglite();
+    } else if (dbProvider === 'sqlite') {
+        if (!process.env.DATABASE_URL || !process.env.DATABASE_URL.trim()) {
+            const dataDir = (process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? '').trim();
+            if (!dataDir) {
+                throw new Error('HAPPIER_SERVER_LIGHT_DATA_DIR (or HAPPY_SERVER_LIGHT_DATA_DIR) must be set when using sqlite without DATABASE_URL');
             }
-            await initDbSqlite();
-        } else {
-            throw new Error(`Unsupported HAPPY_DB_PROVIDER/HAPPIER_DB_PROVIDER for light flavor: ${dbProvider}`);
+            process.env.DATABASE_URL = pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href;
         }
-        initFilesLocalFromEnv(process.env);
+        await initDbSqlite();
     } else {
-        if (dbProvider === 'postgres') {
-            initDbPostgres();
-        } else if (dbProvider === 'mysql') {
-            await initDbMysql();
-        } else {
-            throw new Error(`Unsupported HAPPY_DB_PROVIDER/HAPPIER_DB_PROVIDER for full flavor: ${dbProvider}`);
-        }
+        throw new Error(`Unsupported HAPPY_DB_PROVIDER/HAPPIER_DB_PROVIDER: ${dbProvider}`);
+    }
+
+    if (filesBackend === 'local') {
+        initFilesLocalFromEnv(process.env);
+    } else if (filesBackend === 's3') {
         initFilesS3FromEnv(process.env);
+    } else {
+        throw new Error(`Unsupported HAPPY_FILES_BACKEND/HAPPIER_FILES_BACKEND: ${String(filesBackend)}`);
     }
 
     // Storage
@@ -119,7 +140,7 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
     if (role === 'worker') {
         if (!shouldEnableRedisAdapter) {
             throw new Error(
-                "SERVER_ROLE=worker requires Redis adapter enabled (set REDIS_URL and HAPPIER_SOCKET_REDIS_ADAPTER=1) so worker pushes can fan out to connected API sockets",
+                "SERVER_ROLE=worker requires Redis socket adapter enabled (set REDIS_URL and HAPPIER_SOCKET_ADAPTER=redis-streams) so worker pushes can fan out to connected API sockets",
             );
         }
         // Create an emitter-only Socket.IO server wired to the Redis adapter, so background jobs can publish
@@ -157,6 +178,12 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
         if (cleanup) {
             onShutdown('account-change-cleanup', async () => {
                 cleanup.stop();
+            });
+        }
+        const voiceCleanup = startVoiceSessionLeaseCleanupFromEnv();
+        if (voiceCleanup) {
+            onShutdown('voice-lease-cleanup', async () => {
+                voiceCleanup.stop();
             });
         }
         startDatabaseMetricsUpdater();

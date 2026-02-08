@@ -3,6 +3,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { acquirePgliteDirLock } from "./pgliteLock";
 
 export { Prisma };
 export type TransactionClient = Prisma.TransactionClient;
@@ -32,6 +33,8 @@ let _db: PrismaClientType | null = null;
 let _pglite: PGlite | null = null;
 let _pgliteServer: PGLiteSocketServer | null = null;
 let _provider: DbProvider | null = null;
+let _releasePgliteDirLock: (() => Promise<void>) | null = null;
+let _initDbPgliteInFlight: Promise<void> | null = null;
 
 export const db: PrismaClientType = new Proxy({} as PrismaClientType, {
     get(_target, prop) {
@@ -102,12 +105,14 @@ export async function initDbSqlite(): Promise<void> {
 }
 
 function resolveLightPgliteDirFromEnv(env: NodeJS.ProcessEnv): string {
-    const fromEnv = env.HAPPY_SERVER_LIGHT_DB_DIR?.trim();
+    const fromEnv = (env.HAPPIER_SERVER_LIGHT_DB_DIR ?? env.HAPPY_SERVER_LIGHT_DB_DIR)?.trim();
     if (fromEnv) return fromEnv;
 
-    const dataDir = env.HAPPY_SERVER_LIGHT_DATA_DIR?.trim();
+    const dataDir = (env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? env.HAPPY_SERVER_LIGHT_DATA_DIR)?.trim();
     if (!dataDir) {
-        throw new Error("Missing HAPPY_SERVER_LIGHT_DATA_DIR (expected applyLightDefaultEnv to set it)");
+        throw new Error(
+            "Missing HAPPIER_SERVER_LIGHT_DATA_DIR/HAPPY_SERVER_LIGHT_DATA_DIR (expected applyLightDefaultEnv to set it)",
+        );
     }
     return join(dataDir, "pglite");
 }
@@ -130,28 +135,57 @@ export async function initDbPglite(): Promise<void> {
     if (_db || _pglite || _pgliteServer) {
         throw new Error("Database client is already initialized.");
     }
+    if (_initDbPgliteInFlight) {
+        throw new Error("PGlite initialization is already in progress.");
+    }
 
-    const dbDir = resolveLightPgliteDirFromEnv(process.env);
-    await mkdir(dbDir, { recursive: true });
+    const initPromise = (async () => {
+        const dbDir = resolveLightPgliteDirFromEnv(process.env);
+        await mkdir(dbDir, { recursive: true });
 
-    const pglite = new PGlite(dbDir);
-    // `PGlite` initializes asynchronously. Ensure it's ready before starting the socket server.
-    await (pglite as any).waitReady;
-    const server = new PGLiteSocketServer({
-        db: pglite,
-        host: "127.0.0.1",
-        port: 0,
-    });
-    await server.start();
+        const releaseLock = await acquirePgliteDirLock(dbDir, { purpose: "server:initDbPglite" });
 
-    // The Socket server returns a Postgres connection string. Ensure Prisma uses a single connection
-    // because pglite is single-connection.
-    process.env.DATABASE_URL = withConnectionLimit(server.getServerConn(), 1);
+        let pglite: PGlite | null = null;
+        let server: PGLiteSocketServer | null = null;
+        try {
+            pglite = new PGlite(dbDir);
+            // `PGlite` initializes asynchronously. Ensure it's ready before starting the socket server.
+            await pglite.waitReady;
+            server = new PGLiteSocketServer({
+                db: pglite,
+                host: "127.0.0.1",
+                port: 0,
+            });
+            await server.start();
 
-    _pglite = pglite;
-    _pgliteServer = server;
-    _provider = "pglite";
-    _db = new PrismaClient();
+            // The Socket server returns a Postgres connection string. Ensure Prisma uses a single connection
+            // because pglite is single-connection.
+            process.env.DATABASE_URL = withConnectionLimit(server.getServerConn(), 1);
+
+            const prismaClient = new PrismaClient();
+            _pglite = pglite;
+            _pgliteServer = server;
+            _provider = "pglite";
+            _db = prismaClient;
+            _releasePgliteDirLock = releaseLock;
+        } catch (e) {
+            if (server) {
+                await server.stop().catch(() => {});
+            }
+            if (pglite) {
+                await pglite.close().catch(() => {});
+            }
+            await releaseLock().catch(() => {});
+            throw e;
+        }
+    })();
+
+    _initDbPgliteInFlight = initPromise;
+    try {
+        await initPromise;
+    } finally {
+        _initDbPgliteInFlight = null;
+    }
 }
 
 export function isPrismaErrorCode(err: unknown, code: string): boolean {
@@ -182,5 +216,11 @@ export async function shutdownDbPglite(): Promise<void> {
     _pglite = null;
     if (pglite) {
         await pglite.close();
+    }
+
+    const release = _releasePgliteDirLock;
+    _releasePgliteDirLock = null;
+    if (release) {
+        await release().catch(() => {});
     }
 }
