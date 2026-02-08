@@ -1,8 +1,8 @@
 {
   "v": 1,
   "providerId": "opencode",
-  "scenarioId": "glob_list_files",
-  "createdAt": "2026-02-06T21:22:11.647Z",
+  "scenarioId": "acp_resume_load_session",
+  "createdAt": "2026-02-06T21:18:14.868Z",
   "fixtureKeys": [
     "acp/opencode/tool-call/Bash",
     "acp/opencode/tool-result/Bash"

@@ -1,0 +1,18 @@
+{
+  "v": 1,
+  "providerId": "opencode",
+  "scenarioId": "search_ls_equivalence",
+  "createdAt": "2026-02-06T21:23:00.758Z",
+  "fixtureKeys": [
+    "acp/opencode/tool-call/Bash",
+    "acp/opencode/tool-call/CodeSearch",
+    "acp/opencode/tool-result/Bash",
+    "acp/opencode/tool-result/CodeSearch"
+  ],
+  "shapesByKey": {
+    "acp/opencode/tool-call/Bash": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"command\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/tool-call/CodeSearch": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":null},\"pattern\":{\"t\":\"string\"},\"query\":{\"t\":\"string\"}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/tool-result/Bash": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"output\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"exit_code\":{\"t\":\"number\"},\"metadata\":{\"t\":\"object\",\"keys\":{\"exit\":{\"t\":\"number\"},\"output\":{\"t\":\"string\"},\"truncated\":{\"t\":\"boolean\"}}},\"output\":{\"t\":\"string\"},\"stdout\":{\"t\":\"string\"}}},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/tool-result/CodeSearch": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"output\":{\"t\":\"object\",\"keys\":{\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"matches\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"excerpt\":{\"t\":\"string\"},\"filePath\":{\"t\":\"string\"},\"line\":{\"t\":\"number\"}}}}}},\"type\":{\"t\":\"string\"}}}"
+  }
+}

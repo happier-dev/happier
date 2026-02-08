@@ -1,14 +1,14 @@
 {
   "v": 1,
   "providerId": "opencode",
-  "scenarioId": "permission_surface_outside_workspace",
-  "createdAt": "2026-02-07T16:15:02.045Z",
+  "scenarioId": "multi_file_edit_in_workspace_includes_diff",
+  "createdAt": "2026-02-06T20:49:09.508Z",
   "fixtureKeys": [
     "acp/opencode/tool-call/Edit",
     "acp/opencode/tool-result/Edit"
   ],
   "shapesByKey": {
-    "acp/opencode/tool-call/Edit": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"filePath\":{\"t\":\"string\"},\"file_path\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"path\":{\"t\":\"string\"}}}},\"newString\":{\"t\":\"string\"},\"new_string\":{\"t\":\"string\"},\"oldString\":{\"t\":\"string\"}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
+    "acp/opencode/tool-call/Edit": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"input\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"filePath\":{\"t\":\"string\"},\"file_path\":{\"t\":\"string\"},\"locations\":{\"t\":\"array\",\"item\":{\"t\":\"object\",\"keys\":{\"path\":{\"t\":\"string\"}}}},\"newString\":{\"t\":\"string\"},\"new_string\":{\"t\":\"string\"},\"oldString\":{\"t\":\"string\"},\"old_string\":{\"t\":\"string\"}}},\"name\":{\"t\":\"string\"},\"type\":{\"t\":\"string\"}}}",
     "acp/opencode/tool-result/Edit": "{\"t\":\"object\",\"keys\":{\"callId\":{\"t\":\"string\"},\"id\":{\"t\":\"string\"},\"output\":{\"t\":\"object\",\"keys\":{\"_acp\":{\"t\":\"string\"},\"_happier\":{\"t\":\"object\",\"keys\":{\"canonicalToolName\":{\"t\":\"string\"},\"protocol\":{\"t\":\"string\"},\"provider\":{\"t\":\"string\"},\"rawToolName\":{\"t\":\"string\"},\"v\":{\"t\":\"number\"}}},\"_raw\":{\"t\":\"string\"},\"metadata\":{\"t\":\"object\",\"keys\":{\"diagnostics\":{\"t\":\"object\",\"keys\":{}},\"diff\":{\"t\":\"string\"},\"filediff\":{\"t\":\"object\",\"keys\":{\"additions\":{\"t\":\"number\"},\"after\":{\"t\":\"string\"},\"before\":{\"t\":\"string\"},\"deletions\":{\"t\":\"number\"},\"file\":{\"t\":\"string\"}}},\"truncated\":{\"t\":\"boolean\"}}},\"output\":{\"t\":\"string\"}}},\"type\":{\"t\":\"string\"}}}"
   }
 }
