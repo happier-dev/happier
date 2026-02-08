@@ -9,7 +9,14 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['**/*.test.ts', '**/*.spec.ts'],
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
+    include: ['sources/**/*.test.ts', 'sources/**/*.spec.ts', 'scripts/**/*.test.ts', 'scripts/**/*.spec.ts'],
+    exclude: ['**/*.dbcontract.spec.ts', '**/*.integration.spec.ts', '**/*.integration.test.ts', '**/*.real.integration.test.ts'],
+    // Prevent hoisted module mocks from leaking across test files.
+    // Several integration-style tests mock shared modules (e.g. "@/storage/inTx", "@/app/events/eventRouter").
+    // Without isolation, those mocks can contaminate other files depending on execution order.
+    isolate: true,
     env: {
       S3_HOST: 'localhost',
       S3_PORT: '9000',
