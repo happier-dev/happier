@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -98,6 +98,10 @@ describe('PendingMessagesModal', () => {
         modalAlert.mockReset();
     });
 
+    function findPressableByTestId(tree: renderer.ReactTestRenderer, testID: string): ReactTestInstance | undefined {
+        return tree.root.findAllByType('Pressable').find((node) => node.props.testID === testID);
+    }
+
     it('does not close the modal until abort+send+delete succeed', async () => {
         modalConfirm.mockResolvedValueOnce(true);
         sessionAbort.mockResolvedValueOnce(undefined);
@@ -112,9 +116,7 @@ describe('PendingMessagesModal', () => {
             tree = renderer.create(React.createElement(PendingMessagesModal, { sessionId: 's1', onClose }));
         });
 
-        const sendNow = tree!.root
-            .findAllByType('Pressable' as any)
-            .find((p) => p.props.testID === 'pendingMessages.sendNow:p1');
+        const sendNow = findPressableByTestId(tree!, 'pendingMessages.sendNow:p1');
         expect(sendNow).toBeTruthy();
 
         await act(async () => {
@@ -134,36 +136,6 @@ describe('PendingMessagesModal', () => {
         expect(abortOrder).toBeLessThan(sendOrder);
         expect(sendOrder).toBeLessThan(deleteOrder);
         expect(deleteOrder).toBeLessThan(closeOrder);
-    });
-
-    it('falls back to discarding when delete fails after send', async () => {
-        modalConfirm.mockResolvedValueOnce(true);
-        sessionAbort.mockResolvedValueOnce(undefined);
-        sendMessage.mockResolvedValueOnce(undefined);
-        deletePendingMessage.mockRejectedValueOnce(new Error('delete failed'));
-        discardPendingMessage.mockResolvedValueOnce(undefined);
-
-        const onClose = vi.fn();
-        const { PendingMessagesModal } = await import('./PendingMessagesModal');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingMessagesModal, { sessionId: 's1', onClose }));
-        });
-
-        const sendNow = tree!.root
-            .findAllByType('Pressable' as any)
-            .find((p) => p.props.testID === 'pendingMessages.sendNow:p1');
-        expect(sendNow).toBeTruthy();
-
-        await act(async () => {
-            await sendNow!.props.onPress();
-        });
-
-        expect(deletePendingMessage).toHaveBeenCalledTimes(1);
-        expect(discardPendingMessage).toHaveBeenCalledTimes(1);
-        expect(onClose).toHaveBeenCalledTimes(1);
-        expect(modalAlert).toHaveBeenCalledTimes(0);
     });
 
     it('renders with app theme shape (no secondary background / no danger box)', async () => {
@@ -190,9 +162,7 @@ describe('PendingMessagesModal', () => {
             tree = renderer.create(React.createElement(PendingMessagesModal, { sessionId: 's1', onClose }));
         });
 
-        const sendNow = tree!.root
-            .findAllByType('Pressable' as any)
-            .find((p) => p.props.testID === 'pendingMessages.sendNow:p1');
+        const sendNow = findPressableByTestId(tree!, 'pendingMessages.sendNow:p1');
         expect(sendNow).toBeTruthy();
 
         await act(async () => {

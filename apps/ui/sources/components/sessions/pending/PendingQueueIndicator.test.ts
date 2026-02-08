@@ -1,10 +1,9 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
+import { PendingQueueIndicator } from './PendingQueueIndicator';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-vi.useFakeTimers();
-vi.clearAllMocks();
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -39,7 +38,7 @@ vi.mock('@/components/layout', () => ({
 const modalShow = vi.fn();
 vi.mock('@/modal', () => ({
     Modal: {
-        show: (...args: any[]) => modalShow(...args),
+        show: (...args: unknown[]) => modalShow(...args),
     },
 }));
 
@@ -47,96 +46,109 @@ vi.mock('./PendingMessagesModal', () => ({
     PendingMessagesModal: 'PendingMessagesModal',
 }));
 
-describe('PendingQueueIndicator', () => {
-    const cleanupTimers = () => {
-        vi.clearAllTimers();
-    };
+function flattenTextChildren(value: unknown): string[] {
+    if (typeof value === 'string') return [value];
+    if (Array.isArray(value)) {
+        return value.flatMap((entry) => flattenTextChildren(entry));
+    }
+    return [];
+}
 
-    it('renders null when count is 0', async () => {
-        const { PendingQueueIndicator } = await import('./PendingQueueIndicator');
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingQueueIndicator, { sessionId: 's1', count: 0 }));
-        });
-        expect(tree!.toJSON()).toBeNull();
-        tree!.unmount();
-        cleanupTimers();
+async function renderIndicator(props: { sessionId: string; count: number; preview?: string }) {
+    let tree: renderer.ReactTestRenderer | undefined;
+    await act(async () => {
+        tree = renderer.create(React.createElement(PendingQueueIndicator, props));
+    });
+    return tree!;
+}
+
+describe('PendingQueueIndicator', () => {
+    beforeEach(() => {
+        vi.useFakeTimers();
+        modalShow.mockReset();
     });
 
-    it('renders a preview when provided', async () => {
-        const { PendingQueueIndicator } = await import('./PendingQueueIndicator');
-        let tree: ReturnType<typeof renderer.create> | undefined;
+    afterEach(async () => {
         await act(async () => {
-            tree = renderer.create(
-                React.createElement(PendingQueueIndicator, {
-                    sessionId: 's1',
-                    count: 2,
-                    preview: 'next up: hello',
-                } as any)
-            );
+            vi.clearAllTimers();
+        });
+        vi.useRealTimers();
+    });
+
+    it('renders null when count is 0', async () => {
+        const tree = await renderIndicator({ sessionId: 's1', count: 0 });
+        expect(tree.toJSON()).toBeNull();
+        await act(async () => {
+            tree.unmount();
+        });
+    });
+
+    it('renders preview text after debounce and opens pending modal on press', async () => {
+        const tree = await renderIndicator({
+            sessionId: 's1',
+            count: 2,
+            preview: 'next up: hello',
         });
 
         await act(async () => {
             vi.advanceTimersByTime(250);
         });
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n) => n.props.children).flat();
-        expect(texts.join(' ')).toContain('next up: hello');
-        tree!.unmount();
-        cleanupTimers();
+        const textNodes = tree.root.findAllByType('Text');
+        const renderedText = textNodes.flatMap((node) => flattenTextChildren(node.props.children));
+        expect(renderedText.join(' ')).toContain('next up: hello');
+
+        const indicatorButton = tree.root.findByType('Pressable');
+        await act(async () => {
+            indicatorButton.props.onPress?.();
+        });
+
+        expect(modalShow).toHaveBeenCalledTimes(1);
+        await act(async () => {
+            tree.unmount();
+        });
     });
 
     it('constrains width to layout.maxWidth', async () => {
-        const { PendingQueueIndicator } = await import('./PendingQueueIndicator');
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(PendingQueueIndicator, {
-                    sessionId: 's1',
-                    count: 1,
-                } as any)
-            );
-        });
+        const tree = await renderIndicator({ sessionId: 's1', count: 1 });
 
         await act(async () => {
             vi.advanceTimersByTime(250);
         });
 
-        const views = tree!.root.findAllByType('View' as any);
-        const hasMaxWidthContainer = views.some((v) => {
-            const style = v.props.style;
+        const views = tree.root.findAllByType('View');
+        const hasMaxWidthContainer = views.some((node) => {
+            const style = node.props.style;
             return style && style.maxWidth === 800 && style.width === '100%';
         });
         expect(hasMaxWidthContainer).toBe(true);
 
-        const pressable = tree!.root.findByType('Pressable' as any);
-        const style = pressable.props.style({ pressed: false });
-        expect(style.width).toBe('100%');
-        tree!.unmount();
-        cleanupTimers();
+        const pressable = tree.root.findByType('Pressable') as ReactTestInstance;
+        const styleFn = pressable.props.style as ((input: { pressed: boolean }) => { width?: string });
+        expect(styleFn({ pressed: false }).width).toBe('100%');
+
+        await act(async () => {
+            tree.unmount();
+        });
     });
 
-    it('does not flicker pending UI for fast enqueue→dequeue transitions', async () => {
-        const { PendingQueueIndicator } = await import('./PendingQueueIndicator');
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(React.createElement(PendingQueueIndicator, { sessionId: 's1', count: 0 }));
-        });
-        expect(tree!.toJSON()).toBeNull();
+    it('does not flicker pending UI for fast enqueue-to-dequeue transitions', async () => {
+        const tree = await renderIndicator({ sessionId: 's1', count: 0 });
+        expect(tree.toJSON()).toBeNull();
 
         await act(async () => {
-            tree!.update(React.createElement(PendingQueueIndicator, { sessionId: 's1', count: 1, preview: 'hello' }));
+            tree.update(React.createElement(PendingQueueIndicator, { sessionId: 's1', count: 1, preview: 'hello' }));
         });
-        // Still hidden until debounce elapses.
-        expect(tree!.toJSON()).toBeNull();
+        expect(tree.toJSON()).toBeNull();
 
         await act(async () => {
             vi.advanceTimersByTime(50);
-            tree!.update(React.createElement(PendingQueueIndicator, { sessionId: 's1', count: 0 }));
+            tree.update(React.createElement(PendingQueueIndicator, { sessionId: 's1', count: 0 }));
         });
-        // If the pending queue drains quickly, we should never render.
-        expect(tree!.toJSON()).toBeNull();
-        tree!.unmount();
-        cleanupTimers();
+        expect(tree.toJSON()).toBeNull();
+
+        await act(async () => {
+            tree.unmount();
+        });
     });
 });

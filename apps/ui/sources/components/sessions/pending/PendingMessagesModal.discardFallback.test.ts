@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -89,6 +89,10 @@ describe('PendingMessagesModal discard fallback', () => {
         modalAlert.mockReset();
     });
 
+    function findPressableByTestId(tree: renderer.ReactTestRenderer, testID: string): ReactTestInstance | undefined {
+        return tree.root.findAllByType('Pressable').find((node) => node.props.testID === testID);
+    }
+
     it('falls back to discarding when delete fails after send', async () => {
         modalConfirm.mockResolvedValueOnce(true);
         sessionAbort.mockResolvedValueOnce(undefined);
@@ -104,9 +108,7 @@ describe('PendingMessagesModal discard fallback', () => {
             tree = renderer.create(React.createElement(PendingMessagesModal, { sessionId: 's1', onClose }));
         });
 
-        const sendNow = tree!.root
-            .findAllByType('Pressable' as any)
-            .find((p) => p.props.testID === 'pendingMessages.sendNow:p1');
+        const sendNow = findPressableByTestId(tree!, 'pendingMessages.sendNow:p1');
         expect(sendNow).toBeTruthy();
 
         await act(async () => {
@@ -119,4 +121,3 @@ describe('PendingMessagesModal discard fallback', () => {
         expect(modalAlert).toHaveBeenCalledTimes(0);
     });
 });
-
