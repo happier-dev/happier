@@ -7,6 +7,10 @@ import { AGENTS } from './catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from './types';
 
 describe('AGENTS', () => {
+  it('includes kilo', () => {
+    expect(Object.prototype.hasOwnProperty.call(AGENTS, 'kilo')).toBe(true);
+  });
+
   it('has unique cliSubcommand values', () => {
     const values = Object.values(AGENTS).map((entry) => entry.cliSubcommand);
     expect(new Set(values).size).toBe(values.length);
