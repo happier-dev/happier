@@ -2,7 +2,7 @@ import type { ModelMode } from '@/sync/permissionTypes';
 import type { TranslationKey } from '@/text';
 import type { Href } from 'expo-router';
 
-import { AGENT_IDS, DEFAULT_AGENT_ID, type AgentId } from '@happier-dev/agents';
+import { AGENT_IDS, DEFAULT_AGENT_ID, type AgentId, type AgentModelConfig } from '@happier-dev/agents';
 
 import { CLAUDE_CORE } from './providers/claude/core';
 import { CODEX_CORE } from './providers/codex/core';
@@ -11,6 +11,7 @@ import { GEMINI_CORE } from './providers/gemini/core';
 import { AUGGIE_CORE } from './providers/auggie/core';
 import { QWEN_CORE } from './providers/qwen/core';
 import { KIMI_CORE } from './providers/kimi/core';
+import { KILO_CORE } from './providers/kilo/core';
 
 export { AGENT_IDS, DEFAULT_AGENT_ID };
 export type { AgentId };
@@ -98,11 +99,23 @@ export type AgentCoreConfig = Readonly<{
         modeGroup: PermissionModeGroupId;
         promptProtocol: PermissionPromptProtocol;
     }>;
-    model: Readonly<{
-        supportsSelection: boolean;
-        defaultMode: ModelMode;
-        allowedModes: readonly ModelMode[];
+    sessionModes: Readonly<{
+        /**
+         * How (if at all) ACP session modes should be treated for this agent.
+         *
+         * - none: do not surface ACP session modes as a first-class control in UI
+         * - acpPolicyPresets: ACP modes exist, but represent approval/sandbox presets (not plan/build)
+         * - acpAgentModes: ACP modes represent agent-level modes (e.g. plan/build) and should be user-controllable
+         */
+        kind: 'none' | 'acpPolicyPresets' | 'acpAgentModes';
     }>;
+    /**
+     * Model selection capabilities and static suggestions.
+     *
+     * Source of truth lives in `@happier-dev/agents` so CLI + UI don’t drift.
+     * UI may still prefer dynamic ACP lists (`metadata.acpSessionModelsV1`) when present.
+     */
+    model: AgentModelConfig;
     resume: Readonly<{
         /**
          * Field in session metadata containing the vendor resume id, if supported.
@@ -129,6 +142,13 @@ export type AgentCoreConfig = Readonly<{
          * by callers (e.g. via feature flags / experiments).
          */
         experimental: boolean;
+    }>;
+    localControl?: Readonly<{
+        /**
+         * When true, this agent supports a terminal-driven "local control" mode
+         * that can be mirrored in the UI and switched to/from remote mode.
+         */
+        supported: boolean;
     }>;
     toolRendering: Readonly<{
         /**
@@ -161,6 +181,7 @@ export const AGENTS_CORE: Readonly<Record<AgentId, AgentCoreConfig>> = Object.fr
     auggie: AUGGIE_CORE,
     qwen: QWEN_CORE,
     kimi: KIMI_CORE,
+    kilo: KILO_CORE,
 });
 
 export function isAgentId(value: unknown): value is AgentId {

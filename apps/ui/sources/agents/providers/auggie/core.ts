@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registryCore';
+import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const AUGGIE_CORE: AgentCoreConfig = {
     id: 'auggie',
@@ -24,11 +25,10 @@ export const AUGGIE_CORE: AgentCoreConfig = {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
     },
-    model: {
-        supportsSelection: false,
-        defaultMode: 'default',
-        allowedModes: ['default'],
+    sessionModes: {
+        kind: getAgentSessionModesKind('auggie'),
     },
+    model: getAgentModelConfig('auggie'),
     resume: {
         vendorResumeIdField: 'auggieSessionId',
         uiVendorResumeIdLabelKey: 'sessionInfo.auggieSessionId',

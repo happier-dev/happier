@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registryCore';
+import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const QWEN_CORE: AgentCoreConfig = {
     id: 'qwen',
@@ -26,11 +27,10 @@ export const QWEN_CORE: AgentCoreConfig = {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
     },
-    model: {
-        supportsSelection: false,
-        defaultMode: 'default',
-        allowedModes: ['default'],
+    sessionModes: {
+        kind: getAgentSessionModesKind('qwen'),
     },
+    model: getAgentModelConfig('qwen'),
     resume: {
         vendorResumeIdField: 'qwenSessionId',
         uiVendorResumeIdLabelKey: 'sessionInfo.qwenSessionId',
@@ -48,4 +48,3 @@ export const QWEN_CORE: AgentCoreConfig = {
         profileCompatibilityGlyphScale: 1.0,
     },
 };
-

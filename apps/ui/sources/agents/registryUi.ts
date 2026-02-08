@@ -10,6 +10,7 @@ import { GEMINI_UI } from './providers/gemini/ui';
 import { AUGGIE_UI } from './providers/auggie/ui';
 import { QWEN_UI } from './providers/qwen/ui';
 import { KIMI_UI } from './providers/kimi/ui';
+import { KILO_UI } from './providers/kilo/ui';
 
 export type AgentUiConfig = Readonly<{
     id: AgentId;
@@ -39,6 +40,7 @@ export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze
     auggie: AUGGIE_UI,
     qwen: QWEN_UI,
     kimi: KIMI_UI,
+    kilo: KILO_UI,
 });
 
 export function getAgentIconSource(agentId: AgentId): ImageSourcePropType {

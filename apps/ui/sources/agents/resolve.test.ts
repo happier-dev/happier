@@ -8,10 +8,18 @@ describe('agents/resolve', () => {
         expect(resolveAgentIdOrDefault(null, 'claude')).toBe('claude');
     });
 
-    it('prefers Codex tool prefix hints for permission UI', () => {
-        // When metadata flavor is present, prefer it (tool names can be provider-prefixed inconsistently).
+    it('uses canonical flavor when known and ignores tool prefix hints', () => {
         expect(resolveAgentIdForPermissionUi({ flavor: 'claude', toolName: 'CodexBash' })).toBe('claude');
         expect(resolveAgentIdForPermissionUi({ flavor: 'gemini', toolName: 'CodexBash' })).toBe('gemini');
+    });
+
+    it('prefers Codex tool prefix hints for permission UI', () => {
         expect(resolveAgentIdForPermissionUi({ flavor: null, toolName: 'CodexBash' })).toBe('codex');
+        expect(resolveAgentIdForPermissionUi({ flavor: '', toolName: 'CodexBash' })).toBe('codex');
+    });
+
+    it('falls back to default agent when no flavor or codex tool hint exists', () => {
+        expect(resolveAgentIdForPermissionUi({ flavor: null, toolName: 'Bash' })).toBe('claude');
+        expect(resolveAgentIdForPermissionUi({ flavor: undefined, toolName: '' })).toBe('claude');
     });
 });

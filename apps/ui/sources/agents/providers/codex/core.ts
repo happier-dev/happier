@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registryCore';
+import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const CODEX_CORE: AgentCoreConfig = {
     id: 'codex',
@@ -27,11 +28,10 @@ export const CODEX_CORE: AgentCoreConfig = {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
     },
-    model: {
-        supportsSelection: false,
-        defaultMode: 'default',
-        allowedModes: ['default'],
+    sessionModes: {
+        kind: getAgentSessionModesKind('codex'),
     },
+    model: getAgentModelConfig('codex'),
     resume: {
         vendorResumeIdField: 'codexSessionId',
         uiVendorResumeIdLabelKey: 'sessionInfo.codexSessionId',
@@ -39,6 +39,9 @@ export const CODEX_CORE: AgentCoreConfig = {
         supportsVendorResume: true,
         runtimeGate: null,
         experimental: true,
+    },
+    localControl: {
+        supported: true,
     },
     toolRendering: {
         hideUnknownToolsByDefault: false,
@@ -49,4 +52,3 @@ export const CODEX_CORE: AgentCoreConfig = {
         profileCompatibilityGlyphScale: 0.82,
     },
 };
-

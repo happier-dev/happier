@@ -149,7 +149,8 @@ export function getAgentResumeExperimentsFromSettings(agentId: AgentId, settings
     if (defs.length === 0) return { enabled, switches: {} };
     const switches: Record<string, boolean> = {};
     for (const def of defs) {
-        switches[def.id] = settings[def.settingKey] === true;
+        const settingKey = def.settingKey as Extract<keyof Settings, string>;
+        switches[def.id] = settings[settingKey] === true;
     }
     return { enabled, switches };
 }

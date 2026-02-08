@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registryCore';
+import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const GEMINI_CORE: AgentCoreConfig = {
     id: 'gemini',
@@ -25,11 +26,10 @@ export const GEMINI_CORE: AgentCoreConfig = {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
     },
-    model: {
-        supportsSelection: true,
-        defaultMode: 'gemini-2.5-pro',
-        allowedModes: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+    sessionModes: {
+        kind: getAgentSessionModesKind('gemini'),
     },
+    model: getAgentModelConfig('gemini'),
     resume: {
         // Runtime-gated via ACP capability probing (loadSession).
         vendorResumeIdField: 'geminiSessionId',
@@ -48,4 +48,3 @@ export const GEMINI_CORE: AgentCoreConfig = {
         profileCompatibilityGlyphScale: 0.88,
     },
 };
-

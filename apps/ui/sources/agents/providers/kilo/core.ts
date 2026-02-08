@@ -1,39 +1,39 @@
 import type { AgentCoreConfig } from '@/agents/registryCore';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
-export const KIMI_CORE: AgentCoreConfig = {
-    id: 'kimi',
-    displayNameKey: 'agentInput.agent.kimi',
-    subtitleKey: 'profiles.aiBackend.kimiSubtitleExperimental',
+export const KILO_CORE: AgentCoreConfig = {
+    id: 'kilo',
+    displayNameKey: 'agentInput.agent.kilo',
+    subtitleKey: 'profiles.aiBackend.kiloSubtitleExperimental',
     permissionModeI18nPrefix: 'agentInput.codexPermissionMode',
     availability: { experimental: true },
     connectedService: {
         id: null,
-        name: 'Kimi',
+        name: 'Kilo',
         connectRoute: null,
     },
-    flavorAliases: ['kimi', 'kimi-cli'],
+    flavorAliases: ['kilo', 'kilocode'],
     cli: {
-        detectKey: 'kimi',
-        machineLoginKey: 'kimi',
+        detectKey: 'kilo',
+        machineLoginKey: 'kilo',
         installBanner: {
-            installKind: 'ifAvailable',
-            guideUrl: 'https://kimi.moonshot.cn/docs/cli',
+            installKind: 'command',
+            installCommand: 'npm install -g @kilocode/cli@latest',
         },
-        spawnAgent: 'kimi',
+        spawnAgent: 'kilo',
     },
     permissions: {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
     },
     sessionModes: {
-        kind: getAgentSessionModesKind('kimi'),
+        kind: getAgentSessionModesKind('kilo'),
     },
-    model: getAgentModelConfig('kimi'),
+    model: getAgentModelConfig('kilo'),
     resume: {
-        vendorResumeIdField: 'kimiSessionId',
-        uiVendorResumeIdLabelKey: 'sessionInfo.kimiSessionId',
-        uiVendorResumeIdCopiedKey: 'sessionInfo.kimiSessionIdCopied',
+        vendorResumeIdField: 'kiloSessionId',
+        uiVendorResumeIdLabelKey: 'sessionInfo.kiloSessionId',
+        uiVendorResumeIdCopiedKey: 'sessionInfo.kiloSessionIdCopied',
         supportsVendorResume: false,
         runtimeGate: 'acpLoadSession',
         experimental: false,

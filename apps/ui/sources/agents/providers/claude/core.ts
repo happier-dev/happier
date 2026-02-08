@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registryCore';
+import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const CLAUDE_CORE: AgentCoreConfig = {
     id: 'claude',
@@ -16,9 +17,8 @@ export const CLAUDE_CORE: AgentCoreConfig = {
         detectKey: 'claude',
         machineLoginKey: 'claude-code',
         installBanner: {
-            installKind: 'command',
-            installCommand: 'npm install -g @anthropic-ai/claude-code',
-            guideUrl: 'https://docs.anthropic.com/en/docs/claude-code/installation',
+            installKind: 'ifAvailable',
+            guideUrl: 'https://docs.anthropic.com/en/docs/claude-code/getting-started',
         },
         spawnAgent: 'claude',
     },
@@ -26,11 +26,10 @@ export const CLAUDE_CORE: AgentCoreConfig = {
         modeGroup: 'claude',
         promptProtocol: 'claude',
     },
-    model: {
-        supportsSelection: false,
-        defaultMode: 'default',
-        allowedModes: ['default'],
+    sessionModes: {
+        kind: getAgentSessionModesKind('claude'),
     },
+    model: getAgentModelConfig('claude'),
     resume: {
         vendorResumeIdField: 'claudeSessionId',
         uiVendorResumeIdLabelKey: 'sessionInfo.claudeCodeSessionId',
@@ -38,6 +37,9 @@ export const CLAUDE_CORE: AgentCoreConfig = {
         supportsVendorResume: true,
         runtimeGate: null,
         experimental: false,
+    },
+    localControl: {
+        supported: true,
     },
     toolRendering: {
         hideUnknownToolsByDefault: false,
@@ -48,4 +50,3 @@ export const CLAUDE_CORE: AgentCoreConfig = {
         profileCompatibilityGlyphScale: 1.14,
     },
 };
-

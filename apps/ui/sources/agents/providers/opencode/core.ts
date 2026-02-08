@@ -1,4 +1,5 @@
 import type { AgentCoreConfig } from '@/agents/registryCore';
+import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const OPENCODE_CORE: AgentCoreConfig = {
     id: 'opencode',
@@ -26,11 +27,10 @@ export const OPENCODE_CORE: AgentCoreConfig = {
         modeGroup: 'codexLike',
         promptProtocol: 'codexDecision',
     },
-    model: {
-        supportsSelection: false,
-        defaultMode: 'default',
-        allowedModes: ['default'],
+    sessionModes: {
+        kind: getAgentSessionModesKind('opencode'),
     },
+    model: getAgentModelConfig('opencode'),
     resume: {
         vendorResumeIdField: 'opencodeSessionId',
         uiVendorResumeIdLabelKey: 'sessionInfo.opencodeSessionId',
@@ -48,4 +48,3 @@ export const OPENCODE_CORE: AgentCoreConfig = {
         profileCompatibilityGlyphScale: 1.0,
     },
 };
-
