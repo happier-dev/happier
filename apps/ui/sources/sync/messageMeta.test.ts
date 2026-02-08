@@ -55,4 +55,24 @@ describe('buildOutgoingMessageMeta', () => {
         expect('fallbackModel' in meta).toBe(true);
         expect(meta.fallbackModel).toBe('gemini-2.5-flash');
     });
+
+    it('normalizes legacy provider permission tokens to canonical intents', () => {
+        const meta = buildOutgoingMessageMeta({
+            sentFrom: 'web',
+            permissionMode: 'acceptEdits' as any,
+            appendSystemPrompt: 'PROMPT',
+        });
+
+        expect(meta.permissionMode).toBe('safe-yolo');
+    });
+
+    it('falls back to default permission mode for unknown tokens', () => {
+        const meta = buildOutgoingMessageMeta({
+            sentFrom: 'web',
+            permissionMode: 'unknown-mode' as any,
+            appendSystemPrompt: 'PROMPT',
+        });
+
+        expect(meta.permissionMode).toBe('default');
+    });
 });
