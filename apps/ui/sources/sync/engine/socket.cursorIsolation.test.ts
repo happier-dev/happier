@@ -1,15 +1,114 @@
-import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import type { ApiUpdateContainer } from '../apiTypes';
+import type { Session } from '../storageTypes';
+import * as persistence from '../persistence';
+import { storage } from '../storage';
+import { handleUpdateContainer } from './socket';
+
+const initialStorageState = storage.getState();
+
+function buildSession(sessionId: string): Session {
+    return {
+        id: sessionId,
+        seq: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        active: true,
+        activeAt: 1,
+        metadata: null,
+        metadataVersion: 0,
+        agentState: null,
+        agentStateVersion: 0,
+        thinking: false,
+        thinkingAt: 0,
+        presence: 'online',
+    };
+}
+
+function buildBaseParams(overrides: Partial<Omit<Parameters<typeof handleUpdateContainer>[0], 'updateData'>> = {}) {
+    return {
+        encryption: {
+            getSessionEncryption: () => null,
+            getMachineEncryption: () => null,
+            removeSessionEncryption: () => {},
+        } as unknown as Parameters<typeof handleUpdateContainer>[0]['encryption'],
+        artifactDataKeys: new Map<string, Uint8Array>(),
+        applySessions: vi.fn(),
+        fetchSessions: vi.fn(),
+        applyMessages: vi.fn(),
+        onSessionVisible: vi.fn(),
+        isSessionMessagesLoaded: vi.fn(() => false),
+        getSessionMaterializedMaxSeq: vi.fn(() => 0),
+        markSessionMaterializedMaxSeq: vi.fn(),
+        invalidateMessagesForSession: vi.fn(),
+        assumeUsers: vi.fn(async () => {}),
+        applyTodoSocketUpdates: vi.fn(async () => {}),
+        invalidateSessions: vi.fn(),
+        invalidateArtifacts: vi.fn(),
+        invalidateFriends: vi.fn(),
+        invalidateFriendRequests: vi.fn(),
+        invalidateFeed: vi.fn(),
+        invalidateTodos: vi.fn(),
+        log: { log: vi.fn() },
+        ...overrides,
+    };
+}
 
 describe('socket update handling cursor isolation', () => {
-    it('does not persist /v2/changes cursor from socket updates', () => {
-        // Socket updates are best-effort hints. The durable cursor must only advance from `/v2/changes` responses.
-        const file = join(__dirname, 'socket.ts');
-        const source = readFileSync(file, 'utf8');
+    beforeEach(() => {
+        storage.setState(initialStorageState, true);
+    });
 
-        expect(source).not.toContain('saveChangesCursor');
-        expect(source).not.toContain('changesCursor');
+    it('does not persist durable changes cursor when handling new-session socket updates', async () => {
+        const saveChangesCursorSpy = vi.spyOn(persistence, 'saveChangesCursor');
+        const params = buildBaseParams();
+        const updateData: ApiUpdateContainer = {
+            id: 'u1',
+            seq: 10,
+            createdAt: 100,
+            body: { t: 'new-session' },
+        } as ApiUpdateContainer;
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        expect(params.invalidateSessions).toHaveBeenCalledTimes(1);
+        expect(saveChangesCursorSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not persist durable changes cursor when applying pending-changed socket updates', async () => {
+        const sessionId = 's1';
+        storage.getState().applySessions([buildSession(sessionId)]);
+        const saveChangesCursorSpy = vi.spyOn(persistence, 'saveChangesCursor');
+        const applySessions = vi.fn();
+        const params = buildBaseParams({ applySessions });
+        const updateData: ApiUpdateContainer = {
+            id: 'u2',
+            seq: 11,
+            createdAt: 101,
+            body: {
+                t: 'pending-changed',
+                sid: sessionId,
+                pendingCount: 3,
+                pendingVersion: 42,
+            },
+        } as ApiUpdateContainer;
+
+        await handleUpdateContainer({
+            ...params,
+            updateData,
+        });
+
+        expect(applySessions).toHaveBeenCalledTimes(1);
+        const updatedSession = applySessions.mock.calls[0]?.[0]?.[0] as Session & {
+            pendingCount?: number;
+            pendingVersion?: number;
+        };
+        expect(updatedSession?.pendingCount).toBe(3);
+        expect(updatedSession?.pendingVersion).toBe(42);
+        expect(saveChangesCursorSpy).not.toHaveBeenCalled();
     });
 });
-

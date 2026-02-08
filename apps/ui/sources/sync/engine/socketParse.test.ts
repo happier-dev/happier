@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseEphemeralUpdate, parseUpdateContainer } from './socketParse';
 
 describe('socketParse', () => {
@@ -47,6 +47,31 @@ describe('socketParse', () => {
         expect(res!.seq).toBe(0);
     });
 
+    it('accepts legacy sharing update body nested under body', () => {
+        const res = parseUpdateContainer({
+            body: {
+                t: 'session-share-updated',
+                sessionId: 's1',
+                shareId: 'sh1',
+            },
+        });
+
+        expect(res).not.toBeNull();
+        expect(res!.body.t).toBe('session-share-updated');
+        expect((res!.body as any).sessionId).toBe('s1');
+        expect((res!.body as any).shareId).toBe('sh1');
+        expect(res!.seq).toBe(0);
+    });
+
+    it('returns null for malformed legacy sharing payloads', () => {
+        const res = parseUpdateContainer({
+            t: 'session-shared',
+            // missing sessionId
+        });
+
+        expect(res).toBeNull();
+    });
+
     it('parses ephemeral activity updates', () => {
         const res = parseEphemeralUpdate({
             type: 'activity',
@@ -60,5 +85,17 @@ describe('socketParse', () => {
         expect(res!.type).toBe('activity');
         expect((res as any).id).toBe('s1');
     });
-});
 
+    it('returns null for invalid ephemeral payloads', () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const res = parseEphemeralUpdate({
+            type: 'activity',
+            active: true,
+            // missing required id
+        });
+
+        expect(res).toBeNull();
+        expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+        consoleErrorSpy.mockRestore();
+    });
+});
