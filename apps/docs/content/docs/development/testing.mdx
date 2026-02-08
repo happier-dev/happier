@@ -5,61 +5,83 @@ description: Test tiers, how to run them locally, and how they are gated in CI/r
 
 ## Test tiers (repo-wide model)
 
-We use these tiers consistently across scripts and GitHub Actions:
+We use these lanes consistently across scripts and GitHub Actions.
 
 ### 1) Unit
 
-Fast, deterministic tests that run without external services.
+Fast deterministic tests for pure logic/component behavior.
 
-**Includes:**
-- UI unit tests (`apps/ui`, Vitest in node env)
-- CLI unit/integration tests (`apps/cli`, Vitest; may include tmux integration in CI)
-- Server unit/component tests (`apps/server`, Vitest)
-- Stack tool tests (`apps/stack`, Node’s `node:test`)
-
-**Local commands:**
+**Root command:**
 ```bash
 yarn test
 ```
 
-### 2) Typecheck
+This runs:
+- `yarn workspace @happier-dev/app test`
+- `yarn workspace @happier-dev/cli test:unit`
+- `yarn workspace @happier-dev/server test:unit`
+- `yarn --cwd apps/stack test:unit`
 
-TypeScript typechecking for the main runtime packages (UI/CLI/server).
+Note: the UI workspace package name is `@happier-dev/app` and its directory is `apps/ui`.
+
+### 2) Integration
+
+Real process/filesystem/network orchestration tests at app level.
+
+**Naming convention:**
+- `*.integration.test.*`
+- `*.integration.spec.*`
+- `*.real.integration.test.*`
+
+**Root command:**
+```bash
+yarn test:integration
+```
+
+This runs:
+- `yarn workspace @happier-dev/app test:integration`
+- `yarn workspace @happier-dev/cli test:integration`
+- `yarn workspace @happier-dev/server test:integration`
+- `yarn --cwd apps/stack test:integration`
+
+### 3) Server DB contract
+
+Server-only contract suite against explicit DB providers (Postgres/MySQL in Docker lanes).
 
 **Local command:**
 ```bash
-yarn typecheck
+yarn workspace @happier-dev/server test:db-contract
 ```
 
-### 3) Integration (system-level)
+### 4) Core E2E
 
-Real subprocess + real server-light where needed (still intended to be deterministic).
+End-to-end suites in `packages/tests` against real server/socket contracts.
 
-**CI example:**
-- “CLI + Server (light/pglite) E2E” job in `CI — Tests` runs daemon control-plane integration against a real server-light.
-
-### 4) E2E (core gate)
-
-This is the “ship confidence” suite: real server-light + real sockets + real DB, asserting real HTTP + Socket.IO contracts.
-
-**Local commands:**
+**Root commands:**
 ```bash
 yarn test:e2e
-
-# Run against embedded DB engines:
+yarn test:e2e:core:fast
+yarn test:e2e:core:slow
 yarn test:e2e:core:embedded
 ```
 
-### 5) Providers (contract drift)
+Lane intent:
+- `test:e2e` / `test:e2e:core` = full core gate.
+- `test:e2e:core:fast` = default local loop (excludes the longest process-orchestration scenarios).
+- `test:e2e:core:slow` = long-running scenarios (switching/materialization/mode orchestration).
 
-Opt-in suite that runs **real provider CLIs** through Happier and validates tool-trace normalization + baselines.
-This may consume provider credits and requires secrets.
+Core E2E slow naming convention:
+- `*.slow.e2e.test.ts` files run only in `test:e2e:core:slow`.
+- All other `suites/core-e2e/**/*.test.ts` files run in `test:e2e:core:fast`.
+- `test:e2e` still runs the full core suite (fast + slow together).
 
-**Local commands:**
+### 5) Providers
+
+Provider contract/baseline suites in `packages/tests` (real provider CLIs).
+
+**Root commands:**
 ```bash
 yarn test:providers
-
-# Presets:
 yarn test:providers:all:smoke
 yarn test:providers:claude:extended
 yarn test:providers:codex:smoke
@@ -68,14 +90,23 @@ yarn test:providers:opencode:extended
 
 ### 6) Stress
 
-Nightly/on-demand suite for repeat/chaos patterns and flake classification.
+Repeat/chaos reliability suites in `packages/tests`.
 
-**Local command:**
+**Root command:**
 ```bash
 yarn test:stress
 ```
 
-### 7) Extended DB matrix (Postgres/MySQL)
+### 7) Typecheck
+
+TypeScript typechecking for the main runtime packages (UI/CLI/server).
+
+**Root command:**
+```bash
+yarn typecheck
+```
+
+### 8) Extended DB matrix (Postgres/MySQL)
 
 Optional validation that core E2E and DB contract tests behave on non-embedded engines.
 In CI this runs via a dedicated workflow using service containers.
@@ -85,6 +116,91 @@ In CI this runs via a dedicated workflow using service containers.
 yarn test:e2e:core:docker
 yarn test:db-contract:docker
 ```
+
+## Package-level lane scripts
+
+### UI (`apps/ui`, workspace `@happier-dev/app`)
+- Unit: `yarn --cwd apps/ui test:unit`
+- Integration: `yarn --cwd apps/ui test:integration`
+
+### CLI (`apps/cli`)
+- Unit: `yarn --cwd apps/cli test:unit`
+- Integration: `yarn --cwd apps/cli test:integration`
+- Slow-only lane: `yarn --cwd apps/cli test:slow`
+
+### Server (`apps/server`)
+- Unit: `yarn --cwd apps/server test:unit`
+- Integration: `yarn --cwd apps/server test:integration`
+- DB contract: `yarn --cwd apps/server test:db-contract`
+
+### Stack (`apps/stack`)
+- Unit: `yarn --cwd apps/stack test:unit`
+- Integration: `yarn --cwd apps/stack test:integration`
+
+### E2E workspace (`packages/tests`, workspace `@happier-dev/tests`)
+- Core (full): `yarn workspace @happier-dev/tests test`
+- Core fast: `yarn workspace @happier-dev/tests test:core:fast`
+- Core slow: `yarn workspace @happier-dev/tests test:core:slow`
+- Providers: `yarn workspace @happier-dev/tests test:providers`
+- Stress: `yarn workspace @happier-dev/tests test:stress`
+
+## Env-gated integration suites
+
+Some integration suites intentionally require explicit environment flags:
+- CLI daemon reattach/pid safety: `HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION=1`
+- CLI tmux integration paths in CI: `HAPPIER_CLI_TMUX_INTEGRATION=1`
+
+CI sets these for relevant jobs. Local runs can set them manually when you need those suites.
+
+## Prerequisites matrix
+
+### Unit (`yarn test`)
+- Requires: Node + Yarn only.
+- Should not require tmux, Docker, provider CLIs, or API keys.
+
+### Integration (`yarn test:integration`)
+- UI integration:
+  - Requires: Node + Yarn.
+- CLI integration:
+  - Requires: Node + Yarn.
+  - Optional gated suites:
+    - `HAPPIER_CLI_TMUX_INTEGRATION=1` and `tmux` installed for `*.real.integration.test.ts` tmux coverage.
+    - `HAPPIER_CLI_DAEMON_REATTACH_INTEGRATION=1` for real PID/reattach process inspection suites.
+- Server integration:
+  - Requires: Node + Yarn.
+  - Does not require Docker for regular integration lane.
+- Stack integration:
+  - Requires: Node + Yarn + `git` available in PATH.
+  - Spawns real child processes and validates process ownership/sweep behavior.
+
+### DB contract (`yarn workspace @happier-dev/server test:db-contract`)
+- Requires: DB provider runtime (`postgres`/`mysql`) and matching connection env.
+- Docker-backed helper commands:
+  - `yarn test:db-contract:docker`
+
+### Core E2E (`yarn test:e2e`, `yarn test:e2e:core:embedded`)
+- Requires: Node + Yarn.
+- Uses real server/socket/runtime contracts via `packages/tests`.
+- Does not require provider API keys.
+- Recommended local loop:
+  - `yarn test:e2e:core:fast` during iteration.
+  - `yarn test:e2e:core:slow` before handoff for orchestration-heavy changes.
+  - `yarn test:e2e` for the full core gate.
+
+### Provider suites (`yarn test:providers`, `yarn test:providers:*`)
+- `yarn test:providers` by itself runs provider-suite checks with provider execution disabled by default (`HAPPIER_E2E_PROVIDERS` unset), so it does not require provider CLIs or API keys.
+- `yarn test:providers:all:smoke` / `yarn test:providers:claude:extended` (and similar wrappers) enable real provider execution and then require provider CLIs/binaries for selected providers.
+- Direct workspace command (advanced): `yarn workspace @happier-dev/tests providers:run <preset> <lane>`.
+- Auth mode is provider-spec driven:
+  - `host` mode: uses existing local provider CLI login/session (can run without API keys).
+  - `env` mode: requires provider keys/secrets declared by provider spec.
+- Practical guidance:
+  - `smoke`: minimal scenario tier, but still real provider execution when run via `test:providers:*` wrappers or `providers:run`.
+  - `extended`: broader scenario tier with more scenarios; in CI this typically runs with env-key/secrets overlays.
+
+### Stress (`yarn test:stress`)
+- Requires: Node + Yarn.
+- Longer-running reliability loops; keep out of PR default local loop.
 
 ## Artifacts
 
@@ -100,10 +216,13 @@ CI uploads this directory as an artifact on failure.
 Workflow: `CI — Tests` (`.github/workflows/tests.yml`)
 
 Default gate includes:
-- Unit (UI/Server/CLI/Stack)
+- Unit (UI + app/unit lanes)
+- Integration (UI/CLI/Server/Stack app lanes)
 - Typecheck
-- Integration (CLI+Server daemon E2E)
+- Daemon integration E2E (`CLI + Server (light/pglite) E2E`)
 - Core E2E (pglite + sqlite)
+
+The daemon integration E2E job is intentionally separate from app unit/integration lanes because it verifies cross-package boot/auth/daemon behavior against a real light server process.
 
 ### On-demand provider contracts
 
@@ -131,3 +250,9 @@ When `run_checks=true`, the release runs the same reusable gate as PR CI (via `w
 - providers (smoke/extended)
 - stress
 
+## Contributor guidance
+
+1. Default local loop: run the smallest unit target first.
+2. If your test needs real process/filesystem/network orchestration, name it as integration and keep it out of unit lane.
+3. Before handoff, run the relevant app/unit and app/integration lanes for touched areas.
+4. For protocol/runtime/socket/database contract changes, also run core E2E.
