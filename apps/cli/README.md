@@ -10,7 +10,37 @@ Free. Open source. Code anywhere.
 npm install -g @happier-dev/cli
 ```
 
+## Testing
+
+```bash
+yarn --cwd apps/cli test:unit
+```
+
+Integration (real process/fs/network style):
+
+```bash
+yarn --cwd apps/cli test:integration
+```
+
+Slow build+wiring validation suite:
+
+```bash
+yarn --cwd apps/cli test:slow
+```
+
 ## Usage
+
+### First-time authentication (recommended)
+
+```bash
+happier auth login
+```
+
+Recommended first run:
+1. Choose the mobile option (recommended).
+2. Scan the QR/deep link in the Happier mobile app.
+3. If you already use Happier on another device, sign in with that same account.
+4. If you are logged out, complete sign in/create account, then continue terminal approval (the app returns you automatically).
 
 ### Claude (default)
 
@@ -22,6 +52,13 @@ This will:
 1. Start a Claude Code session
 2. Display a QR code to connect from your mobile device
 3. Allow real-time session sharing between Claude Code and your mobile app
+
+### Multi-server quickstart
+
+```bash
+happier server add --name company --server-url https://api.company.example --webapp-url https://app.company.example --use
+happier --server company auth login
+```
 
 ### Gemini
 
@@ -79,14 +116,88 @@ happier gemini project get          # Show current Google Cloud Project ID
 ### Claude Options
 
 - `-m, --model <model>` - Claude model to use (default: sonnet)
-- `-p, --permission-mode <mode>` - Permission mode: auto, default, or plan
+- `-p, --permission-mode <mode>` - Permission mode: `default`, `read-only`, `safe-yolo`, `yolo`, `plan` (aliases like `ro`, `safe`, `full-access`, `accept-edits`, `bypass-permissions` are accepted)
+- `--permission-mode-updated-at <unix-ms>` - Optional timestamp (ms) for ordering permission changes across devices
 - `--claude-env KEY=VALUE` - Set environment variable for Claude Code
 - `--claude-arg ARG` - Pass additional argument to Claude CLI
+
+### Session Options (agent commands)
+
+These flags are accepted by agent commands like `codex`, `gemini`, `opencode`, `auggie`, `qwen`, `kimi`, `kilo`:
+
+- `--permission-mode <mode>` - Permission mode (aliases accepted; stored canonically in session metadata)
+- `--permission-mode-updated-at <unix-ms>` - Optional timestamp (ms) for ordering permission changes across devices
+- `--agent-mode <id>` - ACP session mode id (e.g. `plan`), when supported by the provider
+- `--agent-mode-updated-at <unix-ms>` - Optional timestamp (ms) for ordering ACP mode changes across devices
+- `--model <id>` - Session model override (capability-driven; may be best-effort depending on provider)
+- `--model-updated-at <unix-ms>` - Optional timestamp (ms) for ordering model changes across devices
 
 ### Global Options
 
 - `-h, --help` - Show help
 - `-v, --version` - Show version
+
+## Permissions
+
+Happier uses **one permission vocabulary** across providers.
+
+You can set permissions either:
+- from the CLI when starting a session (`--permission-mode ...`), or
+- from the app UI (in-session picker and Session settings).
+
+The selected permission mode is stored canonically in **session metadata** so it stays consistent across devices and when switching local ↔ remote.
+
+### Common examples
+
+```bash
+# Claude (default) in safe-yolo
+happier --permission-mode safe-yolo
+
+# Codex in read-only (deny write-like tools)
+happier codex --permission-mode read-only
+
+# Gemini in yolo (aliases accepted)
+happier gemini --permission-mode full-access
+
+# OpenCode in plan mode (ACP session mode)
+happier opencode --agent-mode plan
+
+# Kilo in plan mode (ACP session mode)
+happier kilo --agent-mode plan
+
+# Select a model when supported
+happier gemini --model gemini-2.5-pro
+
+# Provider-native legacy tokens are accepted as aliases
+happier --permission-mode accept-edits        # => safe-yolo (canonical)
+happier --permission-mode bypass-permissions  # => yolo (canonical)
+
+# Legacy: some ACP agents used to accept plan as a permission. Happier still accepts it,
+# but will map it to `--agent-mode plan` (and warn) when the provider exposes ACP modes.
+happier opencode --permission-mode plan        # => --agent-mode plan (deprecated)
+happier kilo --permission-mode plan            # => --agent-mode plan (deprecated)
+```
+
+### What’s enforced where
+
+Depending on the provider, a permission mode can map to:
+- a provider-native “session mode” (when available), and/or
+- Happier’s tool approval gating (read-only/safe-yolo/yolo behavior).
+
+Important provider constraints:
+- **Codex (ACP)**: provider session modes are policy presets (approval + sandbox), not generic “plan/build” agent modes. Happier keeps permissions as the primary user control and maps to the closest preset.
+- **Codex (MCP)**: approval behavior can change mid-session, but many sandbox/environment constraints are decided at session start.
+- **Claude**: `read-only` is best-effort (Claude does not have a strict read-only mode); Happier will map to the closest supported behavior.
+- **ACP “Mode”** (`--agent-mode`): this is separate from permissions and is provider-defined (for example OpenCode “plan” vs “build”).
+
+Model selection behavior:
+- **Claude**: applies on the next prompt.
+- **Codex (MCP)**: model is start-session scoped.
+- **ACP agents**: Happier prefers live `session/set_model`, with config-option fallback when available.
+- **Gemini (ACP)**: model changes may recreate the underlying ACP process; Happier preserves context via replay/history.
+
+For the full user guide (UI behavior, defaults, apply timing), see the app docs:
+- [Permissions](https://github.com/happier-dev/happier/blob/main/apps/docs/content/docs/features/permissions.mdx)
 
 ## Environment Variables
 

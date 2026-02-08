@@ -106,8 +106,8 @@ Core Claude Code integration layer.
 - **`loop.ts`**: Main control loop managing interactive/remote modes
 - **`types.ts`**: Claude message type definitions with parsers
 
-- **`claudeSdk.ts`**: Direct SDK integration using `@anthropic-ai/claude-code`
-- **`interactive.ts`**: **LIKELY WILL BE DEPRECATED in favor of running through SDK** PTY-based interactive Claude sessions
+- **`sdk/*`**: Remote-mode runner that shells out to the user-installed `claude` CLI (`--output-format stream-json`)
+- **`interactive.ts`**: **LIKELY WILL BE DEPRECATED in favor of running through the CLI runner** (PTY-based interactive Claude sessions)
 - **`watcher.ts`**: File system watcher for Claude session files (for interactive mode snooping)
 
 - **`mcp/startPermissionServer.ts`**: MCP (Model Context Protocol) permission server
@@ -169,7 +169,7 @@ User interface components.
 ## Dependencies
 
 - Core: Node.js, TypeScript
-- Claude: `@anthropic-ai/claude-code` SDK
+- Claude: user-installed Claude Code CLI (`claude`)
 - Networking: Socket.IO client, Axios
 - Crypto: TweetNaCl
 - Terminal: node-pty, chalk, qrcode-terminal

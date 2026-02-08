@@ -56,13 +56,16 @@
   ],
   "bundledDependencies": [
     "@happier-dev/agents",
+    "@happier-dev/cli-common",
     "@happier-dev/protocol"
   ],
   "scripts": {
-    "why do we need to build before running tests / dev?": "We need the binary to be built so we run daemon commands which directly run the binary - we don't want them to go out of sync or have custom spawn logic depending how we started happier",
     "typecheck": "tsc --noEmit",
-    "build": "shx rm -rf dist && npx tsc --noEmit && pkgroll",
-    "test": "$npm_execpath run build && vitest run",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true});\" && npx tsc --noEmit && pkgroll",
+    "test": "$npm_execpath run test:unit",
+    "test:unit": "$npm_execpath run build && vitest run --config vitest.config.ts",
+    "test:integration": "$npm_execpath run build && vitest run --config vitest.integration.config.ts",
+    "test:slow": "vitest run --config vitest.slow.config.ts",
     "start": "$npm_execpath run build && node ./bin/happier.mjs",
     "dev": "tsx src/index.ts",
     "dev:local-server": "$npm_execpath run build && tsx --env-file .env.dev-local-server src/index.ts",
@@ -98,8 +101,10 @@
     "prepack": "node scripts/bundleWorkspaceDeps.mjs"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^0.8.0",
+    "@agentclientprotocol/sdk": "^0.14.1",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.31",
     "@happier-dev/agents": "0.0.0",
+    "@happier-dev/cli-common": "0.0.0",
     "@happier-dev/protocol": "0.0.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@stablelib/base64": "^2.0.1",
