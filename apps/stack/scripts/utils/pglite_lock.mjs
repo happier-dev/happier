@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { open, readFile, unlink } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { isPidAlive } from './proc/pids.mjs';
+import { getPidStartTime } from './proc/ownership.mjs';
 
 function lockPathForDbDir(dbDir) {
   return join(dirname(dbDir), '.happier.pglite.lock');
@@ -49,6 +50,7 @@ export async function acquirePgliteDirLock(dbDir, { purpose = 'unknown' } = {}) 
           createdAt: new Date().toISOString(),
           purpose,
           dbDir: resolvedDbDir,
+          pidStartTime: await getPidStartTime(process.pid),
         };
         await handle.writeFile(JSON.stringify(payload, null, 2) + '\n', 'utf-8');
       } finally {
@@ -72,7 +74,16 @@ export async function acquirePgliteDirLock(dbDir, { purpose = 'unknown' } = {}) 
       const existingDbDir = existing?.dbDir ? resolve(String(existing.dbDir)) : '';
       const looksInvalid = Boolean(existing?.invalid);
       const pidAlive = Number.isFinite(existingPid) && isPidAlive(existingPid);
-      const stale = looksInvalid || !pidAlive;
+      const stale = await (async () => {
+        if (looksInvalid) return true;
+        if (!pidAlive) return true;
+        const expectedStartTime = typeof existing?.pidStartTime === 'string' ? existing.pidStartTime.trim() : '';
+        if (!expectedStartTime) return false;
+        const currentStartTime = await getPidStartTime(existingPid);
+        // Fail-open for fingerprint lookup errors: do not break lock acquisition.
+        if (!currentStartTime) return false;
+        return currentStartTime.trim() !== expectedStartTime;
+      })();
 
       if (stale) {
         await removeLock(lockPath);
@@ -94,4 +105,3 @@ export async function acquirePgliteDirLock(dbDir, { purpose = 'unknown' } = {}) 
 
   throw new Error('Failed to acquire pglite lock after retries');
 }
-

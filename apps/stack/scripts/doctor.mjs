@@ -9,7 +9,7 @@ import { getServerComponentName } from './utils/server/server.mjs';
 import { fetchHappierHealth } from './utils/server/server.mjs';
 import { daemonStatusSummary } from './daemon.mjs';
 import { tailscaleServeStatus } from './tailscale.mjs';
-import { homedir } from 'node:os';
+import { findExistingStackCredentialPath, resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
@@ -22,6 +22,7 @@ import { readPackageJsonVersion } from './utils/fs/package_json.mjs';
 import { banner, bullets, cmd, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green, red, yellow } from './utils/ui/ansi.mjs';
 import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
+import { expandHome } from './utils/paths/canonical_home.mjs';
 
 /**
  * Doctor script for common happy-stacks failure modes.
@@ -109,7 +110,7 @@ async function main() {
   const publicServerUrl = resolvedUrls.publicServerUrl;
 
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPIER_STACK_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+    ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
     : join(autostart.baseDir, 'cli');
 
   const serveUi = (process.env.HAPPIER_STACK_SERVE_UI ?? '1') !== '0';
@@ -209,8 +210,16 @@ async function main() {
   // UI build dir check
   if (serveUi) {
     if (await pathExists(uiBuildDir)) {
-      report.checks.uiBuildDir = { ok: true, path: uiBuildDir };
-      if (!json) console.log(`${green('✓')} ui build dir present`);
+      const indexPath = join(uiBuildDir, 'index.html');
+      if (await pathExists(indexPath)) {
+        report.checks.uiBuildDir = { ok: true, path: uiBuildDir };
+        report.checks.uiIndex = { ok: true, path: indexPath };
+        if (!json) console.log(`${green('✓')} ui build dir present`);
+      } else {
+        report.checks.uiBuildDir = { ok: true, path: uiBuildDir };
+        report.checks.uiIndex = { ok: false, missing: indexPath };
+        if (!json) console.log(`${red('x')} ui index missing (${indexPath}) → run: ${cmd('hstack build')}`);
+      }
     } else {
       report.checks.uiBuildDir = { ok: false, missing: uiBuildDir };
       if (!json) console.log(`${red('x')} ui build dir missing (${uiBuildDir}) → run: ${cmd('hstack build')}`);
@@ -232,14 +241,18 @@ async function main() {
     report.checks.daemon = { ok: true, line: line || null };
     if (!json) console.log(`${green('✓')} daemon: ${line ? line : 'status ok'}`);
   } catch (e) {
-    const accessKeyPath = join(cliHomeDir, 'access.key');
-    const hasAccessKey = existsSync(accessKeyPath);
-    report.checks.daemon = { ok: false, hasAccessKey, accessKeyPath };
+    const credentialPaths = resolveStackCredentialPaths({ cliHomeDir, serverUrl: internalServerUrl });
+    const existingCredentialPath = findExistingStackCredentialPath({ cliHomeDir, serverUrl: internalServerUrl });
+    const hasAccessKey = Boolean(existingCredentialPath);
+    report.checks.daemon = { ok: false, hasAccessKey, accessKeyPath: existingCredentialPath || credentialPaths.legacyPath };
     if (!json) {
       console.log(`${red('x')} daemon: not running / status failed`);
       if (!hasAccessKey) {
         const stackName = (process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
-        console.log(`  ${dim('↪ likely cause:')} missing credentials at ${accessKeyPath}`);
+        console.log(`  ${dim('↪ likely cause:')} missing credentials at:`);
+        for (const p of credentialPaths.paths) {
+          console.log(`    ${p}`);
+        }
         console.log(`  ${dim('↪ fix:')} authenticate for this stack:`);
         console.log(`    ${cmd(stackName === 'main' ? 'hstack auth login' : `hstack stack auth ${stackName} login`)}`);
       }
