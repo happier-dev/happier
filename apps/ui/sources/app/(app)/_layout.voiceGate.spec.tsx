@@ -1,0 +1,94 @@
+import React from 'react';
+import renderer, { act } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
+
+import { createRootLayoutFeaturesResponse } from './_layout.testHelpers';
+
+type ReactActEnvironmentGlobal = typeof globalThis & {
+    IS_REACT_ACT_ENVIRONMENT?: boolean;
+};
+(globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
+
+const applySettings = vi.fn();
+
+vi.mock('react-native-reanimated', () => ({}));
+
+vi.mock('expo-router', () => ({
+    Stack: Object.assign(
+        ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
+        { Screen: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children) }
+    ),
+    router: { replace: vi.fn() },
+    useSegments: () => ['(app)'],
+}));
+
+vi.mock('react-native', () => ({
+    Platform: { OS: 'ios' },
+    TouchableOpacity: 'TouchableOpacity',
+    Text: 'Text',
+    AppState: { addEventListener: () => ({ remove: () => {} }) },
+}));
+
+vi.mock('react-native-unistyles', () => ({
+    StyleSheet: { create: <T,>(styles: T) => styles, absoluteFillObject: {} },
+    useUnistyles: () => ({ theme: { colors: { surface: '#fff', header: { background: '#fff', tint: '#000' } } } }),
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+
+vi.mock('@/text', () => ({
+    t: (key: string) => key,
+}));
+
+vi.mock('@/auth/AuthContext', () => ({
+    useAuth: () => ({ isAuthenticated: true }),
+}));
+
+vi.mock('@/auth/authRouting', () => ({
+    isPublicRouteForUnauthenticated: () => true,
+}));
+
+vi.mock('@/utils/platform', () => ({
+    isRunningOnMac: () => false,
+}));
+
+vi.mock('@/components/navigation/Header', () => ({
+    createHeader: () => null,
+}));
+
+vi.mock('@/sync/storage', () => ({
+    storage: {
+        getState: () => ({ settings: { voiceProviderId: 'happier_elevenlabs_agents' } }),
+    },
+    useProfile: () => ({ linkedProviders: [], username: null }),
+}));
+
+vi.mock('@/sync/storageStore', () => ({
+    storage: (selector: (state: { profile: { linkedProviders: []; username: null } }) => unknown) => selector({ profile: { linkedProviders: [], username: null } }),
+}));
+
+vi.mock('@/sync/sync', () => ({
+    sync: { applySettings: (delta: Record<string, unknown>) => applySettings(delta) },
+}));
+
+vi.mock('@/sync/apiFeatures', () => ({
+    getCachedServerFeatures: () => null,
+    getServerFeatures: async () =>
+        createRootLayoutFeaturesResponse({
+            voice: { enabled: false, configured: false, provider: null },
+        }),
+}));
+
+describe('RootLayout voice gating', () => {
+    it('disables Happier voice mode when server reports voice unsupported', async () => {
+        const RootLayout = (await import('./_layout')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(RootLayout));
+        });
+
+        expect(applySettings).toHaveBeenCalledWith({ voiceProviderId: 'off' });
+    });
+});
