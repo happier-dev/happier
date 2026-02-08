@@ -25,3 +25,22 @@ test('buildCodexExecScript embeds prompt via heredoc', () => {
   assert.ok(script.includes('exec'));
 });
 
+test('buildCodexExecArgs defaults to full-auto when permission mode is blank', () => {
+  const args = buildCodexExecArgs({ cd: '/tmp/repo', permissionMode: '   ' });
+  assert.deepEqual(args, ['exec', '--cd', '/tmp/repo', '--full-auto', '-']);
+});
+
+test('buildCodexExecArgs rejects missing cd and invalid permission modes', () => {
+  assert.throws(() => buildCodexExecArgs({ cd: '', permissionMode: 'safe' }), /missing cd/i);
+  assert.throws(() => buildCodexExecArgs({ cd: '/tmp/repo', permissionMode: 'unsafe' }), /invalid permission mode/i);
+});
+
+test('buildCodexExecScript preserves quoted prompt content in heredoc body', () => {
+  const prompt = `Line "one"\nLine 'two'\n$HOME`;
+  const script = buildCodexExecScript({ cd: '/tmp/repo', permissionMode: 'safe', promptText: prompt });
+  assert.match(script, /cat <<'HS_CODEX_PROMPT_/);
+  assert.match(script, /Line "one"/);
+  assert.match(script, /Line 'two'/);
+  assert.match(script, /\$HOME/);
+  assert.match(script, /"--ask-for-approval" "on-request"/);
+});

@@ -14,7 +14,7 @@ function run(cmd, args, { cwd, env } = {}) {
     proc.stdout.on('data', (d) => (stdout += String(d)));
     proc.stderr.on('data', (d) => (stderr += String(d)));
     proc.on('error', reject);
-    proc.on('exit', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
   });
 }
 
@@ -53,10 +53,13 @@ test('swiftbar utils: derives worktree spec from path', async () => {
   assert.equal(res.stdout, 'main\npr/foo\n\n', `unexpected output:\n${res.stdout}`);
 });
 
-test('swiftbar utils: finds git root by walking up from nested package dir', async () => {
+test('swiftbar utils: finds git root by walking up from nested package dir', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-swiftbar-utils-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  });
   const repoRoot = join(tmp, 'repo');
   const pkgDir = join(repoRoot, 'apps', 'ui');
   await mkdir(join(repoRoot, '.git'), { recursive: true });
@@ -70,8 +73,6 @@ test('swiftbar utils: finds git root by walking up from nested package dir', asy
   const res = await run('bash', ['-lc', bashScript], { cwd: rootDir, env: process.env });
   assert.equal(res.code, 0, `expected bash exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
   assert.equal(res.stdout.trim(), repoRoot);
-
-  await rm(tmp, { recursive: true, force: true });
 });
 
 test('swiftbar utils: derives repo key from component dir path', async () => {

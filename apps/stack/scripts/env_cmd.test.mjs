@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,14 +19,22 @@ function runNode(args, { cwd, env }) {
     proc.stdout.on('data', (d) => (stdout += String(d)));
     proc.stderr.on('data', (d) => (stderr += String(d)));
     proc.on('error', reject);
-    proc.on('exit', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
   });
 }
 
-test('hstack env path defaults to main stack env file when no explicit env file is set', async () => {
+async function withTempRoot(t) {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+  return tmp;
+}
+
+test('hstack env path defaults to main stack env file when no explicit env file is set', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
+  const tmp = await withTempRoot(t);
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
@@ -54,10 +62,10 @@ test('hstack env path defaults to main stack env file when no explicit env file 
   );
 });
 
-test('hstack env edits the explicit stack env file when HAPPIER_STACK_ENV_FILE is set', async () => {
+test('hstack env edits the explicit stack env file when HAPPIER_STACK_ENV_FILE is set', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
+  const tmp = await withTempRoot(t);
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
@@ -80,10 +88,10 @@ test('hstack env edits the explicit stack env file when HAPPIER_STACK_ENV_FILE i
   assert.ok(raw.includes('FOO=bar'), `expected FOO in explicit env file\n${raw}`);
 });
 
-test('hstack env (no subcommand) prints usage and exits 0', async () => {
+test('hstack env (no subcommand) prints usage and exits 0', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
+  const tmp = await withTempRoot(t);
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');
@@ -101,10 +109,10 @@ test('hstack env (no subcommand) prints usage and exits 0', async () => {
   assert.ok(res.stdout.includes('[env] usage:'), `expected usage output\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 });
 
-test('hstack env list prints keys in text mode', async () => {
+test('hstack env list prints keys in text mode', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));
+  const tmp = await withTempRoot(t);
 
   const storageDir = join(tmp, 'storage');
   const homeDir = join(tmp, 'home');

@@ -13,6 +13,14 @@ async function writeStubCmd(binDir, name) {
   return p;
 }
 
+function withPatchedPath(t, value) {
+  const prevPath = process.env.PATH;
+  t.after(() => {
+    process.env.PATH = prevPath;
+  });
+  process.env.PATH = value;
+}
+
 test('detectInstalledLlmTools finds tools on PATH and filters onlyAutoExec', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-llm-tools-'));
   t.after(async () => {
@@ -25,11 +33,7 @@ test('detectInstalledLlmTools finds tools on PATH and filters onlyAutoExec', asy
   await writeStubCmd(binDir, 'codex');
   await writeStubCmd(binDir, 'claude');
 
-  const prevPath = process.env.PATH;
-  t.after(() => {
-    process.env.PATH = prevPath;
-  });
-  process.env.PATH = `${binDir}:${prevPath ?? ''}`;
+  withPatchedPath(t, `${binDir}:${process.env.PATH ?? ''}`);
 
   const all = await detectInstalledLlmTools();
   assert.ok(all.some((t) => t.id === 'codex'));
@@ -42,3 +46,22 @@ test('detectInstalledLlmTools finds tools on PATH and filters onlyAutoExec', asy
   );
 });
 
+test('detectInstalledLlmTools returns empty list when PATH is blank', async (t) => {
+  withPatchedPath(t, '');
+  const all = await detectInstalledLlmTools();
+  assert.deepEqual(all, []);
+});
+
+test('detectInstalledLlmTools onlyAutoExec excludes non-auto tools even when present', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-llm-tools-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  const binDir = join(root, 'bin');
+  await mkdir(binDir, { recursive: true });
+  await writeStubCmd(binDir, 'claude');
+
+  withPatchedPath(t, binDir);
+  const auto = await detectInstalledLlmTools({ onlyAutoExec: true });
+  assert.deepEqual(auto, []);
+});

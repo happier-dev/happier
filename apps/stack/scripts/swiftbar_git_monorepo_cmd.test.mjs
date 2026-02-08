@@ -14,14 +14,23 @@ function run(cmd, args, { cwd, env } = {}) {
     proc.stdout.on('data', (d) => (stdout += String(d)));
     proc.stderr.on('data', (d) => (stderr += String(d)));
     proc.on('error', reject);
-    proc.on('exit', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
   });
 }
 
-test('swiftbar git cache treats monorepo package dirs as git repos', async () => {
+async function runOrThrow(cmd, args, { cwd, env } = {}) {
+  const res = await run(cmd, args, { cwd, env });
+  assert.equal(res.code, 0, `${cmd} ${args.join(' ')} failed\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  return res;
+}
+
+test('swiftbar git cache treats monorepo package dirs as git repos', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happier-stack-swiftbar-git-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  });
 
   const repoRoot = join(tmp, 'repo');
   await mkdir(repoRoot, { recursive: true });
@@ -29,9 +38,9 @@ test('swiftbar git cache treats monorepo package dirs as git repos', async () =>
   await writeFile(join(repoRoot, 'apps', 'ui', 'README.md'), 'hello\n', 'utf-8');
 
   // Create a minimal git repo with one commit.
-  await run('git', ['init'], { cwd: repoRoot });
-  await run('git', ['add', '.'], { cwd: repoRoot });
-  await run(
+  await runOrThrow('git', ['init'], { cwd: repoRoot });
+  await runOrThrow('git', ['add', '.'], { cwd: repoRoot });
+  await runOrThrow(
     'git',
     ['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-m', 'init'],
     { cwd: repoRoot }
@@ -63,6 +72,4 @@ test('swiftbar git cache treats monorepo package dirs as git repos', async () =>
     `expected bash exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`
   );
   assert.match(res.stdout, /^ok\t/, `expected info.tsv to start with ok\\t, got:\n${res.stdout}`);
-
-  await rm(tmp, { recursive: true, force: true });
 });

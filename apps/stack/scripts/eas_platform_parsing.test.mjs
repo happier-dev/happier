@@ -12,7 +12,7 @@ function runNode(args, { cwd, env } = {}) {
     proc.stdout.on('data', (d) => (stdout += String(d)));
     proc.stderr.on('data', (d) => (stderr += String(d)));
     proc.on('error', reject);
-    proc.on('exit', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
   });
 }
 
@@ -40,3 +40,24 @@ test('hstack eas build honors space-separated --platform android', async () => {
   assert.ok(!res.stdout.includes('--platform ios'), `expected not to default to ios when platform is explicitly set\nstdout:\n${res.stdout}`);
 });
 
+test('hstack eas build falls back to ios for invalid --platform value', async () => {
+  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+  const rootDir = dirname(scriptsDir);
+
+  const env = {
+    ...process.env,
+    HAPPIER_STACKS_COMPONENT_DIR_HAPPIER_UI: join(rootDir, '..', 'ui'),
+    HAPPIER_STACKS_COMPONENT_DIR_HAPPIER_CLI: join(rootDir, '..', 'cli'),
+    HAPPIER_STACKS_COMPONENT_DIR_HAPPIER_SERVER: join(rootDir, '..', 'server'),
+    HSTACK_EAS_TEST_STUB: '1',
+  };
+
+  const res = await runNode(
+    [join(rootDir, 'scripts', 'eas.mjs'), 'build', '--platform', 'invalid-platform', '--profile', 'production'],
+    { cwd: rootDir, env }
+  );
+
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+  assert.match(res.stdout, /--platform ios\b/, `expected invalid platform to normalize to ios\nstdout:\n${res.stdout}`);
+  assert.ok(!res.stdout.includes('--platform invalid-platform'), `expected invalid platform not to be forwarded\nstdout:\n${res.stdout}`);
+});

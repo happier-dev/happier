@@ -6,13 +6,15 @@ import { tmpdir } from 'node:os';
 import { analyzeTarList, findMonorepoRoot, resolvePackDirForComponent } from './pack.mjs';
 
 test('analyzeTarList detects bundled workspace deps in tar listing', () => {
-  const { hasAgents, hasProtocol } = analyzeTarList([
+  const { hasAgents, hasCliCommon, hasProtocol } = analyzeTarList([
     'package/dist/index.mjs',
     'package/node_modules/@happier-dev/agents/package.json',
     'package/node_modules/@happier-dev/agents/dist/index.js',
+    'package/node_modules/@happier-dev/cli-common/package.json',
     'package/node_modules/@happier-dev/protocol/package.json',
   ]);
   assert.equal(hasAgents, true);
+  assert.equal(hasCliCommon, true);
   assert.equal(hasProtocol, true);
 });
 
@@ -44,6 +46,22 @@ test('resolvePackDirForComponent maps monorepo root to apps/cli', async () => {
       explicitDir: null,
     });
     assert.equal(resolve(resolved), resolve(join(root, 'apps', 'cli')));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('resolvePackDirForComponent prefers explicitDir override', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'pack-test-explicit-'));
+  try {
+    const explicit = join(root, 'custom-pack-dir');
+    await mkdir(explicit, { recursive: true });
+    const resolved = await resolvePackDirForComponent({
+      component: 'happy-cli',
+      componentDir: root,
+      explicitDir: explicit,
+    });
+    assert.equal(resolve(resolved), resolve(explicit));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

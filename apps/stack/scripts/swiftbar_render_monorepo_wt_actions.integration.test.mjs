@@ -14,7 +14,7 @@ function run(cmd, args, { cwd, env } = {}) {
     proc.stdout.on('data', (d) => (stdout += String(d)));
     proc.stderr.on('data', (d) => (stderr += String(d)));
     proc.on('error', reject);
-    proc.on('exit', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
   });
 }
 
@@ -24,10 +24,19 @@ async function git(cwd, args) {
   return res.stdout.trim();
 }
 
-test('swiftbar: monorepo stacks do not offer per-component worktree switching', async () => {
+function findMenuLine(stdout, marker) {
+  return String(stdout ?? '')
+    .split('\n')
+    .find((line) => line.includes(marker));
+}
+
+test('swiftbar: monorepo stacks use repo-scoped worktree actions (no component args)', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptsDir);
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-swiftbar-mono-wt-'));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  });
 
   const workspaceDir = join(tmp, 'workspace');
   const monorepoRoot = join(workspaceDir, 'main');
@@ -79,11 +88,29 @@ test('swiftbar: monorepo stacks do not offer per-component worktree switching', 
   const res = await run('bash', ['-lc', bashScript], { cwd: rootDir, env: process.env });
   assert.equal(res.code, 0, `expected bash exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
 
-  assert.ok(!res.stdout.includes('Use in stack |'), `expected no per-worktree "Use in stack" actions\n${res.stdout}`);
+  const statusLine = findMenuLine(res.stdout, 'Status (active) |');
+  assert.ok(statusLine, `expected status action line\n${res.stdout}`);
+  assert.ok(statusLine.includes('param1=stack'), statusLine);
+  assert.ok(statusLine.includes('param2=wt'), statusLine);
+  assert.ok(statusLine.includes('param3=exp1'), statusLine);
+  assert.ok(statusLine.includes('param5=status'), statusLine);
+  assert.ok(statusLine.includes('param6=active'), statusLine);
+
   assert.ok(
-    res.stdout.includes('Select monorepo worktree (interactive)'),
-    `expected monorepo worktree selector action\n${res.stdout}`
+    !/param5=(status|sync|update)\s+param\d+=happier-(ui|cli|server|server-light)\b/.test(res.stdout),
+    `expected no component identifiers passed to wt actions\n${res.stdout}`
   );
 
-  await rm(tmp, { recursive: true, force: true });
+  const useInteractiveLine = findMenuLine(res.stdout, 'Use worktree in stack (interactive) |');
+  assert.ok(useInteractiveLine, `expected stack-scoped interactive wt selector\n${res.stdout}`);
+  assert.ok(useInteractiveLine.includes('param1=stack'), useInteractiveLine);
+  assert.ok(useInteractiveLine.includes('param2=wt'), useInteractiveLine);
+  assert.ok(useInteractiveLine.includes('param3=exp1'), useInteractiveLine);
+  assert.ok(useInteractiveLine.includes('param5=use'), useInteractiveLine);
+  assert.ok(useInteractiveLine.includes('param6=--interactive'), useInteractiveLine);
+
+  assert.ok(
+    !/PR worktree \(prompt\).*param\d+=happier-(ui|cli|server|server-light)\b/.test(res.stdout),
+    `expected PR worktree helper to not pass component identifiers\n${res.stdout}`
+  );
 });

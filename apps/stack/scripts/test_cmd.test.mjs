@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,7 +14,7 @@ function runNode(args, { cwd, env }) {
     proc.stdout.on('data', (d) => (stdout += String(d)));
     proc.stderr.on('data', (d) => (stderr += String(d)));
     proc.on('error', reject);
-    proc.on('exit', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
   });
 }
 
@@ -42,11 +42,15 @@ async function writeYarnOkPackage({ dir, name, scriptOutput }) {
   await writeFile(join(dir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
 }
 
-test('hstack test --json keeps stdout JSON-only and runs monorepo root when happy points at apps/ui', async () => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
+async function setupTestCmdFixture({ importMetaUrl, t, tmpPrefix }) {
+  const scriptsDir = dirname(fileURLToPath(importMetaUrl));
   const rootDir = dirname(scriptsDir);
 
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-test-cmd-'));
+  const tmp = await mkdtemp(join(tmpdir(), tmpPrefix));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true }).catch(() => {});
+  });
+
   const monoRoot = join(tmp, 'mono');
   const appDir = join(monoRoot, 'apps', 'ui');
 
@@ -64,7 +68,20 @@ test('hstack test --json keeps stdout JSON-only and runs monorepo root when happ
     HAPPIER_STACK_ENV_FILE: join(tmp, 'nonexistent-env'),
   };
 
-  const res = await runNode([join(rootDir, 'scripts', 'test_cmd.mjs'), 'ui', '--json'], { cwd: rootDir, env });
+  return { rootDir, monoRoot, appDir, env };
+}
+
+test('hstack test --json keeps stdout JSON-only and runs monorepo root when happy points at apps/ui', async (t) => {
+  const fixture = await setupTestCmdFixture({
+    importMetaUrl: import.meta.url,
+    t,
+    tmpPrefix: 'happy-stacks-test-cmd-json-',
+  });
+
+  const res = await runNode([join(fixture.rootDir, 'scripts', 'test_cmd.mjs'), 'ui', '--json'], {
+    cwd: fixture.rootDir,
+    env: fixture.env,
+  });
   assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
 
   // Stdout must be JSON only.
@@ -88,9 +105,29 @@ test('hstack test --json keeps stdout JSON-only and runs monorepo root when happ
   assert.equal(parsed.results[0].target, 'ui');
 
   // Monorepo detection: when happy points at apps/ui, tests should run from the monorepo root.
-  assert.equal(parsed.results[0].dir, monoRoot);
+  assert.equal(parsed.results[0].dir, fixture.monoRoot);
 
   // Any command output should be written to stderr (to keep stdout JSON-only).
   assert.ok(res.stderr.includes('ROOT_TEST_RUN'));
   assert.ok(!res.stderr.includes('APP_TEST_RUN'));
+});
+
+test('hstack test (non-json) keeps monorepo-root routing and reports human-readable summary', async (t) => {
+  const fixture = await setupTestCmdFixture({
+    importMetaUrl: import.meta.url,
+    t,
+    tmpPrefix: 'happy-stacks-test-cmd-text-',
+  });
+
+  const res = await runNode([join(fixture.rootDir, 'scripts', 'test_cmd.mjs'), 'ui'], {
+    cwd: fixture.rootDir,
+    env: fixture.env,
+  });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
+
+  assert.ok(res.stdout.includes('[test] ui: running yarn test'), res.stdout);
+  assert.ok(res.stdout.includes('ROOT_TEST_RUN'), res.stdout);
+  assert.ok(!res.stdout.includes('APP_TEST_RUN'), res.stdout);
+  assert.ok(res.stdout.includes('[test] results:'), res.stdout);
+  assert.ok(res.stdout.includes('- ✅ ui: ok (yarn test)'), res.stdout);
 });
