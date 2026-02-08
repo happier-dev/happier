@@ -1,0 +1,41 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": ["bash_echo_trace_ok"],
+    "extended": [
+      "read_known_file",
+      "permission_surface_outside_workspace",
+      "permission_deny_outside_workspace"
+    ]
+  },
+  "tiersByAuthMode": {
+    "host": {
+      "smoke": ["bash_echo_trace_ok"],
+      "extended": [
+        "read_known_file",
+        "agent_sdk_read_known_file",
+        "permission_surface_outside_workspace",
+        "agent_sdk_permission_surface_outside_workspace",
+        "permission_deny_outside_workspace",
+        "agent_sdk_permission_deny_outside_workspace",
+        "agent_sdk_transcript_path_published",
+        "agent_sdk_partial_messages_smoke",
+        "agent_sdk_checkpoint_and_rewind_restores_fs"
+      ]
+    },
+    "env": {
+      "smoke": ["bash_echo_trace_ok"],
+      "extended": [
+        "read_known_file",
+        "agent_sdk_read_known_file",
+        "permission_surface_outside_workspace",
+        "agent_sdk_permission_surface_outside_workspace",
+        "permission_deny_outside_workspace",
+        "agent_sdk_permission_deny_outside_workspace",
+        "agent_sdk_transcript_path_published",
+        "agent_sdk_partial_messages_smoke",
+        "agent_sdk_checkpoint_and_rewind_restores_fs"
+      ]
+    }
+  }
+}

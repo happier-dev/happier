@@ -29,17 +29,21 @@ vi.mock('./utils/systemPrompt', () => ({
     systemPrompt: 'test-system-prompt'
 }));
 
-vi.mock('node:fs', () => ({
-    mkdirSync: vi.fn(),
-    existsSync: vi.fn(() => true)
-}));
+vi.mock('node:fs', async () => {
+    const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+    return {
+        ...actual,
+        mkdirSync: vi.fn(),
+        existsSync: vi.fn(() => true),
+    };
+});
 
 vi.mock('./utils/claudeCheckSession', () => ({
     claudeCheckSession: vi.fn(() => true) // Always return true (session exists)
 }));
 
 describe('claudeLocal --continue handling', () => {
-    let onSessionFound: any;
+    let onSessionFound: (sessionId: string) => void;
 
     beforeEach(() => {
         // Mock spawn to resolve immediately
@@ -62,7 +66,7 @@ describe('claudeLocal --continue handling', () => {
             }
         });
 
-        onSessionFound = vi.fn();
+        onSessionFound = vi.fn<(sessionId: string) => void>();
 
         // Reset mocks
         vi.clearAllMocks();

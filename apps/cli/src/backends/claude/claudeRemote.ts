@@ -8,9 +8,131 @@ import { projectPath } from "@/projectPath";
 import { parseSpecialCommand } from "@/cli/parsers/specialCommands";
 import { logger } from "@/lib";
 import { PushableAsyncIterable } from "@/utils/PushableAsyncIterable";
-import { systemPrompt } from "./utils/systemPrompt";
 import { PermissionResult } from "./sdk/types";
 import type { JsRuntime } from "./runClaude";
+import { getClaudeRemoteSystemPrompt } from "./utils/remoteSystemPrompt";
+
+function parseSdkFlagOverridesFromClaudeArgs(args?: string[]): {
+    maxTurns?: number;
+    strictMcpConfig?: boolean;
+    appendSystemPrompt?: string;
+    customSystemPrompt?: string;
+    model?: string;
+    fallbackModel?: string;
+    allowedTools?: string[];
+    disallowedTools?: string[];
+} {
+    const input = args ?? [];
+    let maxTurns: number | undefined;
+    let strictMcpConfig: boolean | undefined;
+    let appendSystemPrompt: string | undefined;
+    let customSystemPrompt: string | undefined;
+    let model: string | undefined;
+    let fallbackModel: string | undefined;
+    let allowedTools: string[] | undefined;
+    let disallowedTools: string[] | undefined;
+
+    const nextValue = (index: number): string | undefined => {
+        const next = index + 1 < input.length ? input[index + 1] : undefined;
+        if (typeof next !== 'string') return undefined;
+        if (next.startsWith('-')) return undefined;
+        return next;
+    };
+
+    for (let i = 0; i < input.length; i++) {
+        const arg = input[i];
+
+        if (arg === '--max-turns') {
+            const next = nextValue(i);
+            if (typeof next === 'string') {
+                const parsed = Number.parseInt(next, 10);
+                if (Number.isFinite(parsed) && parsed > 0) {
+                    maxTurns = parsed;
+                }
+                i++; // consume value
+            }
+            continue;
+        }
+
+        if (arg === '--strict-mcp-config') {
+            strictMcpConfig = true;
+            continue;
+        }
+
+        if (arg === '--append-system-prompt') {
+            const next = nextValue(i);
+            if (typeof next === 'string') {
+                appendSystemPrompt = next;
+                i++;
+            }
+            continue;
+        }
+
+        if (arg === '--system-prompt') {
+            const next = nextValue(i);
+            if (typeof next === 'string') {
+                customSystemPrompt = next;
+                i++;
+            }
+            continue;
+        }
+
+        if (arg === '--model') {
+            const next = nextValue(i);
+            if (typeof next === 'string') {
+                model = next;
+                i++;
+            }
+            continue;
+        }
+
+        if (arg === '--fallback-model') {
+            const next = nextValue(i);
+            if (typeof next === 'string') {
+                fallbackModel = next;
+                i++;
+            }
+            continue;
+        }
+
+        if (arg === '--allowedTools') {
+            const next = nextValue(i);
+            if (typeof next === 'string') {
+                const parsed = next
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                allowedTools = parsed.length > 0 ? parsed : allowedTools;
+                i++;
+            }
+            continue;
+        }
+
+        if (arg === '--disallowedTools') {
+            const next = nextValue(i);
+            if (typeof next === 'string') {
+                const parsed = next
+                    .split(',')
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                disallowedTools = parsed.length > 0 ? parsed : disallowedTools;
+                i++;
+            }
+            continue;
+        }
+    }
+
+    return {
+        maxTurns,
+        strictMcpConfig,
+        appendSystemPrompt,
+        customSystemPrompt,
+        model,
+        fallbackModel,
+        allowedTools,
+        disallowedTools,
+    };
+}
 
 export async function claudeRemote(opts: {
 
@@ -128,26 +250,36 @@ export async function claudeRemote(opts: {
 
     // Prepare SDK options
     let mode = initial.mode;
-    const sdkOptions: QueryOptions = {
-        cwd: opts.path,
-        continue: shouldContinue || undefined,
-        resume: startFrom ?? undefined,
-        mcpServers: opts.mcpServers,
-        permissionMode: mapToClaudeMode(initial.mode.permissionMode),
-        model: initial.mode.model,
-        fallbackModel: initial.mode.fallbackModel,
-        customSystemPrompt: initial.mode.customSystemPrompt ? initial.mode.customSystemPrompt + '\n\n' + systemPrompt : undefined,
-        appendSystemPrompt: initial.mode.appendSystemPrompt ? initial.mode.appendSystemPrompt + '\n\n' + systemPrompt : systemPrompt,
-        allowedTools: initial.mode.allowedTools ? initial.mode.allowedTools.concat(opts.allowedTools) : opts.allowedTools,
-        disallowedTools: initial.mode.disallowedTools,
-        canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) => opts.canCallTool(toolName, input, mode, options),
-        executable: opts.jsRuntime ?? 'node',
-        abort: opts.signal,
-        pathToClaudeCodeExecutable: (() => {
-            return resolve(join(projectPath(), 'scripts', 'claude_remote_launcher.cjs'));
-        })(),
-        settingsPath: opts.hookSettingsPath,
-    }
+    const argOverrides = parseSdkFlagOverridesFromClaudeArgs(opts.claudeArgs);
+    const customSystemPrompt = argOverrides.customSystemPrompt ?? initial.mode.customSystemPrompt;
+    const appendSystemPrompt = argOverrides.appendSystemPrompt ?? initial.mode.appendSystemPrompt;
+    const allowedTools = argOverrides.allowedTools ?? initial.mode.allowedTools;
+    const disallowedTools = argOverrides.disallowedTools ?? initial.mode.disallowedTools;
+    const remoteSystemPrompt = getClaudeRemoteSystemPrompt({ disableTodos: initial.mode.claudeRemoteDisableTodos === true });
+
+        const sdkOptions: QueryOptions = {
+            cwd: opts.path,
+            continue: shouldContinue || undefined,
+            resume: startFrom ?? undefined,
+            mcpServers: opts.mcpServers,
+            permissionMode: mapToClaudeMode(initial.mode.permissionMode),
+            model: argOverrides.model ?? initial.mode.model,
+            fallbackModel: argOverrides.fallbackModel ?? initial.mode.fallbackModel,
+            maxTurns: argOverrides.maxTurns,
+            customSystemPrompt: customSystemPrompt || undefined,
+            appendSystemPrompt: (appendSystemPrompt ? appendSystemPrompt + '\n\n' : '') + remoteSystemPrompt,
+            allowedTools: allowedTools ? allowedTools.concat(opts.allowedTools) : opts.allowedTools,
+            disallowedTools,
+            strictMcpConfig: argOverrides.strictMcpConfig,
+            canCallTool: (toolName: string, input: unknown, options: { signal: AbortSignal }) =>
+                opts.canCallTool(toolName, input, mode, options),
+            executable: opts.jsRuntime ?? 'node',
+            abort: opts.signal,
+            pathToClaudeCodeExecutable: (() => {
+                return resolve(join(projectPath(), 'scripts', 'claude_remote_launcher.cjs'));
+            })(),
+            settingsPath: opts.hookSettingsPath,
+        }
 
     // Track thinking state
     let thinking = false;

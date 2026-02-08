@@ -8,8 +8,7 @@ import { AgentState, Metadata, Session as ApiSession } from '@/api/types';
 import packageJson from '../../../package.json';
 import { Credentials, readSettings } from '@/persistence';
 import { EnhancedMode, PermissionMode } from './loop';
-import { MessageQueue2 } from '@/utils/MessageQueue2';
-import { hashObject } from '@/utils/deterministicJson';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { startCaffeinate, stopCaffeinate } from '@/integrations/caffeinate';
 import { extractSDKMetadataAsync } from '@/backends/claude/sdk/metadataExtractor';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
@@ -29,15 +28,23 @@ import { Session } from './session';
 import type { TerminalRuntimeFlags } from '@/terminal/terminalRuntimeFlags';
 import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/terminalMetadata';
 import { persistTerminalAttachmentInfoIfNeeded, reportSessionToDaemonIfRunning, sendTerminalFallbackMessageIfNeeded } from '@/agent/runtime/startupSideEffects';
-import { applyStartupMetadataUpdateToSession, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
+import { applyStartupMetadataUpdateToSession, buildModelOverride, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
+import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
 import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach';
 import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
+import { hashClaudeEnhancedModeForQueue } from '@/backends/claude/remote/modeHash';
+import { applyClaudeRemoteMetaState, DEFAULT_CLAUDE_REMOTE_META_STATE } from '@/backends/claude/remote/claudeRemoteMetaState';
+import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
+import { adoptModelOverrideFromMetadata } from './utils/adoptModelOverrideFromMetadata';
+import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
 
 export interface StartOptions {
     model?: string
+    modelId?: string
+    modelUpdatedAt?: number
     permissionMode?: PermissionMode
     startingMode?: 'local' | 'remote'
     shouldStartDaemon?: boolean
@@ -61,31 +68,62 @@ export interface StartOptions {
     existingSessionId?: string
 }
 
-function inferPermissionModeFromClaudeArgs(args?: string[]): PermissionMode | undefined {
+export function extractMcpServersFromClaudeArgs(args?: string[]): { claudeArgs?: string[]; mcpServers: Record<string, any> } {
     const input = args ?? [];
-    let inferred: PermissionMode | undefined;
+    if (input.length === 0) return { claudeArgs: args, mcpServers: {} };
+
+    const output: string[] = [];
+    const mcpServers: Record<string, any> = {};
+    let strippedAny = false;
 
     for (let i = 0; i < input.length; i++) {
         const arg = input[i];
-
-        if (arg === '--dangerously-skip-permissions') {
-            inferred = 'bypassPermissions';
+        if (arg !== '--mcp-config') {
+            output.push(arg);
             continue;
         }
 
-        if (arg === '--permission-mode') {
-            const next = i + 1 < input.length ? input[i + 1] : undefined;
-            if (next && !next.startsWith('-')) {
-                if (next === 'default' || next === 'acceptEdits' || next === 'bypassPermissions' || next === 'plan') {
-                    inferred = next as PermissionMode;
-                }
-                i++; // consume value
-            }
+        const raw = i + 1 < input.length ? input[i + 1] : undefined;
+        if (typeof raw !== 'string' || raw.length === 0) {
+            // Keep as-is so upstream Claude can surface a helpful error message.
+            output.push(arg);
             continue;
+        }
+
+        // Consume value
+        i++;
+
+        try {
+            const parsed = JSON.parse(raw) as any;
+            const servers = parsed && typeof parsed === 'object' ? (parsed as any).mcpServers : null;
+            if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
+                // Not a supported shape; keep as-is for upstream Claude.
+                output.push('--mcp-config', raw);
+                continue;
+            }
+
+            for (const [name, config] of Object.entries(servers as Record<string, any>)) {
+                if (typeof name !== 'string' || name.length === 0) continue;
+                mcpServers[name] = config;
+            }
+
+            // Preserve any non-mcp keys so upstream Claude still sees them.
+            const extras = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? { ...(parsed as Record<string, unknown>) } : null;
+            if (extras) {
+                delete (extras as any).mcpServers;
+                if (Object.keys(extras).length > 0) {
+                    output.push('--mcp-config', JSON.stringify(extras));
+                }
+            }
+            strippedAny = true;
+        } catch {
+            // Invalid JSON; keep as-is for upstream Claude.
+            output.push('--mcp-config', raw);
         }
     }
 
-    return inferred;
+    if (!strippedAny) return { claudeArgs: args, mcpServers };
+    return { claudeArgs: output.length > 0 ? output : undefined, mcpServers };
 }
 
 export async function runClaude(credentials: Credentials, options: StartOptions = {}): Promise<void> {
@@ -130,8 +168,22 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // This is important because there may be no app-sent user messages yet (no meta.permissionMode to infer from).
     const explicitPermissionMode = options.permissionMode;
     const explicitPermissionModeUpdatedAt = options.permissionModeUpdatedAt;
-    const initialPermissionMode = options.permissionMode ?? inferPermissionModeFromClaudeArgs(options.claudeArgs) ?? 'default';
+    const initialPermissionMode = options.permissionMode ?? inferPermissionIntentFromClaudeArgs(options.claudeArgs) ?? 'default';
     options.permissionMode = initialPermissionMode;
+
+    const explicitModelId = typeof options.modelId === 'string' ? options.modelId.trim() : (typeof options.model === 'string' ? options.model.trim() : '');
+    const initialModelId = explicitModelId ? explicitModelId : undefined;
+    const initialModelUpdatedAt =
+        typeof options.modelUpdatedAt === 'number'
+            ? options.modelUpdatedAt
+            : initialModelId
+                ? Date.now()
+                : 0;
+    if (initialModelId) {
+        options.model = initialModelId;
+        options.modelId = initialModelId;
+        options.modelUpdatedAt = initialModelUpdatedAt;
+    }
 
     const { state, metadata } = createSessionMetadata({
         flavor: 'claude',
@@ -141,6 +193,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         terminalRuntime: options.terminalRuntime ?? null,
         permissionMode: initialPermissionMode,
         permissionModeUpdatedAt: typeof explicitPermissionModeUpdatedAt === 'number' ? explicitPermissionModeUpdatedAt : Date.now(),
+        modelId: initialModelId,
+        modelUpdatedAt: initialModelUpdatedAt,
     });
 
     // Handle existing session (for inactive session resume) vs new session.
@@ -213,15 +267,74 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Create realtime session
     const session = api.sessionSyncClient(baseSession);
     // Mark the session as active and refresh metadata on startup.
-    applyStartupMetadataUpdateToSession({
-        session,
-        next: metadata,
-        nowMs: Date.now(),
-        permissionModeOverride: buildPermissionModeOverride({
-            permissionMode: explicitPermissionMode,
-            permissionModeUpdatedAt: explicitPermissionModeUpdatedAt,
-        }),
-    });
+    // For attach flows, wait for the persisted metadata snapshot before writing startup updates
+    // to avoid overwriting the session's canonical workspace path with local defaults.
+    if (baseSession.metadataVersion < 0) {
+        let snapshot: unknown = null;
+        let snapshotError: unknown = null;
+        try {
+            snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 });
+        } catch (error) {
+            snapshotError = error;
+        }
+        if (!snapshot) {
+            logger.debug(
+                '[claude] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)',
+                snapshotError ?? undefined,
+            );
+        } else {
+            applyStartupMetadataUpdateToSession({
+                session,
+                next: metadata,
+                nowMs: Date.now(),
+                permissionModeOverride: buildPermissionModeOverride({
+                    permissionMode: explicitPermissionMode,
+                    permissionModeUpdatedAt: explicitPermissionModeUpdatedAt,
+                }),
+                modelOverride: buildModelOverride({
+                    modelId: initialModelId,
+                    modelUpdatedAt: initialModelUpdatedAt,
+                }),
+                mode: 'attach',
+            });
+        }
+    } else {
+        applyStartupMetadataUpdateToSession({
+            session,
+            next: metadata,
+            nowMs: Date.now(),
+            permissionModeOverride: buildPermissionModeOverride({
+                permissionMode: explicitPermissionMode,
+                permissionModeUpdatedAt: explicitPermissionModeUpdatedAt,
+            }),
+            modelOverride: buildModelOverride({
+                modelId: initialModelId,
+                modelUpdatedAt: initialModelUpdatedAt,
+            }),
+            mode: 'start',
+        });
+    }
+
+    // If the user did not explicitly choose a permission mode for this CLI process, prefer the
+    // canonical session metadata snapshot. This is essential for:
+    // - UI apply timing = next_prompt (metadata already set, message meta absent)
+    // - local ↔ remote switching without losing the selected permission policy
+    if (typeof explicitPermissionMode !== 'string') {
+        const seeded = await resolveStartupPermissionModeFromSession({ session, take: 50 });
+        if (seeded) {
+            options.permissionMode = seeded.mode;
+            options.permissionModeUpdatedAt = seeded.updatedAt;
+        }
+    }
+
+    if (!initialModelId) {
+        const resolved = resolveModelOverrideFromMetadataSnapshot({ metadata: session.getMetadataSnapshot() });
+        if (resolved) {
+            options.modelId = resolved.modelId;
+            options.model = resolved.modelId;
+            options.modelUpdatedAt = resolved.updatedAt;
+        }
+    }
 
     await persistTerminalAttachmentInfoIfNeeded({ sessionId: baseSession.id, terminal });
     sendTerminalFallbackMessageIfNeeded({ session, terminal });
@@ -242,6 +355,17 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             logger.debug('[start] Failed to update session metadata:', error);
         }
     });
+
+    // Extract user-provided MCP servers from --mcp-config so we can:
+    // - merge them with Happy's built-in MCP server
+    // - keep MCP servers consistent across local↔remote mode switches
+    // - avoid passing multiple --mcp-config flags to Claude
+    //
+    // IMPORTANT: do this only after we've confirmed the server is reachable.
+    // If the server is unreachable and we fall back to offline local mode, we must
+    // preserve the user's raw `--mcp-config` flag for upstream Claude.
+    const extractedMcp = extractMcpServersFromClaudeArgs(options.claudeArgs);
+    options.claudeArgs = extractedMcp.claudeArgs;
 
     // Start Happier MCP server
     const happyServer = await startHappyServer(session);
@@ -294,26 +418,30 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     }
 
     // Import MessageQueue2 and create message queue
-    const messageQueue = new MessageQueue2<EnhancedMode>(mode => hashObject({
-        isPlan: mode.permissionMode === 'plan',
-        model: mode.model,
-        fallbackModel: mode.fallbackModel,
-        customSystemPrompt: mode.customSystemPrompt,
-        appendSystemPrompt: mode.appendSystemPrompt,
-        allowedTools: mode.allowedTools,
-        disallowedTools: mode.disallowedTools
-    }));
+    const messageQueue = new MessageQueue2<EnhancedMode>(hashClaudeEnhancedModeForQueue);
 
     // Forward messages to the queue
     // Permission modes: Use the unified 7-mode type, mapping happens at SDK boundary in claudeRemote.ts
     let currentPermissionMode: PermissionMode = options.permissionMode ?? 'default';
     let currentModel = options.model; // Track current model state
+    let currentModelUpdatedAt = typeof options.modelUpdatedAt === 'number' ? options.modelUpdatedAt : 0;
     let currentFallbackModel: string | undefined = undefined; // Track current fallback model
     let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
     let currentAllowedTools: string[] | undefined = undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = undefined; // Track current disallowed tools
+    let currentClaudeRemoteMetaState = DEFAULT_CLAUDE_REMOTE_META_STATE;
     session.onUserMessage((message) => {
+        const adoptedModel = adoptModelOverrideFromMetadata({
+            currentModelId: currentModel,
+            currentUpdatedAt: currentModelUpdatedAt,
+            metadata: session.getMetadataSnapshot(),
+        });
+        if (adoptedModel.didChange) {
+            currentModel = adoptedModel.modelId;
+            currentModelUpdatedAt = adoptedModel.updatedAt;
+            logger.debug(`[loop] Model updated from session metadata: ${adoptedModel.modelId || 'reset to default'}`);
+        }
 
         // Resolve permission mode from meta - pass through as-is, mapping happens at SDK boundary
         let messagePermissionMode: PermissionMode | undefined = currentPermissionMode;
@@ -330,6 +458,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         if (message.meta?.hasOwnProperty('model')) {
             messageModel = message.meta.model || undefined; // null becomes undefined
             currentModel = messageModel;
+            currentModelUpdatedAt =
+                typeof message.createdAt === 'number' && Number.isFinite(message.createdAt) && message.createdAt > 0
+                    ? message.createdAt
+                    : Date.now();
             logger.debug(`[loop] Model updated from user message: ${messageModel || 'reset to default'}`);
         } else {
             logger.debug(`[loop] User message received with no model override, using current: ${currentModel || 'default'}`);
@@ -385,6 +517,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             logger.debug(`[loop] User message received with no disallowed tools override, using current: ${currentDisallowedTools ? currentDisallowedTools.join(', ') : 'none'}`);
         }
 
+        currentClaudeRemoteMetaState = applyClaudeRemoteMetaState(currentClaudeRemoteMetaState, message.meta);
+
         // Check for special commands before processing
         const specialCommand = parseSpecialCommand(message.content.text);
 
@@ -398,7 +532,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 customSystemPrompt: messageCustomSystemPrompt,
                 appendSystemPrompt: messageAppendSystemPrompt,
                 allowedTools: messageAllowedTools,
-                disallowedTools: messageDisallowedTools
+                disallowedTools: messageDisallowedTools,
+                ...currentClaudeRemoteMetaState,
             };
             messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
             logger.debugLargeJson('[start] /compact command pushed to queue:', message);
@@ -415,7 +550,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 customSystemPrompt: messageCustomSystemPrompt,
                 appendSystemPrompt: messageAppendSystemPrompt,
                 allowedTools: messageAllowedTools,
-                disallowedTools: messageDisallowedTools
+                disallowedTools: messageDisallowedTools,
+                ...currentClaudeRemoteMetaState,
             };
             messageQueue.pushIsolateAndClear(specialCommand.originalMessage || message.content.text, enhancedMode);
             logger.debugLargeJson('[start] /clear command pushed to queue:', message);
@@ -431,7 +567,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             customSystemPrompt: messageCustomSystemPrompt,
             appendSystemPrompt: messageAppendSystemPrompt,
             allowedTools: messageAllowedTools,
-            disallowedTools: messageDisallowedTools
+            disallowedTools: messageDisallowedTools,
+            ...currentClaudeRemoteMetaState,
         };
         messageQueue.push(message.content.text, enhancedMode);
         logger.debugLargeJson('User message pushed to queue:', message)
@@ -516,10 +653,12 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             currentSession = sessionInstance;
         },
         mcpServers: {
-            'happy': {
+            ...extractedMcp.mcpServers,
+            // Keep Happy MCP server last so a user-provided "happy" entry cannot override it.
+            happy: {
                 type: 'http' as const,
                 url: happyServer.url,
-            }
+            },
         },
         session,
         claudeEnvVars: options.claudeEnvVars,

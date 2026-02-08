@@ -361,12 +361,13 @@ export function query(config: {
         childStdin = child.stdin
     }
 
-    // Handle stderr in debug mode
-    if (process.env.DEBUG) {
-        child.stderr.on('data', (data) => {
+    // Always drain stderr to avoid deadlocks when Claude (or wrappers) are chatty.
+    // Only print when DEBUG is enabled to keep normal output clean.
+    child.stderr.on('data', (data) => {
+        if (process.env.DEBUG) {
             console.error('Claude Code stderr:', data.toString())
-        })
-    }
+        }
+    })
 
     // Setup cleanup
     const cleanup = () => {

@@ -3,7 +3,7 @@ import { Session } from "./session";
 import { MessageBuffer } from "@/ui/ink/messageBuffer";
 import { RemoteModeDisplay } from "@/backends/claude/ui/RemoteModeDisplay";
 import React from "react";
-import { claudeRemote } from "./claudeRemote";
+import { claudeRemoteDispatch } from "./remote/claudeRemoteDispatch";
 import { PermissionHandler } from "./utils/permissionHandler";
 import { Future } from "@/utils/future";
 import { AbortError, SDKAssistantMessage, SDKMessage, SDKUserMessage } from "./sdk";
@@ -14,6 +14,7 @@ import { EnhancedMode } from "./loop";
 import { RawJSONLines } from "@/backends/claude/types";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
 import { getToolName } from "./utils/getToolName";
+import { syncClaudePermissionModeFromMetadata } from "./utils/syncPermissionModeFromMetadata";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
@@ -339,7 +340,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             let modeHash: string | null = null;
             let mode: EnhancedMode | null = null;
             try {
-                const remoteResult = await claudeRemote({
+                const remoteResult = await claudeRemoteDispatch({
                     sessionId: session.sessionId,
                     transcriptPath: session.transcriptPath,
                     path: session.path,
@@ -359,17 +360,23 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 	                            return p;
 	                        }
 
-	                        const msg = await waitForMessagesOrPending({
-	                            messageQueue: session.queue,
-	                            abortSignal: controller.signal,
-	                            popPendingMessage: async () => {
-	                                // Only materialize pending items when there are no committed transcript messages
-	                                // queued locally; committed messages must be processed first.
-	                                if (session.queue.size() > 0) return false;
-	                                return await session.client.popPendingMessage();
-	                            },
-	                            waitForMetadataUpdate: (signal) => session.client.waitForMetadataUpdate(signal),
-	                        });
+		                        const msg = await waitForMessagesOrPending({
+		                            messageQueue: session.queue,
+		                            abortSignal: controller.signal,
+		                            popPendingMessage: async () => {
+		                                // Only materialize pending items when there are no committed transcript messages
+		                                // queued locally; committed messages must be processed first.
+		                                if (session.queue.size() > 0) return false;
+		                                return await session.client.popPendingMessage();
+		                            },
+		                            waitForMetadataUpdate: (signal) => session.client.waitForMetadataUpdate(signal),
+		                            onMetadataUpdate: () => {
+		                                const updated = syncClaudePermissionModeFromMetadata({ session, permissionHandler });
+		                                if (updated) {
+		                                    logger.debug(`[remote]: Permission mode updated from metadata to: ${updated}`);
+		                                }
+		                            },
+		                        });
 
 	                        // Check if mode has changed
 	                        if (msg) {
@@ -390,10 +397,24 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
                         // Exit
                         return null;
                     },
-                    onSessionFound: (sessionId) => {
+                    onSessionFound: (sessionId: string, data: unknown) => {
                         // Update converter's session ID when new session is found
                         sdkToLogConverter.updateSessionId(sessionId);
-                        session.onSessionFound(sessionId);
+                        session.onSessionFound(sessionId, data as any);
+                    },
+                    onCheckpointCaptured: (checkpointId: string) => {
+                        session.client.updateMetadata((metadata: any) => ({
+                            ...metadata,
+                            claudeLastCheckpointId: checkpointId,
+                        }));
+                    },
+                    onCapabilities: (caps: any) => {
+                        if (!caps || typeof caps !== 'object') return;
+                        session.client.updateMetadata((metadata: any) => ({
+                            ...metadata,
+                            ...(Array.isArray(caps.slashCommands) ? { slashCommands: caps.slashCommands } : {}),
+                            ...(Array.isArray(caps.slashCommandDetails) ? { slashCommandDetails: caps.slashCommandDetails } : {}),
+                        }));
                     },
                     onThinkingChange: session.onThinkingChange,
                     claudeEnvVars: session.claudeEnvVars,

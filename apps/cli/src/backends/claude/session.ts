@@ -1,11 +1,12 @@
 import { ApiClient, ApiSessionClient } from "@/lib";
-import { MessageQueue2 } from "@/utils/MessageQueue2";
+import { MessageQueue2 } from "@/agent/runtime/modeMessageQueue";
 import { EnhancedMode } from "./loop";
 import { logger } from "@/ui/logger";
 import type { JsRuntime } from "./runClaude";
 import type { SessionHookData } from "./utils/startHookServer";
 import type { PermissionMode } from "@/api/types";
 import { randomUUID } from "node:crypto";
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permissionModeCanonical';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -95,16 +96,36 @@ export class Session {
     }
 
     setLastPermissionMode = (mode: PermissionMode, updatedAt: number = Date.now()): void => {
-        if (mode === this.lastPermissionMode) {
+        const canonical = normalizePermissionModeToIntent(mode) ?? 'default';
+        if (canonical === this.lastPermissionMode) {
             return;
         }
-        this.lastPermissionMode = mode;
+        this.lastPermissionMode = canonical;
         this.lastPermissionModeUpdatedAt = updatedAt;
         this.client.updateMetadata((metadata) => ({
             ...metadata,
-            permissionMode: mode,
+            permissionMode: canonical,
             permissionModeUpdatedAt: updatedAt
         }));
+    }
+
+    adoptLastPermissionModeFromMetadata = (mode: PermissionMode, updatedAt: number): boolean => {
+        if (!(typeof updatedAt === 'number' && Number.isFinite(updatedAt))) {
+            return false;
+        }
+        if (updatedAt <= this.lastPermissionModeUpdatedAt) {
+            return false;
+        }
+
+        const canonical = normalizePermissionModeToIntent(mode) ?? 'default';
+        if (canonical === this.lastPermissionMode) {
+            this.lastPermissionModeUpdatedAt = updatedAt;
+            return false;
+        }
+
+        this.lastPermissionMode = canonical;
+        this.lastPermissionModeUpdatedAt = updatedAt;
+        return true;
     }
 
     onThinkingChange = (thinking: boolean) => {
@@ -170,10 +191,17 @@ export class Session {
         if (prevSessionId !== sessionId) {
             this.client.updateMetadata((metadata) => ({
                 ...metadata,
-                claudeSessionId: sessionId
+                claudeSessionId: sessionId,
+                claudeTranscriptPath: this.transcriptPath,
             }));
             logger.debug(`[Session] Claude Code session ID ${sessionId} added to metadata`);
 
+        } else if (nextTranscriptPath) {
+            // Same session, but we learned a more precise transcript path from hooks.
+            this.client.updateMetadata((metadata) => ({
+                ...metadata,
+                claudeTranscriptPath: this.transcriptPath,
+            }));
         }
 
         // Notify callbacks when either the sessionId changes or we learned a better transcript path.

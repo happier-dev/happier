@@ -6,11 +6,9 @@ import { z } from 'zod';
 import { PERMISSION_MODES, isPermissionMode } from '@/api/types';
 import { runClaude, type StartOptions } from '@/backends/claude/runClaude';
 import { claudeCliPath } from '@/backends/claude/claudeLocal';
-import { isDaemonRunningCurrentlyInstalledHappyVersion } from '@/daemon/controlClient';
 import { readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
-import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import packageJson from '../../../../package.json';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -96,6 +94,31 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
         process.exit(1);
       }
       options.permissionModeUpdatedAt = Math.floor(parsedAt);
+    } else if (arg === '--model') {
+      if (i + 1 >= strippedArgs.length) {
+        console.error(chalk.red('Missing value for --model (expected: model id)'));
+        process.exit(1);
+      }
+      const raw = strippedArgs[++i];
+      const normalized = typeof raw === 'string' ? raw.trim() : '';
+      if (!normalized) {
+        console.error(chalk.red('Invalid --model value: empty'));
+        process.exit(1);
+      }
+      options.modelId = normalized;
+      unknownArgs.push('--model', normalized);
+    } else if (arg === '--model-updated-at') {
+      if (i + 1 >= strippedArgs.length) {
+        console.error(chalk.red('Missing value for --model-updated-at (expected: unix ms timestamp)'));
+        process.exit(1);
+      }
+      const raw = strippedArgs[++i];
+      const parsedAt = Number(raw);
+      if (!Number.isFinite(parsedAt) || parsedAt <= 0) {
+        console.error(chalk.red(`Invalid --model-updated-at value: ${raw}. Expected a positive number (unix ms)`));
+        process.exit(1);
+      }
+      options.modelUpdatedAt = Math.floor(parsedAt);
     } else if (arg === '--js-runtime') {
       const runtime = strippedArgs[++i];
       if (runtime !== 'node' && runtime !== 'bun') {
@@ -134,6 +157,10 @@ export async function handleClaudeCliCommand(context: CommandContext): Promise<v
 
   if (unknownArgs.length > 0) {
     options.claudeArgs = [...(options.claudeArgs || []), ...unknownArgs];
+  }
+
+  if (typeof options.modelId === 'string' && options.modelId.trim()) {
+    options.model = options.modelId.trim();
   }
 
   // Resolve Chrome mode: explicit flag > settings > false
@@ -197,24 +224,6 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
   }
 
   const { credentials } = await authAndSetupMachineIfNeeded();
-
-  // Always auto-start daemon for simplicity
-  logger.debug('Ensuring Happier background service is running & matches our version...');
-
-  if (!(await isDaemonRunningCurrentlyInstalledHappyVersion())) {
-    logger.debug('Starting Happier background service...');
-
-    // Use the built binary to spawn daemon
-    const daemonProcess = spawnHappyCLI(['daemon', 'start-sync'], {
-      detached: true,
-      stdio: 'ignore',
-      env: process.env,
-    });
-    daemonProcess.unref();
-
-    // Give daemon a moment to write PID & port file
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  }
 
   try {
     options.terminalRuntime = context.terminalRuntime;

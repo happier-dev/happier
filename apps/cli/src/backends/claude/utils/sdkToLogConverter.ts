@@ -83,18 +83,25 @@ export class SDKToLogConverter {
      * Convert SDK message to log format
      */
     convert(sdkMessage: SDKMessage): RawJSONLines | null {
+        if (sdkMessage && typeof sdkMessage === 'object' && (sdkMessage as any).happierPartial === true) {
+            return null
+        }
+
         const uuid = randomUUID()
         const timestamp = new Date().toISOString()
         let parentUuid = this.lastUuid;
         let isSidechain = false;
+        let sidechainId: string | undefined;
         if (sdkMessage.parent_tool_use_id) {
             isSidechain = true;
+            sidechainId = (sdkMessage as any).parent_tool_use_id;
             parentUuid = this.sidechainLastUUID.get((sdkMessage as any).parent_tool_use_id) ?? null;
             this.sidechainLastUUID.set((sdkMessage as any).parent_tool_use_id!, uuid);
         }
         const baseFields = {
             parentUuid: parentUuid,
             isSidechain: isSidechain,
+            ...(sidechainId ? { sidechainId } : {}),
             userType: 'external' as const,
             cwd: this.context.cwd,
             sessionId: this.context.sessionId,
@@ -245,6 +252,7 @@ export class SDKToLogConverter {
         return {
             parentUuid: null,
             isSidechain: true,
+            sidechainId: toolUseId,
             userType: 'external' as const,
             cwd: this.context.cwd,
             sessionId: this.context.sessionId,

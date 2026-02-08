@@ -1,11 +1,12 @@
 import { ApiSessionClient } from "@/api/apiSession"
-import { MessageQueue2 } from "@/utils/MessageQueue2"
+import { MessageQueue2 } from "@/agent/runtime/modeMessageQueue"
 import { logger } from "@/ui/logger"
 import { Session } from "./session"
 import { claudeLocalLauncher, LauncherResult } from "./claudeLocalLauncher"
 import { claudeRemoteLauncher } from "./claudeRemoteLauncher"
 import { ApiClient } from "@/lib"
 import type { JsRuntime } from "./runClaude"
+import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
 
 // Re-export permission mode type from api/types
 // Single unified type with 7 modes - Codex modes mapped at SDK boundary
@@ -25,6 +26,16 @@ export interface EnhancedMode {
     appendSystemPrompt?: string;
     allowedTools?: string[];
     disallowedTools?: string[];
+
+    // Claude remote-mode (provider-scoped) settings forwarded via message meta.
+    claudeRemoteAgentSdkEnabled?: boolean;
+    claudeRemoteSettingSources?: 'project' | 'user_project' | 'none';
+    claudeRemoteIncludePartialMessages?: boolean;
+    claudeRemoteEnableFileCheckpointing?: boolean;
+    claudeRemoteMaxThinkingTokens?: number | null;
+    claudeRemoteDisableTodos?: boolean;
+    claudeRemoteStrictMcpServerConfig?: boolean;
+    claudeRemoteAdvancedOptionsJson?: string;
 }
 
 interface LoopOptions {
@@ -67,8 +78,16 @@ export async function loop(opts: LoopOptions): Promise<number> {
         jsRuntime: opts.jsRuntime
     });
 
-    // Publish initial permission mode so the app can reflect it even before any app-driven message exists.
-    session.setLastPermissionMode(opts.permissionMode ?? 'default');
+    // Seed the permission mode from the canonical session metadata snapshot (if present).
+    // This is critical for attach flows where the UI may have set permissions (immediate) without any user messages,
+    // and for ensuring local↔remote switches preserve the selected mode.
+    const seeded = await resolveStartupPermissionModeFromSession({ session: opts.session as any, take: 50 });
+    if (seeded) {
+        session.adoptLastPermissionModeFromMetadata(seeded.mode, seeded.updatedAt);
+    } else {
+        session.lastPermissionMode = opts.permissionMode ?? 'default';
+        session.lastPermissionModeUpdatedAt = 0;
+    }
     opts.onSessionReady?.(session)
 
     let mode: 'local' | 'remote' = opts.startingMode ?? 'local';

@@ -6,7 +6,8 @@ import { createSessionScanner } from "./utils/sessionScanner";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import type { PermissionMode } from "@/api/types";
 import { mapToClaudeMode } from "./utils/permissionMode";
-import { createInterface } from "node:readline";
+import { confirmDiscardBeforeSwitchToLocal } from "@/backends/utils/confirmDiscardBeforeSwitchToLocal";
+import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
 
 function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: PermissionMode): string[] | undefined {
     const filtered: string[] = [];
@@ -41,8 +42,8 @@ export type LauncherResult = { type: 'switch' } | { type: 'exit', code: number }
 
 export async function claudeLocalLauncher(session: Session): Promise<LauncherResult> {
 
-    // Create scanner
-    const scanner = await createSessionScanner({
+	    // Create scanner
+	    const scanner = await createSessionScanner({
         sessionId: session.sessionId,
         transcriptPath: session.transcriptPath,
         claudeConfigDir: session.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
@@ -69,13 +70,36 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
     session.addSessionFoundCallback(scannerSessionCallback);
 
 
-    // Handle abort
-    let exitReason: LauncherResult | null = null;
-    let abortingForModeSwitch = false;
-    const processAbortController = new AbortController();
-    let exitFuture = new Future<void>();
-    try {
-        async function abort() {
+	    // Handle abort
+	    let exitReason: LauncherResult | null = null;
+	    let abortingForModeSwitch = false;
+	    const processAbortController = new AbortController();
+	    let exitFuture = new Future<void>();
+        let syncLastPermissionModeFromMetadata: (() => void) | null = null;
+	    try {
+            const clientEmitter = session.client as any;
+
+            syncLastPermissionModeFromMetadata = () => {
+                if (!clientEmitter || typeof clientEmitter.getMetadataSnapshot !== 'function') {
+                    return;
+                }
+                const resolved = resolvePermissionIntentFromMetadataSnapshot({
+                    metadata: clientEmitter.getMetadataSnapshot(),
+                });
+                if (!resolved) return;
+                session.adoptLastPermissionModeFromMetadata(resolved.intent, resolved.updatedAt);
+            };
+
+            // Seed from metadata so local Claude spawns always reflect the latest app-selected mode.
+            syncLastPermissionModeFromMetadata();
+
+            // While we can't change Claude's local permission mode mid-process, we still adopt updates
+            // so that any subsequent spawn (fork/retry/local restart) uses the latest intent.
+            if (clientEmitter && typeof clientEmitter.on === 'function') {
+                clientEmitter.on('metadata-updated', syncLastPermissionModeFromMetadata);
+            }
+
+	        async function abort() {
 
             // Send abort signal
             if (!processAbortController.signal.aborted) {
@@ -156,14 +180,14 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
         const queuedLocalIds = session.queue.queue
             .map((item) => item.mode?.localId)
             .filter((id): id is string => typeof id === 'string' && id.length > 0);
-        const serverPending = session.client.peekPendingMessageQueueV1Preview({ maxPreview: 3 });
+        const serverPendingCount = await session.client.peekPendingMessageQueueV2Count();
 
-        if (queuedCount > 0 || serverPending.count > 0) {
+        if (queuedCount > 0 || serverPendingCount > 0) {
             const confirmed = await confirmDiscardQueuedMessages({
                 queuedCount,
                 queuedPreview: queued,
-                serverCount: serverPending.count,
-                serverPreview: serverPending.preview,
+                serverCount: serverPendingCount,
+                serverPreview: [],
             });
             if (!confirmed) {
                 return { type: 'switch' };
@@ -172,8 +196,8 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
             // Discard server-side pending messages first, so remote mode does not replay them later.
             let discardedServerCount = 0;
             try {
-                if (serverPending.count > 0) {
-                    discardedServerCount = await session.client.discardPendingMessageQueueV1All({ reason: 'switch_to_local' });
+                if (serverPendingCount > 0) {
+                    discardedServerCount = await session.client.discardPendingMessageQueueV2All({ reason: 'switch_to_local' });
                 }
             } catch (e) {
                 session.client.sendSessionEvent({
@@ -222,10 +246,10 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
             scanner.onNewSession(sessionId);
         }
 
-        // Run local mode
-        let errorCount = 0;
-        const maxRetries = 5;
-        while (true) {
+	        // Run local mode
+	        let errorCount = 0;
+	        const maxRetries = 5;
+	        while (true) {
             // If we already have an exit reason, return it
             if (exitReason) {
                 return exitReason;
@@ -242,12 +266,14 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
                 session.clearSessionId();
             }
 
-            // Launch
-            logger.debug('[local]: launch');
-            try {
-                // Ensure local Claude Code is spawned with the current session permission mode.
-                // This is essential for remote → local switches where the app-selected mode must carry over.
-                session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, session.lastPermissionMode);
+	            // Launch
+	            logger.debug('[local]: launch');
+	            try {
+                    syncLastPermissionModeFromMetadata?.();
+
+	                // Ensure local Claude Code is spawned with the current session permission mode.
+	                // This is essential for remote → local switches where the app-selected mode must carry over.
+	                session.claudeArgs = upsertClaudePermissionModeArgs(session.claudeArgs, session.lastPermissionMode);
 
                 await claudeLocal({
                     path: session.path,
@@ -316,10 +342,15 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
             }
             logger.debug('[local]: launch done');
         }
-    } finally {
+	    } finally {
+            const clientEmitter = session.client as any;
+            if (clientEmitter && typeof clientEmitter.off === 'function' && syncLastPermissionModeFromMetadata) {
+                // Best-effort: some test stubs don't implement EventEmitter.
+                clientEmitter.off('metadata-updated', syncLastPermissionModeFromMetadata);
+            }
 
-        // Resolve future
-        exitFuture.resolve(undefined);
+	        // Resolve future
+	        exitFuture.resolve(undefined);
 
         // Set handlers to no-op
         session.client.rpcHandlerManager.registerHandler('abort', async () => { });
@@ -337,39 +368,10 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
     return exitReason || { type: 'exit', code: 0 };
 }
     async function confirmDiscardQueuedMessages(opts: { queuedCount: number; queuedPreview: string[]; serverCount: number; serverPreview: string[] }): Promise<boolean> {
-        if (!process.stdin.isTTY || !process.stdout.isTTY) {
-            return false;
-        }
-
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
-        const question = (text: string) => new Promise<string>((resolve) => rl.question(text, resolve));
-
-        const renderPreview = (messages: string[]) =>
-            messages
-            .filter((m) => m.trim().length > 0)
-            .slice(0, 3)
-            .map((m, i) => `  ${i + 1}. ${m.length > 120 ? `${m.slice(0, 120)}…` : m}`)
-            .join('\n');
-
-        const blocks: string[] = [];
-        if (opts.serverCount > 0) {
-            const preview = renderPreview(opts.serverPreview);
-            blocks.push(preview
-                ? `Pending UI messages (${opts.serverCount}):\n${preview}`
-                : `Pending UI messages (${opts.serverCount}).`);
-        }
-        if (opts.queuedCount > 0) {
-            const preview = renderPreview(opts.queuedPreview);
-            blocks.push(preview
-                ? `Queued remote messages (${opts.queuedCount}):\n${preview}`
-                : `Queued remote messages (${opts.queuedCount}).`);
-        }
-
-        process.stdout.write(`\n${blocks.join('\n\n')}\n\n`);
-
-        const answer = await question('Discard these messages and switch to local mode? (y/N) ');
-        rl.close();
-
-        const normalized = answer.trim().toLowerCase();
-        return normalized === 'y' || normalized === 'yes';
+        return confirmDiscardBeforeSwitchToLocal({
+            queuedCount: opts.queuedCount,
+            queuedPreview: opts.queuedPreview,
+            pendingCount: opts.serverCount,
+            pendingPreview: opts.serverPreview,
+        });
     }

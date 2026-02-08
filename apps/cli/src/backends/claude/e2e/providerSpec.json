@@ -1,0 +1,25 @@
+{
+  "v": 1,
+  "id": "claude",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_CLAUDE",
+  "protocol": "claude",
+  "traceProvider": "claude",
+  "requiredBinaries": ["claude"],
+  "auth": {
+    "mode": "auto",
+    "env": {
+      "requiredAnyOf": [["ANTHROPIC_API_KEY"]]
+    },
+    "host": {
+      "envUnset": []
+    }
+  },
+  "cli": {
+    "subcommand": "claude",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev"
+    }
+  }
+}
