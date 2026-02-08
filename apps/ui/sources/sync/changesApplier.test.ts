@@ -127,4 +127,121 @@ describe('changesApplier', () => {
         expect(applyTodoSocketUpdates).not.toHaveBeenCalled();
         expect(invalidateTodos).toHaveBeenCalledTimes(1);
     });
+
+    it('runs all planned invalidations and catches up only loaded sessions', async () => {
+        const invalidateSettings = vi.fn(async () => {});
+        const invalidateProfile = vi.fn(async () => {});
+        const invalidateMachines = vi.fn(async () => {});
+        const invalidateArtifacts = vi.fn(async () => {});
+        const invalidateFeed = vi.fn(async () => {});
+        const invalidateSessions = vi.fn(async () => {});
+        const invalidateMessagesForSession = vi.fn(async () => {});
+        const invalidateGitStatusForSession = vi.fn(() => {});
+
+        await applyPlannedChangeActions({
+            planned: buildPlanned({
+                sessionIdsToCatchUp: ['s1', 's2'],
+                invalidate: {
+                    settings: true,
+                    profile: true,
+                    machines: true,
+                    artifacts: true,
+                    feed: true,
+                    sessions: true,
+                },
+            }),
+            credentials,
+            isSessionMessagesLoaded: (sessionId) => sessionId === 's2',
+            invalidate: {
+                settings: invalidateSettings,
+                profile: invalidateProfile,
+                machines: invalidateMachines,
+                artifacts: invalidateArtifacts,
+                feed: invalidateFeed,
+                sessions: invalidateSessions,
+            },
+            invalidateMessagesForSession,
+            invalidateGitStatusForSession,
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet: async () => ({ values: [] }),
+        });
+
+        expect(invalidateSettings).toHaveBeenCalledTimes(1);
+        expect(invalidateProfile).toHaveBeenCalledTimes(1);
+        expect(invalidateMachines).toHaveBeenCalledTimes(1);
+        expect(invalidateArtifacts).toHaveBeenCalledTimes(1);
+        expect(invalidateFeed).toHaveBeenCalledTimes(1);
+        expect(invalidateSessions).toHaveBeenCalledTimes(1);
+        expect(invalidateMessagesForSession).toHaveBeenCalledTimes(1);
+        expect(invalidateMessagesForSession).toHaveBeenCalledWith('s2');
+        expect(invalidateGitStatusForSession).toHaveBeenCalledTimes(1);
+        expect(invalidateGitStatusForSession).toHaveBeenCalledWith('s2');
+    });
+
+    it('invalidates todos for refresh-feature KV plan', async () => {
+        const invalidateTodos = vi.fn(async () => {});
+        const kvBulkGet = vi.fn(async () => ({ values: [] as Array<{ key: string; value: string | null; version: number }> }));
+
+        await applyPlannedChangeActions({
+            planned: buildPlanned({
+                kv: { type: 'refresh-feature', feature: 'todos' },
+            }),
+            credentials,
+            isSessionMessagesLoaded: () => false,
+            invalidate: { todos: invalidateTodos },
+            invalidateMessagesForSession: async () => {},
+            invalidateGitStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet,
+        });
+
+        expect(invalidateTodos).toHaveBeenCalledTimes(1);
+        expect(kvBulkGet).not.toHaveBeenCalled();
+    });
+
+    it('skips KV calls when bulk-keys plan has no todo-prefixed keys', async () => {
+        const invalidateTodos = vi.fn(async () => {});
+        const kvBulkGet = vi.fn(async () => ({ values: [] as Array<{ key: string; value: string | null; version: number }> }));
+
+        await applyPlannedChangeActions({
+            planned: buildPlanned({
+                kv: { type: 'bulk-keys', feature: 'todos', keys: ['settings.a', 'profile.b'] },
+            }),
+            credentials,
+            isSessionMessagesLoaded: () => false,
+            invalidate: { todos: invalidateTodos },
+            invalidateMessagesForSession: async () => {},
+            invalidateGitStatusForSession: () => {},
+            applyTodoSocketUpdates: async () => {},
+            kvBulkGet,
+        });
+
+        expect(kvBulkGet).not.toHaveBeenCalled();
+        expect(invalidateTodos).not.toHaveBeenCalled();
+    });
+
+    it('falls back to todos invalidation when bulk KV request throws', async () => {
+        const applyTodoSocketUpdates = vi.fn(async () => {});
+        const invalidateTodos = vi.fn(async () => {});
+        const kvBulkGet = vi.fn(async () => {
+            throw new Error('network down');
+        });
+
+        await applyPlannedChangeActions({
+            planned: buildPlanned({
+                kv: { type: 'bulk-keys', feature: 'todos', keys: ['todo.a'] },
+            }),
+            credentials,
+            isSessionMessagesLoaded: () => false,
+            invalidate: { todos: invalidateTodos },
+            invalidateMessagesForSession: async () => {},
+            invalidateGitStatusForSession: () => {},
+            applyTodoSocketUpdates,
+            kvBulkGet,
+        });
+
+        expect(kvBulkGet).toHaveBeenCalledTimes(1);
+        expect(applyTodoSocketUpdates).not.toHaveBeenCalled();
+        expect(invalidateTodos).toHaveBeenCalledTimes(1);
+    });
 });
