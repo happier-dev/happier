@@ -17,10 +17,13 @@ Usage:
   bash scripts/ci/run-act-tests.sh <job>...     # run specific job(s)
 
 Jobs:
-  expo-app
+  ui
   server
   cli
+  stack
+  typecheck
   cli-daemon-e2e
+  e2e-core
 
 Env overrides:
   ACT_WORKFLOW_PATH   (default: .github/workflows/tests.yml)
@@ -56,7 +59,7 @@ fi
 
 mkdir -p "$LOG_DIR"
 
-DEFAULT_JOBS=(expo-app server cli cli-daemon-e2e)
+DEFAULT_JOBS=(ui server cli stack typecheck cli-daemon-e2e e2e-core)
 JOBS=("$@")
 if [[ ${#JOBS[@]} -eq 0 ]]; then
   JOBS=("${DEFAULT_JOBS[@]}")
