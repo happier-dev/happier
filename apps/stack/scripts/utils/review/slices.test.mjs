@@ -29,3 +29,13 @@ test('planPathSlices splits large groups by prefix depth and respects maxFiles',
   const all = slices.flatMap((s) => s.paths).sort();
   assert.deepEqual(all, Array.from(new Set(changedPaths)).sort());
 });
+
+test('planPathSlices normalizes duplicate and absolute/windows-shaped paths', () => {
+  const slices = planPathSlices({
+    changedPaths: ['apps\\ui\\a.ts', '/apps/ui/a.ts', 'apps/ui/a.ts', 'apps/ui/b.ts'],
+    maxFiles: 5,
+  });
+
+  assert.equal(slices.length, 1);
+  assert.deepEqual(slices[0].paths, ['apps/ui/a.ts', 'apps/ui/b.ts']);
+});

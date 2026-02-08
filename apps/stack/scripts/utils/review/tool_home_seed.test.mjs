@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { seedAugmentHomeFromRealHome, seedCodeRabbitHomeFromRealHome, seedCodexHomeFromRealHome } from './tool_home_seed.mjs';
@@ -56,20 +56,22 @@ test('seedCodeRabbitHomeFromRealHome refreshes auth.json when the real home has 
     await mkdir(join(realHome, '.coderabbit'), { recursive: true });
     await mkdir(join(isolatedHome, '.coderabbit'), { recursive: true });
 
-    await writeFile(join(isolatedHome, '.coderabbit', 'auth.json'), 'old\n', 'utf-8');
-    // Ensure a later mtime for the real auth.
-    await new Promise((r) => setTimeout(r, 15));
-    await writeFile(join(realHome, '.coderabbit', 'auth.json'), 'new\n', 'utf-8');
+    const isolatedAuthPath = join(isolatedHome, '.coderabbit', 'auth.json');
+    const realAuthPath = join(realHome, '.coderabbit', 'auth.json');
+    await writeFile(isolatedAuthPath, 'old\n', 'utf-8');
+    await writeFile(realAuthPath, 'new\n', 'utf-8');
+    await utimes(isolatedAuthPath, new Date(1_000), new Date(1_000));
+    await utimes(realAuthPath, new Date(2_000), new Date(2_000));
 
     await seedCodeRabbitHomeFromRealHome({ realHomeDir: realHome, isolatedHomeDir: isolatedHome });
 
-    assert.equal(await readFile(join(isolatedHome, '.coderabbit', 'auth.json'), 'utf-8'), 'new\n');
+    assert.equal(await readFile(isolatedAuthPath, 'utf-8'), 'new\n');
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('seedCodexHomeFromRealHome refreshes auth/config when the real home has newer ones', async () => {
+test('seedCodexHomeFromRealHome refreshes auth and does not copy user config.toml', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happy-stacks-codex-seed-'));
   const realHome = join(root, 'real');
   const isolatedHome = join(root, 'isolated');
@@ -78,17 +80,26 @@ test('seedCodexHomeFromRealHome refreshes auth/config when the real home has new
     await mkdir(join(realHome, '.codex'), { recursive: true });
     await mkdir(isolatedHome, { recursive: true });
 
-    await writeFile(join(isolatedHome, 'auth.json'), 'old-auth\n', 'utf-8');
-    await writeFile(join(isolatedHome, 'config.toml'), 'old-cfg\n', 'utf-8');
+    const isolatedAuthPath = join(isolatedHome, 'auth.json');
+    const realAuthPath = join(realHome, '.codex', 'auth.json');
 
-    await new Promise((r) => setTimeout(r, 15));
-    await writeFile(join(realHome, '.codex', 'auth.json'), 'new-auth\n', 'utf-8');
+    await writeFile(isolatedAuthPath, 'old-auth\n', 'utf-8');
+    await writeFile(join(isolatedHome, 'config.toml'), 'old-cfg\n', 'utf-8');
+    await writeFile(realAuthPath, 'new-auth\n', 'utf-8');
     await writeFile(join(realHome, '.codex', 'config.toml'), 'new-cfg\n', 'utf-8');
+    await utimes(isolatedAuthPath, new Date(1_000), new Date(1_000));
+    await utimes(realAuthPath, new Date(2_000), new Date(2_000));
 
     await seedCodexHomeFromRealHome({ realHomeDir: realHome, isolatedHomeDir: isolatedHome });
 
-    assert.equal(await readFile(join(isolatedHome, 'auth.json'), 'utf-8'), 'new-auth\n');
-    assert.equal(await readFile(join(isolatedHome, 'config.toml'), 'utf-8'), 'new-cfg\n');
+    assert.equal(await readFile(isolatedAuthPath, 'utf-8'), 'new-auth\n');
+    let hasConfig = true;
+    try {
+      await stat(join(isolatedHome, 'config.toml'));
+    } catch {
+      hasConfig = false;
+    }
+    assert.equal(hasConfig, false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

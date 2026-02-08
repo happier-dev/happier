@@ -1,4 +1,4 @@
-import { copyFile, cp, mkdir, stat } from 'node:fs/promises';
+import { copyFile, cp, mkdir, rm, stat } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -73,9 +73,16 @@ export async function seedCodexHomeFromRealHome({ realHomeDir, isolatedHomeDir }
   const isolated = String(isolatedHomeDir ?? '').trim();
   if (!real || !isolated || real === isolated) return;
 
-  // Codex uses CODEX_HOME/{auth.json,config.toml,...}
+  // Ensure prior runs do not leak custom user config (MCP/plugins) into review jobs.
+  try {
+    await rm(join(isolated, 'config.toml'), { force: true });
+  } catch {
+    // best-effort
+  }
+
+  // Copy auth only. We intentionally avoid copying user config.toml so review
+  // runs do not inherit personal MCP/plugin settings that can stall batch jobs.
   await copyFileIfNewer({ srcFile: join(real, '.codex', 'auth.json'), destFile: join(isolated, 'auth.json') });
-  await copyFileIfNewer({ srcFile: join(real, '.codex', 'config.toml'), destFile: join(isolated, 'config.toml') });
 }
 
 /**

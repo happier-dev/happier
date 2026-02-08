@@ -8,6 +8,11 @@ test('detectAugmentAuthError matches 401 login guidance', () => {
   assert.equal(detectAugmentAuthError({ stdout, stderr: '' }), true);
 });
 
+test('detectAugmentAuthError returns false when required markers are incomplete', () => {
+  assert.equal(detectAugmentAuthError({ stdout: 'Authentication failed', stderr: '' }), false);
+  assert.equal(detectAugmentAuthError({ stdout: "Run 'auggie login' to authenticate first.", stderr: '' }), false);
+});
+
 test('buildAugmentReviewArgs builds auggie --print args with optional settings', () => {
   const args = buildAugmentReviewArgs({
     prompt: 'Review the code',
@@ -40,3 +45,20 @@ test('buildAugmentReviewArgs builds auggie --print args with optional settings',
   assert.equal(args.at(-1), 'Review the code');
 });
 
+test('buildAugmentReviewArgs keeps required args and ignores blank option values', () => {
+  const args = buildAugmentReviewArgs({
+    prompt: 'Review now',
+    workspaceRoot: '   ',
+    cacheDir: '',
+    model: null,
+    rulesFiles: 'not-an-array',
+    retryTimeoutSec: undefined,
+    maxTurns: '',
+  });
+
+  assert.deepEqual(args, ['--print', '--quiet', '--dont-save-session', '--ask', '--output-format', 'text', 'Review now']);
+});
+
+test('buildAugmentReviewArgs requires a non-empty prompt', () => {
+  assert.throws(() => buildAugmentReviewArgs({ prompt: '   ' }), /missing prompt/);
+});

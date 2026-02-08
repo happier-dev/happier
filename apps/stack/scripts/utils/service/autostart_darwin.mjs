@@ -68,6 +68,20 @@ function plistXml({ label, programArgs, env = {}, stdoutPath, stderrPath, workin
     ? `\n    <key>WorkingDirectory</key>\n    <string>${xmlEscape(workingDirectory)}</string>\n`
     : '\n';
 
+  // IMPORTANT:
+  // We want launchd to restart the stack if it crashes, but not to spin in a tight loop when
+  // `hstack start` exits cleanly (e.g. it detects "already running").
+  //
+  // `KeepAlive` with `SuccessfulExit=false` means:
+  // - exit 0 => do not restart (success)
+  // - exit non-zero => restart (crash)
+  const keepAliveXml =
+    `\n    <key>KeepAlive</key>\n` +
+    `    <dict>\n` +
+    `      <key>SuccessfulExit</key>\n` +
+    `      <false/>\n` +
+    `    </dict>\n`;
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -82,8 +96,7 @@ ${programArgsXml}
 
     <key>RunAtLoad</key>
     <true/>
-    <key>KeepAlive</key>
-    <true/>
+${keepAliveXml}
 ${workingDirXml}    <key>StandardOutPath</key>
     <string>${xmlEscape(stdoutPath)}</string>
     <key>StandardErrorPath</key>
@@ -96,6 +109,10 @@ ${envXml}
   </dict>
 </plist>
 `;
+}
+
+export function buildLaunchdPlistXml({ label, programArgs, env = {}, stdoutPath, stderrPath, workingDirectory }) {
+  return plistXml({ label, programArgs, env, stdoutPath, stderrPath, workingDirectory });
 }
 
 export async function ensureMacAutostartEnabled({ rootDir, label, env }) {
@@ -119,7 +136,7 @@ export async function ensureMacAutostartEnabled({ rootDir, label, env }) {
     PATH: buildLaunchdPath({ execPath: process.execPath, basePath: process.env.PATH }),
   };
 
-  const xml = plistXml({
+  const xml = buildLaunchdPlistXml({
     label: l,
     programArgs,
     env: mergedEnv,

@@ -24,3 +24,9 @@ test('parseCodeRabbitRateLimitRetryMs supports seconds-only windows', () => {
   assert.equal(ms, (31 + 1) * 1000);
 });
 
+test('parseCodeRabbitRateLimitRetryMs enforces a minimum 1s retry window', () => {
+  const ms = parseCodeRabbitRateLimitRetryMs(
+    '[2026-01-26T00:27:23.067Z] ERROR: Rate limit exceeded, please try after 0 minutes and 0 seconds'
+  );
+  assert.equal(ms, 1000);
+});

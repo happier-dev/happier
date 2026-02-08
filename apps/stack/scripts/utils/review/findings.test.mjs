@@ -3,31 +3,52 @@ import assert from 'node:assert/strict';
 
 import { formatTriageMarkdown, parseCodeRabbitPlainOutput, parseCodexReviewText } from './findings.mjs';
 
+function joinLines(lines) {
+  return lines.join('\n');
+}
+
+function makeCodeRabbitBlock({ file, line, type, commentLines = [], promptLines = [] }) {
+  const lines = [
+    '============================================================================',
+    `File: ${file}`,
+    `Line: ${line}`,
+    `Type: ${type}`,
+    '',
+    'Comment:',
+    ...commentLines,
+  ];
+  if (promptLines.length) {
+    lines.push('', 'Prompt for AI Agent:', ...promptLines);
+  }
+  return lines;
+}
+
+function makeCodexFindingsJsonBlock(findings, { fenced = false } = {}) {
+  const json = JSON.stringify(findings, null, 2);
+  if (!fenced) return ['===FINDINGS_JSON===', json];
+  return ['===FINDINGS_JSON===', '```json', json, '```'];
+}
+
+function withLabelPrefix(lines, label) {
+  return lines.map((line) => `${label}${line}`);
+}
+
 test('parseCodeRabbitPlainOutput parses CodeRabbit plain blocks', () => {
-  const out = [
-    '============================================================================',
-    'File: apps/cli/src/utils/spawnHappyCLI.invocation.test.ts',
-    'Line: 17 to 31',
-    'Type: potential_issue',
-    '',
-    'Comment:',
-    'Dynamic imports may be cached, causing test isolation issues.',
-    '',
-    'Some more details.',
-    '',
-    'Prompt for AI Agent:',
-    'Do the thing.',
-    '',
-    '============================================================================',
-    'File: apps/ui/sources/app/(app)/_layout.tsx',
-    'Line: 29 to 35',
-    'Type: potential_issue',
-    '',
-    'Comment:',
-    "Hooks order violation: useUnistyles() called after conditional return.",
-    '',
-    'More details.',
-  ].join('\n');
+  const out = joinLines([
+    ...makeCodeRabbitBlock({
+      file: 'apps/cli/src/utils/spawnHappyCLI.invocation.test.ts',
+      line: '17 to 31',
+      type: 'potential_issue',
+      commentLines: ['Dynamic imports may be cached, causing test isolation issues.', '', 'Some more details.'],
+      promptLines: ['Do the thing.'],
+    }),
+    ...makeCodeRabbitBlock({
+      file: 'apps/ui/sources/app/(app)/_layout.tsx',
+      line: '29 to 35',
+      type: 'potential_issue',
+      commentLines: ['Hooks order violation: useUnistyles() called after conditional return.', '', 'More details.'],
+    }),
+  ]);
 
   const findings = parseCodeRabbitPlainOutput(out);
   assert.equal(findings.length, 2);
@@ -39,24 +60,41 @@ test('parseCodeRabbitPlainOutput parses CodeRabbit plain blocks', () => {
   assert.match(findings[0].prompt, /Do the thing/);
 });
 
+test('parseCodeRabbitPlainOutput supports log-prefixed lines and single-line range', () => {
+  const label = '[monorepo:coderabbit:1/3] ';
+  const out = joinLines(
+    withLabelPrefix(
+      makeCodeRabbitBlock({
+        file: 'apps/stack/scripts/review.mjs',
+        line: '42',
+        type: 'nit',
+        commentLines: ['Prefer a clearer constant name.'],
+      }),
+      label
+    )
+  );
+
+  const findings = parseCodeRabbitPlainOutput(out);
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].file, 'apps/stack/scripts/review.mjs');
+  assert.deepEqual(findings[0].lines, { start: 42, end: 42 });
+  assert.equal(findings[0].type, 'nit');
+  assert.equal(findings[0].title, 'Prefer a clearer constant name.');
+});
+
 test('parseCodexReviewText extracts findings JSON trailer', () => {
-  const review = [
+  const review = joinLines([
     'Overall verdict: looks good.',
     '',
-    '===FINDINGS_JSON===',
-    JSON.stringify(
-      [
-        {
-          severity: 'major',
-          file: 'apps/server/sources/main.light.ts',
-          title: 'Do not exit after startup',
-          recommendation: 'Remove process.exit(0) on success.',
-        },
-      ],
-      null,
-      2
-    ),
-  ].join('\n');
+    ...makeCodexFindingsJsonBlock([
+      {
+        severity: 'major',
+        file: 'apps/server/sources/main.light.ts',
+        title: 'Do not exit after startup',
+        recommendation: 'Remove process.exit(0) on success.',
+      },
+    ]),
+  ]);
 
   const findings = parseCodexReviewText(review);
   assert.equal(findings.length, 1);
@@ -65,25 +103,14 @@ test('parseCodexReviewText extracts findings JSON trailer', () => {
 });
 
 test('parseCodexReviewText extracts findings JSON trailer even when fenced', () => {
-  const review = [
-    'All good.',
-    '',
-    '===FINDINGS_JSON===',
-    '```json',
-    JSON.stringify(
-      [
-        {
-          severity: 'minor',
-          file: 'cli/src/foo.ts',
-          title: 'Prefer explicit return type',
-          recommendation: 'Add an explicit return type for clarity.',
-        },
-      ],
-      null,
-      2
-    ),
-    '```',
-  ].join('\n');
+  const review = joinLines(['All good.', '', ...makeCodexFindingsJsonBlock([
+    {
+      severity: 'minor',
+      file: 'cli/src/foo.ts',
+      title: 'Prefer explicit return type',
+      recommendation: 'Add an explicit return type for clarity.',
+    },
+  ], { fenced: true })]);
 
   const findings = parseCodexReviewText(review);
   assert.equal(findings.length, 1);
@@ -93,23 +120,22 @@ test('parseCodexReviewText extracts findings JSON trailer even when fenced', () 
 
 test('parseCodexReviewText extracts findings JSON trailer when lines are log-prefixed', () => {
   const label = '[monorepo:augment:4/39] ';
-  const review = [
-    `${label}some preamble`,
-    `${label}===FINDINGS_JSON===`,
-    `${label}\`\`\`json`,
-    `${label}[`,
-    `${label}  {`,
-    `${label}    \"severity\": \"major\",`,
-    `${label}    \"file\": \"cli/src/x.ts\",`,
-    `${label}    \"title\": \"Fix thing\",`,
-    `${label}    \"recommendation\": \"Do it.\",`,
-    `${label}    \"needsDiscussion\": false`,
-    `${label}  }`,
-    `${label}]`,
-    `${label}\`\`\``,
-    `${label}`,
-    `${label}Request ID: abc`,
-  ].join('\n');
+  const prefixed = withLabelPrefix(
+    makeCodexFindingsJsonBlock(
+      [
+        {
+          severity: 'major',
+          file: 'cli/src/x.ts',
+          title: 'Fix thing',
+          recommendation: 'Do it.',
+          needsDiscussion: false,
+        },
+      ],
+      { fenced: true }
+    ).concat(['', 'Request ID: abc']),
+    label
+  );
+  const review = joinLines([`${label}some preamble`, ...prefixed]);
 
   const findings = parseCodexReviewText(review);
   assert.equal(findings.length, 1);
@@ -118,11 +144,11 @@ test('parseCodexReviewText extracts findings JSON trailer when lines are log-pre
 });
 
 test('parseCodexReviewText falls back to parsing [P#] bullet lines', () => {
-  const review = [
+  const review = joinLines([
     '[monorepo:codex:2/21] Review comment:',
     '[monorepo:codex:2/21] - [P1] Fix thing one — /Users/me/repo/.project/review-worktrees/codex-2-of-21-abc/apps/cli/src/foo.ts:10-12',
     '[monorepo:codex:2/21] - [P3] Fix thing two — /Users/me/repo/.project/review-worktrees/codex-2-of-21-abc/apps/ui/sources/bar.tsx:7',
-  ].join('\n');
+  ]);
 
   const findings = parseCodexReviewText(review);
   assert.equal(findings.length, 2);
@@ -137,18 +163,23 @@ test('parseCodexReviewText falls back to parsing [P#] bullet lines', () => {
 });
 
 test('parseCodexReviewText falls back when marker exists but JSON is missing/invalid', () => {
-  const review = [
+  const review = joinLines([
     'instructions...',
     '===FINDINGS_JSON===',
     'this is not json',
     '[monorepo:codex:2/21] - [P2] Fix thing — /Users/me/repo/.project/review-worktrees/codex-2-of-21-abc/apps/server/src/x.ts:1-2',
-  ].join('\n');
+  ]);
 
   const findings = parseCodexReviewText(review);
   assert.equal(findings.length, 1);
   assert.equal(findings[0].file, 'apps/server/src/x.ts');
   assert.deepEqual(findings[0].lines, { start: 1, end: 2 });
   assert.equal(findings[0].severity, 'major');
+});
+
+test('parseCodexReviewText returns empty list when no findings marker/bullets exist', () => {
+  const findings = parseCodexReviewText('No actionable findings.');
+  assert.deepEqual(findings, []);
 });
 
 test('formatTriageMarkdown includes required workflow fields', () => {

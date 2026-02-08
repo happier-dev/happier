@@ -49,3 +49,59 @@ test('planCommitChunks marks overLimit when a single step exceeds maxFiles', asy
     { base: 'c1', head: 'c2', fileCount: 2, overLimit: false },
   ]);
 });
+
+test('planCommitChunks validates options and handles empty commit input', async () => {
+  await assert.rejects(
+    async () =>
+      await planCommitChunks({
+        baseCommit: 'BASE',
+        commits: 'not-an-array',
+        maxFiles: 3,
+        countFilesBetween: async () => 1,
+      }),
+    /commits must be an array/
+  );
+
+  await assert.rejects(
+    async () =>
+      await planCommitChunks({
+        baseCommit: 'BASE',
+        commits: ['c1'],
+        maxFiles: 0,
+        countFilesBetween: async () => 1,
+      }),
+    /maxFiles must be a positive number/
+  );
+
+  await assert.rejects(
+    async () =>
+      await planCommitChunks({
+        baseCommit: 'BASE',
+        commits: ['c1'],
+        maxFiles: 3,
+        countFilesBetween: null,
+      }),
+    /countFilesBetween must be a function/
+  );
+
+  const chunks = await planCommitChunks({
+    baseCommit: 'BASE',
+    commits: [' ', ''],
+    maxFiles: 3,
+    countFilesBetween: async () => 1,
+  });
+  assert.deepEqual(chunks, []);
+});
+
+test('planCommitChunks rejects invalid countFilesBetween results', async () => {
+  await assert.rejects(
+    async () =>
+      await planCommitChunks({
+        baseCommit: 'BASE',
+        commits: ['c1'],
+        maxFiles: 3,
+        countFilesBetween: async () => Number.NaN,
+      }),
+    /returned invalid count/
+  );
+});

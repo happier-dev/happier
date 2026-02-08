@@ -79,9 +79,9 @@ async function gitCommit({ cwd, env, message }) {
     'git',
     [
       '-c',
-      'user.name=Happy Review',
+      'user.name=Happier Review',
       '-c',
-      'user.email=review@happy.local',
+      'user.email=review@happier.local',
       '-c',
       'commit.gpgsign=false',
       'commit',

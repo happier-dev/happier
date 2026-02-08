@@ -11,12 +11,12 @@ export function defaultRepoCheckoutDir(rootDir, env = process.env) {
   return getRepoDir(rootDir, clean);
 }
 
-export function resolveDefaultStackReviewComponents({ rootDir, components }) {
+export function resolveDefaultStackReviewComponents({ rootDir, components, env = process.env }) {
   const list = Array.isArray(components) ? components : [];
   if (!list.length) return [];
 
-  const effectiveRepo = getRepoDir(rootDir, process.env);
-  const defaultRepo = defaultRepoCheckoutDir(rootDir, process.env);
+  const effectiveRepo = getRepoDir(rootDir, env);
+  const defaultRepo = defaultRepoCheckoutDir(rootDir, env);
   // Repo-only model: if the stack is pinned to a non-default worktree/checkout, all
   // logical services share that same repo pin.
   return effectiveRepo !== defaultRepo ? list : [];

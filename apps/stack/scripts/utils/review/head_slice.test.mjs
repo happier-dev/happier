@@ -89,3 +89,29 @@ test('createHeadSliceCommits produces a focused diff while keeping full HEAD cod
     await rm(repo, { recursive: true, force: true });
   }
 });
+
+test('getChangedOps tracks rename as remove plus checkout', async () => {
+  const repo = await mkdtemp(join(tmpdir(), 'happy-review-head-slice-rename-'));
+  const env = gitEnv();
+
+  try {
+    await run('git', ['init', '-q'], { cwd: repo, env });
+    await run('git', ['checkout', '-q', '-b', 'main'], { cwd: repo, env });
+    await mkdir(join(repo, 'apps', 'ui'), { recursive: true });
+    await writeFile(join(repo, 'apps', 'ui', 'old.txt'), 'old\n', 'utf-8');
+    await run('git', ['add', '.'], { cwd: repo, env });
+    await run('git', ['commit', '-q', '-m', 'chore: base'], { cwd: repo, env });
+
+    const baseCommit = (await runCapture('git', ['rev-parse', 'HEAD'], { cwd: repo, env })).trim();
+    await run('git', ['mv', 'apps/ui/old.txt', 'apps/ui/new.txt'], { cwd: repo, env });
+    await run('git', ['commit', '-q', '-m', 'refactor: rename'], { cwd: repo, env });
+    const headCommit = (await runCapture('git', ['rev-parse', 'HEAD'], { cwd: repo, env })).trim();
+
+    const ops = await getChangedOps({ cwd: repo, baseRef: baseCommit, headRef: headCommit, env });
+    assert.deepEqual([...ops.checkout].sort(), ['apps/ui/new.txt']);
+    assert.deepEqual([...ops.remove].sort(), ['apps/ui/old.txt']);
+    assert.deepEqual([...ops.all].sort(), ['apps/ui/new.txt', 'apps/ui/old.txt']);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});

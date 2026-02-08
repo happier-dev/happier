@@ -7,6 +7,11 @@ test('runSlicedJobs preserves order and respects concurrency', async () => {
 
   let active = 0;
   let maxActive = 0;
+  let startedParallel = 0;
+  let releaseParallel;
+  const parallelGate = new Promise((resolve) => {
+    releaseParallel = resolve;
+  });
 
   const results = await runSlicedJobs({
     items,
@@ -14,7 +19,13 @@ test('runSlicedJobs preserves order and respects concurrency', async () => {
     run: async (item) => {
       active += 1;
       maxActive = Math.max(maxActive, active);
-      await new Promise((r) => setTimeout(r, 20));
+      if (item.index > 1) {
+        startedParallel += 1;
+        if (startedParallel === 2) {
+          releaseParallel();
+        }
+        await parallelGate;
+      }
       active -= 1;
       return { index: item.index };
     },
@@ -44,4 +55,3 @@ test('runSlicedJobs can abort early after the first item', async () => {
   assert.deepEqual(seen, [1]);
   assert.deepEqual(results.map((r) => r.index), [1]);
 });
-

@@ -1,8 +1,17 @@
 import { runCapture } from '../proc/proc.mjs';
 
+function isTruthyEnvValue(value) {
+  const raw = String(value ?? '').trim().toLowerCase();
+  if (!raw) return false;
+  return raw !== '0' && raw !== 'false';
+}
+
 export async function openUrlInBrowser(url, { timeoutMs = 5_000 } = {}) {
   const u = String(url ?? '').trim();
   if (!u) return { ok: false, error: 'missing_url' };
+  if (isTruthyEnvValue(process.env.HAPPIER_NO_BROWSER_OPEN) || isTruthyEnvValue(process.env.HAPPIER_STACK_NO_BROWSER)) {
+    return { ok: false, error: 'browser_open_disabled' };
+  }
 
   try {
     if (process.platform === 'darwin') {
