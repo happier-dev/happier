@@ -59,16 +59,25 @@ vi.mock('react-native-unistyles', () => ({
     },
 }));
 
+function renderBaseModal(
+    BaseModal: React.ComponentType<any>,
+    props: Record<string, unknown> = {},
+    options?: Parameters<typeof renderer.create>[1],
+) {
+    let tree: ReturnType<typeof renderer.create> | undefined;
+    act(() => {
+        tree = renderer.create(
+            React.createElement(BaseModal, { visible: true, children: React.createElement('Child'), ...props }),
+            options,
+        );
+    });
+    return tree;
+}
+
 describe('BaseModal (web)', () => {
     it('renders using Radix Dialog instead of react-native Modal', async () => {
         const { BaseModal } = await import('./BaseModal');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(BaseModal, { visible: true, children: React.createElement('Child') }),
-            );
-        });
+        const tree = renderBaseModal(BaseModal);
 
         expect(tree?.root.findAllByType('DialogRoot' as any).length).toBe(1);
         expect(tree?.root.findAllByType('RNModal' as any).length).toBe(0);
@@ -76,39 +85,21 @@ describe('BaseModal (web)', () => {
 
     it('wraps the dialog content in a DismissableLayer Branch (so underlying Vaul/Radix layers don’t dismiss)', async () => {
         const { BaseModal } = await import('./BaseModal');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(BaseModal, { visible: true, children: React.createElement('Child') }),
-            );
-        });
+        const tree = renderBaseModal(BaseModal);
 
         expect(tree?.root.findAllByType('DismissableLayerBranch' as any).length).toBe(1);
     });
 
     it('renders a DialogTitle for accessibility', async () => {
         const { BaseModal } = await import('./BaseModal');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(BaseModal, { visible: true, children: React.createElement('Child') }),
-            );
-        });
+        const tree = renderBaseModal(BaseModal);
 
         expect(tree?.root.findAllByType('DialogTitle' as any).length).toBe(1);
     });
 
     it('omits the overlay when showBackdrop is false', async () => {
         const { BaseModal } = await import('./BaseModal');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(BaseModal, { visible: true, showBackdrop: false, children: React.createElement('Child') }),
-            );
-        });
+        const tree = renderBaseModal(BaseModal, { showBackdrop: false });
 
         expect(tree?.root.findAllByType('DialogOverlay' as any).length).toBe(0);
     });
@@ -116,15 +107,7 @@ describe('BaseModal (web)', () => {
     it('prevents outside dismissal when closeOnBackdrop is false', async () => {
         const { BaseModal } = await import('./BaseModal');
 
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(
-                    BaseModal,
-                    { visible: true, closeOnBackdrop: false, onClose: () => {}, children: React.createElement('Child') },
-                ),
-            );
-        });
+        const tree = renderBaseModal(BaseModal, { closeOnBackdrop: false, onClose: () => {} });
 
         const content = tree?.root.findAllByType('DialogContent' as any)?.[0];
         expect(content?.props.onPointerDownOutside).toBeTypeOf('function');
@@ -138,13 +121,7 @@ describe('BaseModal (web)', () => {
         const { BaseModal } = await import('./BaseModal');
 
         const onClose = vi.fn();
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(BaseModal, { visible: true, onClose, children: React.createElement('Child') }),
-            );
-        });
+        const tree = renderBaseModal(BaseModal, { onClose });
 
         const content = tree?.root.findAllByType('DialogContent' as any)?.[0];
         expect(content?.props.onClick).toBeTypeOf('function');
@@ -159,13 +136,7 @@ describe('BaseModal (web)', () => {
         const { BaseModal } = await import('./BaseModal');
 
         const onClose = vi.fn();
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(BaseModal, { visible: true, onClose, children: React.createElement('Child') }),
-            );
-        });
+        const tree = renderBaseModal(BaseModal, { onClose });
 
         const content = tree?.root.findAllByType('DialogContent' as any)?.[0];
         expect(content?.props.onClick).toBeTypeOf('function');
@@ -179,13 +150,7 @@ describe('BaseModal (web)', () => {
 
     it('sets the centering container to pointerEvents=\"box-none\" so backdrop clicks are not swallowed by RN-web wrappers', async () => {
         const { BaseModal } = await import('./BaseModal');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(BaseModal, { visible: true, children: React.createElement('Child') }),
-            );
-        });
+        const tree = renderBaseModal(BaseModal);
 
         const container = tree?.root.findAllByType('KeyboardAvoidingView' as any)?.[0];
         expect(container?.props.pointerEvents).toBe('box-none');
@@ -193,13 +158,7 @@ describe('BaseModal (web)', () => {
 
     it('sets the wrapper around children to pointerEvents=\"box-none\" so clicks outside the card dismiss (instead of hitting a full-width View)', async () => {
         const { BaseModal } = await import('./BaseModal');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(BaseModal, { visible: true, children: React.createElement('Child') }),
-            );
-        });
+        const tree = renderBaseModal(BaseModal);
 
         const child = tree?.root.findByType('Child' as any);
         const wrapper = (child as any)?.parent;
@@ -210,17 +169,7 @@ describe('BaseModal (web)', () => {
 
     it('applies zIndexBase to the overlay and content so stacked modals layer correctly', async () => {
         const { BaseModal } = await import('./BaseModal');
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        act(() => {
-            tree = renderer.create(
-                React.createElement(BaseModal, {
-                    visible: true,
-                    zIndexBase: 1234,
-                    children: React.createElement('Child'),
-                }),
-            );
-        });
+        const tree = renderBaseModal(BaseModal, { zIndexBase: 1234 });
 
         const overlay = tree?.root.findAllByType('DialogOverlay' as any)?.[0];
         const content = tree?.root.findAllByType('DialogContent' as any)?.[0];
@@ -240,20 +189,34 @@ describe('BaseModal (web)', () => {
             return React.createElement('Probe');
         }
 
-        act(() => {
-            renderer.create(
-                React.createElement(BaseModal, { visible: true, children: React.createElement(Probe) }),
-                {
-                    createNodeMock: (element: any) => {
-                        if (element?.props?.['data-happy-modal-portal-host'] !== undefined) {
-                            return portalHostMock;
-                        }
-                        return null;
-                    },
+        renderBaseModal(
+            BaseModal,
+            { children: React.createElement(Probe) },
+            {
+                createNodeMock: (element: any) => {
+                    if (element?.props?.['data-happy-modal-portal-host'] !== undefined) {
+                        return portalHostMock;
+                    }
+                    return null;
                 },
-            );
-        });
+            },
+        );
 
         expect(observedTarget).toBe(portalHostMock);
+    });
+
+    it('calls onClose when Radix reports onOpenChange(false)', async () => {
+        const { BaseModal } = await import('./BaseModal');
+        const onClose = vi.fn();
+        const tree = renderBaseModal(BaseModal, { onClose });
+
+        const root = tree?.root.findByType('DialogRoot' as any);
+        expect(root?.props.onOpenChange).toBeTypeOf('function');
+
+        act(() => {
+            root?.props.onOpenChange(false);
+        });
+
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 });
