@@ -1,0 +1,40 @@
+{
+  "name": "@happier-dev/cli-common",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./links": {
+      "types": "./dist/links.d.ts",
+      "default": "./dist/links.js"
+    },
+    "./update": {
+      "types": "./dist/update/index.d.ts",
+      "default": "./dist/update/index.js"
+    },
+    "./workspaces": {
+      "types": "./dist/workspaces/index.d.ts",
+      "default": "./dist/workspaces/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "yarn -s build && node --test \"tests/*.test.mjs\"",
+    "postinstall:real": "yarn -s build",
+    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(!fs.existsSync('tsconfig.json'))process.exit(0);const yarn=process.platform==='win32'?'yarn.cmd':'yarn';const r=cp.spawnSync(yarn,['-s','postinstall:real'],{stdio:'inherit'});process.exit(r.status??1);\""
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
