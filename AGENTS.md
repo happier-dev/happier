@@ -13,12 +13,31 @@ You are an AGENT in the Edison framework. This constitution defines your mandato
 
 ## TDD Principles (All Roles)
 
-Test-Driven Development is NON-NEGOTIABLE for all implementation work.
+Test-Driven Development is NON-NEGOTIABLE for behavior-changing implementation work.
 
 ### Scope: What Requires TDD (and what does not)
 - **Requires TDD**: Any change that adds/changes executable behavior (production source code, CLIs, validators, state machines, config-loading/merging logic).
 - **Does not require new tests**: Content-only edits to Markdown/YAML/templates (e.g., docs, templates, default config values) *when no executable behavior changes*.
 - **No bundling**: Do not hide behavior changes inside a “content-only” change. If you touched production code, you must follow TDD.
+
+### Behavior-Change Decision Matrix (Mandatory)
+Apply this matrix before writing tests:
+
+1) **Behavior changed or added**:
+- Follow strict RED-GREEN-REFACTOR.
+- Prefer updating the most relevant existing test first.
+- Add a new test only when no existing test can express the new behavior clearly.
+
+2) **No behavior change (structural/internal only)**:
+- Do not add new tests by default.
+- Run relevant existing tests for regression safety.
+- Update existing tests only if setup/helpers/interfaces changed.
+
+3) **Purely mechanical changes** (renames, moves, formatting, comments, type-only hardening with no runtime effect):
+- Do not add tests.
+- Run targeted checks/lint/type/test commands as appropriate.
+
+If uncertain whether behavior changed, treat it as behavior-changing and do RED first.
 
 ### The RED-GREEN-REFACTOR Cycle
 - **RED**: Write a failing test first and confirm it fails for the right reason
@@ -39,6 +58,7 @@ If implementation exists before the test:
 - Refactor with a full test run before proceeding
 - Coverage targets from config: overall >= 90%, changed/new >= 100%
 - Update tests only to reflect agreed spec/format changes, never just to "make green"
+- Prefer modifying or replacing existing tests over adding overlapping tests
 - Keep output clean—no console noise
 
 ### Good Tests (Heuristics)
@@ -47,6 +67,8 @@ If implementation exists before the test:
 - Assert on observable outcomes (return values, state changes, HTTP responses), not internal call sequences.
 - Tests should be deterministic and isolated (no shared global state, no ordering reliance).
 - Avoid brittle “content policing” tests (e.g., pinning default config values or exact Markdown wording/format/length).
+- Avoid near-duplicate tests that assert the same behavior through different fixtures unless each fixture represents a distinct risk.
+- When a new test overlaps an old one, consolidate and remove or rewrite the weaker test.
 
 ## Test Suite Selection (Fast vs Slow)
 
@@ -60,10 +82,47 @@ yarn test
 - For tight iteration loops (RED/GREEN): run the *smallest relevant subset* (single test file, single package, targeted command) to iterate quickly.
 - Before handoff, and whenever touching cross-cutting behavior (session/task/worktree/evidence/composition/config loading): run the project’s **full** required test run
 
+### Test Lane Contract (Required)
+- Treat `test` and `test:unit` (where defined; do not create `test:unit` unless intentionally splitting lanes) as fast lanes only; avoid heavy process/network/database orchestration in unit tests.
+- Put orchestration-heavy or real-environment suites in `*.integration.test.*` / `*.integration.spec.*` (or `*.real.integration.test.*`) so they run under integration lanes.
+- Keep e2e/provider/stress suites in their existing dedicated lanes under `packages/tests/suites`.
+- When adding or moving integration tests, update the package test scripts/config so:
+  - unit excludes integration patterns
+  - integration includes integration patterns
+  - CI executes both unit and integration lanes explicitly.
+- If a test is flaky or slow due to real orchestration, move it to integration lane first; do not weaken assertions to force unit-lane speed.
+
+Reconciliation with the NO MOCKS section: unit lanes should still test real behavior, but with lightweight real implementations (for example: in-memory SQLite, embedded test clients, and local file-backed stores). "Orchestration-heavy" means Dockerized dependencies, multi-process setups, external services, or real network calls that make tests slow or non-deterministic; those belong in integration lanes.
+
+### Happier Test Lane Map (Project-Specific)
+Use these as canonical top-level lanes in this repository:
+- `yarn test` (fast unit lane across apps)
+- `yarn test:integration` (orchestration-heavy app integration lane)
+- `yarn test:e2e:core:fast` (default local core e2e loop)
+- `yarn test:e2e:core:slow` (long orchestration core e2e)
+- `yarn test:providers` (provider contracts; opt-in/flag-driven)
+- `yarn test:db-contract:docker` (server db contract via docker)
+
+Naming and placement rules:
+- App integration tests: `*.integration.test.*`, `*.integration.spec.*`, `*.real.integration.test.*`
+- Core e2e slow tests: `packages/tests/suites/core-e2e/**/*.slow.e2e.test.ts`
+- Core e2e fast tests: other `packages/tests/suites/core-e2e/**/*.test.ts`
+- Provider/stress suites remain under `packages/tests/suites/providers` and `packages/tests/suites/stress`
+
+When introducing or moving a lane/pattern, update all three in the same change:
+- package-level test config/scripts
+- root `package.json` lane scripts
+- CI workflow wiring that executes the lane
+
+For full prerequisites/env matrix and examples, follow:
+- `apps/docs/content/docs/development/testing.mdx`
+- `packages/tests/README.md`
+
 ### Guardrails
 - No `.skip` / `.todo` / `.only` (or equivalents) committed
 - Do not leave debugging logs in tests
 - Evidence must be generated by trusted runners, not manually fabricated
+- No duplicate test intent: each test must own a distinct behavior/risk
 
 ## NO MOCKS Philosophy (All Roles)
 
@@ -113,7 +172,7 @@ External APIs you don't control (third-party services, payment gateways, email p
 - Dependency Inversion Principle
 
 ### Configuration-First
-- No hardcoded values—all cofigurable
+- No hardcoded values—all configurable
 - No magic numbers or strings in code
 - Every behavior must be configurable
 
@@ -182,6 +241,7 @@ yarn test
 - [ ] Failure message is clear and points to missing behavior (not test bugs)
 - [ ] Test covers the specific functionality
 - [ ] If the test passes immediately, stop: tighten/adjust the test until it fails correctly (otherwise it may not be testing what you think)
+- [ ] Existing related tests were reviewed first to avoid adding a duplicate
 
 #### 2. GREEN Phase: Minimal Implementation
 Write the MINIMUM code needed to make the test pass.
@@ -218,6 +278,7 @@ yarn test
 - Adding test-only methods/flags to production code to make tests easier.
 - Mocking/stubbing without understanding what real side effects the test depends on.
 - Boundary mocks that don't match the real schema/shape (partial mocks that silently diverge).
+- Adding new tests for behavior that is already sufficiently covered instead of improving existing tests.
 
 ### Gate Checks (Before You Proceed)
 **Before adding any production method to "help tests":**
@@ -235,6 +296,7 @@ yarn test
 - "I'll add tests later" - NO!
 - Skip test verification (RED phase must fail)
 - Use excessive mocking (test real behavior)
+- Add duplicate tests when an existing test can be updated to cover the behavior
 - Leave skipped/focused/disabled tests in committed code
 - Commit with failing tests
 
