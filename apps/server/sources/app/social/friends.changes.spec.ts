@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createInTxWithAccountLookup, createSocialAccount } from "./socialTestHarness";
 
 const markAccountChanged = vi.fn(async () => 1);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
@@ -15,7 +16,14 @@ vi.mock("./friendNotification", () => ({
 }));
 
 vi.mock("./type", () => ({
-    buildUserProfile: (user: any, status: any) => ({ id: user.id, status }),
+    toSocialIdentities: (identities: any[]) =>
+        (identities ?? []).map((identity) => ({
+            provider: identity.provider,
+            providerLogin: identity.providerLogin ?? null,
+            profile: identity.profile,
+            showOnProfile: Boolean(identity.showOnProfile),
+        })),
+    buildUserProfile: (user: any, status: any, _githubProfile: any) => ({ id: user.id, status }),
 }));
 
 vi.mock("@/storage/prisma", () => ({
@@ -29,16 +37,12 @@ vi.mock("@/storage/prisma", () => ({
 }));
 
 let txAccountFindUnique: any;
+const setAccountLookup = (accountsById: Record<string, any>) => {
+    txAccountFindUnique = vi.fn(async (args: any) => accountsById[args.where.id] ?? null);
+};
 
 vi.mock("@/storage/inTx", () => {
-    const inTx = async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
-        const tx: any = {
-            account: {
-                findUnique: (...args: any[]) => txAccountFindUnique(...args),
-            },
-        };
-        return await fn(tx);
-    };
+    const { inTx } = createInTxWithAccountLookup((...args: any[]) => txAccountFindUnique(...args));
     return { inTx };
 });
 
@@ -48,10 +52,9 @@ describe("friends marking (AccountChange integration)", () => {
     });
 
     it("friendAdd: new request marks friends for both users", async () => {
-        txAccountFindUnique = vi.fn(async (args: any) => {
-            if (args.where.id === "u1") return { id: "u1", githubUser: null };
-            if (args.where.id === "u2") return { id: "u2", githubUser: null };
-            return null;
+        setAccountLookup({
+            u1: createSocialAccount("u1"),
+            u2: createSocialAccount("u2"),
         });
         relationshipGet.mockImplementation(async (_tx: any, from: string, _to: string) => {
             if (from === "u1") return "none";
@@ -67,10 +70,9 @@ describe("friends marking (AccountChange integration)", () => {
     });
 
     it("friendAdd: accepting request marks friends for both users", async () => {
-        txAccountFindUnique = vi.fn(async (args: any) => {
-            if (args.where.id === "u1") return { id: "u1", githubUser: null };
-            if (args.where.id === "u2") return { id: "u2", githubUser: null };
-            return null;
+        setAccountLookup({
+            u1: createSocialAccount("u1"),
+            u2: createSocialAccount("u2"),
         });
         relationshipGet.mockImplementation(async (_tx: any, from: string, _to: string) => {
             if (from === "u2") return "requested";
@@ -85,10 +87,9 @@ describe("friends marking (AccountChange integration)", () => {
     });
 
     it("friendRemove: requested->rejected marks friends for current user only", async () => {
-        txAccountFindUnique = vi.fn(async (args: any) => {
-            if (args.where.id === "u1") return { id: "u1", githubUser: null };
-            if (args.where.id === "u2") return { id: "u2", githubUser: null };
-            return null;
+        setAccountLookup({
+            u1: { id: "u1" },
+            u2: createSocialAccount("u2"),
         });
         relationshipGet.mockImplementation(async (_tx: any, from: string, _to: string) => {
             if (from === "u1") return "requested";

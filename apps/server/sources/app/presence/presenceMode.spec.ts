@@ -2,15 +2,14 @@ import { describe, expect, it } from "vitest";
 import { shouldConsumePresenceFromRedis, shouldEnableLocalPresenceDbFlush, shouldPublishPresenceToRedis } from "./presenceMode";
 
 describe("presenceMode", () => {
-    it("enables local DB flush in lite", () => {
-        const env: any = { HAPPY_SERVER_FLAVOR: "light", SERVER_ROLE: "api" };
+    it("enables local DB flush by default (single-process)", () => {
+        const env: any = { SERVER_ROLE: "api" };
         expect(shouldEnableLocalPresenceDbFlush(env)).toBe(true);
     });
 
-    it("publishes to redis only in full api role with adapter enabled", () => {
+    it("publishes to redis only in api role with adapter enabled", () => {
         const base: any = {
-            HAPPY_SERVER_FLAVOR: "full",
-            HAPPY_SOCKET_REDIS_ADAPTER: "1",
+            HAPPIER_SOCKET_ADAPTER: "redis-streams",
             REDIS_URL: "redis://localhost:6379",
         };
         expect(shouldPublishPresenceToRedis({ ...base, SERVER_ROLE: "api" })).toBe(true);
@@ -18,10 +17,9 @@ describe("presenceMode", () => {
         expect(shouldPublishPresenceToRedis({ ...base, SERVER_ROLE: "worker" })).toBe(false);
     });
 
-    it("consumes from redis only in full worker role with adapter enabled", () => {
+    it("consumes from redis only in worker role with adapter enabled", () => {
         const base: any = {
-            HAPPY_SERVER_FLAVOR: "full",
-            HAPPY_SOCKET_REDIS_ADAPTER: "1",
+            HAPPIER_SOCKET_ADAPTER: "redis-streams",
             REDIS_URL: "redis://localhost:6379",
         };
         expect(shouldConsumePresenceFromRedis({ ...base, SERVER_ROLE: "worker" })).toBe(true);
@@ -30,12 +28,10 @@ describe("presenceMode", () => {
 
     it("disables local DB flush when publishing to redis in api role", () => {
         const env: any = {
-            HAPPY_SERVER_FLAVOR: "full",
             SERVER_ROLE: "api",
-            HAPPY_SOCKET_REDIS_ADAPTER: "1",
+            HAPPIER_SOCKET_ADAPTER: "redis-streams",
             REDIS_URL: "redis://localhost:6379",
         };
         expect(shouldEnableLocalPresenceDbFlush(env)).toBe(false);
     });
 });
-

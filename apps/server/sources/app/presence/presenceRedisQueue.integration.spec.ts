@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const xadd = vi.fn(async () => "0-0");
 const getRedisClient = vi.fn(() => ({ xadd }));
@@ -6,9 +6,19 @@ const getRedisClient = vi.fn(() => ({ xadd }));
 vi.mock("@/storage/redis", () => ({ getRedisClient }));
 
 describe("presenceRedisQueue", () => {
+    const originalStreamMaxLen = process.env.HAPPY_PRESENCE_STREAM_MAXLEN;
+
     beforeEach(() => {
         vi.clearAllMocks();
         delete process.env.HAPPY_PRESENCE_STREAM_MAXLEN;
+    });
+
+    afterEach(() => {
+        if (originalStreamMaxLen == null) {
+            delete process.env.HAPPY_PRESENCE_STREAM_MAXLEN;
+        } else {
+            process.env.HAPPY_PRESENCE_STREAM_MAXLEN = originalStreamMaxLen;
+        }
     });
 
     it("adds MAXLEN trimming by default", async () => {
@@ -76,4 +86,3 @@ describe("presenceRedisQueue", () => {
         );
     });
 });
-

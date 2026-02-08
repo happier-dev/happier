@@ -1,8 +1,8 @@
 import { Server, Socket } from "socket.io";
 import { log } from "@/utils/log";
-import { GitHubProfile } from "@/app/api/types";
 import { AccountProfile } from "@/types";
 import { getPublicUrl } from "@/storage/files";
+import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 
 // === CONNECTION TYPES ===
 
@@ -76,13 +76,19 @@ export type UpdateEvent = {
         version: number;
     } | null | undefined;
 } | {
+    type: 'pending-changed';
+    sessionId: string;
+    pendingVersion: number;
+    pendingCount: number;
+    changedByAccountId?: string;
+} | {
     type: 'update-account';
     userId: string;
     settings?: {
         value: string | null;
         version: number;
     } | null | undefined;
-    github?: GitHubProfile | null | undefined;
+    linkedProviders?: LinkedProvider[] | undefined;
 } | {
     type: 'new-machine';
     machineId: string;
@@ -518,6 +524,27 @@ export function buildUpdateSessionUpdate(
             agentState
         },
         createdAt: Date.now()
+    };
+}
+
+export function buildPendingChangedUpdate(
+    data: { sessionId: string; pendingVersion: number; pendingCount: number; changedByAccountId?: string },
+    updateSeq: number,
+    updateId: string,
+): UpdatePayload {
+    return {
+        id: updateId,
+        seq: updateSeq,
+        body: {
+            t: "pending-changed",
+            // Compatibility: some clients use `sid` or `sessionId`.
+            sid: data.sessionId,
+            sessionId: data.sessionId,
+            pendingVersion: data.pendingVersion,
+            pendingCount: data.pendingCount,
+            ...(typeof data.changedByAccountId === "string" ? { changedByAccountId: data.changedByAccountId } : {}),
+        },
+        createdAt: Date.now(),
     };
 }
 

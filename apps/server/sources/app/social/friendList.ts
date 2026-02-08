@@ -1,5 +1,5 @@
 import { Context } from "@/context";
-import { buildUserProfile, UserProfile } from "./type";
+import { buildUserProfile, toSocialIdentities, UserProfile } from "./type";
 import { db } from "@/storage/db";
 import { RelationshipStatus } from "@/storage/prisma";
 
@@ -15,7 +15,10 @@ export async function friendList(ctx: Context): Promise<UserProfile[]> {
         include: {
             toUser: {
                 include: {
-                    githubUser: true
+                    AccountIdentity: {
+                        select: { provider: true, providerLogin: true, profile: true, showOnProfile: true },
+                        orderBy: { provider: "asc" },
+                    },
                 }
             }
         }
@@ -24,7 +27,12 @@ export async function friendList(ctx: Context): Promise<UserProfile[]> {
     // Build UserProfile objects
     const profiles: UserProfile[] = [];
     for (const relationship of relationships) {
-        profiles.push(buildUserProfile(relationship.toUser, relationship.status));
+        const identities = toSocialIdentities(relationship.toUser.AccountIdentity);
+        profiles.push(buildUserProfile(
+            relationship.toUser as any,
+            relationship.status,
+            identities,
+        ));
     }
 
     return profiles;

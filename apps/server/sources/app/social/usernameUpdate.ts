@@ -5,6 +5,13 @@ import { randomKeyNaked } from "@/utils/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
+export class UsernameTakenError extends Error {
+    constructor() {
+        super('username-taken');
+        this.name = 'UsernameTakenError';
+    }
+}
+
 export async function usernameUpdate(ctx: Context, username: string): Promise<void> {
     const userId = ctx.uid;
 
@@ -16,7 +23,7 @@ export async function usernameUpdate(ctx: Context, username: string): Promise<vo
         }
     });
     if (existingUser) { // Should never happen
-        throw new Error('Username is already taken');
+        throw new UsernameTakenError();
     }
 
     await inTx(async (tx) => {

@@ -67,12 +67,12 @@ describe("presenceRedisQueue worker", () => {
         const { startPresenceRedisWorker } = await import("./presenceRedisQueue");
         const worker = startPresenceRedisWorker({ flushIntervalMs: 60_000, readBlockMs: 1, readCount: 1 });
 
-        // Give the loop a tick.
-        await new Promise((r) => setTimeout(r, 10));
+        await vi.waitFor(() => {
+            expect(xautoclaim).toHaveBeenCalled();
+        });
 
         // Not ACKed yet (we only ACK after a successful flush).
         expect(xack).not.toHaveBeenCalled();
-        expect(xautoclaim).toHaveBeenCalled();
 
         await worker.stop();
 

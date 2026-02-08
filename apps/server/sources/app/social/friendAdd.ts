@@ -1,11 +1,35 @@
 import { Context } from "@/context";
-import { buildUserProfile, UserProfile } from "./type";
+import { buildUserProfile, toSocialIdentities, UserProfile } from "./type";
 import { inTx } from "@/storage/inTx";
 import { relationshipSet } from "./relationshipSet";
 import { relationshipGet } from "./relationshipGet";
 import { sendFriendRequestNotification, sendFriendshipEstablishedNotification } from "./friendNotification";
 import { RelationshipStatus } from "@/storage/prisma";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { resolveFriendsPolicyFromEnv } from "./friendsPolicy";
+
+export class FriendsIdentityProviderRequiredError extends Error {
+    readonly provider: string;
+    constructor(provider: string) {
+        super("provider-required");
+        this.name = "FriendsIdentityProviderRequiredError";
+        this.provider = provider.toString().trim().toLowerCase();
+    }
+}
+
+export class FriendsUsernameRequiredError extends Error {
+    constructor() {
+        super('username-required');
+        this.name = 'FriendsUsernameRequiredError';
+    }
+}
+
+export class FriendsDisabledError extends Error {
+    constructor() {
+        super('friends-disabled');
+        this.name = 'FriendsDisabledError';
+    }
+}
 
 /**
  * Add a friend or accept a friend request.
@@ -20,20 +44,53 @@ export async function friendAdd(ctx: Context, uid: string): Promise<UserProfile 
         return null;
     }
 
+    const friendsPolicy = resolveFriendsPolicyFromEnv(process.env);
+    if (!friendsPolicy.enabled) {
+        throw new FriendsDisabledError();
+    }
+
     // Update relationship status
     return await inTx(async (tx) => {
 
         // Read current user objects
         const currentUser = await tx.account.findUnique({
             where: { id: ctx.uid },
-            include: { githubUser: true }
+            include: {
+                AccountIdentity: {
+                    select: { provider: true, providerLogin: true, profile: true, showOnProfile: true },
+                    orderBy: { provider: "asc" },
+                },
+            }
         });
         const targetUser = await tx.account.findUnique({
             where: { id: uid },
-            include: { githubUser: true }
+            include: {
+                AccountIdentity: {
+                    select: { provider: true, providerLogin: true, profile: true, showOnProfile: true },
+                    orderBy: { provider: "asc" },
+                },
+            }
         });
         if (!currentUser || !targetUser) {
             return null;
+        }
+
+        if (friendsPolicy.allowUsername) {
+            if (!currentUser.username || !targetUser.username) {
+                throw new FriendsUsernameRequiredError();
+            }
+        } else {
+            const requiredProviderId = friendsPolicy.requiredIdentityProviderId;
+            if (!requiredProviderId) {
+                throw new Error(
+                    "Friends policy misconfigured: requiredIdentityProviderId must be set when allowUsername is false",
+                );
+            }
+            const currentHasProvider = currentUser.AccountIdentity.some((i) => i.provider === requiredProviderId);
+            const targetHasProvider = targetUser.AccountIdentity.some((i) => i.provider === requiredProviderId);
+            if (!currentHasProvider || !targetHasProvider) {
+                throw new FriendsIdentityProviderRequiredError(requiredProviderId);
+            }
         }
 
         // Read relationship status
@@ -56,7 +113,8 @@ export async function friendAdd(ctx: Context, uid: string): Promise<UserProfile 
             await markAccountChanged(tx, { accountId: targetUser.id, kind: 'friends', entityId: 'self' });
 
             // Return the target user profile
-            return buildUserProfile(targetUser, RelationshipStatus.friend);
+            const identities = toSocialIdentities(targetUser.AccountIdentity);
+            return buildUserProfile(targetUser as any, RelationshipStatus.friend, identities);
         }
 
         // Case 2: If status is none or rejected, create a new request (since other side is not in requested state)
@@ -76,10 +134,12 @@ export async function friendAdd(ctx: Context, uid: string): Promise<UserProfile 
             await markAccountChanged(tx, { accountId: targetUser.id, kind: 'friends', entityId: 'self' });
 
             // Return the target user profile
-            return buildUserProfile(targetUser, RelationshipStatus.requested);
+            const identities = toSocialIdentities(targetUser.AccountIdentity);
+            return buildUserProfile(targetUser as any, RelationshipStatus.requested, identities);
         }
 
         // Do not change anything and return the target user profile
-        return buildUserProfile(targetUser, currentUserRelationship);
+        const identities = toSocialIdentities(targetUser.AccountIdentity);
+        return buildUserProfile(targetUser as any, currentUserRelationship, identities);
     });
 }

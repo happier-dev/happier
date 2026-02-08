@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { createInTxHarness } from "../api/testkit/txHarness";
 
 const emitUpdate = vi.fn();
 const buildUpdateAccountUpdate = vi.fn((_userId: string, _profile: any, updSeq: number, updId: string) => ({
@@ -30,23 +31,11 @@ vi.mock("@/storage/db", () => ({
 let txAccountUpdate: any;
 
 vi.mock("@/storage/inTx", () => {
-    const afterTx = (tx: any, callback: () => void) => {
-        tx.__afterTxCallbacks.push(callback);
-    };
-
-    const inTx = async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
-        const tx: any = {
-            __afterTxCallbacks: [] as Array<() => void | Promise<void>>,
+    const { inTx, afterTx } = createInTxHarness(() => ({
             account: {
                 update: (...args: any[]) => txAccountUpdate(...args),
             },
-        };
-        const result = await fn(tx);
-        for (const cb of tx.__afterTxCallbacks) {
-            await cb();
-        }
-        return result;
-    };
+    }));
 
     return { afterTx, inTx };
 });

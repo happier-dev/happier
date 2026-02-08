@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -156,11 +156,10 @@ describe("eventRouter session room isolation (integration)", () => {
                 recipientFilter: { type: "all-interested-in-session", sessionId: "s1" },
             });
 
-            // Give the event loop a moment for delivery.
-            await new Promise((r) => setTimeout(r, 50));
-
-            expect(receivedByU1.length).toBe(1);
-            expect(receivedByU2.length).toBe(0);
+            await vi.waitFor(() => {
+                expect(receivedByU1.some((payload) => payload?.id === "upd-1")).toBe(true);
+            });
+            expect(receivedByU2.some((payload) => payload?.id === "upd-1")).toBe(false);
 
             // Prove that two recipients can legitimately have different cursors, and they must not receive each other's containers.
             eventRouter.emitUpdate({
@@ -169,10 +168,10 @@ describe("eventRouter session room isolation (integration)", () => {
                 recipientFilter: { type: "all-interested-in-session", sessionId: "s1" },
             });
 
-            await new Promise((r) => setTimeout(r, 50));
-
-            expect(receivedByU1.length).toBe(1);
-            expect(receivedByU2.length).toBe(1);
+            await vi.waitFor(() => {
+                expect(receivedByU2.some((payload) => payload?.id === "upd-2")).toBe(true);
+            });
+            expect(receivedByU1.some((payload) => payload?.id === "upd-2")).toBe(false);
         } finally {
             u1.disconnect();
             u2.disconnect();
