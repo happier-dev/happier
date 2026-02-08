@@ -16,6 +16,15 @@ async function waitFor(predicate: () => boolean, timeoutMs: number = 2000, inter
   throw new Error('Timed out waiting for condition')
 }
 
+function getFirstTextFromContent(content: unknown): string | null {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return null
+  const first = content[0]
+  if (!first || typeof first !== 'object') return null
+  const text = (first as { text?: unknown }).text
+  return typeof text === 'string' ? text : null
+}
+
 describe('sessionScanner', () => {
   let testDir: string
   let projectDir: string
@@ -79,6 +88,7 @@ describe('sessionScanner', () => {
     
     const sessionId1 = '93a9705e-bc6a-406d-8dce-8acc014dedbd'
     const sessionFile1 = join(projectDir, `${sessionId1}.jsonl`)
+    await mkdir(projectDir, { recursive: true })
     
     // Write first line
     await writeFile(sessionFile1, lines1[0] + '\n')
@@ -89,19 +99,18 @@ describe('sessionScanner', () => {
     expect(collectedMessages[0].type).toBe('user')
     if (collectedMessages[0].type === 'user') {
       const content = collectedMessages[0].message.content
-      const text = typeof content === 'string' ? content : (content as any)[0].text
+      const text = getFirstTextFromContent(content)
       expect(text).toBe('say lol')
     }
     
-    // Write second line with delay
-    await new Promise(resolve => setTimeout(resolve, 50))
+    // Write second line and wait for scanner to process it.
     await appendFile(sessionFile1, lines1[1] + '\n')
     await waitFor(() => collectedMessages.length >= 2)
     
     expect(collectedMessages).toHaveLength(2)
     expect(collectedMessages[1].type).toBe('assistant')
     if (collectedMessages[1].type === 'assistant' && collectedMessages[1].message) {
-      expect((collectedMessages[1].message.content as any)[0].text).toBe('lol')
+      expect(getFirstTextFromContent(collectedMessages[1].message.content)).toBe('lol')
     }
     
     // PHASE 2: Resumed session (1-continue-run-ls-tool.jsonl)
@@ -110,6 +119,7 @@ describe('sessionScanner', () => {
     
     const sessionId2 = '789e105f-ae33-486d-9271-0696266f072d'
     const sessionFile2 = join(projectDir, `${sessionId2}.jsonl`)
+    await mkdir(projectDir, { recursive: true })
     
     // Reset collected messages count for clarity
     const phase1Count = collectedMessages.length
@@ -130,7 +140,6 @@ describe('sessionScanner', () => {
     expect(collectedMessages[phase1Count].type).toBe('summary')
     
     // Write new messages (user asks for ls tool) - this is line 3
-    await new Promise(resolve => setTimeout(resolve, 50))
     await appendFile(sessionFile2, lines2[3] + '\n')
     await waitFor(() => collectedMessages.some(m => m.type === 'user' && m.message.content === 'run ls tool '))
     
@@ -144,15 +153,17 @@ describe('sessionScanner', () => {
     
     // Write remaining lines (assistant tool use, tool result, final assistant message) - starting from line 4
     for (let i = 4; i < lines2.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 50))
       await appendFile(sessionFile2, lines2[i] + '\n')
     }
-    await waitFor(() => collectedMessages.some(m =>
-      m.type === 'assistant' &&
-      Array.isArray((m.message?.content as any)) &&
-      typeof (m.message?.content as any)[0]?.text === 'string' &&
-      (m.message?.content as any)[0].text.includes('0-say-lol-session.jsonl')
-    ), 5000)
+    await waitFor(
+      () =>
+        collectedMessages.some((m) => {
+          if (m.type !== 'assistant') return false
+          const text = getFirstTextFromContent(m.message?.content)
+          return typeof text === 'string' && text.includes('0-say-lol-session.jsonl')
+        }),
+      5000,
+    )
     
     // Final count check
     const finalMessages = collectedMessages.slice(phase1Count)
@@ -164,7 +175,7 @@ describe('sessionScanner', () => {
     const lastAssistantMsg = collectedMessages[collectedMessages.length - 1]
     expect(lastAssistantMsg.type).toBe('assistant')
     if (lastAssistantMsg.type === 'assistant' && lastAssistantMsg.message?.content) {
-      const content = (lastAssistantMsg.message.content as any)[0].text
+      const content = getFirstTextFromContent(lastAssistantMsg.message.content) ?? ''
       expect(content).toContain('0-say-lol-session.jsonl')
       expect(content).toContain('readme.md')
     }
@@ -242,68 +253,6 @@ describe('sessionScanner', () => {
     expect(collectedMessages[0].type).toBe('assistant')
   })
   
-  it('should not process duplicate assistant messages with same message ID', async () => {
-    // Currently broken unclear if we need this or not post migrating to sdk & removeing deduplication
-    return;
-
-    // scanner = await createSessionScanner({
-    //   sessionId: null,
-    //   workingDirectory: testDir,
-    //   onMessage: (msg) => collectedMessages.push(msg)
-    // })
-    
-    // const fixture = await readFile(join(__dirname, '__fixtures__', 'duplicate-assistant-response.jsonl'), 'utf-8')
-    // const lines = fixture.split('\n').filter(line => line.trim())
-    
-    // const sessionId = 'b91d4412-e6c4-4e51-bb1b-585bcd78aca4'
-    // const sessionFile = join(projectDir, `${sessionId}.jsonl`)
-    
-    // // Write first user message
-    // await writeFile(sessionFile, lines[0] + '\n')
-    // scanner.onNewSession(sessionId)
-    // await new Promise(resolve => setTimeout(resolve, 100))
-    
-    // expect(collectedMessages).toHaveLength(1)
-    // expect(collectedMessages[0].type).toBe('user')
-    
-    // // Write first assistant response
-    // await appendFile(sessionFile, lines[1] + '\n')
-    // await new Promise(resolve => setTimeout(resolve, 100))
-    
-    // expect(collectedMessages).toHaveLength(2)
-    // expect(collectedMessages[1].type).toBe('assistant')
-    // const firstAssistantMsg = collectedMessages[1]
-    // if (firstAssistantMsg.type === 'assistant') {
-    //   expect((firstAssistantMsg.message.content as any)[0].text).toBe('lol')
-    //   expect(firstAssistantMsg.message.id).toBe('msg_01R62tkBs9tw5X76JmpWXYbc')
-    // }
-    
-    // // Write duplicate assistant response (same message ID, different UUID)
-    // await appendFile(sessionFile, lines[2] + '\n')
-    // await new Promise(resolve => setTimeout(resolve, 100))
-    
-    // // Should NOT process the duplicate - still only 2 messages
-    // expect(collectedMessages).toHaveLength(2)
-    
-    // // Write next user message
-    // await appendFile(sessionFile, lines[3] + '\n')
-    // await new Promise(resolve => setTimeout(resolve, 100))
-    
-    // expect(collectedMessages).toHaveLength(3)
-    // expect(collectedMessages[2].type).toBe('user')
-    
-    // // Write final assistant response
-    // await appendFile(sessionFile, lines[4] + '\n')
-    // await new Promise(resolve => setTimeout(resolve, 100))
-    
-    // expect(collectedMessages).toHaveLength(4)
-    // expect(collectedMessages[3].type).toBe('assistant')
-    // const lastAssistantMsg = collectedMessages[3]
-    // if (lastAssistantMsg.type === 'assistant') {
-    //   expect((lastAssistantMsg.message.content as any)[0].text).toBe('kekr')
-    //   expect(lastAssistantMsg.message.id).toBe('msg_01KWeuP88pkzRtXmggJRnQmV')
-    // }
-  })
   it('should notify when transcript file is missing for too long', async () => {
     const missing: { sessionId: string; filePath: string }[] = []
 

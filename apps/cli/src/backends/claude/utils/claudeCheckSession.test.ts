@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { claudeCheckSession } from './claudeCheckSession';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import {
+    cleanupTempSessionDir,
+    createTempSessionDir,
+    writeSessionObjectLines,
+} from './sessionFixtures.testHelpers';
 
 // Mock getProjectPath to use test directory
 vi.mock('./path', () => ({
@@ -12,22 +16,21 @@ vi.mock('./path', () => ({
 describe('claudeCheckSession', () => {
     let testDir: string;
 
+    const writeRecords = (sessionId: string, records: Array<Record<string, unknown>>) =>
+        writeSessionObjectLines(testDir, sessionId, records);
+
     beforeEach(() => {
-        testDir = join(tmpdir(), `test-session-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-        mkdirSync(testDir, { recursive: true });
+        testDir = createTempSessionDir('test-session');
     });
 
     afterEach(() => {
-        if (existsSync(testDir)) {
-            rmSync(testDir, { recursive: true, force: true });
-        }
+        cleanupTempSessionDir(testDir);
     });
 
     describe('Claude Code 2.1.x sessions (uuid field)', () => {
         it('should accept session with valid uuid', () => {
             const sessionId = '12345678-1234-1234-1234-123456789abc';
-            const sessionFile = join(testDir, `${sessionId}.jsonl`);
-            writeFileSync(sessionFile, JSON.stringify({ uuid: 'msg-123', type: 'user' }) + '\n');
+            writeRecords(sessionId, [{ uuid: 'msg-123', type: 'user' }]);
 
             expect(claudeCheckSession(sessionId, testDir)).toBe(true);
         });
@@ -47,8 +50,7 @@ describe('claudeCheckSession', () => {
     describe('Older Claude Code sessions (messageId field)', () => {
         it('should accept session with valid messageId', () => {
             const sessionId = '87654321-4321-4321-4321-210987654321';
-            const sessionFile = join(testDir, `${sessionId}.jsonl`);
-            writeFileSync(sessionFile, JSON.stringify({ messageId: 'msg-456', type: 'user' }) + '\n');
+            writeRecords(sessionId, [{ messageId: 'msg-456', type: 'user' }]);
 
             expect(claudeCheckSession(sessionId, testDir)).toBe(true);
         });
@@ -68,8 +70,7 @@ describe('claudeCheckSession', () => {
     describe('Summary line sessions (leafUuid field)', () => {
         it('should accept session with valid leafUuid', () => {
             const sessionId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-            const sessionFile = join(testDir, `${sessionId}.jsonl`);
-            writeFileSync(sessionFile, JSON.stringify({ leafUuid: 'leaf-789', type: 'summary' }) + '\n');
+            writeRecords(sessionId, [{ leafUuid: 'leaf-789', type: 'summary' }]);
 
             expect(claudeCheckSession(sessionId, testDir)).toBe(true);
         });
@@ -78,40 +79,35 @@ describe('claudeCheckSession', () => {
     describe('Edge cases - invalid sessions', () => {
         it('should reject session with empty uuid string', () => {
             const sessionId = '12345678-1234-1234-1234-123456789abc';
-            const sessionFile = join(testDir, `${sessionId}.jsonl`);
-            writeFileSync(sessionFile, JSON.stringify({ uuid: '', type: 'user' }) + '\n');
+            writeRecords(sessionId, [{ uuid: '', type: 'user' }]);
 
             expect(claudeCheckSession(sessionId, testDir)).toBe(false);
         });
 
         it('should reject session with empty messageId string', () => {
             const sessionId = '12345678-1234-1234-1234-123456789abc';
-            const sessionFile = join(testDir, `${sessionId}.jsonl`);
-            writeFileSync(sessionFile, JSON.stringify({ messageId: '', type: 'user' }) + '\n');
+            writeRecords(sessionId, [{ messageId: '', type: 'user' }]);
 
             expect(claudeCheckSession(sessionId, testDir)).toBe(false);
         });
 
         it('should reject session with null uuid', () => {
             const sessionId = '12345678-1234-1234-1234-123456789abc';
-            const sessionFile = join(testDir, `${sessionId}.jsonl`);
-            writeFileSync(sessionFile, JSON.stringify({ uuid: null, type: 'user' }) + '\n');
+            writeRecords(sessionId, [{ uuid: null, type: 'user' }]);
 
             expect(claudeCheckSession(sessionId, testDir)).toBe(false);
         });
 
         it('should reject session with no ID fields', () => {
             const sessionId = '12345678-1234-1234-1234-123456789abc';
-            const sessionFile = join(testDir, `${sessionId}.jsonl`);
-            writeFileSync(sessionFile, JSON.stringify({ type: 'user', content: 'test' }) + '\n');
+            writeRecords(sessionId, [{ type: 'user', content: 'test' }]);
 
             expect(claudeCheckSession(sessionId, testDir)).toBe(false);
         });
 
         it('should reject session with only other fields', () => {
             const sessionId = '12345678-1234-1234-1234-123456789abc';
-            const sessionFile = join(testDir, `${sessionId}.jsonl`);
-            writeFileSync(sessionFile, JSON.stringify({ role: 'user', message: 'hello' }) + '\n');
+            writeRecords(sessionId, [{ role: 'user', message: 'hello' }]);
 
             expect(claudeCheckSession(sessionId, testDir)).toBe(false);
         });
@@ -171,7 +167,7 @@ describe('claudeCheckSession', () => {
             writeFileSync(transcriptPath, JSON.stringify({ uuid: 'msg-override', type: 'user' }) + '\n');
 
             // RED: current implementation ignores transcriptPath and checks only `${getProjectPath(path)}/${sessionId}.jsonl`
-            expect((claudeCheckSession as any)(sessionId, testDir, transcriptPath)).toBe(true);
+            expect(claudeCheckSession(sessionId, testDir, transcriptPath)).toBe(true);
         });
     });
 

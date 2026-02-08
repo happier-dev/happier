@@ -15,5 +15,30 @@ describe('RemoteModeDisplay input handling', () => {
     const second = interpretRemoteModeKeypress({ confirmationMode: 'switch', actionInProgress: null }, ' ', {});
     expect(second.action).toBe('switch');
   });
-});
 
+  it('requires double Ctrl+C to confirm full exit', () => {
+    const first = interpretRemoteModeKeypress({ confirmationMode: null, actionInProgress: null }, 'c', { ctrl: true });
+    expect(first.action).toBe('confirm-exit');
+
+    const second = interpretRemoteModeKeypress({ confirmationMode: 'exit', actionInProgress: null }, 'c', { ctrl: true });
+    expect(second.action).toBe('exit');
+  });
+
+  it('resets confirmation mode on unrelated keypress', () => {
+    const result = interpretRemoteModeKeypress({ confirmationMode: 'switch', actionInProgress: null }, 'x', {});
+    expect(result.action).toBe('reset');
+  });
+
+  it('ignores keypresses while an action is in progress', () => {
+    const switchWhileBusy = interpretRemoteModeKeypress({ confirmationMode: null, actionInProgress: 'switching' }, 't', { ctrl: true });
+    expect(switchWhileBusy.action).toBe('none');
+
+    const exitWhileBusy = interpretRemoteModeKeypress({ confirmationMode: 'exit', actionInProgress: 'exiting' }, 'c', { ctrl: true });
+    expect(exitWhileBusy.action).toBe('none');
+  });
+
+  it('returns none for non-control keys when there is no confirmation state', () => {
+    const result = interpretRemoteModeKeypress({ confirmationMode: null, actionInProgress: null }, 'a', {});
+    expect(result.action).toBe('none');
+  });
+});

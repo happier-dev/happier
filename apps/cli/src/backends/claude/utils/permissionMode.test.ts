@@ -8,8 +8,8 @@ describe('mapToClaudeMode', () => {
             expect(mapToClaudeMode('yolo')).toBe('bypassPermissions');
         });
 
-        it('maps safe-yolo → default', () => {
-            expect(mapToClaudeMode('safe-yolo')).toBe('default');
+        it('maps safe-yolo → acceptEdits', () => {
+            expect(mapToClaudeMode('safe-yolo')).toBe('acceptEdits');
         });
 
         it('maps read-only → default', () => {

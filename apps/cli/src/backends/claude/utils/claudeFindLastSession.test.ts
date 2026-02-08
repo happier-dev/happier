@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { claudeFindLastSession } from './claudeFindLastSession';
-import { mkdirSync, writeFileSync, rmSync, existsSync, utimesSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import {
+    cleanupTempSessionDir,
+    createTempSessionDir,
+    setSessionMtime,
+    writeSessionObjectLines,
+} from './sessionFixtures.testHelpers';
 
 // Mock getProjectPath to use test directory
 vi.mock('./path', () => ({
@@ -12,44 +17,35 @@ vi.mock('./path', () => ({
 describe('claudeFindLastSession', () => {
     let testDir: string;
 
+    const writeRecords = (sessionId: string, records: Array<Record<string, unknown>>) =>
+        writeSessionObjectLines(testDir, sessionId, records);
+
     beforeEach(() => {
-        testDir = join(tmpdir(), `test-sessions-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-        mkdirSync(testDir, { recursive: true });
+        testDir = createTempSessionDir('test-sessions');
     });
 
     afterEach(() => {
-        if (existsSync(testDir)) {
-            rmSync(testDir, { recursive: true, force: true });
-        }
+        cleanupTempSessionDir(testDir);
     });
 
     describe('Basic session finding', () => {
         it('should find session with uuid field', () => {
             const sessionId = '12345678-1234-1234-1234-123456789abc';
-            writeFileSync(
-                join(testDir, `${sessionId}.jsonl`),
-                JSON.stringify({ uuid: 'msg-1', type: 'user' }) + '\n'
-            );
+            writeRecords(sessionId, [{ uuid: 'msg-1', type: 'user' }]);
 
             expect(claudeFindLastSession(testDir)).toBe(sessionId);
         });
 
         it('should find session with messageId field (older Claude Code)', () => {
             const sessionId = '87654321-4321-4321-4321-210987654321';
-            writeFileSync(
-                join(testDir, `${sessionId}.jsonl`),
-                JSON.stringify({ messageId: 'msg-old', type: 'user' }) + '\n'
-            );
+            writeRecords(sessionId, [{ messageId: 'msg-old', type: 'user' }]);
 
             expect(claudeFindLastSession(testDir)).toBe(sessionId);
         });
 
         it('should find session with leafUuid field', () => {
             const sessionId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-            writeFileSync(
-                join(testDir, `${sessionId}.jsonl`),
-                JSON.stringify({ leafUuid: 'leaf-123', type: 'summary' }) + '\n'
-            );
+            writeRecords(sessionId, [{ leafUuid: 'leaf-123', type: 'summary' }]);
 
             expect(claudeFindLastSession(testDir)).toBe(sessionId);
         });
@@ -59,7 +55,7 @@ describe('claudeFindLastSession', () => {
         });
 
         it('should return null when directory does not exist', () => {
-            const nonExistentDir = join(tmpdir(), 'does-not-exist-' + Date.now());
+            const nonExistentDir = join(testDir, 'does-not-exist-' + Date.now());
             expect(claudeFindLastSession(nonExistentDir)).toBe(null);
         });
     });
@@ -68,21 +64,19 @@ describe('claudeFindLastSession', () => {
         it('should find most recent session by mtime (uuid format)', async () => {
             // Create older session
             const oldSessionId = '11111111-1111-1111-1111-111111111111';
-            const oldFile = join(testDir, `${oldSessionId}.jsonl`);
-            writeFileSync(oldFile, JSON.stringify({ uuid: 'msg-1', type: 'user' }) + '\n');
+            const oldFile = writeRecords(oldSessionId, [{ uuid: 'msg-1', type: 'user' }]);
 
             // Set old mtime
             const oldTime = new Date('2025-01-01');
-            utimesSync(oldFile, oldTime, oldTime);
+            setSessionMtime(oldFile, oldTime);
 
             // Create newer session
             const newSessionId = '22222222-2222-2222-2222-222222222222';
-            const newFile = join(testDir, `${newSessionId}.jsonl`);
-            writeFileSync(newFile, JSON.stringify({ uuid: 'msg-2', type: 'user' }) + '\n');
+            const newFile = writeRecords(newSessionId, [{ uuid: 'msg-2', type: 'user' }]);
 
             // Set new mtime
             const newTime = new Date('2025-12-31');
-            utimesSync(newFile, newTime, newTime);
+            setSessionMtime(newFile, newTime);
 
             expect(claudeFindLastSession(testDir)).toBe(newSessionId);
         });
@@ -90,15 +84,13 @@ describe('claudeFindLastSession', () => {
         it('should find most recent session regardless of ID field type', () => {
             // Create older session with uuid
             const oldSessionId = '11111111-1111-1111-1111-111111111111';
-            const oldFile = join(testDir, `${oldSessionId}.jsonl`);
-            writeFileSync(oldFile, JSON.stringify({ uuid: 'msg-1', type: 'user' }) + '\n');
-            utimesSync(oldFile, new Date('2025-01-01'), new Date('2025-01-01'));
+            const oldFile = writeRecords(oldSessionId, [{ uuid: 'msg-1', type: 'user' }]);
+            setSessionMtime(oldFile, new Date('2025-01-01'));
 
             // Create newer session with messageId
             const newSessionId = '22222222-2222-2222-2222-222222222222';
-            const newFile = join(testDir, `${newSessionId}.jsonl`);
-            writeFileSync(newFile, JSON.stringify({ messageId: 'msg-2', type: 'user' }) + '\n');
-            utimesSync(newFile, new Date('2025-12-31'), new Date('2025-12-31'));
+            const newFile = writeRecords(newSessionId, [{ messageId: 'msg-2', type: 'user' }]);
+            setSessionMtime(newFile, new Date('2025-12-31'));
 
             expect(claudeFindLastSession(testDir)).toBe(newSessionId);
         });
@@ -159,15 +151,13 @@ describe('claudeFindLastSession', () => {
 
             // Valid: old session with messageId
             const oldValidId = '11111111-1111-1111-1111-111111111111';
-            const oldValidFile = join(testDir, `${oldValidId}.jsonl`);
-            writeFileSync(oldValidFile, JSON.stringify({ messageId: 'old-msg', type: 'user' }) + '\n');
-            utimesSync(oldValidFile, new Date('2025-01-01'), new Date('2025-01-01'));
+            const oldValidFile = writeRecords(oldValidId, [{ messageId: 'old-msg', type: 'user' }]);
+            setSessionMtime(oldValidFile, new Date('2025-01-01'));
 
             // Valid: new session with uuid
             const newValidId = '22222222-2222-2222-2222-222222222222';
-            const newValidFile = join(testDir, `${newValidId}.jsonl`);
-            writeFileSync(newValidFile, JSON.stringify({ uuid: 'new-msg', type: 'user' }) + '\n');
-            utimesSync(newValidFile, new Date('2025-12-31'), new Date('2025-12-31'));
+            const newValidFile = writeRecords(newValidId, [{ uuid: 'new-msg', type: 'user' }]);
+            setSessionMtime(newValidFile, new Date('2025-12-31'));
 
             expect(claudeFindLastSession(testDir)).toBe(newValidId);
         });
@@ -176,12 +166,11 @@ describe('claudeFindLastSession', () => {
             // Create 50 sessions with messageId (older format)
             for (let i = 0; i < 50; i++) {
                 const sessionId = `${i.toString().padStart(8, '0')}-1111-1111-1111-111111111111`;
-                const sessionFile = join(testDir, `${sessionId}.jsonl`);
-                writeFileSync(sessionFile, JSON.stringify({ messageId: `msg-${i}`, type: 'user' }) + '\n');
+                const sessionFile = writeRecords(sessionId, [{ messageId: `msg-${i}`, type: 'user' }]);
 
                 // Set different mtimes
                 const time = new Date(2025, 0, 1 + i);
-                utimesSync(sessionFile, time, time);
+                setSessionMtime(sessionFile, time);
             }
 
             // Most recent should be the last one created
