@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -100,17 +100,11 @@ describe('ToolView (minimal tools)', () => {
     it('renders a specific tool view even when the tool is marked minimal', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Bash',
-            state: 'completed',
             input: { command: 'echo hello' },
             result: { stdout: 'hello\n', stderr: '' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {

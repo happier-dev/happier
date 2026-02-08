@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { collectHostText, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -99,17 +99,13 @@ describe('ToolView (running tools)', () => {
     it('renders structured stdout/stderr while running when a tool streams output', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'SomeUnknownTool',
             state: 'running',
             input: { anything: true },
             result: { stdout: 'hello\n', stderr: '' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
             completedAt: null,
-            description: null,
-            permission: undefined,
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
@@ -118,8 +114,8 @@ describe('ToolView (running tools)', () => {
             );
         });
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts.flatMap((c: any) => Array.isArray(c) ? c : [c]).filter((c: any) => typeof c === 'string');
+        const flattened = collectHostText(tree!);
         expect(flattened).toContain('stdout');
+        expect(flattened).not.toContain('toolView.output');
     });
 });

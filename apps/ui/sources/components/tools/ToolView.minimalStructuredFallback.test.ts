@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { collectHostText, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -104,17 +104,34 @@ describe('ToolView (minimal tools)', () => {
     it('renders a structured fallback view for minimal tools without a specific view', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
+            name: 'Bash',
+            input: { command: 'echo hello' },
+            result: { stdout: 'hello\n', stderr: '' },
+        });
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(
+                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
+            );
+        });
+
+        const flattened = collectHostText(tree!);
+        expect(flattened).toContain('stdout');
+        expect(flattened).not.toContain('toolView.input');
+        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(0);
+    });
+
+    it('hides body for minimal tools with no output payload', async () => {
+        const { ToolView } = await import('./ToolView');
+
+        const tool = makeToolCall({
             name: 'Bash',
             state: 'completed',
             input: { command: 'echo hello' },
-            result: { stdout: 'hello\n', stderr: '' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+            result: null,
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
@@ -123,35 +140,8 @@ describe('ToolView (minimal tools)', () => {
             );
         });
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts.flatMap((c: any) => Array.isArray(c) ? c : [c]).filter((c: any) => typeof c === 'string');
-        expect(flattened).toContain('stdout');
-    });
-
-    it('renders a structured fallback view for running minimal tools that stream stdout', async () => {
-        const { ToolView } = await import('./ToolView');
-
-        const tool: ToolCall = {
-            name: 'Bash',
-            state: 'running',
-            input: { command: 'echo hello' },
-            result: { stdout: 'hello\n', stderr: '' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: null,
-            description: null,
-            permission: undefined,
-        };
-
-        let tree: ReturnType<typeof renderer.create> | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(ToolView, { tool, metadata: null, messages: [], sessionId: 's1', messageId: 'm1' }),
-            );
-        });
-
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts.flatMap((c: any) => Array.isArray(c) ? c : [c]).filter((c: any) => typeof c === 'string');
-        expect(flattened).toContain('stdout');
+        const flattened = collectHostText(tree!);
+        expect(flattened).not.toContain('stdout');
+        expect(flattened).not.toContain('toolView.input');
     });
 });

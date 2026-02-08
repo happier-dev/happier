@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -101,17 +101,12 @@ describe('ToolView (ACP kind fallback)', () => {
     it('uses tool.input._acp.kind to pick a specific view when tool.name is not a stable key', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Run echo hello',
-            state: 'completed',
             input: { _acp: { kind: 'execute', title: 'Run echo hello' }, command: ['/bin/zsh', '-lc', 'echo hello'] },
             result: { stdout: 'hello\n', stderr: '' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
             description: 'Run echo hello',
-            permission: undefined,
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
@@ -120,6 +115,8 @@ describe('ToolView (ACP kind fallback)', () => {
             );
         });
 
-        expect(tree!.root.findAllByType('SpecificToolView' as any)).toHaveLength(1);
+        const specificViews = tree!.root.findAllByType('SpecificToolView' as any);
+        expect(specificViews).toHaveLength(1);
+        expect(specificViews[0].props.resolvedName).toBe('Run echo hello');
     });
 });

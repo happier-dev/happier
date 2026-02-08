@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { type ToolCall } from '@/sync/typesMessage';
+import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -75,17 +75,12 @@ describe('ToolFullView (inference + view selection)', () => {
         getToolViewComponentSpy.mockClear();
         const { ToolFullView } = await import('./ToolFullView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Run echo hello',
-            state: 'completed',
             input: { _acp: { kind: 'execute', title: 'Run echo hello' }, command: ['/bin/zsh', '-lc', 'echo hello'] },
             result: { stdout: 'hello\n', stderr: '' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
             description: 'Run echo hello',
-            permission: undefined,
-        };
+        });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
@@ -104,17 +99,11 @@ describe('ToolFullView (inference + view selection)', () => {
         getToolViewComponentSpy.mockClear();
         const { ToolFullView } = await import('./ToolFullView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Read',
-            state: 'completed',
             input: { file_path: '/tmp/a.txt' },
             result: { content: 'hello' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {

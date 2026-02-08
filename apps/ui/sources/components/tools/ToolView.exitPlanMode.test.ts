@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -102,16 +102,13 @@ describe('ToolView (ExitPlanMode)', () => {
     it('does not render PermissionFooter for ExitPlanMode', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'ExitPlanMode',
             state: 'running',
             input: { plan: 'plan' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
             completedAt: null,
-            description: null,
             permission: { id: 'perm1', status: 'pending' },
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
@@ -126,16 +123,13 @@ describe('ToolView (ExitPlanMode)', () => {
     it('renders PermissionFooter for normal tools', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Write',
             state: 'running',
             input: { file_path: '/tmp/x', content: 'x' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
             completedAt: null,
-            description: null,
             permission: { id: 'perm1', status: 'pending' },
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {

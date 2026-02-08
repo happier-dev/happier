@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -90,17 +90,11 @@ describe('ToolView (detail level: full)', () => {
 
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'Read',
-            state: 'completed',
             input: { file_path: '/tmp/a.txt' },
             result: { file: { content: 'hello' } },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {

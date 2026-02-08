@@ -1,20 +1,35 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { PermissionFooter } from './PermissionFooter';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+
+const runtime = vi.hoisted(() => ({
+    flavor: 'opencode' as 'codex' | 'opencode',
+    protocol: 'claude' as 'codexDecision' | 'claude',
+    setProtocol(protocol: 'codexDecision' | 'claude', flavor: 'codex' | 'opencode') {
+        this.protocol = protocol;
+        this.flavor = flavor;
+    },
+}));
+
+const ops = vi.hoisted(() => ({
+    sessionDeny: vi.fn(async () => {}),
+    sessionAbort: vi.fn(async () => {}),
+}));
 
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     TouchableOpacity: 'TouchableOpacity',
     ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
-    StyleSheet: { create: (styles: any) => styles },
+    Platform: { OS: 'ios', select: <T,>(value: { ios?: T }) => value.ios },
+    StyleSheet: { create: <T,>(styles: T) => styles },
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
+    StyleSheet: { create: <T,>(styles: T) => styles },
     useUnistyles: () => ({
         theme: {
             colors: {
@@ -34,12 +49,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-const sessionDeny = vi.fn<(...args: any[]) => Promise<void>>(async (..._args: any[]) => {});
-const sessionAbort = vi.fn<(...args: any[]) => Promise<void>>(async (..._args: any[]) => {});
 vi.mock('@/sync/ops', () => ({
     sessionAllow: vi.fn(async () => {}),
-    sessionDeny: (...args: any[]) => sessionDeny(...args),
-    sessionAbort: (...args: any[]) => sessionAbort(...args),
+    sessionDeny: (...args: unknown[]) => ops.sessionDeny(...args),
+    sessionAbort: (...args: unknown[]) => ops.sessionAbort(...args),
 }));
 
 vi.mock('@/sync/storage', () => ({
@@ -51,24 +64,48 @@ vi.mock('@/text', () => ({
 }));
 
 vi.mock('@/agents/resolve', () => ({
-    resolveAgentIdForPermissionUi: () => 'opencode',
+    resolveAgentIdForPermissionUi: () => runtime.flavor,
 }));
 
 vi.mock('@/agents/permissionUiCopy', () => ({
-    getPermissionFooterCopy: () => ({
-        protocol: 'claude',
-        yesAllowAllEditsKey: 'claude.permissions.yesAllowAllEdits',
-        yesForToolKey: 'claude.permissions.yesForTool',
-        noTellAgentKey: 'claude.permissions.stopAndExplain',
-    }),
+    getPermissionFooterCopy: () => {
+        if (runtime.protocol === 'codexDecision') {
+            return {
+                protocol: 'codexDecision',
+                yesAlwaysAllowCommandKey: 'codex.permissions.yesAlwaysAllowCommand',
+                yesForSessionKey: 'codex.permissions.yesForSession',
+                stopAndExplainKey: 'codex.permissions.stopAndExplain',
+            };
+        }
+        return {
+            protocol: 'claude',
+            yesAllowAllEditsKey: 'claude.permissions.yesAllowAllEdits',
+            yesForToolKey: 'claude.permissions.yesForTool',
+            noTellAgentKey: 'claude.permissions.stopAndExplain',
+        };
+    },
 }));
 
-describe('PermissionFooter (non-codex)', () => {
-    it('Stop denies permission (abort) and aborts the run', async () => {
-        sessionDeny.mockClear();
-        sessionAbort.mockClear();
-
-        const { PermissionFooter } = await import('./PermissionFooter');
+describe('PermissionFooter stop action', () => {
+    it.each([
+        {
+            name: 'codex decision protocol',
+            protocol: 'codexDecision' as const,
+            flavor: 'codex' as const,
+            toolName: 'execute',
+            toolInput: { command: 'pwd' },
+        },
+        {
+            name: 'non-codex protocol',
+            protocol: 'claude' as const,
+            flavor: 'opencode' as const,
+            toolName: 'Read',
+            toolInput: { filepath: '/etc/hosts' },
+        },
+    ])('Stop denies permission and aborts the run for $name', async ({ protocol, flavor, toolName, toolInput }) => {
+        runtime.setProtocol(protocol, flavor);
+        ops.sessionDeny.mockClear();
+        ops.sessionAbort.mockClear();
 
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
@@ -76,22 +113,23 @@ describe('PermissionFooter (non-codex)', () => {
                 React.createElement(PermissionFooter, {
                     permission: { id: 'p1', status: 'pending' },
                     sessionId: 's1',
-                    toolName: 'Read',
-                    toolInput: { filepath: '/etc/hosts' },
-                    metadata: { flavor: 'opencode' },
+                    toolName,
+                    toolInput,
+                    metadata: { flavor },
                 }),
             );
         });
 
-        const buttons = tree!.root.findAllByType('TouchableOpacity' as any);
-        const stop = buttons[buttons.length - 1];
+        const buttons = tree?.root.findAllByType('TouchableOpacity') ?? [];
+        const stopButton = buttons.at(-1);
+        expect(stopButton).toBeTruthy();
 
         await act(async () => {
-            await stop.props.onPress();
+            await stopButton?.props.onPress?.();
         });
 
-        expect(sessionDeny).toHaveBeenCalledTimes(1);
-        expect((sessionDeny as any).mock.calls[0]?.[4]).toBe('abort');
-        expect(sessionAbort).toHaveBeenCalledTimes(1);
+        expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
+        expect(ops.sessionDeny.mock.calls[0]?.[4]).toBe('abort');
+        expect(ops.sessionAbort).toHaveBeenCalledTimes(1);
     });
 });

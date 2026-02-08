@@ -53,6 +53,12 @@ export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages, d
     const filtered: FilteredTool[] = [];
     const isFullView = detailLevel === 'full';
     const taskStartedAt = tool.startedAt ?? tool.createdAt;
+    const taskResultContent =
+        typeof (tool.result as any)?.content === 'string'
+            ? String((tool.result as any).content)
+            : typeof tool.result === 'string'
+                ? tool.result
+                : null;
 
     for (let m of messages) {
         if (m.kind === 'tool-call') {
@@ -146,9 +152,18 @@ export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages, d
     if (detailLevel === 'title') return null;
 
     const summary = formatTaskSummary(tool);
-    const visibleTools = isFullView ? filtered.slice(Math.max(0, filtered.length - 10)) : filtered.slice(Math.max(0, filtered.length - 3));
+    const visibleTools = isFullView ? filtered : filtered.slice(Math.max(0, filtered.length - 3));
     const remainingCount = Math.max(0, filtered.length - visibleTools.length);
-    const hasAnyContent = Boolean(summary) || filtered.length > 0;
+    const textMessages = messages.filter((m) => m.kind === 'user-text' || m.kind === 'agent-text');
+    const threadTextMessages = isFullView
+        ? textMessages
+        : (() => {
+            const agentMessages = textMessages.filter((m) => m.kind === 'agent-text' && !(m as any).isThinking);
+            if (agentMessages.length > 0) return agentMessages.slice(Math.max(0, agentMessages.length - 2));
+            return textMessages.slice(Math.max(0, textMessages.length - 1));
+        })();
+
+    const hasAnyContent = Boolean(summary) || Boolean(taskResultContent) || filtered.length > 0 || threadTextMessages.length > 0;
     if (!hasAnyContent) return null;
 
     return (
@@ -158,6 +173,13 @@ export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages, d
                     <View style={styles.summaryItem}>
                         <Text style={styles.summaryText} numberOfLines={isFullView ? undefined : 3}>
                             {summary}
+                        </Text>
+                    </View>
+                ) : null}
+                {taskResultContent ? (
+                    <View style={styles.summaryItem}>
+                        <Text style={styles.summaryText} numberOfLines={isFullView ? undefined : 3}>
+                            {taskResultContent}
                         </Text>
                     </View>
                 ) : null}
@@ -182,6 +204,19 @@ export const TaskView = React.memo<ToolViewProps>(({ tool, metadata, messages, d
                         <Text style={styles.moreToolsText}>
                             {t('tools.taskView.moreTools', { count: remainingCount })}
                         </Text>
+                    </View>
+                )}
+                {threadTextMessages.length > 0 && (
+                    <View style={styles.summaryItem}>
+                        {threadTextMessages.map((m, idx) => (
+                            <Text
+                                key={`thread-text-${idx}`}
+                                style={styles.summaryText}
+                                numberOfLines={isFullView ? undefined : 3}
+                            >
+                                {m.text}
+                            </Text>
+                        ))}
                     </View>
                 )}
             </View>

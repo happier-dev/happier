@@ -1,7 +1,8 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -89,12 +90,12 @@ vi.mock('@/components/tools/knownTools', () => ({
 }));
 
 type ToolViewDetailLevel = 'title' | 'summary' | 'full';
-let mockDetailLevelDefault: ToolViewDetailLevel = 'summary';
+const mockSettings: { detailLevelDefault: ToolViewDetailLevel } = { detailLevelDefault: 'summary' };
 
 vi.mock('@/sync/storage', () => ({
     useSetting: (key: string) => {
-        if (key === 'toolViewDetailLevelDefault') return mockDetailLevelDefault;
-        if (key === 'toolViewDetailLevelDefaultLocalControl') return mockDetailLevelDefault;
+        if (key === 'toolViewDetailLevelDefault') return mockSettings.detailLevelDefault;
+        if (key === 'toolViewDetailLevelDefaultLocalControl') return mockSettings.detailLevelDefault;
         if (key === 'toolViewDetailLevelByToolName') return {};
         if (key === 'toolViewTapAction') return 'expand';
         if (key === 'toolViewExpandedDetailLevelDefault') return 'full';
@@ -104,32 +105,33 @@ vi.mock('@/sync/storage', () => ({
 }));
 
 describe('ToolView fixtures (v1)', () => {
+    beforeEach(() => {
+        mockSettings.detailLevelDefault = 'summary';
+        renderedSummarySpy.mockClear();
+        renderedFullSpy.mockClear();
+    });
+
     it('renders title/summary/full modes without crashing for common canonical tools', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const base: Omit<ToolCall, 'name' | 'input' | 'result'> = {
-            state: 'completed',
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
-
         const tools: ToolCall[] = [
-            { ...base, name: 'Bash', input: { command: "echo 'hi'" }, result: { stdout: 'hi\n', exit_code: 0 } },
-            { ...base, name: 'Read', input: { file_path: '/tmp/a.txt' }, result: { file: { content: 'hello' } } },
-            { ...base, name: 'Diff', input: { unified_diff: '--- a\n+++ b\n' }, result: null },
-            { ...base, name: 'Patch', input: { changes: { 'a.txt': { insert: { line: 1, content: 'x' } } } }, result: null },
-            { ...base, name: 'TodoWrite', input: { todos: [{ id: '1', text: 'do thing', completed: false }] }, result: { todos: [{ id: '1', text: 'do thing', completed: false }] } },
-            { ...base, name: 'Reasoning', input: { content: 'thinking' }, result: { content: 'ok' } },
+            makeToolCall({ name: 'Bash', input: { command: "echo 'hi'" }, result: { stdout: 'hi\n', exit_code: 0 } }),
+            makeToolCall({ name: 'Read', input: { file_path: '/tmp/a.txt' }, result: { file: { content: 'hello' } } }),
+            makeToolCall({ name: 'Diff', input: { unified_diff: '--- a\n+++ b\n' }, result: null }),
+            makeToolCall({ name: 'Patch', input: { changes: { 'a.txt': { insert: { line: 1, content: 'x' } } } }, result: null }),
+            makeToolCall({
+                name: 'TodoWrite',
+                input: { todos: [{ id: '1', text: 'do thing', completed: false }] },
+                result: { todos: [{ id: '1', text: 'do thing', completed: false }] },
+            }),
+            makeToolCall({ name: 'Reasoning', input: { content: 'thinking' }, result: { content: 'ok' } }),
         ];
 
         for (const tool of tools) {
             // title
             renderedSummarySpy.mockClear();
             renderedFullSpy.mockClear();
-            mockDetailLevelDefault = 'title';
+            mockSettings.detailLevelDefault = 'title';
             let titleTree!: renderer.ReactTestRenderer;
             await act(async () => {
                 titleTree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
@@ -141,7 +143,7 @@ describe('ToolView fixtures (v1)', () => {
             // summary
             renderedSummarySpy.mockClear();
             renderedFullSpy.mockClear();
-            mockDetailLevelDefault = 'summary';
+            mockSettings.detailLevelDefault = 'summary';
             let summaryTree!: renderer.ReactTestRenderer;
             await act(async () => {
                 summaryTree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
@@ -152,7 +154,7 @@ describe('ToolView fixtures (v1)', () => {
             // full (prefer full-view component)
             renderedSummarySpy.mockClear();
             renderedFullSpy.mockClear();
-            mockDetailLevelDefault = 'full';
+            mockSettings.detailLevelDefault = 'full';
             let fullTree!: renderer.ReactTestRenderer;
             await act(async () => {
                 fullTree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));

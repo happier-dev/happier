@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -107,17 +107,12 @@ describe('ToolView (error message formatting)', () => {
     it('passes a JSON string to ToolError when the tool result is an object', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'SomeUnknownTool',
             state: 'error',
             input: { anything: true },
             result: { error: 'Tool call failed', status: 'failed' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        });
 
         await act(async () => {
             renderer.create(
@@ -129,6 +124,7 @@ describe('ToolView (error message formatting)', () => {
         const args = toolErrorSpy.mock.calls[0][0];
         expect(typeof args.message).toBe('string');
         expect(args.message).toContain('"error"');
+        expect(args.message).toContain('"status"');
         expect(args.message).toContain('Tool call failed');
     });
 });

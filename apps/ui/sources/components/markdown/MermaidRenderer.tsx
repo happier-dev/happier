@@ -4,6 +4,7 @@ import { WebView } from 'react-native-webview';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { sanitizeRenderedMermaidSvg } from './mermaidSanitize';
 
 // Style for Web platform
 const webStyle: any = {
@@ -12,6 +13,8 @@ const webStyle: any = {
     padding: 16,
     overflow: 'auto',
 };
+
+const WebDiv: React.ElementType<{ style?: any; dangerouslySetInnerHTML?: { __html: string } }> = 'div' as any;
 
 // Mermaid render component that works on all platforms
 export const MermaidRenderer = React.memo((props: {
@@ -53,12 +56,11 @@ export const MermaidRenderer = React.memo((props: {
                         );
 
                         if (isMounted) {
-                            setSvgContent(svg);
+                            setSvgContent(sanitizeRenderedMermaidSvg(svg));
                         }
                     }
                 } catch (error) {
                     if (isMounted) {
-                        console.warn(`[Mermaid] ${t('markdown.mermaidRenderFailed')}: ${error instanceof Error ? error.message : String(error)}`);
                         setHasError(true);
                     }
                 }
@@ -94,8 +96,7 @@ export const MermaidRenderer = React.memo((props: {
 
         return (
             <View style={style.container}>
-                {/* @ts-ignore - Web only */}
-                <div
+                <WebDiv
                     style={webStyle}
                     dangerouslySetInnerHTML={{ __html: svgContent }}
                 />

@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { collectHostText, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -102,17 +102,14 @@ describe('ToolView (permission pending)', () => {
     it('does not show elapsed time while waiting for permission', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'execute',
             state: 'running',
             input: { command: 'pwd' },
             result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
             completedAt: null,
-            description: null,
             permission: { id: 'perm1', status: 'pending' },
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
@@ -121,25 +118,21 @@ describe('ToolView (permission pending)', () => {
             );
         });
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts.flatMap((c: any) => Array.isArray(c) ? c : [c]).filter((c: any) => typeof c === 'string');
+        const flattened = collectHostText(tree!);
         expect(flattened).not.toContain('123.4s');
     });
 
     it('shows elapsed time when running without pending permission', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'execute',
             state: 'running',
             input: { command: 'pwd' },
             result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
             completedAt: null,
-            description: null,
             permission: undefined,
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
@@ -148,26 +141,21 @@ describe('ToolView (permission pending)', () => {
             );
         });
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts.flatMap((c: any) => Array.isArray(c) ? c : [c]).filter((c: any) => typeof c === 'string');
+        const flattened = collectHostText(tree!);
         expect(flattened).toContain('123.4s');
     });
 
     it('does not render PermissionFooter once the tool is completed', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'execute',
             state: 'completed',
             input: { command: 'pwd' },
-            result: { stdout: '/tmp\n' } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
+            result: { stdout: '/tmp\n' },
             // Some providers can leave permission status stale; ToolView should not show action buttons in that case.
             permission: { id: 'perm1', status: 'pending' },
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {

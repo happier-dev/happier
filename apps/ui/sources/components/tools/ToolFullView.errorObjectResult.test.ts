@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { collectHostText, makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -66,26 +66,21 @@ describe('ToolFullView (error message formatting)', () => {
             throw new Error(e?.stack ? String(e.stack) : String(e));
         }
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'UnknownTool',
             state: 'error',
             input: { anything: true },
             result: { error: 'Tool call failed', status: 'failed' },
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
-            tree = renderer.create(React.createElement(ToolFullView as any, { tool, sessionId: 's1', metadata: null, messages: [] }));
+            tree = renderer.create(React.createElement(ToolFullView, { tool, sessionId: 's1', metadata: null, messages: [] }));
         });
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts.flatMap((c: any) => Array.isArray(c) ? c : [c]).filter((c: any) => typeof c === 'string');
+        const flattened = collectHostText(tree!);
         expect(flattened.join('\n')).toContain('"error"');
+        expect(flattened.join('\n')).toContain('"status"');
         expect(flattened.join('\n')).toContain('Tool call failed');
     });
 });

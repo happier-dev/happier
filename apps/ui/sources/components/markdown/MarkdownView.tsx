@@ -40,7 +40,6 @@ export const MarkdownView = React.memo((props: {
             const textId = storeTempText(props.markdown);
             router.push(`/text-selection?textId=${textId}`);
         } catch (error) {
-            console.error('Error storing text for selection:', error);
             Modal.alert(t('common.error'), t('textSelection.failedToOpen'));
         }
     }, [props.markdown, router]);
@@ -134,24 +133,22 @@ function RenderNumberedListBlock(props: { items: { number: number, spans: Markdo
 
 function RenderCodeBlock(props: { content: string, language: string | null, first: boolean, last: boolean, selectable: boolean }) {
     const [isHovered, setIsHovered] = React.useState(false);
+    const isWeb = Platform.OS === 'web';
 
     const copyCode = React.useCallback(async () => {
         try {
             await Clipboard.setStringAsync(props.content);
             Modal.alert(t('common.success'), t('markdown.codeCopied'), [{ text: t('common.ok'), style: 'cancel' }]);
         } catch (error) {
-            console.error('Failed to copy code:', error);
             Modal.alert(t('common.error'), t('markdown.copyFailed'), [{ text: t('common.ok'), style: 'cancel' }]);
         }
     }, [props.content]);
 
     return (
-        <View
+        <Pressable
             style={[style.codeBlock, props.first && style.first, props.last && style.last]}
-            // @ts-ignore - Web only events
-            onMouseEnter={() => setIsHovered(true)}
-            // @ts-ignore - Web only events
-            onMouseLeave={() => setIsHovered(false)}
+            onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
+            onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
         >
             {props.language && <Text selectable={props.selectable} style={style.codeLanguage}>{props.language}</Text>}
             <ScrollView
@@ -177,7 +174,7 @@ function RenderCodeBlock(props: { content: string, language: string | null, firs
                     <Text style={style.copyButtonText}>{t('common.copy')}</Text>
                 </Pressable>
             </View>
-        </View>
+        </Pressable>
     );
 }
 

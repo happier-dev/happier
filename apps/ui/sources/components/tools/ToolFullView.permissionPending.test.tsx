@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,22 +57,20 @@ describe('ToolFullView (permission pending)', () => {
     it('renders PermissionFooter so users can approve/deny from the full view', async () => {
         const { ToolFullView } = await import('./ToolFullView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'edit',
             state: 'running',
             input: {},
             result: null,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
             completedAt: null,
             description: 'edit',
             permission: { id: 'perm1', status: 'pending' },
-        };
+        });
 
         let tree: ReturnType<typeof renderer.create> | undefined;
         await act(async () => {
             tree = renderer.create(
-                React.createElement(ToolFullView as any, { tool, metadata: null, messages: [], sessionId: 's1' }),
+                React.createElement(ToolFullView, { tool, metadata: null, messages: [], sessionId: 's1' }),
             );
         });
 

@@ -12,11 +12,10 @@ export function resolveToolViewDetailLevel(params: {
         return override;
     }
 
-    const sessionMode = (params.toolInput as any)?._happy?.sessionMode;
+    const sessionMode = (params.toolInput as any)?._happier?.sessionMode ?? (params.toolInput as any)?._happy?.sessionMode;
     if (sessionMode === 'local_control') {
         return params.detailLevelDefaultLocalControl;
     }
 
     return params.detailLevelDefault;
 }
-

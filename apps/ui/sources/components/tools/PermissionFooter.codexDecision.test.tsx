@@ -1,6 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
+import { PermissionFooter } from './PermissionFooter';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -9,12 +10,12 @@ vi.mock('react-native', () => ({
     Text: 'Text',
     TouchableOpacity: 'TouchableOpacity',
     ActivityIndicator: 'ActivityIndicator',
-    Platform: { OS: 'ios', select: (v: any) => v.ios },
-    StyleSheet: { create: (styles: any) => styles },
+    Platform: { OS: 'ios', select: <T,>(value: { ios?: T }) => value.ios },
+    StyleSheet: { create: <T,>(styles: T) => styles },
 }));
 
 vi.mock('react-native-unistyles', () => ({
-    StyleSheet: { create: (styles: any) => styles },
+    StyleSheet: { create: <T,>(styles: T) => styles },
     useUnistyles: () => ({
         theme: {
             colors: {
@@ -34,12 +35,10 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-const sessionDeny = vi.fn<(...args: any[]) => Promise<void>>(async (..._args: any[]) => {});
-const sessionAbort = vi.fn<(...args: any[]) => Promise<void>>(async (..._args: any[]) => {});
 vi.mock('@/sync/ops', () => ({
     sessionAllow: vi.fn(async () => {}),
-    sessionDeny: (...args: any[]) => sessionDeny(...args),
-    sessionAbort: (...args: any[]) => sessionAbort(...args),
+    sessionDeny: vi.fn(async () => {}),
+    sessionAbort: vi.fn(async () => {}),
 }));
 
 vi.mock('@/sync/storage', () => ({
@@ -64,11 +63,10 @@ vi.mock('@/agents/permissionUiCopy', () => ({
 }));
 
 describe('PermissionFooter (codexDecision)', () => {
-    it('shows a permission summary line', async () => {
-        const { PermissionFooter } = await import('./PermissionFooter');
-
+    it('shows a command summary line for codex decision approvals', () => {
         let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
+
+        act(() => {
             tree = renderer.create(
                 React.createElement(PermissionFooter, {
                     permission: { id: 'p1', status: 'pending' },
@@ -80,39 +78,12 @@ describe('PermissionFooter (codexDecision)', () => {
             );
         });
 
-        const texts = tree!.root.findAllByType('Text' as any).map((n: any) => n.props.children);
-        const flattened = texts.flatMap((c: any) => Array.isArray(c) ? c : [c]).filter((c: any) => typeof c === 'string');
+        const texts = tree?.root.findAllByType('Text') ?? [];
+        const flattened = texts.flatMap((node) => {
+            const child = node.props.children;
+            return Array.isArray(child) ? child : [child];
+        }).filter((entry): entry is string => typeof entry === 'string');
+
         expect(flattened).toContain('Run: pwd');
-    });
-
-    it('Stop denies permission and aborts the run', async () => {
-        sessionDeny.mockClear();
-        sessionAbort.mockClear();
-
-        const { PermissionFooter } = await import('./PermissionFooter');
-
-        let tree: renderer.ReactTestRenderer | undefined;
-        await act(async () => {
-            tree = renderer.create(
-                React.createElement(PermissionFooter, {
-                    permission: { id: 'p1', status: 'pending' },
-                    sessionId: 's1',
-                    toolName: 'execute',
-                    toolInput: { command: 'pwd' },
-                    metadata: { flavor: 'codex' },
-                }),
-            );
-        });
-
-        const buttons = tree!.root.findAllByType('TouchableOpacity' as any);
-        // Last button is "stop and explain"
-        const stop = buttons[buttons.length - 1];
-
-        await act(async () => {
-            await stop.props.onPress();
-        });
-
-        expect(sessionDeny).toHaveBeenCalledTimes(1);
-        expect(sessionAbort).toHaveBeenCalledTimes(1);
     });
 });

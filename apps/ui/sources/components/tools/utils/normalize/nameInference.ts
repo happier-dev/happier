@@ -3,7 +3,7 @@ import { asRecord, firstNonEmptyString, hasNonEmptyRecord } from './_shared';
 function canonicalizeToolNameNonV2(toolName: string, input: unknown): string {
     // NOTE: This path covers:
     // - legacy sessions (pre V2 tool normalization)
-    // - Claude local-control sessions (tool events produced from a transcript; no `_happy` metadata)
+    // - Claude local-control sessions (tool events produced from a transcript; no `_happier` metadata)
 
     const inputObj = asRecord(input);
 
@@ -12,7 +12,7 @@ function canonicalizeToolNameNonV2(toolName: string, input: unknown): string {
     if (toolName === 'CodexReasoning' || toolName === 'GeminiReasoning' || toolName === 'think') return 'Reasoning';
     if (toolName === 'exit_plan_mode') return 'ExitPlanMode';
 
-    if (toolName === 'mcp__happy__change_title') return 'change_title';
+    if (toolName === 'mcp__happier__change_title' || toolName === 'mcp__happy__change_title') return 'change_title';
 
     const lower = toolName.toLowerCase();
     if (lower === 'patch') return 'Patch';
@@ -77,9 +77,14 @@ function canonicalizeToolNameNonV2(toolName: string, input: unknown): string {
 
 export function canonicalizeToolNameForRendering(toolName: string, input: unknown): string {
     const inputObj = asRecord(input);
+    const happier = asRecord(asRecord(inputObj)?._happier);
+    const canonicalFromHappier = firstNonEmptyString(happier?.canonicalToolName);
+    if (canonicalFromHappier) return canonicalFromHappier;
+
+    // Legacy V2 sessions (pre `_happier` rename) used `_happy`.
     const happy = asRecord(asRecord(inputObj)?._happy);
     const canonicalFromHappy = firstNonEmptyString(happy?.canonicalToolName);
     if (canonicalFromHappy) return canonicalFromHappy;
+
     return canonicalizeToolNameNonV2(toolName, input);
 }
-

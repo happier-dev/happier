@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { ToolCall } from '@/sync/typesMessage';
+import { makeToolCall } from './ToolView.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -82,21 +82,16 @@ describe('ToolView (unknown tools)', () => {
     it('collapses unknown tools to title-only by default (safe), even when global default is summary', async () => {
         const { ToolView } = await import('./ToolView');
 
-        const tool: ToolCall = {
+        const tool = makeToolCall({
             name: 'SomeBrandNewTool',
             state: 'completed',
-            input: { secret: 'should-not-render-inline' } as any,
-            result: { ok: true } as any,
-            createdAt: Date.now(),
-            startedAt: Date.now(),
-            completedAt: Date.now(),
-            description: null,
-            permission: undefined,
-        };
+            input: { secret: 'should-not-render-inline' },
+            result: { ok: true },
+        });
 
         let tree!: renderer.ReactTestRenderer;
         await act(async () => {
-            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null } as any));
+            tree = renderer.create(React.createElement(ToolView, { tool, metadata: null }));
         });
 
         // Header renders (baseline sanity).
@@ -105,4 +100,3 @@ describe('ToolView (unknown tools)', () => {
         expect(tree.root.findAllByType('CodeView' as any)).toHaveLength(0);
     });
 });
-
