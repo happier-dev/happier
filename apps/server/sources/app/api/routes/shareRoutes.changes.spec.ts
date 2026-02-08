@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createFakeRouteApp, createReplyStub, getRouteHandler } from "../testkit/routeHarness";
+import { createInTxHarness } from "../testkit/txHarness";
 
 vi.mock("@/app/share/accessControl", () => ({
     canManageSharing: vi.fn(async () => true),
@@ -77,46 +79,18 @@ let txSessionShareFindFirst: any;
 let txSessionShareDelete: any;
 
 vi.mock("@/storage/inTx", () => {
-    const afterTx = (tx: any, callback: () => void) => {
-        tx.__afterTxCallbacks.push(callback);
-    };
-
-    const inTx = async <T>(fn: (tx: any) => Promise<T>): Promise<T> => {
-        const tx: any = {
-            __afterTxCallbacks: [] as Array<() => void | Promise<void>>,
+    const harness = createInTxHarness(() => ({
             sessionShare: {
                 upsert: (...args: any[]) => txSessionShareUpsert(...args),
                 update: (...args: any[]) => txSessionShareUpdate(...args),
                 findFirst: (...args: any[]) => txSessionShareFindFirst(...args),
                 delete: (...args: any[]) => txSessionShareDelete(...args),
             },
-        };
-
-        const result = await fn(tx);
-        for (const cb of tx.__afterTxCallbacks) {
-            await cb();
-        }
-        return result;
-    };
-
-    return { afterTx, inTx };
+        }));
+    return { afterTx: harness.afterTx, inTx: harness.inTx };
 });
 
-class FakeApp {
-    public authenticate = vi.fn();
-    public routes = new Map<string, any>();
-
-    get() {}
-    post(path: string, _opts: any, handler: any) {
-        this.routes.set(`POST ${path}`, handler);
-    }
-    patch(path: string, _opts: any, handler: any) {
-        this.routes.set(`PATCH ${path}`, handler);
-    }
-    delete(path: string, _opts: any, handler: any) {
-        this.routes.set(`DELETE ${path}`, handler);
-    }
-}
+const ENCRYPTED_DATA_KEY = Buffer.from(Uint8Array.from([0, ...new Array(73).fill(1)])).toString("base64");
 
 describe("shareRoutes (AccountChange integration)", () => {
     beforeEach(() => {
@@ -155,11 +129,11 @@ describe("shareRoutes (AccountChange integration)", () => {
 
     it("POST marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const app = new FakeApp();
+        const app = createFakeRouteApp();
         shareRoutes(app as any);
 
-        const handler = app.routes.get("POST /v1/sessions/:sessionId/shares");
-        const reply = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
+        const handler = getRouteHandler(app, "POST", "/v1/sessions/:sessionId/shares");
+        const reply = createReplyStub();
 
         await handler(
             {
@@ -168,7 +142,7 @@ describe("shareRoutes (AccountChange integration)", () => {
                 body: {
                     userId: "recipient",
                     accessLevel: "edit",
-                    encryptedDataKey: Buffer.from(Uint8Array.from([0, ...new Array(73).fill(1)])).toString("base64"),
+                    encryptedDataKey: ENCRYPTED_DATA_KEY,
                 },
             },
             reply,
@@ -178,18 +152,25 @@ describe("shareRoutes (AccountChange integration)", () => {
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "recipient", kind: "share", entityId: "s1" }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "recipient", kind: "session", entityId: "s1" }));
 
-        expect(buildSessionSharedUpdate).toHaveBeenCalledWith(expect.anything(), 12, expect.any(String));
         expect(emitUpdate).toHaveBeenCalledTimes(1);
-        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({ userId: "recipient" }));
+        expect(emitUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: "recipient",
+                payload: expect.objectContaining({
+                    seq: 12,
+                    body: expect.objectContaining({ t: "session-shared" }),
+                }),
+            }),
+        );
     });
 
     it("PATCH marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const app = new FakeApp();
+        const app = createFakeRouteApp();
         shareRoutes(app as any);
 
-        const handler = app.routes.get("PATCH /v1/sessions/:sessionId/shares/:shareId");
-        const reply = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
+        const handler = getRouteHandler(app, "PATCH", "/v1/sessions/:sessionId/shares/:shareId");
+        const reply = createReplyStub();
 
         await handler(
             {
@@ -204,18 +185,25 @@ describe("shareRoutes (AccountChange integration)", () => {
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "recipient", kind: "share", entityId: "s1" }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "recipient", kind: "session", entityId: "s1" }));
 
-        expect(buildSessionShareUpdatedUpdate).toHaveBeenCalledWith("share-1", "s1", "admin", expect.any(Date), 12, expect.any(String));
         expect(emitUpdate).toHaveBeenCalledTimes(1);
-        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({ userId: "recipient" }));
+        expect(emitUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: "recipient",
+                payload: expect.objectContaining({
+                    seq: 12,
+                    body: expect.objectContaining({ t: "session-share-updated" }),
+                }),
+            }),
+        );
     });
 
     it("DELETE marks owner+recipient share changes (and recipient session) and emits using latest recipient cursor", async () => {
         const { shareRoutes } = await import("./shareRoutes");
-        const app = new FakeApp();
+        const app = createFakeRouteApp();
         shareRoutes(app as any);
 
-        const handler = app.routes.get("DELETE /v1/sessions/:sessionId/shares/:shareId");
-        const reply = { send: vi.fn((p: any) => p), code: vi.fn(() => reply) };
+        const handler = getRouteHandler(app, "DELETE", "/v1/sessions/:sessionId/shares/:shareId");
+        const reply = createReplyStub();
 
         await handler(
             {
@@ -229,8 +217,15 @@ describe("shareRoutes (AccountChange integration)", () => {
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "recipient", kind: "share", entityId: "s1" }));
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "recipient", kind: "session", entityId: "s1" }));
 
-        expect(buildSessionShareRevokedUpdate).toHaveBeenCalledWith("share-1", "s1", 12, expect.any(String));
         expect(emitUpdate).toHaveBeenCalledTimes(1);
-        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({ userId: "recipient" }));
+        expect(emitUpdate).toHaveBeenCalledWith(
+            expect.objectContaining({
+                userId: "recipient",
+                payload: expect.objectContaining({
+                    seq: 12,
+                    body: expect.objectContaining({ t: "session-share-revoked" }),
+                }),
+            }),
+        );
     });
 });
