@@ -4,6 +4,7 @@ import { agent as claude } from '@/backends/claude';
 import { agent as codex } from '@/backends/codex';
 import { agent as gemini } from '@/backends/gemini';
 import { agent as kimi } from '@/backends/kimi';
+import { agent as kilo } from '@/backends/kilo';
 import { agent as opencode } from '@/backends/opencode';
 import { agent as qwen } from '@/backends/qwen';
 import { DEFAULT_CATALOG_AGENT_ID } from './types';
@@ -19,6 +20,7 @@ export const AGENTS: Record<CatalogAgentId, AgentCatalogEntry> = {
   auggie,
   qwen,
   kimi,
+  kilo,
 };
 
 const cachedVendorResumeSupportPromises = new Map<CatalogAgentId, Promise<VendorResumeSupportFn>>();

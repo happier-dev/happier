@@ -5,14 +5,8 @@ import type { CommandHandler } from '@/cli/commandRegistry';
 import type { CloudConnectTarget } from '@/cloud/connectTypes';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 
-import {
-  AGENT_IDS as CATALOG_AGENT_IDS,
-  DEFAULT_AGENT_ID as DEFAULT_CATALOG_AGENT_ID,
-  type AgentId as CatalogAgentId,
-  type VendorResumeSupportLevel,
-} from '@happier-dev/agents';
-
-export { CATALOG_AGENT_IDS, DEFAULT_CATALOG_AGENT_ID };
+export { AGENT_IDS as CATALOG_AGENT_IDS, DEFAULT_AGENT_ID as DEFAULT_CATALOG_AGENT_ID } from '@happier-dev/agents';
+import type { AgentId as CatalogAgentId, VendorResumeSupportLevel } from '@happier-dev/agents';
 export type { CatalogAgentId, VendorResumeSupportLevel };
 
 export type CatalogAcpBackendCreateResult = Readonly<{ backend: AgentBackend }>;
