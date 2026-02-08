@@ -42,6 +42,14 @@ export interface CreateSessionMetadataOptions {
     permissionMode?: PermissionMode;
     /** Timestamp (ms) for permissionMode, used for arbitration across devices (optional) */
     permissionModeUpdatedAt?: number;
+    /** ACP session mode override to publish for the session (optional; ACP backends only) */
+    agentModeId?: string;
+    /** Timestamp (ms) for agentModeId, used for arbitration across devices (optional) */
+    agentModeUpdatedAt?: number;
+    /** Model override to publish for the session (optional) */
+    modelId?: string;
+    /** Timestamp (ms) for modelId, used for arbitration across devices (optional) */
+    modelUpdatedAt?: number;
 }
 
 /**
@@ -102,9 +110,24 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
         flavor: opts.flavor,
         ...(opts.permissionMode && { permissionMode: opts.permissionMode }),
         ...(typeof opts.permissionModeUpdatedAt === 'number' && { permissionModeUpdatedAt: opts.permissionModeUpdatedAt }),
-        // Seed messageQueueV1 so the app can detect queue support without relying on machine capabilities.
-        // Older CLIs won't write this field, so the app will fall back to direct send.
-        messageQueueV1: { v: 1, queue: [] },
+        ...(typeof opts.agentModeId === 'string' && opts.agentModeId.trim()
+            ? {
+                  acpSessionModeOverrideV1: {
+                      v: 1,
+                      updatedAt: typeof opts.agentModeUpdatedAt === 'number' ? opts.agentModeUpdatedAt : Date.now(),
+                      modeId: opts.agentModeId.trim(),
+                  },
+              }
+            : {}),
+        ...(typeof opts.modelId === 'string' && opts.modelId.trim()
+            ? {
+                  modelOverrideV1: {
+                      v: 1,
+                      updatedAt: typeof opts.modelUpdatedAt === 'number' ? opts.modelUpdatedAt : Date.now(),
+                      modelId: opts.modelId.trim(),
+                  },
+              }
+            : {}),
     };
 
     return { state, metadata };

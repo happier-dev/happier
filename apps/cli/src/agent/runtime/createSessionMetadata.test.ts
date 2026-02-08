@@ -1,33 +1,39 @@
-import { describe, expect, it, vi } from 'vitest';
-
-vi.mock('@/configuration', () => ({
-    configuration: {
-        happyHomeDir: '/tmp/happy-home',
-    },
-}));
-
-vi.mock('@/projectPath', () => ({
-    projectPath: () => '/tmp/happy-lib',
-}));
-
-vi.mock('../../package.json', () => ({
-    default: { version: '0.0.0-test' },
-}));
+import { describe, expect, it } from 'vitest';
 
 import { createSessionMetadata } from './createSessionMetadata';
 
 describe('createSessionMetadata', () => {
-    it('seeds messageQueueV1 so the app can safely detect queue support', () => {
+    it('does not seed legacy messageQueueV1 metadata', () => {
         const { metadata } = createSessionMetadata({
             flavor: 'claude',
             machineId: 'machine-1',
             startedBy: 'terminal',
         });
 
-        expect(metadata.messageQueueV1).toEqual({
-            v: 1,
-            queue: [],
-        });
+        expect((metadata as any).messageQueueV1).toBeUndefined();
+    });
+
+    it('seeds acpSessionModeOverrideV1 when agentModeId is provided', () => {
+        const { metadata } = createSessionMetadata({
+            flavor: 'opencode',
+            machineId: 'machine-1',
+            startedBy: 'terminal',
+            agentModeId: 'plan',
+            agentModeUpdatedAt: 123,
+        } as any);
+
+        expect((metadata as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
+    });
+
+    it('seeds modelOverrideV1 when modelId is provided', () => {
+        const { metadata } = createSessionMetadata({
+            flavor: 'codex',
+            machineId: 'machine-1',
+            startedBy: 'terminal',
+            modelId: 'gpt-5-codex-high',
+            modelUpdatedAt: 123,
+        } as any);
+
+        expect((metadata as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 123, modelId: 'gpt-5-codex-high' });
     });
 });
-

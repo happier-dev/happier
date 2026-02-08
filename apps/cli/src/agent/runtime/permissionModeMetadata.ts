@@ -1,4 +1,5 @@
 import type { PermissionMode } from '@/api/types';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 export function maybeUpdatePermissionModeMetadata(opts: {
   currentPermissionMode: PermissionMode | undefined;
@@ -6,17 +7,21 @@ export function maybeUpdatePermissionModeMetadata(opts: {
   updateMetadata: (updater: (current: any) => any) => void;
   nowMs?: () => number;
 }): { didChange: boolean; currentPermissionMode: PermissionMode } {
-  if (opts.currentPermissionMode === opts.nextPermissionMode) {
-    return { didChange: false, currentPermissionMode: opts.nextPermissionMode };
+  const canonicalNext = (parsePermissionIntentAlias(opts.nextPermissionMode) ?? 'default') as PermissionMode;
+  const canonicalCurrent = opts.currentPermissionMode
+    ? ((parsePermissionIntentAlias(opts.currentPermissionMode) ?? opts.currentPermissionMode) as PermissionMode)
+    : undefined;
+
+  if (canonicalCurrent === canonicalNext) {
+    return { didChange: false, currentPermissionMode: canonicalNext };
   }
 
   const nowMs = opts.nowMs ?? Date.now;
   opts.updateMetadata((current) => ({
     ...current,
-    permissionMode: opts.nextPermissionMode,
+    permissionMode: canonicalNext,
     permissionModeUpdatedAt: nowMs(),
   }));
 
-  return { didChange: true, currentPermissionMode: opts.nextPermissionMode };
+  return { didChange: true, currentPermissionMode: canonicalNext };
 }
-

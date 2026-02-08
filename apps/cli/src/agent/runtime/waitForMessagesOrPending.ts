@@ -1,4 +1,4 @@
-import { MessageQueue2 } from '@/utils/MessageQueue2';
+import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 
 export type MessageBatch<T> = {
     message: string;
@@ -12,6 +12,7 @@ export async function waitForMessagesOrPending<T>(opts: {
     abortSignal: AbortSignal;
     popPendingMessage: () => Promise<boolean>;
     waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
+    onMetadataUpdate?: (() => void | Promise<void>) | null;
 }): Promise<MessageBatch<T> | null> {
     while (true) {
         if (opts.abortSignal.aborted) {
@@ -37,21 +38,41 @@ export async function waitForMessagesOrPending<T>(opts: {
         }
 
         try {
-            const winner = await Promise.race([
-                opts.messageQueue
-                    .waitForMessagesAndGetAsString(controller.signal)
-                    .then((batch) => ({ kind: 'batch' as const, batch })),
-                opts.waitForMetadataUpdate(controller.signal).then((ok) => ({ kind: 'meta' as const, ok })),
-            ]);
+            const queueWait = opts.messageQueue
+                .waitForMessagesSignal(controller.signal)
+                .then((hasMessages) => ({ kind: 'queue' as const, hasMessages }));
+            const metaWait = opts.waitForMetadataUpdate(controller.signal).then((ok) => ({ kind: 'meta' as const, ok }));
+
+            const winner = await Promise.race([queueWait, metaWait]);
+
+            // If metadata waiting ended (e.g. disconnect), fall back to waiting for a real message
+            // without repeatedly re-arming the race (which can cause a tight loop).
+            if (winner.kind === 'meta' && !winner.ok) {
+                const queued = await queueWait;
+                if (!queued.hasMessages) {
+                    return null;
+                }
+                return await opts.messageQueue.waitForMessagesAndGetAsString(opts.abortSignal);
+            }
 
             controller.abort('waitForMessagesOrPending');
 
-            if (winner.kind === 'batch') {
-                return winner.batch;
+            if (winner.kind === 'queue') {
+                if (!winner.hasMessages) {
+                    // Aborted/closed while waiting.
+                    return null;
+                }
+                // Collect the batch now (non-racy): avoids the loser draining the queue.
+                return await opts.messageQueue.waitForMessagesAndGetAsString(opts.abortSignal);
             }
 
-            if (!winner.ok) {
-                return null;
+            try {
+                const cb = opts.onMetadataUpdate;
+                if (cb) {
+                    await cb();
+                }
+            } catch {
+                // Non-fatal: metadata notifications should not break the message loop.
             }
 
             // Metadata updated – loop to try popPendingMessage again.

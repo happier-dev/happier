@@ -13,7 +13,7 @@ describe('maybeUpdatePermissionModeMetadata', () => {
       nowMs,
     });
 
-    expect(res).toEqual({ didChange: false, currentPermissionMode: 'acceptEdits' });
+    expect(res).toEqual({ didChange: false, currentPermissionMode: 'safe-yolo' });
     expect(updateMetadata).not.toHaveBeenCalled();
   });
 
@@ -28,15 +28,14 @@ describe('maybeUpdatePermissionModeMetadata', () => {
       nowMs,
     });
 
-    expect(res).toEqual({ didChange: true, currentPermissionMode: 'bypassPermissions' });
+    expect(res).toEqual({ didChange: true, currentPermissionMode: 'yolo' });
     expect(updateMetadata).toHaveBeenCalledTimes(1);
     const updater = updateMetadata.mock.calls[0]?.[0];
     expect(typeof updater).toBe('function');
     expect(updater({ somethingElse: 1 })).toEqual({
       somethingElse: 1,
-      permissionMode: 'bypassPermissions',
+      permissionMode: 'yolo',
       permissionModeUpdatedAt: 456,
     });
   });
 });
-
