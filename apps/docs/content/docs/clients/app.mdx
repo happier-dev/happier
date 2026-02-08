@@ -5,7 +5,23 @@ description: Mobile + web UI configuration.
 
 ## Server URL
 
-The app can use a default server URL, or you can configure a custom server URL for self-hosting.
+The app can use the official Happier server, or you can add one or more custom servers for self-hosting.
 
-For production, we recommend `https://api.happier.dev`.
+### Saved servers + switching
 
+- You can save multiple servers and switch between them.
+- Credentials are stored **per server**, so a hosted account and a self-hosted account won’t overwrite each other.
+- On different servers, accounts are independent even if you use the same login provider.
+- On web, you can switch the server **for this tab** or **make it the device default**.
+
+### Configure-server links (1-click)
+
+Some installers (for example `hstack setup` and Proxmox) print “configure server” links/QRs that open the app/web UI directly on your server configuration screen, prefilled with the correct URL.
+
+## Multi-server workflows
+
+For detailed server profile, switching, and multi-daemon guidance, see [Features → Multi-server](/docs/features/multi-server).
+
+## Notifications
+
+See [Notifications](./notifications) for push notification setup (Expo + APNs/FCM) and self-hosting notes.

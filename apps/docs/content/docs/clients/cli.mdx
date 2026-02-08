@@ -1,6 +1,6 @@
 ---
 title: CLI
-description: Install and run the CLI.
+description: Install, authenticate, and target servers from the CLI.
 ---
 
 ## Install
@@ -9,10 +9,51 @@ description: Install and run the CLI.
 npm install -g @happier-dev/cli
 ```
 
-## Connect to a server
+## Authenticate
 
-Set the server URL (exact env var depends on your CLI configuration):
+```bash
+happier auth login
+```
 
-- For production: `https://api.happier.dev`
-- For local: `http://localhost:3005`
+`happier auth login` prints both web and mobile connection options.  
+When using self-hosted servers, run login against the correct server profile (see below).
 
+Recommended first-run flow:
+
+- Use the mobile app path first (QR/deep link) to sign in/create account and approve terminal connection.
+- If you already use Happier on another device, sign in with that same account.
+- If you open a terminal-connect link while logged out, Happier routes you through sign in and then returns you to terminal approval automatically.
+
+## Server profiles
+
+### Save and switch servers
+
+```bash
+happier server list
+happier server current
+happier server add --name company --server-url https://api.company.example --webapp-url https://app.company.example --use
+happier server use company
+```
+
+### Target a server for one command
+
+Use per-invocation targeting when you do not want to switch the default:
+
+```bash
+happier --server company auth login
+happier --server personal daemon status
+```
+
+You can also use URL flags:
+
+```bash
+happier --server-url https://api.company.example --webapp-url https://app.company.example auth login
+```
+
+## Daemon (background mode)
+
+For always-on background sessions, remote control, and headless servers, see [Daemon](./daemon).
+
+## Multi-server reference
+
+For full multi-server and multi-daemon guidance, see [Features → Multi-server](/docs/features/multi-server).

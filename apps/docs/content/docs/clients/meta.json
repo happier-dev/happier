@@ -3,7 +3,9 @@
   "pages": [
     "index",
     "cli",
-    "app"
+    "daemon",
+    "app",
+    "notifications",
+    "voice"
   ]
 }
-
