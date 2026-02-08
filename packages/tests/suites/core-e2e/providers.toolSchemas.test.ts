@@ -16,7 +16,7 @@ describe('providers: normalized tool schema validation (V2)', () => {
             id: 'm1',
             name: 'Bash',
             input: {
-              _happy: {
+              _happier: {
                 v: 2,
                 protocol: 'acp',
                 provider: 'opencode',
@@ -39,7 +39,7 @@ describe('providers: normalized tool schema validation (V2)', () => {
             callId: 'c1',
             id: 'm2',
             output: {
-              _happy: {
+              _happier: {
                 v: 2,
                 protocol: 'acp',
                 provider: 'opencode',
@@ -72,7 +72,7 @@ describe('providers: normalized tool schema validation (V2)', () => {
             id: 'm1',
             name: 'FutureTool',
             input: {
-              _happy: {
+              _happier: {
                 v: 2,
                 protocol: 'acp',
                 provider: 'future',
@@ -91,7 +91,7 @@ describe('providers: normalized tool schema validation (V2)', () => {
     expect(res.ok).toBe(true);
   });
 
-  it('fails when a normalized tool-call is missing _happy metadata', () => {
+  it('fails when a normalized tool-call is missing _happier metadata', () => {
     const fixturesExamples: Record<string, unknown> = {
       'acp/opencode/tool-call/Bash': [
         {
@@ -114,7 +114,64 @@ describe('providers: normalized tool schema validation (V2)', () => {
     const res = validateNormalizedToolFixturesV2({ fixturesExamples });
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error('expected failure');
-    expect(res.reason).toContain('missing _happy');
+    expect(res.reason).toContain('missing _happier');
+  });
+
+  it('does not require _happier metadata for raw Claude tool trace events', () => {
+    const fixturesExamples: Record<string, unknown> = {
+      'claude/claude/tool-call/Read': [
+        {
+          v: 1,
+          protocol: 'claude',
+          provider: 'claude',
+          kind: 'tool-call',
+          payload: {
+            type: 'tool_use',
+            id: 'toolu_1',
+            name: 'Read',
+            input: { file_path: '/tmp/a.txt' },
+          },
+        },
+      ],
+      'claude/claude/tool-result/Read': [
+        {
+          v: 1,
+          protocol: 'claude',
+          provider: 'claude',
+          kind: 'tool-result',
+          payload: {
+            type: 'tool_result',
+            tool_use_id: 'toolu_1',
+            content: [{ type: 'text', text: 'hello' }],
+          },
+        },
+      ],
+    };
+
+    const res = validateNormalizedToolFixturesV2({ fixturesExamples });
+    expect(res.ok).toBe(true);
+  });
+
+  it('fails when raw Claude tool trace events do not match the expected envelope', () => {
+    const fixturesExamples: Record<string, unknown> = {
+      'claude/claude/tool-call/Read': [
+        {
+          v: 1,
+          protocol: 'claude',
+          provider: 'claude',
+          kind: 'tool-call',
+          payload: {
+            // Missing `type: tool_use` and `id`
+            name: 'Read',
+            input: { file_path: '/tmp/a.txt' },
+          },
+        },
+      ],
+    };
+
+    const res = validateNormalizedToolFixturesV2({ fixturesExamples });
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('expected failure');
+    expect(res.reason).toContain('claude tool-use payload');
   });
 });
-

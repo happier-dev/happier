@@ -4,6 +4,7 @@ import { stableStringifyShape, shapeOf } from '../../src/testkit/providers/shape
 import {
   computeProviderBaselineV1,
   diffProviderBaseline,
+  stableStringifyBaselineShapeEntry,
   type ProviderBaselineV1,
 } from '../../src/testkit/providers/baselines';
 
@@ -134,9 +135,10 @@ describe('providers: baselines', () => {
       fixturesExamples,
     });
 
-    // Mutate observed payload shape to differ.
+    // Mutate observed payload shape to differ in a meaningful way (type change),
+    // while still allowing additive keys elsewhere (which baselines intentionally tolerate).
     const observedExamples: Record<string, unknown> = {
-      a: [{ payload: { a: 1, extra: true } }],
+      a: [{ payload: { a: '1' } }],
     };
 
     const diff = diffProviderBaseline({
@@ -150,9 +152,39 @@ describe('providers: baselines', () => {
     expect(diff.reason).toContain('Payload shape drifted');
 
     // Sanity: expected shape string differs.
-    const expected = baseline.shapesByKey['a'];
+    const expected = stableStringifyBaselineShapeEntry(baseline.shapesByKey['a']);
+    const observed = stableStringifyShape(shapeOf((observedExamples.a as any[])[0].payload));
+    expect(observed).not.toBe(expected);
+  });
+
+  it('does not fail when only `_raw` subtree shape drifts', () => {
+    const fixturesExamples: Record<string, unknown> = {
+      a: [{ payload: { _happier: { v: 2 }, _raw: { a: 1 } } }],
+    };
+
+    const baseline = makeBaseline({
+      providerId: 'p',
+      scenarioId: 's',
+      fixtureKeys: ['a'],
+      fixturesExamples,
+    });
+
+    // Drift only under `_raw` should be ignored by baseline normalization.
+    const observedExamples: Record<string, unknown> = {
+      a: [{ payload: { _happier: { v: 2 }, _raw: { totallyDifferent: { nested: true } } } }],
+    };
+
+    const diff = diffProviderBaseline({
+      baseline,
+      observedFixtureKeys: ['a'],
+      observedExamples,
+      allowExtraKeys: true,
+    });
+    expect(diff.ok).toBe(true);
+
+    // Sanity: the raw shape strings would differ without normalization.
+    const expected = stableStringifyBaselineShapeEntry(baseline.shapesByKey['a']);
     const observed = stableStringifyShape(shapeOf((observedExamples.a as any[])[0].payload));
     expect(observed).not.toBe(expected);
   });
 });
-
