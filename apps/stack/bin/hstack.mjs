@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import { commandHelpArgs, renderhstackRootHelp, resolvehstackCommand } from '../scripts/utils/cli/cli_registry.mjs';
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../scripts/utils/paths/canonical_home.mjs';
 import { resolveStackEnvPath } from '../scripts/utils/paths/paths.mjs';
+import { SANDBOX_PRESERVE_KEYS, scrubHappierStackEnv } from '../scripts/utils/env/scrub_env.mjs';
+import { maybeAutoUpdateNotice as maybeAutoUpdateNoticeShared } from '../scripts/utils/update/auto_update_notice.mjs';
 
 function getCliRootDir() {
   return dirname(dirname(fileURLToPath(import.meta.url)));
@@ -165,31 +167,19 @@ function applySandboxDirIfRequested(argv) {
   // Keep only a tiny set of sandbox-safe globals; everything else should be driven by flags
   // and stack env files inside the sandbox.
   const preserved = new Map();
-  const keepKeys = [
-    'HAPPIER_STACK_VERBOSE',
-    'HAPPIER_STACK_INVOKED_CWD',
-    'HAPPIER_STACK_SANDBOX_DIR',
-    'HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL',
-    'HAPPIER_STACK_UPDATE_CHECK',
-    'HAPPIER_STACK_UPDATE_CHECK_INTERVAL_MS',
-    'HAPPIER_STACK_UPDATE_NOTIFY_INTERVAL_MS',
-  ];
-  for (const k of keepKeys) {
+  for (const k of SANDBOX_PRESERVE_KEYS) {
     if (process.env[k] != null && String(process.env[k]).trim() !== '') {
       preserved.set(k, process.env[k]);
     }
   }
+  const scrubbed = scrubHappierStackEnv(process.env, {
+    keepHappierStackKeys: Array.from(preserved.keys()),
+    clearUnprefixedKeys: ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL'],
+  });
   for (const k of Object.keys(process.env)) {
-    if (k.startsWith('HAPPIER_STACK_')) {
-      delete process.env[k];
-      continue;
-    }
-    // Also clear unprefixed Happier vars; sandbox commands should compute these from stack state.
-    if (k === 'HAPPIER_HOME_DIR' || k === 'HAPPIER_SERVER_URL' || k === 'HAPPIER_WEBAPP_URL') {
-      delete process.env[k];
-    }
+    if (!(k in scrubbed)) delete process.env[k];
   }
-  for (const [k, v] of preserved.entries()) {
+  for (const [k, v] of Object.entries(scrubbed)) {
     process.env[k] = v;
   }
 
@@ -227,85 +217,13 @@ function applySandboxDirIfRequested(argv) {
 }
 
 function maybeAutoUpdateNotice(cliRootDir, cmd) {
-  // Non-blocking, cached update checks:
-  // - never run network calls in-process
-  // - optionally print a notice (TTY only) if cache says an update is available
-  // - periodically kick off a background check that refreshes the cache
-  const enabled = (process.env.HAPPIER_STACK_UPDATE_CHECK ?? '1') !== '0';
-  if (!enabled) return;
-  // Never do background checks for non-interactive invocations (CI, LaunchAgents, scripts).
-  if (!process.stdout.isTTY) return;
-  if (process.env.HAPPIER_STACK_UPDATE_CHECK_SPAWNED === '1') return;
-  if (cmd === 'self' || cmd === 'help' || cmd === '--help' || cmd === '-h') return;
-
-  const homeDir = resolveHomeDir();
-  const cacheDir = join(homeDir, 'cache');
-  const cachePath = join(cacheDir, 'update.json');
-
-  const intervalMsRaw = (process.env.HAPPIER_STACK_UPDATE_CHECK_INTERVAL_MS ?? '').trim();
-  const intervalMs = intervalMsRaw ? Number(intervalMsRaw) : 24 * 60 * 60 * 1000;
-  const notifyIntervalMsRaw = (process.env.HAPPIER_STACK_UPDATE_NOTIFY_INTERVAL_MS ?? '').trim();
-  const notifyIntervalMs = notifyIntervalMsRaw ? Number(notifyIntervalMsRaw) : 24 * 60 * 60 * 1000;
-
-  let cached = null;
-  try {
-    if (existsSync(cachePath)) {
-      cached = JSON.parse(readFileSync(cachePath, 'utf-8'));
-    }
-  } catch {
-    cached = null;
-  }
-
-  const now = Date.now();
-  const checkedAt = typeof cached?.checkedAt === 'number' ? cached.checkedAt : 0;
-  const shouldCheck = !checkedAt || (Number.isFinite(intervalMs) && now - checkedAt > intervalMs);
-
-  const updateAvailable = Boolean(cached?.updateAvailable);
-  const latest = typeof cached?.latest === 'string' ? cached.latest : '';
-  const current = typeof cached?.current === 'string' ? cached.current : '';
-  const notifiedAt = typeof cached?.notifiedAt === 'number' ? cached.notifiedAt : 0;
-  const shouldNotify =
-    Boolean(updateAvailable && latest) &&
-    Boolean(process.stdout.isTTY) &&
-    (!notifiedAt || (Number.isFinite(notifyIntervalMs) && now - notifiedAt > notifyIntervalMs));
-
-  if (shouldNotify) {
-    const from = current ? current : 'current';
-    // Keep it short; no network calls here.
-    console.error(`[hstack] update available: ${from} -> ${latest} (run: hstack self update)`);
-    try {
-      mkdirSync(cacheDir, { recursive: true });
-      writeFileSync(
-        cachePath,
-        JSON.stringify(
-          {
-            ...(cached ?? {}),
-            notifiedAt: now,
-          },
-          null,
-          2
-        ) + '\n',
-        'utf-8'
-      );
-    } catch {
-      // ignore
-    }
-  }
-
-  if (!shouldCheck) return;
-
-  // Kick off a background refresh (best-effort, no logs).
-  try {
-    const child = spawn(process.execPath, [join(cliRootDir, 'scripts', 'self.mjs'), 'check', '--quiet'], {
-      stdio: 'ignore',
-      cwd: cliRootDir,
-      env: { ...process.env, HAPPIER_STACK_UPDATE_CHECK_SPAWNED: '1' },
-      detached: true,
-    });
-    child.unref();
-  } catch {
-    // ignore
-  }
+  maybeAutoUpdateNoticeShared({
+    cliRootDir,
+    cmd,
+    homeDir: resolveHomeDir(),
+    isTTY: Boolean(process.stdout.isTTY),
+    env: process.env,
+  });
 }
 
 function usage() {

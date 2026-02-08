@@ -15,19 +15,29 @@ const EXTRA_COMPONENTS = ['stacks'];
 const VALID_TARGETS = ['ui', 'cli', 'server'];
 const VALID_COMPONENTS = [...VALID_TARGETS, ...EXTRA_COMPONENTS, 'all'];
 
-function targetFromLegacyComponent(component) {
+function targetFromComponentToken(component) {
   const c = String(component ?? '').trim();
+  if (!c) return null;
+  if (c === 'ui' || c === 'cli' || c === 'server' || c === 'stacks' || c === 'all') return c;
+
+  // Modern (Happier) component ids:
+  if (c === 'happier-ui') return 'ui';
+  if (c === 'happier-cli') return 'cli';
+  if (c === 'happier-server' || c === 'happier-server-light') return 'server';
+
+  // Legacy (Happy) ids:
   if (c === 'happy') return 'ui';
   if (c === 'happy-cli') return 'cli';
   if (c === 'happy-server' || c === 'happy-server-light') return 'server';
+
   return null;
 }
 
-function legacyComponentFromTarget(target) {
+function componentFromTarget(target) {
   const t = String(target ?? '').trim();
-  if (t === 'ui') return 'happy';
-  if (t === 'cli') return 'happy-cli';
-  if (t === 'server') return 'happy-server';
+  if (t === 'ui') return 'happier-ui';
+  if (t === 'cli') return 'happier-cli';
+  if (t === 'server') return 'happier-server';
   return null;
 }
 
@@ -38,11 +48,7 @@ function normalizeTargetsOrThrow(rawTargets) {
   const mapped = requested
     .map((t) => {
       const lower = t.toLowerCase();
-      if (lower === 'all') return 'all';
-      if (lower === 'stacks') return 'stacks';
-      if (VALID_TARGETS.includes(lower)) return lower;
-      const legacy = targetFromLegacyComponent(lower);
-      return legacy ?? null;
+      return targetFromComponentToken(lower);
     })
     .filter(Boolean);
 
@@ -82,16 +88,17 @@ function pickTestScript(scripts) {
 
 async function resolveTestDirForComponent({ component, dir }) {
   // Monorepo mode:
-  // In the Happy monorepo, the "happy" component dir is often set to `<repo>/expo-app`
-  // so dev/start can operate from the app package. For validation, we want the monorepo
-  // root scripts (which run expo-app + cli + server together).
-  if (component !== 'happy') return dir;
-  const isLegacyExpoApp = dir.endsWith(`${sep}expo-app`) || dir.endsWith('/expo-app');
-  const isPackagesHappyApp =
-    dir.endsWith(`${sep}packages${sep}happy-app`) || dir.endsWith('/apps/ui');
-  if (!isLegacyExpoApp && !isPackagesHappyApp) return dir;
+  // When the UI component dir resolves to a subdirectory (apps/ui, legacy expo-app, etc),
+  // we prefer running tests from the monorepo root scripts when available.
+  if (component !== 'happier-ui') return dir;
 
-  const parent = isPackagesHappyApp ? dirname(dirname(dir)) : dirname(dir);
+  const abs = dir;
+  const isLegacyExpoApp = abs.endsWith(`${sep}expo-app`) || abs.endsWith('/expo-app');
+  const isAppsUi = abs.endsWith(`${sep}apps${sep}ui`) || abs.endsWith('/apps/ui');
+  const isLegacyPackagesApp = abs.endsWith(`${sep}packages${sep}app`) || abs.endsWith('/packages/app');
+  if (!isLegacyExpoApp && !isAppsUi && !isLegacyPackagesApp) return dir;
+
+  const parent = isAppsUi || isLegacyPackagesApp ? dirname(dirname(abs)) : dirname(abs);
   try {
     const scripts = await readPackageJsonScripts(parent);
     if (!scripts) return dir;
@@ -138,21 +145,21 @@ async function main() {
   const rootDir = getRootDir(import.meta.url);
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
-  const inferredLegacy =
+  const inferred =
     positionals.length === 0
       ? inferComponentFromCwd({
           rootDir,
           invokedCwd: getInvokedCwd(process.env),
-          components: ['happy', 'happy-cli', 'happy-server'],
+          components: ['happier-ui', 'happier-cli', 'happier-server'],
         })
       : null;
-  if (inferredLegacy) {
+  if (inferred) {
     if (!(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
-      process.env.HAPPIER_STACK_REPO_DIR = inferredLegacy.repoDir;
+      process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
     }
   }
 
-  const inferredTarget = inferredLegacy ? targetFromLegacyComponent(inferredLegacy.component) : null;
+  const inferredTarget = inferred ? targetFromComponentToken(inferred.component) : null;
   const requested = normalizeTargetsOrThrow(positionals.length ? positionals : inferredTarget ? [inferredTarget] : ['all']);
   const wantAll = requested.includes('all');
   // Default `all` excludes "stacks" to avoid coupling to stack tests and their baselines.
@@ -185,7 +192,7 @@ async function main() {
       continue;
     }
 
-    const component = legacyComponentFromTarget(target);
+    const component = componentFromTarget(target);
     const rawDir = getComponentDir(rootDir, component);
     const dir = await resolveTestDirForComponent({ component, dir: rawDir });
     if (!(await pathExists(dir))) {

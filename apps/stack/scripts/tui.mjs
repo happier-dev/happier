@@ -13,6 +13,8 @@ import { commandExists } from './utils/proc/commands.mjs';
 import { renderQrAscii } from './utils/ui/qr.mjs';
 import { resolveMobileQrPayload } from './utils/mobile/dev_client_links.mjs';
 import { worktreeSpecFromDir } from './utils/git/worktrees.mjs';
+import { stopStackForTuiExit } from './utils/tui/cleanup.mjs';
+import { terminateProcessGroup } from './utils/proc/terminate.mjs';
 
 function nowTs() {
   const d = new Date();
@@ -113,6 +115,13 @@ function inferStackNameFromForwardedArgs(args) {
   }
   // Fallback: use current environment stack (or main).
   return (process.env.HAPPIER_STACK_STACK ?? '').trim() || 'main';
+}
+
+function isStackStartLikeForwardedArgs(args) {
+  const i = args.indexOf('stack');
+  if (i < 0) return false;
+  const subcmd = (args[i + 1] ?? '').toString().trim();
+  return subcmd === 'dev' || subcmd === 'start';
 }
 
 const readEnvObject = readEnvObjectFromFile;
@@ -791,7 +800,11 @@ async function main() {
     process.stdout.write('\x1b[?25h');
   }
 
-  function shutdown() {
+  let exiting = false;
+  async function shutdownAndExit(code = 0) {
+    if (exiting) return;
+    exiting = true;
+
     clearInterval(summaryTimer);
     try {
       process.stdin.setRawMode(false);
@@ -803,16 +816,44 @@ async function main() {
     } catch {
       // ignore
     }
-    try {
-      if (child.exitCode == null && child.pid) {
-        if (process.platform !== 'win32') process.kill(-child.pid, 'SIGINT');
-        else child.kill('SIGINT');
-      }
-    } catch {
-      // ignore
+    const childPid = Number(child?.pid);
+    if (child.exitCode == null && Number.isFinite(childPid) && childPid > 1) {
+      // Ensure the child is actually gone before stack infra cleanup, otherwise a still-running
+      // watch process can immediately respawn server/daemon and re-lock the DB.
+      await terminateProcessGroup(childPid, { graceMs: 900 });
     }
+
+    // Best-effort cleanup: when the TUI runs a long-lived `stack dev/start` command, ensure all
+    // stack-owned infra processes are stopped (server/expo/daemon) even if the child exits early.
+    let cleanupError = null;
+    if (isStackStartLikeForwardedArgs(forwarded)) {
+      try {
+        await stopStackForTuiExit({ rootDir, stackName, json: false, noDocker: false });
+      } catch (e) {
+        cleanupError = e;
+        logOrch(`stop failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     process.stdout.write('\x1b[2J\x1b[H\x1b[?25h');
+    if (cleanupError) {
+      // eslint-disable-next-line no-console
+      console.error(`[tui] cleanup failed: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
+    }
+    process.exit(code);
   }
+
+  function shutdown() {
+    shutdownAndExit(0).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error(`[tui] shutdown error: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
+    });
+  }
+
+  // Ensure we still clean up if the process receives an actual signal (e.g. watch reload / external stop).
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 
   process.stdin.setRawMode(true);
   process.stdin.resume();
@@ -820,7 +861,7 @@ async function main() {
     const s = d.toString('utf-8');
     if (s === '\u0003' || s === 'q') {
       shutdown();
-      process.exit(0);
+      return;
     }
     if (s === '\t') return focusNext(+1);
     if (s === '\x1b[Z') return focusNext(-1);

@@ -9,16 +9,19 @@ import { isStackMode, resolveDefaultStackReviewComponents } from './utils/review
 import { planCommitChunks } from './utils/review/chunks.mjs';
 import { planPathSlices } from './utils/review/slices.mjs';
 import { createHeadSliceCommits, getChangedOps } from './utils/review/head_slice.mjs';
+import { assertSafeRelativeRepoPath, getUncommittedOps } from './utils/review/uncommitted_ops.mjs';
 import { runWithConcurrencyLimit } from './utils/proc/parallel.mjs';
 import { runCodeRabbitReview } from './utils/review/runners/coderabbit.mjs';
 import { extractCodexReviewFromJsonl, runCodexReview } from './utils/review/runners/codex.mjs';
 import { detectAugmentAuthError, runAugmentReview } from './utils/review/runners/augment.mjs';
+import { detectClaudeAuthError, runClaudeReview } from './utils/review/runners/claude.mjs';
 import { formatTriageMarkdown, parseCodeRabbitPlainOutput, parseCodexReviewText } from './utils/review/findings.mjs';
 import { runSlicedJobs } from './utils/review/sliced_runner.mjs';
 import { seedAugmentHomeFromRealHome, seedCodeRabbitHomeFromRealHome, seedCodexHomeFromRealHome } from './utils/review/tool_home_seed.mjs';
-import { join } from 'node:path';
+import { shouldUseUncommittedPathSlices } from './utils/review/slice_mode.mjs';
+import { dirname, join } from 'node:path';
 import { ensureDir } from './utils/fs/ops.mjs';
-import { copyFile, writeFile } from 'node:fs/promises';
+import { copyFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { runCapture } from './utils/proc/proc.mjs';
 import { withDetachedWorktree } from './utils/review/detached_worktree.mjs';
@@ -26,7 +29,7 @@ import { withDetachedWorktree } from './utils/review/detached_worktree.mjs';
 const VALID_TARGETS = ['ui', 'cli', 'server'];
 const DEFAULT_TARGETS = VALID_TARGETS;
 const VALID_COMPONENTS = ['happier-ui', 'happier-cli', 'happier-server'];
-const VALID_REVIEWERS = ['coderabbit', 'codex', 'augment'];
+const VALID_REVIEWERS = ['coderabbit', 'codex', 'augment', 'claude'];
 const VALID_DEPTHS = ['deep', 'normal'];
 const VALID_CHANGE_TYPES = ['committed', 'uncommitted', 'all'];
 const DEFAULT_REVIEW_MAX_FILES = 50;
@@ -52,10 +55,56 @@ function normalizeChangeType(raw) {
   throw new Error(`[review] invalid --type=${raw} (expected: ${VALID_CHANGE_TYPES.join(' | ')})`);
 }
 
+function subsetSet(set, allowed) {
+  const out = new Set();
+  for (const v of set) {
+    if (allowed.has(v)) out.add(v);
+  }
+  return out;
+}
+
+async function applyUncommittedSlice({ srcRepoDir, worktreeDir, checkoutPaths, removePaths }) {
+  for (const rel of removePaths) {
+    const safeRel = assertSafeRelativeRepoPath(rel);
+    // Best-effort: remove file/dir if it exists.
+    // This is an ephemeral review worktree; being defensive is fine.
+    // eslint-disable-next-line no-await-in-loop
+    await rm(join(worktreeDir, safeRel), { recursive: true, force: true });
+  }
+
+  for (const rel of checkoutPaths) {
+    const safeRel = assertSafeRelativeRepoPath(rel);
+    const dest = join(worktreeDir, safeRel);
+    const src = join(srcRepoDir, safeRel);
+    if (!existsSync(src)) {
+      // A file can disappear between planning and application if the worktree changes mid-run.
+      // Treat missing sources as a deletion in the ephemeral review worktree.
+      // eslint-disable-next-line no-await-in-loop
+      await rm(dest, { recursive: true, force: true });
+      continue;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await ensureDir(dirname(dest));
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      await copyFile(src, dest);
+    } catch (e) {
+      if (e && typeof e === 'object' && 'code' in e && e.code === 'ENOENT') {
+        // A file can disappear between planning and application if the worktree changes mid-run.
+        // Treat missing sources as a deletion in the ephemeral review worktree.
+        // eslint-disable-next-line no-await-in-loop
+        await rm(dest, { recursive: true, force: true });
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 function usage() {
   return [
     '[review] usage:',
-    '  hstack tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment] [--type=committed|uncommitted|all] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
+    '  hstack tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment,claude] [--type=committed|uncommitted|all] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--codex-model=<id>] [--claude-model=<id>] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
     '',
     'targets:',
     `  ${[...VALID_TARGETS, 'all'].join(' | ')}`,
@@ -136,6 +185,11 @@ function tailLines(text, n) {
 function detectCodeRabbitAuthError({ stdout, stderr }) {
   const combined = `${stdout ?? ''}\n${stderr ?? ''}`;
   return combined.includes('Authentication required') && combined.includes("coderabbit auth login");
+}
+
+function detectCodeRabbitNoFilesToReview({ stdout, stderr }) {
+  const combined = `${stdout ?? ''}\n${stderr ?? ''}`.toLowerCase();
+  return combined.includes('no files to review');
 }
 
 function detectCodexUsageLimit({ stdout, stderr }) {
@@ -284,6 +338,18 @@ function buildCodexMonorepoSlicePrompt({ sliceLabel, baseCommit, baseRef }) {
   ].join('\n');
 }
 
+function buildUncommittedSlicePrompt({ sliceLabel, basePrompt }) {
+  return [
+    `Slice: ${sliceLabel}`,
+    '- The worktree is pre-scoped for this slice only.',
+    '- Files outside this slice may be intentionally absent in this temporary worktree.',
+    '- Do not file "missing file/module" findings unless the missing path is part of this slice diff.',
+    '- Review only the uncommitted changes currently present in this worktree.',
+    '',
+    basePrompt,
+  ].join('\n');
+}
+
 async function gitLines({ cwd, args, env }) {
   const out = await runCapture('git', args, { cwd, env });
   return String(out ?? '')
@@ -370,6 +436,7 @@ async function main() {
     coderabbit: reviewers.includes('coderabbit'),
     codex: reviewers.includes('codex'),
     augment: reviewers.includes('augment'),
+    claude: reviewers.includes('claude'),
   });
 
   const inferred = positionals.length === 0 ? resolveComponentFromCwdOrNull({ rootDir, invokedCwd }) : null;
@@ -424,6 +491,8 @@ async function main() {
     })()
     : changeType;
   const chunkingMode = (kv.get('--chunking') ?? 'auto').toString().trim().toLowerCase();
+  const codexModelFlag = (kv.get('--codex-model') ?? '').toString().trim();
+  const claudeModelFlag = (kv.get('--claude-model') ?? '').toString().trim();
   const augmentModelFlag = (kv.get('--augment-model') ?? '').toString().trim();
   const augmentMaxTurnsFlag = (kv.get('--augment-max-turns') ?? '').toString().trim();
   const chunkMaxFilesRaw = (kv.get('--chunk-max-files') ?? '').toString().trim();
@@ -445,8 +514,22 @@ async function main() {
     throw new Error('[review] invalid --chunking (expected: auto|head-slice|commit-window)');
   }
 
+  if (codexModelFlag) process.env.HAPPIER_STACK_CODEX_MODEL = codexModelFlag;
+  if (claudeModelFlag) process.env.HAPPIER_STACK_CLAUDE_MODEL = claudeModelFlag;
   if (augmentModelFlag) process.env.HAPPIER_STACK_AUGMENT_MODEL = augmentModelFlag;
   if (augmentMaxTurnsFlag) process.env.HAPPIER_STACK_AUGMENT_MAX_TURNS = augmentMaxTurnsFlag;
+
+  // Review artifacts: always create a per-run directory containing raw outputs + a triage checklist.
+  const reviewsRootDir = join(rootDir, '.project', 'reviews');
+  await ensureDir(reviewsRootDir);
+  const runLabelOverride = (kv.get('--run-label') ?? '').toString().trim();
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim();
+  const defaultLabel = `review-${ts}${stackName ? `-${sanitizeLabel(stackName)}` : ''}`;
+  const runLabel = sanitizeLabel(runLabelOverride || defaultLabel) || defaultLabel;
+  const runDir = join(reviewsRootDir, runLabel);
+  await ensureDir(runDir);
+  await ensureDir(join(runDir, 'raw'));
 
   const deepInstructionsPath = join(rootDir, 'scripts', 'utils', 'review', 'instructions', 'deep.md');
   const coderabbitConfigFiles = depth === 'deep' ? [deepInstructionsPath] : [];
@@ -474,7 +557,7 @@ async function main() {
   if (reviewers.includes('codex')) {
     const codexHomeKey = 'HAPPIER_STACK_CODEX_HOME_DIR';
     if (!(process.env[codexHomeKey] ?? '').toString().trim()) {
-      process.env[codexHomeKey] = join(rootDir, '.project', 'codex-home');
+      process.env[codexHomeKey] = join(runDir, 'tool-homes', 'codex');
     }
     await ensureDir(process.env[codexHomeKey]);
 
@@ -540,18 +623,6 @@ async function main() {
     ? [{ component: 'monorepo', repoDir: monorepoRoot, monorepo: true }]
     : resolved.map((x) => ({ component: x.component, repoDir: x.repoDir, monorepo: false }));
 
-  // Review artifacts: always create a per-run directory containing raw outputs + a triage checklist.
-  const reviewsRootDir = join(rootDir, '.project', 'reviews');
-  await ensureDir(reviewsRootDir);
-  const runLabelOverride = (kv.get('--run-label') ?? '').toString().trim();
-  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-  const stackName = (process.env.HAPPIER_STACK_STACK ?? '').toString().trim();
-  const defaultLabel = `review-${ts}${stackName ? `-${sanitizeLabel(stackName)}` : ''}`;
-  const runLabel = sanitizeLabel(runLabelOverride || defaultLabel) || defaultLabel;
-  const runDir = join(reviewsRootDir, runLabel);
-  await ensureDir(runDir);
-  await ensureDir(join(runDir, 'raw'));
-
   const jobResults = await runWithConcurrencyLimit({
     items: jobs,
     limit,
@@ -567,8 +638,11 @@ async function main() {
 
       const maxFiles = Number.isFinite(chunkMaxFiles) && chunkMaxFiles > 0 ? chunkMaxFiles : 300;
       const sliceConcurrency = Math.max(1, Math.floor(limit / Math.max(1, reviewers.length)));
-      const wantChunksCoderabbit = coderabbitType === 'committed' ? (coderabbitChunksOverride ?? globalChunks) : false;
-      const wantChunksCodex = changeType === 'committed' ? (codexChunksOverride ?? globalChunks) : false;
+      const wantChunksCoderabbit =
+        coderabbitType === 'committed' || coderabbitType === 'uncommitted'
+          ? (coderabbitChunksOverride ?? globalChunks)
+          : false;
+      const wantChunksCodex = codexChunksOverride ?? globalChunks;
       const wantChunksAugment = changeType === 'committed' ? (augmentChunksOverride ?? globalChunks) : false;
       const effectiveChunking = chunkingMode === 'auto' ? (monorepo ? 'head-slice' : 'commit-window') : chunkingMode;
 
@@ -582,11 +656,91 @@ async function main() {
       const perReviewer = await Promise.all(
         reviewers.map(async (reviewer) => {
           if (reviewer === 'coderabbit') {
-            const fileCount = await countChangedFiles({ cwd: repoDir, env: process.env, base: base.baseRef });
+            const uncommittedOps = coderabbitType === 'uncommitted' ? await getUncommittedOps({ cwd: repoDir, env: process.env }) : null;
+            const fileCount =
+              coderabbitType === 'uncommitted'
+                ? (uncommittedOps?.all?.size ?? 0)
+                : await countChangedFiles({ cwd: repoDir, env: process.env, base: base.baseRef });
             const autoChunks = fileCount > maxFiles;
 
             let coderabbitBaseCommit = null;
             let note = '';
+
+            // Uncommitted mode: CodeRabbit has a hard max-files limit. If exceeded, run in path slices
+            // inside ephemeral detached worktrees so each slice stays under the limit.
+            if (coderabbitType === 'uncommitted' && fileCount > maxFiles && (wantChunksCoderabbit ?? autoChunks)) {
+              const ops = uncommittedOps ?? (await getUncommittedOps({ cwd: repoDir, env: process.env }));
+              const slices = planPathSlices({ changedPaths: Array.from(ops.all), maxFiles });
+
+              const sliceItems = slices.map((slice, i) => ({ slice, index: i + 1, of: slices.length }));
+              const sliceResults = await runSlicedJobs({
+                items: sliceItems,
+                limit: sliceConcurrency,
+                run: async ({ slice, index, of }) => {
+                  const logFile = join(runDir, 'raw', `coderabbit-slice-${index}-of-${of}-${sanitizeLabel(slice.label)}.log`);
+                  const rr = await withDetachedWorktree(
+                    { repoDir, headCommit: 'HEAD', label: `coderabbit-uncommitted-${index}-of-${of}`, env: process.env },
+                    async (worktreeDir) => {
+                      const allowed = new Set(slice.paths);
+                      const sliceCheckout = subsetSet(ops.checkout, allowed);
+                      const sliceRemove = subsetSet(ops.remove, allowed);
+                      await applyUncommittedSlice({
+                        srcRepoDir: repoDir,
+                        worktreeDir,
+                        checkoutPaths: sliceCheckout,
+                        removePaths: sliceRemove,
+                      });
+                      return await runCodeRabbitReview({
+                        repoDir: worktreeDir,
+                        baseRef: null,
+                        baseCommit: null,
+                        env: process.env,
+                        type: coderabbitType,
+                        configFiles: coderabbitConfigFiles,
+                        streamLabel: stream ? `monorepo:coderabbit:${index}/${of}` : undefined,
+                        teeFile: logFile,
+                        teeLabel: `monorepo:coderabbit:${index}/${of}`,
+                      });
+                    }
+                  );
+                  const noFilesToReview = detectCodeRabbitNoFilesToReview({ stdout: rr.stdout, stderr: rr.stderr });
+                  const ok = Boolean(rr.ok) || noFilesToReview;
+                  return {
+                    index,
+                    of,
+                    slice: slice.label,
+                    fileCount: slice.paths.length,
+                    logFile,
+                    ok,
+                    exitCode: ok ? 0 : rr.exitCode,
+                    signal: rr.signal,
+                    durationMs: rr.durationMs,
+                    stdout: rr.stdout ?? '',
+                    stderr: rr.stderr ?? '',
+                  };
+                },
+                shouldAbortEarly: (r) => detectCodeRabbitAuthError({ stdout: r?.stdout, stderr: r?.stderr }),
+              });
+
+              if (sliceResults.length === 1 && detectCodeRabbitAuthError(sliceResults[0])) {
+                const msg = `[review] coderabbit auth required: run 'coderabbit auth login' in an interactive session, then re-run this review.`;
+                // eslint-disable-next-line no-console
+                console.error(msg);
+              }
+
+              const okAll = sliceResults.every((r) => r.ok);
+              return {
+                reviewer,
+                ok: okAll,
+                exitCode: okAll ? 0 : 1,
+                signal: null,
+                durationMs: sliceResults.reduce((acc, r) => acc + (r.durationMs ?? 0), 0),
+                stdout: '',
+                stderr: '',
+                note: `uncommitted slices: ${sliceResults.length} slices (maxFiles=${maxFiles})`,
+                slices: sliceResults,
+              };
+            }
 
             // Monorepo: prefer HEAD-sliced chunking so each slice is reviewed in the final HEAD state.
             if (monorepo && effectiveChunking === 'head-slice' && (wantChunksCoderabbit ?? autoChunks)) {
@@ -626,14 +780,16 @@ async function main() {
                       });
                     }
                   );
+                  const noFilesToReview = detectCodeRabbitNoFilesToReview({ stdout: rr.stdout, stderr: rr.stderr });
+                  const ok = Boolean(rr.ok) || noFilesToReview;
                   return {
                     index,
                     of,
                     slice: slice.label,
                     fileCount: slice.paths.length,
                     logFile,
-                    ok: Boolean(rr.ok),
-                    exitCode: rr.exitCode,
+                    ok,
+                    exitCode: ok ? 0 : rr.exitCode,
                     signal: rr.signal,
                     durationMs: rr.durationMs,
                     stdout: rr.stdout ?? '',
@@ -784,8 +940,102 @@ async function main() {
           if (reviewer === 'codex') {
             const jsonMode = json;
             const usePromptMode = depth === 'deep' || changeType === 'all';
-            const fileCount = await countChangedFiles({ cwd: repoDir, env: process.env, base: base.baseRef });
-            const autoChunks = usePromptMode && fileCount > maxFiles;
+            const uncommittedOps = changeType === 'uncommitted' ? await getUncommittedOps({ cwd: repoDir, env: process.env }) : null;
+            const fileCount =
+              changeType === 'uncommitted'
+                ? (uncommittedOps?.all?.size ?? 0)
+                : await countChangedFiles({ cwd: repoDir, env: process.env, base: base.baseRef });
+            const autoChunks = changeType === 'uncommitted' ? fileCount > maxFiles : usePromptMode && fileCount > maxFiles;
+
+            if (
+              monorepo &&
+              effectiveChunking === 'head-slice' &&
+              shouldUseUncommittedPathSlices({
+                reviewer: 'codex',
+                changeType,
+                fileCount,
+                maxFiles,
+                chunksPreference: wantChunksCodex,
+              })
+            ) {
+              const ops = uncommittedOps ?? (await getUncommittedOps({ cwd: repoDir, env: process.env }));
+              const slices = planPathSlices({ changedPaths: Array.from(ops.all), maxFiles });
+
+              const sliceItems = slices.map((slice, i) => ({ slice, index: i + 1, of: slices.length }));
+              const sliceResults = await runSlicedJobs({
+                items: sliceItems,
+                limit: sliceConcurrency,
+                run: async ({ slice, index, of }) => {
+                  const logFile = join(runDir, 'raw', `codex-slice-${index}-of-${of}-${sanitizeLabel(slice.label)}.log`);
+                  const rr = await withDetachedWorktree(
+                    { repoDir, headCommit: 'HEAD', label: `codex-uncommitted-${index}-of-${of}`, env: process.env },
+                    async (worktreeDir) => {
+                      const allowed = new Set(slice.paths);
+                      const sliceCheckout = subsetSet(ops.checkout, allowed);
+                      const sliceRemove = subsetSet(ops.remove, allowed);
+                      await applyUncommittedSlice({
+                        srcRepoDir: repoDir,
+                        worktreeDir,
+                        checkoutPaths: sliceCheckout,
+                        removePaths: sliceRemove,
+                      });
+                      const prompt = usePromptMode
+                        ? buildUncommittedSlicePrompt({
+                            sliceLabel: slice.label,
+                            basePrompt: buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType }),
+                          })
+                        : '';
+                      return await runCodexReview({
+                        repoDir: worktreeDir,
+                        baseRef: null,
+                        env: process.env,
+                        jsonMode,
+                        model: process.env.HAPPIER_STACK_CODEX_MODEL,
+                        prompt,
+                        streamLabel: stream && !jsonMode ? `monorepo:codex:${index}/${of}` : undefined,
+                        teeFile: logFile,
+                        teeLabel: `monorepo:codex:${index}/${of}`,
+                      });
+                    }
+                  );
+                  const extracted = jsonMode ? extractCodexReviewFromJsonl(rr.stdout ?? '') : null;
+                  return {
+                    index,
+                    of,
+                    slice: slice.label,
+                    fileCount: slice.paths.length,
+                    logFile,
+                    ok: Boolean(rr.ok),
+                    exitCode: rr.exitCode,
+                    signal: rr.signal,
+                    durationMs: rr.durationMs,
+                    stdout: rr.stdout ?? '',
+                    stderr: rr.stderr ?? '',
+                    review_output: extracted,
+                  };
+                },
+                shouldAbortEarly: (r) => detectCodexUsageLimit({ stdout: r?.stdout, stderr: r?.stderr }),
+              });
+
+              if (sliceResults.length === 1 && detectCodexUsageLimit(sliceResults[0])) {
+                const msg = `[review] codex usage limit detected; resolve Codex credits/limits, then re-run this review.`;
+                // eslint-disable-next-line no-console
+                console.error(msg);
+              }
+
+              const okAll = sliceResults.every((r) => r.ok);
+              return {
+                reviewer,
+                ok: okAll,
+                exitCode: okAll ? 0 : 1,
+                signal: null,
+                durationMs: sliceResults.reduce((acc, r) => acc + (r.durationMs ?? 0), 0),
+                stdout: '',
+                stderr: '',
+                note: `uncommitted slices: ${sliceResults.length} slices (maxFiles=${maxFiles})`,
+                slices: sliceResults,
+              };
+            }
 
             if (monorepo && effectiveChunking === 'head-slice' && usePromptMode && (wantChunksCodex ?? autoChunks)) {
               const headCommit = (await runCapture('git', ['rev-parse', 'HEAD'], { cwd: repoDir, env: process.env })).trim();
@@ -821,6 +1071,7 @@ async function main() {
                         baseRef: null,
                         env: process.env,
                         jsonMode,
+                        model: process.env.HAPPIER_STACK_CODEX_MODEL,
                         prompt,
                         streamLabel: stream && !jsonMode ? `monorepo:codex:${index}/${of}` : undefined,
                         teeFile: logFile,
@@ -878,6 +1129,7 @@ async function main() {
               baseRef: usePromptMode ? null : changeType === 'uncommitted' ? null : base.baseRef,
               env: process.env,
               jsonMode,
+              model: process.env.HAPPIER_STACK_CODEX_MODEL,
               prompt,
               streamLabel: stream && !jsonMode ? `${component}:codex` : undefined,
               teeFile: logFile,
@@ -893,6 +1145,201 @@ async function main() {
               stdout: res.stdout ?? '',
               stderr: res.stderr ?? '',
               review_output: extracted,
+              logFile,
+            };
+          }
+          if (reviewer === 'claude') {
+            const jsonMode = false;
+            const canChunk = changeType !== 'uncommitted';
+            const uncommittedOps = changeType === 'uncommitted' ? await getUncommittedOps({ cwd: repoDir, env: process.env }) : null;
+            const fileCount =
+              changeType === 'uncommitted'
+                ? (uncommittedOps?.all?.size ?? 0)
+                : await countChangedFiles({ cwd: repoDir, env: process.env, base: base.baseRef });
+            const autoChunks = fileCount > maxFiles;
+
+            if (
+              monorepo &&
+              effectiveChunking === 'head-slice' &&
+              shouldUseUncommittedPathSlices({
+                reviewer: 'claude',
+                changeType,
+                fileCount,
+                maxFiles,
+                chunksPreference: globalChunks,
+              })
+            ) {
+              const ops = uncommittedOps ?? (await getUncommittedOps({ cwd: repoDir, env: process.env }));
+              const slices = planPathSlices({ changedPaths: Array.from(ops.all), maxFiles });
+
+              const sliceItems = slices.map((slice, i) => ({ slice, index: i + 1, of: slices.length }));
+              const sliceResults = await runSlicedJobs({
+                items: sliceItems,
+                limit: sliceConcurrency,
+                run: async ({ slice, index, of }) => {
+                  const logFile = join(runDir, 'raw', `claude-slice-${index}-of-${of}-${sanitizeLabel(slice.label)}.log`);
+                  const rr = await withDetachedWorktree(
+                    { repoDir, headCommit: 'HEAD', label: `claude-uncommitted-${index}-of-${of}`, env: process.env },
+                    async (worktreeDir) => {
+                      const allowed = new Set(slice.paths);
+                      const sliceCheckout = subsetSet(ops.checkout, allowed);
+                      const sliceRemove = subsetSet(ops.remove, allowed);
+                      await applyUncommittedSlice({
+                        srcRepoDir: repoDir,
+                        worktreeDir,
+                        checkoutPaths: sliceCheckout,
+                        removePaths: sliceRemove,
+                      });
+                      const prompt = buildUncommittedSlicePrompt({
+                        sliceLabel: slice.label,
+                        basePrompt: buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType }),
+                      });
+                      return await runClaudeReview({
+                        repoDir: worktreeDir,
+                        env: process.env,
+                        prompt,
+                        model: process.env.HAPPIER_STACK_CLAUDE_MODEL,
+                        streamLabel: stream && !jsonMode ? `monorepo:claude:${index}/${of}` : undefined,
+                        teeFile: logFile,
+                        teeLabel: `monorepo:claude:${index}/${of}`,
+                      });
+                    }
+                  );
+                  return {
+                    index,
+                    of,
+                    slice: slice.label,
+                    fileCount: slice.paths.length,
+                    logFile,
+                    ok: Boolean(rr.ok),
+                    exitCode: rr.exitCode,
+                    signal: rr.signal,
+                    durationMs: rr.durationMs,
+                    stdout: rr.stdout ?? '',
+                    stderr: rr.stderr ?? '',
+                  };
+                },
+                shouldAbortEarly: (r) => detectClaudeAuthError({ stdout: r?.stdout, stderr: r?.stderr }),
+              });
+
+              if (sliceResults.length === 1 && detectClaudeAuthError(sliceResults[0])) {
+                const msg = `[review] claude auth/rate-limit issue detected; ensure Claude CLI auth/limits are healthy, then re-run this review.`;
+                // eslint-disable-next-line no-console
+                console.error(msg);
+              }
+
+              const okAll = sliceResults.every((r) => r.ok);
+              return {
+                reviewer,
+                ok: okAll,
+                exitCode: okAll ? 0 : 1,
+                signal: null,
+                durationMs: sliceResults.reduce((acc, r) => acc + (r.durationMs ?? 0), 0),
+                stdout: '',
+                stderr: '',
+                note: `uncommitted slices: ${sliceResults.length} slices (maxFiles=${maxFiles})`,
+                slices: sliceResults,
+              };
+            }
+
+            if (monorepo && canChunk && effectiveChunking === 'head-slice' && (globalChunks ?? autoChunks)) {
+              const headCommit = (await runCapture('git', ['rev-parse', 'HEAD'], { cwd: repoDir, env: process.env })).trim();
+              const baseCommit = (await runCapture('git', ['rev-parse', base.baseRef], { cwd: repoDir, env: process.env })).trim();
+              const ops = await getChangedOps({ cwd: repoDir, baseRef: baseCommit, headRef: headCommit, env: process.env });
+              const slices = planPathSlices({ changedPaths: Array.from(ops.all), maxFiles });
+
+              const sliceItems = slices.map((slice, i) => ({ slice, index: i + 1, of: slices.length }));
+              const sliceResults = await runSlicedJobs({
+                items: sliceItems,
+                limit: sliceConcurrency,
+                run: async ({ slice, index, of }) => {
+                  const logFile = join(runDir, 'raw', `claude-slice-${index}-of-${of}-${sanitizeLabel(slice.label)}.log`);
+                  const rr = await withDetachedWorktree(
+                    { repoDir, headCommit: baseCommit, label: `claude-${index}-of-${of}`, env: process.env },
+                    async (worktreeDir) => {
+                      const { baseSliceCommit } = await createHeadSliceCommits({
+                        cwd: worktreeDir,
+                        env: process.env,
+                        baseRef: baseCommit,
+                        headCommit,
+                        ops,
+                        slicePaths: slice.paths,
+                        label: slice.label.replace(/\/+$/g, ''),
+                      });
+                      const prompt = buildCodexMonorepoSlicePrompt({
+                        sliceLabel: slice.label,
+                        baseCommit: baseSliceCommit,
+                        baseRef: base.baseRef,
+                      });
+                      return await runClaudeReview({
+                        repoDir: worktreeDir,
+                        env: process.env,
+                        prompt,
+                        model: process.env.HAPPIER_STACK_CLAUDE_MODEL,
+                        streamLabel: stream && !jsonMode ? `monorepo:claude:${index}/${of}` : undefined,
+                        teeFile: logFile,
+                        teeLabel: `monorepo:claude:${index}/${of}`,
+                      });
+                    }
+                  );
+                  return {
+                    index,
+                    of,
+                    slice: slice.label,
+                    fileCount: slice.paths.length,
+                    logFile,
+                    ok: Boolean(rr.ok),
+                    exitCode: rr.exitCode,
+                    signal: rr.signal,
+                    durationMs: rr.durationMs,
+                    stdout: rr.stdout ?? '',
+                    stderr: rr.stderr ?? '',
+                  };
+                },
+                shouldAbortEarly: (r) => detectClaudeAuthError({ stdout: r?.stdout, stderr: r?.stderr }),
+              });
+
+              if (sliceResults.length === 1 && detectClaudeAuthError(sliceResults[0])) {
+                const msg = `[review] claude auth/rate-limit issue detected; ensure Claude CLI auth/limits are healthy, then re-run this review.`;
+                // eslint-disable-next-line no-console
+                console.error(msg);
+              }
+
+              const okAll = sliceResults.every((r) => r.ok);
+              return {
+                reviewer,
+                ok: okAll,
+                exitCode: okAll ? 0 : 1,
+                signal: null,
+                durationMs: sliceResults.reduce((acc, r) => acc + (r.durationMs ?? 0), 0),
+                stdout: '',
+                stderr: '',
+                note: `monorepo head-slice: ${sliceResults.length} slices (maxFiles=${maxFiles})`,
+                slices: sliceResults,
+              };
+            }
+
+            const prompt = monorepo
+              ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType })
+              : buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType });
+            const logFile = join(runDir, 'raw', `claude-${sanitizeLabel(component)}.log`);
+            const res = await runClaudeReview({
+              repoDir,
+              env: process.env,
+              prompt,
+              model: process.env.HAPPIER_STACK_CLAUDE_MODEL,
+              streamLabel: stream && !jsonMode ? `${component}:claude` : undefined,
+              teeFile: logFile,
+              teeLabel: `${component}:claude`,
+            });
+            return {
+              reviewer,
+              ok: Boolean(res.ok),
+              exitCode: res.exitCode,
+              signal: res.signal,
+              durationMs: res.durationMs,
+              stdout: res.stdout ?? '',
+              stderr: res.stderr ?? '',
               logFile,
             };
           }
@@ -1040,6 +1487,7 @@ async function main() {
     let cr = 0;
     let cx = 0;
     let au = 0;
+    let cl = 0;
 
     for (const job of jobResults) {
       for (const rr of job.results) {
@@ -1110,6 +1558,31 @@ async function main() {
               allFindings.push({
                 ...f,
                 id: `AU-${String(au).padStart(3, '0')}`,
+                job: job.component,
+                slice,
+                sourceLog: sourceLog ?? null,
+              });
+            }
+          };
+
+          if (Array.isArray(sliceLike)) {
+            for (const s of sliceLike) {
+              consumeText(s.stdout ?? '', s.slice ?? `${s.index}/${s.of}`, s.logFile ?? null);
+            }
+          } else {
+            consumeText(rr.stdout ?? '', null, rr.logFile ?? null);
+          }
+        }
+
+        if (rr.reviewer === 'claude') {
+          const sliceLike = rr.slices ?? rr.chunks ?? null;
+          const consumeText = (reviewText, slice, sourceLog) => {
+            const parsed = parseCodexReviewText(reviewText).map((f) => ({ ...f, reviewer: 'claude' }));
+            for (const f of parsed) {
+              cl += 1;
+              allFindings.push({
+                ...f,
+                id: `CL-${String(cl).padStart(3, '0')}`,
                 job: job.component,
                 slice,
                 sourceLog: sourceLog ?? null,

@@ -11,6 +11,8 @@ import { ensureExpoIsolationEnv, getExpoStatePaths, wantsExpoClearCache } from '
 import { expoExec } from './utils/expo/command.mjs';
 import { getInvokedCwd, inferComponentFromCwd } from './utils/cli/cwd_scope.mjs';
 import { applyStackTauriOverrides } from './utils/tauri/stack_overrides.mjs';
+import { buildIntoTempThenReplace } from './utils/fs/atomic_dir_swap.mjs';
+import { pathExists } from './utils/fs/fs.mjs';
 
 /**
  * Build a lightweight static web UI bundle (no Expo dev server).
@@ -88,10 +90,6 @@ async function main() {
 
   await ensureDepsInstalled(uiDir, 'happier-ui');
 
-  // Clean output to avoid stale assets.
-  await rm(outDir, { recursive: true, force: true });
-  await mkdir(outDir, { recursive: true });
-
   console.log(`[local] exporting web UI to ${outDir}...`);
 
   // Build for root hosting (the server redirects /ui -> /).
@@ -105,7 +103,11 @@ async function main() {
   };
 
   // Expo CLI is available via node_modules/.bin once dependencies are installed.
-  {
+  await buildIntoTempThenReplace(outDir, async (tmpOutDir) => {
+    // Ensure the output dir exists (Expo writes into it).
+    await rm(tmpOutDir, { recursive: true, force: true });
+    await mkdir(tmpOutDir, { recursive: true });
+
     const paths = getExpoStatePaths({
       baseDir: getDefaultAutostartPaths().baseDir,
       kind: 'ui-export',
@@ -113,14 +115,21 @@ async function main() {
       stateFileName: 'ui.export.state.json',
     });
     await ensureExpoIsolationEnv({ env, stateDir: paths.stateDir, expoHomeDir: paths.expoHomeDir, tmpDir: paths.tmpDir });
-    const args = ['export', '--platform', 'web', '--output-dir', outDir, ...(wantsExpoClearCache({ env }) ? ['-c'] : [])];
+    const args = ['export', '--platform', 'web', '--output-dir', tmpOutDir, ...(wantsExpoClearCache({ env }) ? ['-c'] : [])];
     await expoExec({ dir: uiDir, args, env, ensureDepsLabel: 'happier-ui' });
-  }
+
+    const indexPath = join(tmpOutDir, 'index.html');
+    if (!(await pathExists(indexPath))) {
+      throw new Error(
+        `[local] UI export incomplete: missing ${indexPath}\nFix: re-run hstack build (or run hstack dev for dev mode)`,
+      );
+    }
+  });
 
   if (json) {
     printResult({ json, data: { ok: true, outDir, tauriBuilt: false } });
   } else {
-  console.log('[local] UI build complete');
+    console.log('[local] UI build complete');
   }
 
   //

@@ -34,6 +34,7 @@ import {
 import { isTty, prompt, promptSelect, withRl } from './utils/cli/wizard.mjs';
 import { parseEnvToObject } from './utils/env/dotenv.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
+import { resolvehstackCommand } from './utils/cli/cli_registry.mjs';
 import { ensureEnvFilePruned, ensureEnvFileUpdated } from './utils/env/env_file.mjs';
 import { listAllStackNames, stackExistsSync } from './utils/stack/stacks.mjs';
 import { stopStackWithEnv } from './utils/stack/stop.mjs';
@@ -47,9 +48,12 @@ import { openUrlInBrowser } from './utils/ui/browser.mjs';
 import { bold, cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { copyFileIfMissing, linkFileIfMissing, writeSecretFileIfMissing } from './utils/auth/files.mjs';
+import { findAnyCredentialPathInCliHome, findExistingStackCredentialPath, resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
+import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { resolveAuthSeedFromEnv } from './utils/stack/startup.mjs';
 import { getHomeEnvLocalPath } from './utils/env/config.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
+import { STACK_WRAPPER_PRESERVE_KEYS, scrubHappierStackEnv } from './utils/env/scrub_env.mjs';
 import { resolveHandyMasterSecretFromStack } from './utils/auth/handy_master_secret.mjs';
 import { readPinnedServerPortFromEnvFile } from './utils/server/port.mjs';
 import { getEnvValue, getEnvValueAny } from './utils/env/values.mjs';
@@ -72,11 +76,22 @@ import { isCursorInstalled, openWorkspaceInEditor, writeStackCodeWorkspace } fro
 import { readLastLines } from './utils/fs/tail.mjs';
 import { defaultStackReleaseIdentity } from './utils/mobile/identifiers.mjs';
 import { interactiveEdit, interactiveNew } from './utils/stack/interactive_stack_config.mjs';
+import { normalizeStackNameOrNull } from './utils/stack/names.mjs';
 import { resolveServerPortFromEnv, resolveServerUrls } from './utils/server/urls.mjs';
+import { runOrchestratedGuidedAuthFlow } from './utils/auth/orchestrated_stack_auth_flow.mjs';
+import { assertExpoWebappBundlesOrThrow } from './utils/auth/stack_guided_login.mjs';
 import { getDaemonEnv, startLocalDaemonWithAuth, stopLocalDaemon } from './daemon.mjs';
 import { createStepPrinter } from './utils/cli/progress.mjs';
 import { getVerbosityLevel } from './utils/cli/verbosity.mjs';
 import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mode.mjs';
+
+function resolveTopLevelNodeScriptFile(cmd) {
+  const c = resolvehstackCommand(cmd);
+  if (!c || c.kind !== 'node') return null;
+  const rel = String(c.scriptRelPath ?? '').trim();
+  if (!rel) return null;
+  return rel.startsWith('scripts/') ? rel.slice('scripts/'.length) : rel;
+}
 
 function stackNameFromArg(positionals, idx) {
   const name = positionals[idx]?.trim() ? positionals[idx].trim() : '';
@@ -191,16 +206,42 @@ async function copyAuthFromStackIntoNewStack({
   const sourceEnv = parseEnvToObject(sourceEnvRaw);
   const sourceCli = getCliHomeDirFromEnvOrDefault({ stackBaseDir: sourceBaseDir, env: sourceEnv });
   const targetCli = stackEnv.HAPPIER_STACK_CLI_HOME_DIR;
+  const sourceInternalServerUrl = `http://127.0.0.1:${resolveServerPortFromEnv({ env: sourceEnv, defaultPort: 3005 })}`;
+  const targetInternalServerUrl = `http://127.0.0.1:${resolveServerPortFromEnv({ env: stackEnv, defaultPort: 3005 })}`;
+  const sourceEnvScoped = applyStackActiveServerScopeEnv({ env: sourceEnv, stackName: fromStackName, cliIdentity: 'default' });
+  const targetEnvScoped = applyStackActiveServerScopeEnv({ env: stackEnv, stackName, cliIdentity: 'default' });
+  const sourceCredentialPaths = resolveStackCredentialPaths({
+    cliHomeDir: sourceCli,
+    serverUrl: sourceInternalServerUrl,
+    env: sourceEnvScoped,
+  });
+  const targetCredentialPaths = resolveStackCredentialPaths({
+    cliHomeDir: targetCli,
+    serverUrl: targetInternalServerUrl,
+    env: targetEnvScoped,
+  });
+  const sourceAccessKeyPath =
+    findExistingStackCredentialPath({ cliHomeDir: sourceCli, serverUrl: sourceInternalServerUrl, env: sourceEnvScoped }) ||
+    [sourceCredentialPaths.serverScopedPath, sourceCredentialPaths.urlHashServerScopedPath, sourceCredentialPaths.legacyPath]
+      .filter(Boolean)
+      .find((candidate) => existsSync(candidate)) ||
+    findAnyCredentialPathInCliHome({ cliHomeDir: sourceCli });
 
   if (linkMode) {
-    copied.accessKey = await linkFileIfMissing({ from: join(sourceCli, 'access.key'), to: join(targetCli, 'access.key') });
+    copied.accessKey =
+      sourceAccessKeyPath
+        ? await linkFileIfMissing({ from: sourceAccessKeyPath, to: targetCredentialPaths.serverScopedPath })
+        : false;
     copied.settings = await linkFileIfMissing({ from: join(sourceCli, 'settings.json'), to: join(targetCli, 'settings.json') });
   } else {
-    copied.accessKey = await copyFileIfMissing({
-      from: join(sourceCli, 'access.key'),
-      to: join(targetCli, 'access.key'),
-      mode: 0o600,
-    });
+    copied.accessKey =
+      sourceAccessKeyPath
+        ? await copyFileIfMissing({
+          from: sourceAccessKeyPath,
+          to: targetCredentialPaths.serverScopedPath,
+          mode: 0o600,
+        })
+        : false;
     copied.settings = await copyFileIfMissing({
       from: join(sourceCli, 'settings.json'),
       to: join(targetCli, 'settings.json'),
@@ -270,62 +311,14 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
   // IMPORTANT: stack env file should be authoritative. If the user has HAPPIER_STACK_*
   // exported in their shell, it would otherwise "win" because utils/env.mjs only sets
   // env vars if they are missing/empty.
-  const cleaned = { ...process.env };
-  const keepPrefixed = new Set([
-    // Stack/env pointers:
-    'HAPPIER_STACK_ENV_FILE',
-    'HAPPIER_STACK_STACK',
-
-    // Sandbox detection + policy (must propagate to child processes).
-    'HAPPIER_STACK_SANDBOX_DIR',
-    'HAPPIER_STACK_SANDBOX_ALLOW_GLOBAL',
-
-    // Sandbox-enforced dirs (without these, sandbox isolation breaks).
-    'HAPPIER_STACK_CLI_ROOT_DISABLE',
-    'HAPPIER_STACK_CANONICAL_HOME_DIR',
-    'HAPPIER_STACK_HOME_DIR',
-    'HAPPIER_STACK_WORKSPACE_DIR',
-    'HAPPIER_STACK_RUNTIME_DIR',
-    'HAPPIER_STACK_STORAGE_DIR',
-
-    // Sandbox-safe UX knobs (keep consistent through stack wrappers).
-    'HAPPIER_STACK_VERBOSE',
-    'HAPPIER_STACK_UPDATE_CHECK',
-    'HAPPIER_STACK_UPDATE_CHECK_INTERVAL_MS',
-    'HAPPIER_STACK_UPDATE_NOTIFY_INTERVAL_MS',
-
-    // Guided auth flow coordination across wrappers.
-    // These are intentionally passed through even though most HAPPIER_STACK_* vars are scrubbed.
-    'HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH',
-    'HAPPIER_STACK_AUTH_FLOW',
-
-    // Safe global defaults that should apply inside stack wrappers unless overridden by the stack env file.
-    // This is important for VM/CI/sandbox environments where users want predictable port ranges without
-    // pinning every stack env explicitly.
-    'HAPPIER_STACK_STACK_PORT_START',
-
-    'HAPPIER_STACK_BIND_MODE',
-    'HAPPIER_STACK_EXPO_HOST',
-
-    // Expo dev-server port strategy (web + dev-client share the same Metro process).
-    'HAPPIER_STACK_EXPO_DEV_PORT',
-    'HAPPIER_STACK_EXPO_DEV_PORT_STRATEGY',
-    'HAPPIER_STACK_EXPO_DEV_PORT_BASE',
-    'HAPPIER_STACK_EXPO_DEV_PORT_RANGE',
-  ]);
-  for (const k of Object.keys(cleaned)) {
-    if (keepPrefixed.has(k)) continue;
-    if (k.startsWith('HAPPIER_STACK_')) {
-      delete cleaned[k];
-    }
-  }
+  const cleaned = scrubHappierStackEnv(process.env, { keepHappierStackKeys: STACK_WRAPPER_PRESERVE_KEYS });
   const raw = await readExistingEnv(envPath);
   const stackEnv = parseEnvToObject(raw);
 
   const runtimeStatePath = getStackRuntimeStatePath(stackName);
   const runtimeState = await readStackRuntimeStateFile(runtimeStatePath);
 
-  const env = {
+  let env = {
     ...cleaned,
     HAPPIER_STACK_STACK: stackName,
     HAPPIER_STACK_ENV_FILE: envPath,
@@ -336,6 +329,11 @@ async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     // One-shot overrides (e.g. --repo=...) win over stack env file.
     ...extraEnv,
   };
+  env = applyStackActiveServerScopeEnv({
+    env,
+    stackName,
+    cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
+  });
 
   // Runtime-only port overlay (ephemeral stacks): only trust it when the owner pid is still alive.
   const ownerPid = Number(runtimeState?.ownerPid);
@@ -411,6 +409,21 @@ async function cmdNew({ rootDir, argv, emit = true }) {
         '[--copy-auth-from=<stack>] [--link-auth] [--no-copy-auth] [--interactive] [--non-interactive] [--force-port]'
     );
   }
+  const normalizedName = normalizeStackNameOrNull(stackName);
+  if (!normalizedName) {
+    throw new Error(
+      `[stack] invalid stack name: ${JSON.stringify(stackName)}\n` +
+        `[stack] stack names must be DNS-safe labels (lowercase letters/numbers/hyphens).\n` +
+        `[stack] Example: my-stack`
+    );
+  }
+  {
+    const changedBeyondCase = normalizedName !== stackName.toLowerCase();
+    stackName = normalizedName;
+    if (!json && emit && changedBeyondCase) {
+      console.warn(`[stack] normalized stack name to: ${stackName}`);
+    }
+  }
   if (stackName === 'main') {
     throw new Error('[stack] stack name \"main\" is reserved (use the default stack without creating it)');
   }
@@ -421,7 +434,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
   }
   const effectiveDbProvider =
     dbProviderRaw ||
-    (serverComponent === 'happier-server-light' ? 'pglite' : 'postgres');
+    (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres');
   if (serverComponent === 'happier-server-light' && effectiveDbProvider !== 'pglite' && effectiveDbProvider !== 'sqlite') {
     throw new Error(`[stack] invalid --db-provider for happier-server-light: ${effectiveDbProvider} (supported: pglite, sqlite)`);
   }
@@ -481,11 +494,8 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     HAPPIER_STACK_STACK_REMOTE: config.createRemote?.trim() ? config.createRemote.trim() : 'upstream',
     ...defaultRepoEnv,
   };
-  // Power user knob: override DB provider selection in the server (no extra prompts).
-  // Defaults remain flavor-based (light=pglite, full=postgres) when unset.
-  if (dbProviderRaw) {
-    stackEnv.HAPPIER_DB_PROVIDER = dbProviderRaw;
-  }
+  // Persist DB provider explicitly so existing behavior is stable even if defaults evolve later.
+  stackEnv.HAPPIER_DB_PROVIDER = effectiveDbProvider;
   // Power user knob: override DATABASE_URL (required for mysql today, useful for external DBs).
   if (databaseUrlOverride) {
     if (serverComponent === 'happier-server-light') {
@@ -497,7 +507,7 @@ async function cmdNew({ rootDir, argv, emit = true }) {
     stackEnv.HAPPIER_STACK_SERVER_PORT = String(port);
   }
 
-  // Server-light storage isolation: ensure stacks have their own light data dir (files + embedded pglite) by default.
+  // Server-light storage isolation: ensure stacks have their own light data dir.
   // (This prevents a dev stack from mutating main stack's data when schema changes.)
   if (serverComponent === 'happier-server-light') {
     const dataDir = join(baseDir, 'server-light');
@@ -1079,7 +1089,8 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
             try {
               const stackBaseDir = resolveStackEnvPath(stackName).baseDir;
               const cliHomeDir = getCliHomeDirFromEnvOrDefault({ stackBaseDir, env });
-              const hasCreds = existsSync(join(cliHomeDir, 'access.key'));
+              const serverUrl = (childEnv.HAPPIER_SERVER_URL ?? env.HAPPIER_SERVER_URL ?? '').toString().trim();
+              const hasCreds = Boolean(findExistingStackCredentialPath({ cliHomeDir, serverUrl, env: childEnv }));
               if (!hasCreds) {
                 childEnv.HAPPIER_STACK_AUTH_FLOW = '1';
               }
@@ -1262,8 +1273,126 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
       }
 
       // Pinned port stack: run normally under the pinned env.
+      if (background && wantsJson) {
+        // Background mode is meaningless for a dry-run. Run the script normally so callers
+        // can still use `--background --json` as a config probe.
+        await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], { cwd: rootDir, env });
+        return;
+      }
       if (background) {
-        throw new Error('[stack] --background is only supported for ephemeral-port stacks');
+        const pinnedPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
+        if (!pinnedPort) {
+          throw new Error(`[stack] ${stackName}: cannot start in background (missing HAPPIER_STACK_SERVER_PORT)`);
+        }
+
+        const stackBaseDir = resolveStackEnvPath(stackName).baseDir;
+        const logsDir = join(stackBaseDir, 'logs');
+        const logPath = join(logsDir, `${scriptPath.replace(/\.mjs$/, '')}.${Date.now()}.log`);
+        await ensureDir(logsDir);
+
+        const logHandle = await open(logPath, 'a');
+        const outFd = logHandle.fd;
+
+        const child = spawn(process.execPath, [join(rootDir, 'scripts', scriptPath), ...args], {
+          cwd: rootDir,
+          env,
+          stdio: ['ignore', outFd ?? 'ignore', outFd ?? 'ignore'],
+          shell: false,
+          detached: process.platform !== 'win32',
+        });
+        try {
+          await logHandle?.close();
+        } catch {
+          // ignore
+        }
+
+        await recordStackRuntimeStart(runtimeStatePath, {
+          stackName,
+          script: scriptPath,
+          ephemeral: false,
+          ownerPid: child.pid,
+          ports: { server: pinnedPort },
+          logs: { runner: logPath },
+        }).catch(() => {});
+
+        const internalServerUrl = `http://127.0.0.1:${pinnedPort}`;
+        try {
+          let exited = null;
+          const exitPromise = new Promise((resolvePromise) => {
+            child.once('exit', (code, sig) => {
+              exited = { kind: 'exit', code: code ?? 0, sig: sig ?? null };
+              resolvePromise(exited);
+            });
+            child.once('error', (err) => {
+              exited = { kind: 'error', error: err instanceof Error ? err.message : String(err) };
+              resolvePromise(exited);
+            });
+          });
+          const readyPromise = (async () => {
+            const timeoutMsRaw =
+              (process.env.HAPPIER_STACK_STACK_BACKGROUND_READY_TIMEOUT_MS ?? '180000')
+                .toString()
+                .trim();
+            const timeoutMs = timeoutMsRaw ? Number(timeoutMsRaw) : 180_000;
+            await waitForHttpOk(`${internalServerUrl}/health`, {
+              timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 180_000,
+              intervalMs: 300,
+            });
+            return { kind: 'ready' };
+          })();
+
+          const first = await Promise.race([exitPromise, readyPromise]);
+          if (first.kind !== 'ready') {
+            throw new Error(`[stack] ${stackName}: runner exited before becoming ready. log: ${logPath}`);
+          }
+          if (exited && exited.kind !== 'ready') {
+            throw new Error(`[stack] ${stackName}: runner reported ready but exited immediately. log: ${logPath}`);
+          }
+          if (!isPidAlive(child.pid)) {
+            throw new Error(
+              `[stack] ${stackName}: runner health check passed, but runner is not running.\n` +
+                `[stack] This usually means the chosen port (${pinnedPort}) is already in use by another process.\n` +
+                `[stack] log: ${logPath}`
+            );
+          }
+        } catch (e) {
+          try {
+            const tail = await readLastLines(logPath, 160);
+            if (tail && e instanceof Error) {
+              e.message = `${e.message}\n\n[stack] last runner log lines:\n${tail}`;
+            }
+          } catch {
+            // ignore
+          }
+          try {
+            if (process.platform !== 'win32') {
+              try {
+                process.kill(-child.pid, 'SIGTERM');
+              } catch {
+                // ignore
+              }
+            }
+            try {
+              child.kill('SIGTERM');
+            } catch {
+              // ignore
+            }
+          } catch {
+            // ignore
+          }
+          await deleteStackRuntimeStateFile(runtimeStatePath).catch(() => {});
+          throw e;
+        }
+
+        if (!wantsJson) {
+          console.log(`[stack] ${stackName}: logs: ${logPath}`);
+        }
+        try {
+          child.unref();
+        } catch {
+          // ignore
+        }
+        return;
       }
       if (wantsRestart && !wantsJson) {
         const pinnedPort = coercePort(env.HAPPIER_STACK_SERVER_PORT);
@@ -1561,22 +1690,27 @@ async function cmdAudit({ rootDir, argv }) {
       const dataDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DATA_DIR');
       const filesDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_FILES_DIR');
       const dbDir = getEnvValue(env, 'HAPPIER_SERVER_LIGHT_DB_DIR');
+      const rawDbProvider =
+        (getEnvValue(env, 'HAPPIER_DB_PROVIDER') ?? getEnvValue(env, 'HAPPY_DB_PROVIDER') ?? '').toString().trim().toLowerCase();
+      const dbProvider = rawDbProvider === 'pglite' ? 'pglite' : 'sqlite';
       const expectedDataDir = join(baseDir, 'server-light');
       const expectedFilesDir = join(expectedDataDir, 'files');
       const expectedDbDir = join(expectedDataDir, 'pglite');
 
       if (!dataDir) issues.push({ code: 'missing_server_light_data_dir', message: `missing HAPPIER_SERVER_LIGHT_DATA_DIR (expected ${expectedDataDir})` });
       if (!filesDir) issues.push({ code: 'missing_server_light_files_dir', message: `missing HAPPIER_SERVER_LIGHT_FILES_DIR (expected ${expectedFilesDir})` });
-      if (!dbDir) issues.push({ code: 'missing_server_light_db_dir', message: `missing HAPPIER_SERVER_LIGHT_DB_DIR (expected ${expectedDbDir})` });
       if (dataDir && dataDir !== expectedDataDir) issues.push({ code: 'server_light_data_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_DATA_DIR=${dataDir} (expected ${expectedDataDir})` });
       if (filesDir && filesDir !== expectedFilesDir) issues.push({ code: 'server_light_files_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_FILES_DIR=${filesDir} (expected ${expectedFilesDir})` });
-      if (dbDir && dbDir !== expectedDbDir) issues.push({ code: 'server_light_db_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_DB_DIR=${dbDir} (expected ${expectedDbDir})` });
+      if (dbProvider === 'pglite') {
+        if (!dbDir) issues.push({ code: 'missing_server_light_db_dir', message: `missing HAPPIER_SERVER_LIGHT_DB_DIR (expected ${expectedDbDir})` });
+        if (dbDir && dbDir !== expectedDbDir) issues.push({ code: 'server_light_db_dir_mismatch', message: `HAPPIER_SERVER_LIGHT_DB_DIR=${dbDir} (expected ${expectedDbDir})` });
+      }
 
       const legacyDbUrl = getEnvValue(env, 'DATABASE_URL');
       if (legacyDbUrl) {
         issues.push({
           code: 'legacy_database_url',
-          message: `DATABASE_URL is set for a light stack (${legacyDbUrl}); light uses embedded pglite and does not require DATABASE_URL in the stack env`,
+          message: `DATABASE_URL is set for a light stack (${legacyDbUrl}); light manages its own local database and does not require DATABASE_URL in the stack env`,
         });
       }
     }
@@ -2041,6 +2175,20 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
                 // Prefer localhost for readiness checks (faster/more reliable), even though we
                 // instruct the user to use the stack-scoped *.localhost origin for storage isolation.
                 await waitForHttpOk(uiRootLocalhost || uiRoot, { timeoutMs: 30_000 });
+                try {
+                  await assertExpoWebappBundlesOrThrow({
+                    rootDir,
+                    stackName: name,
+                    webappUrl: uiRootLocalhost || uiRoot,
+                  });
+                } catch (e) {
+                  const detail = e instanceof Error ? e.message : String(e);
+                  throw new Error(
+                    `[stack] temporary UI is reachable, but the Expo web bundle is not ready.\n` +
+                      `${detail}\n` +
+                      `[stack] expo log: ${expoLogPath}`
+                  );
+                }
                 console.log(`- open: ${uiRoot}`);
                 console.log(`- click: "Create Account"`);
                 console.log(`- then open: ${uiSettings}`);
@@ -2074,10 +2222,13 @@ async function cmdCreateDevAuthSeed({ rootDir, argv }) {
 
               console.log('');
               console.log(`[stack] step 3/3: authenticate the CLI against this stack ${dim('(web auth)')}`);
-              console.log(`[stack] launching: ${yellow(`hstack stack auth ${name} login`)}`);
-              await run(process.execPath, [join(rootDir, 'scripts', 'auth.mjs'), 'login', '--no-force'], {
-                cwd: rootDir,
+              console.log(`[stack] launching unified guided auth flow`);
+              await runOrchestratedGuidedAuthFlow({
+                rootDir,
+                stackName: name,
                 env,
+                verbosity,
+                json: false,
               });
             } finally {
               if (uiProc) {
@@ -2331,7 +2482,7 @@ async function cmdDuplicate({ rootDir, argv }) {
 
   const positionals = argv.filter((a) => !a.startsWith('--'));
   const fromStack = (positionals[1] ?? '').trim();
-  const toStack = (positionals[2] ?? '').trim();
+  let toStack = (positionals[2] ?? '').trim();
   if (!fromStack || !toStack) {
     throw new Error('[stack] usage: hstack stack duplicate <from> <to> [--duplicate-worktrees] [--deps=...] [--json]');
   }
@@ -2355,10 +2506,11 @@ async function cmdDuplicate({ rootDir, argv }) {
   const serverComponent = parseServerComponentFromEnv(fromEnv);
 
   // Create the destination stack env with the correct baseDir and defaults (do not copy auth/data).
-  await cmdNew({
+  const created = await cmdNew({
     rootDir,
     argv: [toStack, '--no-copy-auth', '--server', serverComponent],
   });
+  toStack = created?.stackName ?? toStack;
 
   const fromRepoDir = String(fromEnv.HAPPIER_STACK_REPO_DIR ?? '').trim();
   if (!fromRepoDir) {
@@ -2501,9 +2653,24 @@ async function cmdPrStack({ rootDir, argv }) {
 	  }
 
   const positionals = argv0.filter((a) => !a.startsWith('--'));
-  const stackName = (positionals[1] ?? '').trim();
+  let stackName = (positionals[1] ?? '').trim();
   if (!stackName) {
     throw new Error('[stack] pr: missing stack name. Usage: hstack stack pr <name> --repo=<pr>');
+  }
+  {
+    const normalizedName = normalizeStackNameOrNull(stackName);
+    if (!normalizedName) {
+      throw new Error(
+        `[stack] pr: invalid stack name: ${JSON.stringify(stackName)}\n` +
+          `[stack] stack names must be DNS-safe labels (lowercase letters/numbers/hyphens).\n` +
+          `[stack] Example: pr-123`
+      );
+    }
+    const changedBeyondCase = normalizedName !== stackName.toLowerCase();
+    stackName = normalizedName;
+    if (!json && changedBeyondCase) {
+      console.warn(`[stack] normalized stack name to: ${stackName}`);
+    }
   }
   if (stackName === 'main') {
     throw new Error('[stack] pr: stack name "main" is reserved; pick a unique name for this PR stack');
@@ -2560,11 +2727,13 @@ async function cmdPrStack({ rootDir, argv }) {
 
 	  const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY) && !json;
 
-	  const mainAccessKeyPath = join(resolveStackEnvPath('main').baseDir, 'cli', 'access.key');
-	  const devAuthAccessKeyPath = join(resolveStackEnvPath('dev-auth').baseDir, 'cli', 'access.key');
-
-	  const hasMainAccessKey = existsSync(mainAccessKeyPath);
-	  const hasDevAuthAccessKey = existsSync(devAuthAccessKeyPath) && existsSync(resolveStackEnvPath('dev-auth').envPath);
+	  const hasMainAccessKey = Boolean(findAnyCredentialPathInCliHome({ cliHomeDir: join(resolveStackEnvPath('main').baseDir, 'cli') }));
+	  const hasDevAuthAccessKey =
+	    existsSync(resolveStackEnvPath('dev-auth').envPath) &&
+	    Boolean(findAnyCredentialPathInCliHome({ cliHomeDir: join(resolveStackEnvPath('dev-auth').baseDir, 'cli') }));
+	  const hasLegacyAccessKey =
+	    existsSync(resolveStackEnvPath('legacy').envPath) &&
+	    Boolean(findAnyCredentialPathInCliHome({ cliHomeDir: join(resolveStackEnvPath('legacy').baseDir, 'cli') }));
 
 	  const inferredSeedFromEnv = resolveAuthSeedFromEnv(process.env);
 	  const inferredSeedFromAvailability = hasDevAuthAccessKey ? 'dev-auth' : hasMainAccessKey ? 'main' : 'main';
@@ -2649,9 +2818,9 @@ async function cmdPrStack({ rootDir, argv }) {
 
   // 1) Create (or reuse) the stack.
   let created = null;
-	  if (!stackExists) {
-	    progress(`[stack] pr: creating stack "${stackName}" (server=${serverComponent})...`);
-	    created = await cmdNew({
+		  if (!stackExists) {
+		    progress(`[stack] pr: creating stack "${stackName}" (server=${serverComponent})...`);
+		    created = await cmdNew({
 	      rootDir,
 	      argv: [
 	        stackName,
@@ -2661,13 +2830,14 @@ async function cmdPrStack({ rootDir, argv }) {
 	        ...(databaseUrlFromArg ? [`--database-url=${databaseUrlFromArg}`] : []),
 	        ...(json ? ['--json'] : []),
 	      ],
-	      // Prevent cmdNew from printing in JSON mode (we’ll print the final combined object below).
-	      emit: !json,
-	    });
-	  } else {
-    progress(`[stack] pr: reusing existing stack "${stackName}"...`);
-    // Ensure requested server flavor is compatible with the existing stack.
-    const existing = await cmdInfoInternal({ rootDir, stackName });
+		      // Prevent cmdNew from printing in JSON mode (we’ll print the final combined object below).
+		      emit: !json,
+		    });
+        stackName = created?.stackName ?? stackName;
+		  } else {
+	    progress(`[stack] pr: reusing existing stack "${stackName}"...`);
+	    // Ensure requested server flavor is compatible with the existing stack.
+	    const existing = await cmdInfoInternal({ rootDir, stackName });
     if (existing.serverComponent !== serverComponent) {
       throw new Error(
         `[stack] pr: existing stack "${stackName}" uses server=${existing.serverComponent}, but command requested server=${serverComponent}.\n` +
@@ -2815,7 +2985,7 @@ async function cmdPrStack({ rootDir, argv }) {
       ...(wantsExpoTailscale ? ['--expo-tailscale'] : []),
       ...(passthrough.length ? ['--', ...passthrough] : []),
     ];
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'dev.mjs', args, background });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('dev') || 'dev.mjs', args, background });
   } else if (wantsStart) {
     progress(`[stack] pr: ${stackName}: starting...`);
     const args = [
@@ -2823,7 +2993,7 @@ async function cmdPrStack({ rootDir, argv }) {
       ...(wantsExpoTailscale ? ['--expo-tailscale'] : []),
       ...(passthrough.length ? ['--', ...passthrough] : []),
     ];
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'run.mjs', args, background });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('start') || 'run.mjs', args, background });
   }
 
   const info = await cmdInfoInternal({ rootDir, stackName });
@@ -3030,22 +3200,25 @@ async function cmdStackDaemon({ rootDir, stackName, argv, json }) {
           : {}),
       };
       await mkdir(cliHomeDir, { recursive: true }).catch(() => {});
-      const daemonEnv = getDaemonEnv({ baseEnv: envForIdentity, cliHomeDir, internalServerUrl, publicServerUrl });
+      const daemonEnv = getDaemonEnv({
+        baseEnv: envForIdentity,
+        cliHomeDir,
+        internalServerUrl,
+        publicServerUrl,
+        stackName,
+        cliIdentity: identity,
+      });
 
       if (action === 'start' || action === 'restart') {
         // UX: if this identity is not authenticated yet and we're in a real TTY, offer to run the
         // guided login flow inline (instead of failing or asking for a second terminal).
         //
         // Important: never prompt in --json mode (automation must not hang).
-        const accessKeyPath = join(cliHomeDir, 'access.key');
-        const hasCreds = (() => {
-          try {
-            if (!existsSync(accessKeyPath)) return false;
-            return readFileSync(accessKeyPath, 'utf-8').trim().length > 0;
-          } catch {
-            return false;
-          }
-        })();
+        const hasCreds = Boolean(findExistingStackCredentialPath({
+          cliHomeDir,
+          serverUrl: internalServerUrl,
+          env: envForIdentity,
+        }));
 
         if (!hasCreds) {
           if (json) {
@@ -3101,7 +3274,15 @@ async function cmdStackDaemon({ rootDir, stackName, argv, json }) {
       }
 
       if (action === 'stop') {
-        await stopLocalDaemon({ cliBin, internalServerUrl, cliHomeDir });
+        await stopLocalDaemon({
+          cliBin,
+          internalServerUrl,
+          publicServerUrl,
+          cliHomeDir,
+          env: envForIdentity,
+          stackName,
+          cliIdentity: identity,
+        });
         const status = await runCapture(process.execPath, [cliBin, 'daemon', 'status'], { cwd: rootDir, env: daemonEnv }).catch(() => '');
         return { ok: true, action, cliIdentity: identity, cliHomeDir, status: status.trim() || null };
       }
@@ -3313,20 +3494,9 @@ async function maybePrintDelegatedStackHelp({ rootDir, cmd, stackName, json }) {
   const c = (cmd ?? '').toString().trim();
   if (!c) return false;
 
-  const helpScriptByCmd = new Map([
-    ['dev', 'dev.mjs'],
-    ['start', 'run.mjs'],
-    ['build', 'build.mjs'],
-    ['typecheck', 'typecheck.mjs'],
-    ['lint', 'lint.mjs'],
-    ['test', 'test.mjs'],
-    ['review', 'review.mjs'],
-    ['doctor', 'doctor.mjs'],
-    ['mobile', 'mobile.mjs'],
-    ['mobile-dev-client', 'mobile_dev_client.mjs'],
-  ]);
-
-  const script = helpScriptByCmd.get(c);
+  const delegated = new Set(['dev', 'start', 'build', 'typecheck', 'lint', 'test', 'review', 'doctor', 'mobile', 'mobile-dev-client']);
+  if (!delegated.has(c)) return false;
+  const script = resolveTopLevelNodeScriptFile(c);
   if (!script) return false;
 
   const usageLine = STACK_HELP_USAGE_BY_CMD.get(c) ?? null;
@@ -3644,7 +3814,7 @@ async function main() {
         const cliHomeDirForIdentity = identity
           ? resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity })
           : baseCliHomeDir;
-        const envForHappy = identity
+        let envForHappy = identity
           ? {
               ...env,
               HAPPIER_STACK_CLI_IDENTITY: identity,
@@ -3654,6 +3824,11 @@ async function main() {
               HAPPIER_STACK_CLI_HOME_DIR: cliHomeDirForIdentity,
             }
           : env;
+        envForHappy = applyStackActiveServerScopeEnv({
+          env: envForHappy,
+          stackName,
+          cliIdentity: identity || (envForHappy.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
+        });
 
         // Passthrough: preserve CLI output and exit code; avoid wrapper stack traces.
         const child = spawn(process.execPath, [join(rootDir, 'scripts', 'happier.mjs'), ...forwardedArgs], {
@@ -3676,56 +3851,56 @@ async function main() {
   if (cmd === 'dev') {
     const background = passthrough.includes('--background') || passthrough.includes('--bg');
     const args = background ? passthrough.filter((a) => a !== '--background' && a !== '--bg') : passthrough;
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'dev.mjs', args, background });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('dev') || 'dev.mjs', args, background });
     return;
   }
   if (cmd === 'start') {
     const background = passthrough.includes('--background') || passthrough.includes('--bg');
     const args = background ? passthrough.filter((a) => a !== '--background' && a !== '--bg') : passthrough;
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'run.mjs', args, background });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('start') || 'run.mjs', args, background });
     return;
   }
   if (cmd === 'build') {
     const { kv } = parseArgs(passthrough);
     const overrides = resolveTransientRepoOverrides({ rootDir, kv });
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'build.mjs', args: passthrough, extraEnv: overrides });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('build') || 'build.mjs', args: passthrough, extraEnv: overrides });
     return;
   }
   if (cmd === 'typecheck') {
     const { kv } = parseArgs(passthrough);
     const overrides = resolveTransientRepoOverrides({ rootDir, kv });
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'typecheck.mjs', args: passthrough, extraEnv: overrides });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('typecheck') || 'typecheck.mjs', args: passthrough, extraEnv: overrides });
     return;
   }
   if (cmd === 'lint') {
     const { kv } = parseArgs(passthrough);
     const overrides = resolveTransientRepoOverrides({ rootDir, kv });
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'lint.mjs', args: passthrough, extraEnv: overrides });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('lint') || 'lint.mjs', args: passthrough, extraEnv: overrides });
     return;
   }
   if (cmd === 'test') {
     const { kv } = parseArgs(passthrough);
     const overrides = resolveTransientRepoOverrides({ rootDir, kv });
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'test.mjs', args: passthrough, extraEnv: overrides });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('test') || 'test_cmd.mjs', args: passthrough, extraEnv: overrides });
     return;
   }
   if (cmd === 'review') {
     const { kv } = parseArgs(passthrough);
     const overrides = resolveTransientRepoOverrides({ rootDir, kv });
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'review.mjs', args: passthrough, extraEnv: overrides });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('review') || 'review.mjs', args: passthrough, extraEnv: overrides });
     return;
   }
   if (cmd === 'doctor') {
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'doctor.mjs', args: passthrough });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('doctor') || 'doctor.mjs', args: passthrough });
     return;
   }
   if (cmd === 'mobile') {
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'mobile.mjs', args: passthrough });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('mobile') || 'mobile.mjs', args: passthrough });
     return;
   }
   if (cmd === 'mobile-dev-client') {
     // Stack-scoped wrapper so the dev-client can be built from the stack's active Happier checkout/worktree.
-    await cmdRunScript({ rootDir, stackName, scriptPath: 'mobile_dev_client.mjs', args: passthrough });
+    await cmdRunScript({ rootDir, stackName, scriptPath: resolveTopLevelNodeScriptFile('mobile-dev-client') || 'mobile_dev_client.mjs', args: passthrough });
     return;
   }
   if (cmd === 'mobile:install') {

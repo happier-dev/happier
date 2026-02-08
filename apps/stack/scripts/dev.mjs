@@ -7,7 +7,6 @@ import { getServerComponentName, isHappierServerRunning } from './utils/server/s
 import { requireDir } from './utils/proc/pm.mjs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { homedir } from 'node:os';
 import { isDaemonRunning, stopLocalDaemon } from './daemon.mjs';
 import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { assertServerComponentDirMatches, assertServerPrismaProviderMatches } from './utils/server/validate.mjs';
@@ -30,6 +29,8 @@ import { applyBindModeToEnv, resolveBindModeFromArgs } from './utils/net/bind_mo
 import { cmd, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
 import { isSandboxed } from './utils/env/sandbox.mjs';
+import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
+import { expandHome } from './utils/paths/canonical_home.mjs';
 
  /**
   * Dev mode stack:
@@ -163,7 +164,7 @@ async function main() {
   const uiApiUrl = resolvedUrls.defaultPublicUrl;
   const restart = flags.has('--restart');
   const cliHomeDir = process.env.HAPPIER_STACK_CLI_HOME_DIR?.trim()
-    ? process.env.HAPPIER_STACK_CLI_HOME_DIR.trim().replace(/^~(?=\/)/, homedir())
+    ? expandHome(process.env.HAPPIER_STACK_CLI_HOME_DIR.trim())
     : join(autostart.baseDir, 'cli');
 
   if (json) {
@@ -196,6 +197,7 @@ async function main() {
 
   const children = [];
   let shuttingDown = false;
+  installExitCleanup({ label: 'local', children });
 
   // Ensure happier-cli is install+build ready before starting the daemon.
   // Worktrees often don't have dist/ built yet, which causes MODULE_NOT_FOUND on dist/index.mjs.
@@ -366,7 +368,7 @@ async function main() {
   });
 
   if (startDaemon) {
-    const gate = daemonStartGate({ env: baseEnv, cliHomeDir });
+    const gate = daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: internalServerUrl });
     if (!gate.ok) {
       // In orchestrated auth flows (setup-pr/review-pr), we intentionally keep server/UI up
       // for guided login and start daemon post-auth from the orchestrator.
@@ -375,7 +377,7 @@ async function main() {
       } else {
         const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
         if (!isInteractive) {
-          throw new Error(formatDaemonAuthRequiredError({ stackName, cliHomeDir }));
+          throw new Error(formatDaemonAuthRequiredError({ stackName, cliHomeDir, serverUrl: internalServerUrl }));
         }
       }
     } else {
@@ -387,13 +389,15 @@ async function main() {
         publicServerUrl,
         restart,
         isShuttingDown: () => shuttingDown,
+        env: baseEnv,
+        stackName,
       });
     }
   }
 
   const cliWatcher = watchHappyCliAndRestartDaemon({
     enabled: watchEnabled,
-    startDaemon: startDaemon && daemonStartGate({ env: baseEnv, cliHomeDir }).ok,
+    startDaemon: startDaemon && daemonStartGate({ env: baseEnv, cliHomeDir, serverUrl: internalServerUrl }).ok,
     buildCli,
     cliDir,
     cliBin,
@@ -401,6 +405,8 @@ async function main() {
     internalServerUrl,
     publicServerUrl,
     isShuttingDown: () => shuttingDown,
+    env: baseEnv,
+    stackName,
   });
   if (cliWatcher) watchers.push(cliWatcher);
 

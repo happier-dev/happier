@@ -12,7 +12,7 @@ import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox
 import { normalizeProfile } from './utils/cli/normalize.mjs';
 import { banner, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { cyan, dim, green } from './utils/ui/ansi.mjs';
-import { detectSwiftbarPluginInstalled } from './utils/menubar/swiftbar.mjs';
+import { detectSwiftbarPluginInstalled, removeSwiftbarPlugins } from './utils/menubar/swiftbar.mjs';
 
 async function ensureSwiftbarAssets({ cliRootDir }) {
   const homeDir = getHappyStacksHomeDir();
@@ -46,21 +46,6 @@ function sandboxPluginBasename() {
   if (!sandboxDir) return '';
   const hash = createHash('sha256').update(sandboxDir).digest('hex').slice(0, 10);
   return `hstack.sandbox-${hash}`;
-}
-
-function removeSwiftbarPlugins({ patterns }) {
-  const pats = (patterns ?? []).filter(Boolean);
-  const args = pats.length ? pats.map((p) => `"${p}"`).join(' ') : '"hstack.*.sh"';
-  const s =
-    `DIR="$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)"; ` +
-    `if [[ -z "$DIR" ]]; then DIR="$HOME/Library/Application Support/SwiftBar/Plugins"; fi; ` +
-    `if [[ -d "$DIR" ]]; then rm -f "$DIR"/${args} 2>/dev/null || true; echo "$DIR"; else echo ""; fi`;
-  const res = spawnSync('bash', ['-lc', s], { encoding: 'utf-8' });
-  if (res.status !== 0) {
-    return null;
-  }
-  const out = String(res.stdout ?? '').trim();
-  return out || null;
 }
 
 async function main() {
@@ -135,8 +120,15 @@ async function main() {
     const patterns = isSandboxed()
       ? [`${sandboxPluginBasename()}.*.sh`]
       : ['hstack.*.sh'];
-    const dir = removeSwiftbarPlugins({ patterns });
-    printResult({ json, data: { ok: true, pluginsDir: dir }, text: dir ? `[menubar] removed plugins from ${dir}` : '[menubar] no plugins dir found' });
+    const res = await removeSwiftbarPlugins({ patterns });
+    const dir = res.pluginsDir;
+    printResult({
+      json,
+      data: { ok: res.ok, pluginsDir: dir, removed: res.removed },
+      text: dir
+        ? (res.ok ? `[menubar] removed plugins from ${dir}` : `[menubar] failed to remove plugins from ${dir}`)
+        : '[menubar] no plugins dir found',
+    });
     return;
   }
 

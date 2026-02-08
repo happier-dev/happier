@@ -6,6 +6,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+const scriptsDir = dirname(fileURLToPath(import.meta.url));
+const rootDir = dirname(scriptsDir);
+
 function runCmd(cmd, args, { cwd, env }) {
   return new Promise((resolve, reject) => {
     const cleanEnv = {};
@@ -19,7 +22,14 @@ function runCmd(cmd, args, { cwd, env }) {
     proc.stdout.on('data', (d) => (stdout += String(d)));
     proc.stderr.on('data', (d) => (stderr += String(d)));
     proc.on('error', reject);
-    proc.on('exit', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+    proc.on('close', (code, signal) => {
+      if (code != null) {
+        resolve({ code, stdout, stderr });
+        return;
+      }
+      const signalText = signal ? ` (signal: ${signal})` : '';
+      resolve({ code: 1, stdout, stderr: `${stderr}Process exited without code${signalText}\n` });
+    });
   });
 }
 
@@ -33,24 +43,17 @@ async function runOk(cmd, args, { cwd, env }) {
   return res;
 }
 
-test('hstack wt archive detaches and moves a git worktree (preserving uncommitted changes)', async () => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-archive-'));
-
-  const storageDir = join(tmp, 'storage');
-  const homeDir = join(tmp, 'home');
-  const workspaceDir = join(tmp, 'workspace');
-
-  const baseEnv = {
+function createBaseEnv({ homeDir, storageDir, workspaceDir }) {
+  return {
     ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HAPPIER_STACK_'))),
     GIT_TERMINAL_PROMPT: '0',
     HAPPIER_STACK_HOME_DIR: homeDir,
     HAPPIER_STACK_STORAGE_DIR: storageDir,
     HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
   };
+}
 
-  const repoDir = join(workspaceDir, 'main');
+async function initMainRepo({ repoDir, baseEnv }) {
   await mkdir(repoDir, { recursive: true });
   await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
@@ -58,10 +61,42 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
   await writeFile(join(repoDir, 'README.md'), 'hello\n', 'utf-8');
   await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
   await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
+}
+
+async function addWorktree({ repoDir, worktreeDir, branch, baseEnv }) {
+  await mkdir(dirname(worktreeDir), { recursive: true });
+  await runOk('git', ['worktree', 'add', '-b', branch, worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
+}
+
+async function createArchiveFixture(t, prefix) {
+  const tmp = await mkdtemp(join(tmpdir(), prefix));
+  t.after(async () => {
+    await rm(tmp, { recursive: true, force: true });
+  });
+
+  const storageDir = join(tmp, 'storage');
+  const homeDir = join(tmp, 'home');
+  const workspaceDir = join(tmp, 'workspace');
+  const baseEnv = createBaseEnv({ homeDir, storageDir, workspaceDir });
+  const repoDir = join(workspaceDir, 'main');
+
+  await initMainRepo({ repoDir, baseEnv });
+
+  return {
+    baseEnv,
+    homeDir,
+    repoDir,
+    storageDir,
+    tmp,
+    workspaceDir,
+  };
+}
+
+test('hstack wt archive detaches and moves a git worktree (preserving uncommitted changes)', async (t) => {
+  const { baseEnv, repoDir, workspaceDir } = await createArchiveFixture(t, 'happy-stacks-wt-archive-');
 
   const worktreeDir = join(workspaceDir, 'pr', 'test-archive');
-  await mkdir(dirname(worktreeDir), { recursive: true });
-  await runOk('git', ['worktree', 'add', '-b', 'pr/test-archive', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
+  await addWorktree({ repoDir, worktreeDir, branch: 'pr/test-archive', baseEnv });
 
   await writeFile(join(worktreeDir, 'staged.txt'), 'staged\n', 'utf-8');
   await runOk('git', ['add', 'staged.txt'], { cwd: worktreeDir, env: baseEnv });
@@ -107,35 +142,11 @@ test('hstack wt archive detaches and moves a git worktree (preserving uncommitte
   assert.notEqual(branchExists.code, 0, 'expected source repo branch deleted');
 });
 
-test('hstack wt archive refuses to break stacks unless --detach-stacks is provided', async () => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-archive-stacks-'));
-
-  const storageDir = join(tmp, 'storage');
-  const homeDir = join(tmp, 'home');
-  const workspaceDir = join(tmp, 'workspace');
-
-  const baseEnv = {
-    ...process.env,
-    GIT_TERMINAL_PROMPT: '0',
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
-  };
-
-  const repoDir = join(workspaceDir, 'main');
-  await mkdir(repoDir, { recursive: true });
-  await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
-  await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
-  await runOk('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir, env: baseEnv });
-  await writeFile(join(repoDir, 'README.md'), 'hello\n', 'utf-8');
-  await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
-  await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
+test('hstack wt archive refuses to break stacks unless --detach-stacks is provided', async (t) => {
+  const { baseEnv, repoDir, storageDir, workspaceDir } = await createArchiveFixture(t, 'happy-stacks-wt-archive-stacks-');
 
   const worktreeDir = join(workspaceDir, 'pr', 'linked-to-stack');
-  await mkdir(dirname(worktreeDir), { recursive: true });
-  await runOk('git', ['worktree', 'add', '-b', 'pr/linked-to-stack', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
+  await addWorktree({ repoDir, worktreeDir, branch: 'pr/linked-to-stack', baseEnv });
   await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');
 
   const stackName = 'exp-test';
@@ -173,35 +184,11 @@ test('hstack wt archive refuses to break stacks unless --detach-stacks is provid
   assert.ok(gitStat.isDirectory(), 'expected archived .git to be a directory (detached repo)');
 });
 
-test('hstack wt archive can archive a broken git worktree (missing .git/worktrees entry)', async () => {
-  const scriptsDir = dirname(fileURLToPath(import.meta.url));
-  const rootDir = dirname(scriptsDir);
-  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-wt-archive-broken-'));
-
-  const storageDir = join(tmp, 'storage');
-  const homeDir = join(tmp, 'home');
-  const workspaceDir = join(tmp, 'workspace');
-
-  const baseEnv = {
-    ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('HAPPIER_STACK_'))),
-    GIT_TERMINAL_PROMPT: '0',
-    HAPPIER_STACK_HOME_DIR: homeDir,
-    HAPPIER_STACK_STORAGE_DIR: storageDir,
-    HAPPIER_STACK_WORKSPACE_DIR: workspaceDir,
-  };
-
-  const repoDir = join(workspaceDir, 'main');
-  await mkdir(repoDir, { recursive: true });
-  await runOk('git', ['init', '-b', 'main'], { cwd: repoDir, env: baseEnv });
-  await runOk('git', ['config', 'user.name', 'Test'], { cwd: repoDir, env: baseEnv });
-  await runOk('git', ['config', 'user.email', 'test@example.com'], { cwd: repoDir, env: baseEnv });
-  await writeFile(join(repoDir, 'README.md'), 'hello\n', 'utf-8');
-  await runOk('git', ['add', 'README.md'], { cwd: repoDir, env: baseEnv });
-  await runOk('git', ['commit', '-m', 'init'], { cwd: repoDir, env: baseEnv });
+test('hstack wt archive can archive a broken git worktree (missing .git/worktrees entry)', async (t) => {
+  const { baseEnv, repoDir, workspaceDir } = await createArchiveFixture(t, 'happy-stacks-wt-archive-broken-');
 
   const worktreeDir = join(workspaceDir, 'pr', 'broken-worktree');
-  await mkdir(dirname(worktreeDir), { recursive: true });
-  await runOk('git', ['worktree', 'add', '-b', 'pr/broken-worktree', worktreeDir, 'main'], { cwd: repoDir, env: baseEnv });
+  await addWorktree({ repoDir, worktreeDir, branch: 'pr/broken-worktree', baseEnv });
 
   // Create uncommitted changes (no staging; the index will be deleted when we break the worktree).
   await writeFile(join(worktreeDir, 'untracked.txt'), 'untracked\n', 'utf-8');

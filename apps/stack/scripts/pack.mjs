@@ -80,7 +80,7 @@ async function createPackSandbox({ monorepoRoot, packageRelDir }) {
   // Minimal monorepo layout needed for pack steps that reference workspace deps:
   // - root package.json + yarn.lock (for repo root detection)
   // - target package dir (e.g. apps/cli)
-  // - packages/agents + packages/protocol (bundled deps source)
+  // - bundled deps sources (packages/*)
   const filesToCopy = [
     'package.json',
     'yarn.lock',
@@ -92,6 +92,7 @@ async function createPackSandbox({ monorepoRoot, packageRelDir }) {
   const dirsToCopy = [
     packageRelDir,
     'packages/agents',
+    'packages/cli-common',
     'packages/protocol',
   ];
   for (const d of dirsToCopy) {
@@ -109,8 +110,9 @@ async function createPackSandbox({ monorepoRoot, packageRelDir }) {
 
 export function analyzeTarList(paths) {
   const hasAgents = paths.some((p) => p.startsWith('package/node_modules/@happier-dev/agents/'));
+  const hasCliCommon = paths.some((p) => p.startsWith('package/node_modules/@happier-dev/cli-common/'));
   const hasProtocol = paths.some((p) => p.startsWith('package/node_modules/@happier-dev/protocol/'));
-  return { hasAgents, hasProtocol };
+  return { hasAgents, hasCliCommon, hasProtocol };
 }
 
 async function main() {
@@ -199,17 +201,17 @@ async function main() {
     const tarballPath = join(sandboxPackDir, tarballName);
     const tarListRaw = await runCapture('tar', ['-tf', tarballPath], { cwd: sandboxPackDir, env: process.env });
     const tarPaths = tarListRaw.split('\n').map((l) => l.trim()).filter(Boolean);
-    const { hasAgents, hasProtocol } = analyzeTarList(tarPaths);
+    const { hasAgents, hasCliCommon, hasProtocol } = analyzeTarList(tarPaths);
 
     // Only enforce bundled deps for CLI by default; other packages may intentionally not bundle.
     const shouldEnforceBundledDeps = target === 'cli';
-    const ok = shouldEnforceBundledDeps ? hasAgents && hasProtocol : true;
+    const ok = shouldEnforceBundledDeps ? hasAgents && hasCliCommon && hasProtocol : true;
     const data = {
       ok,
       packDir,
       sandboxRoot,
       tarball: { name: basename(tarballPath) },
-      bundled: { agents: hasAgents, protocol: hasProtocol },
+      bundled: { agents: hasAgents, cliCommon: hasCliCommon, protocol: hasProtocol },
       enforcement: { bundledDeps: shouldEnforceBundledDeps },
       dryRun: { ok: true, output: json ? undefined : dryRunOut },
     };
@@ -224,6 +226,7 @@ async function main() {
       `[pack] tarball: ${basename(tarballPath)} (generated in a temp sandbox)`,
       `[pack] bundledDependencies (best-effort):`,
       `- @happier-dev/agents:   ${hasAgents ? '✅ present' : shouldEnforceBundledDeps ? '❌ missing' : '↪ not required'}`,
+      `- @happier-dev/cli-common: ${hasCliCommon ? '✅ present' : shouldEnforceBundledDeps ? '❌ missing' : '↪ not required'}`,
       `- @happier-dev/protocol: ${hasProtocol ? '✅ present' : shouldEnforceBundledDeps ? '❌ missing' : '↪ not required'}`,
     ];
     if (!ok) {
