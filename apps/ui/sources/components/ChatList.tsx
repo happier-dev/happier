@@ -10,7 +10,6 @@ import { ChatFooter } from './ChatFooter';
 import { buildChatListItems, type ChatListItem } from '@/components/sessions/chatListItems';
 import { PendingUserTextMessageView } from '@/components/sessions/pending/PendingUserTextMessageView';
 import { sync } from '@/sync/sync';
-import type { SwitchToLocalControlDisabledReason } from '@/sync/localControlSwitch';
 
 export type ChatListBottomNotice = {
     title: string;
@@ -21,8 +20,6 @@ export const ChatList = React.memo((props: {
     session: Session;
     bottomNotice?: ChatListBottomNotice | null;
     onRequestSwitchToRemote?: () => void;
-    onRequestSwitchToLocal?: () => void;
-    switchToLocalDisabledReason?: SwitchToLocalControlDisabledReason;
 }) => {
     const { messages, isLoaded } = useSessionMessages(props.session.id);
     const { messages: pendingMessages } = useSessionPendingMessages(props.session.id);
@@ -49,8 +46,6 @@ export const ChatList = React.memo((props: {
             isLoaded={isLoaded}
             bottomNotice={props.bottomNotice}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-            onRequestSwitchToLocal={props.onRequestSwitchToLocal}
-            switchToLocalDisabledReason={props.switchToLocalDisabledReason}
             interaction={interaction}
         />
     )
@@ -75,8 +70,6 @@ const ListFooter = React.memo((props: {
     sessionId: string;
     bottomNotice?: ChatListBottomNotice | null;
     onRequestSwitchToRemote?: () => void;
-    onRequestSwitchToLocal?: () => void;
-    switchToLocalDisabledReason?: SwitchToLocalControlDisabledReason;
 }) => {
     const session = useSession(props.sessionId)!;
     return (
@@ -84,8 +77,6 @@ const ListFooter = React.memo((props: {
             controlledByUser={session.agentState?.controlledByUser || false}
             notice={props.bottomNotice ?? null}
             onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-            onRequestSwitchToLocal={props.onRequestSwitchToLocal}
-            switchToLocalDisabledReason={props.switchToLocalDisabledReason}
         />
     )
 });
@@ -98,8 +89,6 @@ const ChatListInternal = React.memo((props: {
     isLoaded: boolean,
     bottomNotice?: ChatListBottomNotice | null,
     onRequestSwitchToRemote?: () => void,
-    onRequestSwitchToLocal?: () => void,
-    switchToLocalDisabledReason?: SwitchToLocalControlDisabledReason;
     interaction: {
         canSendMessages: boolean;
         canApprovePermissions: boolean;
@@ -174,8 +163,6 @@ const ChatListInternal = React.memo((props: {
                     sessionId={props.sessionId}
                     bottomNotice={props.bottomNotice}
                     onRequestSwitchToRemote={props.onRequestSwitchToRemote}
-                    onRequestSwitchToLocal={props.onRequestSwitchToLocal}
-                    switchToLocalDisabledReason={props.switchToLocalDisabledReason}
                 />
             }
             ListFooterComponent={<ListHeader isLoadingOlder={isLoadingOlder} />}

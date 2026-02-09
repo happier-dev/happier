@@ -58,7 +58,7 @@ import { ActivityIndicator, Platform, Pressable, Text, View } from 'react-native
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
 import { sessionSwitch } from '@/sync/ops';
-import { getSwitchToLocalControlDisabledReason, shouldOfferSwitchToLocalControl, shouldRenderChatTimelineForSession, shouldRequestRemoteControlAfterPendingEnqueue } from '@/sync/localControlSwitch';
+import { shouldRenderChatTimelineForSession, shouldRequestRemoteControlAfterPendingEnqueue } from '@/sync/localControlSwitch';
 
 function formatResumeSupportDetailCode(code: 'cliNotDetected' | 'capabilityProbeFailed' | 'acpProbeFailed' | 'loadSessionFalse'): string {
     switch (code) {
@@ -288,18 +288,6 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
 
     const machine = useMachine(typeof machineId === 'string' ? machineId : '');
     const isMachineReachable = Boolean(machine) && isMachineOnline(machine!);
-
-    const switchToLocalDisabledReason = React.useMemo(() => getSwitchToLocalControlDisabledReason({
-        session,
-        isMachineOnline: isMachineReachable,
-        resumeCapabilityOptions,
-    }), [isMachineReachable, resumeCapabilityOptions, session]);
-
-    const shouldOfferSwitchToLocal = React.useMemo(() => shouldOfferSwitchToLocalControl({
-        session,
-        isMachineOnline: isMachineReachable,
-        resumeCapabilityOptions,
-    }), [isMachineReachable, resumeCapabilityOptions, session]);
 
     const inactiveUi = React.useMemo(() => {
         return getInactiveSessionUiState({
@@ -664,29 +652,11 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
         })();
     }, [hasWriteAccess, sessionId]);
 
-    const handleRequestSwitchToLocal = React.useCallback(() => {
-        if (!hasWriteAccess) {
-            Modal.alert(t('common.error'), t('session.sharing.noEditPermission'));
-            return;
-        }
-        void (async () => {
-            try {
-                const ok = await sessionSwitch(sessionId, 'local');
-                if (ok !== true) {
-                    Modal.alert(t('common.error'), t('errors.failedToSwitchControl'));
-                }
-            } catch {
-                Modal.alert(t('common.error'), t('errors.failedToSwitchControl'));
-            }
-        })();
-    }, [hasWriteAccess, sessionId]);
-
     const shouldRenderChatTimeline = React.useMemo(() => shouldRenderChatTimelineForSession({
         committedMessagesCount: messages.length,
         pendingMessagesCount: pendingMessages.length,
         controlledByUser: Boolean(session.agentState?.controlledByUser),
-        forceRenderFooter: shouldOfferSwitchToLocal || switchToLocalDisabledReason != null,
-    }), [messages.length, pendingMessages.length, session.agentState?.controlledByUser, shouldOfferSwitchToLocal, switchToLocalDisabledReason]);
+    }), [messages.length, pendingMessages.length, session.agentState?.controlledByUser]);
 
     let content = (
         <>
@@ -696,8 +666,6 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                         session={session}
                         bottomNotice={bottomNotice}
                         onRequestSwitchToRemote={handleRequestSwitchToRemote}
-                        onRequestSwitchToLocal={shouldOfferSwitchToLocal ? handleRequestSwitchToLocal : undefined}
-                        switchToLocalDisabledReason={!shouldOfferSwitchToLocal ? switchToLocalDisabledReason ?? undefined : undefined}
                     />
                 )}
             </Deferred>

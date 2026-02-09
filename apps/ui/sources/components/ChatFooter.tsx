@@ -6,14 +6,11 @@ import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { SessionNoticeBanner, type SessionNoticeBannerProps } from '@/components/sessions/SessionNoticeBanner';
 import { layout } from '@/components/layout';
-import type { SwitchToLocalControlDisabledReason } from '@/sync/localControlSwitch';
 
 interface ChatFooterProps {
     controlledByUser?: boolean;
     notice?: Pick<SessionNoticeBannerProps, 'title' | 'body'> | null;
     onRequestSwitchToRemote?: () => void;
-    onRequestSwitchToLocal?: () => void;
-    switchToLocalDisabledReason?: SwitchToLocalControlDisabledReason;
 }
 
 export const ChatFooter = React.memo((props: ChatFooterProps) => {
@@ -53,19 +50,6 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         ...Typography.default(),
     };
 
-    const switchToLocalUnavailableText = React.useMemo(() => {
-        switch (props.switchToLocalDisabledReason) {
-            case 'machineOffline':
-                return t('chatFooter.localModeUnavailableMachineOffline');
-            case 'daemonStarted':
-                return t('chatFooter.localModeUnavailableDaemonStarted');
-            case 'resumeUnsupported':
-                return t('chatFooter.localModeUnavailableNeedsResume');
-            default:
-                return null;
-        }
-    }, [props.switchToLocalDisabledReason]);
-
     return (
         <View style={containerStyle}>
             {props.controlledByUser && (
@@ -85,27 +69,6 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
                             style={switchButtonStyle}
                         >
                             <Text style={switchButtonTextStyle}>{t('chatFooter.switchToRemote')}</Text>
-                        </Pressable>
-                    )}
-                </View>
-            )}
-            {!props.controlledByUser && (props.onRequestSwitchToLocal || switchToLocalUnavailableText) && (
-                <View style={warningContainerStyle}>
-                    <Ionicons
-                        name="terminal-outline"
-                        size={16}
-                        color={theme.colors.box.warning.text}
-                    />
-                    <Text style={warningTextStyle}>
-                        {props.onRequestSwitchToLocal ? t('chatFooter.localModeAvailable') : switchToLocalUnavailableText}
-                    </Text>
-                    {props.onRequestSwitchToLocal && (
-                        <Pressable
-                            accessibilityLabel={t('chatFooter.switchToLocal')}
-                            onPress={props.onRequestSwitchToLocal}
-                            style={switchButtonStyle}
-                        >
-                            <Text style={switchButtonTextStyle}>{t('chatFooter.switchToLocal')}</Text>
                         </Pressable>
                     )}
                 </View>

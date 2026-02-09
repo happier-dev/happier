@@ -69,29 +69,14 @@ describe('ChatFooter (local control)', () => {
         });
     });
 
-    it('renders a switch-to-local button when remote and local control is available', async () => {
+    it('does not render switch-to-local controls while remote-controlled', async () => {
         const tree = await renderFooter({
             controlledByUser: false,
-            onRequestSwitchToLocal: vi.fn(),
-        });
-
-        const pressables = tree.root.findAllByType('Pressable');
-        expect(pressables.length).toBeGreaterThan(0);
-        expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(true);
-
-        await act(async () => {
-            tree.unmount();
-        });
-    });
-
-    it('renders unavailable copy and no local-switch action when local control is unavailable', async () => {
-        const tree = await renderFooter({
-            controlledByUser: false,
-            switchToLocalDisabledReason: 'resumeUnsupported',
         });
 
         const textNodes = tree.root.findAllByType('Text');
-        expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeUnavailableNeedsResume')).toBe(true);
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeAvailable')).toBe(false);
+        expect(textNodes.some((node) => node.props.children === 'chatFooter.localModeUnavailableNeedsResume')).toBe(false);
 
         const pressables = tree.root.findAllByType('Pressable');
         expect(pressables.some((node) => node.props.accessibilityLabel === 'chatFooter.switchToLocal')).toBe(false);
