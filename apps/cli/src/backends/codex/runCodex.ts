@@ -1,130 +1,76 @@
-import { render } from "ink";
-import React from "react";
-import { ApiClient } from '@/api/api';
 import { CodexMcpClient } from './codexMcpClient';
 import { applyPermissionModeToCodexPermissionHandler } from './utils/applyPermissionModeToHandler';
 import { createCodexPermissionHandler, type CodexRuntimePermissionHandler } from './utils/createCodexPermissionHandler';
-import { formatCodexEventForUi } from './utils/formatCodexEventForUi';
-import { nextCodexLifecycleAcpMessages } from './utils/codexAcpLifecycle';
 import { ReasoningProcessor } from './utils/reasoningProcessor';
 import { DiffProcessor } from './utils/diffProcessor';
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
-import { Credentials, readSettings } from '@/persistence';
-import { initialMachineMetadata } from '@/daemon/run';
+import { Credentials } from '@/persistence';
+import { initialMachineMetadata } from '@/daemon/startDaemon';
 import os from 'node:os';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { hashObject } from '@/utils/deterministicJson';
-import { projectPath } from '@/projectPath';
 import { resolve, join } from 'node:path';
 import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
-import { startHappyServer } from '@/mcp/startHappyServer';
+import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import { MessageBuffer } from "@/ui/ink/messageBuffer";
-import { CodexTerminalDisplay } from "@/backends/codex/ui/CodexTerminalDisplay";
 import { trimIdent } from "@/utils/trimIdent";
-import type { CodexSessionConfig, CodexToolResponse } from './types';
+import type { CodexSessionConfig } from './types';
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { delay } from "@/utils/time";
 import { stopCaffeinate } from '@/integrations/caffeinate';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
-import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
-import { setupOfflineReconnection } from '@/api/offline/setupOfflineReconnection';
-import type { ApiSessionClient } from '@/api/apiSession';
-import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/terminalMetadata';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { isExperimentalCodexAcpEnabled, isExperimentalCodexVendorResumeEnabled } from '@/backends/codex/experiments';
-import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permissionModeMetadata';
-import { resolveModelOverrideFromMetadataSnapshot, resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
+import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permission/permissionModeMetadata';
+import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import {
+    applyPermissionIntentFromMetadataIfNewer,
+    applyStartupPermissionModeSeedIfNewer,
+} from '@/agent/runtime/permission/permissionModeStateSync';
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
-import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permissionModeCanonical';
-import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach';
+import { pushTextToMessageQueueWithSpecialCommands } from '@/agent/runtime/queueSpecialCommands';
+import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permission/permissionModeCanonical';
 import { maybeUpdateCodexSessionIdMetadata } from './utils/codexSessionIdMetadata';
 import { createCodexAcpRuntime } from './acp/runtime';
 import { syncCodexAcpSessionModeFromPermissionMode } from './acp/syncSessionModeFromPermissionMode';
-import { applyStartupMetadataUpdateToSession, buildAcpSessionModeOverride, buildModelOverride, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
-import { persistTerminalAttachmentInfoIfNeeded, primeAgentStateForUi, reportSessionToDaemonIfRunning, sendTerminalFallbackMessageIfNeeded } from '@/agent/runtime/startupSideEffects';
+import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
+import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
+import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
+import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
 import { codexLocalLauncher } from './codexLocalLauncher';
-import { confirmDiscardQueuedMessagesForSwitchToLocal } from '@/agent/localControl/confirmDiscardBeforeSwitchToLocal';
-import { discardPendingBeforeSwitchToLocal } from '@/agent/localControl/discardPendingBeforeSwitchToLocal';
+import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
 import { applyLocalControlLaunchGating } from '@/agent/localControl/launchGating';
 import {
-    decideCodexLocalControlSupport,
     formatCodexLocalControlLaunchFallbackMessage,
     formatCodexLocalControlSwitchDeniedMessage,
 } from './localControl/localControlSupport';
+import { createCodexLocalControlSupportResolver } from './localControl/createLocalControlSupportResolver';
 import { resolveCodexMcpResumeServerCommand } from './resume/resolveMcpResumeServer';
 import { resolveCodexMcpServerSpawn } from './resume/resolveCodexMcpServer';
 import { probeCodexAcpLoadSessionSupport } from './acp/probeLoadSessionSupport';
-import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
 import { resolveCodexMessageModel } from './utils/resolveCodexMessageModel';
 import { buildCodexMcpStartConfigForMessage } from './utils/buildCodexMcpStartConfigForMessage';
 import { createModelOverrideSynchronizer } from '@/agent/runtime/modelOverrideSync';
 import { resolveCodexAcpResumePreflight } from './utils/codexAcpResumePreflight';
-
-type ReadyEventOptions = {
-    pending: unknown;
-    queueSize: () => number;
-    shouldExit: boolean;
-    sendReady: () => void;
-    notify?: () => void;
-};
-
-/**
- * Notify connected clients when Codex finishes processing and the queue is idle.
- * Returns true when a ready event was emitted.
- */
-export function emitReadyIfIdle({ pending, queueSize, shouldExit, sendReady, notify }: ReadyEventOptions): boolean {
-    if (shouldExit) {
-        return false;
-    }
-    if (pending) {
-        return false;
-    }
-    if (queueSize() > 0) {
-        return false;
-    }
-
-    sendReady();
-    notify?.();
-    return true;
-}
-
-export function extractCodexToolErrorText(response: CodexToolResponse): string | null {
-    if (!response?.isError) {
-        return null;
-    }
-    const text = (response.content || [])
-        .map((c) => (c && typeof c.text === 'string' ? c.text : ''))
-        .filter(Boolean)
-        .join('\n')
-        .trim();
-    return text || 'Codex error';
-}
-
-export function extractMcpToolCallResultOutput(result: unknown): unknown {
-    if (result && typeof result === 'object') {
-        const record = result as Record<string, unknown>;
-        if (Object.prototype.hasOwnProperty.call(record, 'Ok')) {
-            return (record as any).Ok;
-        }
-        if (Object.prototype.hasOwnProperty.call(record, 'Err')) {
-            return (record as any).Err;
-        }
-    }
-    return result;
-}
-
-export function nextStoredSessionIdForResumeAfterAttempt(
-    storedSessionIdForResume: string | null,
-    attempt: { attempted: boolean; success: boolean },
-): string | null {
-    if (!attempt.attempted) {
-        return storedSessionIdForResume;
-    }
-    return attempt.success ? null : storedSessionIdForResume;
-}
+import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
+import {
+    createCodexMcpMessageHandler,
+    forwardCodexErrorToUi as forwardCodexErrorToUiShared,
+    forwardCodexStatusToUi as forwardCodexStatusToUiShared,
+} from './runtime/mcpMessageHandler';
+import { runCodexLocalModePass } from './runtime/localModePass';
+import { cleanupCodexRunResources } from './runtime/cleanupRunResources';
+import {
+    emitReadyIfIdle,
+    extractCodexToolErrorText,
+    nextStoredSessionIdForResumeAfterAttempt,
+} from './runtime/sessionTurnLifecycle';
+import { createLocalRemoteModeController } from '@/agent/localControl/createLocalRemoteModeController';
+import { createCodexRemoteTerminalUi } from './runtime/createCodexRemoteTerminalUi';
 
 /**
  * Main entry point for the codex command with ink UI
@@ -132,7 +78,7 @@ export function nextStoredSessionIdForResumeAfterAttempt(
 export async function runCodex(opts: {
     credentials: Credentials;
     startedBy?: 'daemon' | 'terminal';
-    terminalRuntime?: import('@/terminal/terminalRuntimeFlags').TerminalRuntimeFlags | null;
+    terminalRuntime?: import('@/terminal/runtime/terminalRuntimeFlags').TerminalRuntimeFlags | null;
     permissionMode?: import('@/api/types').PermissionMode;
     permissionModeUpdatedAt?: number;
     agentModeId?: string;
@@ -164,26 +110,16 @@ export async function runCodex(opts: {
     // Set backend for offline warnings (before any API calls)
     connectionState.setBackend('Codex');
 
-    const api = await ApiClient.create(opts.credentials);
+    const { api, machineId } = await initializeBackendApiContext({
+        credentials: opts.credentials,
+        machineMetadata: initialMachineMetadata,
+        missingMachineIdMessage: '[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues',
+    });
 
     // Log startup options
     logger.debug(`[codex] Starting with options: startedBy=${opts.startedBy || 'terminal'}`);
 
-    //
-    // Machine
-    //
-
-    const settings = await readSettings();
-    let machineId = settings?.machineId;
-    if (!machineId) {
-        console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues`);
-        process.exit(1);
-    }
     logger.debug(`Using machineId: ${machineId}`);
-    await api.getOrCreateMachine({
-        machineId,
-        metadata: initialMachineMetadata
-    });
 
     //
     // Attach to existing Happy session (inactive-session-resume) OR create a new one.
@@ -220,7 +156,6 @@ export async function runCodex(opts: {
         modelId: initialModelId ?? undefined,
         modelUpdatedAt: initialModelUpdatedAt,
     });
-    const terminal = buildTerminalMetadataFromRuntimeFlags(opts.terminalRuntime ?? null);
     let session: ApiSessionClient;
     let workspaceDirFromMetadata: string | null = null;
     // Permission handler declared here so it can be updated in onSessionSwap callback
@@ -228,57 +163,35 @@ export async function runCodex(opts: {
     let permissionHandler: CodexRuntimePermissionHandler;
     // Offline reconnection handle (only relevant when creating a new session and server is unreachable)
     let reconnectionHandle: { cancel: () => void } | null = null;
-
-    if (typeof opts.existingSessionId === 'string' && opts.existingSessionId.trim()) {
-        const existingId = opts.existingSessionId.trim();
-        logger.debug(`[codex] Attaching to existing Happy session: ${existingId}`);
-        const baseSession = await createBaseSessionForAttach({
-            existingSessionId: existingId,
-            metadata,
-            state,
-        });
-        session = api.sessionSyncClient(baseSession);
-        // Attach flows must wait for the persisted session metadata snapshot before writing any startup updates.
-        // Otherwise we risk overwriting the session's canonical workspace path with the local CLI cwd.
-        let snapshot: any = null;
-        let snapshotError: unknown = null;
-        try {
-            snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 });
-        } catch (error) {
-            snapshotError = error;
-        }
-        if (!snapshot) {
-            logger.debug(
-                '[codex] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)',
-                snapshotError ?? undefined,
-            );
-        } else {
-            workspaceDirFromMetadata = typeof snapshot.path === 'string' && snapshot.path.trim().length > 0 ? snapshot.path : null;
-            // Refresh metadata on startup (mark session active and update runtime fields).
-            applyStartupMetadataUpdateToSession({
-                session,
-                next: metadata,
-                nowMs: Date.now(),
-                permissionModeOverride: buildPermissionModeOverride({
-                    permissionMode: opts.permissionMode,
-                    permissionModeUpdatedAt: opts.permissionModeUpdatedAt,
-                }),
-                acpSessionModeOverride: buildAcpSessionModeOverride({
-                    agentModeId: opts.agentModeId,
-                    agentModeUpdatedAt: opts.agentModeUpdatedAt,
-                }),
-                modelOverride: buildModelOverride({
-                    modelId: opts.modelId,
-                    modelUpdatedAt: opts.modelUpdatedAt,
-                }),
-                mode: 'attach',
-            });
+    const initializedSession = await initializeBackendRunSession({
+        api,
+        sessionTag,
+        metadata,
+        state,
+        existingSessionId: opts.existingSessionId,
+        uiLogPrefix: '[codex]',
+        startupMetadataOverrides: createStartupMetadataOverrides(opts),
+        startupSideEffectsOrder: 'persist-first',
+        allowOfflineStub: true,
+        onSessionSwap: (newSession) => {
+            session = newSession;
+            // Update permission handler with new session to avoid stale reference
+            if (permissionHandler) {
+                permissionHandler.updateSession(newSession);
+            }
+        },
+        onAttachMetadataSnapshotReady: (snapshot, attachSession) => {
+            const maybeSnapshot = snapshot as { path?: unknown } | null;
+            workspaceDirFromMetadata =
+                typeof maybeSnapshot?.path === 'string' && maybeSnapshot.path.trim().length > 0
+                    ? maybeSnapshot.path
+                    : null;
 
             // If we are attaching using the MCP engine, strip any stale ACP session *state* metadata.
             // This prevents the UI from mis-detecting ACP capabilities based on previous runs.
             // Note: we intentionally keep user-configured overrides (permissionMode/modelOverride/acpSessionModeOverride).
             if (!isExperimentalCodexAcpEnabled()) {
-                session.updateMetadata((current) => {
+                attachSession.updateMetadata((current) => {
                     const meta = current as any;
                     if (
                         meta.acpSessionModesV1 === undefined &&
@@ -291,48 +204,31 @@ export async function runCodex(opts: {
                     return rest as any;
                 });
             }
-        }
-
-        primeAgentStateForUi(session, '[codex]');
-        await persistTerminalAttachmentInfoIfNeeded({ sessionId: existingId, terminal });
-        sendTerminalFallbackMessageIfNeeded({ session, terminal });
-        await reportSessionToDaemonIfRunning({ sessionId: existingId, metadata });
-    } else {
-        const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+        },
+        onAttachMetadataSnapshotMissing: (error) => {
+            logger.debug(
+                '[codex] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)',
+                error ?? undefined,
+            );
+        },
+    });
+    session = initializedSession.session;
+    reconnectionHandle = initializedSession.reconnectionHandle;
+    if (!initializedSession.attachedToExistingSession) {
         workspaceDirFromMetadata = typeof metadata.path === 'string' && metadata.path.trim().length > 0 ? metadata.path : null;
-
-        // Handle server unreachable case - create offline stub with hot reconnection
-        const offline = setupOfflineReconnection({
-            api,
-            sessionTag,
-            metadata,
-            state,
-            response,
-            onSessionSwap: (newSession) => {
-                session = newSession;
-                // Update permission handler with new session to avoid stale reference
-                if (permissionHandler) {
-                    permissionHandler.updateSession(newSession);
-                }
-            }
-        });
-        session = offline.session;
-        reconnectionHandle = offline.reconnectionHandle;
-
-        primeAgentStateForUi(session, '[codex]');
-        if (response) {
-            await persistTerminalAttachmentInfoIfNeeded({ sessionId: response.id, terminal });
-            sendTerminalFallbackMessageIfNeeded({ session, terminal });
-            await reportSessionToDaemonIfRunning({ sessionId: response.id, metadata });
-        }
     }
 
     if (typeof explicitPermissionMode !== 'string' && typeof opts.existingSessionId === 'string' && opts.existingSessionId.trim()) {
-        const seeded = await resolveStartupPermissionModeFromSession({ session, take: 50 });
-        if (seeded && seeded.updatedAt > initialPermissionModeUpdatedAt) {
-            initialPermissionMode = seeded.mode;
-            initialPermissionModeUpdatedAt = seeded.updatedAt;
-        }
+        initialPermissionModeUpdatedAt = await applyStartupPermissionModeSeedIfNewer({
+            explicitPermissionMode,
+            session,
+            currentPermissionModeUpdatedAt: initialPermissionModeUpdatedAt,
+            take: 50,
+            apply: ({ mode, updatedAt }) => {
+                initialPermissionMode = mode;
+                initialPermissionModeUpdatedAt = updatedAt;
+            },
+        });
     }
 
     const messageQueue = new MessageQueue2<EnhancedMode>((mode) => hashObject({
@@ -384,13 +280,11 @@ export async function runCodex(opts: {
             localId: message.localId ?? null,
             model: messageModel,
         };
-
-        const specialCommand = parseSpecialCommand(message.content.text);
-        if (specialCommand.type === 'clear') {
-            messageQueue.pushIsolateAndClear(message.content.text, enhancedMode);
-        } else {
-            messageQueue.push(message.content.text, enhancedMode);
-        }
+        pushTextToMessageQueueWithSpecialCommands({
+            queue: messageQueue,
+            text: message.content.text,
+            mode: enhancedMode,
+        });
     });
 
     let thinking = false;
@@ -406,39 +300,11 @@ export async function runCodex(opts: {
         : null;
     const mcpResumeServerAvailable = Boolean(mcpResumeServerCommand);
 
-    let localControlSupportCache:
-        | import('./localControl/localControlSupport').CodexLocalControlSupportDecision
-        | null = null;
-    let acpLoadSessionSupportedCache: boolean | null = null;
-
-    const resolveLocalControlSupport = async (opts: { includeAcpProbe: boolean }) => {
-        if (localControlSupportCache) return localControlSupportCache;
-
-        const acpLoadSessionSupported = await (async () => {
-            if (!experimentalCodexAcpEnabled) return false;
-            if (!opts.includeAcpProbe) return false;
-            if (typeof acpLoadSessionSupportedCache === 'boolean') return acpLoadSessionSupportedCache;
-            const probe = await probeCodexAcpLoadSessionSupport();
-            acpLoadSessionSupportedCache = probe.ok ? probe.loadSession : false;
-            return acpLoadSessionSupportedCache;
-        })();
-
-            const decision = decideCodexLocalControlSupport({
-                startedBy: startedByForLocalControl,
-                experimentalCodexAcpEnabled,
-                experimentalCodexResumeEnabled,
-                acpLoadSessionSupported,
-            });
-
-        // Cache only when we have a stable answer:
-        // - MCP path does not depend on a probe.
-        // - ACP path should cache only after probing.
-        if (!experimentalCodexAcpEnabled || typeof acpLoadSessionSupportedCache === 'boolean') {
-            localControlSupportCache = decision;
-        }
-
-        return decision;
-    };
+    const resolveLocalControlSupport = createCodexLocalControlSupportResolver({
+        startedBy: startedByForLocalControl,
+        experimentalCodexAcpEnabled,
+        experimentalCodexResumeEnabled,
+    });
 
     let mode: 'local' | 'remote' = opts.startingMode ?? 'remote';
     let localModeFallbackMessage: string | null = null;
@@ -482,16 +348,12 @@ export async function runCodex(opts: {
     }
 
     const sendReady = () => {
-        session.sendSessionEvent({ type: 'ready' });
-        try {
-            api.push().sendToAllDevices(
-                "It's ready!",
-                'Codex is waiting for your command',
-                { sessionId: session.sessionId }
-            );
-        } catch (pushError) {
-            logger.debug('[Codex] Failed to send ready push', pushError);
-        }
+        sendReadyWithPushNotification({
+            session,
+            pushSender: api.push(),
+            waitingForCommandLabel: 'Codex',
+            logPrefix: '[Codex]',
+        });
     };
 
     // Debug helper: log active handles/requests if DEBUG is enabled
@@ -579,21 +441,7 @@ export async function runCodex(opts: {
         logger.debug('[Codex] Abort completed, proceeding with termination');
 
         try {
-            // Update lifecycle state to archived before closing
-            if (session) {
-                session.updateMetadata((currentMetadata) => ({
-                    ...currentMetadata,
-                    lifecycleState: 'archived',
-                    lifecycleStateSince: Date.now(),
-                    archivedBy: 'cli',
-                    archiveReason: 'User terminated'
-                }));
-
-                // Send session death message
-                session.sendSessionDeath();
-                await session.flush();
-                await session.close();
-            }
+            await archiveAndCloseSession(session);
 
             // Force close Codex transport (best-effort) so we don't leave stray processes
             try {
@@ -632,8 +480,6 @@ export async function runCodex(opts: {
 
     const messageBuffer = new MessageBuffer();
     const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
-    let inkInstance: any = null;
-    let remoteUiAllowsSwitchToLocal = false;
     let requestedSwitchToLocal = false;
 
     const resolveLocalSwitchAvailability = async (): Promise<
@@ -669,12 +515,12 @@ export async function runCodex(opts: {
         return true;
     };
 
-    const renderRemoteUi = () => React.createElement(CodexTerminalDisplay, {
+    const remoteTerminalUi = createCodexRemoteTerminalUi({
         messageBuffer,
         logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
-        allowSwitchToLocal: remoteUiAllowsSwitchToLocal,
+        hasTTY,
+        stdin: process.stdin,
         onExit: async () => {
-            // Exit the agent
             logger.debug('[codex]: Exiting agent via Ctrl-C');
             shouldExit = true;
             await handleAbort();
@@ -683,50 +529,6 @@ export async function runCodex(opts: {
             await requestSwitchToLocalIfSupported();
         },
     });
-
-    const mountRemoteUi = () => {
-        if (!hasTTY) return;
-        if (!inkInstance) {
-            console.clear();
-            inkInstance = render(renderRemoteUi(), {
-                exitOnCtrlC: false,
-                patchConsole: false
-            });
-
-            process.stdin.resume();
-            if (process.stdin.isTTY) {
-                process.stdin.setRawMode(true);
-            }
-            process.stdin.setEncoding("utf8");
-            return;
-        }
-        inkInstance.rerender(renderRemoteUi());
-    };
-
-    const unmountRemoteUi = async () => {
-        if (!hasTTY) return;
-        if (process.stdin.isTTY) {
-            try {
-                process.stdin.setRawMode(false);
-            } catch {
-                // ignore
-            }
-        }
-        if (inkInstance) {
-            try {
-                inkInstance.unmount();
-            } catch {
-                // ignore
-            }
-            inkInstance = null;
-        }
-        await cleanupStdinAfterInk({ stdin: process.stdin as any, drainMs: 75 });
-        try {
-            process.stdin.pause();
-        } catch {
-            // ignore
-        }
-    };
 
     if (localModeFallbackMessage) {
         messageBuffer.addMessage(localModeFallbackMessage, 'status');
@@ -755,16 +557,10 @@ export async function runCodex(opts: {
     }
 
     // Start Happier MCP server (HTTP) and prepare STDIO bridge config for Codex
-    happierMcpServer = await startHappyServer(session);
+    const happierBridge = await createHappierMcpBridge(session, { commandMode: 'current-process' });
+    happierMcpServer = happierBridge.happierMcpServer;
     const directory = workspaceDirFromMetadata ?? process.cwd();
-    const bridgeScript = join(projectPath(), 'bin', 'happier-mcp.mjs');
-    // Use process.execPath (bun or node) as command to support both runtimes
-    const mcpServers = {
-        happier: {
-            command: process.execPath,
-            args: [bridgeScript, '--url', happierMcpServer!.url]
-        }
-    };
+    const mcpServers = happierBridge.mcpServers;
 
     const localControlSupportedForMcp = !useCodexAcp
         ? (await resolveLocalControlSupport({ includeAcpProbe: false })).ok
@@ -802,19 +598,21 @@ export async function runCodex(opts: {
     });
     if (client) client.setPermissionHandler(permissionHandler);
 
-    function forwardCodexStatusToUi(messageText: string): void {
-        messageBuffer.addMessage(messageText, 'status');
-        session.sendSessionEvent({ type: 'message', message: messageText });
-    }
+    const forwardCodexStatusToUi = (messageText: string): void => {
+        forwardCodexStatusToUiShared({
+            messageBuffer,
+            session,
+            messageText,
+        });
+    };
 
-    function forwardCodexErrorToUi(errorText: string): void {
-        const text = typeof errorText === 'string' ? errorText.trim() : '';
-        if (!text || text === 'Codex error') {
-            forwardCodexStatusToUi('Codex error');
-            return;
-        }
-        forwardCodexStatusToUi(`Codex error: ${text}`);
-    }
+    const forwardCodexErrorToUi = (errorText: string): void => {
+        forwardCodexErrorToUiShared({
+            messageBuffer,
+            session,
+            errorText,
+        });
+    };
 
     const lastCodexThreadIdPublished: { value: string | null } = { value: null };
 
@@ -839,190 +637,32 @@ export async function runCodex(opts: {
         });
     }
 
-    if (client) client.setHandler((msg) => {
-        logger.debug(`[Codex] MCP message: ${JSON.stringify(msg)}`);
-
-        publishCodexThreadIdToMetadata();
-
-        const lifecycle = nextCodexLifecycleAcpMessages({ currentTaskId, msg });
-        currentTaskId = lifecycle.currentTaskId;
-        for (const event of lifecycle.messages) {
-            session.sendAgentMessage('codex', event);
-        }
-
-        const uiText = formatCodexEventForUi(msg);
-        if (uiText) {
-            forwardCodexStatusToUi(uiText);
-        }
-
-        // Add messages to the ink UI buffer based on message type
-        if (msg.type === 'agent_message') {
-            messageBuffer.addMessage(msg.message, 'assistant');
-        } else if (msg.type === 'agent_reasoning_delta') {
-            // Skip reasoning deltas in the UI to reduce noise
-        } else if (msg.type === 'agent_reasoning') {
-            messageBuffer.addMessage(`[Thinking] ${msg.text.substring(0, 100)}...`, 'system');
-        } else if (msg.type === 'exec_command_begin') {
-            messageBuffer.addMessage(`Executing: ${msg.command}`, 'tool');
-        } else if (msg.type === 'exec_command_end') {
-            const output = msg.output || msg.error || 'Command completed';
-            const truncatedOutput = output.substring(0, 200);
-            messageBuffer.addMessage(
-                `Result: ${truncatedOutput}${output.length > 200 ? '...' : ''}`,
-                'result'
-            );
-        } else if (msg.type === 'task_started') {
-            messageBuffer.addMessage('Starting task...', 'status');
-        } else if (msg.type === 'task_complete') {
-            messageBuffer.addMessage('Task completed', 'status');
-            sendReady();
-        } else if (msg.type === 'turn_aborted') {
-            messageBuffer.addMessage('Turn aborted', 'status');
-            sendReady();
-        }
-
-        if (msg.type === 'task_started') {
-            if (!thinking) {
-                logger.debug('thinking started');
-                thinking = true;
-                session.keepAlive(thinking, 'remote');
-            }
-        }
-        if (msg.type === 'task_complete' || msg.type === 'turn_aborted') {
-            if (thinking) {
-                logger.debug('thinking completed');
-                thinking = false;
-                session.keepAlive(thinking, 'remote');
-            }
-        }
-        if (msg.type === 'agent_reasoning_section_break') {
-            // Reset reasoning processor for new section
-            reasoningProcessor.handleSectionBreak();
-        }
-        if (msg.type === 'agent_reasoning_delta') {
-            // Process reasoning delta - tool calls are sent automatically via callback
-            reasoningProcessor.processDelta(msg.delta);
-        }
-        if (msg.type === 'agent_reasoning') {
-            // Complete the reasoning section - tool results or reasoning messages sent via callback
-            reasoningProcessor.complete(msg.text);
-        }
-        if (msg.type === 'agent_message') {
-            session.sendCodexMessage({
-                type: 'message',
-                message: msg.message,
-                id: randomUUID()
-            });
-        }
-        if (msg.type === 'exec_command_begin' || msg.type === 'exec_approval_request') {
-            let { call_id, type, ...inputs } = msg;
-            session.sendCodexMessage({
-                type: 'tool-call',
-                name: 'CodexBash',
-                callId: call_id,
-                input: inputs,
-                id: randomUUID()
-            });
-        }
-        if (msg.type === 'exec_command_end') {
-            let { call_id, type, ...output } = msg;
-            session.sendCodexMessage({
-                type: 'tool-call-result',
-                callId: call_id,
-                output: output,
-                id: randomUUID()
-            });
-        }
-        if (msg.type === 'token_count') {
-            session.sendCodexMessage({
-                ...msg,
-                id: randomUUID()
-            });
-        }
-        if (msg.type === 'patch_apply_begin') {
-            // Handle the start of a patch operation
-            let { call_id, auto_approved, changes } = msg;
-
-            // Add UI feedback for patch operation
-            const changeCount = Object.keys(changes).length;
-            const filesMsg = changeCount === 1 ? '1 file' : `${changeCount} files`;
-            messageBuffer.addMessage(`Modifying ${filesMsg}...`, 'tool');
-
-            // Send tool call message
-            session.sendCodexMessage({
-                type: 'tool-call',
-                name: 'CodexPatch',
-                callId: call_id,
-                input: {
-                    auto_approved,
-                    changes
-                },
-                id: randomUUID()
-            });
-        }
-        if (msg.type === 'patch_apply_end') {
-            // Handle the end of a patch operation
-            let { call_id, stdout, stderr, success } = msg;
-
-            // Add UI feedback for completion
-            if (success) {
-                const message = stdout || 'Files modified successfully';
-                messageBuffer.addMessage(message.substring(0, 200), 'result');
-            } else {
-                const errorMsg = stderr || 'Failed to modify files';
-                messageBuffer.addMessage(`Error: ${errorMsg.substring(0, 200)}`, 'result');
-            }
-
-            // Send tool call result message
-            session.sendCodexMessage({
-                type: 'tool-call-result',
-                callId: call_id,
-                output: {
-                    stdout,
-                    stderr,
-                    success
-                },
-                id: randomUUID()
-            });
-        }
-        if (msg.type === 'turn_diff') {
-            // Handle turn_diff messages and track unified_diff changes
-            if (msg.unified_diff) {
-                diffProcessor.processDiff(msg.unified_diff);
-            }
-        }
-        // Handle MCP tool calls (e.g., change_title from happy server)
-        if (msg.type === 'mcp_tool_call_begin') {
-            const { call_id, invocation } = msg;
-            // Use mcp__ prefix so frontend recognizes it as MCP tool (minimal display)
-            const toolName = `mcp__${invocation.server}__${invocation.tool}`;
-            session.sendCodexMessage({
-                type: 'tool-call',
-                name: toolName,
-                callId: call_id,
-                input: invocation.arguments || {},
-                id: randomUUID()
-            });
-        }
-        if (msg.type === 'mcp_tool_call_end') {
-            const { call_id, result } = msg;
-            const output = extractMcpToolCallResultOutput(result);
-            session.sendCodexMessage({
-                type: 'tool-call-result',
-                callId: call_id,
-                output: output,
-                id: randomUUID()
-            });
-        }
-    });
+    if (client) {
+        const handleMcpMessage = createCodexMcpMessageHandler({
+            logger,
+            session,
+            messageBuffer,
+            sendReady,
+            publishCodexThreadIdToMetadata,
+            reasoningProcessor,
+            diffProcessor,
+            getCurrentTaskId: () => currentTaskId,
+            setCurrentTaskId: (next) => {
+                currentTaskId = next;
+            },
+            getThinking: () => thinking,
+            setThinking: (next) => {
+                thinking = next;
+            },
+        });
+        client.setHandler(handleMcpMessage);
+    }
 
     let first = true;
 
     try {
         let wasCreated = false;
             let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
-            let lastPublishedMode: 'local' | 'remote' | null = null;
-            let switchHandlerRegistered = false;
 
         const codexAcpRuntimeForSync = codexAcpRuntime;
         const modelSync =
@@ -1035,28 +675,28 @@ export async function runCodex(opts: {
                 : null;
 
         const syncRuntimeOverridesFromMetadata = (): void => {
-            const resolved = resolvePermissionIntentFromMetadataSnapshot({
+            currentPermissionModeUpdatedAt = applyPermissionIntentFromMetadataIfNewer({
                 metadata: session.getMetadataSnapshot(),
+                currentPermissionModeUpdatedAt,
+                apply: ({ intent, updatedAt }) => {
+                    currentPermissionModeUpdatedAt = updatedAt;
+                    currentPermissionMode = intent;
+                    applyPermissionModeToCodexPermissionHandler({
+                        permissionHandler,
+                        permissionMode: intent,
+                    });
+                    if (useCodexAcp && codexAcpRuntime) {
+                        void syncCodexAcpSessionModeFromPermissionMode({
+                            runtime: codexAcpRuntime,
+                            permissionMode: intent,
+                            metadata: session.getMetadataSnapshot(),
+                        }).catch((e) => {
+                            logger.debug('[CodexACP] Failed to sync session mode from metadata (non-fatal)', e);
+                        });
+                    }
+                    logger.debug(`[Codex] Permission mode updated from metadata to: ${intent}`);
+                },
             });
-            if (!resolved) return;
-            if (resolved.updatedAt <= currentPermissionModeUpdatedAt) return;
-
-            currentPermissionModeUpdatedAt = resolved.updatedAt;
-            currentPermissionMode = resolved.intent;
-            applyPermissionModeToCodexPermissionHandler({
-                permissionHandler,
-                permissionMode: resolved.intent,
-            });
-            if (useCodexAcp && codexAcpRuntime) {
-                void syncCodexAcpSessionModeFromPermissionMode({
-                    runtime: codexAcpRuntime,
-                    permissionMode: resolved.intent,
-                    metadata: session.getMetadataSnapshot(),
-                }).catch((e) => {
-                    logger.debug('[CodexACP] Failed to sync session mode from metadata (non-fatal)', e);
-                });
-            }
-            logger.debug(`[Codex] Permission mode updated from metadata to: ${resolved.intent}`);
         };
 
         const syncModelOverrideFromMetadata = (): void => {
@@ -1079,108 +719,43 @@ export async function runCodex(opts: {
         syncRuntimeOverridesFromMetadata();
         syncModelOverrideFromMetadata();
 
-        const publishModeState = async (nextMode: 'local' | 'remote'): Promise<void> => {
-            if (lastPublishedMode !== nextMode) {
-                session.sendSessionEvent({ type: 'switch', mode: nextMode });
-                lastPublishedMode = nextMode;
-            }
-
-            session.updateAgentState((currentState) => ({
-                ...currentState,
-                controlledByUser: nextMode === 'local',
-            }));
-            session.keepAlive(thinking, nextMode);
-
-            if (nextMode === 'remote') {
-                remoteUiAllowsSwitchToLocal = (await resolveLocalSwitchAvailability()).ok;
-                mountRemoteUi();
-            } else {
-                remoteUiAllowsSwitchToLocal = false;
-                await unmountRemoteUi();
-            }
-        };
-
-        const registerRemoteSwitchHandler = (): void => {
-            if (switchHandlerRegistered) return;
-            switchHandlerRegistered = true;
-            session.rpcHandlerManager.registerHandler('switch', async (params: any) => {
-                const to = params && typeof params === 'object' ? (params as any).to : undefined;
-                // Remote launcher is already in remote mode, so {to:'remote'} is a no-op.
-                if (to === 'remote') return false;
-                return await requestSwitchToLocalIfSupported();
-            });
-        };
+        const localRemoteSwitchController = createLocalRemoteModeController({
+            session,
+            getThinking: () => thinking,
+            resolveLocalSwitchAvailability,
+            requestSwitchToLocalIfSupported,
+            mountRemoteUi: () => remoteTerminalUi.mount(),
+            unmountRemoteUi: () => remoteTerminalUi.unmount(),
+            setRemoteUiAllowsSwitchToLocal: (allowed) => remoteTerminalUi.setAllowSwitchToLocal(allowed),
+        });
 
         while (!shouldExit) {
             if (mode === 'local') {
-                await publishModeState('local');
-
-                const queuedCount = messageQueue.size();
-                const queuedPreview = messageQueue.queue.map((item) => item.message);
-                const queuedLocalIds = messageQueue.queue
-                    .map((item) => item.mode?.localId)
-                    .filter((id): id is string => typeof id === 'string' && id.length > 0);
-                const serverPendingV2Count = (await session.listPendingMessageQueueV2LocalIds()).length;
-
-                if (queuedCount > 0 || serverPendingV2Count > 0) {
-                    const discardResult = await discardPendingBeforeSwitchToLocal({
-                        queuedCount,
-                        queuedLocalIds,
-                        serverPendingCount: serverPendingV2Count,
-                        confirmDiscard: () =>
-                            confirmDiscardQueuedMessagesForSwitchToLocal({
-                                queuedCount,
-                                queuedPreview,
-                                serverCount: serverPendingV2Count,
-                                serverPreview: [],
-                            }),
-                        discardServerPending: () =>
-                            session.discardPendingMessageQueueV2All({ reason: 'switch_to_local' }),
-                        markQueuedAsDiscarded: (localIds) =>
-                            session.discardCommittedMessageLocalIds({ localIds: [...localIds], reason: 'switch_to_local' }),
-                        resetQueued: () => {
-                            messageQueue.reset();
-                        },
-                        sendStatusMessage: (message) => {
-                            session.sendSessionEvent({ type: 'message', message });
-                        },
-                        formatError: formatErrorForUi,
-                        onCancelled: () => {
-                            session.sendSessionEvent({
-                                type: 'message',
-                                message: 'Keeping queued messages; staying in remote mode.',
-                            });
-                        },
-                    });
-
-                    if (discardResult !== 'proceed') {
-                        mode = 'remote';
-                        continue;
-                    }
-                }
-
-                const localResult = await codexLocalLauncher<EnhancedMode>({
-                    path: workspaceDirFromMetadata ?? process.cwd(),
-                    api,
+                await localRemoteSwitchController.publishModeState('local');
+                const localPass = await runCodexLocalModePass<EnhancedMode>({
                     session,
                     messageQueue,
+                    workspaceDir: workspaceDirFromMetadata ?? process.cwd(),
+                    api,
                     permissionMode: currentPermissionMode ?? initialPermissionMode,
                     resumeId: storedSessionIdForResume,
+                    formatError: formatErrorForUi,
+                    launchLocal: codexLocalLauncher,
                 });
 
-                if (localResult.type === 'exit') {
+                if (localPass.type === 'exit') {
                     shouldExit = true;
                     break;
                 }
 
-                storedSessionIdForResume = localResult.resumeId;
+                storedSessionIdForResume = localPass.resumeId;
                 mode = 'remote';
                 continue;
             }
 
-            await publishModeState('remote');
+            await localRemoteSwitchController.publishModeState('remote');
             requestedSwitchToLocal = false;
-            registerRemoteSwitchHandler();
+            localRemoteSwitchController.registerRemoteSwitchHandler();
 
         while (!shouldExit && !requestedSwitchToLocal) {
             logActiveHandles('loop-top');
@@ -1336,35 +911,9 @@ export async function runCodex(opts: {
                         logger.debug('[CodexMCP] connect complete');
                     }
 
-                    // Map permission mode to approval policy and sandbox for startSession
-                    const approvalPolicy = (() => {
-                    switch (message.mode.permissionMode) {
-                        // Codex native modes
-                        case 'default': return 'untrusted' as const;                    // Ask for non-trusted commands
-                        case 'read-only': return 'never' as const;                      // Never ask, read-only enforced by sandbox
-                        case 'safe-yolo': return 'on-failure' as const;                 // Auto-run, ask only on failure
-                        case 'yolo': return 'on-failure' as const;                      // Auto-run, ask only on failure
-                        // Defensive fallback for Claude-specific modes (backward compatibility)
-                        case 'bypassPermissions': return 'on-failure' as const;         // Full access: map to yolo behavior
-                        case 'acceptEdits': return 'on-request' as const;               // Let model decide (closest to auto-approve edits)
-                        case 'plan': return 'untrusted' as const;                       // Conservative: ask for non-trusted
-                        default: return 'untrusted' as const;                           // Safe fallback
-                    }
-                })();
-                    const sandbox = (() => {
-                    switch (message.mode.permissionMode) {
-                        // Codex native modes
-                        case 'default': return 'workspace-write' as const;              // Can write in workspace
-                        case 'read-only': return 'read-only' as const;                  // Read-only filesystem
-                        case 'safe-yolo': return 'workspace-write' as const;            // Can write in workspace
-                        case 'yolo': return 'danger-full-access' as const;              // Full system access
-                        // Defensive fallback for Claude-specific modes
-                        case 'bypassPermissions': return 'danger-full-access' as const; // Full access: map to yolo
-                        case 'acceptEdits': return 'workspace-write' as const;          // Can edit files in workspace
-                        case 'plan': return 'workspace-write' as const;                 // Can write for planning
-                        default: return 'workspace-write' as const;                     // Safe default
-                    }
-                })();
+                    const { approvalPolicy, sandbox } = resolveCodexMcpPolicyForPermissionMode(
+                        message.mode.permissionMode,
+                    );
 
                     if (!wasCreated) {
                     const startConfig: CodexSessionConfig = buildCodexMcpStartConfigForMessage({
@@ -1500,60 +1049,17 @@ export async function runCodex(opts: {
         }
 
     } finally {
-        // Clean up resources when main loop exits
-        logger.debug('[codex]: Final cleanup start');
-        logActiveHandles('cleanup-start');
-
-        // Cancel offline reconnection if still running
-        if (reconnectionHandle) {
-            logger.debug('[codex]: Cancelling offline reconnection');
-            reconnectionHandle.cancel();
-        }
-
-        try {
-            logger.debug('[codex]: sendSessionDeath');
-            session.sendSessionDeath();
-            logger.debug('[codex]: flush begin');
-            await session.flush();
-            logger.debug('[codex]: flush done');
-            logger.debug('[codex]: session.close begin');
-            await session.close();
-            logger.debug('[codex]: session.close done');
-        } catch (e) {
-            logger.debug('[codex]: Error while closing session', e);
-        }
-        if (client) {
-            logger.debug('[codex]: client.forceCloseSession begin');
-            await client.forceCloseSession();
-            logger.debug('[codex]: client.forceCloseSession done');
-        } else {
-            await codexAcpRuntime?.reset();
-            codexAcpRuntime = null;
-        }
-        // Stop Happier MCP server
-        logger.debug('[codex]: happierMcpServer.stop');
-        happierMcpServer?.stop();
-
-        // Clean up ink UI
-        if (process.stdin.isTTY) {
-            logger.debug('[codex]: setRawMode(false)');
-            try { process.stdin.setRawMode(false); } catch { }
-        }
-        // Stop reading from stdin so the process can exit
-        if (hasTTY) {
-            logger.debug('[codex]: stdin.pause()');
-            try { process.stdin.pause(); } catch { }
-        }
-        // Clear periodic keep-alive to avoid keeping event loop alive
-        logger.debug('[codex]: clearInterval(keepAlive)');
-        clearInterval(keepAliveInterval);
-        if (inkInstance) {
-            logger.debug('[codex]: inkInstance.unmount()');
-            inkInstance.unmount();
-        }
-        messageBuffer.clear();
-
-        logActiveHandles('cleanup-end');
-        logger.debug('[codex]: Final cleanup completed');
+        await cleanupCodexRunResources({
+            session,
+            reconnectionHandle,
+            client,
+            codexAcpRuntime,
+            stopHappierMcpServer: () => happierMcpServer?.stop(),
+            unmountRemoteUi: () => remoteTerminalUi.unmount(),
+            keepAliveInterval,
+            messageBuffer,
+            logDebug: (message, error) => logger.debug(message, error),
+            logActiveHandles,
+        });
     }
 }

@@ -1,4 +1,4 @@
-import { ApiSessionClient } from "@/api/apiSession"
+import { ApiSessionClient } from "@/api/session/sessionClient"
 import { MessageQueue2 } from "@/agent/runtime/modeMessageQueue"
 import { logger } from "@/ui/logger"
 import { Session } from "./session"
@@ -6,7 +6,7 @@ import { claudeLocalLauncher, LauncherResult } from "./claudeLocalLauncher"
 import { claudeRemoteLauncher } from "./claudeRemoteLauncher"
 import { ApiClient } from "@/lib"
 import type { JsRuntime } from "./runClaude"
-import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
+import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/permission/startupPermissionModeSeed';
 
 // Re-export permission mode type from api/types
 // Single unified type with 7 modes - Codex modes mapped at SDK boundary

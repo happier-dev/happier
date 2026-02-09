@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { JsonlFollower } from '@/agent/localControl/jsonlFollower';
 import { mapCodexRolloutEventToActions } from './rolloutMapper';
 

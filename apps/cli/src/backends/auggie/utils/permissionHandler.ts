@@ -4,7 +4,7 @@
  * Mode-aware permission handler for ACP sessions.
  */
 
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import {
   CodexLikePermissionHandler,
   type PermissionResult,

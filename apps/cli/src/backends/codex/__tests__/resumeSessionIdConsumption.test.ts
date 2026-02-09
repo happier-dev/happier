@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextStoredSessionIdForResumeAfterAttempt } from '../runCodex';
+import { nextStoredSessionIdForResumeAfterAttempt } from '../runtime/sessionTurnLifecycle';
 
 describe('nextStoredSessionIdForResumeAfterAttempt', () => {
   it('keeps stored resume id when resume fails', () => {

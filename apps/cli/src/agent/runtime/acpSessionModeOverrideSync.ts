@@ -1,6 +1,6 @@
 import type { Metadata } from '@/api/types';
 
-import { computePendingAcpSessionModeOverrideApplication } from './permissionModeFromMetadata';
+import { computePendingAcpSessionModeOverrideApplication } from './permission/permissionModeFromMetadata';
 
 export function createAcpSessionModeOverrideSynchronizer(params: Readonly<{
   session: { getMetadataSnapshot: () => Metadata | null };

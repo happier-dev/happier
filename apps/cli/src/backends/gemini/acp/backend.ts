@@ -19,7 +19,7 @@ import {
   DEFAULT_GEMINI_MODEL 
 } from '@/backends/gemini/constants';
 import type { PermissionMode } from '@/api/types';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 import { 
   readGeminiLocalConfig, 
   determineGeminiModel,

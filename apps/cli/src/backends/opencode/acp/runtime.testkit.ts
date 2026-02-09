@@ -3,7 +3,7 @@ import { vi } from 'vitest';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import * as acpModule from '@/agent/acp';
 import type { AgentBackend, AgentMessageHandler } from '@/agent/core';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 

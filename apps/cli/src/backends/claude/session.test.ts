@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { Session } from './session';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import type { EnhancedMode } from './loop';

@@ -18,6 +18,7 @@
       "edit_write_file_and_cat",
       "multi_file_edit_in_workspace",
       "multi_file_edit_in_workspace_includes_diff",
+      "abort_turn_then_continue",
       "permission_mode_default_outside_workspace",
       "permission_mode_safe_yolo_outside_workspace",
       "permission_mode_read_only_outside_workspace",

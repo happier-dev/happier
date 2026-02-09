@@ -11,7 +11,5 @@ export const agent = {
   getCloudConnectTarget: async () => (await import('@/backends/claude/cloud/connect')).claudeCloudConnect,
   getDaemonSpawnHooks: async () => (await import('@/backends/claude/daemon/spawnHooks')).claudeDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
-  getHeadlessTmuxArgvTransform: async () =>
-    (await import('@/backends/claude/terminal/headlessTmuxTransform')).claudeHeadlessTmuxArgvTransform,
+  getHeadlessTmuxArgvTransform: async () => (await import('@/terminal/tmux/headlessTmuxArgs')).ensureRemoteStartingModeArgs,
 } satisfies AgentCatalogEntry;
-

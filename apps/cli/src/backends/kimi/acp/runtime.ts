@@ -1,11 +1,8 @@
 import type { McpServerConfig } from '@/agent';
-import type { AgentBackend } from '@/agent/core';
-import { createCatalogAcpBackend } from '@/agent/acp';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
-import type { ApiSessionClient } from '@/api/apiSession';
+import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { logger } from '@/ui/logger';
 
 import { maybeUpdateKimiSessionIdMetadata } from '@/backends/kimi/utils/kimiSessionIdMetadata';
 import type { PermissionMode } from '@/api/types';
@@ -21,28 +18,18 @@ export function createKimiAcpRuntime(params: {
 }) {
   const lastPublishedKimiSessionId = { value: null as string | null };
 
-  return createAcpRuntime({
+  return createCatalogProviderAcpRuntime({
     provider: 'kimi',
+    loggerLabel: 'KimiACP',
     directory: params.directory,
     session: params.session,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    ensureBackend: async () => {
-      const permissionModeRaw =
-        params.getPermissionMode?.() ??
-        params.session.getMetadataSnapshot?.()?.permissionMode;
-      const permissionMode = typeof permissionModeRaw === 'string' ? permissionModeRaw : undefined;
-      const created = await createCatalogAcpBackend('kimi', {
-        cwd: params.directory,
-        mcpServers: params.mcpServers,
-        permissionHandler: params.permissionHandler,
-        permissionMode,
-      });
-      logger.debug('[KimiACP] Backend created');
-      return created.backend as unknown as AgentBackend;
-    },
+    getPermissionMode: params.getPermissionMode,
+    resolvePermissionMode: ({ getPermissionMode, session }) =>
+      getPermissionMode?.() ?? session.getMetadataSnapshot?.()?.permissionMode,
     onSessionIdChange: (nextSessionId) => {
       maybeUpdateKimiSessionIdMetadata({
         getKimiSessionId: () => nextSessionId,

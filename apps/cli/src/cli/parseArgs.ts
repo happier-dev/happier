@@ -1,4 +1,4 @@
-import { parseAndStripTerminalRuntimeFlags, type TerminalRuntimeFlags } from '@/terminal/terminalRuntimeFlags';
+import { parseAndStripTerminalRuntimeFlags, type TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 
 export function parseCliArgs(argv: string[]): Readonly<{
   args: string[];

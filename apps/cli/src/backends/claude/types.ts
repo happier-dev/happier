@@ -31,7 +31,7 @@ export const RawJSONLinesSchema = z.discriminatedUnion("type", [
     uuid: z.string(),
     type: z.literal("assistant"),
     message: z.object({
-      usage: UsageSchema.optional(), // Used in apiSession.ts
+      usage: UsageSchema.optional(), // Used in session/sessionClient.ts
       model: z.string().optional(), // Used for cost calculation
     }).passthrough().optional()
   }).passthrough(),
@@ -39,7 +39,7 @@ export const RawJSONLinesSchema = z.discriminatedUnion("type", [
   // Summary message - validates summary and leafUuid
   z.object({
     type: z.literal("summary"),
-    summary: z.string(), // Used in apiSession.ts
+    summary: z.string(), // Used in session/sessionClient.ts
     leafUuid: z.string() // Used in getMessageKey()
   }).passthrough(),
 

@@ -7,6 +7,16 @@ import {
   type AgentId,
 } from '@happier-dev/agents';
 
+export type ParsedSessionStartArgs = {
+  startedBy: 'daemon' | 'terminal' | undefined;
+  permissionMode: PermissionMode | undefined;
+  permissionModeUpdatedAt: number | undefined;
+  agentModeId: string | undefined;
+  agentModeUpdatedAt: number | undefined;
+  modelId: string | undefined;
+  modelUpdatedAt: number | undefined;
+};
+
 const PERMISSION_MODE_EXAMPLES = [
   '--permission-mode read-only',
   '--permission-mode yolo',
@@ -20,15 +30,7 @@ function parsePermissionModeAlias(raw: string): PermissionMode | null {
   return isPermissionMode(parsed) ? parsed : null;
 }
 
-export function parseSessionStartArgs(args: string[]): {
-  startedBy: 'daemon' | 'terminal' | undefined;
-  permissionMode: PermissionMode | undefined;
-  permissionModeUpdatedAt: number | undefined;
-  agentModeId: string | undefined;
-  agentModeUpdatedAt: number | undefined;
-  modelId: string | undefined;
-  modelUpdatedAt: number | undefined;
-} {
+export function parseSessionStartArgs(args: string[]): ParsedSessionStartArgs {
   let startedBy: 'daemon' | 'terminal' | undefined = undefined;
   let permissionMode: PermissionMode | undefined = undefined;
   let permissionModeUpdatedAt: number | undefined = undefined;
@@ -140,6 +142,14 @@ export function parseSessionStartArgs(args: string[]): {
   }
 
   return { startedBy, permissionMode, permissionModeUpdatedAt, agentModeId, agentModeUpdatedAt, modelId, modelUpdatedAt };
+}
+
+export function readOptionalFlagValue(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return undefined;
+  const value = args[idx + 1];
+  if (!value || value.startsWith('-')) return undefined;
+  return value;
 }
 
 export function applyDeprecatedSessionStartAliasesForAgent(params: {

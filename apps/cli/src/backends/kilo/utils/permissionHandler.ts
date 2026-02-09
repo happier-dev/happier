@@ -5,7 +5,7 @@
  * write-like so they surface prompts in safe-yolo/default modes.
  */
 
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import {
   CodexLikePermissionHandler,
   type PermissionResult,

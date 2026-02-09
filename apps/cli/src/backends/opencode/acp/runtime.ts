@@ -1,12 +1,9 @@
 import type { McpServerConfig } from '@/agent';
-import type { AgentBackend } from '@/agent/core';
-import { createCatalogAcpBackend } from '@/agent/acp';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
-import type { ApiSessionClient } from '@/api/apiSession';
+import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { logger } from '@/ui/logger';
 import { OpenCodeTurnDiffAccumulator } from '../utils/turnDiffAccumulator';
 
 export function createOpenCodeAcpRuntime(params: {
@@ -24,14 +21,16 @@ export function createOpenCodeAcpRuntime(params: {
 }) {
   const turnDiffAccumulator = new OpenCodeTurnDiffAccumulator();
 
-  return createAcpRuntime({
+  return createCatalogProviderAcpRuntime({
     provider: 'opencode',
+    loggerLabel: 'OpenCodeACP',
     directory: params.directory,
     session: params.session,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    getPermissionMode: params.getPermissionMode,
     hooks: {
       onBeginTurn: () => {
         turnDiffAccumulator.beginTurn();
@@ -47,16 +46,6 @@ export function createOpenCodeAcpRuntime(params: {
         const callId = sendToolCall({ toolName: 'Diff', input: diff });
         sendToolResult({ callId, output: { status: 'completed' } });
       },
-    },
-    ensureBackend: async () => {
-      const created = await createCatalogAcpBackend('opencode', {
-        cwd: params.directory,
-        mcpServers: params.mcpServers,
-        permissionHandler: params.permissionHandler,
-        permissionMode: params.getPermissionMode?.(),
-      });
-      logger.debug('[OpenCodeACP] Backend created');
-      return created.backend as unknown as AgentBackend;
     },
   });
 }

@@ -1,0 +1,636 @@
+import { spawn, type SpawnOptions } from 'child_process';
+
+import { logger } from '@/ui/logger';
+
+import {
+  buildPosixShellCommand,
+  isTmuxWindowIndexConflict,
+  normalizeExitCode,
+  readNonNegativeIntegerEnv,
+  readPositiveIntegerEnv,
+  resolveTmuxCommandTimeoutMs,
+} from './env';
+import {
+  formatTmuxSessionIdentifier,
+  parseTmuxSessionIdentifier,
+  TmuxSessionIdentifierError,
+} from './identifiers';
+import { COMMANDS_SUPPORTING_TARGET, CONTROL_SEQUENCES, WIN_OPS } from './operations';
+import {
+  TmuxControlState,
+  type TmuxCommandResult,
+  type TmuxControlSequence,
+  type TmuxEnvironment,
+  type TmuxSessionIdentifier,
+  type TmuxSessionInfo,
+  type TmuxWindowOperation,
+} from './types';
+
+export interface TmuxSpawnOptions extends Omit<SpawnOptions, 'env'> {
+  /** Target tmux session name */
+  sessionName?: string;
+  /** Custom tmux socket path */
+  socketPath?: string;
+  /** Create new window in existing session */
+  createWindow?: boolean;
+  /** Window name for new windows */
+  windowName?: string;
+  // Note: env is intentionally excluded from this interface.
+  // It's passed as a separate parameter to spawnInTmux() for clarity
+  // and efficiency - only variables that differ from the tmux server
+  // environment need to be passed via -e flags.
+}
+
+export class TmuxUtilities {
+  /** Default session name to prevent interference */
+  public static readonly DEFAULT_SESSION_NAME = 'happy';
+
+  private controlState: TmuxControlState = TmuxControlState.NORMAL;
+  public readonly sessionName: string;
+  private readonly tmuxCommandEnv?: Record<string, string>;
+  private readonly tmuxSocketPath?: string;
+
+  constructor(sessionName?: string, tmuxCommandEnv?: Record<string, string>, tmuxSocketPath?: string) {
+    this.sessionName = sessionName || TmuxUtilities.DEFAULT_SESSION_NAME;
+    this.tmuxCommandEnv = tmuxCommandEnv;
+    this.tmuxSocketPath = tmuxSocketPath;
+  }
+
+  /**
+   * Detect tmux environment from TMUX environment variable
+   */
+  detectTmuxEnvironment(): TmuxEnvironment | null {
+    const tmuxEnv = process.env.TMUX;
+    if (!tmuxEnv) {
+      return null;
+    }
+
+    // TMUX environment format: socket_path,server_pid,pane_id
+    // NOTE: session name / window are NOT encoded in TMUX. Query tmux formats for those.
+    try {
+      const parts = tmuxEnv.split(',');
+      if (parts.length < 3) return null;
+
+      const socketPath = parts[0]?.trim();
+      const serverPidStr = parts[1]?.trim();
+      // Prefer TMUX_PANE (pane id like %0). Fallback to TMUX env var third component (often pane index).
+      const pane = (process.env.TMUX_PANE ?? parts[2])?.trim();
+
+      if (!socketPath || !serverPidStr || !pane) return null;
+      if (!/^\d+$/.test(serverPidStr)) return null;
+
+      return {
+        socket_path: socketPath,
+        server_pid: Number.parseInt(serverPidStr, 10),
+        pane,
+      };
+    } catch (error) {
+      logger.debug('[TMUX] Failed to parse TMUX environment variable:', error);
+    }
+
+    return null;
+  }
+
+  /**
+   * Execute tmux command with proper session targeting and socket handling
+   */
+  async executeTmuxCommand(
+    cmd: string[],
+    session?: string,
+    window?: string,
+    pane?: string,
+    socketPath?: string,
+  ): Promise<TmuxCommandResult | null> {
+    const targetSession = session || this.sessionName;
+
+    // Build command array
+    let baseCmd = ['tmux'];
+
+    // Add socket specification if provided
+    const resolvedSocketPath = socketPath ?? this.tmuxSocketPath;
+    if (resolvedSocketPath) {
+      baseCmd = ['tmux', '-S', resolvedSocketPath];
+    }
+
+    // Handle send-keys with proper target specification
+    if (cmd.length > 0 && cmd[0] === 'send-keys') {
+      const fullCmd = [...baseCmd, cmd[0]];
+
+      // Add target specification immediately after send-keys
+      let target = targetSession;
+      if (window) target += `:${window}`;
+      if (pane) target += `.${pane}`;
+      fullCmd.push('-t', target);
+
+      // Add keys and control sequences
+      fullCmd.push(...cmd.slice(1));
+
+      return this.executeCommand(fullCmd);
+    }
+
+    // Non-send-keys commands
+    const fullCmd = [...baseCmd, ...cmd];
+
+    // Add target specification for commands that support it
+    const hasExplicitTarget = cmd.includes('-t');
+    if (!hasExplicitTarget && cmd.length > 0 && COMMANDS_SUPPORTING_TARGET.has(cmd[0])) {
+      let target = targetSession;
+      if (window) target += `:${window}`;
+      if (pane) target += `.${pane}`;
+      fullCmd.push('-t', target);
+    }
+
+    return this.executeCommand(fullCmd);
+  }
+
+  /**
+   * Execute command with subprocess and return result
+   */
+  private async executeCommand(cmd: string[]): Promise<TmuxCommandResult | null> {
+    try {
+      const result = await this.runCommand(cmd);
+      return {
+        returncode: result.exitCode,
+        stdout: result.stdout || '',
+        stderr: result.stderr || '',
+        command: cmd,
+      };
+    } catch (error) {
+      logger.debug('[TMUX] Command execution failed:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Run command using Node.js child_process.spawn
+   */
+  private runCommand(args: string[], options: SpawnOptions = {}): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const mergedEnv = {
+        ...process.env,
+        ...(this.tmuxCommandEnv ?? {}),
+        ...(options.env ?? {}),
+      };
+
+      const child = spawn(args[0], args.slice(1), {
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: resolveTmuxCommandTimeoutMs(),
+        shell: false,
+        ...options,
+        env: mergedEnv,
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout?.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      child.stderr?.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      child.on('close', (code) => {
+        resolve({
+          exitCode: normalizeExitCode(code),
+          stdout,
+          stderr,
+        });
+      });
+
+      child.on('error', (error) => {
+        reject(error);
+      });
+    });
+  }
+
+  /**
+   * Parse control sequences in text (^ for escape, ^^ for literal ^)
+   */
+  parseControlSequences(text: string): [string, TmuxControlState] {
+    const result: string[] = [];
+    let i = 0;
+    let localState = this.controlState;
+
+    while (i < text.length) {
+      const char = text[i];
+
+      if (localState === TmuxControlState.NORMAL) {
+        if (char === '^') {
+          if (i + 1 < text.length && text[i + 1] === '^') {
+            // Literal ^
+            result.push('^');
+            i += 2;
+          } else {
+            // Escape to normal tmux
+            localState = TmuxControlState.ESCAPE;
+            i += 1;
+          }
+        } else {
+          result.push(char);
+          i += 1;
+        }
+      } else if (localState === TmuxControlState.ESCAPE) {
+        // In escape mode - pass through to tmux directly
+        result.push(char);
+        i += 1;
+        localState = TmuxControlState.NORMAL;
+      } else {
+        result.push(char);
+        i += 1;
+      }
+    }
+
+    this.controlState = localState;
+    return [result.join(''), localState];
+  }
+
+  /**
+   * Execute window operation using WIN_OPS dispatch with type safety
+   */
+  async executeWinOp(
+    operation: TmuxWindowOperation,
+    args: string[] = [],
+    session?: string,
+    window?: string,
+    pane?: string,
+  ): Promise<boolean> {
+    const tmuxCmd = WIN_OPS[operation];
+    if (!tmuxCmd) {
+      logger.debug(`[TMUX] Unknown operation: ${operation}`);
+      return false;
+    }
+
+    const cmdParts = tmuxCmd.split(' ');
+    cmdParts.push(...args);
+
+    const result = await this.executeTmuxCommand(cmdParts, session, window, pane);
+    return result !== null && result.returncode === 0;
+  }
+
+  /**
+   * Ensure session exists, create if needed
+   */
+  async ensureSessionExists(sessionName?: string): Promise<boolean> {
+    const targetSession = sessionName || this.sessionName;
+
+    // Check if session exists
+    const result = await this.executeTmuxCommand(['has-session', '-t', targetSession]);
+    if (result && result.returncode === 0) {
+      return true;
+    }
+
+    // Create session if it doesn't exist
+    const createResult = await this.executeTmuxCommand(['new-session', '-d', '-s', targetSession]);
+    return createResult !== null && createResult.returncode === 0;
+  }
+
+  /**
+   * Capture current input from tmux pane
+   */
+  async captureCurrentInput(session?: string, window?: string, pane?: string): Promise<string> {
+    const result = await this.executeTmuxCommand(['capture-pane', '-p'], session, window, pane);
+    if (result && result.returncode === 0) {
+      const lines = result.stdout.trim().split('\n');
+      return lines[lines.length - 1] || '';
+    }
+    return '';
+  }
+
+  /**
+   * Check if user is actively typing
+   */
+  async isUserTyping(
+    checkInterval = 500,
+    maxChecks = 3,
+    session?: string,
+    window?: string,
+    pane?: string,
+  ): Promise<boolean> {
+    const initialInput = await this.captureCurrentInput(session, window, pane);
+
+    for (let i = 0; i < maxChecks - 1; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, checkInterval));
+      const currentInput = await this.captureCurrentInput(session, window, pane);
+      if (currentInput !== initialInput) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Send keys to tmux pane with proper control sequence handling and type safety
+   */
+  async sendKeys(keys: string | TmuxControlSequence, session?: string, window?: string, pane?: string): Promise<boolean> {
+    // Validate input
+    if (!keys || typeof keys !== 'string') {
+      logger.debug('[TMUX] Invalid keys provided to sendKeys');
+      return false;
+    }
+
+    // Handle control sequences that must be separate arguments
+    if (CONTROL_SEQUENCES.has(keys as TmuxControlSequence)) {
+      const result = await this.executeTmuxCommand(['send-keys', keys], session, window, pane);
+      return result !== null && result.returncode === 0;
+    }
+
+    // Regular text
+    const result = await this.executeTmuxCommand(['send-keys', keys], session, window, pane);
+    return result !== null && result.returncode === 0;
+  }
+
+  /**
+   * Send multiple keys to tmux pane with proper control sequence handling
+   */
+  async sendMultipleKeys(
+    keys: Array<string | TmuxControlSequence>,
+    session?: string,
+    window?: string,
+    pane?: string,
+  ): Promise<boolean> {
+    if (!Array.isArray(keys) || keys.length === 0) {
+      logger.debug('[TMUX] Invalid keys array provided to sendMultipleKeys');
+      return false;
+    }
+
+    for (const key of keys) {
+      const success = await this.sendKeys(key, session, window, pane);
+      if (!success) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Get comprehensive session information
+   */
+  async getSessionInfo(sessionName?: string): Promise<TmuxSessionInfo> {
+    const targetSession = sessionName || this.sessionName;
+    const envInfo = this.detectTmuxEnvironment();
+
+    const info: TmuxSessionInfo = {
+      target_session: targetSession,
+      session: targetSession,
+      window: 'unknown',
+      pane: 'unknown',
+      socket_path: undefined,
+      tmux_active: envInfo !== null,
+      current_session: undefined,
+      available_sessions: [],
+    };
+
+    if (envInfo) {
+      info.socket_path = envInfo.socket_path;
+      info.env_pane = envInfo.pane;
+    }
+
+    // Get available sessions
+    const result = await this.executeTmuxCommand(['list-sessions']);
+    if (result && result.returncode === 0) {
+      info.available_sessions = result.stdout
+        .trim()
+        .split('\n')
+        .filter((line) => line.trim())
+        .map((line) => line.split(':')[0]);
+    }
+
+    return info;
+  }
+
+  /**
+   * Spawn process in tmux session with environment variables.
+   *
+   * IMPORTANT: Unlike Node.js spawn(), env is a separate parameter.
+   * This is intentional because tmux sets window-scoped environment via `new-window -e KEY=VALUE`.
+   * Callers may provide a fully merged environment (daemon env + profile overrides) so tmux and
+   * non-tmux spawns behave consistently.
+   *
+   * @param args - Command and arguments to execute (as array, will be joined)
+   * @param options - Spawn options (tmux-specific, excludes env)
+   * @param env - Environment variables to set in window
+   * @returns Result with success status and session identifier
+   */
+  async spawnInTmux(
+    args: string[],
+    options: TmuxSpawnOptions = {},
+    env?: Record<string, string>,
+  ): Promise<{ success: boolean; sessionId?: string; sessionName?: string; windowName?: string; pid?: number; error?: string }> {
+    try {
+      // Check if tmux is available
+      const tmuxCheck = await this.executeTmuxCommand(['list-sessions']);
+      if (!tmuxCheck) {
+        throw new Error('tmux not available');
+      }
+
+      // Handle session name resolution
+      // - undefined: Use this instance's default session ("happy")
+      // - empty string: Use current/most-recent session deterministically
+      // - specific name: Use that session (create if doesn't exist)
+      let sessionName = options.sessionName ?? this.sessionName;
+
+      if (options.sessionName === '') {
+        const listResult = await this.executeTmuxCommand([
+          'list-sessions',
+          '-F',
+          '#{session_name}\t#{session_attached}\t#{session_last_attached}',
+        ]);
+
+        const candidates = (listResult?.stdout ?? '')
+          .trim()
+          .split('\n')
+          .filter((line) => line.trim())
+          .map((line) => {
+            const [name, attachedRaw, lastAttachedRaw] = line.split('\t');
+            const attached = Number.parseInt(attachedRaw ?? '0', 10);
+            const lastAttached = Number.parseInt(lastAttachedRaw ?? '0', 10);
+            return {
+              name: (name ?? '').trim(),
+              attached: Number.isFinite(attached) ? attached : 0,
+              lastAttached: Number.isFinite(lastAttached) ? lastAttached : 0,
+            };
+          })
+          .filter((row) => row.name.length > 0);
+
+        candidates.sort((a, b) => {
+          // Prefer attached sessions first, then most recently attached.
+          if (a.attached !== b.attached) return b.attached - a.attached;
+          return b.lastAttached - a.lastAttached;
+        });
+
+        sessionName = candidates[0]?.name ?? TmuxUtilities.DEFAULT_SESSION_NAME;
+      }
+
+      const windowName = options.windowName || `happy-${Date.now()}`;
+
+      // Ensure session exists
+      await this.ensureSessionExists(sessionName);
+
+      // Build command to execute in the new window
+      const fullCommand = buildPosixShellCommand(args);
+
+      // Create new window in session with command and environment variables
+      // IMPORTANT: Don't manually add -t here - executeTmuxCommand handles it via parameters
+      const createWindowArgs = ['new-window', '-P', '-F', '#{pane_pid}', '-n', windowName];
+
+      // Add working directory if specified
+      if (options.cwd) {
+        const cwdPath = typeof options.cwd === 'string' ? options.cwd : options.cwd.pathname;
+        createWindowArgs.push('-c', cwdPath);
+      }
+
+      // Add target session explicitly so option ordering is correct.
+      createWindowArgs.push('-t', sessionName);
+
+      // Add environment variables using -e flag (sets them in the window's environment)
+      // Note: tmux windows inherit environment from tmux server, but we need to ensure
+      // the daemon's environment variables (especially expanded auth variables) are available
+      if (env && Object.keys(env).length > 0) {
+        for (const [key, value] of Object.entries(env)) {
+          // Skip undefined/null values with warning
+          if (value === undefined || value === null) {
+            logger.warn(`[TMUX] Skipping undefined/null environment variable: ${key}`);
+            continue;
+          }
+
+          // Validate variable name (tmux accepts standard env var names)
+          if (!/^[A-Z_][A-Z0-9_]*$/i.test(key)) {
+            logger.warn(`[TMUX] Skipping invalid environment variable name: ${key}`);
+            continue;
+          }
+
+          // `new-window -e` takes KEY=VALUE literally (no shell parsing).
+          // Do NOT quote or escape values intended for shell parsing.
+          createWindowArgs.push('-e', `${key}=${value}`);
+        }
+        logger.debug(`[TMUX] Setting ${Object.keys(env).length} environment variables in tmux window`);
+      }
+
+      // Add the command to run in the window (runs immediately when window is created)
+      createWindowArgs.push(fullCommand);
+
+      // Create window with command and get PID immediately.
+      //
+      // Note: tmux can fail with `create window failed: index N in use` when multiple
+      // clients concurrently create windows in the same session (tmux does not always
+      // auto-retry the window index allocation). Retry a few times to make concurrent
+      // session starts robust.
+      const maxAttempts = readPositiveIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_MAX_ATTEMPTS', 3);
+      const retryDelayMs = readNonNegativeIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS', 25);
+
+      let createResult: TmuxCommandResult | null = null;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        createResult = await this.executeTmuxCommand(createWindowArgs);
+        if (createResult && createResult.returncode === 0) break;
+
+        const stderr = createResult?.stderr;
+        const shouldRetry = attempt < maxAttempts && isTmuxWindowIndexConflict(stderr);
+        if (!shouldRetry) break;
+
+        logger.debug(`[TMUX] new-window failed with window index conflict; retrying (attempt ${attempt}/${maxAttempts})`);
+        if (retryDelayMs > 0) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        }
+      }
+
+      if (!createResult || createResult.returncode !== 0) {
+        throw new Error(`Failed to create tmux window: ${createResult?.stderr}`);
+      }
+
+      // Extract the PID from the output
+      const panePidText = createResult.stdout.trim();
+      if (!/^\d+$/.test(panePidText)) {
+        const preview = panePidText.length > 200 ? `${panePidText.slice(0, 200)}…` : panePidText;
+        throw new Error(`Failed to extract PID from tmux output: ${preview}`);
+      }
+
+      const panePid = Number.parseInt(panePidText, 10);
+      if (!Number.isFinite(panePid) || panePid <= 0) {
+        throw new Error(`Failed to extract PID from tmux output: ${panePidText}`);
+      }
+
+      logger.debug(`[TMUX] Spawned command in tmux session ${sessionName}, window ${windowName}, PID ${panePid}`);
+
+      // Return tmux session info and PID
+      const sessionIdentifier: TmuxSessionIdentifier = {
+        session: sessionName,
+        window: windowName,
+      };
+
+      return {
+        success: true,
+        sessionId: formatTmuxSessionIdentifier(sessionIdentifier),
+        sessionName,
+        windowName,
+        pid: panePid,
+      };
+    } catch (error) {
+      logger.debug('[TMUX] Failed to spawn in tmux:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  /**
+   * Get session info for a given session identifier string
+   */
+  async getSessionInfoFromString(sessionIdentifier: string): Promise<TmuxSessionInfo | null> {
+    try {
+      const parsed = parseTmuxSessionIdentifier(sessionIdentifier);
+      const info = await this.getSessionInfo(parsed.session);
+      return info;
+    } catch (error) {
+      if (error instanceof TmuxSessionIdentifierError) {
+        logger.debug(`[TMUX] Invalid session identifier: ${error.message}`);
+      } else {
+        logger.debug('[TMUX] Error getting session info:', error);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Kill a tmux window safely with proper error handling
+   */
+  async killWindow(sessionIdentifier: string): Promise<boolean> {
+    try {
+      const parsed = parseTmuxSessionIdentifier(sessionIdentifier);
+      if (!parsed.window) {
+        throw new TmuxSessionIdentifierError(`Window identifier required: ${sessionIdentifier}`);
+      }
+
+      const result = await this.executeTmuxCommand(['kill-window'], parsed.session, parsed.window);
+      return result !== null && result.returncode === 0;
+    } catch (error) {
+      if (error instanceof TmuxSessionIdentifierError) {
+        logger.debug(`[TMUX] Invalid window identifier: ${error.message}`);
+      } else {
+        logger.debug('[TMUX] Error killing window:', error);
+      }
+      return false;
+    }
+  }
+
+  /**
+   * List windows in a session
+   */
+  async listWindows(sessionName?: string): Promise<string[]> {
+    const targetSession = sessionName || this.sessionName;
+    const result = await this.executeTmuxCommand(['list-windows', '-t', targetSession, '-F', '#W']);
+
+    if (!result || result.returncode !== 0) {
+      return [];
+    }
+
+    return result.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
+}

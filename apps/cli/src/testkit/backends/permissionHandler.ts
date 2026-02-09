@@ -1,4 +1,4 @@
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { AgentState } from '@/api/types';
 import type { PermissionResponse } from '@/agent/permissions/BasePermissionHandler';
 

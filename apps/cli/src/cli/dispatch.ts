@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { logger } from '@/ui/logger';
-import type { TerminalRuntimeFlags } from '@/terminal/terminalRuntimeFlags';
+import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 import { commandRegistry } from '@/cli/commandRegistry';
 import { AGENTS } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
@@ -48,7 +48,7 @@ export async function dispatchCli(params: Readonly<{
       }
 
       try {
-        const { startHappyHeadlessInTmux } = await import('@/terminal/startHappyHeadlessInTmux');
+        const { startHappyHeadlessInTmux } = await import('@/terminal/tmux/startHappyHeadlessInTmux');
         await startHappyHeadlessInTmux(args);
       } catch (error) {
         console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')

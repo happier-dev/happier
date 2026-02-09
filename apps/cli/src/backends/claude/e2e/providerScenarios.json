@@ -5,7 +5,8 @@
     "extended": [
       "read_known_file",
       "permission_surface_outside_workspace",
-      "permission_deny_outside_workspace"
+      "permission_deny_outside_workspace",
+      "abort_turn_then_continue"
     ]
   },
   "tiersByAuthMode": {
@@ -18,6 +19,8 @@
         "agent_sdk_permission_surface_outside_workspace",
         "permission_deny_outside_workspace",
         "agent_sdk_permission_deny_outside_workspace",
+        "abort_turn_then_continue",
+        "agent_sdk_abort_turn_then_continue",
         "agent_sdk_transcript_path_published",
         "agent_sdk_partial_messages_smoke",
         "agent_sdk_checkpoint_and_rewind_restores_fs"
@@ -32,6 +35,8 @@
         "agent_sdk_permission_surface_outside_workspace",
         "permission_deny_outside_workspace",
         "agent_sdk_permission_deny_outside_workspace",
+        "abort_turn_then_continue",
+        "agent_sdk_abort_turn_then_continue",
         "agent_sdk_transcript_path_published",
         "agent_sdk_partial_messages_smoke",
         "agent_sdk_checkpoint_and_rewind_restores_fs"

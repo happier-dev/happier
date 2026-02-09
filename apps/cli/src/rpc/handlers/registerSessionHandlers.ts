@@ -1,4 +1,4 @@
-import type { TerminalSpawnOptions } from '@/terminal/terminalConfig';
+import type { TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import type { PermissionMode } from '@/api/types';
 import type { CatalogAgentId } from '@/backends/types';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';

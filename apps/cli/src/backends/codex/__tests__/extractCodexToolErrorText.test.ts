@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractCodexToolErrorText } from '../runCodex';
+import { extractCodexToolErrorText } from '../runtime/sessionTurnLifecycle';
 import type { CodexToolResponse } from '../types';
 
 describe('extractCodexToolErrorText', () => {
@@ -33,4 +33,3 @@ describe('extractCodexToolErrorText', () => {
     expect(extractCodexToolErrorText(response)).toBe('Codex error');
   });
 });
-

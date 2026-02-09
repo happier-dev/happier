@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { emitReadyIfIdle } from '../runCodex';
+import { emitReadyIfIdle } from '../runtime/sessionTurnLifecycle';
 
 describe('emitReadyIfIdle', () => {
     it('emits ready and notification when queue is idle', () => {

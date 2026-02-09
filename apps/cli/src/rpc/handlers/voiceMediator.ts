@@ -10,7 +10,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { ClaudeSdkAgentBackend } from '@/agent/claudeSdk/ClaudeSdkAgentBackend';
-import { VoiceMediatorError, VoiceMediatorManager } from '@/voice/mediator/VoiceMediatorManager';
+import { VoiceMediatorError, VoiceMediatorManager } from '@/agent/voice/mediator/VoiceMediatorManager';
 import { AGENT_IDS, getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 import { createCodexAcpBackend } from '@/backends/codex/acp/backend';
 import { createGeminiBackend } from '@/backends/gemini/acp/backend';
@@ -23,7 +23,7 @@ import { createKiloBackend } from '@/backends/kilo/acp/backend';
 import {
   createVoiceMediatorAcpPermissionHandler,
   permissionModeForVoiceMediatorPolicy,
-} from '@/voice/mediator/permissionPolicy';
+} from '@/agent/voice/mediator/permissionPolicy';
 
 function asRpcError(e: unknown): { error: string; errorCode?: string } {
   if (e instanceof VoiceMediatorError) {

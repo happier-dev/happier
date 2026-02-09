@@ -11,7 +11,7 @@ Command: `happier daemon start`
 Control Flow:
 1. `src/index.ts` receives `daemon start` command
 2. Spawns detached process via `spawnHappyCLI(['daemon', 'start-sync'], { detached: true })`
-3. New process calls `startDaemon()` from `src/daemon/run.ts`
+3. New process calls `startDaemon()` from `src/daemon/startDaemon.ts`
 4. `startDaemon()` performs startup:
    - Sets up shutdown promise and handlers (SIGINT, SIGTERM, uncaughtException, unhandledRejection)
    - Version check: `isDaemonRunningSameVersion()` reads daemon.state.json, compares `startedWithCliVersion` with `configuration.currentCliVersion`

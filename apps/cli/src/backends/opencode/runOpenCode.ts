@@ -4,472 +4,58 @@
  * Runs the OpenCode agent through Happier CLI using ACP.
  */
 
-import { render } from 'ink';
-import React from 'react';
-import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
-
-import { ApiClient } from '@/api/api';
-import type { ApiSessionClient } from '@/api/apiSession';
 import type { PermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
 import type { Credentials } from '@/persistence';
-import { readSettings } from '@/persistence';
-import { initialMachineMetadata } from '@/daemon/run';
-import { connectionState } from '@/api/offline/serverConnectionErrors';
-import { setupOfflineReconnection } from '@/api/offline/setupOfflineReconnection';
-import { projectPath } from '@/projectPath';
-import { startHappyServer } from '@/mcp/startHappyServer';
-import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
-import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach';
-import {
-  persistTerminalAttachmentInfoIfNeeded,
-  primeAgentStateForUi,
-  reportSessionToDaemonIfRunning,
-  sendTerminalFallbackMessageIfNeeded,
-} from '@/agent/runtime/startupSideEffects';
-import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permissionModeMetadata';
-import { applyStartupMetadataUpdateToSession, buildAcpSessionModeOverride, buildModelOverride, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
-import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
-import { stopCaffeinate } from '@/integrations/caffeinate';
-import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import { hashObject } from '@/utils/deterministicJson';
-import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
-import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { OpenCodeTerminalDisplay } from '@/backends/opencode/ui/OpenCodeTerminalDisplay';
-import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
-import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permissionModeCanonical';
-import { createAcpSessionModeOverrideSynchronizer } from '@/agent/runtime/acpSessionModeOverrideSync';
-import { createAcpConfigOptionOverrideSynchronizer } from '@/agent/runtime/acpConfigOptionOverrideSync';
-import { createModelOverrideSynchronizer } from '@/agent/runtime/modelOverrideSync';
-import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
-import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
+import { initialMachineMetadata } from '@/daemon/startDaemon';
+import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 
-import type { McpServerConfig } from '@/agent';
+import { OpenCodeTerminalDisplay } from '@/backends/opencode/ui/OpenCodeTerminalDisplay';
+
 import { maybeUpdateOpenCodeSessionIdMetadata } from './utils/opencodeSessionIdMetadata';
 import { createOpenCodeAcpRuntime } from './acp/runtime';
-import { waitForNextOpenCodeMessage } from './utils/waitForNextOpenCodeMessage';
-import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
 
-export async function runOpenCode(opts: {
+export async function runOpenCode(opts: StandardAcpProviderRunOptions & {
   credentials: Credentials;
-  startedBy?: 'daemon' | 'terminal';
-  terminalRuntime?: import('@/terminal/terminalRuntimeFlags').TerminalRuntimeFlags | null;
   permissionMode?: PermissionMode;
-  permissionModeUpdatedAt?: number;
-  agentModeId?: string;
-  agentModeUpdatedAt?: number;
-  modelId?: string;
-  modelUpdatedAt?: number;
-  existingSessionId?: string;
-  resume?: string;
 }): Promise<void> {
-  const sessionTag = randomUUID();
-  const explicitPermissionMode = opts.permissionMode;
-
-  connectionState.setBackend('OpenCode');
-
-  const api = await ApiClient.create(opts.credentials);
-
-  const settings = await readSettings();
-  const machineId = settings?.machineId;
-  if (!machineId) {
-    console.error(`[START] No machine ID found in settings. Please report this issue on https://github.com/happier-dev/happier/issues`);
-    process.exit(1);
-  }
-  await api.getOrCreateMachine({ machineId, metadata: initialMachineMetadata });
-
-  const initialPermissionMode = normalizePermissionModeToIntent(opts.permissionMode ?? 'default') ?? 'default';
-  const { state, metadata } = createSessionMetadata({
-    flavor: 'opencode',
-    machineId,
-    startedBy: opts.startedBy,
-    terminalRuntime: opts.terminalRuntime ?? null,
-    permissionMode: initialPermissionMode,
-    permissionModeUpdatedAt: typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : Date.now(),
-    agentModeId: opts.agentModeId,
-    agentModeUpdatedAt: opts.agentModeUpdatedAt,
-    modelId: opts.modelId,
-    modelUpdatedAt: opts.modelUpdatedAt,
-  });
-
-  const terminal = metadata.terminal;
-  let session: ApiSessionClient;
-  let permissionHandler: ProviderEnforcedPermissionHandler;
-  let reconnectionHandle: { cancel: () => void } | null = null;
-
-  if (typeof opts.existingSessionId === 'string' && opts.existingSessionId.trim()) {
-    const existingId = opts.existingSessionId.trim();
-    logger.debug(`[opencode] Attaching to existing Happy session: ${existingId}`);
-    const baseSession = await createBaseSessionForAttach({ existingSessionId: existingId, metadata, state });
-    session = api.sessionSyncClient(baseSession);
-
-    // Attach flows must wait for the persisted session metadata snapshot before writing any startup updates.
-    // Otherwise we risk overwriting the session's canonical workspace path with the local CLI cwd.
-    let snapshot: unknown = null;
-    try {
-      snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 });
-    } catch (err) {
-      logger.debug(`[opencode] Error fetching session metadata snapshot (non-fatal): ${String(err instanceof Error ? err.message : err)}`);
-      // Non-fatal: attach can still proceed without writing startup metadata.
-    }
-    if (!snapshot) {
-      logger.debug('[opencode] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)');
-    } else {
-      applyStartupMetadataUpdateToSession({
-        session,
-        next: metadata,
-        nowMs: Date.now(),
-        permissionModeOverride: buildPermissionModeOverride({
-          permissionMode: opts.permissionMode,
-          permissionModeUpdatedAt: opts.permissionModeUpdatedAt,
-        }),
-        acpSessionModeOverride: buildAcpSessionModeOverride({
-          agentModeId: opts.agentModeId,
-          agentModeUpdatedAt: opts.agentModeUpdatedAt,
-        }),
-        modelOverride: buildModelOverride({
-          modelId: opts.modelId,
-          modelUpdatedAt: opts.modelUpdatedAt,
-        }),
-        mode: 'attach',
-      });
-    }
-
-    primeAgentStateForUi(session, '[OpenCode]');
-    await reportSessionToDaemonIfRunning({ sessionId: existingId, metadata });
-    await persistTerminalAttachmentInfoIfNeeded({ sessionId: existingId, terminal });
-    sendTerminalFallbackMessageIfNeeded({ session, terminal });
-  } else {
-    const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
-    if (!response) {
-      throw new Error('Failed to create session');
-    }
-
-    const { session: initialSession, reconnectionHandle: rh } = setupOfflineReconnection({
-      api,
-      sessionTag,
-      metadata,
-      state,
-      response,
-      onSessionSwap: (newSession) => {
-        session = newSession;
-        if (permissionHandler) {
-          permissionHandler.updateSession(newSession);
-        }
-      },
-    });
-    session = initialSession;
-    reconnectionHandle = rh;
-
-    primeAgentStateForUi(session, '[OpenCode]');
-    await reportSessionToDaemonIfRunning({ sessionId: response.id, metadata });
-    await persistTerminalAttachmentInfoIfNeeded({ sessionId: response.id, terminal });
-    sendTerminalFallbackMessageIfNeeded({ session, terminal });
-  }
-
-  let abortRequestedCallback: (() => void | Promise<void>) | null = null;
-  permissionHandler = createProviderEnforcedPermissionHandler({
-    session,
-    logPrefix: '[OpenCode]',
-    onAbortRequested: () => abortRequestedCallback?.(),
-  });
-  permissionHandler.setPermissionMode(initialPermissionMode);
-
-  // Start Happier MCP server for `change_title` tool exposure (bridged to ACP via happier-mcp.mjs).
-  const happierMcpServer = await startHappyServer(session);
-
-  const bridgeCommand = join(projectPath(), 'bin', 'happier-mcp.mjs');
-  const mcpServers: Record<string, McpServerConfig> = {
-    happier: { command: bridgeCommand, args: ['--url', happierMcpServer.url] },
-  };
-
-  // Message queue keyed by permission mode. OpenCode can apply permission decisions per tool call
-  // without restarting the session, so we do not include model in the hash.
-  const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode }>((mode) => hashObject({
-    permissionMode: mode.permissionMode,
-  }));
-
-  let currentPermissionMode: PermissionMode | undefined = initialPermissionMode;
-  let currentPermissionModeUpdatedAt: number =
-    typeof session.getMetadataSnapshot()?.permissionModeUpdatedAt === 'number'
-      ? (session.getMetadataSnapshot()?.permissionModeUpdatedAt as number)
-      : 0;
-
-  session.onUserMessage((message) => {
-    let messagePermissionMode = currentPermissionMode;
-    if (message.meta?.permissionMode) {
-      const nextPermissionMode = normalizePermissionModeToIntent(message.meta.permissionMode);
-      if (nextPermissionMode) {
-        const res = maybeUpdatePermissionModeMetadata({
-        currentPermissionMode,
-        nextPermissionMode,
-        updateMetadata: (updater) => session.updateMetadata(updater),
-        nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
-      });
-        currentPermissionMode = res.currentPermissionMode;
-        messagePermissionMode = currentPermissionMode;
-      }
-    }
-
-    const mode = { permissionMode: messagePermissionMode || 'default' };
-    const special = parseSpecialCommand(message.content.text);
-    if (special.type === 'clear') {
-      messageQueue.pushIsolateAndClear(message.content.text, mode);
-    } else {
-      messageQueue.push(message.content.text, mode);
-    }
-  });
-
-  const messageBuffer = new MessageBuffer();
-  const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
-  let inkInstance: ReturnType<typeof render> | null = null;
-  if (hasTTY) {
-    console.clear();
-    inkInstance = render(React.createElement(OpenCodeTerminalDisplay, {
-      messageBuffer,
-      logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
-      onExit: async () => {
-        shouldExit = true;
-        await handleAbort();
-      },
-    }), { exitOnCtrlC: false, patchConsole: false });
-  }
-
-  let thinking = false;
-  let shouldExit = false;
-  let abortController = new AbortController();
-  session.keepAlive(thinking, 'remote');
-  const keepAliveInterval = setInterval(() => session.keepAlive(thinking, 'remote'), 2000);
-
-  const runtimeDirectory = session.getMetadataSnapshot()?.path ?? metadata.path;
-
-  const runtime = createOpenCodeAcpRuntime({
-    directory: runtimeDirectory,
-    session,
-    messageBuffer,
-    mcpServers,
-    permissionHandler,
-    onThinkingChange: (value) => { thinking = value; },
-    getPermissionMode: () => currentPermissionMode ?? 'default',
-  });
   const lastPublishedOpenCodeSessionId = { value: null as string | null };
 
-  const handleAbort = async () => {
-    logger.debug('[OpenCode] Abort requested');
-    session.sendAgentMessage('opencode', { type: 'turn_aborted', id: randomUUID() });
-    permissionHandler.reset();
-    messageQueue.reset();
-    try {
-      abortController.abort();
-      abortController = new AbortController();
-      await runtime.cancel();
-    } catch (e) {
-      logger.debug('[OpenCode] Failed to cancel current operation (non-fatal)', e);
-    }
-  };
-  abortRequestedCallback = handleAbort;
-
-  const handleKillSession = async () => {
-    logger.debug('[OpenCode] Kill session requested');
-    shouldExit = true;
-    await handleAbort();
-    try {
-      if (session) {
-        session.updateMetadata((currentMetadata) => ({
-          ...currentMetadata,
-          lifecycleState: 'archived',
-          lifecycleStateSince: Date.now(),
-          archivedBy: 'cli',
-          archiveReason: 'User terminated',
-        }));
-        session.sendSessionDeath();
-        await session.flush();
-        await session.close();
-      }
-    } finally {
-      clearInterval(keepAliveInterval);
-      reconnectionHandle?.cancel();
-      stopCaffeinate();
-      happierMcpServer.stop();
-      await runtime.reset();
-      inkInstance?.unmount();
-      process.exit(0);
-    }
-  };
-
-  session.rpcHandlerManager.registerHandler('abort', handleAbort);
-  registerKillSessionHandler(session.rpcHandlerManager, handleKillSession);
-
-  const sendReady = () => {
-    session.sendSessionEvent({ type: 'ready' });
-    try {
-      api.push().sendToAllDevices("It's ready!", 'OpenCode is waiting for your command', { sessionId: session.sessionId });
-    } catch (pushError) {
-      logger.debug('[OpenCode] Failed to send ready push', pushError);
-    }
-  };
-
-  let wasStarted = false;
-  let storedSessionIdForResume: string | null = null;
-  if (typeof opts.resume === 'string' && opts.resume.trim()) {
-    storedSessionIdForResume = opts.resume.trim();
-  }
-
-  try {
-    let currentModeHash: string | null = null;
-    type QueuedMessage = { message: string; mode: { permissionMode: PermissionMode }; hash: string };
-    let pending: QueuedMessage | null = null;
-    const modeSync = createAcpSessionModeOverrideSynchronizer({
+  await runStandardAcpProvider(opts, {
+    flavor: 'opencode',
+    backendDisplayName: 'OpenCode',
+    uiLogPrefix: '[OpenCode]',
+    providerName: 'OpenCode',
+    waitingForCommandLabel: 'OpenCode',
+    agentMessageType: 'opencode',
+    machineMetadata: initialMachineMetadata,
+    terminalDisplay: OpenCodeTerminalDisplay,
+    resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
+    createRuntime: ({ directory, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode }) => createOpenCodeAcpRuntime({
+      directory,
       session,
-      runtime,
-      isStarted: () => wasStarted,
-    });
-    const configOptionSync = createAcpConfigOptionOverrideSynchronizer({
-      session,
-      runtime,
-      isStarted: () => wasStarted,
-    });
-    const modelSync = createModelOverrideSynchronizer({
-      session,
-      runtime,
-      isStarted: () => wasStarted,
-    });
-
-    if (typeof explicitPermissionMode !== 'string') {
-      const seeded = await resolveStartupPermissionModeFromSession({ session, take: 50 });
-      if (seeded && seeded.updatedAt > currentPermissionModeUpdatedAt) {
-        currentPermissionModeUpdatedAt = seeded.updatedAt;
-        currentPermissionMode = seeded.mode;
-        permissionHandler.setPermissionMode(seeded.mode);
-      }
-    }
-
-    const syncPermissionModeFromMetadata = () => {
-      const resolved = resolvePermissionIntentFromMetadataSnapshot({
-        metadata: session.getMetadataSnapshot(),
+      messageBuffer,
+      mcpServers,
+      permissionHandler,
+      onThinkingChange: setThinking,
+      getPermissionMode,
+    }),
+    onAttachMetadataSnapshotError: (error) => {
+      logger.debug(`[opencode] Error fetching session metadata snapshot (non-fatal): ${String(error instanceof Error ? error.message : error)}`);
+    },
+    onAttachMetadataSnapshotMissing: () => {
+      logger.debug('[opencode] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)');
+    },
+    onAfterStart: ({ session, runtime }) => {
+      maybeUpdateOpenCodeSessionIdMetadata({
+        getOpenCodeSessionId: () => runtime.getSessionId(),
+        updateHappySessionMetadata: (updater) => session.updateMetadata(updater),
+        lastPublished: lastPublishedOpenCodeSessionId,
       });
-      if (!resolved) return;
-      if (resolved.updatedAt <= currentPermissionModeUpdatedAt) return;
-      currentPermissionModeUpdatedAt = resolved.updatedAt;
-      currentPermissionMode = resolved.intent;
-      permissionHandler.setPermissionMode(resolved.intent);
-    };
-
-    // Seed pending ACP mode (if any) before waiting for messages.
-    modeSync.syncFromMetadata();
-    configOptionSync.syncFromMetadata();
-    modelSync.syncFromMetadata();
-
-    while (!shouldExit) {
-      let message: QueuedMessage | null = pending;
-      pending = null;
-
-      if (!message) {
-        const next = await waitForNextOpenCodeMessage({
-          messageQueue,
-          abortSignal: abortController.signal,
-          session,
-          onMetadataUpdate: () => {
-            syncPermissionModeFromMetadata();
-            modeSync.syncFromMetadata();
-            configOptionSync.syncFromMetadata();
-            modelSync.syncFromMetadata();
-          },
-        });
-        if (!next) continue;
-        message = { message: next.message, mode: next.mode, hash: next.hash };
-      }
-      if (!message) continue;
-
-      // Apply permission mode immediately (no session restart required).
-      permissionHandler.setPermissionMode(message.mode.permissionMode);
-
-      if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
-        const resumeId = runtime.getSessionId();
-        currentModeHash = message.hash;
-        if (resumeId) storedSessionIdForResume = resumeId;
-
-        messageBuffer.addMessage('Restarting OpenCode session (permission settings changed)…', 'status');
-        await runtime.reset();
-        wasStarted = false;
-        lastPublishedOpenCodeSessionId.value = null;
-        permissionHandler.reset();
-        thinking = false;
-        session.keepAlive(thinking, 'remote');
-
-        pending = message;
-        continue;
-      }
-
-      currentModeHash = message.hash;
-
-      messageBuffer.addMessage(message.message, 'user');
-
-      const special = parseSpecialCommand(message.message);
-      if (special.type === 'clear') {
-        messageBuffer.addMessage('Resetting OpenCode session…', 'status');
-        await runtime.reset();
-        wasStarted = false;
-        lastPublishedOpenCodeSessionId.value = null;
-        permissionHandler.reset();
-        thinking = false;
-        session.keepAlive(thinking, 'remote');
-        messageBuffer.addMessage('Session reset.', 'status');
-        sendReady();
-        continue;
-      }
-
-      try {
-        runtime.beginTurn();
-        if (!wasStarted) {
-          const resumeId = storedSessionIdForResume?.trim();
-          if (resumeId) {
-            storedSessionIdForResume = null; // consume once
-            messageBuffer.addMessage('Resuming previous context…', 'status');
-            try {
-              await runtime.startOrLoad({ resumeId });
-            } catch (e) {
-              logger.debug('[OpenCode] Resume failed; starting a new session instead', e);
-              messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
-              session.sendAgentMessage('opencode', { type: 'message', message: 'Resume failed; starting a new session.' });
-              await runtime.startOrLoad({});
-            }
-          } else {
-            await runtime.startOrLoad({});
-          }
-          maybeUpdateOpenCodeSessionIdMetadata({
-            getOpenCodeSessionId: () => runtime.getSessionId(),
-            updateHappySessionMetadata: (updater) => session.updateMetadata(updater),
-            lastPublished: lastPublishedOpenCodeSessionId,
-          });
-          wasStarted = true;
-          await modeSync.flushPendingAfterStart();
-          await configOptionSync.flushPendingAfterStart();
-          await modelSync.flushPendingAfterStart();
-        }
-        await runtime.sendPrompt(message.message);
-      } catch (error) {
-        logger.debug('[OpenCode] Error during prompt:', error);
-        session.sendAgentMessage('opencode', { type: 'message', message: `Error: ${error instanceof Error ? error.message : String(error)}` });
-      } finally {
-        runtime.flushTurn();
-        // Metadata updates can arrive while we're mid-turn (we only poll while waiting for the next message).
-        // Sync again at turn end so we don't miss ACP mode overrides that were persisted during the prompt.
-        modeSync.syncFromMetadata();
-        configOptionSync.syncFromMetadata();
-        modelSync.syncFromMetadata();
-        thinking = false;
-        session.keepAlive(thinking, 'remote');
-        sendReady();
-      }
-    }
-  } finally {
-    clearInterval(keepAliveInterval);
-    reconnectionHandle?.cancel();
-    stopCaffeinate();
-    happierMcpServer.stop();
-    await runtime.reset();
-    inkInstance?.unmount();
-  }
+    },
+    onAfterReset: () => {
+      lastPublishedOpenCodeSessionId.value = null;
+    },
+    formatPromptErrorMessage: (error) => `Error: ${error instanceof Error ? error.message : String(error)}`,
+  });
 }

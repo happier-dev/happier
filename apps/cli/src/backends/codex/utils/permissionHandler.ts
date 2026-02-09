@@ -16,7 +16,7 @@
  * controls how Happier answers/surfaces permission prompts and host-side tool gating (e.g. ACP fs).
  */
 
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import {
   CodexLikePermissionHandler,
   type PendingRequest,

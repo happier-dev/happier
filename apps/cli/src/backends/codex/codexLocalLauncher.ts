@@ -1,5 +1,5 @@
 import type { PermissionMode } from '@/api/types';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 
 import { spawn } from 'node:child_process';
@@ -9,6 +9,7 @@ import { join } from 'node:path';
 
 import { CodexRolloutMirror } from './localControl/codexRolloutMirror';
 import { discoverCodexRolloutFileOnce } from './localControl/rolloutDiscovery';
+import { resolveCodexMcpPolicyForPermissionMode } from './utils/permissionModePolicy';
 
 export type CodexLauncherResult = { type: 'switch'; resumeId: string } | { type: 'exit'; code: number };
 
@@ -72,49 +73,7 @@ function buildCodexTuiArgs(opts: { cwd: string; resumeId?: string | null; permis
   // Always enforce working directory to match the Happy session path.
   args.push('--cd', opts.cwd);
 
-  // Map permission modes to Codex CLI flags (approval + sandbox).
-  // These align with the remote Codex backend's defaults for parity across switching.
-  const approvalPolicy = (() => {
-    switch (opts.permissionMode) {
-      case 'default':
-        return 'untrusted' as const;
-      case 'read-only':
-        // Read-only mode is hard-stopped by the sandbox. Avoid interactive approval prompts.
-        return 'never' as const;
-      case 'safe-yolo':
-      case 'yolo':
-      case 'bypassPermissions':
-        // These modes optimize for throughput: only ask when something fails.
-        return 'on-failure' as const;
-      case 'acceptEdits':
-        return 'on-request' as const;
-      case 'plan':
-        return 'untrusted' as const;
-      default:
-        return 'untrusted' as const;
-    }
-  })();
-
-  const sandbox = (() => {
-    switch (opts.permissionMode) {
-      case 'default':
-        return 'workspace-write' as const;
-      case 'read-only':
-        return 'read-only' as const;
-      case 'safe-yolo':
-        return 'workspace-write' as const;
-      case 'yolo':
-        return 'danger-full-access' as const;
-      case 'bypassPermissions':
-        return 'danger-full-access' as const;
-      case 'acceptEdits':
-        return 'workspace-write' as const;
-      case 'plan':
-        return 'workspace-write' as const;
-      default:
-        return 'workspace-write' as const;
-    }
-  })();
+  const { approvalPolicy, sandbox } = resolveCodexMcpPolicyForPermissionMode(opts.permissionMode);
 
   args.push('--ask-for-approval', approvalPolicy);
   args.push('--sandbox', sandbox);

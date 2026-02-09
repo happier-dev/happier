@@ -1,4 +1,4 @@
-import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
+import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import type { PermissionMode } from '@/api/types';
 import { mapToClaudeMode } from './permissionMode';
 

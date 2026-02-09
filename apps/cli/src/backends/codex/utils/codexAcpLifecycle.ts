@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ACPMessageData } from '@/api/apiSession';
+import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 
 export function nextCodexLifecycleAcpMessages(params: {
   currentTaskId: string | null;

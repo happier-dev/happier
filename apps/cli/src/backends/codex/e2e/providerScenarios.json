@@ -24,7 +24,8 @@
       "multi_file_edit_in_workspace",
       "multi_file_edit_in_workspace_includes_diff",
       "acp_resume_load_session",
-      "acp_resume_fresh_session_imports_history"
+      "acp_resume_fresh_session_imports_history",
+      "abort_turn_then_continue"
     ]
   }
 }

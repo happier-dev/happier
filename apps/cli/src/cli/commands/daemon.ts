@@ -2,7 +2,7 @@ import chalk from 'chalk';
 
 import { checkIfDaemonRunningAndCleanupStaleState, listDaemonSessions, stopDaemon, stopDaemonSession } from '@/daemon/controlClient';
 import { install } from '@/daemon/install';
-import { startDaemon } from '@/daemon/run';
+import { startDaemon } from '@/daemon/startDaemon';
 import { runDaemonServiceCliCommand } from '@/daemon/service/cli';
 import { uninstall } from '@/daemon/uninstall';
 import { getLatestDaemonLog } from '@/ui/logger';

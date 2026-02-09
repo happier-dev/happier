@@ -1,4 +1,4 @@
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 
 import { CodexPermissionHandler } from './permissionHandler';

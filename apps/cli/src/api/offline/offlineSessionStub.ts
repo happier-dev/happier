@@ -11,7 +11,8 @@
  */
 
 import { EventEmitter } from 'node:events';
-import type { ACPMessageData, ACPProvider, ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { AgentState, Metadata, Usage, UserMessage } from '@/api/types';
 

@@ -6,9 +6,10 @@ import { createSessionScanner } from "./utils/sessionScanner";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import type { PermissionMode } from "@/api/types";
 import { mapToClaudeMode } from "./utils/permissionMode";
-import { confirmDiscardQueuedMessagesForSwitchToLocal } from "@/agent/localControl/confirmDiscardBeforeSwitchToLocal";
-import { discardPendingBeforeSwitchToLocal } from "@/agent/localControl/discardPendingBeforeSwitchToLocal";
-import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
+import { discardQueuedAndPendingForLocalSwitch } from '@/agent/localControl/discardQueuedAndPendingForLocalSwitch';
+import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
+import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 
 function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: PermissionMode): string[] | undefined {
     const filtered: string[] = [];
@@ -111,24 +112,6 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
             await exitFuture.promise;
         }
 
-        async function ensureSessionInfoBeforeSwitch(): Promise<void> {
-            const needsSessionId = session.sessionId === null;
-            const needsTranscriptPath = session.transcriptPath === null;
-            if (!needsSessionId && !needsTranscriptPath) return;
-
-            session.client.sendSessionEvent({
-                type: 'message',
-                message: needsSessionId
-                    ? 'Waiting for Claude session to initialize before switching…'
-                    : 'Waiting for Claude transcript info before switching…',
-            });
-
-            await session.waitForSessionFound({
-                timeoutMs: 2000,
-                requireTranscriptPath: needsTranscriptPath,
-            });
-        }
-
         async function doAbort() {
             logger.debug('[local]: doAbort');
 
@@ -142,7 +125,7 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
             session.queue.reset();
 
             // Abort
-            await ensureSessionInfoBeforeSwitch();
+            await ensureSessionInfoBeforeSwitch({ session });
             await abort();
         }
 
@@ -156,7 +139,7 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
             abortingForModeSwitch = true;
 
             // Abort
-            await ensureSessionInfoBeforeSwitch();
+            await ensureSessionInfoBeforeSwitch({ session });
             await abort();
         }
 
@@ -165,7 +148,7 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
         session.client.rpcHandlerManager.registerHandler('switch', async (params: any) => {
             // Newer clients send a target mode. Older clients send no params.
             // Local launcher is already in local mode, so {to:'local'} is a no-op.
-            const to = params && typeof params === 'object' ? (params as any).to : undefined;
+            const to = resolveSwitchRequestTarget(params);
             if (to === 'local') return false;
             await doSwitch();
             return true;
@@ -176,41 +159,21 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
             void doSwitch();
         }); // When any message is received, abort current process, clean queue and switch to remote mode
 
-        const queued = session.queue.queue.map((item) => item.message);
-        const queuedCount = session.queue.size();
-        const queuedLocalIds = session.queue.queue
-            .map((item) => item.mode?.localId)
-            .filter((id): id is string => typeof id === 'string' && id.length > 0);
-        const serverPendingCount = await session.client.peekPendingMessageQueueV2Count();
+        const discardResult = await discardQueuedAndPendingForLocalSwitch({
+            queue: session.queue,
+            getServerPendingCount: () => session.client.peekPendingMessageQueueV2Count(),
+            discardServerPending: () =>
+                session.client.discardPendingMessageQueueV2All({ reason: 'switch_to_local' }),
+            markQueuedAsDiscarded: (localIds) =>
+                session.client.discardCommittedMessageLocalIds({ localIds: [...localIds], reason: 'switch_to_local' }),
+            sendStatusMessage: (message) => {
+                session.client.sendSessionEvent({ type: 'message', message });
+            },
+            formatError: formatErrorForUi,
+        });
 
-        if (queuedCount > 0 || serverPendingCount > 0) {
-            const discardResult = await discardPendingBeforeSwitchToLocal({
-                queuedCount,
-                queuedLocalIds,
-                serverPendingCount: serverPendingCount,
-                confirmDiscard: () =>
-                    confirmDiscardQueuedMessagesForSwitchToLocal({
-                        queuedCount,
-                        queuedPreview: queued,
-                        serverCount: serverPendingCount,
-                        serverPreview: [],
-                    }),
-                discardServerPending: () =>
-                    session.client.discardPendingMessageQueueV2All({ reason: 'switch_to_local' }),
-                markQueuedAsDiscarded: (localIds) =>
-                    session.client.discardCommittedMessageLocalIds({ localIds: [...localIds], reason: 'switch_to_local' }),
-                resetQueued: () => {
-                    session.queue.reset();
-                },
-                sendStatusMessage: (message) => {
-                    session.client.sendSessionEvent({ type: 'message', message });
-                },
-                formatError: formatErrorForUi,
-            });
-
-            if (discardResult !== 'proceed') {
-                return { type: 'switch' };
-            }
+        if (discardResult !== 'proceed') {
+            return { type: 'switch' };
         }
 
         // Handle session start

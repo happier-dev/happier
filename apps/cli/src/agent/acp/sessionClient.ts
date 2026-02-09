@@ -1,4 +1,4 @@
-import type { ACPMessageData, ACPProvider } from '@/api/apiSession';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { Metadata } from '@/api/types';
 
 /**

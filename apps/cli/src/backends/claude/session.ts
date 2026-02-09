@@ -6,7 +6,7 @@ import type { JsRuntime } from "./runClaude";
 import type { SessionHookData } from "./utils/startHookServer";
 import type { PermissionMode } from "@/api/types";
 import { randomUUID } from "node:crypto";
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 
 export type SessionFoundInfo = {
     sessionId: string;

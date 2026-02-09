@@ -1,8 +1,6 @@
 import { EnhancedMode } from "./loop";
 import { query, type QueryOptions, type SDKMessage, type SDKSystemMessage, AbortError, SDKUserMessage } from '@/backends/claude/sdk'
 import { mapToClaudeMode } from "./utils/permissionMode";
-import { claudeCheckSession } from "./utils/claudeCheckSession";
-import { claudeFindLastSession } from "./utils/claudeFindLastSession";
 import { join, resolve } from 'node:path';
 import { projectPath } from "@/projectPath";
 import { parseSpecialCommand } from "@/cli/parsers/specialCommands";
@@ -11,128 +9,8 @@ import { PushableAsyncIterable } from "@/utils/PushableAsyncIterable";
 import { PermissionResult } from "./sdk/types";
 import type { JsRuntime } from "./runClaude";
 import { getClaudeRemoteSystemPrompt } from "./utils/remoteSystemPrompt";
-
-function parseSdkFlagOverridesFromClaudeArgs(args?: string[]): {
-    maxTurns?: number;
-    strictMcpConfig?: boolean;
-    appendSystemPrompt?: string;
-    customSystemPrompt?: string;
-    model?: string;
-    fallbackModel?: string;
-    allowedTools?: string[];
-    disallowedTools?: string[];
-} {
-    const input = args ?? [];
-    let maxTurns: number | undefined;
-    let strictMcpConfig: boolean | undefined;
-    let appendSystemPrompt: string | undefined;
-    let customSystemPrompt: string | undefined;
-    let model: string | undefined;
-    let fallbackModel: string | undefined;
-    let allowedTools: string[] | undefined;
-    let disallowedTools: string[] | undefined;
-
-    const nextValue = (index: number): string | undefined => {
-        const next = index + 1 < input.length ? input[index + 1] : undefined;
-        if (typeof next !== 'string') return undefined;
-        if (next.startsWith('-')) return undefined;
-        return next;
-    };
-
-    for (let i = 0; i < input.length; i++) {
-        const arg = input[i];
-
-        if (arg === '--max-turns') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                const parsed = Number.parseInt(next, 10);
-                if (Number.isFinite(parsed) && parsed > 0) {
-                    maxTurns = parsed;
-                }
-                i++; // consume value
-            }
-            continue;
-        }
-
-        if (arg === '--strict-mcp-config') {
-            strictMcpConfig = true;
-            continue;
-        }
-
-        if (arg === '--append-system-prompt') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                appendSystemPrompt = next;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--system-prompt') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                customSystemPrompt = next;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--model') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                model = next;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--fallback-model') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                fallbackModel = next;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--allowedTools') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                const parsed = next
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean);
-                allowedTools = parsed.length > 0 ? parsed : allowedTools;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--disallowedTools') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                const parsed = next
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean);
-                disallowedTools = parsed.length > 0 ? parsed : disallowedTools;
-                i++;
-            }
-            continue;
-        }
-    }
-
-    return {
-        maxTurns,
-        strictMcpConfig,
-        appendSystemPrompt,
-        customSystemPrompt,
-        model,
-        fallbackModel,
-        allowedTools,
-        disallowedTools,
-    };
-}
+import { parseClaudeSdkFlagOverridesFromArgs } from "./remote/sdkFlagOverrides";
+import { resolveClaudeRemoteSessionStartPlan } from "./remote/sessionStartPlan";
 
 export async function claudeRemote(opts: {
 
@@ -170,46 +48,13 @@ export async function claudeRemote(opts: {
     // IMPORTANT: do not "fail closed" to a fresh session just because our local transcript check
     // can't validate the session yet. That can cause context loss during fast local↔remote switching
     // (the session file may exist but not contain "uuid/messageId" lines yet).
-    let startFrom = opts.sessionId;
-    let shouldContinue = false;
-    if (opts.sessionId && !claudeCheckSession(opts.sessionId, opts.path, opts.transcriptPath)) {
-        logger.debug(`[claudeRemote] Session ${opts.sessionId} did not pass transcript validation yet; attempting resume anyway`);
-    }
-    
-    // If we don't have an explicit sessionId to resume from, honor one-time session flags.
-    // (These are consumed by Session.consumeOneTimeFlags() after the first successful spawn.)
-    if (!startFrom && opts.claudeArgs) {
-        // --continue / -c: let Claude pick the last session, but still run in SDK mode
-        if (opts.claudeArgs.includes('--continue') || opts.claudeArgs.includes('-c')) {
-            shouldContinue = true;
-        }
-
-        // --resume / -r: in remote mode we can't show the interactive picker, so:
-        // - `--resume <id>` / `-r <id>` resumes that id
-        // - `--resume` / `-r` resumes the most recent valid UUID session in this project
-        for (let i = 0; i < opts.claudeArgs.length; i++) {
-            const arg = opts.claudeArgs[i];
-            if (arg !== '--resume' && arg !== '-r') continue;
-
-            const maybeValue = i + 1 < opts.claudeArgs.length ? opts.claudeArgs[i + 1] : undefined;
-            if (maybeValue && !maybeValue.startsWith('-')) {
-                startFrom = maybeValue;
-                logger.debug(`[claudeRemote] Found ${arg} with session ID: ${startFrom}`);
-            } else {
-                const lastSession = claudeFindLastSession(opts.path, opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null);
-                if (lastSession) {
-                    startFrom = lastSession;
-                    logger.debug(`[claudeRemote] Found ${arg} without id; using last session: ${startFrom}`);
-                } else {
-                    logger.debug(`[claudeRemote] Found ${arg} without id but no valid last session was found`);
-                }
-            }
-
-            // Explicit resume overrides --continue semantics.
-            shouldContinue = false;
-            break;
-        }
-    }
+    const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
+        sessionId: opts.sessionId,
+        transcriptPath: opts.transcriptPath,
+        path: opts.path,
+        claudeConfigDir: opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
+        claudeArgs: opts.claudeArgs,
+    });
 
     // Set environment variables for Claude Code SDK
     if (opts.claudeEnvVars) {
@@ -250,7 +95,7 @@ export async function claudeRemote(opts: {
 
     // Prepare SDK options
     let mode = initial.mode;
-    const argOverrides = parseSdkFlagOverridesFromClaudeArgs(opts.claudeArgs);
+    const argOverrides = parseClaudeSdkFlagOverridesFromArgs(opts.claudeArgs);
     const customSystemPrompt = argOverrides.customSystemPrompt ?? initial.mode.customSystemPrompt;
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? initial.mode.appendSystemPrompt;
     const allowedTools = argOverrides.allowedTools ?? initial.mode.allowedTools;

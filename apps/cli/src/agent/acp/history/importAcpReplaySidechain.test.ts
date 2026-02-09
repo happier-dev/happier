@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { importAcpReplaySidechainV1 } from './importAcpReplaySidechain';
 import type { AcpReplaySidechainSessionClient } from '@/agent/acp/sessionClient';
-import type { ACPMessageData } from '@/api/apiSession';
+import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import { logger } from '@/utils/logger';
 
 function createFakeSession() {

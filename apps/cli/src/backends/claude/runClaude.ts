@@ -14,7 +14,7 @@ import { extractSDKMetadataAsync } from '@/backends/claude/sdk/metadataExtractor
 import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
 import { getEnvironmentInfo } from '@/ui/doctor';
 import { configuration } from '@/configuration';
-import { initialMachineMetadata } from '@/daemon/run';
+import { initialMachineMetadata } from '@/daemon/startDaemon';
 import { startHappyServer } from '@/mcp/startHappyServer';
 import { startHookServer } from '@/backends/claude/utils/startHookServer';
 import { generateHookSettingsFile, cleanupHookSettingsFile } from '@/backends/claude/utils/generateHookSettings';
@@ -25,18 +25,18 @@ import { startOfflineReconnection, connectionState } from '@/api/offline/serverC
 import { claudeLocal } from '@/backends/claude/claudeLocal';
 import { createSessionScanner } from '@/backends/claude/utils/sessionScanner';
 import { Session } from './session';
-import type { TerminalRuntimeFlags } from '@/terminal/terminalRuntimeFlags';
-import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/terminalMetadata';
+import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
+import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/runtime/terminalMetadata';
 import { persistTerminalAttachmentInfoIfNeeded, reportSessionToDaemonIfRunning, sendTerminalFallbackMessageIfNeeded } from '@/agent/runtime/startupSideEffects';
 import { applyStartupMetadataUpdateToSession, buildModelOverride, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
-import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
+import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/permission/startupPermissionModeSeed';
 import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach';
 import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 import { hashClaudeEnhancedModeForQueue } from '@/backends/claude/remote/modeHash';
 import { applyClaudeRemoteMetaState, DEFAULT_CLAUDE_REMOTE_META_STATE } from '@/backends/claude/remote/claudeRemoteMetaState';
 import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
 import { adoptModelOverrideFromMetadata } from './utils/adoptModelOverrideFromMetadata';
-import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
+import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'

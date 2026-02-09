@@ -1,9 +1,7 @@
 import chalk from 'chalk';
 
-import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { ApiClient } from '@/api/api';
-import { logger } from '@/ui/logger';
-import { parseSessionStartArgs } from '@/cli/sessionStartArgs';
+import { runBackendSessionCliCommand } from '@/cli/runBackendSessionCliCommand';
 import { DEFAULT_GEMINI_MODEL, GEMINI_MODEL_ENV } from '@/backends/gemini/constants';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -138,42 +136,8 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
     process.exit(0);
   }
 
-  try {
-    const { runGemini } = await import('@/backends/gemini/runGemini');
-
-    const { startedBy, permissionMode, permissionModeUpdatedAt, agentModeId, agentModeUpdatedAt, modelId, modelUpdatedAt } = parseSessionStartArgs(args);
-
-    const readFlagValue = (flag: string): string | undefined => {
-      const idx = args.indexOf(flag);
-      if (idx === -1) return undefined;
-      const value = args[idx + 1];
-      if (!value || value.startsWith('-')) return undefined;
-      return value;
-    };
-
-    const existingSessionId = readFlagValue('--existing-session');
-    const resume = readFlagValue('--resume');
-
-    const { credentials } = await authAndSetupMachineIfNeeded();
-
-    await runGemini({
-      credentials,
-      startedBy,
-      terminalRuntime: context.terminalRuntime,
-      permissionMode,
-      permissionModeUpdatedAt,
-      agentModeId,
-      agentModeUpdatedAt,
-      modelId,
-      modelUpdatedAt,
-      existingSessionId,
-      resume,
-    });
-  } catch (error) {
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
-    if (process.env.DEBUG) {
-      console.error(error);
-    }
-    process.exit(1);
-  }
+  await runBackendSessionCliCommand({
+    context,
+    loadRun: async () => (await import('@/backends/gemini/runGemini')).runGemini,
+  });
 }

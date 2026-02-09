@@ -13,7 +13,7 @@ import { encodeBase64, decodeBase64, encrypt, decrypt } from './encryption';
 import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { fetchChanges } from './apiChanges';
+import { fetchChanges } from './changes';
 import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';

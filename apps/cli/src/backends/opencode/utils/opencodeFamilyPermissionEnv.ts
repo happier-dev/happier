@@ -1,5 +1,5 @@
 import type { PermissionMode } from '@/api/types';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 
 type OpenCodePermissionValue = 'allow' | 'deny' | 'ask';
 

@@ -1,5 +1,5 @@
 import type { PermissionMode } from '@/api/types';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 
 export function applyPermissionModeToCodexPermissionHandler(opts: {
   permissionHandler: { setPermissionMode: (mode: PermissionMode) => void };

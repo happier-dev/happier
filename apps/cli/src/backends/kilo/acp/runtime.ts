@@ -1,12 +1,9 @@
 import type { McpServerConfig } from '@/agent';
-import type { AgentBackend } from '@/agent/core';
-import { createCatalogAcpBackend } from '@/agent/acp';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
-import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
-import type { ApiSessionClient } from '@/api/apiSession';
+import { createCatalogProviderAcpRuntime } from '@/agent/acp/runtime/createCatalogProviderAcpRuntime';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { logger } from '@/ui/logger';
 
 import { maybeUpdateKiloSessionIdMetadata } from '@/backends/kilo/utils/kiloSessionIdMetadata';
 
@@ -21,24 +18,16 @@ export function createKiloAcpRuntime(params: {
 }) {
   const lastPublishedKiloSessionId = { value: null as string | null };
 
-  return createAcpRuntime({
+  return createCatalogProviderAcpRuntime({
     provider: 'kilo',
+    loggerLabel: 'KiloACP',
     directory: params.directory,
     session: params.session,
     messageBuffer: params.messageBuffer,
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
-    ensureBackend: async () => {
-      const created = await createCatalogAcpBackend('kilo', {
-        cwd: params.directory,
-        mcpServers: params.mcpServers,
-        permissionHandler: params.permissionHandler,
-        permissionMode: params.getPermissionMode?.(),
-      });
-      logger.debug('[KiloACP] Backend created');
-      return created.backend as unknown as AgentBackend;
-    },
+    getPermissionMode: params.getPermissionMode,
     onSessionIdChange: (nextSessionId) => {
       maybeUpdateKiloSessionIdMetadata({
         getKiloSessionId: () => nextSessionId,

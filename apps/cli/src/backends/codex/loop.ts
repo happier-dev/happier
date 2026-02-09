@@ -1,4 +1,4 @@
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 
 import { codexLocalLauncher, type CodexLauncherResult } from './codexLocalLauncher';

@@ -1,9 +1,9 @@
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { Metadata } from '@/api/types';
 import { configuration } from '@/configuration';
 import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
-import { writeTerminalAttachmentInfo } from '@/terminal/terminalAttachmentInfo';
-import { buildTerminalFallbackMessage } from '@/terminal/terminalFallbackMessage';
+import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { buildTerminalFallbackMessage } from '@/terminal/attachment/terminalFallbackMessage';
 import { logger } from '@/ui/logger';
 
 type DaemonReportDeps = {

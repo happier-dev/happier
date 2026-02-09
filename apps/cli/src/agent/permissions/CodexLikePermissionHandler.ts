@@ -9,14 +9,14 @@
  */
 
 import { logger } from '@/ui/logger';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import {
   BasePermissionHandler,
   type PermissionResult,
   type PendingRequest,
 } from '@/agent/permissions/BasePermissionHandler';
-import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
+import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import type { ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
 
 export type { PermissionResult, PendingRequest };

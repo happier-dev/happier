@@ -9,7 +9,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { AddressInfo } from "node:net";
 import { z } from "zod";
 import { logger } from "@/ui/logger";
-import { ApiSessionClient } from "@/api/apiSession";
+import { ApiSessionClient } from "@/api/session/sessionClient";
 import { randomUUID } from "node:crypto";
 
 export async function startHappyServer(client: ApiSessionClient) {

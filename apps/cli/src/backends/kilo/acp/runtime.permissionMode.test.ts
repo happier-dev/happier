@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import * as acpModule from '@/agent/acp';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import type { AgentBackend, AgentMessageHandler } from '@/agent/core';
 import type { Metadata, PermissionMode } from '@/api/types';

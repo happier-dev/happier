@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import * as acpCatalog from '@/agent/acp';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AgentBackend, AgentMessageHandler } from '@/agent/core';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { AuggieBackendOptions } from './backend';

@@ -4,461 +4,52 @@
  * Runs the Kilo agent through Happier CLI using ACP.
  */
 
-import { render } from 'ink';
-import React from 'react';
-import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
-
-import { ApiClient } from '@/api/api';
-import type { ApiSessionClient } from '@/api/apiSession';
 import type { PermissionMode } from '@/api/types';
 import { logger } from '@/ui/logger';
 import type { Credentials } from '@/persistence';
-import { readSettings } from '@/persistence';
-import { initialMachineMetadata } from '@/daemon/run';
-import { connectionState } from '@/api/offline/serverConnectionErrors';
-import { setupOfflineReconnection } from '@/api/offline/setupOfflineReconnection';
-import { projectPath } from '@/projectPath';
-import { startHappyServer } from '@/mcp/startHappyServer';
-import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
-import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach';
-import {
-  persistTerminalAttachmentInfoIfNeeded,
-  primeAgentStateForUi,
-  reportSessionToDaemonIfRunning,
-  sendTerminalFallbackMessageIfNeeded,
-} from '@/agent/runtime/startupSideEffects';
-import { maybeUpdatePermissionModeMetadata } from '@/agent/runtime/permissionModeMetadata';
-import {
-  applyStartupMetadataUpdateToSession,
-  buildAcpSessionModeOverride,
-  buildModelOverride,
-  buildPermissionModeOverride,
-} from '@/agent/runtime/startupMetadataUpdate';
-import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
-import { stopCaffeinate } from '@/integrations/caffeinate';
-import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import { hashObject } from '@/utils/deterministicJson';
-import { parseSpecialCommand } from '@/cli/parsers/specialCommands';
-import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
-import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMessage } from '@/agent/runtime/permissionModeCanonical';
-import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/startupPermissionModeSeed';
-import { createAcpSessionModeOverrideSynchronizer } from '@/agent/runtime/acpSessionModeOverrideSync';
-import { createAcpConfigOptionOverrideSynchronizer } from '@/agent/runtime/acpConfigOptionOverrideSync';
-import { createModelOverrideSynchronizer } from '@/agent/runtime/modelOverrideSync';
-import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
-import { createProviderEnforcedPermissionHandler } from '@/agent/permissions/createProviderEnforcedPermissionHandler';
+import { initialMachineMetadata } from '@/daemon/startDaemon';
+import { runStandardAcpProvider, type StandardAcpProviderRunOptions } from '@/agent/runtime/runStandardAcpProvider';
 
-import type { McpServerConfig } from '@/agent';
 import { KiloTerminalDisplay } from '@/backends/kilo/ui/KiloTerminalDisplay';
-
 import { createKiloAcpRuntime } from '@/backends/kilo/acp/runtime';
-import { waitForNextKiloMessage } from '@/backends/kilo/utils/waitForNextKiloMessage';
 import { createKiloReadyPushNotifier } from '@/backends/kilo/readyPush';
 
-export async function runKilo(opts: {
+export async function runKilo(opts: StandardAcpProviderRunOptions & {
   credentials: Credentials;
-  startedBy?: 'daemon' | 'terminal';
-  terminalRuntime?: import('@/terminal/terminalRuntimeFlags').TerminalRuntimeFlags | null;
   permissionMode?: PermissionMode;
-  permissionModeUpdatedAt?: number;
-  agentModeId?: string;
-  agentModeUpdatedAt?: number;
-  modelId?: string;
-  modelUpdatedAt?: number;
-  existingSessionId?: string;
-  resume?: string;
 }): Promise<void> {
-  const sessionTag = randomUUID();
-  const explicitPermissionMode = opts.permissionMode;
-
-  connectionState.setBackend('Kilo');
-
-  const api = await ApiClient.create(opts.credentials);
-
-  const settings = await readSettings();
-  const machineId = settings?.machineId;
-  if (!machineId) {
-    console.error(`[START] No machine ID found in settings. Please report this issue on https://github.com/happier-dev/happier/issues`);
-    process.exit(1);
-  }
-  await api.getOrCreateMachine({ machineId, metadata: initialMachineMetadata });
-
-  const initialPermissionMode = normalizePermissionModeToIntent(opts.permissionMode ?? 'default') ?? 'default';
-  const { state, metadata } = createSessionMetadata({
+  await runStandardAcpProvider(opts, {
     flavor: 'kilo',
-    machineId,
-    startedBy: opts.startedBy,
-    terminalRuntime: opts.terminalRuntime ?? null,
-    permissionMode: initialPermissionMode,
-    permissionModeUpdatedAt: typeof opts.permissionModeUpdatedAt === 'number' ? opts.permissionModeUpdatedAt : Date.now(),
-    agentModeId: opts.agentModeId,
-    agentModeUpdatedAt: opts.agentModeUpdatedAt,
-    modelId: opts.modelId,
-    modelUpdatedAt: opts.modelUpdatedAt,
-  });
-
-  const terminal = metadata.terminal;
-  let session: ApiSessionClient;
-  let permissionHandler: ProviderEnforcedPermissionHandler;
-  let reconnectionHandle: { cancel: () => void } | null = null;
-
-  if (typeof opts.existingSessionId === 'string' && opts.existingSessionId.trim()) {
-    const existingId = opts.existingSessionId.trim();
-    logger.debug(`[kilo] Attaching to existing Happy session: ${existingId}`);
-    const baseSession = await createBaseSessionForAttach({ existingSessionId: existingId, metadata, state });
-    session = api.sessionSyncClient(baseSession);
-
-    let snapshot: unknown = null;
-    try {
-      snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 });
-      if (!snapshot) {
-        logger.debug('[kilo] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)');
-      }
-    } catch (error) {
+    backendDisplayName: 'Kilo',
+    uiLogPrefix: '[Kilo]',
+    providerName: 'Kilo',
+    waitingForCommandLabel: 'Kilo',
+    agentMessageType: 'kilo',
+    machineMetadata: initialMachineMetadata,
+    terminalDisplay: KiloTerminalDisplay,
+    resolveRuntimeDirectory: ({ session, metadata }) => session.getMetadataSnapshot()?.path ?? metadata.path,
+    createRuntime: ({ directory, session, messageBuffer, mcpServers, permissionHandler, setThinking, getPermissionMode }) => createKiloAcpRuntime({
+      directory,
+      session,
+      messageBuffer,
+      mcpServers,
+      permissionHandler,
+      onThinkingChange: setThinking,
+      getPermissionMode,
+    }),
+    createSendReady: ({ session, api }) => {
+      const readyPushNotifier = createKiloReadyPushNotifier({ api, sessionId: session.sessionId });
+      return () => {
+        session.sendSessionEvent({ type: 'ready' });
+        readyPushNotifier.maybeSend();
+      };
+    },
+    onAttachMetadataSnapshotMissing: (error) => {
       logger.debug(
         '[kilo] Failed to fetch session metadata snapshot before attach startup update; continuing without metadata write (non-fatal)',
-        error,
+        error ?? undefined,
       );
-    }
-
-    if (snapshot) {
-      applyStartupMetadataUpdateToSession({
-        session,
-        next: metadata,
-        nowMs: Date.now(),
-        permissionModeOverride: buildPermissionModeOverride({
-          permissionMode: opts.permissionMode,
-          permissionModeUpdatedAt: opts.permissionModeUpdatedAt,
-        }),
-        acpSessionModeOverride: buildAcpSessionModeOverride({
-          agentModeId: opts.agentModeId,
-          agentModeUpdatedAt: opts.agentModeUpdatedAt,
-        }),
-        modelOverride: buildModelOverride({
-          modelId: opts.modelId,
-          modelUpdatedAt: opts.modelUpdatedAt,
-        }),
-        mode: 'attach',
-      });
-    }
-
-    primeAgentStateForUi(session, '[Kilo]');
-    await reportSessionToDaemonIfRunning({ sessionId: existingId, metadata });
-    await persistTerminalAttachmentInfoIfNeeded({ sessionId: existingId, terminal });
-    sendTerminalFallbackMessageIfNeeded({ session, terminal });
-  } else {
-    const response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
-    if (!response) {
-      throw new Error('Failed to create session');
-    }
-
-    const { session: initialSession, reconnectionHandle: rh } = setupOfflineReconnection({
-      api,
-      sessionTag,
-      metadata,
-      state,
-      response,
-      onSessionSwap: (newSession) => {
-        session = newSession;
-        if (permissionHandler) {
-          permissionHandler.updateSession(newSession);
-        }
-      },
-    });
-    session = initialSession;
-    reconnectionHandle = rh;
-
-    primeAgentStateForUi(session, '[Kilo]');
-    await reportSessionToDaemonIfRunning({ sessionId: response.id, metadata });
-    await persistTerminalAttachmentInfoIfNeeded({ sessionId: response.id, terminal });
-    sendTerminalFallbackMessageIfNeeded({ session, terminal });
-  }
-
-  let abortRequestedCallback: (() => void | Promise<void>) | null = null;
-  permissionHandler = createProviderEnforcedPermissionHandler({
-    session,
-    logPrefix: '[Kilo]',
-    onAbortRequested: () => abortRequestedCallback?.(),
+    },
+    formatPromptErrorMessage: (error) => `Error: ${error instanceof Error ? error.message : String(error)}`,
   });
-  permissionHandler.setPermissionMode(initialPermissionMode);
-
-  const happierMcpServer = await startHappyServer(session);
-  const bridgeCommand = join(projectPath(), 'bin', 'happier-mcp.mjs');
-  const mcpServers: Record<string, McpServerConfig> = {
-    happier: { command: bridgeCommand, args: ['--url', happierMcpServer.url] },
-  };
-
-  const messageQueue = new MessageQueue2<{ permissionMode: PermissionMode }>((mode) => hashObject({
-    permissionMode: mode.permissionMode,
-  }));
-
-  let currentPermissionMode: PermissionMode | undefined = initialPermissionMode;
-  let currentPermissionModeUpdatedAt: number =
-    typeof session.getMetadataSnapshot()?.permissionModeUpdatedAt === 'number'
-      ? (session.getMetadataSnapshot()?.permissionModeUpdatedAt as number)
-      : 0;
-
-  session.onUserMessage((message) => {
-    let messagePermissionMode = currentPermissionMode;
-    if (message.meta?.permissionMode) {
-      const nextPermissionMode = normalizePermissionModeToIntent(message.meta.permissionMode);
-      if (nextPermissionMode) {
-        const res = maybeUpdatePermissionModeMetadata({
-          currentPermissionMode,
-          nextPermissionMode,
-          updateMetadata: (updater) => session.updateMetadata(updater),
-          nowMs: () => resolvePermissionModeUpdatedAtFromMessage(message),
-        });
-        currentPermissionMode = res.currentPermissionMode;
-        messagePermissionMode = currentPermissionMode;
-      }
-    }
-
-    const mode = { permissionMode: messagePermissionMode || 'default' };
-    const special = parseSpecialCommand(message.content.text);
-    if (special.type === 'clear') {
-      messageQueue.pushIsolateAndClear(message.content.text, mode);
-    } else {
-      messageQueue.push(message.content.text, mode);
-    }
-  });
-
-  const messageBuffer = new MessageBuffer();
-  const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
-  let inkInstance: ReturnType<typeof render> | null = null;
-  if (hasTTY) {
-    console.clear();
-    inkInstance = render(React.createElement(KiloTerminalDisplay, {
-      messageBuffer,
-      logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
-      onExit: async () => {
-        shouldExit = true;
-        await handleAbort();
-      },
-    }), { exitOnCtrlC: false, patchConsole: false });
-  }
-
-  let thinking = false;
-  let shouldExit = false;
-  let abortController = new AbortController();
-  session.keepAlive(thinking, 'remote');
-  const keepAliveInterval = setInterval(() => session.keepAlive(thinking, 'remote'), 2000);
-
-  const runtimeDirectory = session.getMetadataSnapshot()?.path ?? metadata.path;
-
-  const runtime = createKiloAcpRuntime({
-    directory: runtimeDirectory,
-    session,
-    messageBuffer,
-    mcpServers,
-    permissionHandler,
-    onThinkingChange: (value) => { thinking = value; },
-    getPermissionMode: () => currentPermissionMode ?? 'default',
-  });
-
-  const handleAbort = async () => {
-    logger.debug('[Kilo] Abort requested');
-    session.sendAgentMessage('kilo', { type: 'turn_aborted', id: randomUUID() });
-    permissionHandler.reset();
-    messageQueue.reset();
-    try {
-      abortController.abort();
-      abortController = new AbortController();
-      await runtime.cancel();
-    } catch (e) {
-      logger.debug('[Kilo] Failed to cancel current operation (non-fatal)', e);
-    }
-  };
-  abortRequestedCallback = handleAbort;
-
-  const handleKillSession = async () => {
-    logger.debug('[Kilo] Kill session requested');
-    shouldExit = true;
-    await handleAbort();
-    try {
-      if (session) {
-        session.updateMetadata((currentMetadata) => ({
-          ...currentMetadata,
-          lifecycleState: 'archived',
-          lifecycleStateSince: Date.now(),
-          archivedBy: 'cli',
-          archiveReason: 'User terminated',
-        }));
-        session.sendSessionDeath();
-        await session.flush();
-        await session.close();
-      }
-    } finally {
-      clearInterval(keepAliveInterval);
-      reconnectionHandle?.cancel();
-      stopCaffeinate();
-      happierMcpServer.stop();
-      await runtime.reset();
-      inkInstance?.unmount();
-      process.exit(0);
-    }
-  };
-
-  session.rpcHandlerManager.registerHandler('abort', handleAbort);
-  registerKillSessionHandler(session.rpcHandlerManager, handleKillSession);
-  const readyPushNotifier = createKiloReadyPushNotifier({ api, sessionId: session.sessionId });
-
-  const sendReady = () => {
-    session.sendSessionEvent({ type: 'ready' });
-    readyPushNotifier.maybeSend();
-  };
-
-  let wasStarted = false;
-  let storedSessionIdForResume: string | null = null;
-  if (typeof opts.resume === 'string' && opts.resume.trim()) {
-    storedSessionIdForResume = opts.resume.trim();
-  }
-
-  try {
-    let currentModeHash: string | null = null;
-    type QueuedMessage = { message: string; mode: { permissionMode: PermissionMode }; hash: string };
-    let pending: QueuedMessage | null = null;
-    const modeSync = createAcpSessionModeOverrideSynchronizer({
-      session,
-      runtime,
-      isStarted: () => wasStarted,
-    });
-    const configOptionSync = createAcpConfigOptionOverrideSynchronizer({
-      session,
-      runtime,
-      isStarted: () => wasStarted,
-    });
-    const modelSync = createModelOverrideSynchronizer({
-      session,
-      runtime,
-      isStarted: () => wasStarted,
-    });
-
-    if (typeof explicitPermissionMode !== 'string') {
-      const seeded = await resolveStartupPermissionModeFromSession({ session, take: 50 });
-      if (seeded && seeded.updatedAt > currentPermissionModeUpdatedAt) {
-        currentPermissionModeUpdatedAt = seeded.updatedAt;
-        currentPermissionMode = seeded.mode;
-        permissionHandler.setPermissionMode(seeded.mode);
-      }
-    }
-
-    const syncPermissionModeFromMetadata = () => {
-      const resolved = resolvePermissionIntentFromMetadataSnapshot({
-        metadata: session.getMetadataSnapshot(),
-      });
-      if (!resolved) return;
-      if (resolved.updatedAt <= currentPermissionModeUpdatedAt) return;
-      currentPermissionModeUpdatedAt = resolved.updatedAt;
-      currentPermissionMode = resolved.intent;
-      permissionHandler.setPermissionMode(resolved.intent);
-    };
-
-    modeSync.syncFromMetadata();
-    configOptionSync.syncFromMetadata();
-    modelSync.syncFromMetadata();
-
-    while (!shouldExit) {
-      let message: QueuedMessage | null = pending;
-      pending = null;
-
-      if (!message) {
-        const next = await waitForNextKiloMessage({
-          messageQueue,
-          abortSignal: abortController.signal,
-          session,
-          onMetadataUpdate: () => {
-            syncPermissionModeFromMetadata();
-            modeSync.syncFromMetadata();
-            configOptionSync.syncFromMetadata();
-            modelSync.syncFromMetadata();
-          },
-        });
-        if (!next) continue;
-        message = { message: next.message, mode: next.mode, hash: next.hash };
-      }
-      if (!message) continue;
-
-      permissionHandler.setPermissionMode(message.mode.permissionMode);
-
-      if (wasStarted && currentModeHash && message.hash !== currentModeHash) {
-        const resumeId = runtime.getSessionId();
-        currentModeHash = message.hash;
-        if (resumeId) storedSessionIdForResume = resumeId;
-
-        messageBuffer.addMessage('Restarting Kilo session (permission settings changed)…', 'status');
-        await runtime.reset();
-        wasStarted = false;
-        permissionHandler.reset();
-        thinking = false;
-        session.keepAlive(thinking, 'remote');
-
-        pending = message;
-        continue;
-      }
-
-      currentModeHash = message.hash;
-
-      messageBuffer.addMessage(message.message, 'user');
-
-      const special = parseSpecialCommand(message.message);
-      if (special.type === 'clear') {
-        messageBuffer.addMessage('Resetting Kilo session…', 'status');
-        await runtime.reset();
-        wasStarted = false;
-        permissionHandler.reset();
-        thinking = false;
-        session.keepAlive(thinking, 'remote');
-        messageBuffer.addMessage('Session reset.', 'status');
-        sendReady();
-        continue;
-      }
-
-      try {
-        runtime.beginTurn();
-        if (!wasStarted) {
-          const resumeId = storedSessionIdForResume?.trim();
-          if (resumeId) {
-            storedSessionIdForResume = null; // consume once
-            messageBuffer.addMessage('Resuming previous context…', 'status');
-            try {
-              await runtime.startOrLoad({ resumeId });
-            } catch (e) {
-              logger.debug('[Kilo] Resume failed; starting a new session instead', e);
-              messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
-              session.sendAgentMessage('kilo', { type: 'message', message: 'Resume failed; starting a new session.' });
-              await runtime.startOrLoad({});
-            }
-          } else {
-            await runtime.startOrLoad({});
-          }
-          wasStarted = true;
-          await modeSync.flushPendingAfterStart();
-          await configOptionSync.flushPendingAfterStart();
-          await modelSync.flushPendingAfterStart();
-        }
-        await runtime.sendPrompt(message.message);
-      } catch (error) {
-        logger.debug('[Kilo] Error during prompt:', error);
-        session.sendAgentMessage('kilo', { type: 'message', message: `Error: ${error instanceof Error ? error.message : String(error)}` });
-      } finally {
-        runtime.flushTurn();
-        modeSync.syncFromMetadata();
-        configOptionSync.syncFromMetadata();
-        modelSync.syncFromMetadata();
-        thinking = false;
-        session.keepAlive(thinking, 'remote');
-        sendReady();
-      }
-    }
-  } finally {
-    clearInterval(keepAliveInterval);
-    reconnectionHandle?.cancel();
-    stopCaffeinate();
-    happierMcpServer.stop();
-    await runtime.reset();
-    inkInstance?.unmount();
-  }
 }

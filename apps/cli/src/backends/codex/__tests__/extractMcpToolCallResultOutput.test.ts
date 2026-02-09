@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractMcpToolCallResultOutput } from '../runCodex';
+import { extractMcpToolCallResultOutput } from '../runtime/sessionTurnLifecycle';
 
 describe('extractMcpToolCallResultOutput', () => {
   it('prefers Ok when present (including falsy values)', () => {
@@ -24,4 +24,3 @@ describe('extractMcpToolCallResultOutput', () => {
     expect(extractMcpToolCallResultOutput({ value: 1 })).toEqual({ value: 1 });
   });
 });
-

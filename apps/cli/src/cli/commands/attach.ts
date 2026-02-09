@@ -2,8 +2,8 @@ import chalk from 'chalk';
 import { spawn } from 'node:child_process';
 
 import { configuration } from '@/configuration';
-import { readTerminalAttachmentInfo } from '@/terminal/terminalAttachmentInfo';
-import { createTerminalAttachPlan } from '@/terminal/terminalAttachPlan';
+import { readTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
+import { createTerminalAttachPlan } from '@/terminal/attachment/terminalAttachPlan';
 import { isTmuxAvailable, normalizeExitCode } from '@/integrations/tmux';
 
 import type { CommandContext } from '@/cli/commandRegistry';

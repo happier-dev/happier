@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { AcpBackend, type AcpBackendOptions, type AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { resolveCliPathOverride } from '@/agent/acp/resolveCliPathOverride';
 import type { AgentBackend, AgentFactoryOptions, McpServerConfig } from '@/agent/core';
-import { normalizePermissionModeToIntent } from '@/agent/runtime/permissionModeCanonical';
+import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
 import type { PermissionMode } from '@/api/types';
 import { kimiTransport } from '@/backends/kimi/acp/transport';
 

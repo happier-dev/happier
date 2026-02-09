@@ -18,6 +18,8 @@ import { syncClaudePermissionModeFromMetadata } from "./utils/syncPermissionMode
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
+import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
+import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 
 interface PermissionsField {
     date: number;
@@ -131,30 +133,12 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
         await abort();
     }
 
-    async function ensureSessionInfoBeforeSwitch(): Promise<void> {
-        const needsSessionId = session.sessionId === null;
-        const needsTranscriptPath = session.transcriptPath === null;
-        if (!needsSessionId && !needsTranscriptPath) return;
-
-        session.client.sendSessionEvent({
-            type: 'message',
-            message: needsSessionId
-                ? 'Waiting for Claude session to initialize before switching…'
-                : 'Waiting for Claude transcript info before switching…',
-        });
-
-        await session.waitForSessionFound({
-            timeoutMs: 2000,
-            requireTranscriptPath: needsTranscriptPath,
-        });
-    }
-
     async function doSwitch() {
         logger.debug('[remote]: doSwitch');
         if (!exitReason) {
             exitReason = 'switch';
         }
-        await ensureSessionInfoBeforeSwitch();
+        await ensureSessionInfoBeforeSwitch({ session });
         await abort();
     }
 
@@ -163,7 +147,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     session.client.rpcHandlerManager.registerHandler('switch', async (params: any) => {
         // Newer clients send a target mode. Older clients send no params.
         // Remote launcher is already in remote mode, so {to:'remote'} is a no-op.
-        const to = params && typeof params === 'object' ? (params as any).to : undefined;
+        const to = resolveSwitchRequestTarget(params);
         if (to === 'remote') return false;
         await doSwitch();
         return true;

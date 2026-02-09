@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto';
 import { inspect } from 'node:util';
 
-import type { ACPProvider } from '@/api/apiSession';
-import type { ACPMessageData } from '@/api/apiSession';
+import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { logger } from '@/utils/logger';
 import type { AcpReplaySidechainSessionClient } from '@/agent/acp/sessionClient';
 

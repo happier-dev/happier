@@ -2,7 +2,7 @@ import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { Metadata } from '@/api/types';
-import type { ACPMessageData } from '@/api/apiSession';
+import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 
 import type { AcpRuntimeBackend } from './createAcpRuntime';
 

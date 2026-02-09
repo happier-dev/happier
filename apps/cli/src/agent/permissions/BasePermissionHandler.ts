@@ -8,7 +8,7 @@
  */
 
 import { logger } from "@/ui/logger";
-import { ApiSessionClient } from "@/api/apiSession";
+import { ApiSessionClient } from "@/api/session/sessionClient";
 import { AgentState } from "@/api/types";
 import { isToolAllowedForSession, makeToolIdentifier } from './permissionToolIdentifier';
 import { recordToolTraceEvent, type ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';

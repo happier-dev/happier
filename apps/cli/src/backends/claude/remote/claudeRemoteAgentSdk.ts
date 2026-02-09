@@ -7,12 +7,12 @@ import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 
 import type { EnhancedMode } from '@/backends/claude/loop';
 import { mapToClaudeMode } from '@/backends/claude/utils/permissionMode';
-import { claudeCheckSession } from '@/backends/claude/utils/claudeCheckSession';
-import { claudeFindLastSession } from '@/backends/claude/utils/claudeFindLastSession';
 import { getDefaultClaudeCodePathForAgentSdk } from '@/backends/claude/sdk/utils';
 import type { SessionHookData } from '@/backends/claude/utils/startHookServer';
 import { getProjectPath } from '@/backends/claude/utils/path';
 import { getClaudeRemoteSystemPrompt } from '@/backends/claude/utils/remoteSystemPrompt';
+import { parseClaudeSdkFlagOverridesFromArgs } from '@/backends/claude/remote/sdkFlagOverrides';
+import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/sessionStartPlan';
 
 import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
@@ -23,128 +23,6 @@ type AgentSdkQueryFactory = (params: {
     prompt: string | AsyncIterable<any>;
     options?: Record<string, unknown>;
 }) => AgentSdkQueryType;
-
-function parseSdkFlagOverridesFromClaudeArgs(args?: string[]): {
-    maxTurns?: number;
-    strictMcpConfig?: boolean;
-    appendSystemPrompt?: string;
-    customSystemPrompt?: string;
-    model?: string;
-    fallbackModel?: string;
-    allowedTools?: string[];
-    disallowedTools?: string[];
-} {
-    const input = args ?? [];
-    let maxTurns: number | undefined;
-    let strictMcpConfig: boolean | undefined;
-    let appendSystemPrompt: string | undefined;
-    let customSystemPrompt: string | undefined;
-    let model: string | undefined;
-    let fallbackModel: string | undefined;
-    let allowedTools: string[] | undefined;
-    let disallowedTools: string[] | undefined;
-
-    const nextValue = (index: number): string | undefined => {
-        const next = index + 1 < input.length ? input[index + 1] : undefined;
-        if (typeof next !== 'string') return undefined;
-        if (next.startsWith('-')) return undefined;
-        return next;
-    };
-
-    for (let i = 0; i < input.length; i++) {
-        const arg = input[i];
-
-        if (arg === '--max-turns') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                const parsed = Number.parseInt(next, 10);
-                if (Number.isFinite(parsed) && parsed > 0) {
-                    maxTurns = parsed;
-                }
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--strict-mcp-config') {
-            strictMcpConfig = true;
-            continue;
-        }
-
-        if (arg === '--append-system-prompt') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                appendSystemPrompt = next;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--system-prompt') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                customSystemPrompt = next;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--model') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                model = next;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--fallback-model') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                fallbackModel = next;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--allowedTools') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                const parsed = next
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean);
-                allowedTools = parsed.length > 0 ? parsed : allowedTools;
-                i++;
-            }
-            continue;
-        }
-
-        if (arg === '--disallowedTools') {
-            const next = nextValue(i);
-            if (typeof next === 'string') {
-                const parsed = next
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean);
-                disallowedTools = parsed.length > 0 ? parsed : disallowedTools;
-                i++;
-            }
-            continue;
-        }
-    }
-
-    return {
-        maxTurns,
-        strictMcpConfig,
-        appendSystemPrompt,
-        customSystemPrompt,
-        model,
-        fallbackModel,
-        allowedTools,
-        disallowedTools,
-    };
-}
 
 function parseRewindCommand(message: string): { type: 'rewind'; checkpointId?: string; confirmed: boolean } | null {
     const trimmed = message.trim();
@@ -250,40 +128,15 @@ export async function claudeRemoteAgentSdk(opts: {
         });
     };
 
-    let startFrom = opts.sessionId;
-    let shouldContinue = false;
-
-    if (opts.sessionId && !claudeCheckSession(opts.sessionId, opts.path, opts.transcriptPath)) {
-        logger.debug(`[claudeRemoteAgentSdk] Session ${opts.sessionId} did not pass transcript validation yet; attempting resume anyway`);
-    }
-
-    if (!startFrom && opts.claudeArgs) {
-        if (opts.claudeArgs.includes('--continue') || opts.claudeArgs.includes('-c')) {
-            shouldContinue = true;
-        }
-
-        for (let i = 0; i < opts.claudeArgs.length; i++) {
-            const arg = opts.claudeArgs[i];
-            if (arg !== '--resume' && arg !== '-r') continue;
-
-            const maybeValue = i + 1 < opts.claudeArgs.length ? opts.claudeArgs[i + 1] : undefined;
-            if (maybeValue && !maybeValue.startsWith('-')) {
-                startFrom = maybeValue;
-                logger.debug(`[claudeRemoteAgentSdk] Found ${arg} with session ID: ${startFrom}`);
-            } else {
-                const lastSession = claudeFindLastSession(opts.path, opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null);
-                if (lastSession) {
-                    startFrom = lastSession;
-                    logger.debug(`[claudeRemoteAgentSdk] Found ${arg} without id; using last session: ${startFrom}`);
-                } else {
-                    logger.debug(`[claudeRemoteAgentSdk] Found ${arg} without id but no valid last session was found`);
-                }
-            }
-
-            shouldContinue = false;
-            break;
-        }
-    }
+    const { startFrom, shouldContinue } = resolveClaudeRemoteSessionStartPlan({
+        sessionId: opts.sessionId,
+        transcriptPath: opts.transcriptPath,
+        path: opts.path,
+        claudeConfigDir: opts.claudeEnvVars?.CLAUDE_CONFIG_DIR ?? null,
+        claudeArgs: opts.claudeArgs,
+    }, {
+        logPrefix: 'claudeRemoteAgentSdk',
+    });
 
     const initial = await opts.nextMessage();
     if (!initial) return;
@@ -304,7 +157,7 @@ export async function claudeRemoteAgentSdk(opts: {
 
     let mode = initial.mode;
 
-    const argOverrides = parseSdkFlagOverridesFromClaudeArgs(opts.claudeArgs);
+    const argOverrides = parseClaudeSdkFlagOverridesFromArgs(opts.claudeArgs);
     const customSystemPrompt = argOverrides.customSystemPrompt ?? mode.customSystemPrompt;
     const appendSystemPrompt = argOverrides.appendSystemPrompt ?? mode.appendSystemPrompt;
     const allowedTools = argOverrides.allowedTools ?? mode.allowedTools;

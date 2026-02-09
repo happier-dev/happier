@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AgentBackend, AgentMessageHandler } from '@/agent/core';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import type { CodexAcpBackendOptions, CodexAcpBackendResult } from './backend';

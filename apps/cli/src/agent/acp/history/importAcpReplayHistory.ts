@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { ACPProvider } from '@/api/apiSession';
+import type { ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { AcpPermissionHandler } from '@/agent/acp/AcpBackend';
 import { logger } from '@/ui/logger';
 import type { AcpReplayHistorySessionClient } from '@/agent/acp/sessionClient';

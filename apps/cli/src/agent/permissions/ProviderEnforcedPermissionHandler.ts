@@ -9,7 +9,7 @@
  */
 
 import { logger } from '@/ui/logger';
-import type { ApiSessionClient } from '@/api/apiSession';
+import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { PermissionMode } from '@/api/types';
 import {
   BasePermissionHandler,

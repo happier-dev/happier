@@ -1,4 +1,4 @@
-import type { TerminalRuntimeFlags } from '@/terminal/terminalRuntimeFlags';
+import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
 
 import { AGENTS, type AgentCatalogEntry } from '@/backends/catalog';
 

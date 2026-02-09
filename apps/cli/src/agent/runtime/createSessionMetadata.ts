@@ -16,8 +16,8 @@ import type { AgentState, Metadata, PermissionMode } from '@/api/types';
 import { configuration } from '@/configuration';
 import { projectPath } from '@/projectPath';
 import packageJson from '../../../package.json';
-import type { TerminalRuntimeFlags } from '@/terminal/terminalRuntimeFlags';
-import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/terminalMetadata';
+import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
+import { buildTerminalMetadataFromRuntimeFlags } from '@/terminal/runtime/terminalMetadata';
 
 /**
  * Backend flavor identifier for session metadata.
