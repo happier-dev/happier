@@ -158,6 +158,19 @@ External APIs you don't control (third-party services, payment gateways, email p
 - Remove dead code
 - No commented-out code blocks
 
+### File and Folder Naming (Required)
+- Use explicit, purpose-revealing names. A reader should infer intent from path + filename without opening the file.
+- Do not use vague names for production modules (`helpers`, `utils`, `misc`, `bundle`, `manager`, `stuff`) unless the folder scope already makes the purpose unambiguous and the module is genuinely broad.
+- Prefer names aligned with primary export/behavior:
+  - `createX.ts` for module factories
+  - `normalizeX.ts` for normalization logic
+  - `waitForX.ts` for wait/poll utilities
+  - `startX.ts` / `runX.ts` only for true entrypoints
+- Keep backend/provider-specific logic inside that backend folder. Shared cross-backend logic must live in core (`agent/*`) and remain provider-agnostic.
+- Avoid compatibility shims for renames/moves by default. When restructuring, update all imports directly so the final structure is canonical.
+- Split crowded folders by domain (for example: `runtime/`, `session/`, `spawn/`, `permission/`) instead of accumulating many cross-cutting files at one level.
+- Keep files single-purpose. If a file starts owning multiple responsibilities, extract cohesive modules with explicit names.
+
 ### Error Handling
 - Async flows expose clear `loading` / `error` / `empty` states
 - Errors are properly caught and handled
@@ -194,6 +207,96 @@ NO hardcoded values. ALL configuration.
 - Environment-specific settings
 - Audit trail for configuration
 - Easier testing (override config)
+
+## UI App Structure Rules (Happier UI)
+
+Applies to `apps/ui/sources`.
+
+### Root Density Rule
+- Keep `components/`, `hooks/`, `utils/`, and `sync/` roots thin.
+- Prefer domain subfolders for real implementations.
+- Root-level files in these folders should be true domain entry points only.
+
+### Canonical Domain Layout
+- `components/ui/*` for reusable visual primitives and shared UI building blocks.
+- `components/sessions/*` for session-specific composition and transcript UI.
+- `components/sessions/sharing/*` for session sharing dialogs and selectors.
+- `components/settings/*` for settings-domain view composition.
+- `components/zen/*` for Zen task UI composition, navigation, and screens.
+- `hooks/server/*`, `hooks/inbox/*`, `hooks/search/*`, `hooks/session/*`, `hooks/auth/*`, `hooks/machine/*`, `hooks/ui/*`.
+- `utils/worktree/*`, `utils/timing/*`, `utils/platform/*`, `utils/path/*`, `utils/errors/*`, `utils/strings/*`, `utils/sessions/*`, `utils/auth/*`, `utils/system/*`, `utils/tools/*`, `utils/url/*`.
+- `sync/api/*`, `sync/runtime/*`, plus `sync/domains/*`, plus existing `sync/engine/*`, `sync/store/*`, `sync/reducer/*`, etc.
+- `sync/api/{account,artifacts,capabilities,session,social,types,voice}/*` for protocol-layer clients grouped by external API surface.
+- `sync/domains/permissions/*`, `sync/domains/profiles/*`, `sync/domains/pending/*`, `sync/domains/models/*`, `sync/domains/messages/*`, `sync/domains/server/*`, `sync/domains/settings/*`, `sync/domains/state/*`, `sync/domains/session/*`, `sync/domains/todos/*`, `sync/domains/input/*`, `sync/domains/purchases/*`, `sync/domains/social/*`, `sync/domains/artifacts/*`.
+- `sync/engine/{account,artifacts,machines,overrides,pending,purchases,sessions,socket,social,settings,todos}/*` for effectful sync runtime flows grouped by concern.
+- `sync/encryption/*` for cryptographic primitives and settings/share encryption helpers.
+- `agents/prompt/*` for agent/system prompt composition.
+- `components/tools/catalog/*`, `components/tools/renderers/*`, `components/tools/normalization/*`, `components/tools/shell/*`, `components/tools/legacy/*`.
+- `components/tools/shell/{views,presentation,permissions}/*`:
+  `views` = orchestration-level tool shells (`ToolView`, `ToolFullView`), `presentation` = display-only shell blocks (`ToolHeader`, `ToolSectionView`, status/error/diff UI), `permissions` = permission action footer and tests.
+- `components/tools/renderers/{core,fileOps,workflow,web,system}/*`:
+  `core` = registry/types/test helpers, `fileOps` = filesystem renderers, `workflow` = plan/task/question/todo renderers, `web` = web fetch/search renderers, `system` = shell/mcp/system renderers.
+
+### Sync Placement Boundaries (Mandatory)
+- `sync/` root may contain only cross-domain runtime layers and folders (`api`, `domains`, `runtime`, `engine`, `store`, `reducer`, `git`, `http`, `encryption`, `ops`) plus explicit wiring entrypoints.
+- Do not add domain-owned feature modules directly under `sync/` root; place them under `sync/domains/<domain>/`.
+- `sync/api/*`: request/response adapters and protocol mapping only (includes capabilities protocol parsing).
+- `sync/api/account/*`: account-level API calls (username, usage, kv, vendor tokens).
+- `sync/api/artifacts/*`: artifact CRUD API client.
+- `sync/api/capabilities/*`: capabilities/feature negotiation and capability protocol mapping.
+- `sync/api/session/*`: session transport APIs (changes, push, socket request helpers).
+- `sync/api/social/*`: feed/friends/sharing transport APIs.
+- `sync/api/types/*`: API schema contracts shared by transport clients.
+- `sync/api/voice/*`: voice API transport.
+- `sync/domains/permissions/*`: permission types/defaults/options/override/apply logic.
+- `sync/domains/profiles/*`: profile definitions, grouping, compatibility, and mutations.
+- `sync/domains/pending/*`: pending queue, pending navigation state, terminal pending connect flow.
+- `sync/domains/models/*`: model mode/options/override logic.
+- `sync/domains/messages/*`: message metadata, message type contracts, send-meta shaping, and unread derivation.
+- `sync/domains/server/*`: active server runtime/snapshot/config/profile selection, server targeting, and server switch helpers.
+- `sync/domains/settings/*`: settings schema/selection/normalization plus local settings, debug settings, terminal options, and secret binding pruning.
+- `sync/domains/state/*`: persistence/storage state contracts and serialization boundaries.
+- `sync/domains/session/*`: session lifecycle helpers, session view/payload derivation, and session-specific console mode derivation.
+- `sync/domains/todos/*`: Zen todo sync/state operations and task-session linking.
+- `sync/domains/input/*`: prompt-adjacent file/command suggestion helpers used by agent input and autocomplete.
+- `sync/domains/purchases/*`: purchase payload parsing and RevenueCat adapters/types.
+- `sync/domains/social/*`: feed/friend/sharing type contracts and social-domain sync payload shaping.
+- `sync/domains/artifacts/*`: artifact payload contracts and artifact-domain type shaping.
+- `sync/runtime/*`: small cross-cutting runtime helpers (time, rpc error shaping, lightweight sequencing helpers) that are not domain-owned.
+- `sync/runtime/orchestration/*`: sync coordination pipelines (connection switching, reconnect catch-up, planner/applier orchestration, project-scoped runtime coordination).
+- `sync/encryption/*`: secret encryption/decryption/sealing and share-key crypto helpers.
+- `agents/prompt/*`: system prompt composition and prompt policy assembly.
+- `sync/engine/*`: orchestration and effectful runtime flows.
+- `sync/engine/account/*`: account bootstrap/push token registration flows.
+- `sync/engine/artifacts/*`: artifact fetch/socket apply + crypto coordination.
+- `sync/engine/machines/*`: machine fetch/socket apply flows.
+- `sync/engine/overrides/*`: ACP/model/permission override publish flows.
+- `sync/engine/pending/*`: pending queue V2 orchestration.
+- `sync/engine/purchases/*`: purchase sync/runtime triggers.
+- `sync/engine/sessions/*`: session fetch/snapshot/socket message update orchestration.
+- `sync/engine/socket/*`: socket transport parsing/reconnect/container handling.
+- `sync/engine/social/*`: feed + relationship socket/fetch orchestration.
+- `sync/engine/settings/*`: settings fetch/apply/seal orchestration.
+- `sync/engine/todos/*`: todo domain sync orchestration.
+- `sync/store/*`: state domains/selectors/normalization and persistence-facing state shape.
+- `sync/store/*` may depend on `sync/domains/*`, but domain modules must not depend on `sync/store/*`.
+- `sync/ops/*`: orchestration-facing operation entrypoints (spawn/session/machine actions) that compose domain + runtime helpers.
+
+### Naming and File Markers
+- One concept per file; avoid mixed-responsibility modules.
+- Co-locate tests with implementation using `*.test.ts`, `*.spec.ts`, `*.test.tsx`, `*.spec.tsx`.
+- Underscore-prefixed markers are allowed only for intentional structural internals (for example: `_registry.ts`, `_types.ts`, `_shared.ts`).
+- Do not use underscore-prefixed names for regular feature modules.
+- Do not use `-` prefixed feature folders (`-zen`, `-session`) in `apps/ui/sources`.
+- Do not use singular `components/session/*`; use `components/sessions/*`.
+
+### Import and Migration Rules
+- Prefer canonical alias imports (`@/components/...`, `@/hooks/...`, `@/utils/...`, `@/sync/...`) over fragile long relative paths.
+- During moves, bulk-update imports in the same change.
+- Do not commit compatibility wrappers after canonical import rewrites are complete.
+- Use `components/tools/{catalog,renderers,normalization,shell,legacy}` canonical paths. Do not import from legacy locations (`components/tools/views`, `components/tools/knownTools`, `components/tools/utils`).
+- Use `components/tools/renderers/{core,fileOps,workflow,web,system}` canonical renderer paths; do not create flat renderer files at `components/tools/renderers/` root.
+- Use canonical sync aliases after domainization (for example: `@/sync/domains/messages/*`, `@/sync/domains/server/*`, `@/sync/domains/settings/*`, `@/sync/domains/session/*`, `@/sync/domains/purchases/*`, `@/sync/domains/social/*`, `@/sync/domains/artifacts/*`, `@/sync/runtime/orchestration/*`, `@/sync/api/capabilitiesProtocol`, `@/sync/encryption/*`, `@/agents/prompt/*`).
 
 ---
 
