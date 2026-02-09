@@ -1,0 +1,100 @@
+---
+title: Notifications
+description: Push notifications (Expo + FCM/APNs) for CLI events and self-hosting.
+---
+
+Happier uses **Expo Push Notifications** as a delivery mechanism. In the current architecture:
+
+- The **mobile app** registers an **Expo push token** and saves it to the server.
+- The **server** stores push tokens per account (it does *not* send push payloads).
+- The **CLI** fetches the user’s saved tokens from the server and sends notifications via Expo’s push API (for example: *“It’s ready!”* or *Permission Request*).
+
+## What you need to configure
+
+### 1) Server (any deployment)
+
+Your server must expose the push token routes:
+
+- `POST /v1/push-tokens`
+- `GET /v1/push-tokens`
+- `DELETE /v1/push-tokens/:token`
+
+If you’re self-hosting the server, see: `Deployment` → `Docker` / `Environment variables`.
+
+### 2) Mobile app (iOS + Android)
+
+For self-hosting, the recommended flow is:
+
+1. Self-host the **server**, then
+2. Use the official Happier app and set its **Server URL** to your instance.
+
+In this setup, you do **not** need to configure APNs/FCM yourself. The official app already includes the required push notification credentials; your server just stores the user’s Expo push tokens.
+
+### 3) CLI (sender)
+
+The CLI sends notifications by:
+
+1. Calling your server to fetch saved Expo push tokens for the authenticated user.
+2. Sending push payloads via Expo’s push API to those tokens.
+
+If a user runs their **own server + CLI**, they must:
+
+- Point both app and CLI at the same server URL.
+- Ensure the server stores push tokens (routes above).
+
+## Self-hosting checklists
+
+### Recommended (server-only)
+
+1. Deploy the server.
+2. In the official Happier app, set **Server URL** to your server.
+3. Run the CLI against that same server URL.
+
+Once the app has registered a push token to your server, the CLI can send notifications (including permission notifications) via Expo.
+
+## API key restrictions (Android / Firebase)
+
+For Firebase Android configs, the API key embedded in `google-services.json` is **client-side**. Security comes from **restrictions**, not secrecy:
+
+### Application restriction (recommended)
+
+In Google Cloud Console, restrict the API key to:
+
+- **Android apps**
+- Your app’s **package name(s)**
+- Your signing certificate **SHA-1** fingerprint(s)
+
+#### Finding the SHA-1 fingerprints you should add
+
+You typically need **more than one** SHA-1 during development and release:
+
+- **Debug / dev builds** (your dev keystore)
+- **Release builds** (your release/upload keystore)
+- **Play Store installs** (the **Play App Signing** key, once enabled)
+
+Common places to find them:
+
+- **EAS**: view Android credentials and copy the keystore SHA-1 (upload/release key).
+- **Play Console** (after enabling Play App Signing): *App integrity* → *App signing certificate* → SHA-1.
+- **Firebase Console**: *Project settings* → *Your apps* → *Android app* → add SHA-1 fingerprints (so Firebase recognizes the signing cert).
+
+Note: the “fingerprint” shown in EAS build lists is **not** the same thing as the Android signing certificate SHA-1.
+
+### API restriction (recommended minimal allowlist for Cloud Messaging)
+
+If you use Firebase **Cloud Messaging** only, Google’s own allowlist guidance for Firebase keys is:
+
+- **Firebase Management API** (`firebase.googleapis.com`)
+- **Cloud Logging API** (`logging.googleapis.com`)
+- **Firebase Installations API** (`firebaseinstallations.googleapis.com`)
+- **FCM Registration API** (`fcmregistrations.googleapis.com`)
+
+If you enable additional Firebase products (Firestore/Storage/Auth/etc), expand the allowlist accordingly.
+
+## Development builds (optional)
+
+By default, Happier avoids registering push tokens in `__DEV__` to prevent accidental token churn during local dev.
+
+To enable push token registration in dev builds, set:
+
+- `EXPO_PUBLIC_ENABLE_DEV_PUSH_TOKEN_REGISTRATION=1`

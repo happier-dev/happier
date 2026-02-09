@@ -1,0 +1,88 @@
+---
+title: Custom mobile build (optional)
+description: Build and install your own Happier app build for a self-hosted server (without publishing to app stores).
+---
+
+Most self-hosters should **not** build a custom app. The recommended setup is:
+
+1. Self-host the server
+2. Use the official Happier app and set its **Server URL** to your instance
+
+This page is for advanced users who want to install their **own** build on their phone (for example: different bundle id/package name, different Expo project, or a private fork).
+
+This page focuses on **local / internal installs** for your own devices or team. **Publishing to app stores is out of scope.**
+
+## How notifications work (architecture)
+
+- The app registers an **Expo push token** and saves it to the server (`/v1/push-tokens`).
+- The CLI fetches saved tokens from the server and sends notifications via Expo’s push API.
+- The server stores tokens, but does **not** send push payloads in the current design.
+
+## Requirements for a custom build
+
+### 1) iOS (APNs)
+
+Your custom app build needs valid APNs credentials configured for your Expo/EAS project.
+
+### 2) Android (FCM + `google-services.json`)
+
+Your custom app build needs FCM configured and must include a valid Firebase Android config file (`google-services.json`) at build time.
+
+In this repo, the Expo config expects:
+
+- `apps/ui/app.config.js` → `android.googleServicesFile: "./google-services.json"`
+
+### 3) Server URL
+
+Your custom build must point to your self-hosted server URL (either via in-app settings or a baked default).
+
+## Installing on a phone (no app stores)
+
+### iOS (recommended: hstack helpers)
+
+If you’re working in a local stack, `hstack` includes helpers to build and install on an iPhone over USB:
+
+- **Install the shared dev-client (once)**:
+
+```bash
+hstack mobile-dev-client --install
+```
+
+- **Install an isolated per-stack app** (separate home screen app per stack):
+
+```bash
+hstack stack mobile:install <stack>
+```
+
+See [hstack → Mobile (iOS)](../hstack/mobile-ios) for the full workflow and troubleshooting.
+
+### Android
+
+For Android, use EAS internal distribution or a local Android build flow for your Expo project. Ensure your app is configured with the correct `google-services.json` for the Android package you’re installing.
+
+## API key restrictions (Android / Firebase)
+
+`google-services.json` contains a client-side API key. Security comes from **restrictions**, not secrecy.
+
+### Application restrictions (recommended)
+
+Restrict the key to:
+
+- **Android apps**
+- Your app’s **package name(s)**
+- Your signing certificate **SHA-1** fingerprint(s)
+
+For EAS builds, the SHA-1 is stable as long as you keep using the same Android keystore.
+
+If you distribute via the Play Store, installs from Google Play are signed with the **Play App Signing** key (which is different from your upload key). Add that SHA-1 too, otherwise Firebase/FCM can break for store-installed builds.
+
+### API restrictions (recommended minimal allowlist for Cloud Messaging)
+
+If you only use Firebase Cloud Messaging, restrict the key to these APIs:
+
+- **Firebase Management API** (`firebase.googleapis.com`)
+- **Cloud Logging API** (`logging.googleapis.com`)
+- **Firebase Installations API** (`firebaseinstallations.googleapis.com`)
+- **FCM Registration API** (`fcmregistrations.googleapis.com`)
+
+If you enable additional Firebase products (Firestore/Storage/Auth/etc), expand the allowlist accordingly.
