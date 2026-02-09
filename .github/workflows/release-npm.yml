@@ -159,14 +159,57 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
+      - name: Setup Corepack (Yarn 1.22.22)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
+      - name: Set preview versions (working tree only)
+        if: inputs.channel == 'preview'
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const { readFileSync, writeFileSync } = require('node:fs');
+          const { join } = require('node:path');
+          function normalizeBase(version) {
+            const m = String(version ?? '').trim().match(/^(\d+)\.(\d+)\.(\d+)/);
+            if (!m) throw new Error(`Invalid version: ${version}`);
+            return `${m[1]}.${m[2]}.${m[3]}`;
+          }
+          function setPreviewVersion(pkgPath) {
+            const raw = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+            const base = normalizeBase(raw.version);
+            const runNumberRaw = Number(process.env.GITHUB_RUN_NUMBER ?? '0');
+            const run = Number.isFinite(runNumberRaw) ? Math.max(0, Math.floor(runNumberRaw)) : 0;
+            const runAttemptRaw = Number(process.env.GITHUB_RUN_ATTEMPT ?? '1');
+            const attempt = Number.isFinite(runAttemptRaw) ? Math.max(1, Math.floor(runAttemptRaw)) : 1;
+            raw.version = `${base}-preview.${run}.${attempt}`;
+            writeFileSync(pkgPath, JSON.stringify(raw, null, 2) + '\n', 'utf-8');
+            return raw.version;
+          }
+          const versions = {};
+          if (process.env.PUBLISH_CLI === 'true') {
+            versions.cli = setPreviewVersion(join('apps', 'cli', 'package.json'));
+          }
+          if (process.env.PUBLISH_STACK === 'true') {
+            versions.stack = setPreviewVersion(join('apps', 'stack', 'package.json'));
+          }
+          console.log(JSON.stringify(versions));
+          NODE
+        env:
+          PUBLISH_CLI: ${{ inputs.publish_cli }}
+          PUBLISH_STACK: ${{ inputs.publish_stack }}
+
       - name: Bump cli version (main)
         id: bump_cli
+        if: inputs.channel == 'production'
         run: |
           set -euo pipefail
           if [ "${{ inputs.publish_cli }}" != "true" ] || [ "${{ inputs.bump }}" = "none" ]; then
@@ -178,6 +221,7 @@ jobs:
 
       - name: Bump stack version (main)
         id: bump_stack
+        if: inputs.channel == 'production'
         run: |
           set -euo pipefail
           if [ "${{ inputs.publish_stack }}" != "true" ] || [ "${{ inputs.stack_bump }}" = "none" ]; then
@@ -204,7 +248,7 @@ jobs:
         run: yarn --cwd apps/stack test
 
       - name: Commit version bump(s) (main)
-        if: steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP'
+        if: inputs.channel == 'production' && (steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP')
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -227,7 +271,7 @@ jobs:
           git commit -m "chore(release): bump versions (${bumped[*]})"
 
       - name: Push main
-        if: steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP'
+        if: inputs.channel == 'production' && (steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP')
         run: git push origin HEAD:main
 
       - name: npm publish
