@@ -1,0 +1,13 @@
+{
+  "title": "Features",
+  "pages": [
+    "index",
+    "git",
+    "multi-server",
+    "friends",
+    "permissions",
+    "pending-queue",
+    "voice",
+    "voice-local"
+  ]
+}

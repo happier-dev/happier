@@ -1,0 +1,56 @@
+---
+title: Local voice providers
+description: Run local OpenAI-compatible STT/TTS servers for Local OSS Voice.
+---
+
+Local OSS Voice is a turn-based pipeline that uses **OpenAI-compatible** endpoints that you host yourself:
+
+- **STT**: `POST /v1/audio/transcriptions`
+- **TTS**: `POST /v1/audio/speech`
+
+In the app, configure **Settings → Voice → Local OSS Voice**:
+
+- **STT Base URL** (typically `http://<host>:<port>/v1`)
+- **TTS Base URL** (typically `http://<host>:<port>/v1`)
+- Optional API keys (stored encrypted), model/voice fields, and output format
+
+## Direct-to-session vs mediator mode
+
+Local OSS Voice supports two conversation modes:
+
+- **Direct-to-session:** each time you speak, the transcribed text is sent into the Happier session as a normal message.
+- **Mediator mode:** each time you speak, the transcribed text is sent into an ephemeral multi-turn “voice mediator” chat. When you’re ready, you tap **Commit** and Happier inserts a single final instruction message into the session.
+
+Mediator mode can use:
+
+- **Daemon mediator (recommended):** uses the daemon’s per-session process (no extra HTTP endpoints required).
+- **OpenAI-compatible mediator:** calls a user-configured chat endpoint (`POST /v1/chat/completions`). This is useful if you want the entire voice stack (STT+TTS+chat) to be local/HTTP-based.
+
+## Important networking notes
+
+- On phones, `localhost` / `127.0.0.1` usually refers to the phone itself, not your computer.
+  - Use your computer’s LAN IP (e.g. `http://192.168.1.10:8000/v1`) or a tunnel.
+- If you expose a server beyond your LAN, add authentication and HTTPS.
+- On web, you may need to handle CORS.
+
+## Compatible servers (examples)
+
+Happier doesn’t bundle these servers — you run them separately. The goal is interoperability via OpenAI-compatible APIs.
+
+### STT (speech-to-text)
+
+- [`etalab-ia/faster-whisper-server`](https://github.com/etalab-ia/faster-whisper-server)
+- [`matatonic/openedai-whisper`](https://github.com/matatonic/openedai-whisper) (unmaintained)
+
+### TTS (text-to-speech)
+
+- [`remsky/Kokoro-FastAPI`](https://github.com/remsky/Kokoro-FastAPI)
+- [`travisvn/chatterbox-tts-api`](https://github.com/travisvn/chatterbox-tts-api) (AGPL-3.0)
+- [`travisvn/openai-edge-tts`](https://github.com/travisvn/openai-edge-tts) (uses Microsoft Edge TTS; requires network access)
+- [`matatonic/openedai-speech`](https://github.com/matatonic/openedai-speech) (archived; OpenAI-compatible; supports local backends like piper/XTTS)
+
+## Troubleshooting
+
+- **Can’t connect from mobile**: verify the server is bound to `0.0.0.0`, allow the port in firewall, and use your LAN IP.
+- **403/401**: check that your API key (if needed) is configured in the app and the server.
+- **Bad audio / wrong voice**: confirm `model` and `voice` values supported by your TTS server.

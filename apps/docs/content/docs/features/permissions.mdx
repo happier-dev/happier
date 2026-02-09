@@ -1,0 +1,164 @@
+---
+title: Permissions
+description: Choose how much access your agent has (CLI + app), and how changes apply mid-session.
+---
+
+## What permissions control
+
+Permissions determine **how often Happier asks for approval** when an agent wants to run tools (like editing files or running commands), and how restrictive the session environment should be.
+
+You can set permissions in two places:
+
+- **CLI**: when starting a session
+- **App UI**: per-session (and as defaults for new sessions)
+
+Happier stores your choice in the session so it stays consistent when you open the same session on another device.
+
+## Permission modes
+
+These are the modes you may see in the CLI and/or the app:
+
+- **Default**: uses the provider’s normal behavior (ask when needed).
+- **Read-only**: the agent can read and inspect, but write-like actions are denied.
+- **Safe YOLO**: automatically allows read-like actions; asks for approval before write-like actions.
+- **YOLO**: skips approvals as much as the provider allows (full speed, least safe).
+
+Not every provider supports every mode. When a mode isn’t supported, Happier will **fall back** to the closest supported behavior and show you the **Effective** policy in the UI.
+
+## Session modes (ACP)
+
+Some ACP-based providers expose **session modes** (for example, “plan” vs “build”).
+
+Session modes are **separate from permissions**:
+
+- **Permissions** control approvals and safety boundaries.
+- **Session modes** control the agent’s operating mode (provider-defined).
+
+### CLI usage
+
+Start a session with an ACP session mode:
+
+```bash
+happier opencode --agent-mode plan
+happier kilo --agent-mode plan
+```
+
+### App UI usage
+
+In a session, open the input settings and pick a value from the **Mode** section when it’s available for the current provider.
+
+Note: Claude’s **Plan** is a provider-native *permission mode*, so it appears under **Permissions** (not under **Mode**).
+
+## Resume support (ACP)
+
+Some ACP providers support resuming an existing vendor session via ACP’s `loadSession`.
+
+As of this release, Happier treats `loadSession` support as **capability-driven**:
+
+- **Supported (in principle)**: OpenCode, Gemini, Auggie, Qwen, Kimi, Kilo
+- **Codex ACP**: varies by build; Happier probes support and will **fail closed** (it won’t silently start a fresh session when resume is unavailable).
+
+## Model selection
+
+Some providers let you choose **which model** runs your session.
+
+If model selection is available, you can set it from:
+
+- **CLI**: when starting the session
+- **App UI**: from the input settings inside a session
+
+### CLI usage
+
+```bash
+happier gemini --model gemini-2.5-pro
+```
+
+### App UI usage
+
+In a session, open the input settings and pick a model from the **Model** section.
+
+For ACP providers that advertise supported models, Happier will show the provider’s live list.
+For providers without a live list (like Claude Code), Happier may allow entering a **custom model id**.
+
+### Model apply behavior (what happens after you change it)
+
+Model changes are capability-driven and provider-specific:
+
+- **Claude**: applies on the next prompt (no session restart required).
+- **Codex (MCP)**: model is decided when the MCP session starts; changing model means starting a new MCP session.
+- **Codex/OpenCode/Kilo/Auggie (ACP)**: Happier applies model changes live when `session/set_model` is supported; otherwise it falls back to provider config options when available.
+- **Gemini (ACP)**: model changes may require recreating the underlying ACP process; Happier preserves context using replay/history so the session still continues.
+
+## CLI usage
+
+Start a session with a permission mode:
+
+```bash
+happier codex --permission-mode read-only
+happier codex --permission-mode safe-yolo
+happier claude --permission-mode yolo
+```
+
+### Aliases (you can use the words you already know)
+
+The CLI accepts common aliases and normalizes them automatically:
+
+- `readonly`, `read only`, `ro` → `read-only`
+- `full`, `full-access`, `danger-full-access`, `bypass` → `yolo`
+- `ask`, `prompt`, `auto` → `default`
+- `accept-edits` (Claude wording) → `safe-yolo`
+- `bypass-permissions` (legacy) → `yolo`
+
+If you pass an unknown value, Happier prints the supported list and examples.
+
+## App UI usage
+
+### Change permissions for the current session
+
+In a session, open the **permission chip** (shield) and pick a mode.
+
+The picker shows:
+
+- a short description of each mode, and
+- an **Effective** line that explains what the selected mode means for the current provider/session.
+
+### Set defaults for new sessions
+
+Go to **Settings → Session** and set your default permission mode per provider.
+
+### When does a change apply?
+
+In **Settings → Session**, you can control *when* a permission change takes effect:
+
+- **Immediate**: publish the new permission mode to the session right away (best when you want the running agent to react without sending a new message).
+- **Next prompt**: apply the new mode to the next message you send, and publish it after that message is committed (best when you want the change to “arm” for the next request without touching the current running turn).
+
+If you select **Next prompt** and then **don’t send a message**, the change stays local to your device until you send one.
+
+## Provider notes (what to expect)
+
+### Codex (MCP vs ACP)
+
+Codex can run via different backends:
+
+- **ACP**: exposes provider-native **policy presets** (approval + sandbox combinations). These are not generic “plan/build” agent modes.
+- **MCP**: tool approvals can update mid-session, but some environment/sandbox controls may only apply when starting a new session.
+
+In Happier, **permissions remain the primary control** for Codex. Happier maps your selected permission intent to the closest Codex ACP policy preset when available.
+
+Model IDs can also vary by Codex build and account. If model selection isn’t shown in the app for your Codex session, you can still set it via the CLI (when supported by your installed Codex backend).
+
+The UI’s **Effective** line is the source of truth for what your current session will do.
+
+### Claude
+
+Claude supports additional provider-native modes (like **Plan**) and edit-oriented flows (like **Accept Edits**).
+
+If you choose a mode that Claude doesn’t support directly (for example **Read-only**), Happier will fall back and show the mapping in the **Effective** line.
+
+Examples:
+
+- **Read-only** → Effective: **View-only**
+- **Accept Edits** can map to a provider-supported edit/approve flow depending on your Claude backend and version
+
+If the Effective mode is different from what you expected, treat the Effective line as source of truth for that session.

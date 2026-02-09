@@ -1,0 +1,96 @@
+---
+title: Pending queue
+description: Queue messages while the agent is busy, offline, or not ready yet — and edit/reorder them before they run.
+---
+
+## What is the pending queue?
+
+The pending queue lets you **store messages for a session** without sending them to the agent immediately.
+
+Pending messages are:
+
+- **Session-wide**: anyone with edit access to a shared session can see and manage them.
+- **Ordered**: you control the order they will be processed.
+- **Editable**: you can edit, remove, or reorder them before they run.
+- **Encrypted**: pending content is stored on the server the same way transcript messages are (server stores ciphertext).
+
+Pending messages **do not affect “unread”** indicators. Instead, you’ll see a separate **pending count badge**.
+
+## Where you’ll see it
+
+### Session list badge
+
+In the session list, sessions with pending messages show a **pending count** badge (for example `3` or `99+`).
+
+### In the session view
+
+When a session has pending messages, a **“Pending (N)”** indicator appears in the session view. Tap it to open the **Pending messages** sheet.
+
+## Managing pending messages (UI)
+
+Open **Pending messages** from the session view indicator.
+
+### Pending messages actions
+
+For each pending message you can:
+
+- **Move up / Move down**: changes the order the agent will process messages.
+- **Edit**: update the message text before it runs.
+- **Remove**: deletes the pending message (it won’t be processed).
+- **Send now**: stops the current turn and sends the message immediately.
+
+### Discarded messages
+
+Sometimes messages end up in the **Discarded messages** section (for example, when switching a session from remote to local and the pending queue must not be processed).
+
+From Discarded messages you can:
+
+- **Re-queue**: move the message back into the pending queue.
+- **Remove**: permanently delete it.
+- **Send now**: send it immediately.
+
+## Message sending settings
+
+Go to **Settings → Session → Message sending**.
+
+### Queue in agent (current)
+
+Default behavior when everything is online:
+
+- your message is written to the transcript immediately
+- the agent processes it when ready
+
+Safety fallback:
+
+- if the session is **offline**, **resuming**, or the agent is **not ready yet**, Happier may store the message in the **pending queue first** to avoid losing it.
+
+### Interrupt & send
+
+Aborts the current turn (if any), then sends your message immediately.
+
+If the session needs to resume (or is offline), Happier may store the message in the **pending queue first** and then deliver it once the agent is ready.
+
+### Pending until ready
+
+Stores your message in the session’s pending queue and lets the agent pull it when ready.
+
+This is the best option when you want to:
+
+- queue up multiple messages and control their order,
+- keep messages editable until the agent starts processing them,
+- avoid losing a message when the agent is offline or not ready yet.
+
+## Mixed-version behavior (server / agent compatibility)
+
+The pending queue feature requires support from both:
+
+- the **server** (pending queue endpoints + updates), and
+- the **agent/CLI** that processes sessions (must know how to materialize pending into the transcript).
+
+If your setup doesn’t support pending queues, the app will fall back to the normal message sending behavior and you won’t be able to rely on pending queue actions.
+
+## Tips
+
+- If you’re queuing multiple thoughts, use **Move up / Move down** to ensure the agent processes them in the intended order.
+- If you decide something is no longer relevant, **Remove** it before it runs.
+- If you need something handled immediately, **Send now** is the fastest path.

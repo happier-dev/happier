@@ -1,0 +1,118 @@
+---
+title: Friends
+description: Add friends, share sessions with people you trust, and discover users by username.
+---
+
+Friends is a social layer on top of Happier sessions:
+
+- **Discover** people by a username (`@username`)
+- **Send** friend requests and manage relationships
+- **Share** sessions directly with friends
+
+The server advertises Friends and GitHub OAuth availability via `GET /v1/features`. The UI uses that endpoint to decide whether to show Friends at all, and whether to offer GitHub connect.
+
+## Identity model (one username, regardless of how you got it)
+
+Happier uses a single, unique identifier for discovery: `account.username`.
+
+- User search (`GET /v1/user/search`) matches `username`
+- Friend requests use account IDs internally, but the UI is centered around `@username`
+- Usernames are **normalized to lowercase** on the server
+
+Users should not need to know whether a username came from GitHub or was set manually — they just search `@username`.
+
+## GitHub connection (OAuth)
+
+When a user connects GitHub:
+
+1. The server completes the OAuth flow and fetches `GET https://api.github.com/user` (scope is `read:user`).
+2. The server links the GitHub account to the Happier account (1 GitHub account → 1 Happier account).
+3. The server **does not overwrite** an existing `account.username`.
+4. If `account.username` is empty, the server tries to set it to the GitHub `login` (lowercased), **but only if that username is not already taken**.
+
+If the GitHub login username is already taken (or invalid under your server’s username policy), GitHub can still connect successfully, but the app will prompt the user to pick a different `@username` before Friends setup is complete.
+
+Disconnecting GitHub:
+
+- Always removes the GitHub link.
+- Keeps a custom username.
+- Clears `account.username` only when it matches the GitHub login (treated as “GitHub-derived”).
+
+## Username-only mode (no GitHub required)
+
+Some self-hosted servers prefer not to require GitHub. When enabled, users can claim a local username.
+
+- Endpoint: `POST /v1/account/username`
+- Validation is controlled by server env vars (see below).
+
+### Username selection on GitHub-required servers
+
+Even when Friends requires GitHub, the app may still ask a user to **choose a username**.
+
+This happens when the user’s GitHub login cannot be used as a unique server username (for example, it’s already taken). In that case:
+
+- GitHub can still be connected successfully.
+- The user must pick a different `@username` to be discoverable.
+- The app surfaces this on the Friends screens, and in **Settings → Account**.
+
+## Server configuration
+
+### Feature toggles
+
+- `FRIENDS_ENABLED` (`true`/`false`, default `true`): master switch for Friends endpoints + UI.
+- `FRIENDS_ALLOW_USERNAME` (`true`/`false`, default `false`):
+  - `false`: Friends requires GitHub connection for requests/discovery.
+  - `true`: Friends requires a claimed `@username` (GitHub is optional).
+
+### Username policy (when `FRIENDS_ALLOW_USERNAME=true`)
+
+- `FRIENDS_USERNAME_MIN_LEN` (default `3`)
+- `FRIENDS_USERNAME_MAX_LEN` (default `32`)
+- `FRIENDS_USERNAME_REGEX` (default `^[a-z0-9_-]+$`)
+
+### GitHub OAuth
+
+Required to enable GitHub connect:
+
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- `GITHUB_REDIRECT_URL` (canonical) or `GITHUB_REDIRECT_URI` (legacy)
+
+Optional:
+
+- `HAPPIER_WEBAPP_URL` (default `https://app.happier.dev`): base URL/scheme for the client. The server redirects to `${HAPPIER_WEBAPP_URL}/oauth/github` after the server callback completes.
+- `GITHUB_STORE_ACCESS_TOKEN` (`true`/`false`, default `false`): whether to persist GitHub access tokens on the server (Friends does not require this). If you enforce org membership via `AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE=oauth_user_token` (membership checks via user OAuth token mode), token storage is required for offboarding checks. See `/docs/deployment/env#github-org-membership-source-recommended-github-app`.
+- `OAUTH_PENDING_TTL_SECONDS` (default `600`, min `60`, max `3600`): how long a “pending OAuth finalize” (e.g. waiting for username selection) can be finalized.
+  - Legacy alias: `GITHUB_OAUTH_PENDING_TTL_SECONDS` (if `OAUTH_PENDING_TTL_SECONDS` is unset).
+
+#### GitHub setup (OAuth App)
+
+1. In GitHub, go to **Settings → Developer settings → OAuth Apps → New OAuth App**.
+2. Set **Authorization callback URL** to your server callback endpoint:
+   - `https://YOUR_SERVER/v1/oauth/github/callback`
+3. Copy the **Client ID** and **Client secret** into your server environment as `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
+4. Set `GITHUB_REDIRECT_URL` to the same callback URL you registered above.
+5. (Self-hosting) Set `HAPPIER_WEBAPP_URL` to the URL/scheme that should receive the post-OAuth redirect.
+   - The server redirects to `${HAPPIER_WEBAPP_URL}/oauth/github?...`
+
+## Client behavior (UI)
+
+- The Friends experience is reachable at `/friends` (legacy `/inbox` redirects to `/friends`).
+- If Friends is disabled (`features.social.friends.enabled=false`), the UI hides the Friends tab and related screens.
+- If Friends requires GitHub (`features.social.friends.requiresGitHub=true`) but GitHub OAuth isn’t configured (`features.oauth.providers.github.configured=false`), the UI disables the GitHub connect button and shows a clear “not configured” hint.
+
+## API surface (high level)
+
+- `GET /v1/features`: server-advertised feature flags (Friends + GitHub OAuth).
+- `GET /v1/user/search?query=...`: search users by username.
+- `POST /v1/friends/add`: send a friend request.
+- `POST /v1/friends/remove`: remove a friend.
+- `GET /v1/friends`: list friends/relationships.
+- `POST /v1/account/username`: claim/update a username (requires auth; available when Friends is enabled and either `FRIENDS_ALLOW_USERNAME=true` or GitHub is connected).
+  - Body: `{ "username": "alice" }`
+  - Success: `200 { "username": "alice" }`
+  - Errors:
+    - `400 { "error": "friends-disabled" }` when Friends is disabled
+    - `400 { "error": "username-disabled" }` when `FRIENDS_ALLOW_USERNAME=false` and the user has no GitHub identity
+    - `400 { "error": "invalid-username" }` when the username fails validation
+    - `409 { "error": "username-taken" }` when the username is already in use

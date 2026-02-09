@@ -1,0 +1,99 @@
+---
+title: Multi-server
+description: Use multiple Happier servers from the same app and CLI.
+---
+
+Happier supports using multiple servers at once (for example official + personal self-host + company self-host).
+
+## Core model
+
+- A **server profile** is a saved API/webapp target.
+- Auth is **scoped per server**. Signing into `server A` does not sign you into `server B`.
+- Daemon/runtime state is also scoped per server, so one machine can run multiple daemon instances safely.
+
+If you use the same identity provider (for example GitHub) on two servers, they are still separate server accounts.
+
+## App and web UI
+
+### Add and switch servers
+
+- Open **Server** settings to add, select, rename, or remove saved servers.
+- On web, server selection can be set per-tab or as a device default.
+- If a connect/notification link targets a different server, Happier switches to that server before continuing.
+
+### Configure-server links
+
+Installers and setup commands can print one-click links:
+
+- `happier://server?url=<ENCODED_SERVER_URL>`
+- `<WEBAPP_URL>/server?url=<ENCODED_SERVER_URL>&auto=1`
+
+These prefill server settings so users do not have to paste URLs manually.
+
+## CLI server profiles
+
+### Persisted profiles
+
+Use server profile commands:
+
+```bash
+happier server list
+happier server current
+happier server add --name company --server-url https://api.company.example --webapp-url https://app.company.example --use
+happier server use company
+happier server remove company
+happier server test company
+```
+
+### Per-command targeting (no default switch)
+
+Target a server for one command only:
+
+```bash
+happier --server company auth login
+happier --server personal daemon status
+```
+
+You can also pass explicit URLs for a single invocation:
+
+```bash
+happier --server-url https://api.company.example --webapp-url https://app.company.example auth login
+```
+
+## Multiple daemons on one machine
+
+Install/start one daemon service per server profile:
+
+```bash
+happier --server personal daemon service install
+happier --server company daemon service install
+```
+
+Check global status:
+
+```bash
+happier daemon service list
+happier daemon status --all
+```
+
+## Recommended flow
+
+1. Add/select the target server.
+2. Sign in on that server (app/web). If you already use Happier on another device, sign in with that same account.
+3. Connect terminal/daemon for that same server.
+
+For end-to-end walkthroughs, see [Onboarding](../getting-started/onboarding) and [Proxmox deployment](../deployment/proxmox).
+
+## FAQ and gotchas
+
+### I opened a terminal-connect link while logged out. What should happen?
+
+Happier stores the pending terminal-connect request, sends you through sign-in/create account, then returns you to terminal approval automatically.
+
+### I signed in with the same provider on two servers. Why do I see different data?
+
+Accounts are server-scoped. The identity provider can be the same, but each server has independent account/session state.
+
+### I switched servers and my previous sessions are gone.
+
+That is expected when the previous sessions belong to another server. Switch back to that server profile to see those sessions again.

@@ -1,0 +1,60 @@
+---
+title: Git & File Browser
+description: Review repository changes in-session and use experimental Git write operations safely.
+---
+
+Happier includes Git-aware review directly in session screens.
+
+## Availability
+
+- **File browser is stable**: repository status, changed files, and diffs are part of the normal product surface.
+- **Git write operations are experimental**: stage, unstage, commit, pull, push, and revert are behind **Settings → Features → Git operations**.
+
+## What you can do
+
+### Read-only review (stable)
+
+- Browse repository changed files from a session.
+- Open a file and inspect staged/unstaged diffs.
+- Switch between session-attributed and repository-wide changed file views.
+- Search and open files in the current project.
+- See branch tracking context (upstream and ahead/behind counters) in the files header.
+- See consistent Git delta counts across files view and session/status badges (all derived from the same Git snapshot model).
+
+### Write operations (experimental)
+
+- Stage/unstage full files.
+- Stage/unstage selected lines (text diffs only).
+- Create commits from staged changes.
+- View recent commit history and open commit diffs.
+- Revert a commit (creates a revert commit).
+- Fetch, pull, and push.
+- See which session currently owns the Git write lock when another operation is running.
+- Filter the in-app Git operation log by `All sessions` or `This session`.
+
+## Session view vs repository view
+
+Changed-files view supports two modes:
+
+- **Repository changes**: full source of truth from current Git status.
+- **Session-attributed changes**: best-effort attribution for a specific session.
+
+Attribution uses direct operation signals first (for example stage/unstage actions). When multiple sessions are active on the same repository, attribution reliability is reduced and Happier favors direct attribution signals over inferred ones.
+When reliability is limited and no direct-attribution signals are available, Happier keeps the repository view as the only changed-files mode to avoid misleading session attribution.
+
+## Safety rules
+
+Git operations are intentionally conservative:
+
+- Pull uses **fast-forward only**.
+- Pull and revert require a clean worktree.
+- Push/pull/revert are blocked when `HEAD` is detached.
+- Push is blocked when local branch is behind upstream.
+- Push/pull/revert are blocked while conflicts are present.
+- Destructive history editing actions (reset/rebase/cherry-pick/drop) are not exposed in app UI.
+
+## Current limitations
+
+- Line-level staging is for text diffs. Binary/conflict cases fall back to file-level actions.
+- Session attribution is best-effort and not a replacement for repository truth.
+- Git write operations remain experimental while we continue hardening.
