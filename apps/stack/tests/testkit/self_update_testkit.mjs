@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const stackRoot = fileURLToPath(new URL('..', import.meta.url));
+const stackRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 function writeFakeNpmBin({ tmp }) {
   const binDir = join(tmp, 'bin');

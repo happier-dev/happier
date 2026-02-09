@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createMonorepoWorktreeEnv, createMonorepoWorktreeFixture, runNode } from './worktrees_monorepo.test_helper.mjs';
+import { createMonorepoWorktreeEnv, createMonorepoWorktreeFixture, runNode } from './testkit/worktrees_monorepo_testkit.mjs';
 
 test('hstack wt cursor opens the monorepo root (not a subpackage dir) in monorepo worktrees', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { stopStackWithEnv } from './utils/stack/stop.mjs';
-import { isAlive, spawnOwnedSleep, waitForProcessAlive } from './stack_stop_sweeps.testHelper.mjs';
+import { isAlive, spawnOwnedSleep, waitForProcessAlive } from './testkit/stack_stop_sweeps_testkit.mjs';
 
 test('stopStackWithEnv does not auto-sweep when autoSweep=false and stack.runtime.json is missing', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

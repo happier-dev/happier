@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDoctorWorkspaceFixture, doctorEnv, runNode } from './doctor.testHelper.mjs';
+import { createDoctorWorkspaceFixture, doctorEnv, runNode } from './testkit/doctor_testkit.mjs';
 
 test('doctor does not crash in non-json mode (kv helper not shadowed)', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

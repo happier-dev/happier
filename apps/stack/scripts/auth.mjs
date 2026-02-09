@@ -44,6 +44,8 @@ import {
   findExistingStackCredentialPath,
   resolveStackCredentialPaths,
 } from './utils/auth/credentials_paths.mjs';
+import { decodeJwtPayloadUnsafe } from './utils/auth/decode_jwt_payload_unsafe.mjs';
+import { fileHasContent } from './utils/fs/file_has_content.mjs';
 import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 import { getStackRuntimeStatePath, isPidAlive as isRuntimePidAlive, readStackRuntimeStateFile } from './utils/stack/runtime_state.mjs';
 
@@ -84,15 +86,6 @@ async function resolveWebappUrlFromRunningExpo({ rootDir, stackName }) {
 
 // (auth file copy/link helpers live in scripts/utils/auth/files.mjs)
 
-function fileHasContent(path) {
-  try {
-    if (!existsSync(path)) return false;
-    return readFileSync(path, 'utf-8').trim().length > 0;
-  } catch {
-    return false;
-  }
-}
-
 function readAuthTokenFromCredentialPath(path) {
   const p = String(path ?? '').trim();
   if (!p || !existsSync(p)) return null;
@@ -108,23 +101,6 @@ function readAuthTokenFromCredentialPath(path) {
       // fall through
     }
     return raw;
-  } catch {
-    return null;
-  }
-}
-
-function decodeJwtPayloadUnsafe(token) {
-  const raw = String(token ?? '').trim();
-  if (!raw) return null;
-  const parts = raw.split('.');
-  if (parts.length < 2) return null;
-  try {
-    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padLength = normalized.length % 4 === 0 ? 0 : 4 - (normalized.length % 4);
-    const padded = normalized + '='.repeat(padLength);
-    const decoded = Buffer.from(padded, 'base64').toString('utf-8');
-    const payload = JSON.parse(decoded);
-    return payload && typeof payload === 'object' ? payload : null;
   } catch {
     return null;
   }

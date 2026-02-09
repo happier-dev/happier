@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAuthStackFixture, getStackRootFromMeta, hstackBinPath, runNodeCapture } from './auth.testHelper.mjs';
+import { createAuthStackFixture, getStackRootFromMeta, hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 
 test('hstack auth login --method=mobile sets HAPPIER_AUTH_METHOD in --print --json output', async () => {
   const rootDir = getStackRootFromMeta(import.meta.url);

@@ -1,7 +1,8 @@
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 
 import { ensureDepsInstalled, pmSpawnScript } from '../proc/pm.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from '../server/infra/happy_server_infra.mjs';
+import { applyServerLightEnvDefaults } from '../server/apply_server_light_env_defaults.mjs';
 import { resolveServerDevScript } from '../server/flavor_scripts.mjs';
 import { waitForServerReady } from '../server/server.mjs';
 import { isTcpPortFree, pickNextFreeTcpPort } from '../net/ports.mjs';
@@ -56,16 +57,7 @@ export async function startDevServer({
   };
 
   if (serverComponentName === 'happier-server-light') {
-    const dataDir = baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR?.trim()
-      ? baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR.trim()
-      : join(autostart.baseDir, 'server-light');
-    serverEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
-    serverEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR?.trim()
-      ? baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR.trim()
-      : join(dataDir, 'files');
-    serverEnv.HAPPIER_SERVER_LIGHT_DB_DIR = baseEnv.HAPPIER_SERVER_LIGHT_DB_DIR?.trim()
-      ? baseEnv.HAPPIER_SERVER_LIGHT_DB_DIR.trim()
-      : join(dataDir, 'pglite');
+    applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir });
   }
 
   if (serverComponentName === 'happier-server') {

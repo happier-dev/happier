@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hstackBinPath, runNodeCapture } from './auth.testHelper.mjs';
+import { hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 
 test('hstack auth --help surfaces dev-auth seed stack command', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

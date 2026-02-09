@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { interactiveNew } from './interactive_stack_config.mjs';
-import { createInteractiveStackConfigDeps, mkRl } from './interactive_stack_config.test_helper.mjs';
+import { createInteractiveStackConfigDeps, mkRl } from './interactive_stack_config_testkit.mjs';
 
 test('interactiveNew normalizes stackName to a DNS-safe label', async (t) => {
   t.mock.method(console, 'log', () => {});

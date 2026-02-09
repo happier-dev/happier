@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 
-import { run, runCapture } from './utils/proc/proc.mjs';
+import { run, runCapture } from '../utils/proc/proc.mjs';
 
 export async function withTempRoot(t) {
   const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-monorepo-port-'));

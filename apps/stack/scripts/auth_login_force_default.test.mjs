@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAuthStackFixture, getStackRootFromMeta, hstackBinPath, runNodeCapture } from './auth.testHelper.mjs';
+import { createAuthStackFixture, getStackRootFromMeta, hstackBinPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 
 const BASE_ENV_LINES = [
   'HAPPIER_STACK_STACK=main',

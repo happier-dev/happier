@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { authScriptPath, runNodeCapture } from './auth.testHelper.mjs';
+import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 
 async function ensureMinimalMonorepoWithStubCli({ monoRoot }) {
   await mkdir(join(monoRoot, 'apps', 'ui'), { recursive: true });

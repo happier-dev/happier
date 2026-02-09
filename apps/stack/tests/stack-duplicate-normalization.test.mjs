@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-import { createTempDir } from './tempdir.test_helper.mjs';
+import { createTempDir } from './testkit/tempdir_testkit.mjs';
 
 function runHstack(args, { cwd, env }) {
   const testDir = resolve(dirname(fileURLToPath(import.meta.url)));

@@ -4,7 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createMonorepoWorktreeEnv, createMonorepoWorktreeFixture, runNode } from './worktrees_monorepo.test_helper.mjs';
+import { createMonorepoWorktreeEnv, createMonorepoWorktreeFixture, runNode } from './testkit/worktrees_monorepo_testkit.mjs';
 
 test('hstack wt use switches all monorepo group components when target is a monorepo worktree', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

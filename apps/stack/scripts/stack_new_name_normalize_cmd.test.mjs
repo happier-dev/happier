@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { setupStackNewMonorepoFixture } from './stack_new_monorepo.testHelper.mjs';
+import { setupStackNewMonorepoFixture } from './testkit/stack_new_monorepo_testkit.mjs';
 
 test('hstack stack new normalizes stack names across valid and punctuation-heavy inputs', async (t) => {
   const fixture = await setupStackNewMonorepoFixture({

@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ensureServerLightSchemaReady } from './startup.mjs';
-import { buildServerLightEnv, createServerLightFixture } from './startup_server_light.test_helper.mjs';
+import { buildServerLightEnv, createServerLightFixture } from './startup_server_light_testkit.mjs';
 
 test('ensureServerLightSchemaReady bestEffort=true skips migrate:sqlite:deploy by default', async (t) => {
   const { binDir, markerPath, root, serverDir } = await createServerLightFixture(t, {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { runNode } from './worktrees_monorepo.test_helper.mjs';
+import { runNode } from './testkit/worktrees_monorepo_testkit.mjs';
 
 test('runNode reports non-zero exit code for signal-terminated process', async () => {
   const res = await runNode(['-e', 'process.kill(process.pid, "SIGTERM")'], {

@@ -1,43 +1,10 @@
-import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseDotenv } from './dotenv.mjs';
 import { expandHome, getCanonicalHomeEnvPathFromEnv } from '../paths/canonical_home.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './sandbox.mjs';
-
-async function loadEnvFile(path, { override = false, overridePrefix = null } = {}) {
-  try {
-    const contents = await readFile(path, 'utf-8');
-    const parsed = parseDotenv(contents);
-    for (const [k, v] of parsed.entries()) {
-      const allowOverride = override && (!overridePrefix || k.startsWith(overridePrefix));
-      if (allowOverride || process.env[k] == null || process.env[k] === '') {
-        process.env[k] = v;
-      }
-    }
-  } catch {
-    // ignore missing/invalid env file
-  }
-}
-
-async function loadEnvFileIgnoringPrefixes(path, { ignorePrefixes = [] } = {}) {
-  try {
-    const contents = await readFile(path, 'utf-8');
-    const parsed = parseDotenv(contents);
-    for (const [k, v] of parsed.entries()) {
-      if (ignorePrefixes.some((p) => k.startsWith(p))) {
-        continue;
-      }
-      if (process.env[k] == null || process.env[k] === '') {
-        process.env[k] = v;
-      }
-    }
-  } catch {
-    // ignore missing/invalid env file
-  }
-}
+import { loadEnvFile, loadEnvFileIgnoringPrefixes } from './load_env_file.mjs';
 
 // Load stack env (optional). This is intentionally lightweight and does not require extra deps.
 // This file lives under scripts/utils/env, so repo root is three directories up.

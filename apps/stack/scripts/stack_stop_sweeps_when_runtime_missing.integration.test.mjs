@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessExit } from './stack_stop_sweeps.testHelper.mjs';
+import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 
 test('hstack stack stop sweeps owned processes when stack.runtime.json is missing', async (t) => {
   const fixture = await setupStackStopSweepFixture({

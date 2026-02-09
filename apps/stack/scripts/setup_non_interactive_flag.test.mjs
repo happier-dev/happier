@@ -1,20 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(process.execPath, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal, stdout, stderr }));
-  });
-}
+import { runNodeCapture as runNode } from './testkit/stack_script_command_testkit.mjs';
 
 function runSetupJson({ rootDir, extraArgs = [], env }) {
   return runNode(

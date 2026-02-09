@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { ensureCanonicalHomeEnvUpdated, ensureHomeEnvUpdated } from './utils/env/config.mjs';
-import { parseDotenv } from './utils/env/dotenv.mjs';
+import { loadEnvFile } from './utils/env/load_env_file.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
 import { readJsonIfExists } from './utils/fs/json.mjs';
 import { isSandboxed, sandboxAllowsGlobalSideEffects } from './utils/env/sandbox.mjs';
@@ -31,21 +31,6 @@ function firstNonEmpty(...values) {
     if (s) return s;
   }
   return '';
-}
-
-async function loadEnvFile(path, { override = false, overridePrefix = null } = {}) {
-  try {
-    const contents = await readFile(path, 'utf-8');
-    const parsed = parseDotenv(contents);
-    for (const [k, v] of parsed.entries()) {
-      const allowOverride = override && (!overridePrefix || k.startsWith(overridePrefix));
-      if (allowOverride || process.env[k] == null || process.env[k] === '') {
-        process.env[k] = v;
-      }
-    }
-  } catch {
-    // ignore missing/invalid env file
-  }
 }
 
 function isWorkspaceBootstrapped(workspaceDir) {

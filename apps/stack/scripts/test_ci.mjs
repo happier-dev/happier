@@ -1,26 +1,6 @@
-import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-async function collectTestFiles(dir) {
-  const entries = await readdir(dir, { withFileTypes: true });
-  const files = [];
-  for (const e of entries) {
-    if (e.name.startsWith('.')) continue;
-    const p = join(dir, e.name);
-    if (e.isDirectory()) {
-      files.push(...(await collectTestFiles(p)));
-      continue;
-    }
-    if (!e.isFile()) continue;
-    if (!e.name.endsWith('.test.mjs')) continue;
-    if (e.name.endsWith('.integration.test.mjs')) continue;
-    if (e.name.endsWith('.real.integration.test.mjs')) continue;
-    files.push(p);
-  }
-  files.sort();
-  return files;
-}
+import { collectTestFiles } from './utils/test/collect_test_files.mjs';
 
 async function main() {
   const packageRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -28,8 +8,16 @@ async function main() {
   const testsDir = join(packageRoot, 'tests');
 
   const testFiles = [];
-  testFiles.push(...(await collectTestFiles(scriptsDir)));
-  testFiles.push(...(await collectTestFiles(testsDir)));
+  testFiles.push(...(await collectTestFiles({
+    dir: scriptsDir,
+    includeSuffixes: ['.test.mjs'],
+    excludeSuffixes: ['.integration.test.mjs', '.real.integration.test.mjs'],
+  })));
+  testFiles.push(...(await collectTestFiles({
+    dir: testsDir,
+    includeSuffixes: ['.test.mjs'],
+    excludeSuffixes: ['.integration.test.mjs', '.real.integration.test.mjs'],
+  })));
 
   if (testFiles.length === 0) {
     process.stderr.write(`[stack:test] no .test.mjs files found under ${scriptsDir} or ${testsDir}\n`);

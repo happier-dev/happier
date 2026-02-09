@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { runCommandCapture } from './stack_script_cmd.testHelper.mjs';
+import { runCommandCapture } from './stack_script_command_testkit.mjs';
 
 async function runGitOk(args, { cwd, env }) {
   const res = await runCommandCapture('git', args, { cwd, env });

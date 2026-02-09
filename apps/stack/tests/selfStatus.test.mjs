@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { createTempDir } from './tempdir.test_helper.mjs';
+import { createTempDir } from './testkit/tempdir_testkit.mjs';
 
 const stackRoot = fileURLToPath(new URL('..', import.meta.url));
 

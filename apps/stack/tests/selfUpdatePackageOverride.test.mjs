@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createSelfUpdateHarness } from './self-update.test_helper.mjs';
+import { createSelfUpdateHarness } from './testkit/self_update_testkit.mjs';
 
 test('hstack self check uses HAPPIER_STACK_UPDATE_PACKAGE_NAME when set', (t) => {
   const harness = createSelfUpdateHarness(t, { prefix: 'hstack-npm-override-' });

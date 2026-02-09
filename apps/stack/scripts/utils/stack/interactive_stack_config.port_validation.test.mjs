@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { interactiveEdit, interactiveNew } from './interactive_stack_config.mjs';
-import { createInteractiveStackConfigDeps, mkRl } from './interactive_stack_config.test_helper.mjs';
+import { createInteractiveStackConfigDeps, mkRl } from './interactive_stack_config_testkit.mjs';
 
 test('interactiveNew reprompts when port input is invalid', async (t) => {
   t.mock.method(console, 'log', () => {});

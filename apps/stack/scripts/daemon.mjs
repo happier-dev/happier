@@ -11,6 +11,7 @@ import {
   resolveStackDaemonStatePaths,
   resolveStackCredentialPaths,
 } from './utils/auth/credentials_paths.mjs';
+import { decodeJwtPayloadUnsafe } from './utils/auth/decode_jwt_payload_unsafe.mjs';
 import { applyStackActiveServerScopeEnv } from './utils/auth/stable_scope_id.mjs';
 import { existsSync, readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { chmod, copyFile, mkdir } from 'node:fs/promises';
@@ -330,23 +331,6 @@ async function maybeAutoReseedInvalidAuth({
     env,
   });
   return { ok: true, skipped: false, seed };
-}
-
-function decodeJwtPayloadUnsafe(token) {
-  const raw = String(token ?? '').trim();
-  if (!raw) return null;
-  const parts = raw.split('.');
-  if (parts.length < 2) return null;
-  try {
-    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-    const padLength = normalized.length % 4 === 0 ? 0 : 4 - (normalized.length % 4);
-    const padded = normalized + '='.repeat(padLength);
-    const decoded = Buffer.from(padded, 'base64').toString('utf-8');
-    const payload = JSON.parse(decoded);
-    return payload && typeof payload === 'object' ? payload : null;
-  } catch {
-    return null;
-  }
 }
 
 function readAuthTokenFromCredentialFile(path) {

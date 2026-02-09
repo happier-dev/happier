@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileHasContent } from '../fs/file_has_content.mjs';
 
 const SERVER_ID_SAFE_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -30,15 +31,6 @@ function deriveServerIdFromUrl(url) {
     h = Math.imul(h, 16777619);
   }
   return `env_${(h >>> 0).toString(16)}`;
-}
-
-function fileHasContent(path) {
-  try {
-    if (!existsSync(path)) return false;
-    return readFileSync(path, 'utf-8').trim().length > 0;
-  } catch {
-    return false;
-  }
 }
 
 function requireCliHomeDir(cliHomeDir) {

@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { run, runCapture } from './utils/proc/proc.mjs';
-import { withTempRoot, gitEnv, spawnNodeWithCapture } from './monorepo_port.testHelper.mjs';
+import { withTempRoot, gitEnv, spawnNodeWithCapture } from './testkit/monorepo_port_testkit.mjs';
 
 test('monorepo port status reports the current patch and conflicted files during git am', async (t) => {
   const root = await withTempRoot(t);

@@ -14,6 +14,7 @@ import { printResult, wantsHelp, wantsJson } from './utils/cli/cli.mjs';
 import { assertServerComponentDirMatches, assertServerPrismaProviderMatches } from './utils/server/validate.mjs';
 import { resolveServerStartScript } from './utils/server/flavor_scripts.mjs';
 import { applyHappyServerMigrations, ensureHappyServerManagedInfra } from './utils/server/infra/happy_server_infra.mjs';
+import { applyServerLightEnvDefaults } from './utils/server/apply_server_light_env_defaults.mjs';
 import { getAccountCountForServerComponent, prepareDaemonAuthSeedIfNeeded, resolveAutoCopyFromMainEnabled } from './utils/stack/startup.mjs';
 import { recordStackRuntimeStart, recordStackRuntimeUpdate } from './utils/stack/runtime_state.mjs';
 import { resolveStackContext } from './utils/stack/context.mjs';
@@ -292,16 +293,7 @@ async function main() {
   let serverLightAccountCount = null;
   let happierServerAccountCount = null;
   if (serverComponentName === 'happier-server-light') {
-    const dataDir = baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR?.trim()
-      ? baseEnv.HAPPIER_SERVER_LIGHT_DATA_DIR.trim()
-      : join(autostart.baseDir, 'server-light');
-    serverEnv.HAPPIER_SERVER_LIGHT_DATA_DIR = dataDir;
-    serverEnv.HAPPIER_SERVER_LIGHT_FILES_DIR = baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR?.trim()
-      ? baseEnv.HAPPIER_SERVER_LIGHT_FILES_DIR.trim()
-      : join(dataDir, 'files');
-    serverEnv.HAPPIER_SERVER_LIGHT_DB_DIR = baseEnv.HAPPIER_SERVER_LIGHT_DB_DIR?.trim()
-      ? baseEnv.HAPPIER_SERVER_LIGHT_DB_DIR.trim()
-      : join(dataDir, 'pglite');
+    applyServerLightEnvDefaults({ baseEnv, serverEnv, baseDir: autostart.baseDir });
 
     // Reliability: ensure DB schema exists before daemon hits /v1/machines (health checks don't cover DB readiness).
     // If the server is already running and we are not restarting, skip migrations/probes (pglite is single-connection).

@@ -1,27 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-function runNode(args, { cwd, env }) {
-  return new Promise((resolve, reject) => {
-    const cleanEnv = {};
-    for (const [k, v] of Object.entries(env ?? {})) {
-      if (v == null) continue;
-      cleanEnv[k] = String(v);
-    }
-    const proc = spawn(process.execPath, args, { cwd, env: cleanEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => (stdout += String(d)));
-    proc.stderr.on('data', (d) => (stderr += String(d)));
-    proc.on('error', reject);
-    proc.on('exit', (code, signal) => resolve({ code: code ?? (signal ? 1 : 0), signal: signal ?? null, stdout, stderr }));
-  });
-}
+import { runNodeCapture as runNode } from './testkit/stack_script_command_testkit.mjs';
 
 async function withTempRoot(t) {
   const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-env-cmd-'));

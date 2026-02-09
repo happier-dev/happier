@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { run, runCapture } from './utils/proc/proc.mjs';
-import { withTempRoot, gitEnv, initMonorepoStub, initSplitRepoStub } from './monorepo_port.testHelper.mjs';
+import { withTempRoot, gitEnv, initMonorepoStub, initSplitRepoStub } from './testkit/monorepo_port_testkit.mjs';
 
 test('monorepo port rejects when target repo is dirty', async (t) => {
   const root = await withTempRoot(t);

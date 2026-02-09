@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessExit } from './stack_stop_sweeps.testHelper.mjs';
+import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 

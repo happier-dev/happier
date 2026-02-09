@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { authScriptPath, runNodeCapture } from './auth.testHelper.mjs';
+import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 
 function credentialsWithToken(token) {
   return JSON.stringify({

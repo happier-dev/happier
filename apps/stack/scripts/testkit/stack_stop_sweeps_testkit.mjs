@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { runNodeCapture } from './stack_script_cmd.testHelper.mjs';
+import { runNodeCapture } from './stack_script_command_testkit.mjs';
 
 function toSpawnEnv(env) {
   const cleanEnv = {};

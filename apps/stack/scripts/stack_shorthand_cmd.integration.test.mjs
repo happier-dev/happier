@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runNodeCapture } from './stack_script_cmd.testHelper.mjs';
+import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
 
 test('hstack <stack> <cmd> ... rewrites to hstack stack <cmd> <stack> ... when stack exists', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

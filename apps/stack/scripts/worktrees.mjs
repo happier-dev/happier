@@ -39,6 +39,7 @@ import { detectServerComponentDirMismatch } from './utils/server/validate.mjs';
 import { listAllStackNames } from './utils/stack/stacks.mjs';
 import { parseDotenv } from './utils/env/dotenv.mjs';
 import { bold, cyan, dim, green } from './utils/ui/ansi.mjs';
+import { getTodayYmd } from './utils/time/get_today_ymd.mjs';
 
 const DEFAULT_REPO_COMPONENT = 'happier-ui';
 const REPO_DIR_ENV_KEY = 'HAPPIER_STACK_REPO_DIR';
@@ -177,14 +178,6 @@ async function getWorktreeGitDir(worktreeDir) {
 
 async function gitShowTopLevel(dir) {
   return (await git(dir, ['rev-parse', '--show-toplevel'])).trim();
-}
-
-function getTodayYmd() {
-  const now = new Date();
-  const y = String(now.getFullYear());
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
 }
 
 function parseGitdirFile(contents) {

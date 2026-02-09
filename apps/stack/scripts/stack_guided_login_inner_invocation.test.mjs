@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildStackAuthLoginInvocation } from './utils/auth/stack_guided_login.mjs';
-import { getStackRootFromMeta } from './auth.testHelper.mjs';
+import { getStackRootFromMeta } from './testkit/auth_testkit.mjs';
 
 test('guided stack auth login invokes core happier auth login directly', () => {
   const rootDir = getStackRootFromMeta(import.meta.url);

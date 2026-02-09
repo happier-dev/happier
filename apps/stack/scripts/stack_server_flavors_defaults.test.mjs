@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
-import { setupStackNewMonorepoFixture } from './stack_new_monorepo.testHelper.mjs';
+import { setupStackNewMonorepoFixture } from './testkit/stack_new_monorepo_testkit.mjs';
 
 test('hstack stack new server flavor defaults and explicit full flavor pin coherent env values', async (t) => {
   const fixture = await setupStackNewMonorepoFixture({

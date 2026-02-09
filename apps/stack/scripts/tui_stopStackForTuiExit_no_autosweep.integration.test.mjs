@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { stopStackForTuiExit } from './utils/tui/cleanup.mjs';
-import { isAlive, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './stack_stop_sweeps.testHelper.mjs';
+import { isAlive, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 
 test('stopStackForTuiExit auto-sweeps infra when stack.runtime.json is missing (and does not kill session-like processes)', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runNodeCapture } from './stack_script_cmd.testHelper.mjs';
-import { createStackArchiveFixture } from './stack_archive_cmd.testHelper.mjs';
+import { runNodeCapture } from './testkit/stack_script_command_testkit.mjs';
+import { createStackArchiveFixture } from './testkit/stack_archive_command_testkit.mjs';
 
 test('hstack stack archive moves the stack and archives its referenced worktrees', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

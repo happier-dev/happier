@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createDoctorWorkspaceFixture, doctorEnv, runNode } from './doctor.testHelper.mjs';
+import { createDoctorWorkspaceFixture, doctorEnv, runNode } from './testkit/doctor_testkit.mjs';
 
 test('doctor reports a missing UI index.html when UI build dir exists', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

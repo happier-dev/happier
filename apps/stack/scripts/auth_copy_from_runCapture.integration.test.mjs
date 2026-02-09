@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveStackCredentialPaths } from './utils/auth/credentials_paths.mjs';
 import { buildStackStableScopeId } from './utils/auth/stable_scope_id.mjs';
-import { authScriptPath, runNodeCapture } from './auth.testHelper.mjs';
+import { authScriptPath, runNodeCapture } from './testkit/auth_testkit.mjs';
 
 test('hstack stack auth copy-from does not hit ReferenceError: runCapture is not defined', async (t) => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));

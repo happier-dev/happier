@@ -5,7 +5,7 @@ import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { authScriptPath, runNodeCapture, terminateChildProcess } from './auth.testHelper.mjs';
+import { authScriptPath, runNodeCapture, terminateChildProcess } from './testkit/auth_testkit.mjs';
 
 test('hstack stack auth copy-from skips pglite DB seed when lock is held by a live pid', async () => {
   const scriptsDir = dirname(fileURLToPath(import.meta.url));
