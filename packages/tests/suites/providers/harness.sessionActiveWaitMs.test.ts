@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolvePendingDrainTimeoutMs, resolveSessionActiveWaitMs, waitForSessionActiveBestEffort } from '../../src/testkit/providers/harness';
+import {
+  resolvePendingDrainTimeoutMs,
+  resolveScenarioWaitMs,
+  resolveSessionActiveWaitMs,
+  waitForSessionActiveBestEffort,
+} from '../../src/testkit/providers/harness';
 
 describe('providers harness: resolveSessionActiveWaitMs', () => {
   it('defaults to provider global wait when unset', () => {
@@ -10,6 +15,17 @@ describe('providers harness: resolveSessionActiveWaitMs', () => {
   it('inherits larger global wait values up to 240s', () => {
     expect(resolveSessionActiveWaitMs('120000')).toBe(120_000);
     expect(resolveSessionActiveWaitMs('360000')).toBe(240_000);
+  });
+});
+
+describe('providers harness: resolveScenarioWaitMs', () => {
+  it('defaults to global wait when scenario wait is unset', () => {
+    expect(resolveScenarioWaitMs({ scenarioWaitMs: undefined, globalWaitMsRaw: '240000' })).toBe(240_000);
+  });
+
+  it('applies scenario-specific wait and clamps upper bound', () => {
+    expect(resolveScenarioWaitMs({ scenarioWaitMs: 600_000, globalWaitMsRaw: '120000' })).toBe(600_000);
+    expect(resolveScenarioWaitMs({ scenarioWaitMs: 9_999_999, globalWaitMsRaw: '120000' })).toBe(3_600_000);
   });
 });
 

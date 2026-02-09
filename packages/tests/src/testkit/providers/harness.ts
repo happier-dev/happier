@@ -15,7 +15,7 @@ import { decryptLegacyBase64, encryptLegacyBase64 } from '../messageCrypto';
 import { writeCliSessionAttachFile } from '../cliAttachFile';
 import { stopDaemonFromHomeDir } from '../daemon/daemon';
 import { sleep } from '../timing';
-import { createUserScopedSocketCollector } from '../socketClient';
+import { createUserScopedSocketCollector, type CapturedEvent } from '../socketClient';
 import { parsePositiveInt } from '../numbers';
 import { which, yarnCommand } from '../process/commands';
 import { ensureCliDistBuilt, ensureCliSharedDepsBuilt } from '../process/cliDist';
@@ -43,7 +43,9 @@ import {
   extractFatalAgentErrorMessage,
   isSkippableProviderUnavailabilityError,
   readFatalProviderErrorFromCliLogs,
+  resolveCliDistPreflightAllowRebuild,
   resolveCliDistAvailabilityWaitMs,
+  resolveScenarioWaitMs,
   resolveProviderInactivityTimeoutMs,
   resolveProviderPermissionBlockTimeoutMs,
   resolvePendingDrainTimeoutMs,
@@ -58,7 +60,9 @@ export {
   extractFatalAgentErrorMessage,
   isSkippableProviderUnavailabilityError,
   readFatalProviderErrorFromCliLogs,
+  resolveCliDistPreflightAllowRebuild,
   resolveCliDistAvailabilityWaitMs,
+  resolveScenarioWaitMs,
   resolveProviderInactivityTimeoutMs,
   resolveProviderPermissionBlockTimeoutMs,
   resolvePendingDrainTimeoutMs,
@@ -79,6 +83,26 @@ type ToolTraceEventV1 = {
   kind: string;
   payload: any;
   localId?: string;
+};
+
+export type ProviderTokenTelemetryEntryV1 = {
+  v: 1;
+  providerId: string;
+  scenarioId: string;
+  phase: 'single' | 'phase1' | 'phase2';
+  sessionId: string;
+  key: string;
+  timestamp: number;
+  tokens: Record<string, number>;
+  modelId: string | null;
+  source: 'socket-ephemeral-usage';
+};
+
+type ProviderTokenTelemetryReportV1 = {
+  v: 1;
+  runId: string;
+  generatedAt: number;
+  entries: ProviderTokenTelemetryEntryV1[];
 };
 
 const run = createRunDirs({ runLabel: 'providers' });
@@ -129,6 +153,84 @@ async function writeProviderFailureReport(params: {
   await writeFile(reportPath, JSON.stringify(payload, null, 2), 'utf8').catch(() => undefined);
 }
 
+function providerTokenTelemetryReportPath(): string {
+  const raw = (
+    process.env.HAPPIER_E2E_PROVIDER_TOKEN_LEDGER_PATH ??
+    process.env.HAPPY_E2E_PROVIDER_TOKEN_LEDGER_PATH ??
+    ''
+  ).trim();
+  if (raw.length > 0) return resolve(raw);
+  return resolve(join(run.runDir, 'provider-token-ledger.v1.json'));
+}
+
+function normalizeTokenNumberMap(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  const out: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) continue;
+    out[key] = value;
+  }
+  return out;
+}
+
+export function extractProviderTokenTelemetryEntries(params: {
+  providerId: string;
+  scenarioId: string;
+  phase: 'single' | 'phase1' | 'phase2';
+  sessionId: string;
+  modelId: string | null;
+  events: CapturedEvent[];
+}): ProviderTokenTelemetryEntryV1[] {
+  const out: ProviderTokenTelemetryEntryV1[] = [];
+  for (const event of params.events) {
+    if (event.kind !== 'ephemeral') continue;
+    const payload = event.payload as Record<string, unknown> | undefined;
+    if (!payload || payload.type !== 'usage') continue;
+
+    const keyRaw = typeof payload.key === 'string' ? payload.key.trim() : '';
+    const key = keyRaw.length > 0 ? keyRaw : 'unknown';
+    const timestamp = typeof payload.timestamp === 'number' && Number.isFinite(payload.timestamp) ? payload.timestamp : event.at;
+    const tokens = normalizeTokenNumberMap(payload.tokens);
+
+    out.push({
+      v: 1,
+      providerId: params.providerId,
+      scenarioId: params.scenarioId,
+      phase: params.phase,
+      sessionId: params.sessionId,
+      key,
+      timestamp,
+      tokens,
+      modelId: params.modelId,
+      source: 'socket-ephemeral-usage',
+    });
+  }
+  return out;
+}
+
+async function appendProviderTokenTelemetryEntries(entries: ProviderTokenTelemetryEntryV1[]): Promise<void> {
+  if (!Array.isArray(entries) || entries.length === 0) return;
+  const reportPath = providerTokenTelemetryReportPath();
+  let existingEntries: ProviderTokenTelemetryEntryV1[] = [];
+  try {
+    const raw = await readFileText(reportPath);
+    const parsed = JSON.parse(raw) as Partial<ProviderTokenTelemetryReportV1>;
+    if (parsed && parsed.v === 1 && Array.isArray(parsed.entries)) {
+      existingEntries = parsed.entries as ProviderTokenTelemetryEntryV1[];
+    }
+  } catch {
+    // Best-effort merge.
+  }
+
+  const next: ProviderTokenTelemetryReportV1 = {
+    v: 1,
+    runId: run.runId,
+    generatedAt: Date.now(),
+    entries: [...existingEntries, ...entries],
+  };
+  await writeFile(reportPath, JSON.stringify(next, null, 2) + '\n', 'utf8');
+}
+
 export function findFirstToolCallIdByName(events: Array<Pick<ToolTraceEventV1, 'kind' | 'payload'>>, toolName: string): string | null {
   for (const e of events) {
     if (e.kind !== 'tool-call') continue;
@@ -161,6 +263,64 @@ function findPermissionRequestIdsFromTrace(events: ToolTraceEventV1[]): Array<{ 
   }
 
   return out;
+}
+
+type PermissionRpcSocket = {
+  rpcCall: <T = unknown>(method: string, payload: string) => Promise<T>;
+};
+
+export async function autoResolvePendingPermissionRequests(params: {
+  pendingPermissionIds: Array<{ id: string; toolName: string | null }>;
+  approvedPermissionIds: Set<string>;
+  yolo: boolean;
+  allowPermissionAutoApproveInYolo: boolean;
+  decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+  sessionId: string;
+  secret: Uint8Array;
+  uiSocket: PermissionRpcSocket;
+  rpcTimeoutMs?: number;
+}): Promise<{
+  blockedInYolo: Array<{ id: string; toolName: string | null }>;
+  approvedIds: string[];
+}> {
+  const approved =
+    params.decision === 'approved' ||
+    params.decision === 'approved_for_session' ||
+    params.decision === 'approved_execpolicy_amendment';
+  const blockedInYolo: Array<{ id: string; toolName: string | null }> = [];
+  const approvedIds: string[] = [];
+  const rpcTimeoutMs = Math.max(1_000, Math.min(params.rpcTimeoutMs ?? 10_000, 60_000));
+
+  for (const req of params.pendingPermissionIds) {
+    if (!req?.id) continue;
+    if (params.approvedPermissionIds.has(req.id)) continue;
+    if (
+      !shouldAutoApprovePermissionRequest({
+        yolo: params.yolo,
+        toolName: req.toolName,
+        allowPermissionAutoApproveInYolo: params.allowPermissionAutoApproveInYolo,
+      })
+    ) {
+      blockedInYolo.push(req);
+      continue;
+    }
+
+    const payload = encryptLegacyBase64({ id: req.id, approved, decision: params.decision }, params.secret);
+    try {
+      const result = await Promise.race([
+        params.uiSocket.rpcCall<any>(`${params.sessionId}:permission`, payload),
+        sleep(rpcTimeoutMs).then(() => ({ ok: false, error: 'timeout' })),
+      ]);
+      if (result && typeof result === 'object' && (result as any).ok === true) {
+        params.approvedPermissionIds.add(req.id);
+        approvedIds.push(req.id);
+      }
+    } catch {
+      // best-effort; next polling pass can retry
+    }
+  }
+
+  return { blockedInYolo, approvedIds };
 }
 
 function resolveYoloForScenario(scenario: ProviderScenario): boolean {
@@ -305,6 +465,32 @@ export function resolveProviderModelCliArgs(params: {
 
   const now = Math.floor((params.nowMs ?? Date.now)());
   return ['--model', model, '--model-updated-at', String(now)];
+}
+
+function resolveModelIdFromCliArgs(args: string[]): string | null {
+  const index = args.indexOf('--model');
+  if (index < 0) return null;
+  const value = args[index + 1];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function resolveModelIdFromMetadataSnapshot(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const record = metadata as Record<string, unknown>;
+
+  const acp = record.acpSessionModelsV1;
+  if (acp && typeof acp === 'object' && !Array.isArray(acp)) {
+    const current = (acp as Record<string, unknown>).currentModelId;
+    if (typeof current === 'string' && current.trim().length > 0) return current.trim();
+  }
+
+  const override = record.modelOverrideV1;
+  if (override && typeof override === 'object' && !Array.isArray(override)) {
+    const modelId = (override as Record<string, unknown>).modelId;
+    if (typeof modelId === 'string' && modelId.trim().length > 0) return modelId.trim();
+  }
+
+  return null;
 }
 
 function readJsonlEvents(raw: string): ToolTraceEventV1[] {
@@ -629,11 +815,12 @@ async function runOneScenario(params: {
       sessionId: string;
       traceFile: string;
       promptText: string;
+      phase: 'single' | 'phase1' | 'phase2';
       traceSubstringsOverride?: string[];
       extraCliArgs?: string[];
       stdoutPath: string;
       stderrPath: string;
-    }): Promise<{ traceRaw: string; traceEvents: ToolTraceEventV1[] }> {
+    }): Promise<{ traceRaw: string; traceEvents: ToolTraceEventV1[]; tokenTelemetryEntries: ProviderTokenTelemetryEntryV1[] }> {
       const resolveMeta = (metaLike: ProviderScenario['messageMeta'] | undefined): Record<string, unknown> => {
         if (!metaLike) return {};
         try {
@@ -668,6 +855,7 @@ async function runOneScenario(params: {
       const modelCliArgs = resolveProviderModelCliArgs({
         providerId: provider.id,
       });
+      const modelIdFromCliArgs = resolveModelIdFromCliArgs(modelCliArgs);
 
       const attachFile = await writeCliSessionAttachFile({
         cliHome,
@@ -732,10 +920,10 @@ async function runOneScenario(params: {
         })
       ).socket;
 
-      const maxWaitMs = parsePositiveInt(
-        process.env.HAPPIER_E2E_PROVIDER_WAIT_MS ?? process.env.HAPPY_E2E_PROVIDER_WAIT_MS,
-        240_000,
-      );
+      const maxWaitMs = resolveScenarioWaitMs({
+        scenarioWaitMs: scenario.waitMs,
+        globalWaitMsRaw: process.env.HAPPIER_E2E_PROVIDER_WAIT_MS ?? process.env.HAPPY_E2E_PROVIDER_WAIT_MS,
+      });
       await waitForSessionActiveBestEffort({
         yolo,
         wait: () => waitForSessionActive({
@@ -750,6 +938,99 @@ async function runOneScenario(params: {
 
       // If YOLO is disabled for this scenario, auto-approve any permission requests.
         const approvedPermissionIds = new Set<string>();
+        const permissionDecision = scenario.permissionAutoDecision ?? 'approved';
+        const allowPermissionAutoApproveInYolo = resolveAllowPermissionAutoApproveInYolo({
+          provider,
+          scenario,
+          scenarioMeta,
+          yolo,
+        });
+
+        const autoResolveFromTrace = async (
+          relevant: ToolTraceEventV1[],
+          rpcTimeoutMs?: number,
+        ): Promise<Array<{ id: string; toolName: string | null }>> => {
+          if (!uiSocket) return [];
+          const pendingPermissionIds = findPermissionRequestIdsFromTrace(relevant as any);
+          const result = await autoResolvePendingPermissionRequests({
+            pendingPermissionIds,
+            approvedPermissionIds,
+            yolo,
+            allowPermissionAutoApproveInYolo,
+            decision: permissionDecision,
+            sessionId: params.sessionId,
+            secret,
+            uiSocket,
+            rpcTimeoutMs,
+          });
+          return result.blockedInYolo;
+        };
+
+        const autoResolveFromAgentState = async (): Promise<void> => {
+          if (!uiSocket) return;
+          try {
+            const snap = await fetchSessionV2(server.baseUrl, auth.token, params.sessionId);
+            const state = snap.agentState ? (decryptLegacyBase64(snap.agentState, secret) as any) : null;
+            const requests = state && typeof state === 'object' ? (state as any).requests : null;
+            if (!requests || typeof requests !== 'object') return;
+            const pendingPermissionIds = Object.entries(requests).flatMap(([id, req]) => {
+              if (typeof id !== 'string' || id.length === 0 || approvedPermissionIds.has(id)) return [];
+              const tool = req && typeof req === 'object' ? (req as any).tool : null;
+              const toolName = typeof tool === 'string' && tool.trim().length > 0 ? tool.trim() : null;
+              return [{ id, toolName }];
+            });
+            if (pendingPermissionIds.length === 0) return;
+            await autoResolvePendingPermissionRequests({
+              pendingPermissionIds,
+              approvedPermissionIds,
+              yolo,
+              allowPermissionAutoApproveInYolo,
+              decision: permissionDecision,
+              sessionId: params.sessionId,
+              secret,
+              uiSocket,
+            });
+          } catch {
+            // ignore
+          }
+        };
+
+        const runPostSatisfyWithPermissionPump = async (runPostSatisfy: () => Promise<void>): Promise<void> => {
+          if (!uiSocket) {
+            await runPostSatisfy();
+            return;
+          }
+          let done = false;
+          let runError: unknown = null;
+          const runner = (async () => {
+            try {
+              await runPostSatisfy();
+            } catch (error) {
+              runError = error;
+            } finally {
+              done = true;
+            }
+          })();
+
+          while (!done) {
+            if (existsSync(params.traceFile)) {
+              const currentRaw = await readFileText(params.traceFile).catch(() => '');
+              const currentEvents = readJsonlEvents(currentRaw);
+              const relevant = currentEvents.filter(
+                (event) =>
+                  event?.v === 1 &&
+                  event.protocol === provider.protocol &&
+                  (typeof event.provider === 'string' ? event.provider === provider.traceProvider : false),
+              );
+              await autoResolveFromTrace(relevant, 5_000);
+            }
+            await autoResolveFromAgentState();
+            await sleep(250);
+          }
+
+          await runner;
+          if (runError) throw runError;
+        };
 
         const steps = Array.isArray(scenario.steps) && scenario.steps.length > 0
           ? scenario.steps
@@ -813,6 +1094,7 @@ async function runOneScenario(params: {
         maxWaitMs,
       );
 
+      let satisfied = false;
       while (Date.now() - startedWaitAt < maxWaitMs) {
         const fatalFromLogs = await readFatalProviderErrorFromCliLogs({ cliHome });
         if (fatalFromLogs) {
@@ -864,46 +1146,7 @@ async function runOneScenario(params: {
             lastProviderActivityAt = Date.now();
           }
 
-          const decision = scenario.permissionAutoDecision ?? 'approved';
-          const approved =
-            decision === 'approved' || decision === 'approved_for_session' || decision === 'approved_execpolicy_amendment';
-          const pendingPermissionIds = findPermissionRequestIdsFromTrace(relevant as any);
-          const blockedInYolo: Array<{ id: string; toolName: string | null }> = [];
-
-          for (const req of pendingPermissionIds) {
-            if (!req?.id) continue;
-            if (approvedPermissionIds.has(req.id)) continue;
-
-            const allowInYolo = resolveAllowPermissionAutoApproveInYolo({
-              provider,
-              scenario,
-              scenarioMeta,
-              yolo,
-            });
-            if (!shouldAutoApprovePermissionRequest({
-              yolo,
-              toolName: req.toolName,
-              allowPermissionAutoApproveInYolo: allowInYolo,
-            })) {
-              blockedInYolo.push(req);
-              continue;
-            }
-
-            const paramsCiphertext = encryptLegacyBase64({ id: req.id, approved, decision }, secret);
-            try {
-              // Best-effort: if method isn't registered yet, ignore and retry.
-              // Also guard against socket.io ack hangs with an outer timeout.
-              const res = await Promise.race([
-                uiSocket.rpcCall<any>(`${params.sessionId}:permission`, paramsCiphertext),
-                sleep(10_000).then(() => ({ ok: false, error: 'timeout' })),
-              ]);
-              if (res && typeof res === 'object' && (res as any).ok === true) {
-                approvedPermissionIds.add(req.id);
-              }
-            } catch {
-              // ignore
-            }
-          }
+          const blockedInYolo = await autoResolveFromTrace(relevant);
 
           if (blockedInYolo.length > 0) {
             if (blockedPermissionSinceAt == null) blockedPermissionSinceAt = Date.now();
@@ -932,32 +1175,35 @@ async function runOneScenario(params: {
 
           if (scenarioSatisfiedByTrace(relevant as any, satisfactionScenario)) {
             if (scenario.postSatisfy) {
-              if (scenario.postSatisfy.run) {
-                await scenario.postSatisfy.run({
-                  workspaceDir,
-                  baseUrl: server.baseUrl,
-                  token: auth.token,
-                  sessionId: params.sessionId,
-                  secret,
-                  cliHome,
-                });
-              }
-
-              const toolName = scenario.postSatisfy.waitForAcpSidechainFromToolName;
-              if (typeof toolName === 'string' && toolName.trim().length > 0) {
-                const sidechainId = findFirstToolCallIdByName(relevant as any, toolName);
-                if (sidechainId) {
-                  await waitForAcpSidechainMessages({
+              await runPostSatisfyWithPermissionPump(async () => {
+                if (scenario.postSatisfy?.run) {
+                  await scenario.postSatisfy.run({
+                    workspaceDir,
                     baseUrl: server.baseUrl,
                     token: auth.token,
                     sessionId: params.sessionId,
                     secret,
-                    sidechainId,
-                    timeoutMs: scenario.postSatisfy.timeoutMs,
+                    cliHome,
                   });
                 }
-              }
+
+                const toolName = scenario.postSatisfy?.waitForAcpSidechainFromToolName;
+                if (typeof toolName === 'string' && toolName.trim().length > 0) {
+                  const sidechainId = findFirstToolCallIdByName(relevant as any, toolName);
+                  if (sidechainId) {
+                    await waitForAcpSidechainMessages({
+                      baseUrl: server.baseUrl,
+                      token: auth.token,
+                      sessionId: params.sessionId,
+                      secret,
+                      sidechainId,
+                      timeoutMs: scenario.postSatisfy.timeoutMs,
+                    });
+                  }
+                }
+              });
             }
+            satisfied = true;
             break;
           }
         }
@@ -976,49 +1222,21 @@ async function runOneScenario(params: {
           );
         }
 
-        if (uiSocket) {
-          try {
-            const snap = await fetchSessionV2(server.baseUrl, auth.token, params.sessionId);
-            const state = snap.agentState ? (decryptLegacyBase64(snap.agentState, secret) as any) : null;
-            const requests = state && typeof state === 'object' ? (state as any).requests : null;
-            if (requests && typeof requests === 'object') {
-              const decision = scenario.permissionAutoDecision ?? 'approved';
-              const approved =
-                decision === 'approved' || decision === 'approved_for_session' || decision === 'approved_execpolicy_amendment';
-              for (const [id] of Object.entries(requests)) {
-                if (typeof id !== 'string' || id.length === 0) continue;
-                if (approvedPermissionIds.has(id)) continue;
-                const req = (requests as any)[id];
-                const tool = req && typeof req === 'object' ? (req as any).tool : undefined;
-
-                const allowInYolo = resolveAllowPermissionAutoApproveInYolo({
-                  provider,
-                  scenario,
-                  scenarioMeta,
-                  yolo,
-                });
-                if (!shouldAutoApprovePermissionRequest({
-                  yolo,
-                  toolName: typeof tool === 'string' ? tool : null,
-                  allowPermissionAutoApproveInYolo: allowInYolo,
-                })) {
-                  continue;
-                }
-
-                const paramsCiphertext = encryptLegacyBase64({ id, approved, decision }, secret);
-                // Best-effort: if method isn't registered yet, ignore and retry.
-                const res = await uiSocket.rpcCall<any>(`${params.sessionId}:permission`, paramsCiphertext);
-                if (res && typeof res === 'object' && res.ok === true) {
-                  approvedPermissionIds.add(id);
-                }
-              }
-            }
-          } catch {
-            // ignore
-          }
-        }
+        await autoResolveFromAgentState();
 
         await sleep(1_000);
+      }
+
+      if (!satisfied) {
+        const requiredFixtureKeys = satisfactionScenario.requiredFixtureKeys ?? [];
+        const requiredAnyFixtureKeys = satisfactionScenario.requiredAnyFixtureKeys ?? [];
+        const requiredTraceSubstrings = satisfactionScenario.requiredTraceSubstrings ?? [];
+        throw new Error(
+          `Timed out waiting for scenario satisfaction after ${maxWaitMs}ms (${provider.id}.${scenario.id}): ` +
+          `requiredFixtureKeys=${requiredFixtureKeys.join(',') || '(none)'} ` +
+          `requiredAnyFixtureKeys=${requiredAnyFixtureKeys.map((bucket) => `[${bucket.join('|')}]`).join(',') || '(none)'} ` +
+          `requiredTraceSubstrings=${requiredTraceSubstrings.join(',') || '(none)'}`,
+        );
       }
 
         if (!existsSync(params.traceFile)) {
@@ -1043,7 +1261,26 @@ async function runOneScenario(params: {
 
         const finalRaw = await readFileText(params.traceFile).catch(() => '');
         const finalEvents = readJsonlEvents(finalRaw);
-        return { traceRaw: finalRaw, traceEvents: finalEvents };
+        let modelId: string | null = modelIdFromCliArgs;
+        try {
+          const snap = await fetchSessionV2(server.baseUrl, auth.token, params.sessionId);
+          const metadata = decryptLegacyBase64(snap.metadata, secret);
+          modelId = resolveModelIdFromMetadataSnapshot(metadata) ?? modelIdFromCliArgs;
+        } catch {
+          // best-effort telemetry enrichment
+        }
+
+        const socketEvents = uiSocket?.getEvents() ?? [];
+        const tokenTelemetryEntries = extractProviderTokenTelemetryEntries({
+          providerId: String(provider.id),
+          scenarioId: scenario.id,
+          phase: params.phase,
+          sessionId: params.sessionId,
+          modelId,
+          events: socketEvents,
+        });
+
+        return { traceRaw: finalRaw, traceEvents: finalEvents, tokenTelemetryEntries };
       } finally {
         try {
           uiSocket?.close();
@@ -1063,6 +1300,7 @@ async function runOneScenario(params: {
   const phase1 = await runPhase({
     sessionId: sessionIdPhase1,
     traceFile: traceFilePhase1,
+    phase: scenario.resume ? 'phase1' : 'single',
     promptText: scenario.prompt ? scenario.prompt({ workspaceDir }) : '',
     stdoutPath: resolve(join(testDir, 'cli.phase1.stdout.log')),
     stderrPath: resolve(join(testDir, 'cli.phase1.stderr.log')),
@@ -1113,6 +1351,7 @@ async function runOneScenario(params: {
     const phase2 = await runPhase({
       sessionId: sessionIdPhase2 ?? sessionIdPhase1,
       traceFile: traceFilePhase2,
+      phase: 'phase2',
       promptText: scenario.resume.prompt({ workspaceDir }),
       traceSubstringsOverride: scenario.resume.requiredTraceSubstrings,
       extraCliArgs: ['--resume', resumeId],
@@ -1124,6 +1363,13 @@ async function runOneScenario(params: {
     mergedTraceFile = traceFileMerged;
     mergedTraceRaw = `${phase1.traceRaw.trimEnd()}\n${phase2.traceRaw.trimEnd()}\n`;
     await (await import('node:fs/promises')).writeFile(mergedTraceFile, mergedTraceRaw, 'utf8');
+
+    await appendProviderTokenTelemetryEntries([
+      ...phase1.tokenTelemetryEntries,
+      ...phase2.tokenTelemetryEntries,
+    ]);
+  } else {
+    await appendProviderTokenTelemetryEntries([...phase1.tokenTelemetryEntries]);
   }
 
   if (!existsSync(mergedTraceFile)) {
@@ -1290,7 +1536,15 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
     // `@happier-dev/*` ESM exports are up-to-date before starting provider processes.
     const setupDir = run.testDir('setup');
     await ensureCliSharedDepsBuilt({ testDir: setupDir, env: process.env });
-    await ensureCliDistBuilt({ testDir: setupDir, env: process.env });
+    await ensureCliDistBuilt(
+      { testDir: setupDir, env: process.env },
+      {
+        allowRebuild: resolveCliDistPreflightAllowRebuild(),
+        waitForAvailabilityMs: resolveCliDistAvailabilityWaitMs(
+          process.env.HAPPIER_E2E_CLI_DIST_WAIT_MS ?? process.env.HAPPY_E2E_CLI_DIST_WAIT_MS,
+        ),
+      },
+    );
 
     const runnableProviders: ProviderUnderTest[] = [];
     for (const provider of enabledProviders) {

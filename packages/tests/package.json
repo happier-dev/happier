@@ -32,6 +32,7 @@
     "providers:all:extended": "yarn -s providers:run all extended",
     "providers:all:smoke:parallel": "yarn -s providers:run:parallel all smoke",
     "providers:all:extended:parallel": "yarn -s providers:run:parallel all extended",
+    "providers:token-ledger:summary": "node scripts/provider-token-ledger-summary.mjs",
     "providers:opencode:smoke:update-baselines": "yarn -s providers:run opencode smoke --update-baselines",
     "providers:claude:smoke:update-baselines": "yarn -s providers:run claude smoke --update-baselines",
     "providers:codex:smoke:update-baselines": "yarn -s providers:run codex smoke --update-baselines",
