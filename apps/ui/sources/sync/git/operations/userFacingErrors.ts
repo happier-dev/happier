@@ -1,0 +1,77 @@
+import type { GitOperationErrorCode } from '@happier-dev/protocol';
+import { GIT_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
+
+export function getGitUserFacingError(input: {
+    errorCode?: GitOperationErrorCode;
+    error?: string;
+    fallback: string;
+}): string {
+    const rawError = input.error?.toLowerCase() ?? '';
+    switch (input.errorCode) {
+        case GIT_OPERATION_ERROR_CODES.NOT_GIT_REPO:
+            return 'The selected path is not a Git repository.';
+        case GIT_OPERATION_ERROR_CODES.INVALID_PATH:
+            return 'The repository path is invalid.';
+        case GIT_OPERATION_ERROR_CODES.INVALID_REQUEST:
+            if (rawError.includes('merge commits') || rawError.includes('merge commit')) {
+                return 'Reverting merge commits is not supported yet.';
+            }
+            if (rawError.includes('head is detached') || rawError.includes('detached')) {
+                return 'Operation is unavailable while HEAD is detached.';
+            }
+            if (rawError.includes('commit message exceeds maximum length') || rawError.includes('message is too long')) {
+                return 'Commit message is too long. Use a shorter message and try again.';
+            }
+            return 'The Git request is invalid.';
+        case GIT_OPERATION_ERROR_CODES.PATCH_APPLY_FAILED:
+            return 'Diff changed, refresh and reselect your lines.';
+        case GIT_OPERATION_ERROR_CODES.COMMIT_REQUIRED:
+            return 'Commit staged changes before continuing.';
+        case GIT_OPERATION_ERROR_CODES.CONFLICTING_WORKTREE:
+            return 'Resolve local changes and conflicts before continuing.';
+        case GIT_OPERATION_ERROR_CODES.REMOTE_AUTH_REQUIRED:
+            return 'Remote authentication is required.';
+        case GIT_OPERATION_ERROR_CODES.REMOTE_UPSTREAM_REQUIRED:
+            return 'Set an upstream branch before pull or push.';
+        case GIT_OPERATION_ERROR_CODES.REMOTE_NON_FAST_FORWARD:
+            return 'Push rejected because remote has newer commits. Fetch/pull first, then push again.';
+        case GIT_OPERATION_ERROR_CODES.REMOTE_FF_ONLY_REQUIRED:
+            return 'Pull requires a fast-forward but branches diverged. Rebase or merge locally, then retry.';
+        case GIT_OPERATION_ERROR_CODES.REMOTE_REJECTED:
+            if (rawError.includes('gh013') || rawError.includes('repository rule violations')) {
+                return 'Remote rejected the update due to repository rules (GH013). Review the rules and retry.';
+            }
+            if (rawError.includes('gh006') || rawError.includes('protected branch')) {
+                return 'Remote rejected the update due to protected-branch rules (GH006).';
+            }
+            if (rawError.includes('pre-receive hook declined')) {
+                return 'Remote rejected the update through a pre-receive hook. Review repository policy and retry.';
+            }
+            return 'Remote rejected the update (for example by server policy or pre-receive hook).';
+        case GIT_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND:
+            return 'The selected remote was not found in this repository.';
+        case GIT_OPERATION_ERROR_CODES.COMMAND_FAILED:
+            if (rawError.includes('would be overwritten by merge')) {
+                return 'Pull would overwrite local changes. Commit, stash, or discard local changes first.';
+            }
+            return sanitizeCommandFailureFallback(input.error, input.fallback);
+        default:
+            return sanitizeCommandFailureFallback(input.error, input.fallback);
+    }
+}
+
+function sanitizeCommandFailureFallback(error: string | undefined, fallback: string): string {
+    if (looksLikeRawGitOutput(error) || looksLikeRawGitOutput(fallback)) {
+        return 'Git command failed. Refresh repository status and try again.';
+    }
+    return fallback;
+}
+
+function looksLikeRawGitOutput(value: string | undefined): boolean {
+    if (!value) return false;
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    if (trimmed.includes('\n')) return true;
+
+    return /(^|\s)(fatal:|error:|remote:|hint:|usage:|pathspec|did not match any files|cannot lock ref)/i.test(trimmed);
+}
