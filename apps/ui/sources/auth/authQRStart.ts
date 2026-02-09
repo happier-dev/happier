@@ -1,8 +1,8 @@
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import sodium from '@/encryption/libsodium.lib';
-import axios from 'axios';
 import { encodeBase64 } from '../encryption/base64';
-import { getServerUrl } from '@/sync/serverConfig';
+import { getActiveServerSnapshot } from '@/sync/serverRuntime';
+import { serverFetch } from '@/sync/http/client';
 
 export interface QRAuthKeyPair {
     publicKey: Uint8Array;
@@ -20,15 +20,24 @@ export function generateAuthKeyPair(): QRAuthKeyPair {
 
 export async function authQRStart(keypair: QRAuthKeyPair): Promise<boolean> {
     try {
-        const serverUrl = getServerUrl();
+        const serverUrl = getActiveServerSnapshot().serverUrl;
         if (process.env.EXPO_PUBLIC_DEBUG) {
             console.log(`[AUTH DEBUG] Sending auth request to: ${serverUrl}/v1/auth/account/request`);
             console.log(`[AUTH DEBUG] Public key: ${encodeBase64(keypair.publicKey).substring(0, 20)}...`);
         }
 
-        await axios.post(`${serverUrl}/v1/auth/account/request`, {
-            publicKey: encodeBase64(keypair.publicKey),
-        });
+        const response = await serverFetch('/v1/auth/account/request', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                publicKey: encodeBase64(keypair.publicKey),
+            }),
+        }, { includeAuth: false });
+        if (!response.ok) {
+            throw new Error(`Auth request failed: ${response.status}`);
+        }
 
         if (process.env.EXPO_PUBLIC_DEBUG) {
             console.log('[AUTH DEBUG] Auth request sent successfully');

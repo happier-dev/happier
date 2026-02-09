@@ -20,8 +20,13 @@ afterEach(() => {
 const credentials: AuthCredentials = { token: 't', secret: 's' };
 
 function mockServerConfig() {
-    vi.doMock('./serverConfig', () => ({
-        getServerUrl: () => 'https://api.example.test',
+    vi.doMock('./serverRuntime', () => ({
+        getActiveServerSnapshot: () => ({
+            serverId: 'test',
+            serverUrl: 'https://api.example.test',
+            kind: 'custom',
+            generation: 1,
+        }),
     }));
 }
 
@@ -42,12 +47,12 @@ describe('setAccountUsername', () => {
             'https://api.example.test/v1/account/username',
             expect.objectContaining({
                 method: 'POST',
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer t',
-                    'Content-Type': 'application/json',
-                }),
+                headers: expect.any(Headers),
             }),
         );
+        const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+        expect((requestInit.headers as Headers).get('Authorization')).toBe('Bearer t');
+        expect((requestInit.headers as Headers).get('Content-Type')).toBe('application/json');
         expect(res).toEqual({ username: 'alice' });
     });
 

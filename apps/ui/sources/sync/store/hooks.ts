@@ -135,6 +135,10 @@ export function useSessionListViewData(): SessionListViewItem[] | null {
   return getStorage()((state) => (state.isDataReady ? state.sessionListViewData : null));
 }
 
+export function useSessionListViewDataByServerId(): Record<string, SessionListViewItem[] | null> {
+  return getStorage()((state) => state.sessionListViewDataByServerId);
+}
+
 export function useAllSessions(): Session[] {
   return getStorage()(
     useShallow((state) => {

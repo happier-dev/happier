@@ -1,7 +1,7 @@
 import { AuthCredentials } from '@/auth/tokenStorage';
 import { backoff } from '@/utils/time';
 import { HappyError } from '@/utils/errors';
-import { getServerUrl } from './serverConfig';
+import { serverFetch } from './http/client';
 
 function parseSuccessResponse(
     raw: unknown,
@@ -23,17 +23,15 @@ export async function connectVendorToken(
     vendor: string,
     token: string,
 ): Promise<void> {
-    const apiEndpoint = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${apiEndpoint}/v1/connect/${encodeURIComponent(vendor)}/register`, {
+        const response = await serverFetch(`/v1/connect/${encodeURIComponent(vendor)}/register`, {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ token }),
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -71,15 +69,13 @@ export async function connectVendorToken(
  * Disconnect an inference vendor token from the user's account.
  */
 export async function disconnectVendorToken(credentials: AuthCredentials, vendor: string): Promise<void> {
-    const apiEndpoint = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${apiEndpoint}/v1/connect/${encodeURIComponent(vendor)}`, {
+        const response = await serverFetch(`/v1/connect/${encodeURIComponent(vendor)}`, {
             method: 'DELETE',
             headers: {
                 Authorization: `Bearer ${credentials.token}`,
             },
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 404) {

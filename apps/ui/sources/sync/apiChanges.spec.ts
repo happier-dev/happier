@@ -3,8 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchChanges } from './apiChanges';
 import type { AuthCredentials } from '@/auth/tokenStorage';
 
-vi.mock('./serverConfig', () => ({
-    getServerUrl: () => 'https://api.test.com',
+vi.mock('./serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({
+        serverId: 'test',
+        serverUrl: 'https://api.test.com',
+        kind: 'custom',
+        generation: 1,
+    }),
 }));
 
 const credentials: AuthCredentials = { token: 't', secret: 's' };
@@ -50,12 +55,11 @@ describe('apiChanges', () => {
             changes: [{ cursor: 2, kind: 'session', entityId: 's1', changedAt: 1, hint: null }],
             nextCursor: '2',
         });
-        expect(global.fetch).toHaveBeenCalledWith(
-            'https://api.test.com/v2/changes?after=1&limit=50',
-            expect.objectContaining({
-                headers: expect.objectContaining({ Authorization: 'Bearer t' }),
-            }),
-        );
+        expect(global.fetch).toHaveBeenCalledWith('https://api.test.com/v2/changes?after=1&limit=50', expect.any(Object));
+        const requestInit = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as RequestInit;
+        expect(requestInit).toBeDefined();
+        expect(requestInit.headers).toBeInstanceOf(Headers);
+        expect((requestInit.headers as Headers).get('Authorization')).toBe('Bearer t');
     });
 
     it('returns cursor-gone for 410 responses', async () => {
@@ -101,9 +105,6 @@ describe('apiChanges', () => {
         );
 
         await fetchChanges({ credentials, afterCursor: '-100', limit: 10_000 });
-        expect(global.fetch).toHaveBeenCalledWith(
-            'https://api.test.com/v2/changes?after=0&limit=500',
-            expect.any(Object),
-        );
+        expect(global.fetch).toHaveBeenCalledWith('https://api.test.com/v2/changes?after=0&limit=500', expect.any(Object));
     });
 });

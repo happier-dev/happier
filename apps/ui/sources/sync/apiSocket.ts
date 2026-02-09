@@ -4,6 +4,8 @@ import { Encryption } from './encryption/encryption';
 import { observeServerTimestamp } from './time';
 import { createRpcCallError } from './rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { StaleServerGenerationError } from './http/client';
+import { getActiveServerSnapshot } from './serverRuntime';
 
 //
 // Types
@@ -187,8 +189,9 @@ class ApiSocket {
         if (!this.config) {
             throw new Error('SyncSocket not initialized');
         }
+        const snapshot = getActiveServerSnapshot();
 
-        const credentials = await TokenStorage.getCredentials();
+        const credentials = await TokenStorage.getCredentialsForServerUrl(this.config.endpoint);
         if (!credentials) {
             throw new Error('No authentication credentials');
         }
@@ -203,6 +206,11 @@ class ApiSocket {
             ...options,
             headers
         });
+
+        const current = getActiveServerSnapshot();
+        if (current.generation !== snapshot.generation || current.serverId !== snapshot.serverId) {
+            throw new StaleServerGenerationError();
+        }
 
         // Best-effort server time calibration using the HTTP Date header ("server now").
         // This avoids deriving "now" from potentially stale resource timestamps (e.g. session.updatedAt).

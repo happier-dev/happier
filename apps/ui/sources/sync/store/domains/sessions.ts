@@ -1,7 +1,7 @@
 import type { GitStatus, GitWorkingSnapshot, Machine, Session } from '../../storageTypes';
 import { createReducer, reducer } from '../../reducer/reducer';
 import type { NormalizedMessage } from '../../typesRaw';
-import { buildSessionListViewData, type SessionListViewItem } from '../../sessionListViewData';
+import type { SessionListViewItem } from '../../sessionListViewData';
 import { nowServerMs } from '../../time';
 import { loadSessionDrafts, loadSessionLastViewed, loadSessionModelModeUpdatedAts, loadSessionModelModes, loadSessionPermissionModeUpdatedAts, loadSessionPermissionModes, saveSessionDrafts, saveSessionLastViewed, saveSessionModelModeUpdatedAts, saveSessionModelModes, saveSessionPermissionModeUpdatedAts, saveSessionPermissionModes } from '../../persistence';
 import { projectManager } from '../../projectManager';
@@ -10,6 +10,8 @@ import { isModelMode, type PermissionMode } from '@/sync/permissionTypes';
 import { isModelSelectableForSession } from '@/sync/modelOptions';
 import { resolveAgentIdFromFlavor } from '@/agents/catalog';
 import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
+import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
+import { setActiveServerSessionListCache } from '../sessionListCache';
 
 import type { StoreGet, StoreSet } from './_shared';
 import type { SessionMessages } from './messages';
@@ -23,6 +25,7 @@ export type SessionsDomain = {
     sessions: Record<string, Session>;
     sessionsData: (string | Session)[] | null;
     sessionListViewData: SessionListViewItem[] | null;
+    sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
     sessionGitStatus: Record<string, GitStatus | null>;
     sessionLastViewed: Record<string, number>;
     isDataReady: boolean;
@@ -150,6 +153,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
         sessions: {},
         sessionsData: null,  // Legacy - to be removed
         sessionListViewData: null,
+        sessionListViewDataByServerId: {},
         sessionGitStatus: {},
         sessionLastViewed,
         isDataReady: false,
@@ -368,11 +372,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             });
 
             // Build new unified list view data
-            const sessionListViewData = buildSessionListViewData(
-                mergedSessions,
-                state.machines,
-                { groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject }
-            );
+            const sessionListViewData = buildSessionListViewDataWithServerScope({
+                sessions: mergedSessions,
+                machines: state.machines,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+            });
 
             // Update project manager with current sessions and machines
             const machineMetadataMap = new Map<string, any>();
@@ -388,6 +392,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessions: mergedSessions,
                 sessionsData: listData,  // Legacy - to be removed
                 sessionListViewData,
+                sessionListViewDataByServerId: setActiveServerSessionListCache(
+                    state.sessionListViewDataByServerId,
+                    sessionListViewData,
+                ),
                 sessionMessages: updatedSessionMessages
             };
         }),
@@ -445,16 +453,20 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             };
 
             // Rebuild sessionListViewData to update the UI immediately
-            const sessionListViewData = buildSessionListViewData(
-                updatedSessions,
-                state.machines,
-                { groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject }
-            );
+            const sessionListViewData = buildSessionListViewDataWithServerScope({
+                sessions: updatedSessions,
+                machines: state.machines,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+            });
 
             return {
                 ...state,
                 sessions: updatedSessions,
-                sessionListViewData
+                sessionListViewData,
+                sessionListViewDataByServerId: setActiveServerSessionListCache(
+                    state.sessionListViewDataByServerId,
+                    sessionListViewData,
+                ),
             };
         }),
         markSessionOptimisticThinking: (sessionId: string) => set((state) => {
@@ -468,11 +480,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     optimisticThinkingAt: Date.now(),
                 },
             };
-            const sessionListViewData = buildSessionListViewData(
-                nextSessions,
-                state.machines,
-                { groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject }
-            );
+            const sessionListViewData = buildSessionListViewDataWithServerScope({
+                sessions: nextSessions,
+                machines: state.machines,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+            });
 
             const existingTimeout = optimisticThinkingTimeoutBySessionId.get(sessionId);
             if (existingTimeout) {
@@ -492,13 +504,18 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                             optimisticThinkingAt: null,
                         },
                     };
+                    const nextSessionListViewData = buildSessionListViewDataWithServerScope({
+                        sessions: next,
+                        machines: s.machines,
+                        groupInactiveSessionsByProject: s.settings.groupInactiveSessionsByProject,
+                    });
                     return {
                         ...s,
                         sessions: next,
-                        sessionListViewData: buildSessionListViewData(
-                            next,
-                            s.machines,
-                            { groupInactiveSessionsByProject: s.settings.groupInactiveSessionsByProject }
+                        sessionListViewData: nextSessionListViewData,
+                        sessionListViewDataByServerId: setActiveServerSessionListCache(
+                            s.sessionListViewDataByServerId,
+                            nextSessionListViewData,
                         ),
                     };
                 });
@@ -509,6 +526,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 ...state,
                 sessions: nextSessions,
                 sessionListViewData,
+                sessionListViewDataByServerId: setActiveServerSessionListCache(
+                    state.sessionListViewDataByServerId,
+                    sessionListViewData,
+                ),
             };
         }),
         clearSessionOptimisticThinking: (sessionId: string) => set((state) => {
@@ -529,14 +550,19 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     optimisticThinkingAt: null,
                 },
             };
+            const nextSessionListViewData = buildSessionListViewDataWithServerScope({
+                sessions: nextSessions,
+                machines: state.machines,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+            });
 
             return {
                 ...state,
                 sessions: nextSessions,
-                sessionListViewData: buildSessionListViewData(
-                    nextSessions,
-                    state.machines,
-                    { groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject }
+                sessionListViewData: nextSessionListViewData,
+                sessionListViewDataByServerId: setActiveServerSessionListCache(
+                    state.sessionListViewDataByServerId,
+                    nextSessionListViewData,
                 ),
             };
         }),
@@ -727,11 +753,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             saveSessionLastViewed(sessionLastViewed);
             
             // Rebuild sessionListViewData without the deleted session
-            const sessionListViewData = buildSessionListViewData(
-                remainingSessions,
-                state.machines,
-                { groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject }
-            );
+            const sessionListViewData = buildSessionListViewDataWithServerScope({
+                sessions: remainingSessions,
+                machines: state.machines,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+            });
             
             return {
                 ...state,
@@ -739,7 +765,11 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 sessionMessages: remainingSessionMessages,
                 sessionGitStatus: remainingGitStatus,
                 sessionLastViewed: { ...sessionLastViewed },
-                sessionListViewData
+                sessionListViewData,
+                sessionListViewDataByServerId: setActiveServerSessionListCache(
+                    state.sessionListViewDataByServerId,
+                    sessionListViewData,
+                ),
             };
         }),
     };

@@ -57,12 +57,12 @@ describe('TokenStorage (web)', () => {
         await expect(TokenStorage.removeCredentials()).resolves.toBe(false);
     });
 
-    it('calls localStorage.getItem at most once per getCredentials call', async () => {
+    it('checks both primary and legacy scoped keys when credentials are missing', async () => {
         const storage = installStorage();
         storage.setItemMock('auth_credentials', JSON.stringify({ token: 't', secret: 's' }));
 
         const { TokenStorage } = await import('./tokenStorage');
         await TokenStorage.getCredentials();
-        expect(storage.getItemMock).toHaveBeenCalledTimes(1);
+        expect(storage.getItemMock).toHaveBeenCalledTimes(2);
     });
 });

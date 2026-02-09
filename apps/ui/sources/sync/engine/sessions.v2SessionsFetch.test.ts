@@ -5,8 +5,13 @@ import { HappyError } from '@/utils/errors';
 
 import { fetchAndApplySessions, type SessionListEncryption } from './sessionsSnapshot';
 
-vi.mock('../serverConfig', () => ({
-    getServerUrl: () => 'https://example.test',
+vi.mock('../serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({
+        serverId: 'test',
+        serverUrl: 'https://example.test',
+        kind: 'custom',
+        generation: 1,
+    }),
 }));
 
 type SessionRow = {
@@ -178,5 +183,37 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
                 log: { log: () => {} },
             }),
         ).rejects.toThrow('Invalid /v2/sessions response');
+    });
+
+    it('uses injected request transport when provided', async () => {
+        const fetchSpy = vi.fn();
+        vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
+
+        const requestSpy = vi.fn(async () =>
+            jsonResponse({
+                sessions: [buildSessionRow({ id: 's1', seq: 1 })],
+                nextCursor: null,
+                hasNext: false,
+            }),
+        );
+        const { encryption } = createEncryptionHarness();
+        const sessionDataKeys = new Map<string, Uint8Array>();
+        const appliedSessions: Array<Record<string, unknown>> = [];
+
+        await fetchAndApplySessions({
+            credentials: { token: 't', secret: 's' },
+            encryption,
+            sessionDataKeys,
+            request: (path, init) => requestSpy(path, init),
+            applySessions: (sessions) => {
+                appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
+            },
+            repairInvalidReadStateV1: async () => {},
+            log: { log: () => {} },
+        });
+
+        expect(requestSpy).toHaveBeenCalledTimes(1);
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(appliedSessions.map((session) => session.id)).toEqual(['s1']);
     });
 });

@@ -1,7 +1,8 @@
 import type { Machine, Session } from '../../storageTypes';
 import type { Settings } from '../../settings';
 import type { SessionListViewItem } from '../../sessionListViewData';
-import { buildSessionListViewData } from '../../sessionListViewData';
+import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
+import { setActiveServerSessionListCache } from '../sessionListCache';
 
 import type { StoreGet, StoreSet } from './_shared';
 
@@ -14,6 +15,7 @@ type MachinesDomainDependencies = Readonly<{
     sessions: Record<string, Session>;
     settings: Settings;
     sessionListViewData: SessionListViewItem[] | null;
+    sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
 }>;
 
 export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDependencies>({
@@ -40,7 +42,9 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     });
                 }
 
-                const sessionListViewData = buildSessionListViewData(state.sessions, mergedMachines, {
+                const sessionListViewData = buildSessionListViewDataWithServerScope({
+                    sessions: state.sessions,
+                    machines: mergedMachines,
                     groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
                 });
 
@@ -48,8 +52,11 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     ...state,
                     machines: mergedMachines,
                     sessionListViewData,
+                    sessionListViewDataByServerId: setActiveServerSessionListCache(
+                        state.sessionListViewDataByServerId,
+                        sessionListViewData,
+                    ),
                 };
             }),
     };
 }
-

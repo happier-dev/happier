@@ -127,4 +127,41 @@ describe('buildSessionListViewData', () => {
         const group = data.find((i) => i.type === 'project-group') as any;
         expect(group?.displayPath).toBe('/home/userfoo/repo');
     });
+
+    it('propagates server scope metadata to all list rows when provided', () => {
+        const machine = makeMachine({
+            id: 'm1',
+            metadata: { host: 'm1', platform: 'darwin', happyCliVersion: '0.0.0', happyHomeDir: '/h', homeDir: '/home/u' },
+        });
+
+        const sessions: Record<string, Session> = {
+            active: makeSession({
+                id: 'active',
+                active: true,
+                createdAt: 1,
+                updatedAt: 100,
+                metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+            inactive: makeSession({
+                id: 'inactive',
+                createdAt: 2,
+                updatedAt: 50,
+                metadata: { machineId: 'm1', path: '/home/u/repoA', homeDir: '/home/u', host: 'm1', version: '0.0.0', flavor: 'claude' },
+            }),
+        };
+
+        const data = buildSessionListViewData(
+            sessions,
+            { [machine.id]: machine },
+            {
+                groupInactiveSessionsByProject: true,
+                serverScope: { serverId: 'server-a', serverName: 'Server A' },
+            }
+        );
+
+        for (const item of data) {
+            expect((item as any).serverId).toBe('server-a');
+            expect((item as any).serverName).toBe('Server A');
+        }
+    });
 });

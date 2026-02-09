@@ -1,6 +1,6 @@
 import { AuthCredentials } from '@/auth/tokenStorage';
 import { backoff } from '@/utils/time';
-import { getServerUrl } from './serverConfig';
+import { serverFetch } from './http/client';
 import {
     SessionShare,
     SessionShareResponse,
@@ -18,8 +18,6 @@ import {
     ConsentRequiredError,
     SessionSharingError
 } from './sharingTypes';
-
-const API_ENDPOINT = getServerUrl();
 
 /**
  * Get all shares for a session
@@ -40,12 +38,12 @@ export async function getSessionShares(
     sessionId: string
 ): Promise<SessionShare[]> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/shares`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/shares`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -83,14 +81,14 @@ export async function createSessionShare(
     request: CreateSessionShareRequest
 ): Promise<SessionShare> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/shares`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/shares`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(request)
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -131,14 +129,14 @@ export async function updateSessionShare(
     patch: { accessLevel?: 'view' | 'edit' | 'admin'; canApprovePermissions?: boolean }
 ): Promise<SessionShare> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/shares/${shareId}`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/shares/${shareId}`, {
             method: 'PATCH',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(patch)
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -175,12 +173,12 @@ export async function deleteSessionShare(
     shareId: string
 ): Promise<void> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/shares/${shareId}`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/shares/${shareId}`, {
             method: 'DELETE',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -217,14 +215,14 @@ export async function createPublicShare(
     request: CreatePublicShareRequest & { token: string }
 ): Promise<PublicSessionShare> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/public-share`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(request)
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -246,12 +244,12 @@ export async function getPublicShare(
     sessionId: string
 ): Promise<PublicSessionShare | null> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/public-share`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -273,12 +271,12 @@ export async function deletePublicShare(
     sessionId: string
 ): Promise<void> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/public-share`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share`, {
             method: 'DELETE',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -317,20 +315,22 @@ export async function accessPublicShare(
     credentials?: AuthCredentials
 ): Promise<AccessPublicShareResponse> {
     return await backoff(async () => {
-        const url = new URL(`${API_ENDPOINT}/v1/public-share/${token}`);
+        const path = `/v1/public-share/${token}`;
+        const query = new URLSearchParams();
         if (consent !== undefined) {
-            url.searchParams.set('consent', consent.toString());
+            query.set('consent', consent.toString());
         }
+        const requestPath = query.size > 0 ? `${path}?${query.toString()}` : path;
 
         const headers: Record<string, string> = {};
         if (credentials) {
             headers['Authorization'] = `Bearer ${credentials.token}`;
         }
 
-        const response = await fetch(url.toString(), {
+        const response = await serverFetch(requestPath, {
             method: 'GET',
             headers
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 404) {
@@ -358,12 +358,12 @@ export async function getPublicShareBlockedUsers(
     sessionId: string
 ): Promise<PublicShareBlockedUsersResponse> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/public-share/blocked-users`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share/blocked-users`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -388,14 +388,14 @@ export async function blockPublicShareUser(
     request: BlockPublicShareUserRequest
 ): Promise<void> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/public-share/blocked-users`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share/blocked-users`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(request)
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -418,12 +418,12 @@ export async function unblockPublicShareUser(
     blockedUserId: string
 ): Promise<void> {
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/sessions/${sessionId}/public-share/blocked-users/${blockedUserId}`, {
+        const response = await serverFetch(`/v1/sessions/${sessionId}/public-share/blocked-users/${blockedUserId}`, {
             method: 'DELETE',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {
@@ -443,17 +443,20 @@ export async function getPublicShareAccessLogs(
     limit?: number
 ): Promise<PublicShareAccessLogsResponse> {
     return await backoff(async () => {
-        const url = new URL(`${API_ENDPOINT}/v1/sessions/${sessionId}/public-share/access-logs`);
+        const query = new URLSearchParams();
         if (limit !== undefined) {
-            url.searchParams.set('limit', limit.toString());
+            query.set('limit', limit.toString());
         }
+        const requestPath = query.size > 0
+            ? `/v1/sessions/${sessionId}/public-share/access-logs?${query.toString()}`
+            : `/v1/sessions/${sessionId}/public-share/access-logs`;
 
-        const response = await fetch(url.toString(), {
+        const response = await serverFetch(requestPath, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 403) {

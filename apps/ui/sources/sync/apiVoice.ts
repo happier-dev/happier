@@ -1,5 +1,5 @@
 import { AuthCredentials } from '@/auth/tokenStorage';
-import { getServerUrl } from './serverConfig';
+import { serverFetch } from './http/client';
 
 export type VoiceTokenResponse =
     | {
@@ -34,8 +34,6 @@ export async function fetchHappierVoiceToken(
     sessionId: string,
     options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<VoiceTokenResponse> {
-    const serverUrl = getServerUrl();
-
     const timeoutMs = options?.timeoutMs ?? 10_000;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -52,17 +50,17 @@ export async function fetchHappierVoiceToken(
 
     let response: Response;
     try {
-        response = await fetch(`${serverUrl}/v1/voice/token`, {
+        response = await serverFetch('/v1/voice/token', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                sessionId
+                sessionId,
             }),
             signal: controller.signal,
-        });
+        }, { includeAuth: false });
     } finally {
         clearTimeout(timeout);
         if (upstreamSignal) {
@@ -91,14 +89,13 @@ export async function completeHappierVoiceSession(
     params: { leaseId: string; providerConversationId: string },
     options?: { timeoutMs?: number },
 ): Promise<void> {
-    const serverUrl = getServerUrl();
     const timeoutMs = options?.timeoutMs ?? 5000;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const response = await fetch(`${serverUrl}/v1/voice/session/complete`, {
+        const response = await serverFetch('/v1/voice/session/complete', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
@@ -106,7 +103,7 @@ export async function completeHappierVoiceSession(
             },
             body: JSON.stringify(params),
             signal: controller.signal,
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             let bodyText: string | null = null;

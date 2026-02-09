@@ -1,7 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/storageScope';
-import { getServerUrl } from '@/sync/serverConfig';
+import { getActiveServerId, getActiveServerUrl, listServerProfiles } from '@/sync/serverProfiles';
 import { digest } from '@/platform/digest';
 import { encodeBase64 } from '@/encryption/base64';
 
@@ -15,48 +15,77 @@ function textToUtf8Bytes(value: string): Uint8Array {
     return new TextEncoder().encode(value);
 }
 
-async function getServerHashScope(): Promise<string> {
-    const url = getServerUrl().trim().replace(/\/+$/, '');
-    const hash = await digest('SHA-256', textToUtf8Bytes(url));
-    return encodeBase64(hash, 'base64url');
+type ScopedStorageKeys = Readonly<{
+    primary: string;
+    legacy: string | null;
+}>;
+
+function normalizeUrl(raw: string): string {
+    return String(raw ?? '').trim().replace(/\/+$/, '');
+}
+
+function sanitizeScopeToken(raw: string): string {
+    const token = String(raw ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '_').replace(/_+/g, '_');
+    return token || 'default';
 }
 
 async function getServerHashScopeForServerUrl(serverUrl: string): Promise<string> {
-    const normalized = String(serverUrl ?? '').trim().replace(/\/+$/, '');
-    if (!normalized) {
-        // Fall back to current server scope to keep behavior safe.
-        return await getServerHashScope();
-    }
+    const normalized = normalizeUrl(serverUrl);
+    if (!normalized) return 'default';
     const hash = await digest('SHA-256', textToUtf8Bytes(normalized));
     return encodeBase64(hash, 'base64url');
 }
 
-async function getServerScopedKey(baseKey: string, serverUrlOverride?: string): Promise<string> {
+function makeScopedKey(baseKey: string, scopeToken: string): string {
     const scope = Platform.OS === 'web' ? null : readStorageScopeFromEnv();
-    const serverHash = serverUrlOverride
-        ? await getServerHashScopeForServerUrl(serverUrlOverride)
-        : await getServerHashScope();
-    return scopedStorageId(`${baseKey}__srv_${serverHash}`, scope);
+    return scopedStorageId(`${baseKey}__srv_${scopeToken}`, scope);
 }
 
-async function getAuthKey(): Promise<string> {
-    return await getServerScopedKey(AUTH_KEY);
+function resolveServerIdForUrl(serverUrl: string): string | null {
+    const normalized = normalizeUrl(serverUrl);
+    if (!normalized) return null;
+    const match = listServerProfiles().find((profile) => normalizeUrl(profile.serverUrl) === normalized);
+    return match?.id ?? null;
+}
+
+async function getServerScopedKeys(baseKey: string, serverUrlOverride?: string): Promise<ScopedStorageKeys> {
+    const normalizedUrl = normalizeUrl(serverUrlOverride ?? getActiveServerUrl());
+    const serverId = serverUrlOverride ? resolveServerIdForUrl(normalizedUrl) : getActiveServerId();
+
+    if (!serverId) {
+        const hashScope = await getServerHashScopeForServerUrl(normalizedUrl);
+        return {
+            primary: makeScopedKey(baseKey, hashScope),
+            legacy: null,
+        };
+    }
+
+    const idScope = sanitizeScopeToken(serverId);
+    const legacyScope = await getServerHashScopeForServerUrl(normalizedUrl);
+    return {
+        primary: makeScopedKey(baseKey, idScope),
+        legacy: legacyScope === idScope ? null : makeScopedKey(baseKey, legacyScope),
+    };
+}
+
+async function getAuthKeys(serverUrlOverride?: string): Promise<ScopedStorageKeys> {
+    return await getServerScopedKeys(AUTH_KEY, serverUrlOverride);
 }
 
 async function getPendingExternalAuthKey(): Promise<string> {
-    return await getServerScopedKey(PENDING_EXTERNAL_AUTH_KEY);
+    return (await getServerScopedKeys(PENDING_EXTERNAL_AUTH_KEY)).primary;
 }
 
 async function getPendingExternalConnectKey(): Promise<string> {
-    return await getServerScopedKey(PENDING_EXTERNAL_CONNECT_KEY);
+    return (await getServerScopedKeys(PENDING_EXTERNAL_CONNECT_KEY)).primary;
 }
 
 async function getAuthAutoRedirectSuppressedUntilKey(): Promise<string> {
-    return await getServerScopedKey(AUTH_AUTO_REDIRECT_SUPPRESSED_UNTIL_KEY);
+    return (await getServerScopedKeys(AUTH_AUTO_REDIRECT_SUPPRESSED_UNTIL_KEY)).primary;
 }
 
 async function getRecoveryKeyReminderDismissedKey(): Promise<string> {
-    return await getServerScopedKey(RECOVERY_KEY_REMINDER_DISMISSED_KEY);
+    return (await getServerScopedKeys(RECOVERY_KEY_REMINDER_DISMISSED_KEY)).primary;
 }
 
 // Cache for synchronous access
@@ -175,6 +204,80 @@ async function removeStoredValue(key: string, label: string): Promise<boolean> {
     }
 }
 
+function parseCredentialsRaw(raw: string | null): AuthCredentials | null {
+    if (!raw) return null;
+    try {
+        return JSON.parse(raw) as AuthCredentials;
+    } catch {
+        return null;
+    }
+}
+
+async function readCredentialRawByKey(key: string): Promise<string | null> {
+    if (Platform.OS === 'web') {
+        try {
+            return localStorage.getItem(key);
+        } catch (error) {
+            console.error('Error getting credentials:', error);
+            return null;
+        }
+    }
+
+    const cached = credentialsCacheByKey.get(key);
+    if (cached) return cached;
+
+    try {
+        const stored = await SecureStore.getItemAsync(key);
+        if (stored) credentialsCacheByKey.set(key, stored);
+        return stored;
+    } catch (error) {
+        console.error('Error getting credentials:', error);
+        return null;
+    }
+}
+
+async function writeCredentialRawByKey(key: string, raw: string): Promise<boolean> {
+    if (Platform.OS === 'web') {
+        try {
+            localStorage.setItem(key, raw);
+            return true;
+        } catch (error) {
+            console.error('Error setting credentials:', error);
+            return false;
+        }
+    }
+
+    try {
+        await SecureStore.setItemAsync(key, raw);
+        credentialsCacheByKey.set(key, raw);
+        return true;
+    } catch (error) {
+        console.error('Error setting credentials:', error);
+        return false;
+    }
+}
+
+async function removeCredentialByKey(key: string): Promise<boolean> {
+    if (Platform.OS === 'web') {
+        try {
+            localStorage.removeItem(key);
+            return true;
+        } catch (error) {
+            console.error('Error removing credentials:', error);
+            return false;
+        }
+    }
+
+    try {
+        await SecureStore.deleteItemAsync(key);
+        credentialsCacheByKey.delete(key);
+        return true;
+    } catch (error) {
+        console.error('Error removing credentials:', error);
+        return false;
+    }
+}
+
 export const TokenStorage = {
     async getAuthAutoRedirectSuppressedUntil(): Promise<number> {
         const key = await getAuthAutoRedirectSuppressedUntilKey();
@@ -272,130 +375,70 @@ export const TokenStorage = {
     },
 
     async getCredentials(): Promise<AuthCredentials | null> {
-        const key = await getAuthKey();
-        if (Platform.OS === 'web') {
-            try {
-                const raw = localStorage.getItem(key);
-                if (!raw) return null;
-                return JSON.parse(raw) as AuthCredentials;
-            } catch (error) {
-                console.error('Error getting credentials:', error);
-                return null;
-            }
+        const keys = await getAuthKeys();
+        const primaryRaw = await readCredentialRawByKey(keys.primary);
+        const primaryParsed = parseCredentialsRaw(primaryRaw);
+        if (primaryParsed) return primaryParsed;
+
+        if (!keys.legacy) return null;
+
+        const legacyRaw = await readCredentialRawByKey(keys.legacy);
+        const legacyParsed = parseCredentialsRaw(legacyRaw);
+        if (!legacyParsed || !legacyRaw) return null;
+
+        const migrated = await writeCredentialRawByKey(keys.primary, legacyRaw);
+        if (migrated) {
+            await removeCredentialByKey(keys.legacy);
         }
-        const cached = credentialsCacheByKey.get(key);
-        if (cached) {
-            try {
-                return JSON.parse(cached) as AuthCredentials;
-            } catch {
-                // Ignore cache parse errors, fall through to secure store read.
-            }
-        }
-        try {
-            const stored = await SecureStore.getItemAsync(key);
-            if (!stored) return null;
-            credentialsCacheByKey.set(key, stored);
-            return JSON.parse(stored) as AuthCredentials;
-        } catch (error) {
-            console.error('Error getting credentials:', error);
-            return null;
-        }
+        return legacyParsed;
     },
 
     async getCredentialsForServerUrl(serverUrl: string): Promise<AuthCredentials | null> {
-        const key = await getServerScopedKey(AUTH_KEY, serverUrl);
-        if (Platform.OS === 'web') {
-            try {
-                const raw = localStorage.getItem(key);
-                if (!raw) return null;
-                return JSON.parse(raw) as AuthCredentials;
-            } catch (error) {
-                console.error('Error getting credentials:', error);
-                return null;
-            }
-        }
+        const keys = await getAuthKeys(serverUrl);
+        const primaryRaw = await readCredentialRawByKey(keys.primary);
+        const primaryParsed = parseCredentialsRaw(primaryRaw);
+        if (primaryParsed) return primaryParsed;
 
-        const cached = credentialsCacheByKey.get(key);
-        if (cached) {
-            try {
-                return JSON.parse(cached) as AuthCredentials;
-            } catch {
-                // Ignore cache parse errors, fall through to secure store read.
-            }
+        if (!keys.legacy) return null;
+
+        const legacyRaw = await readCredentialRawByKey(keys.legacy);
+        const legacyParsed = parseCredentialsRaw(legacyRaw);
+        if (!legacyParsed || !legacyRaw) return null;
+
+        const migrated = await writeCredentialRawByKey(keys.primary, legacyRaw);
+        if (migrated) {
+            await removeCredentialByKey(keys.legacy);
         }
-        try {
-            const stored = await SecureStore.getItemAsync(key);
-            if (!stored) return null;
-            credentialsCacheByKey.set(key, stored);
-            return JSON.parse(stored) as AuthCredentials;
-        } catch (error) {
-            console.error('Error getting credentials:', error);
-            return null;
-        }
+        return legacyParsed;
     },
 
     async setCredentials(credentials: AuthCredentials): Promise<boolean> {
-        const key = await getAuthKey();
-        if (Platform.OS === 'web') {
-            try {
-                localStorage.setItem(key, JSON.stringify(credentials));
-                return true;
-            } catch (error) {
-                console.error('Error setting credentials:', error);
-                return false;
-            }
+        const keys = await getAuthKeys();
+        const json = JSON.stringify(credentials);
+        const written = await writeCredentialRawByKey(keys.primary, json);
+        if (!written) return false;
+        if (keys.legacy) {
+            await removeCredentialByKey(keys.legacy);
         }
-        try {
-            const json = JSON.stringify(credentials);
-            await SecureStore.setItemAsync(key, json);
-            credentialsCacheByKey.set(key, json);
-            return true;
-        } catch (error) {
-            console.error('Error setting credentials:', error);
-            return false;
-        }
+        return true;
     },
 
     async removeCredentials(): Promise<boolean> {
-        const key = await getAuthKey();
-        if (Platform.OS === 'web') {    
-            try {
-                localStorage.removeItem(key);
-                return true;
-            } catch (error) {
-                console.error('Error removing credentials:', error);
-                return false;
-            }
+        const keys = await getAuthKeys();
+        const primaryRemoved = await removeCredentialByKey(keys.primary);
+        if (keys.legacy) {
+            await removeCredentialByKey(keys.legacy);
         }
-        try {
-            await SecureStore.deleteItemAsync(key);
-            credentialsCacheByKey.delete(key);
-            return true;
-        } catch (error) {
-            console.error('Error removing credentials:', error);
-            return false;
-        }
+        return primaryRemoved;
     },
 
     async removeCredentialsForServerUrl(serverUrl: string): Promise<boolean> {
-        const key = await getServerScopedKey(AUTH_KEY, serverUrl);
-        if (Platform.OS === 'web') {
-            try {
-                localStorage.removeItem(key);
-                return true;
-            } catch (error) {
-                console.error('Error removing credentials:', error);
-                return false;
-            }
+        const keys = await getAuthKeys(serverUrl);
+        const primaryRemoved = await removeCredentialByKey(keys.primary);
+        if (keys.legacy) {
+            await removeCredentialByKey(keys.legacy);
         }
-        try {
-            await SecureStore.deleteItemAsync(key);
-            credentialsCacheByKey.delete(key);
-            return true;
-        } catch (error) {
-            console.error('Error removing credentials:', error);
-            return false;
-        }
+        return primaryRemoved;
     },
 
     async getPendingExternalAuth(): Promise<PendingExternalAuth | null> {

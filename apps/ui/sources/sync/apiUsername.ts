@@ -1,23 +1,21 @@
 import { AuthCredentials } from '@/auth/tokenStorage';
 import { backoff } from '@/utils/time';
-import { getServerUrl } from './serverConfig';
+import { serverFetch } from './http/client';
 import { HappyError } from '@/utils/errors';
 
 export async function setAccountUsername(
     credentials: AuthCredentials,
     username: string,
 ): Promise<{ username: string }> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/account/username`, {
+        const response = await serverFetch('/v1/account/username', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ username }),
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -44,4 +42,3 @@ export async function setAccountUsername(
         return { username: (data as any).username };
     });
 }
-

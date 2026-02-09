@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/tokenStorage';
 import { log } from '@/log';
-import { getServerUrl } from '../serverConfig';
 import type { Machine } from '../storageTypes';
+import { serverFetch } from '../http/client';
 
 type MachineEncryption = {
     decryptMetadata: (version: number, value: string) => Promise<any>;
@@ -100,12 +100,15 @@ export async function fetchAndApplyMachines(params: {
     credentials: AuthCredentials;
     encryption: SyncEncryption;
     machineDataKeys: Map<string, Uint8Array>;
+    request?: (path: string, init: RequestInit) => Promise<Response>;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
 }): Promise<void> {
     const { credentials, encryption, machineDataKeys, applyMachines } = params;
+    const request =
+        params.request
+        ?? ((path: string, init: RequestInit) => serverFetch(path, init, { includeAuth: false }));
 
-    const API_ENDPOINT = getServerUrl();
-    const response = await fetch(`${API_ENDPOINT}/v1/machines`, {
+    const response = await request('/v1/machines', {
         headers: {
             'Authorization': `Bearer ${credentials.token}`,
             'Content-Type': 'application/json',

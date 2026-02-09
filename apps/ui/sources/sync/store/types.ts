@@ -44,6 +44,7 @@ export interface LegacySessionsSlice {
 export interface SessionsDomainSlice {
     sessions: Record<string, Session>;
     sessionListViewData: SessionListViewItem[] | null;
+    sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
     sessionGitStatus: Record<string, GitStatus | null>;
     sessionLastViewed: Record<string, number>;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;

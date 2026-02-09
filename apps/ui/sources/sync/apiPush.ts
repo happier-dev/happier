@@ -1,23 +1,24 @@
 import { AuthCredentials } from '@/auth/tokenStorage';
 import { backoff } from '@/utils/time';
 import { HappyError } from '@/utils/errors';
-import { getServerUrl } from './serverConfig';
+import { serverFetch } from './http/client';
 
 export async function registerPushToken(
     credentials: AuthCredentials,
     token: string,
     opts: Readonly<{ apiEndpoint?: string }> = {},
 ): Promise<void> {
-    const API_ENDPOINT = (opts.apiEndpoint ?? getServerUrl()).trim().replace(/\/+$/, '');
+    const API_ENDPOINT = (opts.apiEndpoint ?? '').trim().replace(/\/+$/, '');
+    const path = API_ENDPOINT ? `${API_ENDPOINT}/v1/push-tokens` : '/v1/push-tokens';
     await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/push-tokens`, {
+        const response = await serverFetch(path, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ token })
-        });
+            body: JSON.stringify({ token }),
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {

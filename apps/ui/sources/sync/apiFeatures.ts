@@ -1,4 +1,4 @@
-import { getServerUrl } from './serverConfig';
+import { serverFetch } from './http/client';
 
 import { FeaturesResponseSchema, type FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 
@@ -20,15 +20,14 @@ export async function getServerFeatures(params?: { timeoutMs?: number; force?: b
         }
     }
 
-    const url = `${getServerUrl()}/v1/features`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-        const response = await fetch(url, {
+        const response = await serverFetch('/v1/features', {
             method: 'GET',
             signal: controller.signal,
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             cached = { value: null, at: Date.now() };

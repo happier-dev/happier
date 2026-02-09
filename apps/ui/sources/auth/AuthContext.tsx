@@ -1,16 +1,18 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { TokenStorage, AuthCredentials } from '@/auth/tokenStorage';
-import { syncCreate } from '@/sync/sync';
-import * as Updates from 'expo-updates';
+import { syncSwitchServer } from '@/sync/sync';
 import { clearPersistence } from '@/sync/persistence';
-import { Platform } from 'react-native';
 import { trackLogout } from '@/track';
+import { subscribeActiveServer } from '@/sync/serverRuntime';
+import { switchConnectionToActiveServer } from '@/sync/connectionManager';
+import { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } from '@/sync/concurrentSessionCache';
 
 interface AuthContextType {
     isAuthenticated: boolean;
     credentials: AuthCredentials | null;
     login: (token: string, secret: string) => Promise<void>;
     logout: () => Promise<void>;
+    refreshFromActiveServer: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -18,44 +20,65 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children, initialCredentials }: { children: ReactNode; initialCredentials: AuthCredentials | null }) {
     const [isAuthenticated, setIsAuthenticated] = useState(!!initialCredentials);
     const [credentials, setCredentials] = useState<AuthCredentials | null>(initialCredentials);
+    const activeServerKeyRef = React.useRef<string | null>(null);
 
-    // Update global auth state when local state changes
-    useEffect(() => {
-        setCurrentAuth(credentials ? { isAuthenticated, credentials, login, logout } : null);
-    }, [isAuthenticated, credentials]);
-
-    const login = async (token: string, secret: string) => {
+    const login = React.useCallback(async (token: string, secret: string) => {
         const newCredentials: AuthCredentials = { token, secret };
         const success = await TokenStorage.setCredentials(newCredentials);
-        if (success) {
-            await syncCreate(newCredentials);
-            setCredentials(newCredentials);
-            setIsAuthenticated(true);
-        } else {
+        if (!success) {
             throw new Error('Failed to save credentials');
         }
-    };
+        await syncSwitchServer(newCredentials);
+        setCredentials(newCredentials);
+        setIsAuthenticated(true);
+    }, []);
 
-    const logout = async () => {
+    const logout = React.useCallback(async () => {
         trackLogout();
         clearPersistence();
         await TokenStorage.removeCredentials();
-        
-        // Update React state to ensure UI consistency
+        await syncSwitchServer(null);
         setCredentials(null);
         setIsAuthenticated(false);
-        
-        if (Platform.OS === 'web') {
-            window.location.reload();
-        } else {
-            try {
-                await Updates.reloadAsync();
-            } catch (error) {
-                // In dev mode, reloadAsync will throw ERR_UPDATES_DISABLED
-                console.log('Reload failed (expected in dev mode):', error);
-            }
+    }, []);
+
+    const refreshFromActiveServer = React.useCallback(async () => {
+        const nextCredentials = await switchConnectionToActiveServer();
+        setCredentials(nextCredentials);
+        setIsAuthenticated(Boolean(nextCredentials));
+    }, []);
+
+    // Update global auth state when local state changes
+    useEffect(() => {
+        setCurrentAuth({
+            isAuthenticated,
+            credentials,
+            login,
+            logout,
+            refreshFromActiveServer,
+        });
+    }, [isAuthenticated, credentials, login, logout, refreshFromActiveServer]);
+
+    useEffect(() => {
+        const unsubscribe = subscribeActiveServer((snapshot) => {
+            const serverKey = `${snapshot.serverId}|${snapshot.serverUrl}`;
+            if (activeServerKeyRef.current === serverKey) return;
+            activeServerKeyRef.current = serverKey;
+            void refreshFromActiveServer();
+        });
+        return unsubscribe;
+    }, [refreshFromActiveServer]);
+
+    useEffect(() => {
+        if (!isAuthenticated) {
+            stopConcurrentSessionCacheSync();
+            return;
         }
-    };
+        startConcurrentSessionCacheSync();
+        return () => {
+            stopConcurrentSessionCacheSync();
+        };
+    }, [isAuthenticated]);
 
     return (
         <AuthContext.Provider
@@ -64,6 +87,7 @@ export function AuthProvider({ children, initialCredentials }: { children: React
                 credentials,
                 login,
                 logout,
+                refreshFromActiveServer,
             }}
         >
             {children}

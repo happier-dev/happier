@@ -1,7 +1,7 @@
 import { AuthCredentials } from '@/auth/tokenStorage';
 import { backoff } from '@/utils/time';
-import { getServerUrl } from './serverConfig';
 import { HappyError } from '@/utils/errors';
+import { serverFetch } from './http/client';
 
 //
 // Types
@@ -71,14 +71,12 @@ export async function kvGet(
     credentials: AuthCredentials,
     key: string
 ): Promise<KvItem | null> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/kv/${encodeURIComponent(key)}`, {
+        const response = await serverFetch(`/v1/kv/${encodeURIComponent(key)}`, {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`
             }
-        });
+        }, { includeAuth: false });
 
         if (response.status === 404) {
             return null;
@@ -110,8 +108,6 @@ export async function kvList(
     credentials: AuthCredentials,
     params: KvListParams = {}
 ): Promise<KvListResponse> {
-    const API_ENDPOINT = getServerUrl();
-
     const queryParams = new URLSearchParams();
     if (params.prefix) {
         queryParams.append('prefix', params.prefix);
@@ -121,15 +117,15 @@ export async function kvList(
     }
 
     const url = queryParams.toString()
-        ? `${API_ENDPOINT}/v1/kv?${queryParams.toString()}`
-        : `${API_ENDPOINT}/v1/kv`;
+        ? `/v1/kv?${queryParams.toString()}`
+        : '/v1/kv';
 
     return await backoff(async () => {
-        const response = await fetch(url, {
+        const response = await serverFetch(url, {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -165,17 +161,15 @@ export async function kvBulkGet(
         throw new Error('Cannot bulk get more than 100 keys at once');
     }
 
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/kv/bulk`, {
+        const response = await serverFetch('/v1/kv/bulk', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ keys })
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -213,17 +207,15 @@ export async function kvMutate(
         throw new Error('Cannot mutate more than 100 keys at once');
     }
 
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/kv`, {
+        const response = await serverFetch('/v1/kv', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({ mutations })
-        });
+        }, { includeAuth: false });
 
         if (response.status === 409) {
             const data = await response.json() as KvMutateErrorResponse;

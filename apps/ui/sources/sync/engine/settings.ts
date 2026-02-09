@@ -2,11 +2,12 @@ import { tracking } from '@/track';
 import { HappyError } from '@/utils/errors';
 import { applySettings, settingsDefaults, settingsParse, type Settings } from '../settings';
 import { summarizeSettings, summarizeSettingsDelta, dbgSettings, isSettingsSyncDebugEnabled } from '../debugSettings';
-import { getServerUrl } from '../serverConfig';
+import { getActiveServerSnapshot } from '../serverRuntime';
 import { storage } from '../storage';
 import type { AuthCredentials } from '@/auth/tokenStorage';
 import type { Encryption } from '../encryption/encryption';
 import { sealSecretsDeep } from '../secretSettings';
+import { serverFetch } from '../http/client';
 
 export async function syncSettings(params: {
     credentials: AuthCredentials;
@@ -16,7 +17,7 @@ export async function syncSettings(params: {
 }): Promise<void> {
     const { credentials, encryption, pendingSettings, clearPendingSettings } = params;
 
-    const API_ENDPOINT = getServerUrl();
+    const activeServerUrl = getActiveServerSnapshot().serverUrl;
     const maxRetries = 3;
     let retryCount = 0;
     let lastVersionMismatch: { expectedVersion: number; currentVersion: number; pendingKeys: string[] } | null = null;
@@ -24,7 +25,7 @@ export async function syncSettings(params: {
     // Apply pending settings
     if (Object.keys(pendingSettings).length > 0) {
         dbgSettings('syncSettings: pending detected; will POST', {
-            endpoint: API_ENDPOINT,
+            endpoint: activeServerUrl,
             expectedVersion: storage.getState().settingsVersion ?? 0,
             pendingKeys: Object.keys(pendingSettings).sort(),
             pendingSummary: summarizeSettingsDelta(pendingSettings as Partial<Settings>),
@@ -35,13 +36,13 @@ export async function syncSettings(params: {
             const version = storage.getState().settingsVersion;
             const settings = applySettings(storage.getState().settings, pendingSettings);
             dbgSettings('syncSettings: POST attempt', {
-                endpoint: API_ENDPOINT,
+                endpoint: activeServerUrl,
                 attempt: retryCount + 1,
                 expectedVersion: version ?? 0,
                 merged: summarizeSettings(settings, { version }),
             });
 
-            const response = await fetch(`${API_ENDPOINT}/v1/account/settings`, {
+            const response = await serverFetch('/v1/account/settings', {
                 method: 'POST',
                 body: JSON.stringify({
                     settings: await encryption.encryptRaw(settings),
@@ -51,7 +52,7 @@ export async function syncSettings(params: {
                     'Authorization': `Bearer ${credentials.token}`,
                     'Content-Type': 'application/json',
                 },
-            });
+            }, { includeAuth: false });
 
             const data = (await response.json()) as
                 | {
@@ -67,7 +68,7 @@ export async function syncSettings(params: {
             if (data.success) {
                 clearPendingSettings();
                 dbgSettings('syncSettings: POST success; pending cleared', {
-                    endpoint: API_ENDPOINT,
+                    endpoint: activeServerUrl,
                     newServerVersion: (version ?? 0) + 1,
                 });
                 break;
@@ -88,7 +89,7 @@ export async function syncSettings(params: {
                 // Merge: server base + our pending changes (our changes win)
                 const mergedSettings = applySettings(serverSettings, pendingSettings);
                 dbgSettings('syncSettings: version-mismatch merge', {
-                    endpoint: API_ENDPOINT,
+                    endpoint: activeServerUrl,
                     expectedVersion: version ?? 0,
                     currentVersion: data.currentVersion,
                     pendingKeys: Object.keys(pendingSettings).sort(),
@@ -126,12 +127,12 @@ export async function syncSettings(params: {
     }
 
     // Run request
-    const response = await fetch(`${API_ENDPOINT}/v1/account/settings`, {
+    const response = await serverFetch('/v1/account/settings', {
         headers: {
             'Authorization': `Bearer ${credentials.token}`,
             'Content-Type': 'application/json',
         },
-    });
+    }, { includeAuth: false });
 
     if (!response.ok) {
         if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -151,7 +152,7 @@ export async function syncSettings(params: {
         : { ...settingsDefaults };
 
     dbgSettings('syncSettings: GET applied', {
-        endpoint: API_ENDPOINT,
+        endpoint: activeServerUrl,
         serverVersion: data.settingsVersion,
         parsed: summarizeSettings(parsedSettings, { version: data.settingsVersion }),
     });

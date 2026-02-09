@@ -4,7 +4,7 @@ import type { AuthCredentials } from '@/auth/tokenStorage';
 const mocks = vi.hoisted(() => ({
     registerPushToken: vi.fn(),
     listServerProfiles: vi.fn(),
-    getServerUrl: vi.fn(),
+    getActiveServerSnapshot: vi.fn(),
     getCredentialsForServerUrl: vi.fn(),
 }));
 
@@ -30,8 +30,8 @@ vi.mock('../serverProfiles', () => ({
     listServerProfiles: mocks.listServerProfiles,
 }));
 
-vi.mock('../serverConfig', () => ({
-    getServerUrl: mocks.getServerUrl,
+vi.mock('../serverRuntime', () => ({
+    getActiveServerSnapshot: mocks.getActiveServerSnapshot,
 }));
 
 vi.mock('@/auth/tokenStorage', () => ({
@@ -71,7 +71,12 @@ async function arrangeNotifications(): Promise<void> {
 beforeEach(() => {
     mocks.registerPushToken.mockResolvedValue({ ok: true });
     mocks.listServerProfiles.mockReturnValue([]);
-    mocks.getServerUrl.mockReturnValue('https://active.example.test');
+    mocks.getActiveServerSnapshot.mockReturnValue({
+        serverId: 'active',
+        serverUrl: 'https://active.example.test',
+        kind: 'custom',
+        generation: 1,
+    });
     mocks.getCredentialsForServerUrl.mockImplementation(async (serverUrl: string) => profileCredentials(serverUrl));
 });
 
@@ -102,7 +107,12 @@ describe('registerPushTokenIfAvailable logging', () => {
             { serverUrl: 'https://s1.example.test' },
             { serverUrl: 'https://s2.example.test' },
         ]);
-        mocks.getServerUrl.mockReturnValue('https://s2.example.test');
+        mocks.getActiveServerSnapshot.mockReturnValue({
+            serverId: 's2',
+            serverUrl: 'https://s2.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
         mocks.registerPushToken
             .mockRejectedValueOnce(new Error('first server down'))
             .mockResolvedValueOnce({ ok: true });
@@ -128,7 +138,12 @@ describe('registerPushTokenIfAvailable logging', () => {
             { serverUrl: 'https://s1.example.test' },
             { serverUrl: 'https://s2.example.test' },
         ]);
-        mocks.getServerUrl.mockReturnValue('https://s2.example.test');
+        mocks.getActiveServerSnapshot.mockReturnValue({
+            serverId: 's2',
+            serverUrl: 'https://s2.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
         mocks.registerPushToken
             .mockResolvedValueOnce({ ok: true })
             .mockRejectedValueOnce(new Error('active profile failed'))
@@ -156,7 +171,12 @@ describe('registerPushTokenIfAvailable logging', () => {
     it('registers active-server credentials when active server is missing from profiles', async () => {
         await arrangeNotifications();
         mocks.listServerProfiles.mockReturnValue([{ serverUrl: 'https://profile.example.test' }]);
-        mocks.getServerUrl.mockReturnValue('https://active.example.test');
+        mocks.getActiveServerSnapshot.mockReturnValue({
+            serverId: 'active',
+            serverUrl: 'https://active.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
         mocks.registerPushToken
             .mockResolvedValueOnce({ ok: true })
             .mockResolvedValueOnce({ ok: true });
@@ -185,7 +205,12 @@ describe('registerPushTokenIfAvailable logging', () => {
             { serverUrl: 'https://s1.example.test' },
             { serverUrl: 'https://s2.example.test' },
         ]);
-        mocks.getServerUrl.mockReturnValue('https://s2.example.test');
+        mocks.getActiveServerSnapshot.mockReturnValue({
+            serverId: 's2',
+            serverUrl: 'https://s2.example.test',
+            kind: 'custom',
+            generation: 1,
+        });
         mocks.registerPushToken
             .mockRejectedValueOnce(new Error('s1 down'))
             .mockRejectedValueOnce(new Error('s2 down'))

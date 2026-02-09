@@ -1,7 +1,7 @@
 import type { AuthCredentials } from '@/auth/tokenStorage';
 import { HappyError } from '@/utils/errors';
 import { backoff } from '@/utils/time';
-import { getServerUrl } from '@/sync/serverConfig';
+import { serverFetch } from '@/sync/http/client';
 
 import type { AuthProvider } from '@/auth/providers/types';
 import type { AuthProviderId } from '@happier-dev/protocol';
@@ -25,8 +25,10 @@ export function createExternalOAuthProvider(params: {
         supportsProfileBadge: params.supportsProfileBadge,
         connectButtonColor: params.connectButtonColor,
         getExternalSignupUrl: async ({ publicKey }) => {
-            const response = await fetch(
-                `${getServerUrl()}/v1/auth/external/${encodeURIComponent(providerId)}/params?publicKey=${encodeURIComponent(publicKey)}`
+            const response = await serverFetch(
+                `/v1/auth/external/${encodeURIComponent(providerId)}/params?publicKey=${encodeURIComponent(publicKey)}`,
+                undefined,
+                { includeAuth: false },
             );
             if (!response.ok) {
                 if (response.status === 400) {
@@ -47,16 +49,18 @@ export function createExternalOAuthProvider(params: {
             return String(data.url);
         },
         getConnectUrl: async (credentials: AuthCredentials) => {
-            const apiEndpoint = getServerUrl();
-
             return await backoff(async () => {
-                const response = await fetch(`${apiEndpoint}/v1/connect/external/${encodeURIComponent(providerId)}/params`, {
-                    method: 'GET',
-                    headers: {
-                        Authorization: `Bearer ${credentials.token}`,
-                        'Content-Type': 'application/json',
+                const response = await serverFetch(
+                    `/v1/connect/external/${encodeURIComponent(providerId)}/params`,
+                    {
+                        method: 'GET',
+                        headers: {
+                            Authorization: `Bearer ${credentials.token}`,
+                            'Content-Type': 'application/json',
+                        },
                     },
-                });
+                    { includeAuth: false },
+                );
 
                 if (!response.ok) {
                     if (response.status === 400) {
@@ -97,17 +101,19 @@ export function createExternalOAuthProvider(params: {
             });
         },
         finalizeConnect: async (credentials: AuthCredentials, payload: { pending: string; username: string }) => {
-            const apiEndpoint = getServerUrl();
-
             return await backoff(async () => {
-                const response = await fetch(`${apiEndpoint}/v1/connect/external/${encodeURIComponent(providerId)}/finalize`, {
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${credentials.token}`,
-                        'Content-Type': 'application/json',
+                const response = await serverFetch(
+                    `/v1/connect/external/${encodeURIComponent(providerId)}/finalize`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${credentials.token}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(payload),
                     },
-                    body: JSON.stringify(payload),
-                });
+                    { includeAuth: false },
+                );
 
                 if (!response.ok) {
                     if (response.status === 409) {
@@ -140,17 +146,20 @@ export function createExternalOAuthProvider(params: {
             });
         },
         cancelConnectPending: async (credentials: AuthCredentials, pending: string) => {
-            const apiEndpoint = getServerUrl();
             const key = pending.trim();
             if (!key) return;
 
             await backoff(async () => {
-                const response = await fetch(`${apiEndpoint}/v1/connect/external/${encodeURIComponent(providerId)}/pending/${encodeURIComponent(key)}`, {
-                    method: 'DELETE',
-                    headers: {
-                        Authorization: `Bearer ${credentials.token}`,
+                const response = await serverFetch(
+                    `/v1/connect/external/${encodeURIComponent(providerId)}/pending/${encodeURIComponent(key)}`,
+                    {
+                        method: 'DELETE',
+                        headers: {
+                            Authorization: `Bearer ${credentials.token}`,
+                        },
                     },
-                });
+                    { includeAuth: false },
+                );
                 if (!response.ok) {
                     // Best-effort cleanup; ignore failures.
                     return;
@@ -158,15 +167,17 @@ export function createExternalOAuthProvider(params: {
             });
         },
         disconnect: async (credentials: AuthCredentials) => {
-            const apiEndpoint = getServerUrl();
-
             return await backoff(async () => {
-                const response = await fetch(`${apiEndpoint}/v1/connect/external/${encodeURIComponent(providerId)}`, {
-                    method: 'DELETE',
-                    headers: {
-                        Authorization: `Bearer ${credentials.token}`,
+                const response = await serverFetch(
+                    `/v1/connect/external/${encodeURIComponent(providerId)}`,
+                    {
+                        method: 'DELETE',
+                        headers: {
+                            Authorization: `Bearer ${credentials.token}`,
+                        },
                     },
-                });
+                    { includeAuth: false },
+                );
 
                 if (!response.ok) {
                     if (response.status === 404) {

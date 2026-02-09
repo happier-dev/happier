@@ -1,28 +1,27 @@
 import type { AuthCredentials } from '@/auth/tokenStorage';
 import { HappyError } from '@/utils/errors';
 import { backoff } from '@/utils/time';
-import { getServerUrl } from '@/sync/serverConfig';
+import { serverFetch } from '@/sync/http/client';
 
 export async function setAccountIdentityShowOnProfile(params: {
     credentials: AuthCredentials;
     providerId: string;
     showOnProfile: boolean;
 }): Promise<void> {
-    const API_ENDPOINT = getServerUrl();
     const provider = params.providerId.toString().trim().toLowerCase();
     if (!provider) {
         throw new HappyError('Invalid provider', false, { status: 400, kind: 'config' });
     }
 
     await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/account/identity/${encodeURIComponent(provider)}`, {
+        const response = await serverFetch(`/v1/account/identity/${encodeURIComponent(provider)}`, {
             method: 'PATCH',
             headers: {
                 'Authorization': `Bearer ${params.credentials.token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ showOnProfile: params.showOnProfile }),
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             let message = `Failed to update identity (${response.status})`;
@@ -36,4 +35,3 @@ export async function setAccountIdentityShowOnProfile(params: {
         }
     });
 }
-

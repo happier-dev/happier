@@ -14,7 +14,7 @@ import { Platform, AppState } from 'react-native';
 import { resolveSentFrom } from './sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './settings';
-import { Profile } from './profile';
+import { Profile, profileDefaults } from './profile';
 import {
     loadPendingSettings,
     savePendingSettings,
@@ -27,7 +27,8 @@ import { initializeTracking, tracking } from '@/track';
 import { parseToken } from '@/utils/parseToken';
 import { RevenueCat } from './revenueCat';
 import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
-import { getServerUrl } from './serverConfig';
+import { getActiveServerSnapshot } from './serverRuntime';
+import { setActiveServerSessionListCache } from './store/sessionListCache';
 import { config } from '@/config';
 import { log } from '@/log';
 import { gitStatusSync } from './git/gitStatusSync';
@@ -79,6 +80,7 @@ import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrid
 import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/modelOverridePublish';
 import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/acpConfigOptionOverridePublish';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
+import { serverFetch } from './http/client';
 import {
     buildUpdatedSessionFromSocketUpdate,
     fetchAndApplySessions,
@@ -171,6 +173,7 @@ class Sync {
     revenueCatInitialized = false;
     private settingsSecretsKey: Uint8Array | null = null;
     private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
+    private updatesSubscribed = false;
 
     // Generic locking mechanism
     private recalculationLockCount = 0;
@@ -339,6 +342,83 @@ class Sync {
         await this.#init();
     }
 
+    private resetServerScopedRuntimeState = () => {
+        apiSocket.disconnect();
+        this.activityAccumulator.reset();
+
+        for (const timer of this.pendingMessageCommitRetryTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.pendingMessageCommitRetryTimers.clear();
+
+        for (const timer of this.messagesSync.values()) {
+            timer.stop();
+        }
+        this.messagesSync.clear();
+        this.sessionReceivedMessages.clear();
+        this.sessionMessagesBeforeSeq.clear();
+        this.sessionMessagesHasMoreOlder.clear();
+        this.sessionMessagesLoadingOlder.clear();
+        this.sessionMessagesPaginationSupported.clear();
+        this.sessionDataKeys.clear();
+        this.machineDataKeys.clear();
+        this.artifactDataKeys.clear();
+        this.readStateV1RepairAttempted.clear();
+        this.readStateV1RepairInFlight.clear();
+
+        this.lastSocketDisconnectedAtMs = null;
+
+        storage.setState((state) => ({
+            ...state,
+            profile: { ...profileDefaults },
+            sessions: {},
+            sessionsData: null,
+            sessionListViewData: null,
+            sessionListViewDataByServerId: setActiveServerSessionListCache(
+                state.sessionListViewDataByServerId,
+                null,
+            ),
+            sessionGitStatus: {},
+            machines: {},
+            sessionMessages: {},
+            sessionPending: {},
+            artifacts: {},
+            friends: {},
+            users: {},
+            friendsLoaded: false,
+            feedItems: [],
+            feedHead: null,
+            feedTail: null,
+            feedHasMore: false,
+            feedLoaded: false,
+            todoState: null,
+            todosLoaded: false,
+            isDataReady: false,
+            realtimeStatus: 'disconnected',
+            socketStatus: 'disconnected',
+            socketLastError: null,
+            socketLastErrorAt: null,
+            syncError: null,
+            lastSyncAt: null,
+        }));
+    };
+
+    public async switchServer(credentials: AuthCredentials): Promise<void> {
+        const secretKey = decodeBase64(credentials.secret, 'base64url');
+        if (secretKey.length !== 32) {
+            throw new Error(`Invalid secret key length: ${secretKey.length}, expected 32`);
+        }
+        const encryption = await Encryption.create(secretKey);
+
+        this.resetServerScopedRuntimeState();
+        apiSocket.initialize({ endpoint: getActiveServerSnapshot().serverUrl, token: credentials.token }, encryption);
+        await this.restore(credentials, encryption);
+    }
+
+    public disconnectServer(): void {
+        this.resetServerScopedRuntimeState();
+    }
+
     /**
      * Encrypt a secret value into an encrypted-at-rest container.
      * Used for transient persistence (e.g. local drafts) where plaintext must never be stored.
@@ -361,7 +441,10 @@ class Sync {
     async #init() {
 
         // Subscribe to updates
-        this.subscribeToUpdates();
+        if (!this.updatesSubscribed) {
+            this.subscribeToUpdates();
+            this.updatesSubscribed = true;
+        }
 
         // Sync initial PostHog opt-out state with stored settings
         if (tracking) {
@@ -1278,14 +1361,12 @@ class Sync {
                 return;
             }
 
-            const serverUrl = getServerUrl();
-
             // Get platform and app identifiers
             const platform = Platform.OS;
             const version = Constants.expoConfig?.version!;
             const appId = (Platform.OS === 'ios' ? Constants.expoConfig?.ios?.bundleIdentifier! : Constants.expoConfig?.android?.package!);
 
-            const response = await fetch(`${serverUrl}/v1/version`, {
+            const response = await serverFetch('/v1/version', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1295,7 +1376,7 @@ class Sync {
                     version,
                     app_id: appId,
                 }),
-            });
+            }, { includeAuth: false });
 
             if (!response.ok) {
                 log.log(`[fetchNativeUpdate] Request failed: ${response.status}`);
@@ -1874,6 +1955,23 @@ export async function syncRestore(credentials: AuthCredentials) {
     await syncInit(credentials, true);
 }
 
+export async function syncSwitchServer(credentials: AuthCredentials | null): Promise<void> {
+    if (!credentials) {
+        if (isInitialized) {
+            sync.disconnectServer();
+            isInitialized = false;
+        }
+        return;
+    }
+
+    if (!isInitialized) {
+        await syncCreate(credentials);
+        return;
+    }
+
+    await sync.switchServer(credentials);
+}
+
 async function syncInit(credentials: AuthCredentials, restore: boolean) {
 
     // Initialize sync engine
@@ -1887,8 +1985,7 @@ async function syncInit(credentials: AuthCredentials, restore: boolean) {
     initializeTracking(encryption.anonID);
 
     // Initialize socket connection
-    const API_ENDPOINT = getServerUrl();
-    apiSocket.initialize({ endpoint: API_ENDPOINT, token: credentials.token }, encryption);
+    apiSocket.initialize({ endpoint: getActiveServerSnapshot().serverUrl, token: credentials.token }, encryption);
 
     // Wire socket status to storage
     apiSocket.onStatusChange((status) => {

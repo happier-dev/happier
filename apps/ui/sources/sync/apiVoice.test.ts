@@ -3,8 +3,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/tokenStorage';
 import { completeHappierVoiceSession, fetchHappierVoiceToken } from './apiVoice';
 
-vi.mock('./serverConfig', () => ({
-    getServerUrl: () => 'https://api.example.test',
+vi.mock('./serverRuntime', () => ({
+    getActiveServerSnapshot: () => ({
+        serverId: 'test',
+        serverUrl: 'https://api.example.test',
+        kind: 'custom',
+        generation: 1,
+    }),
 }));
 
 const credentials: AuthCredentials = { token: 'test', secret: 'secret' };

@@ -1,22 +1,20 @@
 import { AuthCredentials } from '@/auth/tokenStorage';
 import { backoff } from '@/utils/time';
-import { getServerUrl } from './serverConfig';
 import { Artifact, ArtifactCreateRequest, ArtifactUpdateRequest, ArtifactUpdateResponse } from './artifactTypes';
 import { HappyError } from '@/utils/errors';
+import { serverFetch } from './http/client';
 
 /**
  * Fetch all artifacts for the account
  */
 export async function fetchArtifacts(credentials: AuthCredentials): Promise<Artifact[]> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/artifacts`, {
+        const response = await serverFetch('/v1/artifacts', {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -41,15 +39,13 @@ export async function fetchArtifacts(credentials: AuthCredentials): Promise<Arti
  * Fetch a single artifact with full body
  */
 export async function fetchArtifact(credentials: AuthCredentials, artifactId: string): Promise<Artifact> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/artifacts/${artifactId}`, {
+        const response = await serverFetch(`/v1/artifacts/${artifactId}`, {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 404) {
@@ -80,17 +76,15 @@ export async function createArtifact(
     credentials: AuthCredentials, 
     request: ArtifactCreateRequest
 ): Promise<Artifact> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/artifacts`, {
+        const response = await serverFetch('/v1/artifacts', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(request)
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 409) {
@@ -122,17 +116,15 @@ export async function updateArtifact(
     artifactId: string,
     request: ArtifactUpdateRequest
 ): Promise<ArtifactUpdateResponse> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/artifacts/${artifactId}`, {
+        const response = await serverFetch(`/v1/artifacts/${artifactId}`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify(request)
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 404) {
@@ -163,15 +155,13 @@ export async function deleteArtifact(
     credentials: AuthCredentials,
     artifactId: string
 ): Promise<void> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/artifacts/${artifactId}`, {
+        const response = await serverFetch(`/v1/artifacts/${artifactId}`, {
             method: 'DELETE',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 404) {

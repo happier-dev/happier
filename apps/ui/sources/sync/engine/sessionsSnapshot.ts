@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/tokenStorage';
 import { HappyError } from '@/utils/errors';
-import { getServerUrl } from '../serverConfig';
+import { serverFetch } from '../http/client';
 import type { Session } from '../storageTypes';
 import type { Metadata } from '../storageTypes';
 
@@ -19,13 +19,16 @@ export async function fetchAndApplySessions(params: {
     credentials: AuthCredentials;
     encryption: SessionListEncryption;
     sessionDataKeys: Map<string, Uint8Array>;
+    request?: (path: string, init: RequestInit) => Promise<Response>;
     applySessions: (sessions: Array<Omit<Session, 'presence'> & { presence?: 'online' | number }>) => void;
     repairInvalidReadStateV1: (params: { sessionId: string; sessionSeqUpperBound: number }) => Promise<void>;
     log: { log: (message: string) => void };
 }): Promise<void> {
     const { credentials, encryption, sessionDataKeys, applySessions, repairInvalidReadStateV1, log } = params;
+    const request =
+        params.request
+        ?? ((path: string, init: RequestInit) => serverFetch(path, init, { includeAuth: false }));
 
-    const API_ENDPOINT = getServerUrl();
     const SESSION_LIST_LIMIT = 150;
     const sessions: Array<{
         id: string;
@@ -50,11 +53,11 @@ export async function fetchAndApplySessions(params: {
     let cursor: string | null = null;
     while (sessions.length < SESSION_LIST_LIMIT) {
         const pageLimit = Math.min(200, SESSION_LIST_LIMIT - sessions.length);
-        const url = new URL(`${API_ENDPOINT}/v2/sessions`);
+        const url = new URL('/v2/sessions', 'http://placeholder.local');
         url.searchParams.set('limit', String(pageLimit));
         if (cursor) url.searchParams.set('cursor', cursor);
 
-        const response = await fetch(url.toString(), {
+        const response = await request(url.pathname + url.search, {
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json',

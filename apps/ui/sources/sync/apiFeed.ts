@@ -1,9 +1,9 @@
 import { AuthCredentials } from '@/auth/tokenStorage';
 import { backoff } from '@/utils/time';
 import { HappyError } from '@/utils/errors';
-import { getServerUrl } from './serverConfig';
 import { FeedResponse, FeedResponseSchema, FeedItem } from './feedTypes';
 import { log } from '@/log';
+import { serverFetch } from './http/client';
 
 /**
  * Fetch user's feed with pagination
@@ -16,23 +16,21 @@ export async function fetchFeed(
         after?: string;
     }
 ): Promise<{ items: FeedItem[]; hasMore: boolean }> {
-    const API_ENDPOINT = getServerUrl();
-    
     return await backoff(async () => {
         const params = new URLSearchParams();
         if (options?.limit) params.set('limit', options.limit.toString());
         if (options?.before) params.set('before', options.before);
         if (options?.after) params.set('after', options.after);
         
-        const url = `${API_ENDPOINT}/v1/feed${params.toString() ? `?${params}` : ''}`;
+        const url = `/v1/feed${params.toString() ? `?${params}` : ''}`;
         log.log(`📰 Fetching feed: ${url}`);
         
-        const response = await fetch(url, {
+        const response = await serverFetch(url, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`
             }
-        });
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {

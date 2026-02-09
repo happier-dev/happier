@@ -7,10 +7,11 @@ import type { Encryption } from '../encryption/encryption';
 import type { Profile } from '../profile';
 import { profileParse } from '../profile';
 import { settingsParse, SUPPORTED_SCHEMA_VERSION } from '../settings';
-import { getServerUrl } from '../serverConfig';
 import { TokenStorage, type AuthCredentials } from '@/auth/tokenStorage';
 import { HappyError } from '@/utils/errors';
 import { listServerProfiles } from '../serverProfiles';
+import { getActiveServerSnapshot } from '../serverRuntime';
+import { serverFetch } from '../http/client';
 
 export async function handleUpdateAccountSocketUpdate(params: {
     accountUpdate: any;
@@ -74,13 +75,12 @@ export async function fetchAndApplyProfile(params: {
 }): Promise<void> {
     const { credentials, applyProfile } = params;
 
-    const API_ENDPOINT = getServerUrl();
-    const response = await fetch(`${API_ENDPOINT}/v1/account/profile`, {
+    const response = await serverFetch('/v1/account/profile', {
         headers: {
             'Authorization': `Bearer ${credentials.token}`,
             'Content-Type': 'application/json',
         },
-    });
+    }, { includeAuth: false });
 
     if (!response.ok) {
         if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -140,7 +140,7 @@ export async function registerPushTokenIfAvailable(params: {
         const normalizeServerUrl = (serverUrl: string) => serverUrl.replace(/\/+$/, '');
         let activeServerUrl: string | null = null;
         try {
-            activeServerUrl = normalizeServerUrl(getServerUrl());
+            activeServerUrl = normalizeServerUrl(getActiveServerSnapshot().serverUrl);
         } catch {
             activeServerUrl = null;
         }

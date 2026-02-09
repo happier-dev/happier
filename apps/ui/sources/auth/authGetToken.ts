@@ -1,15 +1,13 @@
 import { authChallenge } from "./authChallenge";
-import axios from 'axios';
 import { encodeBase64 } from "../encryption/base64";
-import { getServerUrl } from "@/sync/serverConfig";
 import { Encryption } from "@/sync/encryption/encryption";
 import sodium from '@/encryption/libsodium.lib';
 import { isSessionSharingSupported } from '@/sync/apiFeatures';
+import { serverFetch } from '@/sync/http/client';
 
 const CONTENT_KEY_BINDING_PREFIX = new TextEncoder().encode('Happy content key v1\u0000');
 
 export async function authGetToken(secret: Uint8Array) {
-    const API_ENDPOINT = getServerUrl();
     const { challenge, signature, publicKey } = authChallenge(secret);
 
     const body: any = {
@@ -35,7 +33,16 @@ export async function authGetToken(secret: Uint8Array) {
         body.contentPublicKeySig = encodeBase64(contentPublicKeySig);
     }
 
-    const response = await axios.post(`${API_ENDPOINT}/v1/auth`, body);
-    const data = response.data;
+    const response = await serverFetch('/v1/auth', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+    }, { includeAuth: false });
+    if (!response.ok) {
+        throw new Error(`Authentication failed: ${response.status}`);
+    }
+    const data = await response.json() as { token: string };
     return data.token;
 }

@@ -1,5 +1,5 @@
 import type { AuthCredentials } from '@/auth/tokenStorage';
-import { getServerUrl } from './serverConfig';
+import { serverFetch } from './http/client';
 import { ChangesResponseSchema, CursorGoneErrorSchema, type ChangeEntry } from '@happier-dev/protocol/changes';
 
 export async function fetchChanges(params: {
@@ -19,16 +19,18 @@ export async function fetchChanges(params: {
     })();
 
     const limit = Number.isFinite(params.limit) ? Math.min(Math.max(Math.floor(params.limit), 1), 500) : 200;
-    const url = `${getServerUrl()}/v2/changes?after=${after}&limit=${limit}`;
-
     let response: Response;
     try {
-        response = await fetch(url, {
-            headers: {
-                Authorization: `Bearer ${params.credentials.token}`,
-                'Content-Type': 'application/json',
+        response = await serverFetch(
+            `/v2/changes?after=${after}&limit=${limit}`,
+            {
+                headers: {
+                    Authorization: `Bearer ${params.credentials.token}`,
+                    'Content-Type': 'application/json',
+                },
             },
-        });
+            { includeAuth: false },
+        );
     } catch {
         return { status: 'error' };
     }

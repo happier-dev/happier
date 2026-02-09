@@ -1,13 +1,17 @@
 import type { Machine, Session } from './storageTypes';
 
 export type SessionListViewItem =
-    | { type: 'header'; title: string }
-    | { type: 'active-sessions'; sessions: Session[] }
-    | { type: 'project-group'; displayPath: string; machine: Machine }
-    | { type: 'session'; session: Session; variant?: 'default' | 'no-path' };
+    | { type: 'header'; title: string; headerKind?: 'date' | 'server'; serverId?: string; serverName?: string }
+    | { type: 'active-sessions'; sessions: Session[]; serverId?: string; serverName?: string }
+    | { type: 'project-group'; displayPath: string; machine: Machine; serverId?: string; serverName?: string }
+    | { type: 'session'; session: Session; variant?: 'default' | 'no-path'; serverId?: string; serverName?: string };
 
 export interface BuildSessionListViewDataOptions {
     groupInactiveSessionsByProject: boolean;
+    serverScope?: {
+        serverId: string;
+        serverName?: string;
+    };
 }
 
 function isSessionActive(session: { active: boolean }): boolean {
@@ -47,6 +51,12 @@ export function buildSessionListViewData(
     machines: Record<string, Machine>,
     options: BuildSessionListViewDataOptions
 ): SessionListViewItem[] {
+    const serverScopeMeta = options.serverScope
+        ? {
+            serverId: options.serverScope.serverId,
+            serverName: options.serverScope.serverName,
+        }
+        : {};
     const activeSessions: Session[] = [];
     const inactiveSessions: Session[] = [];
 
@@ -64,7 +74,7 @@ export function buildSessionListViewData(
     const listData: SessionListViewItem[] = [];
 
     if (activeSessions.length > 0) {
-        listData.push({ type: 'active-sessions', sessions: activeSessions });
+        listData.push({ type: 'active-sessions', sessions: activeSessions, ...serverScopeMeta });
     }
 
     if (options.groupInactiveSessionsByProject && inactiveSessions.length > 0) {
@@ -109,12 +119,17 @@ export function buildSessionListViewData(
 
             const hasGroupHeader = Boolean(group.displayPath);
             if (hasGroupHeader) {
-                listData.push({ type: 'project-group', displayPath: group.displayPath, machine: group.machine });
+                listData.push({
+                    type: 'project-group',
+                    displayPath: group.displayPath,
+                    machine: group.machine,
+                    ...serverScopeMeta,
+                });
             }
 
             const variant: 'default' | 'no-path' = hasGroupHeader ? 'no-path' : 'default';
             group.sessions.forEach((session) => {
-                listData.push({ type: 'session', session, variant });
+                listData.push({ type: 'session', session, variant, ...serverScopeMeta });
             });
         }
 
@@ -149,9 +164,9 @@ export function buildSessionListViewData(
                     headerTitle = `${diffDays} days ago`;
                 }
 
-                listData.push({ type: 'header', title: headerTitle });
+                listData.push({ type: 'header', title: headerTitle, headerKind: 'date', ...serverScopeMeta });
                 currentDateGroup.forEach((sess) => {
-                    listData.push({ type: 'session', session: sess });
+                    listData.push({ type: 'session', session: sess, ...serverScopeMeta });
                 });
             }
 
@@ -177,9 +192,9 @@ export function buildSessionListViewData(
             headerTitle = `${diffDays} days ago`;
         }
 
-        listData.push({ type: 'header', title: headerTitle });
+        listData.push({ type: 'header', title: headerTitle, headerKind: 'date', ...serverScopeMeta });
         currentDateGroup.forEach((sess) => {
-            listData.push({ type: 'session', session: sess });
+            listData.push({ type: 'session', session: sess, ...serverScopeMeta });
         });
     }
 

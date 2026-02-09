@@ -1,6 +1,6 @@
 import { AuthCredentials } from '@/auth/tokenStorage';
 import { backoff } from '@/utils/time';
-import { getServerUrl } from './serverConfig';
+import { serverFetch } from './http/client';
 import { HappyError } from '@/utils/errors';
 import {
     UserProfile,
@@ -19,17 +19,16 @@ export async function searchUsersByUsername(
     credentials: AuthCredentials,
     username: string
 ): Promise<UserProfile[]> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(
-            `${API_ENDPOINT}/v1/user/search?${new URLSearchParams({ query: username })}`,
+        const response = await serverFetch(
+            `/v1/user/search?${new URLSearchParams({ query: username })}`,
             {
                 method: 'GET',
                 headers: {
-                    'Authorization': `Bearer ${credentials.token}`
-                }
-            }
+                    'Authorization': `Bearer ${credentials.token}`,
+                },
+            },
+            { includeAuth: false },
         );
 
         if (!response.ok) {
@@ -67,17 +66,16 @@ export async function getUserProfile(
     credentials: AuthCredentials,
     userId: string
 ): Promise<UserProfile | null> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(
-            `${API_ENDPOINT}/v1/user/${userId}`,
+        const response = await serverFetch(
+            `/v1/user/${userId}`,
             {
                 method: 'GET',
                 headers: {
-                    'Authorization': `Bearer ${credentials.token}`
-                }
-            }
+                    'Authorization': `Bearer ${credentials.token}`,
+                },
+            },
+            { includeAuth: false },
         );
 
         if (!response.ok) {
@@ -132,17 +130,15 @@ export async function sendFriendRequest(
     credentials: AuthCredentials,
     recipientId: string
 ): Promise<UserProfile | null> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/friends/add`, {
+        const response = await serverFetch('/v1/friends/add', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ uid: recipientId })
-        });
+            body: JSON.stringify({ uid: recipientId }),
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 404) {
@@ -193,15 +189,13 @@ export async function sendFriendRequest(
 export async function getFriendsList(
     credentials: AuthCredentials
 ): Promise<UserProfile[]> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/friends`, {
+        const response = await serverFetch('/v1/friends', {
             method: 'GET',
             headers: {
-                'Authorization': `Bearer ${credentials.token}`
-            }
-        });
+                'Authorization': `Bearer ${credentials.token}`,
+            },
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {
@@ -235,17 +229,15 @@ export async function removeFriend(
     credentials: AuthCredentials,
     friendId: string
 ): Promise<UserProfile | null> {
-    const API_ENDPOINT = getServerUrl();
-
     return await backoff(async () => {
-        const response = await fetch(`${API_ENDPOINT}/v1/friends/remove`, {
+        const response = await serverFetch('/v1/friends/remove', {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ uid: friendId })
-        });
+            body: JSON.stringify({ uid: friendId }),
+        }, { includeAuth: false });
 
         if (!response.ok) {
             if (response.status === 404) {

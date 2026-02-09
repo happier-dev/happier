@@ -1,7 +1,8 @@
-import { getActiveServerUrl, setActiveServerId, upsertServerProfile } from './serverProfiles';
+import { getActiveServerUrl } from './serverProfiles';
+import { setActiveServer, upsertAndActivateServer } from './serverRuntime';
+import { OFFICIAL_SERVER_ID, OFFICIAL_SERVER_URL } from './serverIdentity';
 
-const DEFAULT_SERVER_URL = 'https://api.happier.dev';
-const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
+const DEFAULT_SERVER_URL = OFFICIAL_SERVER_URL;
 
 export function getServerUrl(): string {
     return getActiveServerUrl();
@@ -10,26 +11,11 @@ export function getServerUrl(): string {
 export function setServerUrl(url: string | null): void {
     const normalized = String(url ?? '').trim().replace(/\/+$/, '');
     if (!normalized) {
-        setActiveServerId('official', { scope: 'device' });
-        if (isWebRuntime) {
-            try {
-                setActiveServerId('official', { scope: 'tab' });
-            } catch {
-                // ignore
-            }
-        }
+        setActiveServer({ serverId: OFFICIAL_SERVER_ID, scope: 'device' });
         return;
     }
 
-    const profile = upsertServerProfile({ serverUrl: normalized });
-    setActiveServerId(profile.id, { scope: 'device' });
-    if (isWebRuntime) {
-        try {
-            setActiveServerId(profile.id, { scope: 'tab' });
-        } catch {
-            // ignore
-        }
-    }
+    upsertAndActivateServer({ serverUrl: normalized, scope: 'device' });
 }
 
 export function isUsingCustomServer(): boolean {
