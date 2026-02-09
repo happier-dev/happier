@@ -57,9 +57,17 @@ describe('persistence', () => {
         it('filters out invalid persisted model modes', () => {
             store.set(
                 'session-model-modes',
-                JSON.stringify({ abc: 'gemini-2.5-pro', bad: 'not-a-model' }),
+                JSON.stringify({ abc: 'gemini-2.5-pro', bad: '   ', num: 12 }),
             );
             expect(loadSessionModelModes()).toEqual({ abc: 'gemini-2.5-pro' });
+        });
+
+        it('preserves non-empty freeform model ids (for providers without a fixed catalog)', () => {
+            store.set(
+                'session-model-modes',
+                JSON.stringify({ abc: 'gemini-2.5-pro', custom: 'claude-3-5-sonnet-latest', bad: '   ' }),
+            );
+            expect(loadSessionModelModes()).toEqual({ abc: 'gemini-2.5-pro', custom: 'claude-3-5-sonnet-latest' });
         });
     });
 
@@ -107,7 +115,7 @@ describe('persistence', () => {
         });
 
         it('roundtrips cursor per account id', () => {
-            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null, github: null }));
+            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
             expect(loadChangesCursor()).toBeNull();
 
             saveChangesCursor('123');
@@ -115,13 +123,13 @@ describe('persistence', () => {
         });
 
         it('salvages cursor from the legacy numeric map', () => {
-            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null, github: null }));
+            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
             store.set('last-changes-cursor-by-account-id-v1', JSON.stringify({ a1: 7 }));
             expect(loadChangesCursor()).toBe('7');
         });
 
         it('clears the key when saving an empty cursor', () => {
-            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null, github: null }));
+            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
             saveChangesCursor('9');
             expect(loadChangesCursor()).toBe('9');
 
@@ -227,6 +235,26 @@ describe('persistence', () => {
             expect(draft?.modelMode).toBe('adaptiveUsage');
         });
 
+        it('preserves freeform model ids in the new session draft', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'claude',
+                    permissionMode: 'default',
+                    modelMode: 'claude-3-5-sonnet-latest',
+                    sessionType: 'simple',
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const draft = loadNewSessionDraft();
+            expect(draft?.modelMode).toBe('claude-3-5-sonnet-latest');
+        });
+
         it('roundtrips resumeSessionId when persisted', () => {
             store.set(
                 'new-session-draft-v1',
@@ -299,7 +327,7 @@ describe('persistence', () => {
                     selectedProfileId: null,
                     agentType: 'gemini',
                     permissionMode: 'default',
-                    modelMode: 'not-a-real-model',
+                    modelMode: '   ',
                     sessionType: 'simple',
                     updatedAt: Date.now(),
                 }),

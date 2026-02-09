@@ -102,12 +102,13 @@ describe('settings', () => {
             } as any);
 
             expect((parsed as any).expUsageReporting).toBe(true);
-            expect((parsed as any).expFileViewer).toBe(true);
+            // Deprecated: file browser is now stable and should not be toggled by experiments migration.
+            expect((parsed as any).expFileViewer).toBe(false);
             expect((parsed as any).expShowThinkingMessages).toBe(true);
             expect((parsed as any).expSessionType).toBe(true);
             expect((parsed as any).expZen).toBe(true);
-            expect((parsed as any).expVoiceAuthFlow).toBe(true);
             expect((parsed as any).expInboxFriends).toBe(true);
+            expect((parsed as any).expGitOperations).toBe(false);
         });
 
         it('should default per-experiment toggles to false when experiments is false (migration)', () => {
@@ -121,8 +122,8 @@ describe('settings', () => {
             expect((parsed as any).expShowThinkingMessages).toBe(false);
             expect((parsed as any).expSessionType).toBe(false);
             expect((parsed as any).expZen).toBe(false);
-            expect((parsed as any).expVoiceAuthFlow).toBe(false);
             expect((parsed as any).expInboxFriends).toBe(false);
+            expect((parsed as any).expGitOperations).toBe(false);
         });
 
         it('defaults per-agent new-session permission modes', () => {
@@ -132,14 +133,32 @@ describe('settings', () => {
             expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('default');
         });
 
+        it('defaults permission mode apply timing to immediate', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).sessionPermissionModeApplyTiming).toBe('immediate');
+        });
+
+        it('defaults local voice mediator settings', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).voiceLocalConversationMode).toBe('direct_session');
+            expect((parsed as any).voiceLocalMediatorBackend).toBe('daemon');
+            expect((parsed as any).voiceMediatorPermissionPolicy).toBe('read_only');
+            expect((parsed as any).voiceMediatorIdleTtlSeconds).toBe(300);
+            expect((parsed as any).voiceMediatorChatModelSource).toBe('custom');
+            expect((parsed as any).voiceMediatorChatModelId).toBe('default');
+            expect((parsed as any).voiceMediatorCommitModelSource).toBe('chat');
+            expect((parsed as any).voiceMediatorVerbosity).toBe('short');
+        });
+
         it('migrates legacy lastUsedPermissionMode into per-agent defaults when missing', () => {
             const parsed = settingsParse({
                 lastUsedAgent: 'claude',
                 lastUsedPermissionMode: 'plan',
             } as any);
             expect((parsed as any).sessionDefaultPermissionModeByAgent?.claude).toBe('plan');
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.codex).toBe('safe-yolo');
-            expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('safe-yolo');
+            // Non-Claude agents clamp unsupported modes to defaults when seeding.
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.codex).toBe('default');
+            expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('default');
         });
 
         it('should preserve explicit per-experiment toggles when present (no forced override)', () => {
@@ -150,8 +169,8 @@ describe('settings', () => {
                 expShowThinkingMessages: true,
                 expSessionType: false,
                 expZen: true,
-                expVoiceAuthFlow: false,
                 expInboxFriends: false,
+                expGitOperations: true,
             } as any);
 
             expect((parsed as any).expUsageReporting).toBe(true);
@@ -159,8 +178,15 @@ describe('settings', () => {
             expect((parsed as any).expShowThinkingMessages).toBe(true);
             expect((parsed as any).expSessionType).toBe(false);
             expect((parsed as any).expZen).toBe(true);
-            expect((parsed as any).expVoiceAuthFlow).toBe(false);
             expect((parsed as any).expInboxFriends).toBe(false);
+            expect((parsed as any).expGitOperations).toBe(true);
+        });
+
+        it('keeps expFileViewer parse-compatible when explicitly present', () => {
+            const parsed = settingsParse({
+                expFileViewer: true,
+            } as any);
+            expect((parsed as any).expFileViewer).toBe(true);
         });
 
         it('should keep valid secrets when one secret entry is invalid', () => {
@@ -368,16 +394,14 @@ describe('settings', () => {
             const maliciousSettings = {
                 viewInline: true,
                 '__proto__': { evil: true },
-                'constructor': { prototype: { evil: true } }
+                'constructor': { prototype: { evil: true } },
+                'prototype': { evil: true },
             };
             const parsed = settingsParse(maliciousSettings);
             expect(parsed.viewInline).toBe(true);
-            // Zod's loose() mode doesn't preserve __proto__ as a regular property
-            // which is actually good for security
-            expect((parsed as any).__proto__).not.toEqual({ evil: true });
-            // Constructor property is preserved as a regular property
-            expect((parsed as any).constructor).toEqual({ prototype: { evil: true } });
-            // Verify no prototype pollution occurred
+            expect(Object.prototype.hasOwnProperty.call(parsed, '__proto__')).toBe(false);
+            expect(Object.prototype.hasOwnProperty.call(parsed, 'constructor')).toBe(false);
+            expect(Object.prototype.hasOwnProperty.call(parsed, 'prototype')).toBe(false);
             expect(({} as any).evil).toBeUndefined();
         });
     });
@@ -565,6 +589,34 @@ describe('settings', () => {
         it('defaults to an empty object', () => {
             const parsed = settingsParse({});
             expect(parsed.secretBindingsByProfileId).toEqual({});
+        });
+    });
+
+    describe('voiceProviderId migration', () => {
+        it('derives voiceProviderId from legacy voiceMode when missing', () => {
+            const off = settingsParse({ voiceMode: 'off' });
+            expect(off.voiceProviderId).toBe('off');
+
+            const happier = settingsParse({ voiceMode: 'happier' });
+            expect(happier.voiceProviderId).toBe('happier_elevenlabs_agents');
+
+            const byo = settingsParse({ voiceMode: 'byo_elevenlabs' });
+            expect(byo.voiceProviderId).toBe('byo_elevenlabs_agents');
+        });
+
+        it('prefers voiceProviderId when present (even if voiceMode disagrees)', () => {
+            const parsed = settingsParse({
+                voiceMode: 'off',
+                voiceProviderId: 'happier_elevenlabs_agents',
+            } as any);
+            expect(parsed.voiceProviderId).toBe('happier_elevenlabs_agents');
+        });
+    });
+
+    describe('voice privacy settings', () => {
+        it('forces voiceShareToolArgs to false even if persisted true', () => {
+            const parsed = settingsParse({ voiceShareToolArgs: true } as any);
+            expect((parsed as any).voiceShareToolArgs).toBe(false);
         });
     });
 

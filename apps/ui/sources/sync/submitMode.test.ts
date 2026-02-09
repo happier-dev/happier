@@ -22,7 +22,9 @@ describe('chooseSubmitMode', () => {
             configuredMode: 'agent_queue',
             session: {
                 agentState: { controlledByUser: true },
-                metadata: { messageQueueV1: { v: 1, queue: [] } },
+                pendingVersion: 0,
+                pendingCount: 0,
+                metadata: {},
             } as any,
         })).toBe('server_pending');
     });
@@ -32,7 +34,9 @@ describe('chooseSubmitMode', () => {
             configuredMode: 'agent_queue',
             session: {
                 thinking: true,
-                metadata: { messageQueueV1: { v: 1, queue: [] } },
+                pendingVersion: 0,
+                pendingCount: 0,
+                metadata: {},
             } as any,
         })).toBe('server_pending');
     });
@@ -43,7 +47,9 @@ describe('chooseSubmitMode', () => {
             session: {
                 presence: 0,
                 agentStateVersion: 0,
-                metadata: { messageQueueV1: { v: 1, queue: [] } },
+                pendingVersion: 0,
+                pendingCount: 0,
+                metadata: {},
             } as any,
         })).toBe('server_pending');
     });
@@ -54,7 +60,9 @@ describe('chooseSubmitMode', () => {
             session: {
                 presence: 'online',
                 agentStateVersion: 0,
-                metadata: { messageQueueV1: { v: 1, queue: [] } },
+                pendingVersion: 0,
+                pendingCount: 0,
+                metadata: {},
             } as any,
         })).toBe('server_pending');
     });
@@ -65,6 +73,19 @@ describe('chooseSubmitMode', () => {
             session: {
                 thinking: true,
                 metadata: {},
+            } as any,
+        })).toBe('agent_queue');
+    });
+
+    it('keeps agent_queue when pending is supported but the CLI version is too old (prevents stranded pending)', () => {
+        expect(chooseSubmitMode({
+            configuredMode: 'agent_queue',
+            session: {
+                presence: 0,
+                agentStateVersion: 0,
+                pendingVersion: 0,
+                pendingCount: 0,
+                metadata: { version: '0.0.1' },
             } as any,
         })).toBe('agent_queue');
     });
