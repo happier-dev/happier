@@ -108,14 +108,16 @@ on:
           - native
           - native_submit
       ui_expo_profile:
-        description: "Deploy — UI EAS build profile (auto recommended)"
+        description: "Deploy — UI EAS build profile (auto recommended). Use *-apk profiles to produce installable Android APKs and publish to GitHub Releases."
         required: true
         default: auto
         type: choice
         options:
           - auto
           - preview
+          - preview-apk
           - production
+          - production-apk
       ui_expo_platform:
         description: "Deploy — UI Expo native platform"
         required: true
@@ -125,6 +127,16 @@ on:
           - ios
           - android
           - all
+      desktop_build:
+        description: "Deploy — Build UI desktop bundles (Tauri)"
+        required: true
+        default: false
+        type: boolean
+      desktop_publish_release:
+        description: "Deploy — Publish UI desktop bundles to GitHub Releases"
+        required: true
+        default: true
+        type: boolean
       deploy_server:
         description: "Deploy — Promote deploy/<env>/server"
         required: true
@@ -670,6 +682,8 @@ jobs:
   deploy_ui:
     if: inputs.dry_run != true && inputs.deploy_ui == true && needs.deploy_plan.outputs.deploy_ui_needed == 'true'
     needs: [checks, promote_main, bump_versions, deploy_plan]
+    permissions:
+      contents: write
     uses: ./.github/workflows/promote-ui.yml
     secrets: inherit
     with:
@@ -681,6 +695,8 @@ jobs:
       expo_action: ${{ inputs.ui_expo_action }}
       expo_profile: ${{ inputs.ui_expo_profile }}
       expo_platform: ${{ inputs.ui_expo_platform }}
+      desktop_build: ${{ inputs.desktop_build }}
+      desktop_publish_release: ${{ inputs.desktop_publish_release }}
       run_tests: false
 
   deploy_server:
@@ -721,6 +737,9 @@ jobs:
   publish_npm:
     if: inputs.dry_run != true && (inputs.cli_bump != 'none' || inputs.stack_bump != 'none')
     needs: [checks, promote_main, bump_versions]
+    permissions:
+      contents: write
+      id-token: write
     uses: ./.github/workflows/release-npm.yml
     secrets: inherit
     with:
