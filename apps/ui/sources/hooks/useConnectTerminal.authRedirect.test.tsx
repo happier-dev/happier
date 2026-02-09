@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from 'vitest';
 const routerReplaceSpy = vi.fn();
 const setPendingTerminalConnectSpy = vi.fn();
 const modalAlertSpy = vi.fn();
+const modalConfirmSpy = vi.fn(async () => true);
+const upsertActivateAndSwitchServerSpy = vi.fn(async () => true);
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'ios' },
@@ -25,12 +27,14 @@ vi.mock('expo-camera', () => ({
     },
 }));
 
-vi.mock('expo-updates', () => ({
-    reloadAsync: vi.fn(async () => {}),
+vi.mock('@/auth/AuthContext', () => ({
+    useAuth: () => ({ credentials: null, refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
-    useAuth: () => ({ credentials: null }),
+vi.mock('@/auth/tokenStorage', () => ({
+    TokenStorage: {
+        getCredentials: vi.fn(async () => null),
+    },
 }));
 
 vi.mock('@/hooks/useCheckCameraPermissions', () => ({
@@ -40,7 +44,7 @@ vi.mock('@/hooks/useCheckCameraPermissions', () => ({
 vi.mock('@/modal', () => ({
     Modal: {
         alert: (...args: any[]) => modalAlertSpy(...args),
-        confirm: vi.fn(async () => true),
+        confirm: (...args: any[]) => modalConfirmSpy(...args),
     },
 }));
 
@@ -48,9 +52,13 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/sync/serverConfig', () => ({
-    getServerUrl: () => 'https://api.happier.dev',
-    setServerUrl: vi.fn(),
+vi.mock('@/sync/serverProfiles', () => ({
+    getActiveServerUrl: () => 'https://api.happier.dev',
+}));
+
+vi.mock('@/sync/activeServerSwitch', () => ({
+    normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
+    upsertActivateAndSwitchServer: (...args: any[]) => upsertActivateAndSwitchServerSpy(...args),
 }));
 
 vi.mock('@/sync/pendingTerminalConnect', () => ({
@@ -106,6 +114,47 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(modalAlertSpy).toHaveBeenCalledWith('terminal.connectTerminal', 'modals.pleaseSignInFirst', [
             { text: 'common.continue' },
         ]);
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+    });
+
+    it('auto-switches server without confirmation prompt before redirecting unauthenticated users', async () => {
+        routerReplaceSpy.mockClear();
+        setPendingTerminalConnectSpy.mockClear();
+        modalAlertSpy.mockClear();
+        modalConfirmSpy.mockClear();
+        upsertActivateAndSwitchServerSpy.mockClear();
+
+        vi.doMock('@/sync/serverProfiles', () => ({
+            getActiveServerUrl: () => 'https://api.happier.dev',
+        }));
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Probe));
+        });
+
+        let result = true;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl('happier://terminal?key=abc123&server=https%3A%2F%2Fstack.example.test');
+        });
+
+        expect(result).toBe(false);
+        expect(modalConfirmSpy).not.toHaveBeenCalled();
+        expect(upsertActivateAndSwitchServerSpy).toHaveBeenCalledTimes(1);
+        expect(upsertActivateAndSwitchServerSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                serverUrl: 'https://stack.example.test',
+                source: 'url',
+                scope: 'device',
+            }),
+        );
         expect(routerReplaceSpy).toHaveBeenCalledWith('/');
     });
 });

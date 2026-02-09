@@ -11,14 +11,15 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 import { useAuth } from '@/auth/AuthContext';
-import { getServerUrl } from '@/sync/serverConfig';
+import { getActiveServerUrl } from '@/sync/serverProfiles';
+import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/activeServerSwitch';
 import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/pendingTerminalConnect';
 import { buildTerminalConnectDeepLink } from '@/utils/terminalConnectUrl';
 
 export default function TerminalConnectScreen() {
     const router = useRouter();
     const [publicKey, setPublicKey] = useState<string | null>(null);
-    const [serverUrl, setServerUrl] = useState<string | null>(null);
+    const [serverUrlFromHash, setServerUrlFromHash] = useState<string | null>(null);
     const [hashProcessed, setHashProcessed] = useState(false);
     const auth = useAuth();
     const authRedirectTriggeredRef = React.useRef(false);
@@ -37,7 +38,7 @@ export default function TerminalConnectScreen() {
                 const key = (params.get('key') ?? '').trim();
                 const server = (params.get('server') ?? '').trim();
                 if (key) setPublicKey(key);
-                if (server) setServerUrl(server);
+                if (server) setServerUrlFromHash(server);
                 
                 // Clear the hash from URL to prevent exposure in browser history
                 window.history.replaceState(null, '', window.location.pathname + window.location.search);
@@ -52,18 +53,34 @@ export default function TerminalConnectScreen() {
         if (authRedirectTriggeredRef.current) return;
 
         authRedirectTriggeredRef.current = true;
+        const desiredServerUrl = (serverUrlFromHash ?? '').trim();
         setPendingTerminalConnect({
             publicKeyB64Url: publicKey,
-            serverUrl: serverUrl ?? getServerUrl(),
+            serverUrl: desiredServerUrl || getActiveServerUrl(),
         });
-        router.replace('/');
-    }, [auth.isAuthenticated, hashProcessed, publicKey, router, serverUrl]);
+
+        void (async () => {
+            if (desiredServerUrl) {
+                try {
+                    await upsertActivateAndSwitchServer({
+                        serverUrl: desiredServerUrl,
+                        source: 'url',
+                        scope: 'device',
+                        refreshAuth: auth.refreshFromActiveServer,
+                    });
+                } catch {
+                    // ignore; auth entry route can still proceed and recover later
+                }
+            }
+            router.replace('/');
+        })();
+    }, [auth.isAuthenticated, auth.refreshFromActiveServer, hashProcessed, publicKey, router, serverUrlFromHash]);
 
     const handleConnect = async () => {
         if (publicKey) {
             const authUrl = buildTerminalConnectDeepLink({
                 publicKeyB64Url: publicKey,
-                serverUrl,
+                serverUrl: serverUrlFromHash,
             });
             await processAuthUrl(authUrl);
         }

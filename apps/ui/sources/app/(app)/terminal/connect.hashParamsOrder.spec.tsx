@@ -29,8 +29,13 @@ vi.mock('@/sync/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => null,
 }));
 
-vi.mock('@/sync/serverConfig', () => ({
-    getServerUrl: () => 'https://api.happier.dev',
+vi.mock('@/sync/serverProfiles', () => ({
+    getActiveServerUrl: () => 'https://api.happier.dev',
+}));
+
+vi.mock('@/sync/activeServerSwitch', () => ({
+    normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
+    upsertActivateAndSwitchServer: vi.fn(async () => true),
 }));
 
 vi.mock('@/hooks/useConnectTerminal', () => ({
@@ -39,7 +44,10 @@ vi.mock('@/hooks/useConnectTerminal', () => ({
 
 vi.mock('react-native', () => ({
     View: 'View',
-    Platform: { OS: 'web' },
+    Platform: {
+        OS: 'web',
+        select: (options: Record<string, unknown>) => options.web ?? options.default,
+    },
 }));
 
 vi.mock('@/components/StyledText', () => ({

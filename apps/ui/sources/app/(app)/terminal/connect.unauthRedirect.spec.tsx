@@ -6,6 +6,7 @@ import renderer, { act } from 'react-test-renderer';
 
 const replaceMock = vi.fn();
 const setPendingMock = vi.fn();
+const upsertActivateAndSwitchServerMock = vi.fn(async () => true);
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -29,8 +30,13 @@ vi.mock('@/sync/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => null,
 }));
 
-vi.mock('@/sync/serverConfig', () => ({
-    getServerUrl: () => 'https://api.happier.dev',
+vi.mock('@/sync/serverProfiles', () => ({
+    getActiveServerUrl: () => 'https://api.happier.dev',
+}));
+
+vi.mock('@/sync/activeServerSwitch', () => ({
+    normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
+    upsertActivateAndSwitchServer: (...args: any[]) => upsertActivateAndSwitchServerMock(...args),
 }));
 
 vi.mock('react-native', () => ({
@@ -71,6 +77,7 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
         vi.resetModules();
         replaceMock.mockClear();
         setPendingMock.mockClear();
+        upsertActivateAndSwitchServerMock.mockClear();
         (globalThis as any).window = {
             location: {
                 hash: '#key=abc123&server=https%3A%2F%2Fcompany.example.test',
@@ -93,7 +100,12 @@ describe('TerminalConnectScreen unauthenticated redirect', () => {
             publicKeyB64Url: 'abc123',
             serverUrl: 'https://company.example.test',
         });
+        expect(upsertActivateAndSwitchServerMock).toHaveBeenCalledWith({
+            serverUrl: 'https://company.example.test',
+            source: 'url',
+            scope: 'device',
+            refreshAuth: undefined,
+        });
         expect(replaceMock).toHaveBeenCalledWith('/');
     });
 });
-
