@@ -51,14 +51,16 @@ on:
           - native
           - native_submit
       expo_profile:
-        description: "Deploy (Expo) — EAS build profile (auto: preview→preview, production→production)"
+        description: "Deploy (Expo) — EAS build profile (auto: preview→preview, production→production). Use *-apk profiles to produce installable Android APKs and publish to GitHub Releases."
         required: true
         default: auto
         type: choice
         options:
           - auto
           - preview
+          - preview-apk
           - production
+          - production-apk
       expo_platform:
         description: "Deploy (Expo) — Native build platform"
         required: true
@@ -105,7 +107,7 @@ on:
         default: none
         type: string
       expo_profile:
-        description: "Deploy (Expo) — EAS build profile (auto: preview→preview, production→production)"
+        description: "Deploy (Expo) — EAS build profile (auto: preview→preview, production→production). Use *-apk profiles to produce installable Android APKs and publish to GitHub Releases."
         required: false
         default: auto
         type: string
@@ -130,6 +132,13 @@ jobs:
     outputs:
       source_ref: ${{ steps.resolve.outputs.ref }}
       release_sha: ${{ steps.release_sha.outputs.sha }}
+      mobile_tag: ${{ steps.mobile_meta.outputs.tag }}
+      mobile_title: ${{ steps.mobile_meta.outputs.title }}
+      mobile_prerelease: ${{ steps.mobile_meta.outputs.prerelease }}
+      mobile_rolling_tag: ${{ steps.mobile_meta.outputs.rolling_tag }}
+      mobile_generate_notes: ${{ steps.mobile_meta.outputs.generate_notes }}
+      mobile_notes: ${{ steps.mobile_meta.outputs.notes }}
+      mobile_publish: ${{ steps.mobile_meta.outputs.publish }}
     steps:
       - name: Resolve source ref
         id: resolve
@@ -283,7 +292,181 @@ jobs:
             exit 1
           fi
           cd apps/ui
-          npx --yes eas-cli@latest build --platform "${{ inputs.expo_platform }}" --profile "${{ steps.expo_profile.outputs.profile }}" --non-interactive
+          npx --yes eas-cli@latest build --platform "${{ inputs.expo_platform }}" --profile "${{ steps.expo_profile.outputs.profile }}" --non-interactive --json > /tmp/eas_build.json
+
+      - name: Download Android APK (EAS *-apk profiles)
+        id: download_apk
+        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && (inputs.expo_platform == 'android' || inputs.expo_platform == 'all') && endsWith(steps.expo_profile.outputs.profile, '-apk') }}
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          APP_ENV: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is required for Expo actions." >&2
+            exit 1
+          fi
+
+          env_name="${{ inputs.environment }}"
+
+          if [ ! -s /tmp/eas_build.json ]; then
+            echo "Missing /tmp/eas_build.json from EAS build step." >&2
+            exit 1
+          fi
+
+          build_meta="$(node - <<'NODE'
+          const fs = require('node:fs');
+          const raw = fs.readFileSync('/tmp/eas_build.json', 'utf8').trim();
+          if (!raw) process.exit(2);
+          const parsed = JSON.parse(raw);
+          const builds = Array.isArray(parsed) ? parsed : [parsed];
+          const android = builds.find(b => (b?.platform || '').toLowerCase() === 'android') ?? null;
+          if (!android) {
+            console.error('No Android build found in EAS output');
+            process.exit(4);
+          }
+          const id = android?.id || android?.buildId;
+          if (!id) process.exit(3);
+          const artifactUrl =
+            android?.artifacts?.applicationArchiveUrl ||
+            android?.artifacts?.buildUrl ||
+            android?.artifacts?.url ||
+            android?.artifactUrl ||
+            android?.applicationArchiveUrl ||
+            '';
+          process.stdout.write(`${String(id)}\t${String(artifactUrl)}`);
+          NODE
+          )"
+          build_id="${build_meta%%$'\t'*}"
+          artifact_url=""
+          if [ "${build_meta}" != "${build_id}" ]; then
+            artifact_url="${build_meta#*$'\t'}"
+          fi
+
+          mkdir -p /tmp/eas
+          apk_path="/tmp/eas/happier-${env_name}-android.apk"
+
+          if [ -z "${artifact_url:-}" ]; then
+            build_view_json="$(
+              cd apps/ui
+              npx --yes eas-cli@latest build:view "${build_id}" --json
+            )"
+            artifact_url="$(
+              BUILD_VIEW_JSON="${build_view_json}" node - <<'NODE'
+              const raw = (process.env.BUILD_VIEW_JSON ?? '').trim();
+              if (!raw) process.exit(2);
+              const parsed = JSON.parse(raw);
+              const build = Array.isArray(parsed) ? parsed[0] : parsed;
+              const url =
+                build?.artifacts?.applicationArchiveUrl ||
+                build?.artifacts?.buildUrl ||
+                build?.artifacts?.url ||
+                build?.artifactUrl ||
+                build?.applicationArchiveUrl ||
+                '';
+              if (!url) process.exit(3);
+              process.stdout.write(String(url));
+              NODE
+            )" || {
+              echo "Unable to resolve Android artifact URL for EAS build ${build_id}" >&2
+              exit 1
+            }
+          fi
+
+          case "${artifact_url}" in
+            https://*) ;;
+            *)
+              echo "Resolved Android artifact URL is not https: ${artifact_url}" >&2
+              exit 1
+              ;;
+          esac
+
+          curl -fL --retry 3 --retry-all-errors --retry-delay 2 --max-time 300 "${artifact_url}" -o "${apk_path}"
+
+          if [ ! -f "${apk_path}" ]; then
+            echo "APK download failed; expected file at: ${apk_path}" >&2
+            exit 1
+          fi
+          apk_size_bytes="$(wc -c < "${apk_path}" | tr -d '[:space:]')"
+          if [ "${apk_size_bytes}" -lt 1000000 ]; then
+            echo "Downloaded APK is unexpectedly small (${apk_size_bytes} bytes): ${apk_path}" >&2
+            exit 1
+          fi
+          if ! unzip -tq "${apk_path}" >/dev/null 2>&1; then
+            echo "Downloaded APK archive failed ZIP integrity check: ${apk_path}" >&2
+            exit 1
+          fi
+
+          mkdir -p dist/ui-mobile
+
+          app_version="$(node -p "require('./apps/ui/package.json').version")"
+          if [ -z "${app_version:-}" ]; then
+            echo "Unable to resolve app version from apps/ui/package.json" >&2
+            exit 1
+          fi
+
+          if [ "${env_name}" = "production" ]; then
+            out="dist/ui-mobile/happier-production-android-v${app_version}.apk"
+          else
+            out="dist/ui-mobile/happier-preview-android.apk"
+          fi
+
+          cp "${apk_path}" "${out}"
+          echo "app_version=${app_version}" >> "$GITHUB_OUTPUT"
+          echo "asset_path=${out}" >> "$GITHUB_OUTPUT"
+
+      - name: Warn when *-apk profile excludes Android platform
+        if: ${{ (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') && endsWith(steps.expo_profile.outputs.profile, '-apk') && !(inputs.expo_platform == 'android' || inputs.expo_platform == 'all') }}
+        run: |
+          echo "::warning::expo_profile '${{ steps.expo_profile.outputs.profile }}' targets APK artifacts, but expo_platform='${{ inputs.expo_platform }}' excludes Android. Mobile APK release will be skipped."
+
+      - name: Upload mobile release assets artifact
+        if: steps.download_apk.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-mobile-assets
+          path: dist/ui-mobile/**
+          retention-days: 7
+
+      - name: Compute mobile release metadata
+        id: mobile_meta
+        if: inputs.expo_action == 'native' || inputs.expo_action == 'native_submit'
+        env:
+          DOWNLOAD_APK_OUTCOME: ${{ steps.download_apk.outcome }}
+        run: |
+          set -euo pipefail
+
+          if [ "${DOWNLOAD_APK_OUTCOME:-}" != "success" ]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "title=" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "rolling_tag=false" >> "$GITHUB_OUTPUT"
+            echo "generate_notes=false" >> "$GITHUB_OUTPUT"
+            echo "notes=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          env_name="${{ inputs.environment }}"
+          app_version="${{ steps.download_apk.outputs.app_version }}"
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+
+          if [ "${env_name}" = "production" ]; then
+            echo "tag=ui-v${app_version}" >> "$GITHUB_OUTPUT"
+            echo "title=UI v${app_version}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "rolling_tag=false" >> "$GITHUB_OUTPUT"
+            echo "generate_notes=true" >> "$GITHUB_OUTPUT"
+            echo "notes=" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=ui-preview" >> "$GITHUB_OUTPUT"
+            echo "title=UI Preview" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "rolling_tag=true" >> "$GITHUB_OUTPUT"
+            echo "generate_notes=false" >> "$GITHUB_OUTPUT"
+            echo "notes=Rolling preview build." >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Expo submit
         if: inputs.expo_action == 'native_submit'
@@ -310,3 +493,24 @@ jobs:
           else
             git push origin HEAD:"$DEPLOY_REF"
           fi
+
+  publish_mobile:
+    name: Publish mobile assets (GitHub Release)
+    if: ${{ needs.promote.outputs.mobile_publish == 'true' }}
+    needs: [promote]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-ui-release.yml
+    secrets: inherit
+    with:
+      tag: ${{ needs.promote.outputs.mobile_tag }}
+      title: ${{ needs.promote.outputs.mobile_title }}
+      target_sha: ${{ needs.promote.outputs.release_sha }}
+      prerelease: ${{ needs.promote.outputs.mobile_prerelease == 'true' }}
+      rolling_tag: ${{ needs.promote.outputs.mobile_rolling_tag == 'true' }}
+      generate_notes: ${{ needs.promote.outputs.mobile_generate_notes == 'true' }}
+      notes: ${{ needs.promote.outputs.mobile_notes }}
+      assets_artifact: ui-mobile-assets
+      assets_artifact_path: dist/ui-mobile
+      assets_dir: dist/ui-mobile
+      clobber: true
