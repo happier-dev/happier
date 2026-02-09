@@ -67,4 +67,21 @@ describe('providers harness: cli log fatal error detection', () => {
 
     await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toContain('Prompt request failed');
   });
+
+  it('detects early fatal MCP-connect errors even with large noisy tails', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const logsDir = join(cliHome, 'logs');
+    await mkdir(logsDir, { recursive: true });
+    const noisyTail = 'x'.repeat(40_000);
+    await writeFile(
+      join(logsDir, '2026-02-09-19-26-35-pid-50852.log'),
+      [
+        '[AcpBackend] Error sending prompt: {"code":-32603,"message":"Internal error","data":{"error":"Failed to connect MCP servers: {\'happier\': RuntimeError(\'Client failed to connect: Connection closed\')}"}}',
+        noisyTail,
+      ].join('\n'),
+      'utf8',
+    );
+
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toContain('Failed to connect MCP servers');
+  });
 });

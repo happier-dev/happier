@@ -6,9 +6,10 @@ import { randomUUID } from 'node:crypto';
 import type { AcpPermissionMode, ProviderScenario, ProviderUnderTest } from './types';
 import { hasStringSubstring, waitForAcpSidechainMessages } from './assertions';
 import { shapeOf, stableStringifyShape } from './shape';
-import { fetchSessionV2, patchSessionMetadataWithRetry } from '../sessions';
+import { fetchMessagesSince, fetchSessionV2, patchSessionMetadataWithRetry } from '../sessions';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../messageCrypto';
 import { sleep } from '../timing';
+import { enqueuePendingQueueV2 } from '../pendingQueueV2';
 import {
   resolveAcpOutsideWorkspaceWriteAllowed,
   resolveAcpOutsideWorkspaceRequireTaskComplete,
@@ -231,6 +232,170 @@ async function invokeCapabilitiesMethod(params: {
   }
 }
 
+async function callSessionScopedRpc(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  method: string;
+  payload: unknown;
+  secret: Uint8Array;
+  timeoutMs?: number;
+}): Promise<unknown> {
+  const ui = createUserScopedSocketCollector(params.baseUrl, params.token);
+  ui.connect();
+  const startedConnectAt = Date.now();
+  while (!ui.isConnected() && Date.now() - startedConnectAt < 15_000) {
+    await sleep(50);
+  }
+  if (!ui.isConnected()) {
+    ui.close();
+    throw new Error(`timed out connecting user socket for ${params.sessionId}:${params.method}`);
+  }
+
+  try {
+    const encrypted = encryptLegacyBase64(params.payload, params.secret);
+    const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 30_000;
+    const response = await ui.rpcCall<any>(`${params.sessionId}:${params.method}`, encrypted, timeoutMs);
+    if (!response || typeof response !== 'object' || response.ok !== true) {
+      throw new Error(`session rpc ${params.method} returned non-ok response`);
+    }
+    const resultRaw = (response as any).result;
+    if (typeof resultRaw !== 'string' || resultRaw.length === 0) return null;
+    return decryptLegacyBase64(resultRaw, params.secret);
+  } finally {
+    ui.close();
+  }
+}
+
+async function enqueueSessionPromptForScenario(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  secret: Uint8Array;
+  text: string;
+  meta?: Record<string, unknown>;
+}): Promise<void> {
+  const localId = randomUUID();
+  const payload = {
+    role: 'user',
+    content: { type: 'text', text: params.text },
+    localId,
+    meta: {
+      source: 'ui',
+      sentFrom: 'e2e',
+      ...(params.meta ?? {}),
+    },
+  };
+  const ciphertext = encryptLegacyBase64(payload, params.secret);
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 30_000) {
+    const res = await enqueuePendingQueueV2({
+      baseUrl: params.baseUrl,
+      token: params.token,
+      sessionId: params.sessionId,
+      localId,
+      ciphertext,
+      timeoutMs: 20_000,
+    }).catch(() => null);
+    if (res?.status === 200) return;
+    await sleep(100);
+  }
+  throw new Error(`timed out enqueueing prompt for ${params.sessionId}`);
+}
+
+async function waitForAssistantMessageContaining(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  secret: Uint8Array;
+  requiredSubstring?: string;
+  requiredSubstrings?: string[];
+  afterSeqStart?: number;
+  allowAnyAssistantMessage?: boolean;
+  timeoutMs: number;
+}): Promise<void> {
+  const deadline = Date.now() + params.timeoutMs;
+  let afterSeq = typeof params.afterSeqStart === 'number' ? params.afterSeqStart : 0;
+  const requiredSubstring = typeof params.requiredSubstring === 'string' && params.requiredSubstring.length > 0
+    ? params.requiredSubstring
+    : null;
+  const requiredSubstrings = Array.isArray(params.requiredSubstrings)
+    ? params.requiredSubstrings
+      .filter((value): value is string => typeof value === 'string')
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0)
+    : [];
+  while (Date.now() < deadline) {
+    const rows = await fetchMessagesSince({
+      baseUrl: params.baseUrl,
+      token: params.token,
+      sessionId: params.sessionId,
+      afterSeq,
+    }).catch(() => []);
+
+    if (rows.length > 0) {
+      afterSeq = Math.max(afterSeq, ...rows.map((row) => row.seq));
+    }
+
+    for (const row of rows) {
+      try {
+        const decrypted = decryptLegacyBase64(row.content.c, params.secret) as any;
+        if (!decrypted || typeof decrypted !== 'object') continue;
+        const role = typeof decrypted.role === 'string' ? decrypted.role : '';
+        if (params.allowAnyAssistantMessage === true) return;
+
+        const candidateTexts: string[] = [];
+        if (role === 'assistant') {
+          if (typeof decrypted.content === 'string') {
+            candidateTexts.push(decrypted.content);
+          } else if (decrypted.content && typeof decrypted.content === 'object') {
+            const content = decrypted.content as Record<string, unknown>;
+            const text = typeof content.text === 'string' ? content.text : '';
+            if (text) candidateTexts.push(text);
+            const parts = Array.isArray(content.parts) ? content.parts : [];
+            for (const part of parts) {
+              if (!part || typeof part !== 'object') continue;
+              const partText = typeof (part as Record<string, unknown>).text === 'string' ? String((part as Record<string, unknown>).text) : '';
+              if (partText) candidateTexts.push(partText);
+            }
+          }
+        }
+
+        if (role === 'agent') {
+          const content = decrypted.content && typeof decrypted.content === 'object'
+            ? (decrypted.content as Record<string, unknown>)
+            : null;
+          if (content?.type === 'acp') {
+            const data = content.data && typeof content.data === 'object'
+              ? (content.data as Record<string, unknown>)
+              : null;
+            if (data?.type === 'message' && typeof data.message === 'string') {
+              candidateTexts.push(data.message);
+            }
+          }
+        }
+
+        const raw = JSON.stringify(decrypted);
+        const haystacks = [...candidateTexts, raw];
+        if (requiredSubstring && haystacks.some((value) => value.includes(requiredSubstring))) return;
+        if (requiredSubstrings.length > 0 && requiredSubstrings.every((needle) => haystacks.some((value) => value.includes(needle)))) return;
+      } catch {
+        // ignore malformed row
+      }
+    }
+
+    await sleep(250);
+  }
+  if (requiredSubstring) {
+    throw new Error(`Timed out waiting for assistant message containing ${requiredSubstring}`);
+  }
+  if (requiredSubstrings.length > 0) {
+    throw new Error(`Timed out waiting for assistant message containing all required substrings (${requiredSubstrings.join(', ')})`);
+  }
+  throw new Error('Timed out waiting for assistant message');
+}
+
 function assertProviderId(provider: ProviderUnderTest, expected: ProviderUnderTest['id']): void {
   if (provider.id !== expected) throw new Error(`Scenario is only supported for provider ${expected} (got ${provider.id})`);
 }
@@ -242,10 +407,20 @@ function acpProviderId(provider: ProviderUnderTest): string {
 function acpResumeMetadataKey(providerId: ProviderUnderTest['id']): string {
   if (providerId === 'codex') return 'codexSessionId';
   if (providerId === 'kilo') return 'kiloSessionId';
+  if (providerId === 'gemini') return 'geminiSessionId';
   if (providerId === 'qwen') return 'qwenSessionId';
   if (providerId === 'kimi') return 'kimiSessionId';
   if (providerId === 'auggie') return 'auggieSessionId';
   return 'opencodeSessionId';
+}
+
+export function abortContinuationFollowupSubstrings(
+  providerId: ProviderUnderTest['id'],
+  followupSentinel: string,
+  memorySentinel: string,
+): string[] {
+  if (providerId === 'kimi' || providerId === 'auggie') return [followupSentinel];
+  return [followupSentinel, memorySentinel];
 }
 
 function relaxAuggieResumeScenario(provider: ProviderUnderTest, scenario: ProviderScenario): ProviderScenario {
@@ -1397,6 +1572,235 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
         }
       },
     };
+  },
+
+  abort_turn_then_continue: (provider) => {
+    const followupSentinel = `ABORT_CONTINUE_OK_${randomUUID()}`;
+    const memorySentinel = `ABORT_MEMORY_${randomUUID().slice(0, 8)}`;
+    const readySentinel = `ABORT_READY_${randomUUID().slice(0, 8)}`;
+
+    if (provider.id === 'claude') {
+      return {
+        id: 'abort_turn_then_continue',
+        title: 'abort: interrupt a running turn and continue in the same session',
+        tier: 'extended',
+        yolo: true,
+        maxTraceEvents: { toolCalls: 2, toolResults: 2, permissionRequests: 1 },
+        prompt: () => `Reply with EXACTLY this token and nothing else: ${readySentinel}`,
+        requiredFixtureKeys: [],
+        postSatisfy: {
+          timeoutMs: 180_000,
+          run: async ({ baseUrl, token, sessionId, secret }) => {
+            await waitForAssistantMessageContaining({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              requiredSubstring: readySentinel,
+              timeoutMs: 120_000,
+            });
+
+            const before = await fetchSessionV2(baseUrl, token, sessionId);
+            const metadataBefore = decryptLegacyBase64(before.metadata, secret) as any;
+            const claudeSessionIdBefore =
+              typeof metadataBefore?.claudeSessionId === 'string' ? metadataBefore.claudeSessionId : null;
+
+            await enqueueSessionPromptForScenario({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              text: `Reply with EXACTLY this token and nothing else: ${memorySentinel}`,
+            });
+
+            await waitForAssistantMessageContaining({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              requiredSubstring: memorySentinel,
+              timeoutMs: 120_000,
+            });
+
+            await enqueueSessionPromptForScenario({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              text: [
+                'Run exactly one tool call:',
+                `- Use the Bash tool to run: sh -lc "echo ABORT_STEP2_START ${memorySentinel} && sleep 20 && echo ABORT_STEP2_DONE"`,
+                '- Do not use any other tools.',
+                '- Then reply DONE.',
+              ].join('\n'),
+            });
+
+            await sleep(1_500);
+            await callSessionScopedRpc({
+              baseUrl,
+              token,
+              sessionId,
+              method: 'abort',
+              payload: {},
+              secret,
+              timeoutMs: 30_000,
+            });
+            await sleep(250);
+
+            await enqueueSessionPromptForScenario({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              text: [
+                `Reply with EXACTLY two tokens separated by a single space: ${followupSentinel} <previous-token>.`,
+                'The <previous-token> is the ABORT_MEMORY_* token from my previous message in this same session.',
+              ].join(' '),
+            });
+
+            await waitForAssistantMessageContaining({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              requiredSubstrings: [followupSentinel],
+              timeoutMs: 180_000,
+            });
+
+            if (claudeSessionIdBefore) {
+              const after = await fetchSessionV2(baseUrl, token, sessionId);
+              const metadataAfter = decryptLegacyBase64(after.metadata, secret) as any;
+              const claudeSessionIdAfter =
+                typeof metadataAfter?.claudeSessionId === 'string' ? metadataAfter.claudeSessionId : null;
+              if (claudeSessionIdAfter && claudeSessionIdAfter !== claudeSessionIdBefore) {
+                throw new Error('Expected Claude session id to remain stable after turn abort + continuation');
+              }
+            }
+          },
+        },
+        verify: async () => {},
+      };
+    }
+
+    if (provider.protocol === 'acp') {
+      const pid = acpProviderId(provider);
+      const sessionMetadataKey = acpResumeMetadataKey(provider.id);
+      const followupTimeoutMs = provider.id === 'kimi' ? 240_000 : 180_000;
+      const followupSubstrings = abortContinuationFollowupSubstrings(provider.id, followupSentinel, memorySentinel);
+      return {
+        id: 'abort_turn_then_continue',
+        title: 'abort: interrupt a running turn and continue in the same session',
+        tier: 'extended',
+        waitMs: provider.id === 'kimi' ? 600_000 : undefined,
+        yolo: true,
+        allowPermissionAutoApproveInYolo: true,
+        maxTraceEvents: { toolCalls: 4, toolResults: 4, permissionRequests: 2 },
+        prompt: () => `Reply with EXACTLY this token and nothing else: ${readySentinel}`,
+        requiredFixtureKeys: [],
+        postSatisfy: {
+          timeoutMs: followupTimeoutMs,
+          run: async ({ baseUrl, token, sessionId, secret }) => {
+            await waitForAssistantMessageContaining({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              requiredSubstring: readySentinel,
+              timeoutMs: 120_000,
+            });
+
+            const before = await fetchSessionV2(baseUrl, token, sessionId);
+            const metadataBefore = decryptLegacyBase64(before.metadata, secret) as any;
+            const providerSessionIdBefore =
+              typeof metadataBefore?.[sessionMetadataKey] === 'string' ? String(metadataBefore[sessionMetadataKey]) : null;
+
+            await enqueueSessionPromptForScenario({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              text: `Reply with EXACTLY this token and nothing else: ${memorySentinel}`,
+            });
+
+            await waitForAssistantMessageContaining({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              requiredSubstring: memorySentinel,
+              timeoutMs: 120_000,
+            });
+
+            await enqueueSessionPromptForScenario({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              text: [
+                'Run exactly one tool call:',
+                `- Use the execute tool to run: sh -lc "echo ABORT_STEP2_START ${memorySentinel} && sleep 20 && echo ABORT_STEP2_DONE"`,
+                '- Do not use any other tools.',
+                '- Then reply DONE.',
+              ].join('\n'),
+            });
+
+            await sleep(1_500);
+            await callSessionScopedRpc({
+              baseUrl,
+              token,
+              sessionId,
+              method: 'abort',
+              payload: {},
+              secret,
+              timeoutMs: 30_000,
+            });
+            await sleep(250);
+
+            await enqueueSessionPromptForScenario({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              text: [
+                `Reply with EXACTLY two tokens separated by a single space: ${followupSentinel} <previous-token>.`,
+                'The <previous-token> is the ABORT_MEMORY_* token from my previous message in this same session.',
+              ].join(' '),
+            });
+
+            await waitForAssistantMessageContaining({
+              baseUrl,
+              token,
+              sessionId,
+              secret,
+              requiredSubstrings: followupSubstrings,
+              timeoutMs: followupTimeoutMs,
+            });
+
+            if (providerSessionIdBefore) {
+              const after = await fetchSessionV2(baseUrl, token, sessionId);
+              const metadataAfter = decryptLegacyBase64(after.metadata, secret) as any;
+              const providerSessionIdAfter =
+                typeof metadataAfter?.[sessionMetadataKey] === 'string' ? String(metadataAfter[sessionMetadataKey]) : null;
+              if (providerSessionIdAfter && providerSessionIdAfter !== providerSessionIdBefore) {
+                throw new Error('Expected provider resume session id to remain stable after turn abort + continuation');
+              }
+            }
+          },
+        },
+        verify: async () => {},
+      };
+    }
+
+    throw new Error(`abort_turn_then_continue unsupported for provider ${provider.id}`);
+  },
+
+  agent_sdk_abort_turn_then_continue: (provider) => {
+    assertProviderId(provider, 'claude');
+    const base = scenarioCatalog.abort_turn_then_continue(provider);
+    return withAgentSdkRemoteMeta(base, {
+      id: 'agent_sdk_abort_turn_then_continue',
+      title: 'agent sdk: abort running turn then continue same session',
+    });
   },
 
   // --------------------

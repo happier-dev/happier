@@ -112,8 +112,10 @@ export async function readFatalProviderErrorFromCliLogs(params: { cliHome: strin
     const raw = await readFile(filePath, 'utf8').catch(() => '');
     if (!raw) continue;
 
-    const tail = raw.slice(-16_000);
-    const lower = tail.toLowerCase();
+    const sample = raw.length > 80_000
+      ? `${raw.slice(0, 32_000)}\n${raw.slice(-80_000)}`
+      : raw;
+    const lower = sample.toLowerCase();
     const fatal = fatalCliLogSubstrings.find((needle) => lower.includes(needle));
     if (!fatal) continue;
 
@@ -138,6 +140,18 @@ export async function readFatalProviderErrorFromCliLogs(params: { cliHome: strin
 export function resolveSessionActiveWaitMs(globalWaitMsRaw: string | undefined): number {
   const globalWaitMs = parsePositiveInt(globalWaitMsRaw, 240_000);
   return Math.max(60_000, Math.min(globalWaitMs, 240_000));
+}
+
+export function resolveScenarioWaitMs(params: {
+  scenarioWaitMs: number | undefined;
+  globalWaitMsRaw: string | undefined;
+}): number {
+  const globalWaitMs = parsePositiveInt(params.globalWaitMsRaw, 240_000);
+  const scenarioWaitMs =
+    typeof params.scenarioWaitMs === 'number' && Number.isFinite(params.scenarioWaitMs)
+      ? Math.floor(params.scenarioWaitMs)
+      : globalWaitMs;
+  return Math.max(30_000, Math.min(scenarioWaitMs, 3_600_000));
 }
 
 export function resolveProviderInactivityTimeoutMs(
@@ -186,6 +200,13 @@ export function shouldAssertPendingDrain(params: { assertPendingDrain?: boolean 
 export function resolveCliDistAvailabilityWaitMs(raw: string | undefined): number {
   const parsed = parsePositiveInt(raw, 180_000);
   return Math.max(30_000, Math.min(parsed, 600_000));
+}
+
+export function resolveCliDistPreflightAllowRebuild(): boolean {
+  return envFlag(
+    ['HAPPIER_E2E_PROVIDER_ALLOW_CLI_PREBUILD_REBUILD', 'HAPPY_E2E_PROVIDER_ALLOW_CLI_PREBUILD_REBUILD'],
+    true,
+  );
 }
 
 export function shouldAutoApprovePermissionRequest(params: {

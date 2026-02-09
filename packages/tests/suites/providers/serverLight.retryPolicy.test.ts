@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:net';
 
-import { isPortAvailableForListen, shouldRetryServerStart } from '../../src/testkit/process/serverLight';
+import { isPortAvailableForListen, shouldRetryServerStart, shouldSkipServerGenerateProviders } from '../../src/testkit/process/serverLight';
 
 async function bindPort(server: Server): Promise<number> {
   return await new Promise((resolve, reject) => {
@@ -60,5 +60,11 @@ describe('providers: server-light retry policy', () => {
       preflightPortAvailable: true,
       error: new Error('other error'),
     })).toBe(false);
+  });
+
+  it('supports explicit server generate skip flags in worker env', () => {
+    expect(shouldSkipServerGenerateProviders({})).toBe(false);
+    expect(shouldSkipServerGenerateProviders({ HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1' })).toBe(true);
+    expect(shouldSkipServerGenerateProviders({ HAPPY_E2E_PROVIDER_SKIP_SERVER_GENERATE: 'yes' })).toBe(true);
   });
 });

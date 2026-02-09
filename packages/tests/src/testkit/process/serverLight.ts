@@ -87,6 +87,18 @@ export function resolveMigrateCommandArgs(provider: TestDbProvider): string[] {
   return ['-s', 'workspace', '@happier-dev/server', 'prisma', 'migrate', 'deploy'];
 }
 
+export function shouldSkipServerGenerateProviders(env: NodeJS.ProcessEnv): boolean {
+  const raw = (
+    env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE ??
+    env.HAPPY_E2E_PROVIDER_SKIP_SERVER_GENERATE ??
+    ''
+  )
+    .toString()
+    .trim()
+    .toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
+}
+
 export async function startServerLight(params: {
   testDir: string;
   extraEnv?: NodeJS.ProcessEnv;
@@ -136,23 +148,25 @@ export async function startServerLight(params: {
   // Ensure Prisma client is generated for the current schema.
   // In multi-worktree setups it's easy for @prisma/client to become stale and then
   // light-mode boot will fail at runtime (PrismaClientValidationError).
-  await runLoggedCommand({
-    command: yarnCommand(),
-    args: ['-s', 'workspace', '@happier-dev/server', 'generate:providers'],
-    cwd: repoRootDir(),
-    env: {
-      ...baseEnv,
-      PORT: '0',
-      PUBLIC_URL: 'http://127.0.0.1:0',
-      // Prisma schema requires DATABASE_URL for `prisma generate`.
-      // `generate:providers` sets per-provider placeholders, but we still pass one here for consistency.
-      DATABASE_URL: 'postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable',
-      HAPPIER_BUILD_DB_PROVIDERS: dbProvider,
-    },
-    stdoutPath: resolve(params.testDir, 'server.generate.stdout.log'),
-    stderrPath: resolve(params.testDir, 'server.generate.stderr.log'),
-    timeoutMs: 180_000,
-  });
+  if (!shouldSkipServerGenerateProviders(baseEnv)) {
+    await runLoggedCommand({
+      command: yarnCommand(),
+      args: ['-s', 'workspace', '@happier-dev/server', 'generate:providers'],
+      cwd: repoRootDir(),
+      env: {
+        ...baseEnv,
+        PORT: '0',
+        PUBLIC_URL: 'http://127.0.0.1:0',
+        // Prisma schema requires DATABASE_URL for `prisma generate`.
+        // `generate:providers` sets per-provider placeholders, but we still pass one here for consistency.
+        DATABASE_URL: 'postgresql://postgres@127.0.0.1:5432/postgres?sslmode=disable',
+        HAPPIER_BUILD_DB_PROVIDERS: dbProvider,
+      },
+      stdoutPath: resolve(params.testDir, 'server.generate.stdout.log'),
+      stderrPath: resolve(params.testDir, 'server.generate.stderr.log'),
+      timeoutMs: 180_000,
+    });
+  }
 
   // Ensure the light database schema exists before the server boots.
   // Server light uses pglite + Prisma but does not auto-migrate on startup.

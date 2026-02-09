@@ -103,6 +103,9 @@ export type ProviderUnderTest = {
 export type ProviderScenario = {
   id: string;
   title: string;
+  // Optional per-scenario max wait for trace satisfaction loop.
+  // Falls back to global HAPPIER_E2E_PROVIDER_WAIT_MS when undefined.
+  waitMs?: number;
   // Prompt text that will be sent as a user message (single-step scenarios).
   // For multi-step scenarios, use `steps` instead.
   prompt?: (ctx: { workspaceDir: string }) => string;

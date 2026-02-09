@@ -5,6 +5,7 @@ import {
   resolveRetryScenarioIds,
   parseFailureReportJson,
   filterProviderIdsByScenarioRegistry,
+  buildProviderChildEnv,
 } from '../../scripts/run-providers-parallel.mjs';
 
 describe('providers parallel run script args', () => {
@@ -148,5 +149,31 @@ describe('providers parallel scenario registry filtering', () => {
     });
 
     expect(filtered).toEqual(['qwen', 'kilo', 'codex']);
+  });
+});
+
+describe('providers parallel child env defaults', () => {
+  it('disables preflight CLI dist rebuilds by default to avoid parallel build churn', () => {
+    const env = buildProviderChildEnv({
+      baseEnv: {},
+      reportPath: '/tmp/failure-report.json',
+      scenarioIds: null,
+    });
+
+    expect(env.HAPPIER_E2E_PROVIDER_ALLOW_CLI_PREBUILD_REBUILD).toBe('0');
+    expect(env.HAPPY_E2E_PROVIDER_ALLOW_CLI_PREBUILD_REBUILD).toBe('0');
+    expect(env.HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE).toBe('1');
+    expect(env.HAPPY_E2E_PROVIDER_SKIP_SERVER_GENERATE).toBe('1');
+  });
+
+  it('forwards explicit scenario selection into child env', () => {
+    const env = buildProviderChildEnv({
+      baseEnv: {},
+      reportPath: '/tmp/failure-report.json',
+      scenarioIds: ['read_known_file', 'search_known_token'],
+    });
+
+    expect(env.HAPPIER_E2E_PROVIDER_SCENARIOS).toBe('read_known_file,search_known_token');
+    expect(env.HAPPY_E2E_PROVIDER_SCENARIOS).toBe('read_known_file,search_known_token');
   });
 });
