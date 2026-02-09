@@ -72,6 +72,7 @@ concurrency:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    environment: release-shared
     steps:
       - name: Resolve source ref
         id: resolve
@@ -101,6 +102,20 @@ jobs:
 
           echo "ref=$src" >> "$GITHUB_OUTPUT"
 
+      - name: Enforce trusted refs for manual dispatch
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            exit 0
+          fi
+          case "${GITHUB_REF_NAME}" in
+            dev|main) ;;
+            *)
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Create GitHub App token
         id: app_token
         uses: actions/create-github-app-token@v1
@@ -128,6 +143,21 @@ jobs:
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
 
+      - name: Sync installer assets into website public
+        id: sync_installers
+        run: |
+          set -euo pipefail
+          node scripts/release/sync-installers.mjs
+          if git diff --quiet -- \
+            apps/website/public/install.sh \
+            apps/website/public/self-host.sh \
+            apps/website/public/install.ps1 \
+            apps/website/public/happier-release.pub; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Bump website version (source ref)
         id: bump_website
         run: |
@@ -146,17 +176,50 @@ jobs:
           set -euo pipefail
           yarn workspace @happier-dev/website build
 
-      - name: Commit version bump (source ref)
-        if: steps.bump_website.outputs.skipped != 'true'
+      - name: Commit website release updates (source ref)
+        id: commit_changes
+        if: steps.bump_website.outputs.skipped != 'true' || steps.sync_installers.outputs.changed == 'true'
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apps/website/package.json
-          git commit -m "chore(release): bump website to v${{ steps.bump_website.outputs.version }}"
+          git add \
+            apps/website/package.json \
+            apps/website/public/install.sh \
+            apps/website/public/self-host.sh \
+            apps/website/public/install.ps1 \
+            apps/website/public/happier-release.pub
+
+          if git diff --cached --quiet; then
+            echo "did_commit=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ steps.bump_website.outputs.skipped }}" != "true" ]; then
+            message="chore(release): bump website to v${{ steps.bump_website.outputs.version }}"
+            if [ "${{ steps.sync_installers.outputs.changed }}" = "true" ]; then
+              message="${message} and sync installers"
+            fi
+          else
+            message="chore(release): sync website installers from release sources"
+          fi
+
+          git commit -m "${message}"
+          echo "did_commit=true" >> "$GITHUB_OUTPUT"
+
+      - name: Detect whether source ref is a branch
+        id: source_ref_kind
+        run: |
+          set -euo pipefail
+          src="${{ steps.resolve.outputs.ref }}"
+          if git ls-remote --exit-code --heads origin "${src}" >/dev/null 2>&1; then
+            echo "is_branch=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_branch=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Push source ref (only for branches)
-        if: steps.bump_website.outputs.skipped != 'true'
+        if: steps.commit_changes.outputs.did_commit == 'true' && steps.source_ref_kind.outputs.is_branch == 'true'
         run: |
           set -euo pipefail
           src="${{ steps.resolve.outputs.ref }}"

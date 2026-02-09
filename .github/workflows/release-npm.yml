@@ -111,6 +111,7 @@ jobs:
       contents: write
       id-token: write
     runs-on: ubuntu-latest
+    environment: release-shared
     outputs:
       sha: ${{ steps.meta.outputs.sha }}
       channel: ${{ steps.meta.outputs.channel }}
@@ -146,6 +147,20 @@ jobs:
             fi
           fi
 
+      - name: Enforce trusted refs for manual dispatch
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            exit 0
+          fi
+          case "${GITHUB_REF_NAME}" in
+            dev|main) ;;
+            *)
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Create GitHub App token
         id: app_token
         uses: actions/create-github-app-token@v1
@@ -174,11 +189,22 @@ jobs:
           corepack enable
           corepack prepare yarn@1.22.22 --activate
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run release contract tests
+        run: yarn -s test:release:contracts
+
+      - name: Verify installer assets are synced
+        run: node scripts/release/sync-installers.mjs --check
 
       - name: Set preview versions (working tree only)
         if: inputs.channel == 'preview'
@@ -314,6 +340,56 @@ jobs:
             echo "stack_version=SKIP" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Build CLI binaries
+        if: inputs.publish_cli
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          node scripts/release/build-cli-binaries.mjs \
+            --channel="${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}" \
+            --version="${{ steps.meta.outputs.cli_version }}"
+
+      - name: Generate CLI manifests
+        if: inputs.publish_cli
+        env:
+          ASSETS_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.channel == 'production' && 'cli-stable' || 'cli-preview' }}
+          MANIFEST_CHANNEL: ${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}
+        run: |
+          set -euo pipefail
+          node scripts/release/publish-manifests.mjs \
+            --product=happier \
+            --channel="${MANIFEST_CHANNEL}" \
+            --version="${{ steps.meta.outputs.cli_version }}" \
+            --artifacts-dir="dist/release-assets/cli" \
+            --out-dir="dist/release-assets/cli/manifests" \
+            --assets-base-url="${ASSETS_BASE_URL}" \
+            --commit-sha="${{ steps.meta.outputs.sha }}" \
+            --workflow-run-id="${{ github.run_id }}"
+
+      - name: Verify CLI release artifacts
+        if: inputs.publish_cli
+        env:
+          RELEASE_CHANNEL: ${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.cli_version }}"
+          test -f "dist/release-assets/cli/checksums-happier-v${version}.txt"
+          test -f "dist/release-assets/cli/checksums-happier-v${version}.txt.minisig"
+          test -f "dist/release-assets/cli/manifests/v1/happier/${RELEASE_CHANNEL}/latest.json"
+
+      - name: Cryptographic verify CLI release artifacts
+        if: inputs.publish_cli
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.cli_version }}"
+          node scripts/release/verify-artifacts.mjs \
+            --artifacts-dir="dist/release-assets/cli" \
+            --checksums="dist/release-assets/cli/checksums-happier-v${version}.txt" \
+            --public-key="scripts/release/installers/happier-release.pub" \
+            --skip-smoke
+
       - name: npm publish
         if: inputs.publish_cli
         env:
@@ -400,6 +476,56 @@ jobs:
             exit 1
           fi
           mv "$tgz" "../../dist/release-assets/stack/stack-${{ steps.meta.outputs.stack_version }}.tgz"
+
+      - name: Build hstack binaries
+        if: inputs.publish_stack
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          node scripts/release/build-hstack-binaries.mjs \
+            --channel="${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}" \
+            --version="${{ steps.meta.outputs.stack_version }}"
+
+      - name: Generate hstack manifests
+        if: inputs.publish_stack
+        env:
+          ASSETS_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.channel == 'production' && 'stack-stable' || 'stack-preview' }}
+          MANIFEST_CHANNEL: ${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}
+        run: |
+          set -euo pipefail
+          node scripts/release/publish-manifests.mjs \
+            --product=hstack \
+            --channel="${MANIFEST_CHANNEL}" \
+            --version="${{ steps.meta.outputs.stack_version }}" \
+            --artifacts-dir="dist/release-assets/stack" \
+            --out-dir="dist/release-assets/stack/manifests" \
+            --assets-base-url="${ASSETS_BASE_URL}" \
+            --commit-sha="${{ steps.meta.outputs.sha }}" \
+            --workflow-run-id="${{ github.run_id }}"
+
+      - name: Verify hstack release artifacts
+        if: inputs.publish_stack
+        env:
+          RELEASE_CHANNEL: ${{ steps.meta.outputs.channel == 'production' && 'stable' || 'preview' }}
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.stack_version }}"
+          test -f "dist/release-assets/stack/checksums-hstack-v${version}.txt"
+          test -f "dist/release-assets/stack/checksums-hstack-v${version}.txt.minisig"
+          test -f "dist/release-assets/stack/manifests/v1/hstack/${RELEASE_CHANNEL}/latest.json"
+
+      - name: Cryptographic verify hstack release artifacts
+        if: inputs.publish_stack
+        run: |
+          set -euo pipefail
+          version="${{ steps.meta.outputs.stack_version }}"
+          node scripts/release/verify-artifacts.mjs \
+            --artifacts-dir="dist/release-assets/stack" \
+            --checksums="dist/release-assets/stack/checksums-hstack-v${version}.txt" \
+            --public-key="scripts/release/installers/happier-release.pub" \
+            --skip-smoke
 
       - name: Upload npm pack artifact (stack)
         if: inputs.publish_stack
@@ -489,6 +615,24 @@ jobs:
       assets_artifact_path: dist/release-assets/cli
       assets_dir: dist/release-assets/cli
 
+  mirror-cli-stable-rolling:
+    if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.cli_version != 'SKIP' }}
+    needs: release
+    uses: ./.github/workflows/publish-github-release.yml
+    secrets: inherit
+    with:
+      tag: cli-stable
+      title: CLI Stable
+      target_sha: ${{ needs.release.outputs.sha }}
+      prerelease: false
+      rolling_tag: true
+      generate_notes: false
+      notes: "Rolling stable build (npm dist-tag: latest)."
+      clobber: true
+      assets_artifact: npm-pack-cli
+      assets_artifact_path: dist/release-assets/cli
+      assets_dir: dist/release-assets/cli
+
   mirror-cli-preview:
     if: ${{ needs.release.outputs.channel == 'preview' && needs.release.outputs.cli_version != 'SKIP' }}
     needs: release
@@ -519,6 +663,24 @@ jobs:
       prerelease: false
       rolling_tag: false
       generate_notes: true
+      clobber: true
+      assets_artifact: npm-pack-stack
+      assets_artifact_path: dist/release-assets/stack
+      assets_dir: dist/release-assets/stack
+
+  mirror-stack-stable-rolling:
+    if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.stack_version != 'SKIP' }}
+    needs: release
+    uses: ./.github/workflows/publish-github-release.yml
+    secrets: inherit
+    with:
+      tag: stack-stable
+      title: Stack Stable
+      target_sha: ${{ needs.release.outputs.sha }}
+      prerelease: false
+      rolling_tag: true
+      generate_notes: false
+      notes: "Rolling stable build (npm dist-tag: latest)."
       clobber: true
       assets_artifact: npm-pack-stack
       assets_artifact_path: dist/release-assets/stack

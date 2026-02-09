@@ -40,6 +40,7 @@ concurrency:
 jobs:
   reset:
     runs-on: ubuntu-latest
+    environment: release-shared
     steps:
       - name: Validate inputs
         run: |
@@ -64,6 +65,20 @@ jobs:
             echo "Got:      ${{ inputs.confirm }}" >&2
             exit 1
           fi
+
+      - name: Enforce trusted refs for manual dispatch
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            exit 0
+          fi
+          case "${GITHUB_REF_NAME}" in
+            dev|main) ;;
+            *)
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Create GitHub App token
         id: app_token

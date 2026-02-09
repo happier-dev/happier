@@ -16,7 +16,7 @@ on:
       run_providers:
         description: "Checks — Run providers contract suite (requires provider secrets)"
         required: true
-        default: true
+        default: false
         type: boolean
       providers_preset:
         description: "Checks (PROVIDERS) — Preset"
@@ -36,53 +36,15 @@ on:
         options:
           - smoke
           - extended
-      run_e2e_core:
-        description: "Checks (CUST) — Run core E2E gate (packages/tests, pglite+sqlite). Ignored unless checks_profile=custom."
+      custom_checks:
+        description: "Checks (CUST) — Comma-separated toggles used only when checks_profile=custom: e2e_core,server_db_contract,stress,cli_smoke_linux,self_host_systemd,build_website,build_docs"
         required: true
-        default: true
-        type: boolean
-      run_server_db_contract:
-        description: "Checks (CUST) — Run server DB contract suite (Postgres). Ignored unless checks_profile=custom."
-        required: true
-        default: true
-        type: boolean
-      run_stress:
-        description: "Checks (CUST) — Run stress suite (slow). Ignored unless checks_profile=custom."
-        required: true
-        default: false
-        type: boolean
-      cli_smoke_linux:
-        description: "Checks (CUST) — Run CLI smoke test on Linux. Ignored unless checks_profile=custom."
-        required: true
-        default: true
-        type: boolean
-      build_website:
-        description: "Checks (CUST) — Build website as part of release checks. Ignored unless checks_profile=custom."
-        required: true
-        default: true
-        type: boolean
-      build_docs:
-        description: "Checks (CUST) — Build docs as part of release checks. Ignored unless checks_profile=custom."
-        required: true
-        default: true
-        type: boolean
+        default: e2e_core,server_db_contract,cli_smoke_linux,self_host_systemd,build_website,build_docs
+        type: string
       dry_run:
         description: "Safety — Run checks and show plan, but do not push/deploy"
         required: true
         default: false
-        type: boolean
-      promote_mode:
-        description: "Promotion — How to update main from dev"
-        required: true
-        type: choice
-        default: fast_forward
-        options:
-          - fast_forward
-          - reset
-      sync_dev_from_main:
-        description: "Promotion — Fast-forward dev to main after version bumps (keeps future releases fast-forwardable)"
-        required: true
-        default: true
         type: boolean
       environment:
         description: "Deploy — Target environment (deploy/<env>/*)"
@@ -92,11 +54,11 @@ on:
         options:
           - preview
           - production
-      deploy_ui:
-        description: "Deploy — Promote deploy/<env>/ui (web deploy on push)"
+      deploy_targets:
+        description: "Deploy — Comma-separated targets: ui,server,website,docs"
         required: true
-        default: true
-        type: boolean
+        default: ui,server,website,docs
+        type: string
       ui_expo_action:
         description: "Deploy — UI Expo action (none|ota|native|native_submit) for the selected environment"
         required: true
@@ -127,31 +89,15 @@ on:
           - ios
           - android
           - all
-      desktop_build:
-        description: "Deploy — Build UI desktop bundles (Tauri)"
+      desktop_mode:
+        description: "Deploy — Desktop artifacts mode"
         required: true
-        default: false
-        type: boolean
-      desktop_publish_release:
-        description: "Deploy — Publish UI desktop bundles to GitHub Releases"
-        required: true
-        default: true
-        type: boolean
-      deploy_server:
-        description: "Deploy — Promote deploy/<env>/server"
-        required: true
-        default: true
-        type: boolean
-      deploy_website:
-        description: "Deploy — Promote deploy/<env>/website"
-        required: true
-        default: true
-        type: boolean
-      deploy_docs:
-        description: "Deploy — Promote deploy/<env>/docs"
-        required: true
-        default: true
-        type: boolean
+        type: choice
+        default: none
+        options:
+          - none
+          - build_only
+          - build_and_publish
       bump:
         description: "Versions — Version bump to apply (only for changed components)"
         required: true
@@ -202,7 +148,6 @@ jobs:
     name: CI Gate (dev)
     if: inputs.checks_profile != 'none'
     uses: ./.github/workflows/tests.yml
-    secrets: inherit
     with:
       run_ui: true
       run_server: true
@@ -210,22 +155,36 @@ jobs:
       run_stack: true
       run_typecheck: true
       run_cli_daemon_e2e: true
-      run_e2e_core: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && inputs.run_e2e_core) }}
-      run_server_db_contract: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && inputs.run_server_db_contract) }}
-      run_providers: ${{ inputs.checks_profile != 'none' && inputs.run_providers }}
+      run_e2e_core: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',e2e_core,')) }}
+      run_server_db_contract: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',server_db_contract,')) }}
+      run_providers: false
       providers_preset: ${{ inputs.providers_preset }}
       providers_tier: ${{ inputs.providers_tier }}
       providers_strict_keys: false
       providers_flake_retry: true
       providers_update_baselines: false
-      run_stress: ${{ inputs.checks_profile == 'custom' && inputs.run_stress }}
+      run_stress: ${{ inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',stress,') }}
+      run_release_contracts: true
+      run_self_host_systemd: ${{ inputs.checks_profile == 'full' || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',self_host_systemd,')) }}
       stress_repeat: "5"
       stress_seed: ""
 
+  providers_gate:
+    name: Providers Gate (dev)
+    if: inputs.checks_profile != 'none' && inputs.run_providers == true
+    uses: ./.github/workflows/providers-contracts.yml
+    secrets: inherit
+    with:
+      preset: ${{ inputs.providers_preset }}
+      tier: ${{ inputs.providers_tier }}
+      strict_keys: false
+      flake_retry: true
+
   checks:
-    needs: [gate]
-    if: ${{ always() && (needs.gate.result == 'success' || needs.gate.result == 'skipped') }}
+    needs: [gate, providers_gate]
+    if: ${{ always() && (needs.gate.result == 'success' || needs.gate.result == 'skipped') && (needs.providers_gate.result == 'success' || needs.providers_gate.result == 'skipped') }}
     runs-on: ubuntu-latest
+    environment: release-shared
     outputs:
       changed_ui: ${{ steps.plan.outputs.changed_ui }}
       changed_cli: ${{ steps.plan.outputs.changed_cli }}
@@ -238,10 +197,11 @@ jobs:
       - name: Validate inputs
         run: |
           set -euo pipefail
-          mode="${{ inputs.promote_mode }}"
           confirm="${{ inputs.confirm }}"
+          mode=""
 
-          if [ "$mode" = "fast_forward" ]; then
+          if [ "$confirm" = "release dev to main" ]; then
+            mode="fast_forward"
             expected="release dev to main"
             if [ "$confirm" != "$expected" ]; then
               echo "Confirmation mismatch." >&2
@@ -249,7 +209,8 @@ jobs:
               echo "Got:      $confirm" >&2
               exit 1
             fi
-          elif [ "$mode" = "reset" ]; then
+          elif [ "$confirm" = "reset main from dev" ]; then
+            mode="reset"
             expected="reset main from dev"
             if [ "$confirm" != "$expected" ]; then
               echo "Confirmation mismatch." >&2
@@ -258,9 +219,23 @@ jobs:
               exit 1
             fi
           else
-            echo "Unknown promote_mode: $mode" >&2
+            echo "Unknown confirmation phrase: $confirm" >&2
             exit 1
           fi
+
+      - name: Enforce trusted refs for manual dispatch
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            exit 0
+          fi
+          case "${GITHUB_REF_NAME}" in
+            dev|main) ;;
+            *)
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Create GitHub App token
         id: app_token
@@ -277,7 +252,7 @@ jobs:
           token: ${{ steps.app_token.outputs.token }}
 
       - name: Setup Node
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (inputs.build_website || inputs.build_docs || inputs.cli_smoke_linux)) }}
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (contains(format(',{0},', inputs.custom_checks), ',build_website,') || contains(format(',{0},', inputs.custom_checks), ',build_docs,') || contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,'))) }}
         uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -285,13 +260,13 @@ jobs:
           cache-dependency-path: yarn.lock
 
       - name: Enable Corepack (Yarn)
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (inputs.build_website || inputs.build_docs || inputs.cli_smoke_linux)) }}
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (contains(format(',{0},', inputs.custom_checks), ',build_website,') || contains(format(',{0},', inputs.custom_checks), ',build_docs,') || contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,'))) }}
         run: |
           corepack enable
           corepack prepare yarn@1.22.22 --activate
 
       - name: Install dependencies
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (inputs.build_website || inputs.build_docs || inputs.cli_smoke_linux)) }}
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (contains(format(',{0},', inputs.custom_checks), ',build_website,') || contains(format(',{0},', inputs.custom_checks), ',build_docs,') || contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,'))) }}
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
@@ -304,15 +279,15 @@ jobs:
           echo "CI gate ran in job 'gate' (tests/typecheck/e2e/providers/stress as configured)."
 
       - name: Build website
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && inputs.build_website) }}
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',build_website,')) }}
         run: yarn website:build
 
       - name: Build docs
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && inputs.build_docs) }}
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',build_docs,')) }}
         run: yarn docs:build
 
       - name: CLI smoke test (Linux)
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && inputs.cli_smoke_linux) }}
+        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,')) }}
         run: |
           set -euo pipefail
           yarn workspace @happier-dev/cli build
@@ -359,7 +334,7 @@ jobs:
               apps/cli/*) changed_cli=true ;;
               apps/server/*) changed_server=true ;;
               apps/stack/*) changed_stack=true ;;
-              apps/website/*) changed_website=true ;;
+              apps/website/*|scripts/release/installers/*|scripts/release/sync-installers.mjs) changed_website=true ;;
               apps/docs/*) changed_docs=true ;;
               packages/agents/*|packages/protocol/*) changed_shared=true ;;
               *) ;;
@@ -378,13 +353,16 @@ jobs:
             echo "## Release plan (dev → main)"
             echo ""
             echo "- checks_profile: \`${{ inputs.checks_profile }}\`"
+            echo "- custom_checks: \`${{ inputs.custom_checks }}\`"
             echo "- environment: \`${{ inputs.environment }}\`"
-            echo "- promote_mode: \`${{ inputs.promote_mode }}\`"
+            echo "- confirm: \`${{ inputs.confirm }}\`"
             echo "- dry_run: \`${{ inputs.dry_run }}\`"
+            echo "- deploy_targets: \`${{ inputs.deploy_targets }}\`"
             echo "- bump: \`${{ inputs.bump }}\`"
             echo "- cli_bump: \`${{ inputs.cli_bump }}\`"
             echo "- stack_bump: \`${{ inputs.stack_bump }}\`"
             echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
+            echo "- desktop_mode: \`${{ inputs.desktop_mode }}\`"
             echo ""
             echo "- commits to release (main..dev): \`$commit_count\`"
             echo ""
@@ -401,6 +379,7 @@ jobs:
   deploy_plan:
     name: deploy_plan (main → deploy branches)
     runs-on: ubuntu-latest
+    environment: release-shared
     if: always()
     needs: [checks, promote_main, bump_versions]
     outputs:
@@ -427,10 +406,10 @@ jobs:
         id: plan
         env:
           ENVIRONMENT: ${{ inputs.environment }}
-          DEPLOY_UI: ${{ inputs.deploy_ui }}
-          DEPLOY_SERVER: ${{ inputs.deploy_server }}
-          DEPLOY_WEBSITE: ${{ inputs.deploy_website }}
-          DEPLOY_DOCS: ${{ inputs.deploy_docs }}
+          DEPLOY_UI: ${{ contains(format(',{0},', inputs.deploy_targets), ',ui,') }}
+          DEPLOY_SERVER: ${{ contains(format(',{0},', inputs.deploy_targets), ',server,') }}
+          DEPLOY_WEBSITE: ${{ contains(format(',{0},', inputs.deploy_targets), ',website,') }}
+          DEPLOY_DOCS: ${{ contains(format(',{0},', inputs.deploy_targets), ',docs,') }}
         run: |
           set -euo pipefail
 
@@ -510,7 +489,7 @@ jobs:
 
           plan_one "deploy_ui" "${ui_ref}" "${DEPLOY_UI}" "apps/ui/*" "packages/agents/*" "packages/protocol/*"
           plan_one "deploy_server" "${server_ref}" "${DEPLOY_SERVER}" "apps/server/*" "packages/agents/*" "packages/protocol/*"
-          plan_one "deploy_website" "${website_ref}" "${DEPLOY_WEBSITE}" "apps/website/*"
+          plan_one "deploy_website" "${website_ref}" "${DEPLOY_WEBSITE}" "apps/website/*" "scripts/release/installers/*" "scripts/release/sync-installers.mjs"
           plan_one "deploy_docs" "${docs_ref}" "${DEPLOY_DOCS}" "apps/docs/*"
 
           {
@@ -535,15 +514,16 @@ jobs:
     with:
       source: dev
       target: main
-      mode: ${{ inputs.promote_mode }}
+      mode: ${{ inputs.confirm == 'reset main from dev' && 'reset' || 'fast_forward' }}
       dry_run: ${{ inputs.dry_run }}
-      allow_reset: ${{ inputs.promote_mode == 'reset' }}
-      confirm: ${{ inputs.promote_mode == 'reset' && 'reset main from dev' || 'promote main from dev' }}
+      allow_reset: ${{ inputs.confirm == 'reset main from dev' }}
+      confirm: ${{ inputs.confirm == 'reset main from dev' && 'reset main from dev' || 'promote main from dev' }}
 
   bump_versions:
     if: inputs.dry_run != true
     needs: [checks, promote_main]
     runs-on: ubuntu-latest
+    environment: release-shared
     steps:
       - name: Decide if we need version bumps
         id: decide
@@ -680,7 +660,7 @@ jobs:
           git push origin HEAD:main
 
   deploy_ui:
-    if: inputs.dry_run != true && inputs.deploy_ui == true && needs.deploy_plan.outputs.deploy_ui_needed == 'true'
+    if: inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && needs.deploy_plan.outputs.deploy_ui_needed == 'true'
     needs: [checks, promote_main, bump_versions, deploy_plan]
     permissions:
       contents: write
@@ -695,12 +675,12 @@ jobs:
       expo_action: ${{ inputs.ui_expo_action }}
       expo_profile: ${{ inputs.ui_expo_profile }}
       expo_platform: ${{ inputs.ui_expo_platform }}
-      desktop_build: ${{ inputs.desktop_build }}
-      desktop_publish_release: ${{ inputs.desktop_publish_release }}
+      desktop_build: ${{ inputs.desktop_mode != 'none' }}
+      desktop_publish_release: ${{ inputs.desktop_mode == 'build_and_publish' }}
       run_tests: false
 
   deploy_server:
-    if: inputs.dry_run != true && inputs.deploy_server == true && needs.deploy_plan.outputs.deploy_server_needed == 'true'
+    if: inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && needs.deploy_plan.outputs.deploy_server_needed == 'true'
     needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-server.yml
     secrets: inherit
@@ -712,7 +692,7 @@ jobs:
       run_tests: false
 
   deploy_website:
-    if: inputs.dry_run != true && inputs.deploy_website == true && needs.deploy_plan.outputs.deploy_website_needed == 'true'
+    if: inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && needs.deploy_plan.outputs.deploy_website_needed == 'true'
     needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-website.yml
     secrets: inherit
@@ -724,7 +704,7 @@ jobs:
       run_build: true
 
   deploy_docs:
-    if: inputs.dry_run != true && inputs.deploy_docs == true && needs.deploy_plan.outputs.deploy_docs_needed == 'true'
+    if: inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && needs.deploy_plan.outputs.deploy_docs_needed == 'true'
     needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-docs.yml
     secrets: inherit
@@ -753,7 +733,7 @@ jobs:
       update_deploy_branch: ${{ inputs.cli_bump != 'none' || inputs.stack_bump != 'none' }}
 
   sync_dev:
-    if: inputs.dry_run != true && inputs.sync_dev_from_main == true
+    if: inputs.dry_run != true && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')
     needs: [checks, promote_main, bump_versions]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit

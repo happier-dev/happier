@@ -63,7 +63,7 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: promote-server-${{ github.ref }}
@@ -72,6 +72,7 @@ concurrency:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    environment: release-shared
     steps:
       - name: Resolve source ref
         id: resolve
@@ -101,6 +102,20 @@ jobs:
 
           echo "ref=$src" >> "$GITHUB_OUTPUT"
 
+      - name: Enforce trusted refs for manual dispatch
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            exit 0
+          fi
+          case "${GITHUB_REF_NAME}" in
+            dev|main) ;;
+            *)
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              exit 1
+              ;;
+          esac
+
       - name: Create GitHub App token
         id: app_token
         uses: actions/create-github-app-token@v1
@@ -127,6 +142,17 @@ jobs:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
         run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run release contract tests
+        run: yarn -s test:release:contracts
+
+      - name: Verify installer assets are synced
+        run: node scripts/release/sync-installers.mjs --check
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
 
       - name: Bump server version (source ref)
         id: bump_server
@@ -159,6 +185,103 @@ jobs:
           set -euo pipefail
           src="${{ steps.resolve.outputs.ref }}"
           git push origin "HEAD:refs/heads/$src"
+
+      - name: Build server runtime binaries
+        env:
+          CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require(\"./apps/server/package.json\").version')"
+          node scripts/release/build-server-binaries.mjs \
+            --channel="${CHANNEL}" \
+            --version="${version}"
+
+      - name: Generate server manifests
+        env:
+          CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+          ASSETS_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.environment == 'production' && 'server-stable' || 'server-preview' }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require(\"./apps/server/package.json\").version')"
+          node scripts/release/publish-manifests.mjs \
+            --product=happier-server \
+            --channel="${CHANNEL}" \
+            --version="${version}" \
+            --artifacts-dir="dist/release-assets/server" \
+            --out-dir="dist/release-assets/server/manifests" \
+            --assets-base-url="${ASSETS_BASE_URL}" \
+            --commit-sha="$(git rev-parse HEAD)" \
+            --workflow-run-id="${{ github.run_id }}"
+
+      - name: Verify server release artifacts
+        env:
+          CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require(\"./apps/server/package.json\").version')"
+          test -f "dist/release-assets/server/checksums-happier-server-v${version}.txt"
+          test -f "dist/release-assets/server/checksums-happier-server-v${version}.txt.minisig"
+          test -f "dist/release-assets/server/manifests/v1/happier-server/${CHANNEL}/latest.json"
+
+      - name: Cryptographic verify server release artifacts
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require(\"./apps/server/package.json\").version')"
+          node scripts/release/verify-artifacts.mjs \
+            --artifacts-dir="dist/release-assets/server" \
+            --checksums="dist/release-assets/server/checksums-happier-server-v${version}.txt" \
+            --public-key="scripts/release/installers/happier-release.pub" \
+            --skip-smoke
+
+      - name: Publish rolling server release assets
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require(\"./apps/server/package.json\").version')"
+          tag="server-preview"
+          title="Server Preview"
+          prerelease="--prerelease"
+          if [ "${CHANNEL}" = "stable" ]; then
+            tag="server-stable"
+            title="Server Stable"
+            prerelease=""
+          fi
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release edit "${tag}" --title "${title}" ${prerelease} --target "$(git rev-parse HEAD)"
+          else
+            gh release create "${tag}" --title "${title}" ${prerelease} --target "$(git rev-parse HEAD)" --notes "Rolling ${CHANNEL} server runtime release."
+          fi
+          mapfile -t assets < <(find dist/release-assets/server -maxdepth 10 -type f | sort)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No server release assets found to upload." >&2
+            exit 1
+          fi
+          gh release upload "${tag}" "${assets[@]}" --clobber
+
+      - name: Publish versioned stable server release assets
+        if: inputs.environment == 'production'
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require(\"./apps/server/package.json\").version')"
+          tag="server-v${version}"
+          title="Server v${version}"
+          if gh release view "${tag}" >/dev/null 2>&1; then
+            gh release edit "${tag}" --title "${title}" --target "$(git rev-parse HEAD)"
+          else
+            gh release create "${tag}" --title "${title}" --target "$(git rev-parse HEAD)" --generate-notes
+          fi
+          mapfile -t assets < <(find dist/release-assets/server -maxdepth 10 -type f | sort)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No server release assets found to upload." >&2
+            exit 1
+          fi
+          gh release upload "${tag}" "${assets[@]}" --clobber
 
       - name: Promote source ref to deploy branch
         env:

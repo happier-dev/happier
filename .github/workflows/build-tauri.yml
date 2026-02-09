@@ -77,6 +77,7 @@ jobs:
     name: Build updater artifacts (${{ matrix.platform_key }})
     runs-on: ${{ matrix.os }}
     needs: [resolve_source]
+    environment: release-shared
     strategy:
       fail-fast: false
       matrix:
@@ -99,6 +100,20 @@ jobs:
         with:
           ref: ${{ needs.resolve_source.outputs.source_sha }}
           fetch-depth: 1
+
+      - name: Enforce trusted refs for manual dispatch
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            exit 0
+          fi
+          case "${GITHUB_REF_NAME}" in
+            dev|main) ;;
+            *)
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -367,10 +382,12 @@ jobs:
             xcrun stapler staple "${dmg_path}"
           fi
 
-      - name: Warn when production notarization is skipped (macOS)
+      - name: Fail when production notarization/signing secrets are missing (macOS)
         if: runner.os == 'macOS' && inputs.environment == 'production' && (env.APPLE_CERTIFICATE == '' || env.APPLE_CERTIFICATE_PASSWORD == '' || env.APPLE_API_KEY_ID == '' || env.APPLE_API_ISSUER_ID == '' || env.APPLE_API_PRIVATE_KEY == '' || env.TAURI_SIGNING_PRIVATE_KEY == '')
         run: |
-          echo "::warning::Skipping macOS notarization for a production build because one or more notarization/signing secrets are missing."
+          echo "Missing required production macOS signing/notarization secrets." >&2
+          echo "Required: APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_API_KEY_ID, APPLE_API_ISSUER_ID, APPLE_API_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY." >&2
+          exit 1
 
       - name: Collect updater artifact + signature
         env:

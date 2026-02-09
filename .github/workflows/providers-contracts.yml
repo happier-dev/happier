@@ -31,6 +31,16 @@ on:
         required: true
         default: true
         type: boolean
+      model_default:
+        description: "Optional default model override for all providers"
+        required: true
+        default: ""
+        type: string
+      model_overrides:
+        description: "Optional provider-specific model overrides (comma/newline list: provider=model)"
+        required: true
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -40,7 +50,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  trusted_ref_guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce trusted refs for manual dispatch
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            exit 0
+          fi
+          case "${GITHUB_REF_NAME}" in
+            dev|main) ;;
+            *)
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              exit 1
+              ;;
+          esac
+
   providers:
+    needs: [trusted_ref_guard]
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
@@ -56,8 +84,9 @@ jobs:
       providers_tier: ${{ inputs.tier }}
       providers_strict_keys: ${{ inputs.strict_keys }}
       providers_flake_retry: ${{ inputs.flake_retry }}
+      providers_model_default: ${{ inputs.model_default }}
+      providers_model_overrides: ${{ inputs.model_overrides }}
       providers_update_baselines: false
       run_stress: false
       stress_repeat: "5"
       stress_seed: ""
-

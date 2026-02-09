@@ -28,7 +28,6 @@ jobs:
   stress-scheduled:
     if: github.event_name == 'schedule'
     uses: ./.github/workflows/tests.yml
-    secrets: inherit
     with:
       run_ui: false
       run_server: false
@@ -50,7 +49,6 @@ jobs:
   stress-manual:
     if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/tests.yml
-    secrets: inherit
     with:
       run_ui: false
       run_server: false

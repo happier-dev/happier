@@ -86,8 +86,18 @@ on:
       providers_flake_retry:
         description: "Providers — Retry once to classify flakes"
         required: true
-        default: false
+        default: true
         type: boolean
+      providers_model_default:
+        description: "Providers — Optional default model override for all providers"
+        required: true
+        default: ""
+        type: string
+      providers_model_overrides:
+        description: "Providers — Optional provider-specific model overrides (comma/newline list: provider=model)"
+        required: true
+        default: ""
+        type: string
       providers_update_baselines:
         description: "Providers — Update committed baselines (requires write access; not for PRs)"
         required: true
@@ -95,6 +105,26 @@ on:
         type: boolean
       run_stress:
         description: "Stress — Run stress suite (repeat/chaos)"
+        required: true
+        default: false
+        type: boolean
+      run_release_contracts:
+        description: "Release — Run release/workflow security contract tests"
+        required: true
+        default: true
+        type: boolean
+      run_installers_smoke:
+        description: "Installers — Run clean-machine installer smoke tests (linux/macos/windows)"
+        required: true
+        default: true
+        type: boolean
+      run_binary_smoke:
+        description: "Binaries — Run isolated binary smoke tests (cli/server/self-host)"
+        required: true
+        default: true
+        type: boolean
+      run_self_host_systemd:
+        description: "Binaries — Run real Linux systemd self-host install/uninstall E2E"
         required: true
         default: false
         type: boolean
@@ -168,13 +198,37 @@ on:
         type: boolean
       providers_flake_retry:
         required: false
-        default: false
+        default: true
         type: boolean
+      providers_model_default:
+        required: false
+        default: ""
+        type: string
+      providers_model_overrides:
+        required: false
+        default: ""
+        type: string
       providers_update_baselines:
         required: false
         default: false
         type: boolean
       run_stress:
+        required: false
+        default: false
+        type: boolean
+      run_release_contracts:
+        required: false
+        default: false
+        type: boolean
+      run_installers_smoke:
+        required: false
+        default: true
+        type: boolean
+      run_binary_smoke:
+        required: false
+        default: true
+        type: boolean
+      run_self_host_systemd:
         required: false
         default: false
         type: boolean
@@ -443,6 +497,206 @@ jobs:
 
       - name: Run integration tests
         run: yarn --cwd apps/stack test:integration
+
+  release-contracts:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_release_contracts }}
+    name: Release Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run release contract tests
+        run: |
+          set -euo pipefail
+          yarn -s test:release:contracts
+          node scripts/release/sync-installers.mjs --check
+
+  installers-smoke-linux:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_installers_smoke }}
+    name: Installer Smoke (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify published installers are synced
+        run: |
+          set -euo pipefail
+          node scripts/release/sync-installers.mjs --check
+
+      - name: Run CLI installer from isolated temp location
+        run: |
+          set -euo pipefail
+          export HOME="$(mktemp -d)"
+          export HAPPIER_INSTALL_DIR="${HOME}/.happier"
+          export HAPPIER_BIN_DIR="${HOME}/.local/bin"
+          export HAPPIER_NONINTERACTIVE=1
+          export HAPPIER_NO_PATH_UPDATE=1
+
+          cp apps/website/public/install.sh /tmp/happier-install.sh
+          chmod +x /tmp/happier-install.sh
+          /tmp/happier-install.sh
+
+          test -x "${HAPPIER_BIN_DIR}/happier"
+          "${HAPPIER_BIN_DIR}/happier" --version
+          "${HAPPIER_BIN_DIR}/happier" --help >/dev/null
+
+  installers-smoke-macos:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_installers_smoke }}
+    name: Installer Smoke (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify published installers are synced
+        run: node scripts/release/sync-installers.mjs --check
+
+      - name: Run CLI installer from isolated temp location
+        run: |
+          set -euo pipefail
+          export HOME="$(mktemp -d)"
+          export HAPPIER_INSTALL_DIR="${HOME}/.happier"
+          export HAPPIER_BIN_DIR="${HOME}/.local/bin"
+          export HAPPIER_NONINTERACTIVE=1
+          export HAPPIER_NO_PATH_UPDATE=1
+
+          cp apps/website/public/install.sh /tmp/happier-install.sh
+          chmod +x /tmp/happier-install.sh
+          /tmp/happier-install.sh
+
+          test -x "${HAPPIER_BIN_DIR}/happier"
+          "${HAPPIER_BIN_DIR}/happier" --version
+          "${HAPPIER_BIN_DIR}/happier" --help >/dev/null
+
+  installers-smoke-windows:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_installers_smoke }}
+    name: Installer Smoke (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify published installers are synced
+        shell: pwsh
+        run: node scripts/release/sync-installers.mjs --check
+
+      - name: Run CLI installer from isolated temp location
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $env:HAPPIER_NONINTERACTIVE = "1"
+          $env:HAPPIER_INSTALL_DIR = Join-Path $env:RUNNER_TEMP ".happier"
+          $env:HAPPIER_BIN_DIR = Join-Path $env:RUNNER_TEMP ".local\bin"
+
+          $scriptPath = Join-Path $env:RUNNER_TEMP "happier-install.ps1"
+          Copy-Item -Path "apps/website/public/install.ps1" -Destination $scriptPath -Force
+          & $scriptPath
+
+          $binaryPath = Join-Path $env:HAPPIER_BIN_DIR "happier.exe"
+          if (-not (Test-Path $binaryPath)) {
+            throw "Installer did not create $binaryPath"
+          }
+          & $binaryPath --version
+          & $binaryPath --help | Out-Null
+
+  binary-smoke:
+    if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_binary_smoke }}
+    name: Binary Smoke (isolated cwd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run isolated binary smoke tests
+        run: |
+          set -euo pipefail
+          node --test apps/stack/scripts/self_host_binary_smoke.integration.test.mjs
+          node --test apps/stack/scripts/release_binary_smoke.integration.test.mjs
+
+  self-host-systemd-e2e:
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_systemd }}
+    name: Self-Host E2E (Linux systemd)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: yarn.lock
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Install dependencies
+        env:
+          YARN_PRODUCTION: "false"
+          npm_config_production: "false"
+        run: yarn install --frozen-lockfile --ignore-engines
+
+      - name: Run real systemd self-host E2E
+        run: |
+          set -euo pipefail
+          node --test apps/stack/scripts/self_host_systemd.real.integration.test.mjs
 
   typecheck:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_typecheck }}
@@ -764,6 +1018,7 @@ jobs:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_providers }}
     name: Providers (contract matrix)
     runs-on: ubuntu-latest
+    environment: providers-ci
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -879,12 +1134,16 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           CODEX_API_KEY: ${{ secrets.CODEX_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HAPPIER_E2E_PROVIDER_MODEL: ${{ inputs.providers_model_default }}
+          HAPPY_E2E_PROVIDER_MODEL: ${{ inputs.providers_model_default }}
+          HAPPIER_E2E_PROVIDER_MODELS: ${{ inputs.providers_model_overrides }}
+          HAPPY_E2E_PROVIDER_MODELS: ${{ inputs.providers_model_overrides }}
         run: |
           set -euo pipefail
 
           flags=()
           if [ "${{ inputs.providers_strict_keys }}" = "true" ]; then flags+=("--strict-keys"); fi
-          if [ "${{ inputs.providers_flake_retry }}" = "true" ]; then flags+=("--flake-retry"); fi
+          if [ "${{ inputs.providers_flake_retry }}" != "true" ]; then flags+=("--no-flake-retry"); fi
           if [ "${{ inputs.providers_update_baselines }}" = "true" ]; then flags+=("--update-baselines"); fi
 
           yarn workspace @happier-dev/tests providers:run "${{ inputs.providers_preset }}" "${{ inputs.providers_tier }}" "${flags[@]}"

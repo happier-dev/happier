@@ -37,7 +37,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce trusted refs for manual dispatch
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]; then
+            exit 0
+          fi
+          case "${GITHUB_REF_NAME}" in
+            dev|main) ;;
+            *)
+              echo "Refusing workflow_dispatch from untrusted ref '${GITHUB_REF_NAME}'. Use dev or main." >&2
+              exit 1
+              ;;
+          esac
+
   promote:
+    needs: [trusted_ref_guard]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:
