@@ -47,13 +47,26 @@ vi.mock('expo-updates', () => ({
     reloadAsync: vi.fn(),
 }));
 
+const routerReplaceMock = vi.fn();
+let localSearchParamsMock: Record<string, any> = {};
+const switchConnectionToActiveServerSpy = vi.fn(async () => null);
+const refreshFromActiveServerSpy = vi.fn(async () => {});
+
 vi.mock('expo-router', () => ({
     Stack: Object.assign(
         ({ children }: any) => React.createElement(React.Fragment, null, children),
         { Screen: ({ children }: any) => React.createElement(React.Fragment, null, children) }
     ),
-    useRouter: () => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }),
-    useLocalSearchParams: () => ({}),
+    useRouter: () => ({ back: vi.fn(), push: vi.fn(), replace: routerReplaceMock }),
+    useLocalSearchParams: () => localSearchParamsMock,
+}));
+
+vi.mock('@/sync/connectionManager', () => ({
+    switchConnectionToActiveServer: (...args: unknown[]) => switchConnectionToActiveServerSpy(...args),
+}));
+
+vi.mock('@/auth/AuthContext', () => ({
+    useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: refreshFromActiveServerSpy }),
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -94,6 +107,32 @@ describe('ServerConfigScreen', () => {
         const rendered = tree!.toJSON();
         expect(rendered).toBeTruthy();
         expect(JSON.stringify(rendered)).toContain('Company');
-        expect(JSON.stringify(rendered)).toContain('Happier (Official)');
+        expect(JSON.stringify(rendered)).toContain('Happier Cloud');
+        expect(JSON.stringify(rendered)).toContain('Enable concurrent view');
+    });
+
+    it('auto=1 upserts and activates server then redirects away', async () => {
+        localSearchParamsMock = { url: 'https://company.example.test', auto: '1' };
+        routerReplaceMock.mockClear();
+        switchConnectionToActiveServerSpy.mockClear();
+        refreshFromActiveServerSpy.mockClear();
+
+        (globalThis as any).fetch = vi.fn(async () => ({ ok: true, text: async () => 'Welcome to Happier Server!' }));
+
+        const { getActiveServerId, setActiveServerId } = await import('@/sync/serverProfiles');
+        setActiveServerId('official', { scope: 'device' });
+
+        const Screen = (await import('./server')).default;
+
+        await act(async () => {
+            renderer.create(React.createElement(Screen));
+            await Promise.resolve();
+        });
+        await act(async () => {});
+
+        expect(getActiveServerId()).not.toEqual('official');
+        expect(switchConnectionToActiveServerSpy).toHaveBeenCalledTimes(1);
+        expect(refreshFromActiveServerSpy).toHaveBeenCalledTimes(1);
+        expect(routerReplaceMock).toHaveBeenCalledWith('/');
     });
 });

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { View, TextInput, KeyboardAvoidingView, Platform, Text as RNText, Pressable } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { View, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/StyledText';
 import { Typography } from '@/constants/Typography';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -14,11 +14,15 @@ import { layout } from '@/components/layout';
 import { t } from '@/text';
 import { validateServerUrl } from '@/sync/serverConfig';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import * as Updates from 'expo-updates';
 import { parseServerConfigRouteParams } from './serverParams';
 import { type ServerProfile, getActiveServerId, listServerProfiles, removeServerProfile, renameServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/serverProfiles';
 import { TokenStorage } from '@/auth/tokenStorage';
 import { Ionicons } from '@expo/vector-icons';
+import { switchConnectionToActiveServer } from '@/sync/connectionManager';
+import { useAuth } from '@/auth/AuthContext';
+import { Switch } from '@/components/Switch';
+import { useSettingMutable } from '@/sync/storage';
+import { OFFICIAL_SERVER_ID } from '@/sync/serverIdentity';
 
 const stylesheet = StyleSheet.create((theme) => ({
     keyboardAvoidingView: {
@@ -81,32 +85,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         textAlign: 'center',
     },
-    webScopeRow: {
-        flexDirection: 'row',
-        gap: 8,
-        marginBottom: 12,
-        justifyContent: 'center',
-        flexWrap: 'wrap',
-    },
-    webScopePill: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        borderRadius: 9999,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderWidth: 1,
-        borderColor: theme.colors.divider,
-        backgroundColor: theme.colors.surface,
-    },
-    webScopePillActive: {
-        borderColor: theme.colors.textSecondary,
-    },
-    webScopePillText: {
-        ...Typography.default('semiBold'),
-        fontSize: 12,
-        color: theme.colors.text,
-    },
 }));
 
 function normalizeUrl(raw: string): string {
@@ -125,85 +103,83 @@ function defaultServerName(rawUrl: string): string {
     }
 }
 
+type MultiServerGroupProfile = {
+    id: string;
+    name: string;
+    serverIds: string[];
+    presentation: 'grouped' | 'flat-with-badge';
+};
+
+function normalizeMultiServerGroupProfiles(
+    raw: unknown,
+    validServerIds: ReadonlySet<string>,
+): MultiServerGroupProfile[] {
+    if (!Array.isArray(raw)) return [];
+    const seenIds = new Set<string>();
+    const result: MultiServerGroupProfile[] = [];
+    for (const item of raw) {
+        if (!item || typeof item !== 'object') continue;
+        const record = item as Record<string, unknown>;
+        const id = String(record.id ?? '').trim();
+        const name = String(record.name ?? '').trim();
+        if (!id || !name) continue;
+        if (seenIds.has(id)) continue;
+        seenIds.add(id);
+        const idsRaw = Array.isArray(record.serverIds) ? record.serverIds : [];
+        const serverIds: string[] = [];
+        const seenServerIds = new Set<string>();
+        for (const rawServerId of idsRaw) {
+            const serverId = String(rawServerId ?? '').trim();
+            if (!serverId) continue;
+            if (!validServerIds.has(serverId)) continue;
+            if (seenServerIds.has(serverId)) continue;
+            seenServerIds.add(serverId);
+            serverIds.push(serverId);
+        }
+        result.push({
+            id,
+            name,
+            serverIds,
+            presentation: record.presentation === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
+        });
+    }
+    return result;
+}
+
+function toGroupProfileId(rawName: string): string {
+    const base = String(rawName ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/-+/g, '-');
+    return base || `group-${Date.now()}`;
+}
+
 export default function ServerConfigScreen() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const router = useRouter();
+    const auth = useAuth();
     const searchParams = useLocalSearchParams();
     const [revision, setRevision] = React.useState(0);
     const [inputUrl, setInputUrl] = useState('');
     const [inputName, setInputName] = useState('');
     const [error, setError] = useState<string | null>(null);
     const [isValidating, setIsValidating] = useState(false);
-    const [webSwitchScope, setWebSwitchScope] = React.useState<'tab' | 'device'>(() => (Platform.OS === 'web' ? 'tab' : 'device'));
     const [authStatusByServerId, setAuthStatusByServerId] = React.useState<Record<string, 'signedIn' | 'signedOut' | 'unknown'>>({});
+    const [multiServerEnabled, setMultiServerEnabled] = useSettingMutable('multiServerEnabled');
+    const [multiServerSelectedServerIds, setMultiServerSelectedServerIds] = useSettingMutable('multiServerSelectedServerIds');
+    const [multiServerPresentation, setMultiServerPresentation] = useSettingMutable('multiServerPresentation');
+    const [multiServerProfiles, setMultiServerProfiles] = useSettingMutable('multiServerProfiles');
+    const [multiServerActiveProfileId, setMultiServerActiveProfileId] = useSettingMutable('multiServerActiveProfileId');
+    const autoHandledRef = React.useRef(false);
     const route = React.useMemo(() => {
         return parseServerConfigRouteParams({ url: searchParams.url, auto: searchParams.auto });
     }, [searchParams.auto, searchParams.url]);
 
     const autoMode = route.auto;
 
-    React.useEffect(() => {
-        if (!route.url) return;
-        if (autoMode || !inputUrl.trim()) {
-            if (inputUrl.trim() !== route.url) setInputUrl(route.url);
-            if (error) setError(null);
-        }
-    }, [autoMode, error, inputUrl, route.url]);
-
-    const servers = React.useMemo(() => {
-        try {
-            return listServerProfiles()
-                .slice()
-                .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
-        } catch {
-            return [] as ServerProfile[];
-        }
-    }, [revision]);
-
-    React.useEffect(() => {
-        let cancelled = false;
-        void (async () => {
-            const entries = await Promise.all(servers.map(async (profile) => {
-                try {
-                    const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
-                    return [profile.id, creds ? 'signedIn' : 'signedOut'] as const;
-                } catch {
-                    return [profile.id, 'unknown'] as const;
-                }
-            }));
-            if (cancelled) return;
-            const next: Record<string, 'signedIn' | 'signedOut' | 'unknown'> = {};
-            for (const [id, status] of entries) next[id] = status;
-            setAuthStatusByServerId(next);
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, [servers]);
-
-    const activeServerId = React.useMemo(() => {
-        try {
-            return getActiveServerId();
-        } catch {
-            return 'official';
-        }
-    }, [revision]);
-
-    const reloadNow = React.useCallback(async () => {
-        if (Platform.OS === 'web') {
-            try {
-                window.location.reload();
-            } catch {
-                // ignore
-            }
-            return;
-        }
-        try {
-            await Updates.reloadAsync();
-        } catch {
-            // ignore (dev mode)
-        }
-    }, []);
+    const switchServer = React.useCallback(async (serverId: string, scope: 'tab' | 'device' = 'device') => {
+        setActiveServerId(serverId, { scope });
+        await switchConnectionToActiveServer();
+        await auth.refreshFromActiveServer();
+    }, [auth]);
 
     const validateServer = async (url: string): Promise<boolean> => {
         try {
@@ -249,6 +225,136 @@ export default function ServerConfigScreen() {
         }
     };
 
+    React.useEffect(() => {
+        if (!autoMode) return;
+        if (!route.url) return;
+        if (autoHandledRef.current) return;
+        autoHandledRef.current = true;
+
+        void (async () => {
+            const url = route.url;
+            const validation = validateServerUrl(url);
+            if (!validation.valid) {
+                setError(validation.error || t('errors.invalidFormat'));
+                return;
+            }
+
+            const isValid = await validateServer(url);
+            if (!isValid) return;
+
+            const normalized = normalizeUrl(url);
+            const name = defaultServerName(normalized);
+            const profile = upsertServerProfile({
+                serverUrl: normalized,
+                name,
+                source: autoMode ? 'url' : 'manual',
+            });
+
+            await switchServer(profile.id, 'device');
+
+            setRevision((r) => r + 1);
+            router.replace('/');
+        })();
+    }, [autoMode, route.url, router, switchServer]);
+
+    React.useEffect(() => {
+        if (!route.url) return;
+        if (autoMode || !inputUrl.trim()) {
+            if (inputUrl.trim() !== route.url) setInputUrl(route.url);
+            if (error) setError(null);
+        }
+    }, [autoMode, error, inputUrl, route.url]);
+
+    const servers = React.useMemo(() => {
+        try {
+            return listServerProfiles()
+                .slice()
+                .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
+        } catch {
+            return [] as ServerProfile[];
+        }
+    }, [revision]);
+
+    const validServerIds = React.useMemo(() => {
+        return new Set(servers.map((profile) => profile.id));
+    }, [servers]);
+
+    const normalizedMultiServerProfiles = React.useMemo(() => {
+        return normalizeMultiServerGroupProfiles(multiServerProfiles, validServerIds);
+    }, [multiServerProfiles, validServerIds]);
+
+    const activeMultiServerProfileId = React.useMemo(() => {
+        const id = String(multiServerActiveProfileId ?? '').trim();
+        return id || null;
+    }, [multiServerActiveProfileId]);
+
+    const activeMultiServerProfile = React.useMemo(() => {
+        if (!activeMultiServerProfileId) return null;
+        return normalizedMultiServerProfiles.find((profile) => profile.id === activeMultiServerProfileId) ?? null;
+    }, [activeMultiServerProfileId, normalizedMultiServerProfiles]);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        void (async () => {
+            const entries = await Promise.all(servers.map(async (profile) => {
+                try {
+                    const creds = await TokenStorage.getCredentialsForServerUrl(profile.serverUrl);
+                    return [profile.id, creds ? 'signedIn' : 'signedOut'] as const;
+                } catch {
+                    return [profile.id, 'unknown'] as const;
+                }
+            }));
+            if (cancelled) return;
+            const next: Record<string, 'signedIn' | 'signedOut' | 'unknown'> = {};
+            for (const [id, status] of entries) next[id] = status;
+            setAuthStatusByServerId(next);
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [servers]);
+
+    React.useEffect(() => {
+        const current = Array.isArray(multiServerSelectedServerIds) ? multiServerSelectedServerIds : [];
+        const next = current.filter((id) => validServerIds.has(id));
+        if (next.length !== current.length || next.some((id, index) => id !== current[index])) {
+            setMultiServerSelectedServerIds(next);
+        }
+    }, [multiServerSelectedServerIds, setMultiServerSelectedServerIds, validServerIds]);
+
+    React.useEffect(() => {
+        const normalized = normalizeMultiServerGroupProfiles(multiServerProfiles, validServerIds);
+        if (JSON.stringify(normalized) !== JSON.stringify(multiServerProfiles)) {
+            setMultiServerProfiles(normalized as any);
+            return;
+        }
+        const id = String(multiServerActiveProfileId ?? '').trim();
+        if (id && !normalized.some((profile) => profile.id === id)) {
+            setMultiServerActiveProfileId(null);
+        }
+    }, [
+        multiServerActiveProfileId,
+        multiServerProfiles,
+        setMultiServerActiveProfileId,
+        setMultiServerProfiles,
+        validServerIds,
+    ]);
+
+    const selectedConcurrentServerIds = React.useMemo(() => {
+        if (activeMultiServerProfile) {
+            return new Set(activeMultiServerProfile.serverIds);
+        }
+        return new Set(Array.isArray(multiServerSelectedServerIds) ? multiServerSelectedServerIds : []);
+    }, [activeMultiServerProfile, multiServerSelectedServerIds]);
+
+    const activeServerId = React.useMemo(() => {
+        try {
+            return getActiveServerId();
+        } catch {
+            return OFFICIAL_SERVER_ID;
+        }
+    }, [revision]);
+
     const handleAddServer = async () => {
         if (!inputUrl.trim()) {
             Modal.alert(t('common.error'), t('server.enterServerUrl'));
@@ -269,20 +375,15 @@ export default function ServerConfigScreen() {
 
         const normalized = normalizeUrl(inputUrl);
         const name = inputName.trim() ? inputName.trim() : defaultServerName(normalized);
-        const profile = upsertServerProfile({ serverUrl: normalized, name });
+        const profile = upsertServerProfile({
+            serverUrl: normalized,
+            name,
+            source: 'manual',
+        });
 
-        const scope: 'tab' | 'device' = Platform.OS === 'web' ? webSwitchScope : 'device';
-        setActiveServerId(profile.id, { scope });
-        if (Platform.OS === 'web' && (autoMode || scope === 'device')) {
-            try {
-                setActiveServerId(profile.id, { scope: 'tab' });
-            } catch {
-                // ignore
-            }
-        }
+        await switchServer(profile.id, 'device');
 
         setRevision((r) => r + 1);
-        await reloadNow();
     };
 
     const handleReset = async () => {
@@ -293,37 +394,154 @@ export default function ServerConfigScreen() {
         );
 
         if (confirmed) {
-            setActiveServerId('official', { scope: 'device' });
-            if (Platform.OS === 'web') {
-                try {
-                    setActiveServerId('official', { scope: 'tab' });
-                } catch {
-                    // ignore
-                }
-            }
+            await switchServer(OFFICIAL_SERVER_ID, 'device');
             setInputUrl('');
             setInputName('');
             setRevision((r) => r + 1);
-            await reloadNow();
         }
     };
 
-    const handleSwitch = React.useCallback(async (profile: ServerProfile) => {
-        const scope: 'tab' | 'device' = Platform.OS === 'web' ? webSwitchScope : 'device';
-        setActiveServerId(profile.id, { scope });
-        if (Platform.OS === 'web' && scope === 'device') {
-            try {
-                setActiveServerId(profile.id, { scope: 'tab' });
-            } catch {
-                // ignore
-            }
-        }
+    const handleSwitch = React.useCallback(async (profile: ServerProfile, scope: 'tab' | 'device' = 'device') => {
+        await switchServer(profile.id, scope);
         setRevision((r) => r + 1);
-        await reloadNow();
-    }, [reloadNow, webSwitchScope]);
+    }, [switchServer]);
+
+    const handleToggleConcurrentServer = React.useCallback((serverId: string) => {
+        if (activeMultiServerProfileId) {
+            const currentProfiles = normalizeMultiServerGroupProfiles(multiServerProfiles, validServerIds);
+            const nextProfiles = currentProfiles.map((profile) => {
+                if (profile.id !== activeMultiServerProfileId) return profile;
+                const exists = profile.serverIds.includes(serverId);
+                const serverIds = exists
+                    ? profile.serverIds.filter((id) => id !== serverId)
+                    : [...profile.serverIds, serverId];
+                return {
+                    ...profile,
+                    serverIds,
+                };
+            });
+            setMultiServerProfiles(nextProfiles as any);
+            return;
+        }
+
+        const current = Array.isArray(multiServerSelectedServerIds) ? multiServerSelectedServerIds : [];
+        const exists = current.includes(serverId);
+        if (exists) {
+            setMultiServerSelectedServerIds(current.filter((id) => id !== serverId));
+            return;
+        }
+        setMultiServerSelectedServerIds([...current, serverId]);
+    }, [
+        activeMultiServerProfileId,
+        multiServerProfiles,
+        multiServerSelectedServerIds,
+        setMultiServerProfiles,
+        setMultiServerSelectedServerIds,
+        validServerIds,
+    ]);
+
+    const handleTogglePresentation = React.useCallback(() => {
+        if (activeMultiServerProfileId) {
+            const currentProfiles = normalizeMultiServerGroupProfiles(multiServerProfiles, validServerIds);
+            const nextProfiles = currentProfiles.map((profile) => {
+                if (profile.id !== activeMultiServerProfileId) return profile;
+                return {
+                    ...profile,
+                    presentation: profile.presentation === 'grouped' ? 'flat-with-badge' : 'grouped',
+                };
+            });
+            setMultiServerProfiles(nextProfiles as any);
+            return;
+        }
+        setMultiServerPresentation(multiServerPresentation === 'grouped' ? 'flat-with-badge' : 'grouped');
+    }, [
+        activeMultiServerProfileId,
+        multiServerPresentation,
+        multiServerProfiles,
+        setMultiServerPresentation,
+        setMultiServerProfiles,
+        validServerIds,
+    ]);
+
+    const handleActivateConcurrentProfile = React.useCallback((profileId: string | null) => {
+        setMultiServerActiveProfileId(profileId);
+    }, [setMultiServerActiveProfileId]);
+
+    const handleCreateConcurrentProfile = React.useCallback(async () => {
+        const name = await Modal.prompt(
+            'Save server group',
+            'Name this server group profile',
+            { placeholder: 'My server group' },
+        );
+        if (!name) return;
+        const trimmedName = name.trim();
+        if (!trimmedName) return;
+
+        const baseId = toGroupProfileId(trimmedName);
+        const existingIds = new Set(normalizedMultiServerProfiles.map((profile) => profile.id));
+        let id = baseId;
+        let suffix = 2;
+        while (existingIds.has(id)) {
+            id = `${baseId}-${suffix}`;
+            suffix += 1;
+        }
+
+        const seedServerIds = Array.from(selectedConcurrentServerIds);
+        const presentation = activeMultiServerProfile?.presentation
+            ?? (multiServerPresentation === 'flat-with-badge' ? 'flat-with-badge' : 'grouped');
+        const nextProfile: MultiServerGroupProfile = {
+            id,
+            name: trimmedName,
+            serverIds: seedServerIds,
+            presentation,
+        };
+        const nextProfiles = [...normalizedMultiServerProfiles, nextProfile];
+        setMultiServerProfiles(nextProfiles as any);
+        setMultiServerActiveProfileId(nextProfile.id);
+    }, [
+        activeMultiServerProfile,
+        multiServerPresentation,
+        normalizedMultiServerProfiles,
+        selectedConcurrentServerIds,
+        setMultiServerActiveProfileId,
+        setMultiServerProfiles,
+    ]);
+
+    const handleRenameConcurrentProfile = React.useCallback(async (profile: MultiServerGroupProfile) => {
+        const next = await Modal.prompt(
+            'Rename server group',
+            'Set a new name for this server group profile',
+            { defaultValue: profile.name, placeholder: 'Server group name' },
+        );
+        if (!next) return;
+        const trimmed = next.trim();
+        if (!trimmed) return;
+        const nextProfiles = normalizedMultiServerProfiles.map((item) => {
+            if (item.id !== profile.id) return item;
+            return {
+                ...item,
+                name: trimmed,
+            };
+        });
+        setMultiServerProfiles(nextProfiles as any);
+    }, [normalizedMultiServerProfiles, setMultiServerProfiles]);
+
+    const handleRemoveConcurrentProfile = React.useCallback(async (profile: MultiServerGroupProfile) => {
+        const confirmed = await Modal.confirm(
+            'Remove server group',
+            `Remove "${profile.name}"?`,
+            { confirmText: t('common.remove'), destructive: true },
+        );
+        if (!confirmed) return;
+        const nextProfiles = normalizedMultiServerProfiles.filter((item) => item.id !== profile.id);
+        setMultiServerProfiles(nextProfiles as any);
+        if (activeMultiServerProfileId === profile.id) {
+            setMultiServerActiveProfileId(null);
+        }
+    }, [activeMultiServerProfileId, normalizedMultiServerProfiles, setMultiServerActiveProfileId, setMultiServerProfiles]);
 
     const handleRename = React.useCallback(async (profile: ServerProfile) => {
-        if (profile.id === 'official') {
+        if (profile.id === OFFICIAL_SERVER_ID) {
             Modal.alert(t('common.error'), t('server.cannotRenameOfficial'));
             return;
         }
@@ -342,7 +560,7 @@ export default function ServerConfigScreen() {
     }, []);
 
     const handleRemove = React.useCallback(async (profile: ServerProfile) => {
-        if (profile.id === 'official') {
+        if (profile.id === OFFICIAL_SERVER_ID) {
             Modal.alert(t('common.error'), t('server.cannotRemoveOfficial'));
             return;
         }
@@ -383,8 +601,7 @@ export default function ServerConfigScreen() {
         }
 
         setRevision((r) => r + 1);
-        await reloadNow();
-    }, [reloadNow]);
+    }, []);
 
     const headerTitle = t('server.serverConfiguration');
     const headerBackTitle = t('common.back');
@@ -419,27 +636,49 @@ export default function ServerConfigScreen() {
                                         ? t('server.signedOut')
                                         : t('server.authStatusUnknown');
                             const subtitle = `${profile.serverUrl}\n${statusLabel}`;
-                            const actions: ItemAction[] = [
-                                {
-                                    id: 'switch',
-                                    title: t('server.switchToServer'),
-                                    icon: 'swap-horizontal-outline',
-                                    onPress: () => handleSwitch(profile),
-                                },
-                                {
-                                    id: 'rename',
-                                    title: t('common.rename'),
-                                    icon: 'pencil-outline',
-                                    onPress: () => handleRename(profile),
-                                },
-                                {
-                                    id: 'remove',
-                                    title: t('common.remove'),
-                                    icon: 'trash-outline',
-                                    destructive: true,
-                                    onPress: () => handleRemove(profile),
-                                },
-                            ];
+                            const actions: ItemAction[] = Platform.OS === 'web'
+                                ? [
+                                    {
+                                        id: 'switch-device',
+                                        title: t('server.makeDefaultOnDevice'),
+                                        icon: 'phone-portrait-outline',
+                                        onPress: () => handleSwitch(profile, 'device'),
+                                    },
+                                    {
+                                        id: 'rename',
+                                        title: t('common.rename'),
+                                        icon: 'pencil-outline',
+                                        onPress: () => handleRename(profile),
+                                    },
+                                    {
+                                        id: 'remove',
+                                        title: t('common.remove'),
+                                        icon: 'trash-outline',
+                                        destructive: true,
+                                        onPress: () => handleRemove(profile),
+                                    },
+                                ]
+                                : [
+                                    {
+                                        id: 'switch',
+                                        title: t('server.switchToServer'),
+                                        icon: 'swap-horizontal-outline',
+                                        onPress: () => handleSwitch(profile, 'device'),
+                                    },
+                                    {
+                                        id: 'rename',
+                                        title: t('common.rename'),
+                                        icon: 'pencil-outline',
+                                        onPress: () => handleRename(profile),
+                                    },
+                                    {
+                                        id: 'remove',
+                                        title: t('common.remove'),
+                                        icon: 'trash-outline',
+                                        destructive: true,
+                                        onPress: () => handleRemove(profile),
+                                    },
+                                ];
 
                             return (
                                 <Item
@@ -450,13 +689,13 @@ export default function ServerConfigScreen() {
                                     selected={isActive}
                                     showChevron={false}
                                     detail={isActive ? t('server.active') : undefined}
-                                    onPress={() => handleSwitch(profile)}
+                                    onPress={() => handleSwitch(profile, 'device')}
                                     rightElement={(
                                         <ItemRowActions
                                             title={profile.name}
                                             actions={actions}
-                                            compactActionIds={['switch']}
-                                            pinnedActionIds={['switch']}
+                                            compactActionIds={Platform.OS === 'web' ? ['switch-device'] : ['switch']}
+                                            pinnedActionIds={Platform.OS === 'web' ? ['switch-device'] : ['switch']}
                                             overflowPosition="beforePinned"
                                         />
                                     )}
@@ -465,31 +704,122 @@ export default function ServerConfigScreen() {
                         })}
                     </ItemGroup>
 
+                    <ItemGroup title="Concurrent multi-server view" footer="Select whether to combine multiple servers in one session list.">
+                        <Item
+                            title="Enable concurrent view"
+                            subtitle="Show sessions from selected servers together"
+                            icon={<Ionicons name="layers-outline" size={29} color="#5856D6" />}
+                            rightElement={<Switch value={Boolean(multiServerEnabled)} onValueChange={setMultiServerEnabled} />}
+                            showChevron={false}
+                            onPress={() => setMultiServerEnabled(!multiServerEnabled)}
+                        />
+                        <Item
+                            title="Presentation mode"
+                            subtitle={
+                                (activeMultiServerProfile?.presentation ?? multiServerPresentation) === 'flat-with-badge'
+                                    ? 'Flat list with server badges'
+                                    : 'Grouped by server'
+                            }
+                            icon={<Ionicons name="list-outline" size={29} color="#007AFF" />}
+                            rightElement={<Ionicons name="swap-horizontal-outline" size={20} color={theme.colors.textSecondary} />}
+                            showChevron={false}
+                            onPress={handleTogglePresentation}
+                        />
+                        <Item
+                            title="Active server group"
+                            subtitle={activeMultiServerProfile ? activeMultiServerProfile.name : 'Default selection'}
+                            icon={<Ionicons name="albums-outline" size={29} color="#8E44AD" />}
+                            rightElement={<Ionicons name="chevron-forward" size={20} color={theme.colors.textSecondary} />}
+                            showChevron={false}
+                            onPress={() => {
+                                if (activeMultiServerProfileId) {
+                                    handleActivateConcurrentProfile(null);
+                                }
+                            }}
+                        />
+                        <Item
+                            title="Save current selection as group"
+                            subtitle="Create a reusable multi-server profile"
+                            icon={<Ionicons name="bookmark-outline" size={29} color="#16A34A" />}
+                            rightElement={<Ionicons name="add-circle-outline" size={20} color={theme.colors.textSecondary} />}
+                            showChevron={false}
+                            onPress={handleCreateConcurrentProfile}
+                        />
+                        {normalizedMultiServerProfiles.map((profile) => {
+                            const isActiveProfile = profile.id === activeMultiServerProfileId;
+                            const actions: ItemAction[] = [
+                                {
+                                    id: 'activate',
+                                    title: isActiveProfile ? 'Use default selection' : 'Use this group',
+                                    icon: 'checkmark-circle-outline',
+                                    onPress: () => handleActivateConcurrentProfile(isActiveProfile ? null : profile.id),
+                                },
+                                {
+                                    id: 'rename',
+                                    title: t('common.rename'),
+                                    icon: 'pencil-outline',
+                                    onPress: () => handleRenameConcurrentProfile(profile),
+                                },
+                                {
+                                    id: 'remove',
+                                    title: t('common.remove'),
+                                    icon: 'trash-outline',
+                                    destructive: true,
+                                    onPress: () => handleRemoveConcurrentProfile(profile),
+                                },
+                            ];
+                            return (
+                                <Item
+                                    key={`multi-server-profile-${profile.id}`}
+                                    title={profile.name}
+                                    subtitle={`${profile.serverIds.length} server${profile.serverIds.length === 1 ? '' : 's'} · ${profile.presentation === 'flat-with-badge' ? 'flat list' : 'grouped list'}`}
+                                    icon={<Ionicons name="folder-open-outline" size={29} color={theme.colors.textSecondary} />}
+                                    selected={isActiveProfile}
+                                    detail={isActiveProfile ? 'Active' : undefined}
+                                    showChevron={false}
+                                    onPress={() => handleActivateConcurrentProfile(isActiveProfile ? null : profile.id)}
+                                    rightElement={(
+                                        <ItemRowActions
+                                            title={profile.name}
+                                            actions={actions}
+                                            compactActionIds={['activate']}
+                                            pinnedActionIds={['activate']}
+                                            overflowPosition="beforePinned"
+                                        />
+                                    )}
+                                />
+                            );
+                        })}
+                        {multiServerEnabled
+                            ? servers.map((profile) => {
+                                const selected = selectedConcurrentServerIds.has(profile.id);
+                                return (
+                                    <Item
+                                        key={`multi-server-${profile.id}`}
+                                        title={profile.name}
+                                        subtitle={profile.serverUrl}
+                                        icon={<Ionicons name="server-outline" size={29} color={theme.colors.textSecondary} />}
+                                        rightElement={(
+                                            <Ionicons
+                                                name={selected ? 'checkmark-circle' : 'ellipse-outline'}
+                                                size={20}
+                                                color={selected ? theme.colors.status.connected : theme.colors.textSecondary}
+                                            />
+                                        )}
+                                        showChevron={false}
+                                        onPress={() => handleToggleConcurrentServer(profile.id)}
+                                    />
+                                );
+                            })
+                            : null}
+                    </ItemGroup>
+
                     <ItemGroup title={t('server.addServerTitle')} footer={t('server.advancedFeatureFooter')}>
                         <View style={styles.contentContainer}>
                             {autoMode ? (
                                 <Text style={[styles.statusText, { marginBottom: 12 }]}>
                                     {t('server.autoConfigHint')}
                                 </Text>
-                            ) : null}
-
-                            {Platform.OS === 'web' ? (
-                                <View style={styles.webScopeRow}>
-                                    <Pressable
-                                        style={[styles.webScopePill, webSwitchScope === 'tab' ? styles.webScopePillActive : null]}
-                                        onPress={() => setWebSwitchScope('tab')}
-                                    >
-                                        <Ionicons name="browsers-outline" size={14} color={theme.colors.text} />
-                                        <RNText style={styles.webScopePillText}>{t('server.switchForThisTab')}</RNText>
-                                    </Pressable>
-                                    <Pressable
-                                        style={[styles.webScopePill, webSwitchScope === 'device' ? styles.webScopePillActive : null]}
-                                        onPress={() => setWebSwitchScope('device')}
-                                    >
-                                        <Ionicons name="phone-portrait-outline" size={14} color={theme.colors.text} />
-                                        <RNText style={styles.webScopePillText}>{t('server.makeDefaultOnDevice')}</RNText>
-                                    </Pressable>
-                                </View>
                             ) : null}
 
                             <Text style={styles.labelText}>{t('server.customServerUrlLabel').toUpperCase()}</Text>

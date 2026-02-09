@@ -32,8 +32,16 @@ const capture = vi.hoisted(() => ({
     },
 }));
 
+const authMocks = vi.hoisted(() => ({
+    refreshFromActiveServer: vi.fn(async () => {}),
+}));
+
+const connectionMocks = vi.hoisted(() => ({
+    switchConnectionToActiveServer: vi.fn(async () => null),
+}));
+
 vi.mock('react-native', () => ({
-    Platform: { OS: 'ios' },
+    Platform: { OS: 'web' },
     View: 'View',
     Text: 'Text',
     Pressable: 'Pressable',
@@ -142,7 +150,7 @@ vi.mock('@/sync/storage', () => ({
 }));
 
 vi.mock('@/auth/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: true }),
+    useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: authMocks.refreshFromActiveServer }),
 }));
 
 vi.mock('expo-router', () => ({
@@ -151,6 +159,10 @@ vi.mock('expo-router', () => ({
 
 vi.mock('@/sync/sync', () => ({
     sync: { retryNow: vi.fn() },
+}));
+
+vi.mock('@/sync/connectionManager', () => ({
+    switchConnectionToActiveServer: (...args: any[]) => connectionMocks.switchConnectionToActiveServer(...args),
 }));
 
 function getActionLabels(): string[] {
@@ -170,6 +182,8 @@ async function importConnectionStatusControl() {
 
 afterEach(() => {
     capture.reset();
+    authMocks.refreshFromActiveServer.mockClear();
+    connectionMocks.switchConnectionToActiveServer.mockClear();
 });
 
 describe('ConnectionStatusControl (native popover config)', () => {
@@ -213,6 +227,109 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
             const actionLabels = getActionLabels();
             expect(actionLabels.some((label) => label.toLowerCase().includes('company'))).toBe(true);
+            expect(actionLabels.some((label) => label.includes('server.switchForThisTab'))).toBe(false);
+            expect(actionLabels.some((label) => label.includes('server.makeDefaultOnDevice'))).toBe(true);
+
+            await act(async () => {
+                tree?.unmount();
+            });
+        } finally {
+            if (previousScope === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
+            }
+        }
+    });
+
+    it('switches server without reload by using runtime switch handlers', async () => {
+        const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+        const scope = `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        try {
+            vi.resetModules();
+            const profiles = await import('@/sync/serverProfiles');
+            const company = profiles.upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
+            const ConnectionStatusControl = await importConnectionStatusControl();
+
+            let tree: renderer.ReactTestRenderer | undefined;
+            await act(async () => {
+                tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            });
+
+            const trigger = tree!.root.findByType('Pressable');
+            await act(async () => {
+                trigger.props.onPress();
+            });
+
+            const switchAction = capture.actionSections
+                .flatMap((section) => section.actions ?? [])
+                .find((action) => action && typeof action === 'object' && (action as any).id === `server-use-${company.id}`) as
+                | { onPress?: () => void }
+                | undefined;
+
+            expect(switchAction).toBeTruthy();
+
+            await act(async () => {
+                switchAction?.onPress?.();
+            });
+
+            expect(connectionMocks.switchConnectionToActiveServer).toHaveBeenCalledTimes(1);
+            expect(authMocks.refreshFromActiveServer).toHaveBeenCalledTimes(1);
+
+            await act(async () => {
+                tree?.unmount();
+            });
+        } finally {
+            if (previousScope === undefined) {
+                delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+            } else {
+                process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
+            }
+        }
+    });
+
+    it('shows per-server device actions on web instead of global scope toggles', async () => {
+        const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
+        const scope = `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        try {
+            vi.resetModules();
+            const { Platform } = await import('react-native');
+            const previousPlatform = Platform.OS;
+            (Platform as any).OS = 'web';
+            const profiles = await import('@/sync/serverProfiles');
+            profiles.upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
+            const ConnectionStatusControl = await importConnectionStatusControl();
+
+            let tree: renderer.ReactTestRenderer | undefined;
+            await act(async () => {
+                tree = renderer.create(React.createElement(ConnectionStatusControl, { variant: 'sidebar' }));
+            });
+
+            const trigger = tree!.root.findByType('Pressable');
+            await act(async () => {
+                trigger.props.onPress();
+            });
+
+            const actionIds = new Set(
+                capture.actionSections.flatMap((section) =>
+                    (section.actions ?? []).flatMap((action) => {
+                        if (!action || typeof action !== 'object') return [];
+                        const id = (action as { id?: unknown }).id;
+                        return typeof id === 'string' ? [id] : [];
+                    }),
+                ),
+            );
+            expect(Array.from(actionIds).some((id) => id.startsWith('server-use-') && id.endsWith('-tab'))).toBe(false);
+            expect(Array.from(actionIds).some((id) => id.startsWith('server-use-') && id.endsWith('-device'))).toBe(false);
+            expect(Array.from(actionIds).some((id) => id.startsWith('server-use-'))).toBe(true);
+            expect(Array.from(actionIds).some((id) => id === 'server-switch-tab')).toBe(false);
+            expect(Array.from(actionIds).some((id) => id === 'server-switch-device')).toBe(false);
+
+            (Platform as any).OS = previousPlatform;
 
             await act(async () => {
                 tree?.unmount();

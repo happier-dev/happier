@@ -17,14 +17,8 @@ vi.mock('expo-notifications', () => ({
     addNotificationResponseReceivedListener: vi.fn(() => ({ remove: () => {} })),
 }));
 
-const reloadSpy = vi.fn(async () => {});
-vi.mock('expo-updates', () => ({
-    reloadAsync: reloadSpy,
-}));
-
 const pushSpy = vi.fn();
-const setActiveServerIdSpy = vi.fn();
-const upsertServerProfileSpy = vi.fn();
+const upsertActivateAndSwitchServerSpy = vi.fn(async () => true);
 const clearPendingTerminalConnectSpy = vi.fn();
 let activeServerUrl = 'https://api.happier.dev';
 let pendingTerminalConnectValue: { publicKeyB64Url: string; serverUrl: string } | null = null;
@@ -64,7 +58,7 @@ vi.mock('@/text', () => ({
 }));
 
 vi.mock('@/auth/AuthContext', () => ({
-    useAuth: () => ({ isAuthenticated: true }),
+    useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
 vi.mock('@/auth/authRouting', () => ({
@@ -97,8 +91,11 @@ vi.mock('@/sync/storageStore', () => ({
 
 vi.mock('@/sync/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
-    setActiveServerId: (...args: unknown[]) => setActiveServerIdSpy(...args),
-    upsertServerProfile: (...args: unknown[]) => upsertServerProfileSpy(...args),
+}));
+
+vi.mock('@/sync/activeServerSwitch', () => ({
+    normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
+    upsertActivateAndSwitchServer: (...args: unknown[]) => upsertActivateAndSwitchServerSpy(...args),
 }));
 
 vi.mock('@/sync/pendingTerminalConnect', () => ({
@@ -119,9 +116,7 @@ afterEach(() => {
     activeServerUrl = 'https://api.happier.dev';
     pendingTerminalConnectValue = null;
     pushSpy.mockClear();
-    reloadSpy.mockClear();
-    setActiveServerIdSpy.mockClear();
-    upsertServerProfileSpy.mockReset();
+    upsertActivateAndSwitchServerSpy.mockReset();
     clearPendingTerminalConnectSpy.mockClear();
     vi.restoreAllMocks();
     vi.resetModules();
@@ -149,31 +144,28 @@ describe('App RootLayout notifications', () => {
         await renderRootLayout();
 
         expect(pushSpy).toHaveBeenCalledWith('/terminal/index?key=abc123&server=https%3A%2F%2Fapi.happier.dev');
-        expect(reloadSpy).not.toHaveBeenCalled();
+        expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
     });
 
-    it('switches server and reloads when pending terminal connect targets another server', async () => {
+    it('switches server and continues without reloading when pending terminal connect targets another server', async () => {
         pendingTerminalConnectValue = {
             publicKeyB64Url: 'abc123',
             serverUrl: 'https://company.example.test',
         };
         activeServerUrl = 'https://api.happier.dev';
-        upsertServerProfileSpy.mockReturnValue({
-            id: 'company',
-            name: 'company',
-            serverUrl: 'https://company.example.test',
-            webappUrl: 'https://company.example.test',
-        });
-
         const Notifications = await import('expo-notifications');
         vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue(null);
         vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
 
         await renderRootLayout();
 
-        expect(pushSpy).not.toHaveBeenCalledWith(expect.stringContaining('/terminal/index'));
-        expect(setActiveServerIdSpy).toHaveBeenCalled();
-        expect(reloadSpy).toHaveBeenCalled();
+        expect(upsertActivateAndSwitchServerSpy).toHaveBeenCalledWith({
+            serverUrl: 'https://company.example.test',
+            source: 'url',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
+        expect(pushSpy).toHaveBeenCalledWith('/terminal/index?key=abc123&server=https%3A%2F%2Fcompany.example.test');
     });
 
     it('navigates to the session when a notification contains sessionId', async () => {
@@ -191,14 +183,7 @@ describe('App RootLayout notifications', () => {
         expect(pushSpy).toHaveBeenCalledWith('/session/s_123');
     });
 
-    it('does not push immediately when a notification includes serverUrl', async () => {
-        upsertServerProfileSpy.mockReturnValue({
-            id: 'company',
-            name: 'company',
-            serverUrl: 'https://company.example.test',
-            webappUrl: 'https://company.example.test',
-        });
-
+    it('switches server and navigates when a notification includes serverUrl', async () => {
         const Notifications = await import('expo-notifications');
         vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
             actionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
@@ -210,7 +195,12 @@ describe('App RootLayout notifications', () => {
 
         await renderRootLayout();
 
-        expect(pushSpy).not.toHaveBeenCalledWith('/session/s_456');
-        expect(reloadSpy).toHaveBeenCalled();
+        expect(upsertActivateAndSwitchServerSpy).toHaveBeenCalledWith({
+            serverUrl: 'https://company.example.test',
+            source: 'notification',
+            scope: 'device',
+            refreshAuth: expect.any(Function),
+        });
+        expect(pushSpy).toHaveBeenCalledWith('/session/s_456');
     });
 });
