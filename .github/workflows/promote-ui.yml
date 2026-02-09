@@ -70,6 +70,16 @@ on:
           - ios
           - android
           - all
+      desktop_build:
+        description: "Deploy (Desktop) — Build Tauri desktop bundles (macOS/Windows/Linux)"
+        required: true
+        default: false
+        type: boolean
+      desktop_publish_release:
+        description: "Deploy (Desktop) — Upload desktop bundles to GitHub Releases"
+        required: true
+        default: true
+        type: boolean
   workflow_call:
     inputs:
       environment:
@@ -116,6 +126,16 @@ on:
         required: false
         default: ios
         type: string
+      desktop_build:
+        description: "Deploy (Desktop) — Build Tauri desktop bundles (macOS/Windows/Linux)"
+        required: false
+        default: false
+        type: boolean
+      desktop_publish_release:
+        description: "Deploy (Desktop) — Upload desktop bundles to GitHub Releases"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -514,3 +534,16 @@ jobs:
       assets_artifact_path: dist/ui-mobile
       assets_dir: dist/ui-mobile
       clobber: true
+
+  desktop:
+    name: Desktop bundles (Tauri)
+    if: ${{ inputs.desktop_build == true }}
+    needs: [promote]
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build-tauri.yml
+    secrets: inherit
+    with:
+      environment: ${{ inputs.environment }}
+      source_ref: ${{ needs.promote.outputs.release_sha }}
+      publish_release: ${{ inputs.desktop_publish_release }}
