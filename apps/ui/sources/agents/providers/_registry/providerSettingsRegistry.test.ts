@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { describe, expect, it } from 'vitest';
 
+import { AGENT_IDS } from '@/agents/catalog';
 import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
 import { assertProviderSettingsPluginsValid, getProviderSettingsPlugin } from '@/agents/providers/_registry/providerSettingsRegistry';
 
@@ -59,5 +60,11 @@ describe('assertProviderSettingsPluginsValid', () => {
 describe('getProviderSettingsPlugin', () => {
     it('resolves plugins case-insensitively', () => {
         expect(getProviderSettingsPlugin('CLAUDE' as any)).not.toBeNull();
+    });
+
+    it('has a plugin entry for every registered backend', () => {
+        for (const agentId of AGENT_IDS) {
+            expect(getProviderSettingsPlugin(agentId)).not.toBeNull();
+        }
     });
 });

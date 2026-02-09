@@ -7,18 +7,14 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { useSettingMutable, useLocalSettingMutable } from '@/sync/storage';
 import { Switch } from '@/components/Switch';
 import { t } from '@/text';
-import { AGENT_IDS, getAgentCore, type AgentId } from '@/agents/catalog';
 
 export default React.memo(function FeaturesSettingsScreen() {
     const [experiments, setExperiments] = useSettingMutable('experiments');
-    const [experimentalAgents, setExperimentalAgents] = useSettingMutable('experimentalAgents');
     const [expUsageReporting, setExpUsageReporting] = useSettingMutable('expUsageReporting');
     const [expGitOperations, setExpGitOperations] = useSettingMutable('expGitOperations');
     const [expShowThinkingMessages, setExpShowThinkingMessages] = useSettingMutable('expShowThinkingMessages');
     const [expSessionType, setExpSessionType] = useSettingMutable('expSessionType');
     const [expZen, setExpZen] = useSettingMutable('expZen');
-    const [expCodexResume, setExpCodexResume] = useSettingMutable('expCodexResume');
-    const [expCodexAcp, setExpCodexAcp] = useSettingMutable('expCodexAcp');
     const [useProfiles, setUseProfiles] = useSettingMutable('useProfiles');
     const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
     const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
@@ -30,32 +26,18 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [usePathPickerSearch, setUsePathPickerSearch] = useSettingMutable('usePathPickerSearch');
 
     const setAllExperimentToggles = React.useCallback((enabled: boolean) => {
-        const nextExperimentalAgents: Record<string, boolean> = { ...(experimentalAgents ?? {}) };
-        for (const id of AGENT_IDS) {
-            if (getAgentCore(id).availability.experimental) {
-                nextExperimentalAgents[id] = enabled;
-            }
-        }
-        setExperimentalAgents(nextExperimentalAgents as any);
         setExpUsageReporting(enabled);
         // Intentionally NOT auto-enabled: this exposes write operations on user repositories.
         setExpGitOperations(false);
         setExpShowThinkingMessages(enabled);
         setExpSessionType(enabled);
         setExpZen(enabled);
-        // Intentionally NOT auto-enabled: these require additional local installs and have extra surface area.
-        setExpCodexResume(false);
-        setExpCodexAcp(false);
     }, [
-        setExpCodexAcp,
-        setExpCodexResume,
         setExpGitOperations,
         setExpSessionType,
         setExpShowThinkingMessages,
         setExpUsageReporting,
         setExpZen,
-        experimentalAgents,
-        setExperimentalAgents,
     ]);
 
     return (
@@ -168,30 +150,6 @@ export default React.memo(function FeaturesSettingsScreen() {
                     title={t('settingsFeatures.experimentalOptions')}
                     footer={t('settingsFeatures.experimentalOptionsDescription')}
                 >
-                    {AGENT_IDS.filter((id) => getAgentCore(id).availability.experimental).map((agentId) => {
-                        const enabled = experimentalAgents?.[agentId] === true;
-                        const icon = getAgentCore(agentId).ui.agentPickerIconName as React.ComponentProps<typeof Ionicons>['name'];
-                        return (
-                            <Item
-                                key={agentId}
-                                title={t(getAgentCore(agentId).displayNameKey)}
-                                subtitle={t(getAgentCore(agentId).subtitleKey)}
-                                icon={<Ionicons name={icon} size={29} color="#007AFF" />}
-                                rightElement={
-                                    <Switch
-                                        value={enabled}
-                                        onValueChange={(next) => {
-                                            setExperimentalAgents({
-                                                ...(experimentalAgents ?? {}),
-                                                [agentId]: next,
-                                            } as any);
-                                        }}
-                                    />
-                                }
-                                showChevron={false}
-                            />
-                        );
-                    })}
                     <Item
                         title={t('settingsFeatures.expUsageReporting')}
                         subtitle={t('settingsFeatures.expUsageReportingSubtitle')}
@@ -225,38 +183,6 @@ export default React.memo(function FeaturesSettingsScreen() {
                         subtitle={t('settingsFeatures.expZenSubtitle')}
                         icon={<Ionicons name="leaf-outline" size={29} color="#34C759" />}
                         rightElement={<Switch value={expZen} onValueChange={setExpZen} />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsFeatures.expCodexResume')}
-                        subtitle={t('settingsFeatures.expCodexResumeSubtitle')}
-                        icon={<Ionicons name="sparkles-outline" size={29} color="#007AFF" />}
-                        rightElement={<Switch
-                            value={expCodexResume}
-                            onValueChange={(next) => {
-                                setExpCodexResume(next);
-                                if (next) {
-                                    // Mutually exclusive: ACP makes the vendor-resume MCP fork unnecessary.
-                                    setExpCodexAcp(false);
-                                }
-                            }}
-                        />}
-                        showChevron={false}
-                    />
-                    <Item
-                        title={t('settingsFeatures.expCodexAcp')}
-                        subtitle={t('settingsFeatures.expCodexAcpSubtitle')}
-                        icon={<Ionicons name="sparkles-outline" size={29} color="#007AFF" />}
-                        rightElement={<Switch
-                            value={expCodexAcp}
-                            onValueChange={(next) => {
-                                setExpCodexAcp(next);
-                                if (next) {
-                                    // Mutually exclusive: ACP replaces the resume-specific MCP fork.
-                                    setExpCodexResume(false);
-                                }
-                            }}
-                        />}
                         showChevron={false}
                     />
                 </ItemGroup>

@@ -5,11 +5,15 @@ import { useRouter } from 'expo-router';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { PROVIDER_SETTINGS_PLUGINS } from '@/agents/providers/_registry/providerSettingsRegistry';
+import { AGENT_IDS, getAgentCore } from '@/agents/catalog';
+import { useSetting } from '@/sync/storage';
 import { t } from '@/text';
+import { useUnistyles } from 'react-native-unistyles';
 
 export default React.memo(function ProviderSettingsIndexScreen() {
     const router = useRouter();
+    const { theme } = useUnistyles();
+    const backendEnabledById = useSetting('backendEnabledById');
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
@@ -17,15 +21,21 @@ export default React.memo(function ProviderSettingsIndexScreen() {
                 title={t('settingsProviders.title')}
                 footer={t('settingsProviders.footer')}
             >
-                {PROVIDER_SETTINGS_PLUGINS.map((plugin) => (
-                    <Item
-                        key={plugin.providerId}
-                        title={plugin.title}
-                        subtitle={t('settingsProviders.providerSubtitle')}
-                        icon={<Ionicons name={plugin.icon.ionName as any} size={29} color={plugin.icon.color} />}
-                        onPress={() => router.push(`/(app)/settings/providers/${plugin.providerId}` as any)}
-                    />
-                ))}
+                {AGENT_IDS.map((agentId) => {
+                    const core = getAgentCore(agentId);
+                    const isEnabled = backendEnabledById?.[agentId] !== false;
+                    const state = isEnabled ? t('settingsProviders.stateEnabled') : t('settingsProviders.stateDisabled');
+                    const channel = core.availability.experimental ? t('settingsProviders.channelExperimental') : t('settingsProviders.channelStable');
+                    return (
+                        <Item
+                            key={agentId}
+                            title={t(core.displayNameKey)}
+                            subtitle={`${state} • ${channel}`}
+                            icon={<Ionicons name={core.ui.agentPickerIconName as any} size={29} color={theme.colors.textSecondary} />}
+                            onPress={() => router.push(`/(app)/settings/providers/${agentId}` as any)}
+                        />
+                    );
+                })}
             </ItemGroup>
         </ItemList>
     );

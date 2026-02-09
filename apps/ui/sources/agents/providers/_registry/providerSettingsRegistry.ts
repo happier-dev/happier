@@ -1,7 +1,14 @@
 import type { AgentId } from '@/agents/catalog';
 
 import type { ProviderSettingsPlugin } from '../_shared/providerSettingsPlugin';
+import { AUGGIE_PROVIDER_SETTINGS_PLUGIN } from '../auggie/settings/plugin';
 import { CLAUDE_PROVIDER_SETTINGS_PLUGIN } from '../claude/settings/plugin';
+import { CODEX_PROVIDER_SETTINGS_PLUGIN } from '../codex/settings/plugin';
+import { GEMINI_PROVIDER_SETTINGS_PLUGIN } from '../gemini/settings/plugin';
+import { KILO_PROVIDER_SETTINGS_PLUGIN } from '../kilo/settings/plugin';
+import { KIMI_PROVIDER_SETTINGS_PLUGIN } from '../kimi/settings/plugin';
+import { OPENCODE_PROVIDER_SETTINGS_PLUGIN } from '../opencode/settings/plugin';
+import { QWEN_PROVIDER_SETTINGS_PLUGIN } from '../qwen/settings/plugin';
 
 export function assertProviderSettingsPluginsValid(plugins: readonly ProviderSettingsPlugin[]): void {
     const errors: string[] = [];
@@ -69,6 +76,13 @@ export function assertProviderSettingsPluginsValid(plugins: readonly ProviderSet
 
 export const PROVIDER_SETTINGS_PLUGINS: readonly ProviderSettingsPlugin[] = [
     CLAUDE_PROVIDER_SETTINGS_PLUGIN,
+    CODEX_PROVIDER_SETTINGS_PLUGIN,
+    OPENCODE_PROVIDER_SETTINGS_PLUGIN,
+    GEMINI_PROVIDER_SETTINGS_PLUGIN,
+    AUGGIE_PROVIDER_SETTINGS_PLUGIN,
+    QWEN_PROVIDER_SETTINGS_PLUGIN,
+    KIMI_PROVIDER_SETTINGS_PLUGIN,
+    KILO_PROVIDER_SETTINGS_PLUGIN,
 ];
 
 assertProviderSettingsPluginsValid(PROVIDER_SETTINGS_PLUGINS);

@@ -148,8 +148,8 @@ export function getCodexResumePreflightIssues(ctx: ResumePreflightContext): read
 export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     resume: {
         experimentSwitches: [
-            { id: CODEX_SWITCH_RESUME_MCP, settingKey: 'expCodexResume' },
-            { id: CODEX_SWITCH_RESUME_ACP, settingKey: 'expCodexAcp' },
+            { id: CODEX_SWITCH_RESUME_MCP, getValue: (settings) => settings.codexBackendMode === 'mcp_resume' },
+            { id: CODEX_SWITCH_RESUME_ACP, getValue: (settings) => settings.codexBackendMode === 'acp' },
         ],
         getAllowExperimentalVendorResume: ({ experiments }) => {
             return experiments.enabled === true && (getSwitch(experiments, CODEX_SWITCH_RESUME_MCP) || getSwitch(experiments, CODEX_SWITCH_RESUME_ACP));
@@ -160,7 +160,7 @@ export const CODEX_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
             return getSwitch(experiments, CODEX_SWITCH_RESUME_ACP) === true && getSwitch(experiments, CODEX_SWITCH_RESUME_MCP) !== true;
         },
         // Codex ACP mode can support vendor-resume via ACP `loadSession`.
-        // We probe this dynamically (same as Gemini/OpenCode) and only enforce it when `expCodexAcp` is enabled.
+        // We probe this dynamically (same as Gemini/OpenCode) and only enforce it when Codex mode is ACP.
         getAllowRuntimeResume: ({ experiments, results }) => {
             if (experiments.enabled !== true) return false;
             if (getSwitch(experiments, CODEX_SWITCH_RESUME_ACP) !== true) return false;

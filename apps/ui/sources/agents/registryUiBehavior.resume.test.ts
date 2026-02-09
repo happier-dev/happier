@@ -10,8 +10,8 @@ import {
 import { makeResults, makeSettings, okCapability } from './registryUiBehavior.testHelpers';
 
 describe('getResumePreflightIssues', () => {
-    it('returns a blocking issue when codex resume is requested but the resume dep is not installed', () => {
-        const settings = makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: false });
+    it('returns a blocking issue when codex backend mode is mcp_resume but the resume dep is not installed', () => {
+        const settings = makeSettings({ codexBackendMode: 'mcp_resume' });
         expect(getResumePreflightIssues({
             agentId: 'codex',
             experiments: getAgentResumeExperimentsFromSettings('codex', settings),
@@ -26,8 +26,8 @@ describe('getResumePreflightIssues', () => {
         ]);
     });
 
-    it('returns a blocking issue when codex acp is requested but the acp dep is not installed', () => {
-        const settings = makeSettings({ experiments: true, expCodexResume: false, expCodexAcp: true });
+    it('returns a blocking issue when codex backend mode is acp but the acp dep is not installed', () => {
+        const settings = makeSettings({ codexBackendMode: 'acp' });
         expect(getResumePreflightIssues({
             agentId: 'codex',
             experiments: getAgentResumeExperimentsFromSettings('codex', settings),
@@ -42,18 +42,23 @@ describe('getResumePreflightIssues', () => {
         ]);
     });
 
-    it('returns empty when experiments are disabled or dep status is unknown', () => {
-        const disabled = makeSettings({ experiments: false, expCodexResume: true, expCodexAcp: true });
+    it('returns empty when deps are unknown', () => {
+        const mcp = makeSettings({ codexBackendMode: 'mcp_resume' });
         expect(getResumePreflightIssues({
             agentId: 'codex',
-            experiments: getAgentResumeExperimentsFromSettings('codex', disabled),
+            experiments: getAgentResumeExperimentsFromSettings('codex', mcp),
             results: makeResults({
                 'dep.codex-acp': okCapability({ installed: false }),
                 'dep.codex-mcp-resume': okCapability({ installed: false }),
             }),
-        })).toEqual([]);
+        })).toEqual([
+            expect.objectContaining({
+                id: 'codex-mcp-resume-not-installed',
+                action: 'openMachine',
+            }),
+        ]);
 
-        const unknown = makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: true });
+        const unknown = makeSettings({ codexBackendMode: 'acp' });
         expect(getResumePreflightIssues({
             agentId: 'codex',
             experiments: getAgentResumeExperimentsFromSettings('codex', unknown),
@@ -62,7 +67,7 @@ describe('getResumePreflightIssues', () => {
     });
 
     it('returns empty for non-codex agents', () => {
-        const settings = makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: true });
+        const settings = makeSettings({ codexBackendMode: 'acp' });
         expect(getResumePreflightIssues({
             agentId: 'claude',
             experiments: getAgentResumeExperimentsFromSettings('claude', settings),
@@ -73,7 +78,7 @@ describe('getResumePreflightIssues', () => {
 
 describe('buildResumeCapabilityOptionsFromUiState', () => {
     it('includes codex experimental resume and runtime resume support when detected', () => {
-        const settings = makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: false });
+        const settings = makeSettings({ codexBackendMode: 'mcp_resume' });
         expect(buildResumeCapabilityOptionsFromUiState({
             settings,
             results: makeResults({
@@ -86,7 +91,7 @@ describe('buildResumeCapabilityOptionsFromUiState', () => {
     });
 
     it('includes OpenCode runtime resume support when detected', () => {
-        const settings = makeSettings({ experiments: false, expCodexResume: false, expCodexAcp: false });
+        const settings = makeSettings({ codexBackendMode: 'mcp' });
         expect(buildResumeCapabilityOptionsFromUiState({
             settings,
             results: makeResults({
@@ -127,12 +132,19 @@ describe('getResumeRuntimeSupportPrefetchPlan', () => {
 });
 
 describe('getResumePreflightPrefetchPlan', () => {
-    it('prefetches codex resume checklist only when codex experiments are enabled', () => {
-        const disabled = makeSettings({ experiments: false, expCodexResume: true, expCodexAcp: true });
-        expect(getResumePreflightPrefetchPlan({ agentId: 'codex', settings: disabled, results: undefined })).toEqual(null);
+    it('prefetches codex resume checklist when codex backend mode requires optional deps', () => {
+        const mcp = makeSettings({ codexBackendMode: 'mcp' });
+        expect(getResumePreflightPrefetchPlan({ agentId: 'codex', settings: mcp, results: undefined })).toEqual(null);
 
-        const enabled = makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: false });
-        expect(getResumePreflightPrefetchPlan({ agentId: 'codex', settings: enabled, results: undefined })).toEqual(
+        const mcpResume = makeSettings({ codexBackendMode: 'mcp_resume' });
+        expect(getResumePreflightPrefetchPlan({ agentId: 'codex', settings: mcpResume, results: undefined })).toEqual(
+            expect.objectContaining({
+                request: expect.objectContaining({ checklistId: expect.stringContaining('resume.codex') }),
+            }),
+        );
+
+        const acp = makeSettings({ codexBackendMode: 'acp' });
+        expect(getResumePreflightPrefetchPlan({ agentId: 'codex', settings: acp, results: undefined })).toEqual(
             expect.objectContaining({
                 request: expect.objectContaining({ checklistId: expect.stringContaining('resume.codex') }),
             }),

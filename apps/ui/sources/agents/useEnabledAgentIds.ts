@@ -6,11 +6,9 @@ import { getEnabledAgentIds } from './enabled';
 import type { AgentId } from './registryCore';
 
 export function useEnabledAgentIds(): AgentId[] {
-    const experiments = useSetting('experiments');
-    const experimentalAgents = useSetting('experimentalAgents');
+    const backendEnabledById = useSetting('backendEnabledById');
 
     return React.useMemo(() => {
-        return getEnabledAgentIds({ experiments, experimentalAgents });
-    }, [experiments, experimentalAgents]);
+        return getEnabledAgentIds({ backendEnabledById });
+    }, [backendEnabledById]);
 }
-

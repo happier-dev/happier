@@ -20,7 +20,8 @@ export type AgentResumeExperiments = Readonly<{
 
 export type AgentExperimentSwitchDef = Readonly<{
     id: string;
-    settingKey: keyof Settings;
+    settingKey?: keyof Settings;
+    getValue?: (settings: Settings) => boolean;
 }>;
 
 export type ResumeRuntimeSupportPrefetchPlan = Readonly<{
@@ -144,13 +145,17 @@ export const AGENTS_UI_BEHAVIOR: Readonly<Record<AgentId, AgentUiBehavior>> = Ob
 );
 
 export function getAgentResumeExperimentsFromSettings(agentId: AgentId, settings: Settings): AgentResumeExperiments {
-    const enabled = settings.experiments === true;
+    const enabled = true;
     const defs = AGENTS_UI_BEHAVIOR[agentId].resume?.experimentSwitches ?? [];
     if (defs.length === 0) return { enabled, switches: {} };
     const switches: Record<string, boolean> = {};
     for (const def of defs) {
-        const settingKey = def.settingKey as Extract<keyof Settings, string>;
-        switches[def.id] = settings[settingKey] === true;
+        if (typeof def.getValue === 'function') {
+            switches[def.id] = def.getValue(settings);
+            continue;
+        }
+        const settingKey = def.settingKey as Extract<keyof Settings, string> | undefined;
+        switches[def.id] = settingKey ? settings[settingKey] === true : false;
     }
     return { enabled, switches };
 }

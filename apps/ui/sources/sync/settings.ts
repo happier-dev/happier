@@ -43,6 +43,10 @@ const DEFAULT_SESSION_PERMISSION_MODE_BY_AGENT: Record<AgentId, PermissionMode> 
     AGENT_IDS.map((id) => [id, 'default']),
 ) as any;
 
+const DEFAULT_BACKEND_ENABLED_BY_ID: Record<AgentId, boolean> = Object.fromEntries(
+    AGENT_IDS.map((id) => [id, true]),
+) as any;
+
 export const AIBackendProfileSchema = z.object({
     // Accept both UUIDs (user profiles) and simple strings (built-in profiles like 'anthropic')
     // The isBuiltIn field distinguishes profile types
@@ -109,6 +113,13 @@ const SessionTmuxMachineOverrideSchema = z.object({
     sessionName: z.string(),
     isolated: z.boolean(),
     tmpDir: z.string().nullable(),
+});
+
+const MultiServerProfileSchema = z.object({
+    id: z.string().min(1),
+    name: z.string().min(1).max(100),
+    serverIds: z.array(z.string()).default([]),
+    presentation: z.enum(['grouped', 'flat-with-badge']).default('grouped'),
 });
 
 export const SavedSecretSchema = z.object({
@@ -262,9 +273,16 @@ const SettingsSchemaBase = z.object({
     wrapLinesInDiffs: z.boolean().describe('Whether to wrap long lines in diff views'),
     analyticsOptOut: z.boolean().describe('Whether to opt out of anonymous analytics'),
     experiments: z.boolean().describe('Whether to enable experimental features'),
-    // Per-agent experimental gating (still subject to `experiments` master switch).
-    // Unknown keys are supported to avoid schema churn when adding new agents.
-    experimentalAgents: z.record(z.string(), z.boolean()).default({}).describe('Per-agent experimental toggles'),
+    // Per-backend enablement map used across picker/settings/profile surfaces.
+    // Unknown keys are allowed to avoid schema churn when adding backends.
+    backendEnabledById: z.record(z.string(), z.boolean()).default(DEFAULT_BACKEND_ENABLED_BY_ID).describe('Per-backend enable/disable toggles'),
+    // Codex backend mode:
+    // - mcp: plain Codex MCP mode
+    // - mcp_resume: Codex MCP + resume extension install
+    // - acp: Codex ACP mode (codex-acp)
+    codexBackendMode: z.enum(['mcp', 'mcp_resume', 'acp']).describe('Codex backend mode'),
+    codexMcpResumeInstallSpec: z.string().describe('Codex MCP resume installer spec (npm/git/file); empty uses daemon default'),
+    codexAcpInstallSpec: z.string().describe('Codex ACP installer spec (npm/git/file); empty uses daemon default'),
     // Per-experiment toggles (gated by `experiments` master switch in UI/usage)
     expUsageReporting: z.boolean().describe('Experimental: enable usage reporting UI'),
     // Deprecated: kept parse-compatible for one migration window.
@@ -274,14 +292,6 @@ const SettingsSchemaBase = z.object({
     expSessionType: z.boolean().describe('Experimental: show session type selector (simple vs worktree)'),
     expZen: z.boolean().describe('Experimental: enable Zen navigation/experience'),
     expInboxFriends: z.boolean().describe('Experimental: enable inbox/friends UI + related UX'),
-    // Intentionally NOT auto-enabled when `experiments` is enabled; this toggles extra local installation + security surface area.
-    expCodexResume: z.boolean().describe('Experimental: enable Codex vendor-resume and resume-codex installer UI'),
-    // Experimental configuration for the Codex resume installer (used only when expCodexResume is enabled).
-    codexResumeInstallSpec: z.string().describe('Codex resume installer spec (npm/git/file); empty uses daemon default'),
-    // Experimental: route Codex through ACP (codex-acp) instead of MCP.
-    expCodexAcp: z.boolean().describe('Experimental: enable Codex ACP backend (requires codex-acp install)'),
-    // Experimental configuration for the Codex ACP installer (used only when expCodexAcp is enabled).
-    codexAcpInstallSpec: z.string().describe('Codex ACP installer spec (npm/git/file); empty uses daemon default'),
     useProfiles: z.boolean().describe('Whether to enable AI backend profiles feature'),
     useEnhancedSessionWizard: z.boolean().describe('A/B test flag: Use enhanced profile-based session wizard UI'),
     // Default permission modes for new sessions (account-level; per agent).
@@ -308,6 +318,11 @@ const SettingsSchemaBase = z.object({
     compactSessionView: z.boolean().describe('Whether to use compact view for active sessions'),
     hideInactiveSessions: z.boolean().describe('Hide inactive sessions in the main list'),
     groupInactiveSessionsByProject: z.boolean().describe('Group inactive sessions by project in the main list'),
+    multiServerEnabled: z.boolean().describe('Whether concurrent multi-server view is enabled'),
+    multiServerSelectedServerIds: z.array(z.string()).describe('Server IDs selected for concurrent multi-server view'),
+    multiServerPresentation: z.enum(['grouped', 'flat-with-badge']).describe('Session list presentation when concurrent multi-server view is enabled'),
+    multiServerProfiles: z.array(MultiServerProfileSchema).describe('Saved concurrent multi-server groups/profiles'),
+    multiServerActiveProfileId: z.string().nullable().describe('Active concurrent multi-server profile ID'),
 	    reviewPromptAnswered: z.boolean().describe('Whether the review prompt has been answered'),
 	    reviewPromptLikedApp: z.boolean().nullish().describe('Whether user liked the app when asked'),
 	    voiceMode: z.enum(['off', 'happier', 'byo_elevenlabs']).describe('Voice mode: off, Happier Voice (server billed), or Bring Your Own ElevenLabs'),
@@ -417,7 +432,10 @@ export const settingsDefaults: Settings = {
     wrapLinesInDiffs: false,
     analyticsOptOut: false,
     experiments: false,
-    experimentalAgents: {},
+    backendEnabledById: DEFAULT_BACKEND_ENABLED_BY_ID,
+    codexBackendMode: 'mcp',
+    codexMcpResumeInstallSpec: '',
+    codexAcpInstallSpec: '',
     expUsageReporting: false,
     expFileViewer: false,
     expGitOperations: false,
@@ -425,10 +443,6 @@ export const settingsDefaults: Settings = {
     expSessionType: false,
     expZen: false,
     expInboxFriends: false,
-    expCodexResume: false,
-    codexResumeInstallSpec: '',
-    expCodexAcp: false,
-    codexAcpInstallSpec: '',
     useProfiles: false,
     sessionDefaultPermissionModeByAgent: DEFAULT_SESSION_PERMISSION_MODE_BY_AGENT,
     sessionPermissionModeApplyTiming: 'immediate',
@@ -450,6 +464,11 @@ export const settingsDefaults: Settings = {
     compactSessionView: false,
     hideInactiveSessions: false,
     groupInactiveSessionsByProject: false,
+    multiServerEnabled: false,
+    multiServerSelectedServerIds: [],
+    multiServerPresentation: 'grouped',
+    multiServerProfiles: [],
+    multiServerActiveProfileId: null,
 	    reviewPromptAnswered: false,
 	    reviewPromptLikedApp: null,
 	    voiceMode: 'happier',
@@ -681,8 +700,7 @@ export function settingsParse(settings: unknown): Settings {
         'expInboxFriends',
     ] as const;
     const hasAnyExperimentKey =
-        experimentKeys.some((k) => k in input) ||
-        ('experimentalAgents' in input);
+        experimentKeys.some((k) => k in input);
 	    if (!hasAnyExperimentKey) {
 	        const enableAll = result.experiments === true;
 	        for (const key of experimentKeys) {
@@ -707,6 +725,11 @@ export function settingsParse(settings: unknown): Settings {
 	        'defaultPermissionModeClaude',
         'defaultPermissionModeCodex',
         'defaultPermissionModeGemini',
+        // Removed backend/experimental fields (replaced by backendEnabledById + codexBackendMode).
+        'experimentalAgents',
+        'expCodexResume',
+        'expCodexAcp',
+        'codexResumeInstallSpec',
         // Voice is no longer experimental; the old experiment toggle is ignored.
         'expVoiceAuthFlow',
     ]);

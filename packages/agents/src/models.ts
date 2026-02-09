@@ -32,6 +32,13 @@ export type AgentModelConfig = Readonly<{
    * Many agents expose a `model` config option, but this is not guaranteed by ACP.
    */
   acpModelConfigOptionId?: string;
+  /**
+   * Controls whether Happy should attempt dynamic model probing for this provider.
+   *
+   * - `auto`: best-effort dynamic probing (CLI command and/or ACP session)
+   * - `static-only`: skip dynamic probing and use catalog defaults only
+   */
+  dynamicProbe?: 'auto' | 'static-only';
   defaultMode: string;
   allowedModes: readonly string[];
 }>;
@@ -103,6 +110,7 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     supportsSelection: true,
     nonAcpApplyScope: 'next_prompt',
     acpModelConfigOptionId: 'model',
+    dynamicProbe: 'static-only',
     defaultMode: 'default',
     allowedModes: ['default'],
   },
@@ -110,6 +118,7 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     supportsSelection: true,
     nonAcpApplyScope: 'next_prompt',
     acpModelConfigOptionId: 'model',
+    dynamicProbe: 'static-only',
     defaultMode: 'default',
     allowedModes: ['default'],
   },

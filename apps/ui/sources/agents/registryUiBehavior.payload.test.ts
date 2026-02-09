@@ -8,10 +8,10 @@ import {
 import { makeSettings } from './registryUiBehavior.testHelpers';
 
 describe('buildSpawnSessionExtrasFromUiState', () => {
-    it('enables codex resume only when spawning codex with a non-empty resume id', () => {
+    it('enables codex MCP resume only when backend mode is mcp_resume and resume id is present', () => {
         expect(buildSpawnSessionExtrasFromUiState({
             agentId: 'codex',
-            settings: makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: false }),
+            settings: makeSettings({ codexBackendMode: 'mcp_resume' }),
             resumeSessionId: 'x1',
         })).toEqual({
             experimentalCodexResume: true,
@@ -20,7 +20,7 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
 
         expect(buildSpawnSessionExtrasFromUiState({
             agentId: 'codex',
-            settings: makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: false }),
+            settings: makeSettings({ codexBackendMode: 'mcp_resume' }),
             resumeSessionId: '   ',
         })).toEqual({
             experimentalCodexResume: false,
@@ -28,10 +28,10 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
         });
     });
 
-    it('enables codex acp only when spawning codex and the flag is enabled', () => {
+    it('enables codex ACP only when backend mode is acp', () => {
         expect(buildSpawnSessionExtrasFromUiState({
             agentId: 'codex',
-            settings: makeSettings({ experiments: true, expCodexResume: false, expCodexAcp: true }),
+            settings: makeSettings({ codexBackendMode: 'acp' }),
             resumeSessionId: '',
         })).toEqual({
             experimentalCodexResume: false,
@@ -39,37 +39,57 @@ describe('buildSpawnSessionExtrasFromUiState', () => {
         });
     });
 
+    it('disables codex resume extras when backend mode is mcp', () => {
+        expect(buildSpawnSessionExtrasFromUiState({
+            agentId: 'codex',
+            settings: makeSettings({ codexBackendMode: 'mcp' }),
+            resumeSessionId: 'x1',
+        })).toEqual({
+            experimentalCodexResume: false,
+            experimentalCodexAcp: false,
+        });
+    });
+
     it('returns an empty object for non-codex agents', () => {
         expect(buildSpawnSessionExtrasFromUiState({
             agentId: 'claude',
-            settings: makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: true }),
+            settings: makeSettings({ codexBackendMode: 'acp' }),
             resumeSessionId: 'x1',
         })).toEqual({});
     });
 });
 
 describe('buildResumeSessionExtrasFromUiState', () => {
-    it('passes codex experiment flags through when experiments are enabled', () => {
+    it('passes codex mode through to resume extras', () => {
         expect(buildResumeSessionExtrasFromUiState({
             agentId: 'codex',
-            settings: makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: false }),
+            settings: makeSettings({ codexBackendMode: 'mcp_resume' }),
         })).toEqual({
             experimentalCodexResume: true,
             experimentalCodexAcp: false,
         });
-    });
 
-    it('returns false flags when experiments are disabled', () => {
         expect(buildResumeSessionExtrasFromUiState({
             agentId: 'codex',
-            settings: makeSettings({ experiments: false, expCodexResume: true, expCodexAcp: true }),
-        })).toEqual({});
+            settings: makeSettings({ codexBackendMode: 'acp' }),
+        })).toEqual({
+            experimentalCodexResume: false,
+            experimentalCodexAcp: true,
+        });
+
+        expect(buildResumeSessionExtrasFromUiState({
+            agentId: 'codex',
+            settings: makeSettings({ codexBackendMode: 'mcp' }),
+        })).toEqual({
+            experimentalCodexResume: false,
+            experimentalCodexAcp: false,
+        });
     });
 
     it('returns an empty object for non-codex agents', () => {
         expect(buildResumeSessionExtrasFromUiState({
             agentId: 'claude',
-            settings: makeSettings({ experiments: true, expCodexResume: true, expCodexAcp: true }),
+            settings: makeSettings({ codexBackendMode: 'acp' }),
         })).toEqual({});
     });
 });

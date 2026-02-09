@@ -13,9 +13,16 @@ import { Text } from '@/components/StyledText';
 import { Typography } from '@/constants/Typography';
 import { sync } from '@/sync/sync';
 import { useSettings } from '@/sync/storage';
-import { isAgentId, type AgentId } from '@/agents/catalog';
+import { isAgentId, getAgentCore, type AgentId } from '@/agents/catalog';
 import { getProviderSettingsPlugin } from '@/agents/providers/_registry/providerSettingsRegistry';
 import { t } from '@/text';
+import { getAgentAdvancedModeCapabilities } from '@happier-dev/agents';
+import {
+    buildCatalogModelList,
+    classifyRuntimeSwitchKind,
+    classifySessionModeKind,
+    describeResumeSupportKind,
+} from '@/agents/providerDetailsInfo';
 
 const ProviderSettingsNumberField = React.memo(function ProviderSettingsNumberField(props: {
     field: any;
@@ -138,6 +145,7 @@ export default React.memo(function ProviderSettingsScreen() {
     const params = useLocalSearchParams();
     const rawProviderId = params.providerId;
     const providerId = typeof rawProviderId === 'string' && isAgentId(rawProviderId) ? (rawProviderId as AgentId) : null;
+    const core = providerId ? getAgentCore(providerId) : null;
     const plugin = providerId ? getProviderSettingsPlugin(providerId) : null;
     const settings = useSettings();
 
@@ -149,7 +157,7 @@ export default React.memo(function ProviderSettingsScreen() {
         sync.applySettings({ [key]: value } as any);
     }, []);
 
-    if (!providerId || !plugin) {
+    if (!providerId || !core) {
         return (
             <ItemList style={{ paddingTop: 0 }}>
                 <ItemGroup>
@@ -167,10 +175,193 @@ export default React.memo(function ProviderSettingsScreen() {
         );
     }
 
+    const advanced = getAgentAdvancedModeCapabilities(providerId);
+    const backendEnabledById = (settings as any).backendEnabledById as Record<string, boolean> | undefined;
+    const backendEnabled = backendEnabledById?.[providerId] !== false;
+    const setBackendEnabled = (next: boolean) => {
+        sync.applySettings({
+            backendEnabledById: {
+                ...(backendEnabledById ?? {}),
+                [providerId]: next,
+            },
+        } as any);
+    };
+
+    const resumeSupportKind = describeResumeSupportKind({
+        supportsVendorResume: core.resume.supportsVendorResume,
+        experimental: core.resume.experimental,
+        runtimeGate: core.resume.runtimeGate,
+    });
+    const resumeSupport = {
+        supported: t('settingsProviders.resumeSupportSupported'),
+        supportedExperimental: t('settingsProviders.resumeSupportSupportedExperimental'),
+        runtimeGatedAcpLoadSession: t('settingsProviders.resumeSupportRuntimeGatedAcpLoadSession'),
+        notSupported: t('settingsProviders.resumeSupportNotSupported'),
+    }[resumeSupportKind];
+    const sessionModeKind = classifySessionModeKind(core.sessionModes.kind);
+    const sessionModeSupport = {
+        none: t('settingsProviders.sessionModeNone'),
+        acpPolicyPresets: t('settingsProviders.sessionModeAcpPolicyPresets'),
+        acpAgentModes: t('settingsProviders.sessionModeAcpAgentModes'),
+    }[sessionModeKind];
+    const runtimeSwitchKind = classifyRuntimeSwitchKind(advanced.supportsRuntimeModeSwitch);
+    const runtimeSwitchSupport = {
+        none: t('settingsProviders.runtimeSwitchNone'),
+        metadataGating: t('settingsProviders.runtimeSwitchMetadataGating'),
+        acpSetSessionMode: t('settingsProviders.runtimeSwitchAcpSetSessionMode'),
+        providerNative: t('settingsProviders.runtimeSwitchProviderNative'),
+    }[runtimeSwitchKind];
+    const catalogModelList = buildCatalogModelList({
+        defaultMode: core.model.defaultMode,
+        allowedModes: core.model.allowedModes,
+    });
+    const catalogModelListText = catalogModelList.length > 0
+        ? catalogModelList.join(', ')
+        : t('settingsProviders.catalogModelListEmpty');
+    const dynamicProbe = core.model.dynamicProbe === 'static-only'
+        ? t('settingsProviders.dynamicModelProbeStaticOnly')
+        : t('settingsProviders.dynamicModelProbeAuto');
+    const nonAcpApplyScope = core.model.nonAcpApplyScope === 'spawn_only'
+        ? t('settingsProviders.nonAcpApplyScopeSpawnOnly')
+        : t('settingsProviders.nonAcpApplyScopeNextPrompt');
+    const acpApplyBehavior = core.model.acpApplyBehavior === 'set_model'
+        ? t('settingsProviders.acpApplyBehaviorSetModel')
+        : core.model.acpApplyBehavior === 'restart_session'
+            ? t('settingsProviders.acpApplyBehaviorRestartSession')
+            : t('settingsProviders.notAvailable');
+    const installInfo = core.cli.installBanner.installKind === 'command'
+        ? (core.cli.installBanner.installCommand ?? t('settingsProviders.installInfoSeeSetupGuide'))
+        : t('settingsProviders.installInfoUseProviderCliInstaller');
+
     return (
         <View ref={popoverBoundaryRef} style={{ flex: 1 }}>
             <ItemList style={{ paddingTop: 0 }}>
-                {plugin.uiSections.map((section) => (
+                <ItemGroup title={t(core.displayNameKey)} footer={t(core.subtitleKey)}>
+                    <Item
+                        title={t('settingsProviders.enabledTitle')}
+                        subtitle={t('settingsProviders.enabledSubtitle')}
+                        icon={<Ionicons name="toggle-outline" size={29} color={theme.colors.textSecondary} />}
+                        rightElement={<Switch value={backendEnabled} onValueChange={setBackendEnabled} />}
+                        showChevron={false}
+                        onPress={() => setBackendEnabled(!backendEnabled)}
+                    />
+                    <Item
+                        title={t('settingsProviders.releaseChannelTitle')}
+                        subtitle={core.availability.experimental ? t('settingsProviders.channelExperimental') : t('settingsProviders.channelStable')}
+                        icon={<Ionicons name="flask-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+
+                <ItemGroup title={t('settingsProviders.capabilitiesTitle')}>
+                    <Item
+                        title={t('settingsProviders.resumeSupportTitle')}
+                        subtitle={resumeSupport}
+                        icon={<Ionicons name="refresh-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.sessionModeSupportTitle')}
+                        subtitle={sessionModeSupport}
+                        icon={<Ionicons name="layers-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.runtimeModeSwitchingTitle')}
+                        subtitle={runtimeSwitchSupport}
+                        icon={<Ionicons name="swap-horizontal-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.localControlTitle')}
+                        subtitle={core.localControl?.supported === true ? t('settingsProviders.supported') : t('settingsProviders.notSupported')}
+                        icon={<Ionicons name="terminal-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+
+                <ItemGroup title={t('settingsProviders.modelsTitle')}>
+                    <Item
+                        title={t('settingsProviders.modelSelectionTitle')}
+                        subtitle={core.model.supportsSelection ? t('settingsProviders.supported') : t('settingsProviders.notSupported')}
+                        icon={<Ionicons name="list-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.freeformModelIdsTitle')}
+                        subtitle={core.model.supportsFreeform ? t('settingsProviders.allowed') : t('settingsProviders.notAllowed')}
+                        icon={<Ionicons name="create-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.defaultModelTitle')}
+                        subtitle={core.model.defaultMode}
+                        icon={<Ionicons name="star-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.catalogModelListTitle')}
+                        subtitle={catalogModelListText}
+                        icon={<Ionicons name="albums-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.dynamicModelProbeTitle')}
+                        subtitle={dynamicProbe}
+                        icon={<Ionicons name="pulse-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.nonAcpApplyScopeTitle')}
+                        subtitle={nonAcpApplyScope}
+                        icon={<Ionicons name="arrow-forward-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.acpApplyBehaviorTitle')}
+                        subtitle={acpApplyBehavior}
+                        icon={<Ionicons name="sync-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.acpConfigOptionTitle')}
+                        subtitle={core.model.acpModelConfigOptionId ?? t('settingsProviders.notAvailable')}
+                        icon={<Ionicons name="settings-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+
+                <ItemGroup title={t('settingsProviders.cliConnectionTitle')}>
+                    <Item
+                        title={t('settingsProviders.detectedCliTitle')}
+                        subtitle={core.cli.detectKey}
+                        icon={<Ionicons name="code-slash-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    <Item
+                        title={t('settingsProviders.installSetupTitle')}
+                        subtitle={installInfo}
+                        icon={<Ionicons name="download-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                    {core.cli.installBanner.guideUrl ? (
+                        <Item
+                            title={t('settingsProviders.setupGuideUrlTitle')}
+                            subtitle={core.cli.installBanner.guideUrl}
+                            icon={<Ionicons name="link-outline" size={29} color={theme.colors.textSecondary} />}
+                            showChevron={false}
+                            copy={core.cli.installBanner.guideUrl}
+                        />
+                    ) : null}
+                    <Item
+                        title={t('settingsProviders.connectedServiceTitle')}
+                        subtitle={core.connectedService.name}
+                        icon={<Ionicons name="cloud-outline" size={29} color={theme.colors.textSecondary} />}
+                        showChevron={false}
+                    />
+                </ItemGroup>
+
+                {(plugin?.uiSections ?? []).map((section) => (
                     <ItemGroup key={section.id} title={section.title} footer={section.footer}>
                         {section.fields.map((field) => {
                             const value = (settings as any)[field.key];

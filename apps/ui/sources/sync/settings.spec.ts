@@ -150,6 +150,44 @@ describe('settings', () => {
             expect((parsed as any).voiceMediatorVerbosity).toBe('short');
         });
 
+        it('defaults multi-server settings to disabled grouped mode', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).multiServerEnabled).toBe(false);
+            expect((parsed as any).multiServerSelectedServerIds).toEqual([]);
+            expect((parsed as any).multiServerPresentation).toBe('grouped');
+            expect((parsed as any).multiServerProfiles).toEqual([]);
+            expect((parsed as any).multiServerActiveProfileId).toBeNull();
+        });
+
+        it('parses multi-server settings values when provided', () => {
+            const parsed = settingsParse({
+                multiServerEnabled: true,
+                multiServerSelectedServerIds: ['server-a', 'server-b'],
+                multiServerPresentation: 'flat-with-badge',
+                multiServerProfiles: [
+                    {
+                        id: 'dev-work',
+                        name: 'Dev Work',
+                        serverIds: ['server-a', 'server-b'],
+                        presentation: 'grouped',
+                    },
+                ],
+                multiServerActiveProfileId: 'dev-work',
+            } as any);
+            expect((parsed as any).multiServerEnabled).toBe(true);
+            expect((parsed as any).multiServerSelectedServerIds).toEqual(['server-a', 'server-b']);
+            expect((parsed as any).multiServerPresentation).toBe('flat-with-badge');
+            expect((parsed as any).multiServerProfiles).toEqual([
+                {
+                    id: 'dev-work',
+                    name: 'Dev Work',
+                    serverIds: ['server-a', 'server-b'],
+                    presentation: 'grouped',
+                },
+            ]);
+            expect((parsed as any).multiServerActiveProfileId).toBe('dev-work');
+        });
+
         it('migrates legacy lastUsedPermissionMode into per-agent defaults when missing', () => {
             const parsed = settingsParse({
                 lastUsedAgent: 'claude',
@@ -297,7 +335,17 @@ describe('settings', () => {
         it('should have correct default values', () => {
             expect(settingsDefaults.schemaVersion).toBe(2);
             expect(settingsDefaults.experiments).toBe(false);
-            expect(settingsDefaults.experimentalAgents).toEqual({});
+            expect(settingsDefaults.backendEnabledById).toMatchObject({
+                claude: true,
+                codex: true,
+                opencode: true,
+                gemini: true,
+                auggie: true,
+                qwen: true,
+                kimi: true,
+                kilo: true,
+            });
+            expect(settingsDefaults.codexBackendMode).toBe('mcp');
             expect(settingsDefaults.sessionDefaultPermissionModeByAgent).toMatchObject({
                 claude: 'default',
                 codex: 'default',

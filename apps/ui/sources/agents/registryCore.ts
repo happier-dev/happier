@@ -45,7 +45,7 @@ export type AgentCoreConfig = Readonly<{
     permissionModeI18nPrefix: string;
     availability: Readonly<{
         /**
-         * When true, this agent is gated behind `settings.experiments` + `settings.experimentalAgents[id]`.
+         * Whether this backend should be marked as experimental in UI surfaces.
          */
         experimental: boolean;
     }>;

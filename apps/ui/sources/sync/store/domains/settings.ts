@@ -1,11 +1,12 @@
 import type { CustomerInfo } from '../../revenueCat/types';
 import type { Machine, Session } from '../../storageTypes';
 import type { SessionListViewItem } from '../../sessionListViewData';
-import { buildSessionListViewData } from '../../sessionListViewData';
 import { applyLocalSettings, type LocalSettings } from '../../localSettings';
 import { customerInfoToPurchases, type Purchases } from '../../purchases';
 import { applySettings, type Settings } from '../../settings';
 import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../persistence';
+import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
+import { setActiveServerSessionListCache } from '../sessionListCache';
 
 import type { StoreGet, StoreSet } from './_shared';
 
@@ -25,6 +26,7 @@ type SettingsDomainDependencies = Readonly<{
     sessions: Record<string, Session>;
     machines: Record<string, Machine>;
     sessionListViewData: SessionListViewItem[] | null;
+    sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
 }>;
 
 export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDependencies>({
@@ -52,13 +54,19 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                     delta.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject;
 
                 if (shouldRebuildSessionListViewData) {
-                    const sessionListViewData = buildSessionListViewData(state.sessions, state.machines, {
+                    const sessionListViewData = buildSessionListViewDataWithServerScope({
+                        sessions: state.sessions,
+                        machines: state.machines,
                         groupInactiveSessionsByProject: newSettings.groupInactiveSessionsByProject,
                     });
                     return {
                         ...state,
                         settings: newSettings,
                         sessionListViewData,
+                        sessionListViewDataByServerId: setActiveServerSessionListCache(
+                            state.sessionListViewDataByServerId,
+                            sessionListViewData,
+                        ),
                     };
                 }
                 return {
@@ -75,7 +83,9 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                         nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject;
 
                     const sessionListViewData = shouldRebuildSessionListViewData
-                        ? buildSessionListViewData(state.sessions, state.machines, {
+                        ? buildSessionListViewDataWithServerScope({
+                            sessions: state.sessions,
+                            machines: state.machines,
                             groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject,
                         })
                         : state.sessionListViewData;
@@ -85,6 +95,9 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                         settings: nextSettings,
                         settingsVersion: nextVersion,
                         sessionListViewData,
+                        sessionListViewDataByServerId: shouldRebuildSessionListViewData
+                            ? setActiveServerSessionListCache(state.sessionListViewDataByServerId, sessionListViewData)
+                            : state.sessionListViewDataByServerId,
                     };
                 }
                 return state;
@@ -97,7 +110,9 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                     nextSettings.groupInactiveSessionsByProject !== state.settings.groupInactiveSessionsByProject;
 
                 const sessionListViewData = shouldRebuildSessionListViewData
-                    ? buildSessionListViewData(state.sessions, state.machines, {
+                    ? buildSessionListViewDataWithServerScope({
+                        sessions: state.sessions,
+                        machines: state.machines,
                         groupInactiveSessionsByProject: nextSettings.groupInactiveSessionsByProject,
                     })
                     : state.sessionListViewData;
@@ -107,6 +122,9 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                     settings: nextSettings,
                     settingsVersion: nextVersion,
                     sessionListViewData,
+                    sessionListViewDataByServerId: shouldRebuildSessionListViewData
+                        ? setActiveServerSessionListCache(state.sessionListViewDataByServerId, sessionListViewData)
+                        : state.sessionListViewDataByServerId,
                 };
             }),
         applyLocalSettings: (delta) =>
@@ -129,4 +147,3 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
             }),
     };
 }
-
