@@ -108,6 +108,12 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.meta.outputs.sha }}
+      channel: ${{ steps.meta.outputs.channel }}
+      npm_tag: ${{ steps.meta.outputs.npm_tag }}
+      cli_version: ${{ steps.meta.outputs.cli_version }}
+      stack_version: ${{ steps.meta.outputs.stack_version }}
     steps:
       - name: Validate inputs
         env:
@@ -278,6 +284,33 @@ jobs:
         if: inputs.channel == 'production' && (steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP')
         run: git push origin HEAD:main
 
+      - name: Release metadata
+        id: meta
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
+          INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "channel=${INPUT_CHANNEL}" >> "$GITHUB_OUTPUT"
+          if [ "${INPUT_CHANNEL}" = "preview" ]; then
+            echo "npm_tag=next" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
+            echo "cli_version=$(node -p 'require(\"./apps/cli/package.json\").version')" >> "$GITHUB_OUTPUT"
+          else
+            echo "cli_version=SKIP" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
+            echo "stack_version=$(node -p 'require(\"./apps/stack/package.json\").version')" >> "$GITHUB_OUTPUT"
+          else
+            echo "stack_version=SKIP" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: npm publish
         if: inputs.publish_cli
         env:
@@ -330,3 +363,40 @@ jobs:
           else
             git push origin HEAD:"$DEPLOY_REF"
           fi
+
+      - name: Step summary
+        if: always()
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
+          INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
+        run: |
+          npm_tag="${{ steps.meta.outputs.npm_tag }}"
+          cli_version="${{ steps.meta.outputs.cli_version }}"
+          stack_version="${{ steps.meta.outputs.stack_version }}"
+          [ -n "${npm_tag}" ] || npm_tag="(unavailable)"
+          [ -n "${cli_version}" ] || cli_version="(unavailable)"
+          [ -n "${stack_version}" ] || stack_version="(unavailable)"
+
+          {
+            echo "### npm publish"
+            echo ""
+            echo "- channel: \`${INPUT_CHANNEL}\`"
+            echo "- npm dist-tag: \`${npm_tag}\`"
+            if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
+              echo "- cli: \`${cli_version}\`"
+            fi
+            if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
+              echo "- stack: \`${stack_version}\`"
+            fi
+            echo ""
+            echo "### GitHub Releases (mirror)"
+            echo ""
+            if [ "${INPUT_CHANNEL}" = "preview" ]; then
+              if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then echo "- \`cli-preview\` (rolling prerelease)"; fi
+              if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then echo "- \`stack-preview\` (rolling prerelease)"; fi
+            else
+              if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then echo "- \`cli-v${cli_version}\`"; fi
+              if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then echo "- \`stack-v${stack_version}\`"; fi
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
