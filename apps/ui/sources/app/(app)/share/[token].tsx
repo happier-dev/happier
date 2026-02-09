@@ -8,7 +8,6 @@ import { ItemList } from '@/components/ItemList';
 import { ItemGroup } from '@/components/ItemGroup';
 import { Item } from '@/components/Item';
 import { Avatar } from '@/components/Avatar';
-import { getServerUrl } from '@/sync/serverConfig';
 import { decryptDataKeyFromPublicShare } from '@/sync/encryption/publicShareEncryption';
 import { AES256Encryption } from '@/sync/encryption/encryptor';
 import { EncryptionCache } from '@/sync/encryption/encryptionCache';
@@ -20,6 +19,7 @@ import { createReducer, reducer } from '@/sync/reducer/reducer';
 import { TranscriptList } from '@/components/sessions/transcript/TranscriptList';
 import { ChatHeaderView } from '@/components/ChatHeaderView';
 import type { Message } from '@/sync/typesMessage';
+import { serverFetch } from '@/sync/http/client';
 
 const SHARE_SCREEN_OPTIONS = { headerShown: false } as const;
 
@@ -101,17 +101,16 @@ export default memo(function PublicShareViewerScreen() {
         setMessages([]);
 
         try {
-            const serverUrl = getServerUrl();
-            const url = withConsent
-                ? `${serverUrl}/v1/public-share/${token}?consent=true`
-                : `${serverUrl}/v1/public-share/${token}`;
+            const path = withConsent
+                ? `/v1/public-share/${token}?consent=true`
+                : `/v1/public-share/${token}`;
 
             const headers: Record<string, string> = {};
             if (authHeader) {
                 headers['Authorization'] = authHeader;
             }
 
-            const response = await fetch(url, { method: 'GET', headers });
+            const response = await serverFetch(path, { method: 'GET', headers }, { includeAuth: false });
             if (!response.ok) {
                 if (response.status === 403) {
                     const data = await response.json();
@@ -148,10 +147,10 @@ export default memo(function PublicShareViewerScreen() {
                 data.session.agentState
             );
 
-            const messagesUrl = withConsent
-                ? `${serverUrl}/v1/public-share/${token}/messages?consent=true`
-                : `${serverUrl}/v1/public-share/${token}/messages`;
-            const messagesResponse = await fetch(messagesUrl, { method: 'GET', headers });
+            const messagesPath = withConsent
+                ? `/v1/public-share/${token}/messages?consent=true`
+                : `/v1/public-share/${token}/messages`;
+            const messagesResponse = await serverFetch(messagesPath, { method: 'GET', headers }, { includeAuth: false });
             if (!messagesResponse.ok) {
                 setError(t('errors.operationFailed'));
                 setIsLoading(false);

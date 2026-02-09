@@ -9,7 +9,7 @@ import { t } from '@/text';
 import { TokenStorage } from '@/auth/tokenStorage';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { authChallenge } from '@/auth/authChallenge';
-import { getServerUrl } from '@/sync/serverConfig';
+import { serverFetch } from '@/sync/http/client';
 import { isSessionSharingSupported } from '@/sync/apiFeatures';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
@@ -139,11 +139,11 @@ export default function OAuthProviderReturn() {
                     const finalize = async (payload: any) => {
                         safeSetBusy(true);
                         try {
-                            const response = await fetch(`${getServerUrl()}/v1/auth/external/${encodeURIComponent(providerId)}/finalize`, {
+                            const response = await serverFetch(`/v1/auth/external/${encodeURIComponent(providerId)}/finalize`, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify(payload),
-                            });
+                            }, { includeAuth: false });
                             const json = await response.json().catch(() => ({}));
                             return { ok: response.ok, status: response.status, json };
                         } finally {
