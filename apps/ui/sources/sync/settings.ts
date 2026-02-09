@@ -3,11 +3,11 @@ import { dbgSettings, isSettingsSyncDebugEnabled } from './debugSettings';
 import { SecretStringSchema } from './secretSettings';
 import { pruneSecretBindings } from './secretBindings';
 import { PERMISSION_MODES } from '@/constants/PermissionModes';
-import type { AgentType } from './modelOptions';
-import { mapPermissionModeAcrossAgents } from './permissionMapping';
 import type { PermissionMode } from './permissionTypes';
-import { isPermissionMode, normalizePermissionModeForGroup } from './permissionTypes';
-import { AGENT_IDS, DEFAULT_AGENT_ID, getAgentCore, isAgentId, type AgentId } from '@/agents/catalog';
+import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES } from './permissionTypes';
+import { AGENT_IDS, getAgentCore, type AgentId } from '@/agents/catalog';
+import { PROVIDER_SETTINGS_PLUGINS } from '@/agents/providers/_registry/providerSettingsRegistry';
+import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 //
 // Configuration Profile Schema (for environment variable profiles)
@@ -245,7 +245,12 @@ export function isProfileVersionCompatible(profileVersion: string, requiredVersi
 // happy-cli maintains its own local settings schemaVersion separately.
 export const SUPPORTED_SCHEMA_VERSION = 2;
 
-export const SettingsSchema = z.object({
+const PROVIDER_SETTINGS_SHAPE: z.ZodRawShape = Object.assign(
+    {},
+    ...PROVIDER_SETTINGS_PLUGINS.map((p) => p.settingsShape),
+);
+
+const SettingsSchemaBase = z.object({
     // Schema version for compatibility detection
     schemaVersion: z.number().default(SUPPORTED_SCHEMA_VERSION).describe('Settings schema version for compatibility checks'),
 
@@ -262,11 +267,12 @@ export const SettingsSchema = z.object({
     experimentalAgents: z.record(z.string(), z.boolean()).default({}).describe('Per-agent experimental toggles'),
     // Per-experiment toggles (gated by `experiments` master switch in UI/usage)
     expUsageReporting: z.boolean().describe('Experimental: enable usage reporting UI'),
-    expFileViewer: z.boolean().describe('Experimental: enable session file viewer'),
+    // Deprecated: kept parse-compatible for one migration window.
+    expFileViewer: z.boolean().describe('Deprecated: legacy session file viewer experiment flag'),
+    expGitOperations: z.boolean().describe('Experimental: enable Git write operations UI'),
     expShowThinkingMessages: z.boolean().describe('Experimental: show assistant thinking messages'),
     expSessionType: z.boolean().describe('Experimental: show session type selector (simple vs worktree)'),
     expZen: z.boolean().describe('Experimental: enable Zen navigation/experience'),
-    expVoiceAuthFlow: z.boolean().describe('Experimental: enable authenticated voice token flow'),
     expInboxFriends: z.boolean().describe('Experimental: enable inbox/friends UI + related UX'),
     // Intentionally NOT auto-enabled when `experiments` is enabled; this toggles extra local installation + security surface area.
     expCodexResume: z.boolean().describe('Experimental: enable Codex vendor-resume and resume-codex installer UI'),
@@ -281,6 +287,9 @@ export const SettingsSchema = z.object({
     // Default permission modes for new sessions (account-level; per agent).
     // Values are normalized per-agent when used in UI/session creation.
     sessionDefaultPermissionModeByAgent: z.record(z.string(), z.enum(PERMISSION_MODES)).default(DEFAULT_SESSION_PERMISSION_MODE_BY_AGENT).describe('Default permission mode per agent for new sessions'),
+    // Whether permission mode changes should be pushed to session metadata immediately (for live CLI updates),
+    // or only applied when the next user message is sent.
+    sessionPermissionModeApplyTiming: z.enum(['immediate', 'next_prompt']).describe('When to apply permission mode changes for a running session'),
     sessionUseTmux: z.boolean().describe('Whether new sessions should start in tmux by default'),
     sessionTmuxSessionName: z.string().describe('Default tmux session name for new sessions'),
     sessionTmuxIsolated: z.boolean().describe('Whether to use an isolated tmux server for new sessions'),
@@ -299,10 +308,47 @@ export const SettingsSchema = z.object({
     compactSessionView: z.boolean().describe('Whether to use compact view for active sessions'),
     hideInactiveSessions: z.boolean().describe('Hide inactive sessions in the main list'),
     groupInactiveSessionsByProject: z.boolean().describe('Group inactive sessions by project in the main list'),
-    reviewPromptAnswered: z.boolean().describe('Whether the review prompt has been answered'),
-    reviewPromptLikedApp: z.boolean().nullish().describe('Whether user liked the app when asked'),
-    voiceAssistantLanguage: z.string().nullable().describe('Preferred language for voice assistant (null for auto-detect)'),
-    preferredLanguage: z.string().nullable().describe('Preferred UI language (null for auto-detect from device locale)'),
+	    reviewPromptAnswered: z.boolean().describe('Whether the review prompt has been answered'),
+	    reviewPromptLikedApp: z.boolean().nullish().describe('Whether user liked the app when asked'),
+	    voiceMode: z.enum(['off', 'happier', 'byo_elevenlabs']).describe('Voice mode: off, Happier Voice (server billed), or Bring Your Own ElevenLabs'),
+	    voiceProviderId: z.enum(['off', 'happier_elevenlabs_agents', 'byo_elevenlabs_agents', 'local_openai_stt_tts']).describe('Voice provider id (new)'),
+	    voiceByoElevenLabsAgentId: z.string().nullable().describe('BYO ElevenLabs: agent id'),
+	    voiceByoElevenLabsApiKey: SecretStringSchema.nullable().describe('BYO ElevenLabs: API key (encrypted-at-rest settings secret)'),
+	    voiceAssistantLanguage: z.string().nullable().describe('Preferred language for voice assistant (null for auto-detect)'),
+	    voiceShareSessionSummary: z.boolean().describe('Voice context: include session summary'),
+	    voiceShareRecentMessages: z.boolean().describe('Voice context: include recent messages'),
+	    voiceRecentMessagesCount: z.number().int().min(0).max(50).describe('Voice context: number of recent messages to include'),
+	    voiceShareToolNames: z.boolean().describe('Voice context: include tool names/descriptions'),
+	    voiceSharePermissionRequests: z.boolean().describe('Voice context: include permission request prompts (args are always redacted)'),
+	    voiceShareFilePaths: z.boolean().describe('Voice context: include local file paths (discouraged)'),
+	    voiceShareToolArgs: z.boolean().describe('Voice context: include tool arguments (always forced off)'),
+	    voiceLocalSttBaseUrl: z.string().nullable().describe('Local voice STT base URL (OpenAI-compatible, e.g. http://host:port/v1)'),
+	    voiceLocalSttApiKey: SecretStringSchema.nullable().describe('Local voice STT API key (optional; encrypted-at-rest settings secret)'),
+	    voiceLocalSttModel: z.string().describe('Local voice STT model name (OpenAI-compatible payload field)'),
+	    voiceLocalTtsBaseUrl: z.string().nullable().describe('Local voice TTS base URL (OpenAI-compatible, e.g. http://host:port/v1)'),
+	    voiceLocalTtsApiKey: SecretStringSchema.nullable().describe('Local voice TTS API key (optional; encrypted-at-rest settings secret)'),
+	    voiceLocalTtsModel: z.string().describe('Local voice TTS model name (OpenAI-compatible payload field)'),
+	    voiceLocalTtsVoice: z.string().describe('Local voice TTS voice id/name (OpenAI-compatible payload field)'),
+	    voiceLocalTtsFormat: z.enum(['mp3', 'wav']).describe('Local voice TTS response format'),
+	    voiceLocalAutoSpeakReplies: z.boolean().describe('Whether to automatically speak assistant replies for local voice provider'),
+	    voiceLocalConversationMode: z.enum(['direct_session', 'mediator']).describe('Local voice: conversation mode (direct-to-session vs mediator)'),
+	    voiceLocalMediatorBackend: z.enum(['daemon', 'openai_compat']).describe('Local voice mediator backend: daemon (sessionRPC) or OpenAI-compatible HTTP'),
+	    voiceMediatorAgentSource: z.enum(['session', 'agent']).describe('Voice mediator backend source: use the current session backend or a specific agent backend'),
+	    voiceMediatorAgentId: z.enum(AGENT_IDS).describe('Voice mediator agent id (when source=agent)'),
+	    voiceMediatorPermissionPolicy: z.enum(['no_tools', 'read_only']).describe('Voice mediator permission policy'),
+	    voiceMediatorIdleTtlSeconds: z.number().int().min(60).max(3600).describe('Voice mediator idle TTL (seconds)'),
+	    voiceMediatorChatModelSource: z.enum(['session', 'custom']).describe('Voice mediator chat model source'),
+	    voiceMediatorChatModelId: z.string().describe('Voice mediator chat model id (when source=custom)'),
+	    voiceMediatorCommitModelSource: z.enum(['chat', 'session', 'custom']).describe('Voice mediator commit model source'),
+	    voiceMediatorCommitModelId: z.string().describe('Voice mediator commit model id (when source=custom)'),
+	    voiceLocalChatBaseUrl: z.string().nullable().describe('Local voice mediator (OpenAI-compatible) chat base URL (e.g. http://host:port/v1)'),
+	    voiceLocalChatApiKey: SecretStringSchema.nullable().describe('Local voice mediator (OpenAI-compatible) chat API key (optional; encrypted-at-rest settings secret)'),
+	    voiceLocalChatChatModel: z.string().describe('Local voice mediator (OpenAI-compatible) chat model name'),
+	    voiceLocalChatCommitModel: z.string().describe('Local voice mediator (OpenAI-compatible) commit model name'),
+	    voiceLocalChatTemperature: z.number().min(0).max(2).describe('Local voice mediator (OpenAI-compatible) chat temperature'),
+	    voiceLocalChatMaxTokens: z.number().int().nullable().describe('Local voice mediator (OpenAI-compatible) max tokens (null = default)'),
+	    voiceMediatorVerbosity: z.enum(['short', 'balanced']).describe('Voice mediator verbosity preference'),
+	    preferredLanguage: z.string().nullable().describe('Preferred UI language (null for auto-detect from device locale)'),
     recentMachinePaths: z.array(z.object({
         machineId: z.string(),
         path: z.string()
@@ -339,6 +385,8 @@ export const SettingsSchema = z.object({
     toolViewExpandedDetailLevelByToolName: z.record(z.string(), z.enum(['summary', 'full'])).default({}).describe('Per-tool expanded detail level overrides (keyed by canonical tool name)'),
 });
 
+export const SettingsSchema = SettingsSchemaBase.extend(PROVIDER_SETTINGS_SHAPE);
+
 //
 // NOTE: Settings must be a flat object with no to minimal nesting, one field == one setting,
 // you can name them with a prefix if you want to group them, but don't nest them.
@@ -352,7 +400,8 @@ export const SettingsSchema = z.object({
 
 const SettingsSchemaPartial = SettingsSchema.partial();
 
-export type Settings = z.infer<typeof SettingsSchema>;
+export type KnownSettings = z.infer<typeof SettingsSchemaBase>;
+export type Settings = z.infer<typeof SettingsSchemaBase> & Record<string, unknown>;
 
 //
 // Defaults
@@ -371,10 +420,10 @@ export const settingsDefaults: Settings = {
     experimentalAgents: {},
     expUsageReporting: false,
     expFileViewer: false,
+    expGitOperations: false,
     expShowThinkingMessages: false,
     expSessionType: false,
     expZen: false,
-    expVoiceAuthFlow: false,
     expInboxFriends: false,
     expCodexResume: false,
     codexResumeInstallSpec: '',
@@ -382,6 +431,7 @@ export const settingsDefaults: Settings = {
     codexAcpInstallSpec: '',
     useProfiles: false,
     sessionDefaultPermissionModeByAgent: DEFAULT_SESSION_PERMISSION_MODE_BY_AGENT,
+    sessionPermissionModeApplyTiming: 'immediate',
     sessionUseTmux: false,
     sessionTmuxSessionName: 'happy',
     sessionTmuxIsolated: true,
@@ -396,15 +446,52 @@ export const settingsDefaults: Settings = {
     agentInputActionBarLayout: 'auto',
     agentInputChipDensity: 'auto',
     avatarStyle: 'brutalist',
-    showFlavorIcons: false,
+    showFlavorIcons: true,
     compactSessionView: false,
     hideInactiveSessions: false,
     groupInactiveSessionsByProject: false,
-    reviewPromptAnswered: false,
-    reviewPromptLikedApp: null,
-    voiceAssistantLanguage: null,
-    preferredLanguage: null,
-    recentMachinePaths: [],
+	    reviewPromptAnswered: false,
+	    reviewPromptLikedApp: null,
+	    voiceMode: 'happier',
+	    voiceProviderId: 'happier_elevenlabs_agents',
+	    voiceByoElevenLabsAgentId: null,
+	    voiceByoElevenLabsApiKey: null,
+	    voiceAssistantLanguage: null,
+	    voiceShareSessionSummary: true,
+	    voiceShareRecentMessages: true,
+	    voiceRecentMessagesCount: 10,
+	    voiceShareToolNames: true,
+	    voiceSharePermissionRequests: true,
+	    voiceShareFilePaths: false,
+	    voiceShareToolArgs: false,
+	    voiceLocalSttBaseUrl: null,
+	    voiceLocalSttApiKey: null,
+	    voiceLocalSttModel: 'whisper-1',
+	    voiceLocalTtsBaseUrl: null,
+	    voiceLocalTtsApiKey: null,
+	    voiceLocalTtsModel: 'tts-1',
+	    voiceLocalTtsVoice: 'alloy',
+	    voiceLocalTtsFormat: 'mp3',
+	    voiceLocalAutoSpeakReplies: true,
+	    voiceLocalConversationMode: 'direct_session',
+	    voiceLocalMediatorBackend: 'daemon',
+	    voiceMediatorAgentSource: 'session',
+	    voiceMediatorAgentId: 'claude',
+	    voiceMediatorPermissionPolicy: 'read_only',
+	    voiceMediatorIdleTtlSeconds: 300,
+	    voiceMediatorChatModelSource: 'custom',
+	    voiceMediatorChatModelId: 'default',
+	    voiceMediatorCommitModelSource: 'chat',
+	    voiceMediatorCommitModelId: 'default',
+	    voiceLocalChatBaseUrl: null,
+	    voiceLocalChatApiKey: null,
+	    voiceLocalChatChatModel: 'default',
+	    voiceLocalChatCommitModel: 'default',
+	    voiceLocalChatTemperature: 0.4,
+	    voiceLocalChatMaxTokens: null,
+	    voiceMediatorVerbosity: 'short',
+	    preferredLanguage: null,
+	    recentMachinePaths: [],
     lastUsedAgent: null,
     lastUsedPermissionMode: null,
     lastUsedModelMode: null,
@@ -430,6 +517,7 @@ export const settingsDefaults: Settings = {
     toolViewTapAction: 'expand',
     toolViewExpandedDetailLevelDefault: 'full',
     toolViewExpandedDetailLevelByToolName: {},
+    ...Object.assign({}, ...PROVIDER_SETTINGS_PLUGINS.map((p) => p.settingsDefaults)),
 };
 Object.freeze(settingsDefaults);
 
@@ -452,7 +540,7 @@ export function settingsParse(settings: unknown): Settings {
     const result: any = { ...settingsDefaults };
 
     // Parse known fields individually to avoid whole-object failure.
-    (Object.keys(SettingsSchema.shape) as Array<keyof typeof SettingsSchema.shape>).forEach((key) => {
+    (Object.keys(SettingsSchema.shape) as Array<Extract<keyof typeof SettingsSchema.shape, string>>).forEach((key) => {
         if (!Object.prototype.hasOwnProperty.call(input, key)) return;
 
         // Special-case profiles: validate per profile entry, keep valid ones.
@@ -563,13 +651,19 @@ export function settingsParse(settings: unknown): Settings {
     if (!hasPerAgentPermissionDefaults) {
         const byAgent: Record<string, PermissionMode> = { ...(result.sessionDefaultPermissionModeByAgent as any) };
         const rawMode = (input as any).lastUsedPermissionMode;
-        const rawAgent = (input as any).lastUsedAgent;
-        if (isPermissionMode(rawMode)) {
-            const from: AgentType = isAgentId(rawAgent) ? rawAgent : DEFAULT_AGENT_ID;
-            for (const to of AGENT_IDS) {
-                const mapped = mapPermissionModeAcrossAgents(rawMode as PermissionMode, from, to);
-                const group = getAgentCore(to).permissions.modeGroup;
-                byAgent[to] = normalizePermissionModeForGroup(mapped, group);
+        if (typeof rawMode === 'string') {
+            const parsed = parsePermissionIntentAlias(rawMode);
+            if (parsed) {
+                // Preserve the user's intent when seeding per-agent defaults. Clamp only when the
+                // target agent does not expose the intent as a selectable permission mode.
+                //
+                // Note: some intents may not be enforceable by a provider at runtime (e.g. Claude
+                // read-only). Those constraints are communicated via "effective policy" elsewhere.
+                for (const to of AGENT_IDS) {
+                    const group = getAgentCore(to).permissions.modeGroup;
+                    const allowed = group === 'codexLike' ? CODEX_LIKE_PERMISSION_MODES : CLAUDE_PERMISSION_MODES;
+                    byAgent[to] = (allowed as readonly string[]).includes(parsed) ? (parsed as PermissionMode) : 'default';
+                }
             }
         }
 
@@ -581,33 +675,45 @@ export function settingsParse(settings: unknown): Settings {
     // to match the master switch so existing users keep the same behavior.
     const experimentKeys = [
         'expUsageReporting',
-        'expFileViewer',
         'expShowThinkingMessages',
         'expSessionType',
         'expZen',
-        'expVoiceAuthFlow',
         'expInboxFriends',
     ] as const;
     const hasAnyExperimentKey =
         experimentKeys.some((k) => k in input) ||
         ('experimentalAgents' in input);
-    if (!hasAnyExperimentKey) {
-        const enableAll = result.experiments === true;
-        for (const key of experimentKeys) {
-            result[key] = enableAll;
-        }
-    }
+	    if (!hasAnyExperimentKey) {
+	        const enableAll = result.experiments === true;
+	        for (const key of experimentKeys) {
+	            result[key] = enableAll;
+	        }
+	    }
 
-    const DROPPED_KEYS = new Set([
-        // Removed in favor of `defaultPermissionModeByAgent`.
-        'defaultPermissionModeClaude',
+	    // Migration: derive `voiceProviderId` from legacy `voiceMode` when missing.
+	    // This keeps older clients (that only persisted voiceMode) working with the new provider selector.
+	    if (!('voiceProviderId' in input)) {
+	        if (result.voiceMode === 'off') result.voiceProviderId = 'off';
+	        if (result.voiceMode === 'happier') result.voiceProviderId = 'happier_elevenlabs_agents';
+	        if (result.voiceMode === 'byo_elevenlabs') result.voiceProviderId = 'byo_elevenlabs_agents';
+	    }
+
+	    // Safety: tool arguments are never shared with voice providers.
+	    // Even if a persisted settings blob contains `voiceShareToolArgs: true`, force it off.
+	    result.voiceShareToolArgs = false;
+
+	    const DROPPED_KEYS = new Set([
+	        // Removed in favor of `defaultPermissionModeByAgent`.
+	        'defaultPermissionModeClaude',
         'defaultPermissionModeCodex',
         'defaultPermissionModeGemini',
+        // Voice is no longer experimental; the old experiment toggle is ignored.
+        'expVoiceAuthFlow',
     ]);
 
     // Preserve unknown fields (forward compatibility).
     for (const [key, value] of Object.entries(input)) {
-        if (key === '__proto__') continue;
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
         if (DROPPED_KEYS.has(key)) continue;
         if (!Object.prototype.hasOwnProperty.call(SettingsSchema.shape, key)) {
             Object.defineProperty(result, key, {
