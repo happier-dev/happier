@@ -45,6 +45,7 @@ import { requireDir } from './utils/proc/pm.mjs';
 import { waitForHttpOk } from './utils/server/server.mjs';
 import { resolveLocalhostHost, preferStackLocalhostUrl } from './utils/paths/localhost_host.mjs';
 import { openUrlInBrowser } from './utils/ui/browser.mjs';
+import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 import { bold, cyan, dim, green, yellow } from './utils/ui/ansi.mjs';
 import { banner, bullets, cmd as cmdFmt, kv, sectionTitle } from './utils/ui/layout.mjs';
 import { copyFileIfMissing, linkFileIfMissing, writeSecretFileIfMissing } from './utils/auth/files.mjs';
@@ -904,9 +905,14 @@ async function cmdRunScript({ rootDir, stackName, scriptPath, args, extraEnv = {
                 : null;
 
           if (uiUrl) {
-            console.log(`[stack] ${stackName}: ui: ${uiUrl}`);
+            const serverUrlForUi =
+              Number.isFinite(existingPort) && existingPort > 0 ? `http://localhost:${existingPort}` : '';
+            const uiOpenUrl = serverUrlForUi
+              ? buildConfigureServerLinks({ webappUrl: uiUrl, serverUrl: serverUrlForUi }).webUrl
+              : uiUrl;
+            console.log(`[stack] ${stackName}: ui: ${uiOpenUrl}`);
             if (openBrowser) {
-              await openUrlInBrowser(uiUrl);
+              await openUrlInBrowser(uiOpenUrl);
             }
           } else if (scriptPath === 'dev.mjs') {
             console.log(`[stack] ${stackName}: ui: unknown (missing expo.webPort in stack.runtime.json)`);

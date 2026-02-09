@@ -104,6 +104,12 @@ const helpScenarios = [
     excludes: ['hstack self status'],
   },
   {
+    title: 'hstack self-host -h prints self-host command help',
+    args: ['self-host', '-h'],
+    includes: ['hstack self-host install', 'hstack self-host status', 'hstack self-host update'],
+    excludes: ['hstack self check'],
+  },
+  {
     title: 'hstack contrib sync -h prints sync help (not root help)',
     args: ['contrib', 'sync', '-h'],
     includes: ['hstack contrib sync'],

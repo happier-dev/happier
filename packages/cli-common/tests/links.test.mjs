@@ -26,11 +26,10 @@ test('buildConfigureServerLinks encodes server URL', () => {
   const out = buildConfigureServerLinks({ webappUrl, serverUrl });
   assert.equal(
     out.webUrl,
-    'https://app.happier.dev/server?url=https%3A%2F%2Fstack.example.test&auto=1',
+    'https://app.happier.dev/?server=https%3A%2F%2Fstack.example.test',
   );
   assert.equal(
     out.mobileUrl,
     'happier://server?url=https%3A%2F%2Fstack.example.test',
   );
 });
-

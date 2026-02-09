@@ -31,6 +31,7 @@ import { cyan, dim, green } from './utils/ui/ansi.mjs';
 import { isSandboxed } from './utils/env/sandbox.mjs';
 import { installExitCleanup } from './utils/proc/exit_cleanup.mjs';
 import { expandHome } from './utils/paths/canonical_home.mjs';
+import { buildConfigureServerLinks } from '@happier-dev/cli-common/links';
 
  /**
   * Dev mode stack:
@@ -465,11 +466,14 @@ async function main() {
     const uiPort = expoRes?.port;
     const uiUrlRaw = uiPort ? `http://localhost:${uiPort}` : '';
     const uiUrl = uiUrlRaw ? await preferStackLocalhostUrl(uiUrlRaw, { stackName }) : '';
+    const uiOpenUrl = uiUrl
+      ? buildConfigureServerLinks({ webappUrl: uiUrl, serverUrl: publicServerUrl }).webUrl
+      : '';
     if (expoRes?.reason === 'already_running' && expoRes.port) {
       console.log(`[local] ui already running (pid=${expoRes.pid}, port=${expoRes.port})`);
-      if (uiUrl) console.log(`[local] ui: open ${uiUrl}`);
+      if (uiOpenUrl) console.log(`[local] ui: open ${uiOpenUrl}`);
     } else if (expoRes?.skipped === false && expoRes.port) {
-      if (uiUrl) console.log(`[local] ui: open ${uiUrl}`);
+      if (uiOpenUrl) console.log(`[local] ui: open ${uiOpenUrl}`);
     } else if (expoRes?.skipped && expoRes?.reason === 'already_running') {
       console.log('[local] ui already running (skipping Expo start)');
     }
@@ -479,7 +483,7 @@ async function main() {
     if (shouldOpen) {
       // Prefer localhost for readiness checks (faster/more reliable), but open the stack-scoped hostname.
       await waitForHttpOk(`http://localhost:${expoRes.port}`, { timeoutMs: 30_000 }).catch(() => {});
-      const res = await openUrlInBrowser(uiUrl);
+      const res = await openUrlInBrowser(uiOpenUrl || uiUrl);
       if (!res.ok) {
         console.warn(`[local] ui: failed to open browser automatically (${res.error}).`);
       }

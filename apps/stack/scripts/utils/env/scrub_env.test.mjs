@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { SANDBOX_PRESERVE_KEYS, scrubHappierStackEnv } from './scrub_env.mjs';
+import {
+  SANDBOX_PRESERVE_KEYS,
+  STACK_WRAPPER_PRESERVE_KEYS,
+  scrubHappierStackEnv,
+} from './scrub_env.mjs';
 
 test('scrubHappierStackEnv removes non-preserved HAPPIER_STACK_* vars and clears selected unprefixed keys', () => {
   const env = {
@@ -77,4 +81,22 @@ test('scrubHappierStackEnv trims and de-duplicates clearUnprefixedKeys', () => {
   assert.equal(scrubbed.HAPPIER_HOME_DIR, undefined);
   assert.equal(scrubbed.HAPPIER_SERVER_URL, undefined);
   assert.equal(scrubbed.HAPPIER_STACK_KEEP, 'keep');
+});
+
+test('scrubHappierStackEnv preserves HAPPIER_STACK_TUI in stack wrapper mode', () => {
+  const env = {
+    PATH: '/bin',
+    HAPPIER_STACK_TUI: '1',
+    HAPPIER_STACK_VERBOSE: '1',
+    HAPPIER_STACK_SECRET: 'drop-me',
+  };
+  const scrubbed = scrubHappierStackEnv(env, {
+    keepHappierStackKeys: STACK_WRAPPER_PRESERVE_KEYS,
+    clearUnprefixedKeys: [],
+  });
+
+  assert.equal(scrubbed.PATH, '/bin');
+  assert.equal(scrubbed.HAPPIER_STACK_TUI, '1');
+  assert.equal(scrubbed.HAPPIER_STACK_VERBOSE, '1');
+  assert.equal(scrubbed.HAPPIER_STACK_SECRET, undefined);
 });

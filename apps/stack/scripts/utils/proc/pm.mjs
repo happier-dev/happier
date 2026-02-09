@@ -51,10 +51,17 @@ async function getComponentPm(dir, env = process.env) {
   void happyMonorepoRoot;
 
   // IMPORTANT: probe yarn with cwd=componentDir; yarn can be blocked depending on Corepack context.
-  if (!(await commandExists('yarn', { cwd: dir, env }))) {
-    throw new Error(`[local] yarn is required for component at ${dir}. Install it via Corepack: \`corepack enable\``);
+  if (await commandExists('yarn', { cwd: dir, env })) {
+    return { name: 'yarn', cmd: 'yarn' };
   }
-  return { name: 'yarn', cmd: 'yarn' };
+
+  const binaryMode = String(env.HAPPIER_STACK_BINARY_MODE ?? '').trim() === '1'
+    || String(env.HAPPIER_STACK_INSTALL_SOURCE ?? '').trim() === 'binary';
+  if (binaryMode && (await commandExists('npm', { cwd: dir, env }))) {
+    return { name: 'npm', cmd: 'npm' };
+  }
+
+  throw new Error(`[local] yarn is required for component at ${dir}. Install it via Corepack: \`corepack enable\``);
 }
 
 const _yarnReadyKeys = new Set();

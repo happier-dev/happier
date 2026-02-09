@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   resolveStackCredentialPaths,
   findExistingStackCredentialPath,
+  findAnyCredentialPathInCliHome,
   resolveStackDaemonStatePaths,
   resolvePreferredStackDaemonStatePaths,
 } from './credentials_paths.mjs';
@@ -42,6 +43,41 @@ test('findExistingStackCredentialPath falls back to legacy access.key', async ()
 
   const found = findExistingStackCredentialPath({ cliHomeDir: dir, serverUrl });
   assert.equal(found, out.legacyPath);
+});
+
+test('findExistingStackCredentialPath keeps server-url isolation and falls back to legacy when resolved scope paths are empty', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-cred-paths-'));
+  const serverUrl = 'http://127.0.0.1:3009';
+  const out = resolveStackCredentialPaths({
+    cliHomeDir: dir,
+    serverUrl,
+    env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_main__id_default' },
+  });
+
+  const otherServerScoped = join(dir, 'servers', 'stack_dev-auth__id_default', 'access.key');
+  await mkdir(join(dir, 'servers', 'stack_dev-auth__id_default'), { recursive: true });
+  await writeFile(out.legacyPath, 'legacy\n', 'utf-8');
+  await writeFile(otherServerScoped, 'server-scoped\n', 'utf-8');
+
+  const found = findExistingStackCredentialPath({
+    cliHomeDir: dir,
+    serverUrl,
+    env: { HAPPIER_ACTIVE_SERVER_ID: 'stack_main__id_default' },
+  });
+  assert.equal(found, out.legacyPath);
+});
+
+test('findAnyCredentialPathInCliHome prefers server-scoped credentials over legacy', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'happy-stacks-any-cred-paths-'));
+  const legacyPath = join(dir, 'access.key');
+  const serverScopedPath = join(dir, 'servers', 'stack_main__id_default', 'access.key');
+
+  await mkdir(join(dir, 'servers', 'stack_main__id_default'), { recursive: true });
+  await writeFile(legacyPath, 'legacy\n', 'utf-8');
+  await writeFile(serverScopedPath, 'server\n', 'utf-8');
+
+  const found = findAnyCredentialPathInCliHome({ cliHomeDir: dir });
+  assert.equal(found, serverScopedPath);
 });
 
 test('resolveStackCredentialPaths uses HAPPIER_ACTIVE_SERVER_ID when provided', async () => {

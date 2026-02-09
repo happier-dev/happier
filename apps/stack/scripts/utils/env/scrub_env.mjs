@@ -27,6 +27,8 @@ export const STACK_WRAPPER_PRESERVE_KEYS = [
 
   // UX knobs.
   'HAPPIER_STACK_VERBOSE',
+  // TUI marker (set by `hstack tui` and must survive stack env scrubbing).
+  'HAPPIER_STACK_TUI',
   'HAPPIER_STACK_UPDATE_CHECK',
   'HAPPIER_STACK_UPDATE_CHECK_INTERVAL_MS',
   'HAPPIER_STACK_UPDATE_NOTIFY_INTERVAL_MS',
@@ -65,4 +67,3 @@ export function scrubHappierStackEnv(
   }
   return out;
 }
-

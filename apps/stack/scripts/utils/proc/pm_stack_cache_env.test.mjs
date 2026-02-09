@@ -44,6 +44,22 @@ async function writeYarnArgDumpStub({ binDir, outputPath }) {
   await writeFile(outputPath, '', 'utf-8');
 }
 
+async function writeNpmArgDumpStub({ binDir, outputPath }) {
+  await mkdir(binDir, { recursive: true });
+  const npmPath = join(binDir, 'npm');
+  await writeFile(
+    npmPath,
+    [
+      '#!/usr/bin/env sh',
+      'set -euo pipefail',
+      'echo "$*" >> "${OUTPUT_PATH:?}"',
+    ].join('\n') + '\n',
+    'utf-8'
+  );
+  await chmod(npmPath, 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+}
+
 async function writeYarnBuildFailAfterDeletingDistStub({ binDir, outputPath }) {
   await mkdir(binDir, { recursive: true });
   const yarnPath = join(binDir, 'yarn');
@@ -171,6 +187,32 @@ test('ensureDepsInstalled prefers yarn when component is inside the Happy monore
   await ensureDepsInstalled(componentDir, 'happier-server', { quiet: true });
   const out = await readFile(outputPath, 'utf-8');
   assert.ok(out.includes('install') || out.includes('--version'));
+});
+
+test('ensureDepsInstalled falls back to npm in binary mode when yarn is unavailable', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-binary-mode-npm-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const componentDir = join(root, 'component');
+  await mkdir(componentDir, { recursive: true });
+  await writeFile(join(componentDir, 'package.json'), '{}\n', 'utf-8');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeNpmArgDumpStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_BINARY_MODE: '1',
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureDepsInstalled(componentDir, 'binary-mode-component', { quiet: true });
+  const out = await readFile(outputPath, 'utf-8');
+  assert.match(out, /install/);
 });
 
 test('pmExecBin sets stack-scoped cache env vars for yarn runs', async (t) => {

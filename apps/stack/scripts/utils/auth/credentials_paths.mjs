@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 const SERVER_ID_SAFE_RE = /^[A-Za-z0-9._-]{1,64}$/;
@@ -143,9 +143,11 @@ export function resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl = 
 
 export function findExistingStackCredentialPath({ cliHomeDir, serverUrl = '', env = process.env }) {
   const resolved = resolveStackCredentialPaths({ cliHomeDir, serverUrl, env });
-  for (const p of resolved.paths) {
-    if (fileHasContent(p)) return p;
+  if (fileHasContent(resolved.serverScopedPath)) return resolved.serverScopedPath;
+  if (resolved.urlHashServerScopedPath && fileHasContent(resolved.urlHashServerScopedPath)) {
+    return resolved.urlHashServerScopedPath;
   }
+  if (fileHasContent(resolved.legacyPath)) return resolved.legacyPath;
   return null;
 }
 
@@ -153,22 +155,35 @@ export function findAnyCredentialPathInCliHome({ cliHomeDir }) {
   const home = String(cliHomeDir ?? '').trim();
   if (!home) return null;
 
-  const legacy = join(home, 'access.key');
-  if (fileHasContent(legacy)) return legacy;
-
   const serversDir = join(home, 'servers');
   try {
     const entries = readdirSync(serversDir, { withFileTypes: true })
       .filter((ent) => ent.isDirectory())
       .map((ent) => ent.name)
       .sort();
+    let best = null;
+    let bestMtimeMs = -1;
     for (const id of entries) {
       const candidate = join(serversDir, id, 'access.key');
-      if (fileHasContent(candidate)) return candidate;
+      if (!fileHasContent(candidate)) continue;
+      let mtimeMs = 0;
+      try {
+        mtimeMs = Number(statSync(candidate).mtimeMs) || 0;
+      } catch {
+        mtimeMs = 0;
+      }
+      if (!best || mtimeMs >= bestMtimeMs) {
+        best = candidate;
+        bestMtimeMs = mtimeMs;
+      }
     }
+    if (best) return best;
   } catch {
     // ignore
   }
+
+  const legacy = join(home, 'access.key');
+  if (fileHasContent(legacy)) return legacy;
 
   return null;
 }

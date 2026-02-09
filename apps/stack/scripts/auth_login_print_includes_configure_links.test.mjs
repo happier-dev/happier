@@ -42,7 +42,7 @@ test('hstack auth login --print --json includes configure-server links and publi
   assert.ok(parsed.configureServer, 'expected configureServer field');
   assert.equal(
     parsed.configureServer.webUrl,
-    `http://localhost:4102/server?url=${encodeURIComponent('http://localhost:4102')}&auto=1`
+    `http://localhost:4102/?server=${encodeURIComponent('http://localhost:4102')}`
   );
   assert.equal(
     parsed.configureServer.mobileUrl,

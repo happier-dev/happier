@@ -1085,8 +1085,12 @@ async function cmdCopyFrom({ argv, json }) {
   // IMPORTANT:
   // Stack auth now uses stable server IDs (`HAPPIER_ACTIVE_SERVER_ID`) which are not persisted in stack env files.
   // Reconstruct the stable scope ID here so copy-from reads the same source credential path that login wrote.
+  // copy-from must use stack-stable credential scope even if the caller shell leaked
+  // rollback flags like HAPPIER_STACK_DISABLE_STABLE_SCOPE=1.
+  const sourceScopeEnv = { ...process.env, ...sourceEnv };
+  delete sourceScopeEnv.HAPPIER_STACK_DISABLE_STABLE_SCOPE;
   const sourceEnvScoped = applyStackActiveServerScopeEnv({
-    env: { ...process.env, ...sourceEnv },
+    env: sourceScopeEnv,
     stackName: fromStackName,
     cliIdentity: 'default',
   });
@@ -1099,8 +1103,10 @@ async function cmdCopyFrom({ argv, json }) {
     findExistingStackCredentialPath({ cliHomeDir: sourceCli, serverUrl: sourceInternalServerUrl, env: sourceEnvScoped }) ||
     findAnyCredentialPathInCliHome({ cliHomeDir: sourceCli });
   const targetEnv = process.env;
+  const targetScopeEnv = { ...targetEnv };
+  delete targetScopeEnv.HAPPIER_STACK_DISABLE_STABLE_SCOPE;
   const targetEnvScoped = applyStackActiveServerScopeEnv({
-    env: targetEnv,
+    env: targetScopeEnv,
     stackName,
     cliIdentity: 'default',
   });
@@ -1163,8 +1169,24 @@ async function cmdCopyFrom({ argv, json }) {
 
   let sourceAccounts = null;
   const sourceTokenSubject = resolveJwtSubjectFromCredentialPath(sourceCredentialPath);
+  let sourceTokenValidation = null;
+  const sourceRuntimeOwnerAlive = await isStackRuntimeOwnerAlive(fromStackName);
+  if (sourceCredentialPath && sourceRuntimeOwnerAlive) {
+    sourceTokenValidation = await validateAuthTokenAgainstServer({
+      credentialPath: sourceCredentialPath,
+      internalServerUrl: sourceInternalServerUrl,
+    });
+    if (sourceTokenValidation.checked && sourceTokenValidation.valid === false) {
+      const status = sourceTokenValidation.status != null ? sourceTokenValidation.status : 'error';
+      const code = sourceTokenValidation.code ? `/${sourceTokenValidation.code}` : '';
+      throw new Error(
+        `[auth] source auth appears stale: source server rejected credential for stack "${fromStackName}" (${status}${code}). Re-auth the source stack and retry.`
+      );
+    }
+  }
   const hasSourceDatabaseUrl = Boolean(String(sourceEnv.DATABASE_URL ?? '').trim());
   const canValidateSourceTokenSubject =
+    !(sourceTokenValidation && sourceTokenValidation.checked && sourceTokenValidation.valid === true) &&
     Boolean(sourceTokenSubject) &&
     (fromServerComponent === 'happier-server-light' || hasSourceDatabaseUrl);
   if (canValidateSourceTokenSubject) {

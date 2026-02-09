@@ -656,7 +656,7 @@ async function cmdSetup({ rootDir, argv }) {
             `- ${cyan('login')}: guided login (recommended)`,
             '',
             dim(
-              `Tip: ${cyan('happier-server-light')} is the simplest local install (no Docker). ${cyan('happier-server')} needs Docker (Postgres/Redis/Minio).`,
+              `Tip: ${cyan('Happier Self-Host default')} is the simplest local install (no Docker). ${cyan('Happier Self-Host full stack')} needs Docker (Postgres/Redis/Minio).`,
             ),
           ]
         : [
@@ -699,22 +699,22 @@ async function cmdSetup({ rootDir, argv }) {
     if (!docker.installed) {
       serverComponent = 'happier-server-light';
       // eslint-disable-next-line no-console
-      console.log(`${green('✓')} Server: ${cyan('happier-server-light')} ${dim('(Docker not detected; simplest local install)')}`);
+      console.log(`${green('✓')} Server: ${cyan('Happier Self-Host default')} ${dim('(Docker not detected; simplest local install)')}`);
     } else if (!docker.running) {
       serverComponent = 'happier-server-light';
       // eslint-disable-next-line no-console
       console.log(
-        `${green('✓')} Server: ${cyan('happier-server-light')} ${dim('(Docker detected but not running; using simplest option)')}`
+        `${green('✓')} Server: ${cyan('Happier Self-Host default')} ${dim('(Docker detected but not running; using simplest option)')}`
       );
       // eslint-disable-next-line no-console
-      console.log(dim(`Tip: start Docker Desktop, then re-run setup if you want ${cyan('happier-server')} (full server).`));
+      console.log(dim(`Tip: start Docker Desktop, then re-run setup if you want ${cyan('Happier Self-Host full stack')}.`));
     } else {
       serverComponent = await withRl(async (rl) => {
         const picked = await promptSelect(rl, {
           title: `${bold('Server flavor')}\n${dim('Pick the backend you want to run locally. You can switch later.')}`,
           options: [
-            { label: `happier-server-light (${green('recommended')}) — simplest local install (PG_Light via embedded PGlite)`, value: 'happier-server-light' },
-            { label: `happier-server — full server (Postgres/Redis/Minio via Docker)`, value: 'happier-server' },
+            { label: `Happier Self-Host default (${green('recommended')}) — simplest local install (PG_Light via embedded PGlite)`, value: 'happier-server-light' },
+            { label: `Happier Self-Host full stack — full server (Postgres/Redis/Minio via Docker)`, value: 'happier-server' },
           ],
           defaultIndex: serverComponent === 'happier-server' ? 1 : 0,
         });

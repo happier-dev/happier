@@ -36,8 +36,9 @@ export function buildConfigureServerLinks(params: Readonly<{
   const serverUrl = String(params.serverUrl ?? '').trim();
   const encodedServerUrl = encodeURIComponent(serverUrl);
   return {
-    webUrl: `${webappUrl}/server?url=${encodedServerUrl}&auto=1`,
+    // Prefer setting the server on any screen via `?server=` so callers don't need to navigate
+    // to a dedicated server selection route first.
+    webUrl: `${webappUrl}/?server=${encodedServerUrl}`,
     mobileUrl: `happier://server?url=${encodedServerUrl}`,
   };
 }
-

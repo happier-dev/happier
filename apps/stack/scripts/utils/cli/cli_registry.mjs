@@ -237,6 +237,14 @@ export function gethstackRegistry() {
       description: 'Runtime install + self-update',
     },
     {
+      name: 'self-host',
+      aliases: ['selfhost'],
+      kind: 'node',
+      scriptRelPath: 'scripts/self_host.mjs',
+      rootUsage: 'hstack self-host install|status|update|rollback|uninstall [--json]',
+      description: 'Happier Self-Host guided install and lifecycle',
+    },
+    {
       name: 'auth',
       kind: 'node',
       scriptRelPath: 'scripts/auth.mjs',
