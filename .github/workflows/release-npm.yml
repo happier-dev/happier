@@ -241,11 +241,15 @@ jobs:
 
       - name: Run cli tests
         if: inputs.publish_cli && inputs.run_tests
-        run: yarn --cwd apps/cli test
+        run: |
+          yarn --cwd apps/cli test:unit
+          yarn --cwd apps/cli test:integration
 
       - name: Run stack tests
         if: inputs.publish_stack && inputs.run_tests
-        run: yarn --cwd apps/stack test
+        run: |
+          yarn --cwd apps/stack test:unit
+          yarn --cwd apps/stack test:integration
 
       - name: Commit version bump(s) (main)
         if: inputs.channel == 'production' && (steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP')
