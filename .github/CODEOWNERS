@@ -1,0 +1,23 @@
+# Release trust roots and signing/release pipeline surfaces.
+# Replace this team handle only if your org uses a different release-admin team.
+/.github/CODEOWNERS @happier-dev/release-admins
+/scripts/release/** @happier-dev/release-admins
+/apps/website/public/happier-release.pub @happier-dev/release-admins
+/apps/website/public/install.sh @happier-dev/release-admins
+/apps/website/public/install.ps1 @happier-dev/release-admins
+/apps/website/public/self-host.sh @happier-dev/release-admins
+
+# Release workflows and reusable release actions.
+/.github/workflows/release-*.yml @happier-dev/release-admins
+/.github/workflows/promote-*.yml @happier-dev/release-admins
+/.github/workflows/publish-*.yml @happier-dev/release-admins
+/.github/workflows/build-tauri.yml @happier-dev/release-admins
+/.github/workflows/deploy.yml @happier-dev/release-admins
+/.github/workflows/deploy-production.yml @happier-dev/release-admins
+/.github/workflows/tests.yml @happier-dev/release-admins
+/.github/workflows/reset-branch.yml @happier-dev/release-admins
+/.github/actions/** @happier-dev/release-admins
+
+# Tauri desktop release/signing surface.
+/apps/ui/src-tauri/** @happier-dev/release-admins
+/apps/ui/tools/tauri/** @happier-dev/release-admins

@@ -1,0 +1,141 @@
+---
+title: Release Artifacts
+description: Binary artifacts, channels, checksums/signatures, manifests, and workflow ownership.
+---
+
+## Channels
+
+- `stable`
+- `preview`
+
+## Artifact naming
+
+- CLI binary archives: `happier-v{version}-{os}-{arch}.tar.gz`
+- hstack binary archives: `hstack-v{version}-{os}-{arch}.tar.gz`
+- Self-host server runtime archives: `happier-server-v{version}-{os}-{arch}.tar.gz`
+- Checksums: `checksums-{product}-v{version}.txt`
+- Checksums signature: `checksums-{product}-v{version}.txt.minisig`
+
+## Supported targets
+
+CLI + hstack:
+
+- `linux-x64`
+- `linux-arm64`
+- `darwin-x64`
+- `darwin-arm64`
+- `windows-x64`
+
+Self-host server runtime:
+
+- `linux-x64`
+- `linux-arm64`
+
+## Manifest schema (`/v1`)
+
+Each platform manifest includes:
+
+- `product`
+- `channel`
+- `version`
+- `os`
+- `arch`
+- `url`
+- `sha256`
+- `signature`
+- `publishedAt`
+- `minSupportedVersion`
+- `rolloutPercent`
+- `critical`
+- `notesUrl`
+- `build.commitSha`
+- `build.workflowRunId`
+
+## Workflow ownership
+
+- `.github/workflows/release-npm.yml`
+  - Publishes npm packages (unchanged behavior).
+  - Builds/signs CLI + hstack binaries.
+  - Generates/publishes CLI + hstack manifests.
+- `.github/workflows/promote-server.yml`
+  - Promotes server deploy branch.
+  - Builds/signs self-host server runtime binaries.
+  - Generates/publishes server manifests.
+- `.github/workflows/release-dev-to-main.yml`
+  - Orchestrates release flow and keeps npm + binary publication gates coherent.
+
+## Rollback policy
+
+- CLI/hstack: rolling tags (`cli-stable` / `cli-preview`, `stack-stable` / `stack-preview`) + versioned tags.
+- Self-host runtime: rolling server release tags + versioned artifacts.
+- `happier self-update` and `hstack self-host rollback --to <version>` are version-targeted rollback entry points.
+
+## Minisign setup (operator runbook)
+
+Generate keys on a trusted machine (do this once):
+
+```bash
+brew install minisign
+mkdir -p ~/.config/happier/release-keys
+cd ~/.config/happier/release-keys
+minisign -G -p happier-release.pub -s happier-release.key
+```
+
+This creates:
+
+- private key: `happier-release.key` (keep private)
+- public key: `happier-release.pub` (safe to distribute)
+
+Important:
+
+- `happier-release.key` is the secret signing key and must never be committed.
+- `happier-release.pub` is the public verification key and should be publicly available.
+
+Configure GitHub repository secrets:
+
+- `MINISIGN_SECRET_KEY`: full private key contents from `happier-release.key`
+- `MINISIGN_PASSPHRASE`: passphrase used when key was generated
+
+Publish the public key for installer verification:
+
+- Canonical repo path (release-owned source): `scripts/release/installers/happier-release.pub`
+- Published website path (generated/synced): `apps/website/public/happier-release.pub`
+- Public URL used by installers: `https://happier.dev/happier-release.pub`
+- Installers embed the canonical key payload by default and verify signatures with that key.
+- `HAPPIER_MINISIGN_PUBKEY_URL` remains as a fallback/override path for controlled rotations.
+- Optional override knobs:
+  - `HAPPIER_MINISIGN_PUBKEY` (inline key text)
+  - `HAPPIER_MINISIGN_PUBKEY_URL` (custom key URL)
+
+Installer source ownership:
+
+- Canonical installer sources live in `scripts/release/installers/`.
+- Published website installer assets in `apps/website/public/` must remain byte-identical.
+- Use `yarn release:sync:installers` to publish sources to website assets.
+- Use `yarn release:check:installers` in CI/release gates to fail on drift.
+- Website promotion (`.github/workflows/promote-website.yml`) runs installer sync automatically before build/deploy and commits synced installer assets when needed.
+
+## Key protection policy
+
+- Treat `scripts/release/installers/happier-release.pub` as the trust root source.
+- Treat `apps/website/public/happier-release.pub` as the published trust-root mirror.
+- Protect release trust-root files with CODEOWNERS at `.github/CODEOWNERS`.
+- Enable branch protection with "Require review from Code Owners" on your protected branches.
+- Assign CODEOWNERS entries to your real organization admin/release-admin team.
+- Keep the private key only in secure local storage + GitHub secrets (`MINISIGN_SECRET_KEY`, `MINISIGN_PASSPHRASE`).
+
+Local signing test before enabling in CI:
+
+```bash
+MINISIGN_SECRET_KEY="$HOME/.config/happier/release-keys/happier-release.key" \
+MINISIGN_PASSPHRASE='your-passphrase' \
+node scripts/release/build-cli-binaries.mjs --channel=preview --targets=$(node -e "process.stdout.write((process.platform==='darwin'?'darwin':'linux')+'-'+(process.arch==='arm64'?'arm64':'x64'))")
+```
+
+Verify signatures locally:
+
+```bash
+node scripts/release/verify-artifacts.mjs \
+  --artifacts-dir=dist/release-assets/cli \
+  --public-key="$HOME/.config/happier/release-keys/happier-release.pub"
+```

@@ -56,7 +56,15 @@
         "website:build": "yarn workspace @happier-dev/website build",
         "docs": "yarn workspace docs dev",
         "docs:build": "yarn workspace docs build",
-        "docs:types": "yarn workspace docs types:check"
+        "docs:types": "yarn workspace docs types:check",
+        "release:build:binaries:cli": "node scripts/release/build-cli-binaries.mjs",
+        "release:build:binaries:hstack": "node scripts/release/build-hstack-binaries.mjs",
+        "release:build:binaries:server": "node scripts/release/build-server-binaries.mjs",
+        "release:verify:artifacts": "node scripts/release/verify-artifacts.mjs",
+        "release:publish:manifests": "node scripts/release/publish-manifests.mjs",
+        "test:release:contracts": "node --test scripts/release/*.test.mjs",
+        "release:sync:installers": "node scripts/release/sync-installers.mjs",
+        "release:check:installers": "node scripts/release/sync-installers.mjs --check"
     },
     "workspaces": {
         "packages": [
