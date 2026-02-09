@@ -44,7 +44,6 @@ export interface NewSessionWizardProfilesProps {
     profiles: AIBackendProfile[];
     favoriteProfileIds: string[];
     setFavoriteProfileIds: (ids: string[]) => void;
-    experimentsEnabled: boolean;
     selectedProfileId: string | null;
     onPressDefaultEnvironment: () => void;
     onPressProfile: (profile: AIBackendProfile) => void;
@@ -190,7 +189,6 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         profiles,
         favoriteProfileIds,
         setFavoriteProfileIds,
-        experimentsEnabled,
         selectedProfileId,
         onPressDefaultEnvironment,
         onPressProfile,
@@ -211,6 +209,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
     } = props.profiles;
 
     const expSessionType = useSetting('expSessionType');
+    const experimentsEnabled = useSetting('experiments');
     const showSessionTypeSelector = experimentsEnabled && expSessionType;
 
     const {
@@ -301,7 +300,6 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                             customProfiles={profiles}
                                             favoriteProfileIds={favoriteProfileIds}
                                             onFavoriteProfileIdsChange={setFavoriteProfileIds}
-                                            experimentsEnabled={experimentsEnabled}
                                             selectedProfileId={selectedProfileId}
                                             popoverBoundaryRef={scrollViewRef}
                                             includeDefaultEnvironmentRow

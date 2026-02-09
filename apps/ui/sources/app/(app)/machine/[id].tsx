@@ -134,7 +134,6 @@ export default function MachineDetailScreen() {
     const terminalTmuxTmpDir = useSetting('sessionTmuxTmpDir');
     const [terminalTmuxByMachineId, setTerminalTmuxByMachineId] = useSettingMutable('sessionTmuxByMachineId');
     const settings = useSettings();
-    const experimentsEnabled = settings.experiments === true;
 
     const { state: detectedCapabilities, refresh: refreshDetectedCapabilities } = useMachineCapabilitiesCache({
         machineId: machineId ?? null,
@@ -318,18 +317,16 @@ export default function MachineDetailScreen() {
         const entries = getInstallableDepRegistryEntries();
         const results = capabilitiesSnapshot?.response.results;
         return entries.map((entry) => {
-            const enabledFlag = (settings as any)[entry.enabledSettingKey] === true;
-            const enabled = Boolean(machineId && experimentsEnabled && enabledFlag);
+            const enabled = Boolean(machineId && entry.enabledWhen(settings as any));
             const depStatus = entry.getDepStatus(results);
             const detectResult = entry.getDetectResult(results);
             return { entry, enabled, depStatus, detectResult };
         });
-    }, [capabilitiesSnapshot, experimentsEnabled, machineId, settings]);
+    }, [capabilitiesSnapshot, machineId, settings]);
 
     React.useEffect(() => {
         if (!machineId) return;
         if (!isOnline) return;
-        if (!experimentsEnabled) return;
 
         const results = capabilitiesSnapshot?.response.results;
         if (!results) return;
@@ -345,7 +342,7 @@ export default function MachineDetailScreen() {
             request: { requests },
             timeoutMs: 12_000,
         });
-    }, [capabilitiesSnapshot, experimentsEnabled, installableDepEntries, isOnline, machineId, refreshDetectedCapabilities]);
+    }, [capabilitiesSnapshot, installableDepEntries, isOnline, machineId, refreshDetectedCapabilities]);
 
     const detectedClisTitle = useMemo(() => {
         const headerTextStyle = [

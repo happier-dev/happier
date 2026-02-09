@@ -4,7 +4,7 @@ import renderer, { act } from 'react-test-renderer';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
-    expo?: { EventEmitter: new () => unknown };
+    expo?: unknown;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as ReactActEnvironmentGlobal).expo = { EventEmitter: class {} };
@@ -120,19 +120,17 @@ vi.mock('@/sync/storage', () => {
             React.useMemo(() => 0, []);
             return {
                 experiments: true,
-                expCodexResume: true,
-                expCodexAcp: false,
+                codexBackendMode: 'mcp_resume',
             };
         },
         useSetting: (name: string) => {
             React.useMemo(() => 0, [name]);
             if (name === 'experiments') return true;
-            if (name === 'expCodexResume') return true;
             return false;
         },
         useSettingMutable: (name: string) => {
             React.useMemo(() => 0, [name]);
-            return [name === 'codexResumeInstallSpec' ? '' : null, vi.fn()];
+            return [name === 'codexMcpResumeInstallSpec' ? '' : null, vi.fn()];
         },
     };
 });

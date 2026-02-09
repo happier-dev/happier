@@ -42,7 +42,6 @@ export function useNewSessionWizardProps(params: Readonly<{
     profiles: AIBackendProfile[];
     favoriteProfileIds: string[];
     setFavoriteProfileIds: (ids: string[]) => void;
-    experimentsEnabled: boolean;
     selectedProfileId: string | null;
     onPressDefaultEnvironment: () => void;
     onPressProfile: (profile: AIBackendProfile) => void;
@@ -201,7 +200,6 @@ export function useNewSessionWizardProps(params: Readonly<{
             profiles: params.profiles,
             favoriteProfileIds: params.favoriteProfileIds,
             setFavoriteProfileIds: params.setFavoriteProfileIds,
-            experimentsEnabled: params.experimentsEnabled,
             selectedProfileId: params.selectedProfileId,
             onPressDefaultEnvironment: params.onPressDefaultEnvironment,
             onPressProfile: params.onPressProfile,
@@ -221,7 +219,6 @@ export function useNewSessionWizardProps(params: Readonly<{
             getSecretMachineEnvOverride,
         };
     }, [
-        params.experimentsEnabled,
         params.favoriteProfileIds,
         params.getProfileDisabled,
         params.getProfileSubtitleExtra,
@@ -385,7 +382,6 @@ export function useNewSessionWizardProps(params: Readonly<{
         params.agentInputExtraActionChips,
         params.canCreate,
         params.connectionStatus,
-        params.experimentsEnabled,
         params.emptyAutocompletePrefixes,
         params.emptyAutocompleteSuggestions,
         params.handleCreateSession,

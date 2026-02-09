@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Platform, useWindowDimensions } from 'react-native';
+import { View, Platform, useWindowDimensions, Pressable, Text } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useAllMachines, storage, useSetting, useSettingMutable, useSettings } from '@/sync/storage';
 import { useRouter, useLocalSearchParams, useNavigation, usePathname } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -54,6 +55,10 @@ import { useNewSessionCapabilitiesPrefetch } from '@/components/sessions/new/hoo
 import { useNewSessionDraftAutoPersist } from '@/components/sessions/new/hooks/useNewSessionDraftAutoPersist';
 import { useCreateNewSession } from '@/components/sessions/new/hooks/useCreateNewSession';
 import { useNewSessionWizardProps } from '@/components/sessions/new/hooks/useNewSessionWizardProps';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/AgentInput';
+import { getActiveServerSnapshot, subscribeActiveServer } from '@/sync/serverRuntime';
+import { listServerProfiles } from '@/sync/serverProfiles';
+import { getNewSessionServerTargeting, resolveNewSessionServerTarget } from '@/sync/multiServer';
 
 // Configuration constants
 const RECENT_PATHS_DEFAULT_VISIBLE = 5;
@@ -103,6 +108,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         machineId: machineIdParam,
         path: pathParam,
         profileId: profileIdParam,
+        serverId: serverIdParam,
         resumeSessionId: resumeSessionIdParam,
         secretId: secretIdParam,
         secretSessionOnlyId,
@@ -113,6 +119,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         machineId?: string;
         path?: string;
         profileId?: string;
+        serverId?: string;
         resumeSessionId?: string;
         secretId?: string;
         secretSessionOnlyId?: string;
@@ -202,8 +209,13 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const sessionDefaultPermissionModeByAgent = useSetting('sessionDefaultPermissionModeByAgent');
     const settings = useSettings();
+    const [activeServerSnapshot, setActiveServerSnapshot] = React.useState(() => getActiveServerSnapshot());
+    React.useEffect(() => {
+        return subscribeActiveServer((snapshot) => {
+            setActiveServerSnapshot(snapshot);
+        });
+    }, []);
     const experimentsEnabled = settings.experiments;
-    const experimentalAgents = useSetting('experimentalAgents');
     const expSessionType = useSetting('expSessionType');
     const resumeCapabilityOptions = React.useMemo(() => {
         return buildResumeCapabilityOptionsFromUiState({
@@ -657,7 +669,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     const wizardInstallableDeps = React.useMemo(() => {
         if (!selectedMachineId) return [];
-        if (experimentsEnabled !== true) return [];
         if (cliAvailability.available[agentType] !== true) return [];
 
         const experiments = getAgentResumeExperimentsFromSettings(agentType, settings);
@@ -678,7 +689,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [
         agentType,
         cliAvailability.available,
-        experimentsEnabled,
         settings,
         resumeSessionId,
         selectedMachineCapabilitiesSnapshot,
@@ -687,7 +697,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
 
     React.useEffect(() => {
         if (!selectedMachineId) return;
-        if (!experimentsEnabled) return;
         if (wizardInstallableDeps.length === 0) return;
 
         const machine = machines.find((m) => m.id === selectedMachineId);
@@ -708,7 +717,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                 timeoutMs: 12_000,
             });
         });
-    }, [experimentsEnabled, machines, selectedMachineId, wizardInstallableDeps]);
+    }, [machines, selectedMachineId, wizardInstallableDeps]);
 
     React.useEffect(() => {
         const results = selectedMachineCapabilitiesSnapshot?.response.results as any;
@@ -725,7 +734,7 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
                 timeoutMs: plan.timeoutMs,
             });
         });
-    }, [agentType, experimentsEnabled, machines, selectedMachineCapabilitiesSnapshot, selectedMachineId, settings]);
+    }, [agentType, machines, selectedMachineCapabilitiesSnapshot, selectedMachineId, settings]);
 
     // Auto-correct invalid agent selection after CLI detection completes
     // This handles the case where lastUsedAgent was 'codex' but codex is not installed
@@ -1129,8 +1138,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
     }, [
         agentType,
         applyPermissionMode,
-        experimentsEnabled,
-        experimentalAgents,
         profileMap,
         selectedProfileId,
         sessionDefaultPermissionModeByAgent,
@@ -1445,6 +1452,88 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [selectedMachine, selectedMachineId, selectedProfileEnvVars, selectedProfileForEnvVars]);
 
+    const serverProfiles = React.useMemo(() => {
+        try {
+            return listServerProfiles()
+                .slice()
+                .sort((a, b) => (b.lastUsedAt ?? 0) - (a.lastUsedAt ?? 0));
+        } catch {
+            return [];
+        }
+    }, [activeServerSnapshot.generation]);
+
+    const availableServerIds = React.useMemo(() => {
+        return serverProfiles.map((profile) => profile.id);
+    }, [serverProfiles]);
+    const multiServerSelectedServerIds = Array.isArray(settings.multiServerSelectedServerIds)
+        ? settings.multiServerSelectedServerIds
+        : [];
+    const multiServerProfiles = Array.isArray(settings.multiServerProfiles)
+        ? settings.multiServerProfiles
+        : [];
+    const multiServerActiveProfileId = typeof settings.multiServerActiveProfileId === 'string'
+        ? settings.multiServerActiveProfileId
+        : null;
+    const multiServerSelectedServerIdsSignature = React.useMemo(() => {
+        return multiServerSelectedServerIds.map((id) => String(id ?? '').trim()).join('|');
+    }, [multiServerSelectedServerIds]);
+    const multiServerProfilesSignature = React.useMemo(() => {
+        return JSON.stringify(multiServerProfiles);
+    }, [multiServerProfiles]);
+    const availableServerIdsSignature = React.useMemo(() => {
+        return availableServerIds.map((id) => String(id ?? '').trim()).join('|');
+    }, [availableServerIds]);
+
+    const newSessionServerTargeting = React.useMemo(() => {
+        return getNewSessionServerTargeting({
+            activeServerId: activeServerSnapshot.serverId,
+            availableServerIds,
+            settings: {
+                multiServerEnabled: Boolean(settings.multiServerEnabled),
+                multiServerSelectedServerIds,
+                multiServerPresentation:
+                    settings.multiServerPresentation === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
+                multiServerProfiles,
+                multiServerActiveProfileId,
+            },
+        });
+    }, [
+        activeServerSnapshot.serverId,
+        availableServerIds,
+        availableServerIdsSignature,
+        multiServerActiveProfileId,
+        multiServerProfiles,
+        multiServerProfilesSignature,
+        multiServerSelectedServerIds,
+        multiServerSelectedServerIdsSignature,
+        settings.multiServerEnabled,
+        settings.multiServerPresentation,
+    ]);
+
+    const requestedServerId = typeof serverIdParam === 'string' ? serverIdParam : null;
+    const newSessionServerTarget = React.useMemo(() => {
+        return resolveNewSessionServerTarget({
+            requestedServerId,
+            activeServerId: activeServerSnapshot.serverId,
+            allowedServerIds: newSessionServerTargeting.allowedServerIds,
+        });
+    }, [activeServerSnapshot.serverId, newSessionServerTargeting.allowedServerIds, requestedServerId]);
+
+    const targetServerId = newSessionServerTarget.targetServerId ?? activeServerSnapshot.serverId;
+    const targetServerProfile = React.useMemo(() => {
+        return serverProfiles.find((profile) => profile.id === targetServerId) ?? null;
+    }, [serverProfiles, targetServerId]);
+    const targetServerName = targetServerProfile?.name ?? targetServerId;
+    const showServerPickerChip = newSessionServerTargeting.pickerEnabled
+        && newSessionServerTargeting.allowedServerIds.length > 1;
+
+    const handleServerClick = React.useCallback(() => {
+        router.push({
+            pathname: '/new/pick/server',
+            params: targetServerId ? { selectedId: targetServerId } : {},
+        });
+    }, [router, targetServerId]);
+
     const agentOptionState = agentNewSessionOptionStateByAgentId[agentType] ?? null;
     const agentNewSessionOptions = React.useMemo(() => {
         return buildNewSessionOptionsFromUiState({ agentId: agentType, agentOptionState });
@@ -1475,6 +1564,8 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         selectedSecretIdByProfileIdByEnvVarName,
         sessionOnlySecretValueByProfileIdByEnvVarName,
         selectedMachineCapabilities,
+        targetServerId,
+        allowedTargetServerIds: newSessionServerTargeting.allowedServerIds,
     });
 
     const handleCloseModal = React.useCallback(() => {
@@ -1512,13 +1603,36 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         });
     }, [agentType]);
 
+    const serverPickerActionChip = React.useMemo<AgentInputExtraActionChip | null>(() => {
+        if (!showServerPickerChip) return null;
+        return {
+            key: 'new-session-target-server',
+            render: ({ chipStyle, iconColor, showLabel, textStyle }) => (
+                <Pressable
+                    onPress={handleServerClick}
+                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+                    style={(p) => chipStyle(p.pressed)}
+                >
+                    <Ionicons name="server-outline" size={16} color={iconColor} />
+                    {showLabel ? (
+                        <Text numberOfLines={1} style={textStyle}>
+                            {targetServerName}
+                        </Text>
+                    ) : null}
+                </Pressable>
+            ),
+        };
+    }, [handleServerClick, showServerPickerChip, targetServerName]);
+
     const agentInputExtraActionChips = React.useMemo(() => {
-        return getNewSessionAgentInputExtraActionChips({
+        const baseChips = getNewSessionAgentInputExtraActionChips({
             agentId: agentType,
             agentOptionState,
             setAgentOptionState: setAgentOptionStateForCurrentAgent,
-        });
-    }, [agentOptionState, agentType, setAgentOptionStateForCurrentAgent]);
+        }) ?? [];
+        if (!serverPickerActionChip) return baseChips;
+        return [serverPickerActionChip, ...baseChips];
+    }, [agentOptionState, agentType, serverPickerActionChip, setAgentOptionStateForCurrentAgent]);
 
     const persistDraftNow = React.useCallback(() => {
         saveNewSessionDraft({
@@ -1635,7 +1749,6 @@ export function useNewSessionScreenModel(): NewSessionScreenModel {
         profiles,
         favoriteProfileIds,
         setFavoriteProfileIds,
-        experimentsEnabled,
         selectedProfileId,
         onPressDefaultEnvironment,
         onPressProfile,

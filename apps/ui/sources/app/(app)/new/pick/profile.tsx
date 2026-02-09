@@ -26,7 +26,6 @@ export default React.memo(function ProfilePickerScreen() {
     const navigation = useNavigation();
     const params = useLocalSearchParams<{ selectedId?: string; machineId?: string; profileId?: string | string[]; secretRequirementResultId?: string }>();
     const useProfiles = useSetting('useProfiles');
-    const experimentsEnabled = useSetting('experiments');
     const [secrets, setSecrets] = useSettingMutable('secrets');
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
     const [profiles, setProfiles] = useSettingMutable('profiles');
@@ -375,7 +374,6 @@ export default React.memo(function ProfilePickerScreen() {
                         customProfiles={profiles}
                         favoriteProfileIds={favoriteProfileIds}
                         onFavoriteProfileIdsChange={setFavoriteProfileIds}
-                        experimentsEnabled={experimentsEnabled}
                         selectedProfileId={selectedId || null}
                         onPressProfile={handleProfilePress}
                         includeDefaultEnvironmentRow

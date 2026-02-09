@@ -14,11 +14,16 @@ type SpawnPayloadCapture = {
 
 async function setupUseCreateNewSessionHarness() {
     const captured: { value: SpawnPayloadCapture } = { value: null };
+    const modalAlertSpy = vi.fn();
+    const setActiveServerSpy = vi.fn();
+    const switchConnectionToActiveServerSpy = vi.fn(async () => ({ token: 'next-token', secret: 'next-secret' }));
+    const refreshMachinesSpy = vi.fn(async () => {});
+    const refreshSessionsSpy = vi.fn(async () => {});
 
     vi.doMock('@/text', () => ({ t: (key: string) => key }));
     vi.doMock('@/modal', () => ({
         Modal: {
-            alert: vi.fn(),
+            alert: (...args: unknown[]) => modalAlertSpy(...args),
             confirm: vi.fn(async () => false),
         },
     }));
@@ -26,14 +31,27 @@ async function setupUseCreateNewSessionHarness() {
         sync: {
             applySettings: vi.fn(),
             decryptSecretValue: vi.fn(),
-            refreshSessions: vi.fn(),
+            refreshSessions: refreshSessionsSpy,
+            refreshMachines: refreshMachinesSpy,
             sendMessage: vi.fn(),
         },
     }));
     vi.doMock('@/sync/storage', () => ({
         storage: {
-            getState: () => ({ settings: {} }),
+            getState: () => ({ settings: {}, machines: { m1: { id: 'm1' } } }),
         },
+    }));
+    vi.doMock('@/sync/serverRuntime', () => ({
+        getActiveServerSnapshot: vi.fn(() => ({
+            serverId: 'server-a',
+            serverUrl: 'https://server-a.example.test',
+            kind: 'custom',
+            generation: 1,
+        })),
+        setActiveServer: (...args: unknown[]) => setActiveServerSpy(...args),
+    }));
+    vi.doMock('@/sync/connectionManager', () => ({
+        switchConnectionToActiveServer: (...args: unknown[]) => switchConnectionToActiveServerSpy(...args),
     }));
     vi.doMock('@/sync/terminalSettings', () => ({
         resolveTerminalSpawnOptions: vi.fn(() => null),
@@ -72,7 +90,14 @@ async function setupUseCreateNewSessionHarness() {
     }));
 
     const { useCreateNewSession } = await import('./useCreateNewSession');
-    return { useCreateNewSession, captured };
+    return {
+        useCreateNewSession,
+        captured,
+        modalAlertSpy,
+        setActiveServerSpy,
+        switchConnectionToActiveServerSpy,
+        refreshMachinesSpy,
+    };
 }
 
 describe('useCreateNewSession permission seeding', () => {
@@ -126,6 +151,8 @@ describe('useCreateNewSession permission seeding', () => {
                 selectedSecretIdByProfileIdByEnvVarName: {},
                 sessionOnlySecretValueByProfileIdByEnvVarName: {},
                 selectedMachineCapabilities: null,
+                targetServerId: null,
+                allowedTargetServerIds: ['server-a'],
             });
 
             handleCreateSession = hook.handleCreateSession as () => Promise<void>;
@@ -145,5 +172,137 @@ describe('useCreateNewSession permission seeding', () => {
         expect(typeof captured.value?.permissionModeUpdatedAt).toBe('number');
         expect(Number.isFinite(captured.value?.permissionModeUpdatedAt)).toBe(true);
         expect((captured.value?.permissionModeUpdatedAt ?? 0)).toBeGreaterThan(0);
+    });
+
+    it('switches to the target server before spawning when targetServerId is provided', async () => {
+        const {
+            useCreateNewSession,
+            setActiveServerSpy,
+            switchConnectionToActiveServerSpy,
+            refreshMachinesSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                sessionType: 'simple',
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-b',
+                allowedTargetServerIds: ['server-a', 'server-b'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        act(() => {
+            renderer.create(React.createElement(Test));
+        });
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(setActiveServerSpy).toHaveBeenCalledWith({ serverId: 'server-b', scope: 'device' });
+        expect(switchConnectionToActiveServerSpy).toHaveBeenCalledTimes(1);
+        expect(refreshMachinesSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to active server when targetServerId is outside the allowed target server IDs', async () => {
+        const {
+            useCreateNewSession,
+            modalAlertSpy,
+            captured,
+            setActiveServerSpy,
+            switchConnectionToActiveServerSpy,
+        } = await setupUseCreateNewSessionHarness();
+
+        let handleCreateSession: null | (() => Promise<void>) = null;
+        const settings = { experiments: false } as unknown as Settings;
+        const machineEnvPresence: UseMachineEnvPresenceResult = {
+            isPreviewEnvSupported: false,
+            isLoading: false,
+            meta: {},
+            refreshedAt: null,
+            refresh: () => {},
+        };
+
+        function Test() {
+            const hook = useCreateNewSession({
+                router: { push: vi.fn(), replace: vi.fn() },
+                selectedMachineId: 'm1',
+                selectedPath: '/tmp',
+                selectedMachine: { metadata: {} },
+                setIsCreating: vi.fn(),
+                setIsResumeSupportChecking: vi.fn(),
+                sessionType: 'simple',
+                settings,
+                useProfiles: false,
+                selectedProfileId: null,
+                profileMap: new Map(),
+                recentMachinePaths: [],
+                agentType: 'codex',
+                permissionMode: 'acceptEdits' as unknown as PermissionMode,
+                modelMode: 'default' as ModelMode,
+                sessionPrompt: '',
+                resumeSessionId: '',
+                agentNewSessionOptions: null,
+                machineEnvPresence,
+                secrets: [],
+                secretBindingsByProfileId: {},
+                selectedSecretIdByProfileIdByEnvVarName: {},
+                sessionOnlySecretValueByProfileIdByEnvVarName: {},
+                selectedMachineCapabilities: null,
+                targetServerId: 'server-c',
+                allowedTargetServerIds: ['server-a'],
+            });
+
+            handleCreateSession = hook.handleCreateSession as () => Promise<void>;
+            return React.createElement('View');
+        }
+
+        act(() => {
+            renderer.create(React.createElement(Test));
+        });
+
+        await act(async () => {
+            await handleCreateSession?.();
+        });
+
+        expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'newSession.serverSelectionUnavailable');
+        expect(captured.value).not.toBeNull();
+        expect(setActiveServerSpy).not.toHaveBeenCalled();
+        expect(switchConnectionToActiveServerSpy).not.toHaveBeenCalled();
     });
 });

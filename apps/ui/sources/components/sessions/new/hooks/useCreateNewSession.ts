@@ -6,6 +6,9 @@ import { sync } from '@/sync/sync';
 import { storage } from '@/sync/storage';
 import { machineSpawnNewSession } from '@/sync/ops';
 import { resolveTerminalSpawnOptions } from '@/sync/terminalSettings';
+import { switchConnectionToActiveServer } from '@/sync/connectionManager';
+import { getActiveServerSnapshot, setActiveServer } from '@/sync/serverRuntime';
+import { resolveNewSessionServerTarget } from '@/sync/multiServer';
 import { createWorktree } from '@/utils/createWorktree';
 import { getMissingRequiredConfigEnvVarNames } from '@/utils/profiles/profileConfigRequirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
@@ -60,6 +63,8 @@ export function useCreateNewSession(params: Readonly<{
     sessionOnlySecretValueByProfileIdByEnvVarName: SecretChoiceByProfileIdByEnvVarName;
 
     selectedMachineCapabilities: any;
+    targetServerId?: string | null;
+    allowedTargetServerIds?: ReadonlyArray<string>;
 }>): Readonly<{
     handleCreateSession: () => void;
 }> {
@@ -75,7 +80,31 @@ export function useCreateNewSession(params: Readonly<{
 
         params.setIsCreating(true);
 
-	        try {
+            try {
+            const targetServerId = typeof params.targetServerId === 'string' ? params.targetServerId.trim() : '';
+            const snapshot = getActiveServerSnapshot();
+            const allowedTargetServerIds = Array.isArray(params.allowedTargetServerIds)
+                ? params.allowedTargetServerIds
+                : [snapshot.serverId];
+            const targetResolution = resolveNewSessionServerTarget({
+                requestedServerId: targetServerId,
+                activeServerId: snapshot.serverId,
+                allowedServerIds: allowedTargetServerIds,
+            });
+            const resolvedTargetServerId = targetResolution.targetServerId ?? snapshot.serverId;
+
+            if (snapshot.serverId !== resolvedTargetServerId) {
+                    setActiveServer({ serverId: resolvedTargetServerId, scope: 'device' });
+                    await switchConnectionToActiveServer();
+                    await sync.refreshMachines();
+            }
+            const machineMap = (storage.getState() as { machines?: Record<string, unknown> }).machines;
+            if (machineMap && !machineMap[params.selectedMachineId]) {
+                Modal.alert(t('common.error'), t('newSession.noMachineSelected'));
+                params.setIsCreating(false);
+                return;
+            }
+
             let actualPath = params.selectedPath;
 
             // Handle worktree creation
@@ -378,6 +407,8 @@ export function useCreateNewSession(params: Readonly<{
         params.secretBindingsByProfileId,
         params.secrets,
         params.selectedMachineCapabilities,
+        params.allowedTargetServerIds,
+        params.targetServerId,
 	        params.selectedSecretIdByProfileIdByEnvVarName,
 	        params.selectedMachine?.metadata?.platform,
 	        params.selectedMachine?.metadata?.windowsRemoteSessionConsole,

@@ -27,7 +27,6 @@ export interface ProfilesListProps {
     customProfiles: AIBackendProfile[];
     favoriteProfileIds: string[];
     onFavoriteProfileIdsChange: (next: string[]) => void;
-    experimentsEnabled: boolean;
 
     selectedProfileId: string | null;
     onPressProfile?: (profile: AIBackendProfile) => void | Promise<void>;
@@ -155,10 +154,10 @@ const ProfileRow = React.memo(function ProfileRow(props: ProfileRowProps) {
 
 export function ProfilesList(props: ProfilesListProps) {
     const { theme, rt } = useUnistyles();
-    const experimentalAgents = useSetting('experimentalAgents');
+    const backendEnabledById = useSetting('backendEnabledById');
     const enabledAgentIds = React.useMemo(() => {
-        return getEnabledAgentIds({ experiments: props.experimentsEnabled, experimentalAgents });
-    }, [experimentalAgents, props.experimentsEnabled]);
+        return getEnabledAgentIds({ backendEnabledById });
+    }, [backendEnabledById]);
     const strings = React.useMemo(() => getDefaultProfileListStrings(enabledAgentIds), [enabledAgentIds]);
     const {
         extraActions,

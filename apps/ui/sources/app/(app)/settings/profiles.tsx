@@ -16,7 +16,6 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Switch } from '@/components/Switch';
 import { convertBuiltInProfileToCustom, createEmptyCustomProfile, duplicateProfileForEdit } from '@/sync/profileMutations';
-import { useSetting } from '@/sync/storage';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
@@ -41,7 +40,6 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
     const [isEditingDirty, setIsEditingDirty] = React.useState(false);
     const isEditingDirtyRef = React.useRef(false);
     const saveRef = React.useRef<(() => boolean) | null>(null);
-    const experimentsEnabled = useSetting('experiments');
     const [secrets, setSecrets] = useSettingMutable('secrets');
     const [secretBindingsByProfileId, setSecretBindingsByProfileId] = useSettingMutable('secretBindingsByProfileId');
 
@@ -326,7 +324,6 @@ const ProfileManager = React.memo(function ProfileManager({ onProfileSelect, sel
                 customProfiles={profiles}
                 favoriteProfileIds={favoriteProfileIds}
                 onFavoriteProfileIdsChange={setFavoriteProfileIds}
-                experimentsEnabled={experimentsEnabled}
                 selectedProfileId={selectedProfileId ?? null}
                 onPressProfile={(profile) => handleEditProfile(profile)}
                 machineId={null}
