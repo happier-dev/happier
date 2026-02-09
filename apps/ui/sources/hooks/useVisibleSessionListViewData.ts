@@ -1,45 +1,92 @@
 import * as React from 'react';
-import { SessionListViewItem, useSessionListViewData, useSetting } from '@/sync/storage';
+import { SessionListViewItem, useSessionListViewData, useSessionListViewDataByServerId, useSetting } from '@/sync/storage';
+import { applySessionListPresentation, resolveSessionListSourceData } from '@/sync/sessionListPresentation';
+import { getEffectiveServerSelection } from '@/sync/multiServer';
+import { listServerProfiles } from '@/sync/serverProfiles';
+import { getActiveServerSnapshot } from '@/sync/serverRuntime';
 
 export function useVisibleSessionListViewData(): SessionListViewItem[] | null {
-    const data = useSessionListViewData();
+    const activeData = useSessionListViewData();
+    const dataByServerId = useSessionListViewDataByServerId();
     const hideInactiveSessions = useSetting('hideInactiveSessions');
+    const settingsMultiServerEnabled = useSetting('multiServerEnabled');
+    const settingsMultiServerSelectedServerIds = useSetting('multiServerSelectedServerIds');
+    const settingsMultiServerPresentation = useSetting('multiServerPresentation');
+    const settingsMultiServerProfiles = useSetting('multiServerProfiles');
+    const settingsMultiServerActiveProfileId = useSetting('multiServerActiveProfileId');
 
     return React.useMemo(() => {
-        if (!data) {
-            return data;
+        const availableServerIds = listServerProfiles().map((profile) => profile.id);
+        const activeServerId = getActiveServerSnapshot().serverId;
+        const selection = getEffectiveServerSelection({
+            activeServerId,
+            availableServerIds,
+            settings: {
+                multiServerEnabled: settingsMultiServerEnabled,
+                multiServerSelectedServerIds: settingsMultiServerSelectedServerIds,
+                multiServerPresentation: settingsMultiServerPresentation,
+                multiServerProfiles: settingsMultiServerProfiles,
+                multiServerActiveProfileId: settingsMultiServerActiveProfileId,
+            },
+        });
+
+        const source = resolveSessionListSourceData({
+            enabled: selection.enabled,
+            activeServerId,
+            activeData,
+            byServerId: dataByServerId,
+            selectedServerIds: selection.serverIds,
+        });
+        if (!source) {
+            return source;
         }
-        if (!hideInactiveSessions) {
-            return data;
-        }
 
-        const filtered: SessionListViewItem[] = [];
-        let pendingProjectGroup: SessionListViewItem | null = null;
+        let visible = source;
 
-        for (const item of data) {
-            if (item.type === 'project-group') {
-                pendingProjectGroup = item;
-                continue;
-            }
+        if (hideInactiveSessions) {
+            const filtered: SessionListViewItem[] = [];
+            let pendingProjectGroup: SessionListViewItem | null = null;
 
-            if (item.type === 'session') {
-                if (item.session.active) {
-                    if (pendingProjectGroup) {
-                        filtered.push(pendingProjectGroup);
-                        pendingProjectGroup = null;
+            for (const item of source) {
+                if (item.type === 'project-group') {
+                    pendingProjectGroup = item;
+                    continue;
+                }
+
+                if (item.type === 'session') {
+                    if (item.session.active) {
+                        if (pendingProjectGroup) {
+                            filtered.push(pendingProjectGroup);
+                            pendingProjectGroup = null;
+                        }
+                        filtered.push(item);
                     }
+                    continue;
+                }
+
+                pendingProjectGroup = null;
+
+                if (item.type === 'active-sessions') {
                     filtered.push(item);
                 }
-                continue;
             }
 
-            pendingProjectGroup = null;
-
-            if (item.type === 'active-sessions') {
-                filtered.push(item);
-            }
+            visible = filtered;
         }
 
-        return filtered;
-    }, [data, hideInactiveSessions]);
+        return applySessionListPresentation(visible, {
+            enabled: selection.enabled,
+            presentation: selection.presentation,
+            selectedServerIds: selection.serverIds,
+        });
+    }, [
+        activeData,
+        dataByServerId,
+        hideInactiveSessions,
+        settingsMultiServerEnabled,
+        settingsMultiServerActiveProfileId,
+        settingsMultiServerProfiles,
+        settingsMultiServerSelectedServerIds,
+        settingsMultiServerPresentation,
+    ]);
 }

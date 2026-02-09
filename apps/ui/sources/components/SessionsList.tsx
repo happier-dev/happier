@@ -129,6 +129,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         marginBottom: 2,
+        gap: 6,
     },
         sessionTitle: {
             fontSize: 15,
@@ -144,6 +145,20 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     sessionTitleDisconnected: {
         color: theme.colors.textSecondary,
+    },
+    serverBadgeContainer: {
+        borderRadius: 999,
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.groupped.background,
+        maxWidth: 140,
+    },
+    serverBadgeText: {
+        fontSize: 10,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
     },
         sessionSubtitle: {
             fontSize: 13,
@@ -261,6 +276,8 @@ export function SessionsList() {
     const isTablet = useIsTablet();
     const navigateToSession = useNavigateToSession();
     const compactSessionView = useSetting('compactSessionView');
+    const multiServerEnabled = useSetting('multiServerEnabled');
+    const multiServerPresentation = useSetting('multiServerPresentation');
     const router = useRouter();
     const selectable = isTablet;
     const dataWithSelected = selectable ? React.useMemo(() => {
@@ -285,11 +302,12 @@ export function SessionsList() {
     }
 
     const keyExtractor = React.useCallback((item: SessionListViewItem & { selected?: boolean }, index: number) => {
+        const serverPrefix = item.serverId ? `${item.serverId}:` : '';
         switch (item.type) {
-            case 'header': return `header-${item.title}-${index}`;
-            case 'active-sessions': return 'active-sessions';
-            case 'project-group': return `project-group-${item.machine.id}-${item.displayPath}-${index}`;
-            case 'session': return `session-${item.session.id}`;
+            case 'header': return `${serverPrefix}header-${item.title}-${index}`;
+            case 'active-sessions': return `${serverPrefix}active-sessions`;
+            case 'project-group': return `${serverPrefix}project-group-${item.machine.id}-${item.displayPath}-${index}`;
+            case 'session': return `${serverPrefix}session-${item.session.id}`;
         }
     }, []);
 
@@ -299,7 +317,7 @@ export function SessionsList() {
                 return (
                     <View style={styles.headerSection}>
                         <Text style={styles.headerText}>
-                            {item.title}
+                            {item.headerKind === 'server' ? `Server: ${item.title}` : item.title}
                         </Text>
                     </View>
                 );
@@ -344,6 +362,8 @@ export function SessionsList() {
                     return (
                         <SessionItem
                             session={item.session}
+                            serverName={item.serverName}
+                            showServerBadge={multiServerEnabled && multiServerPresentation === 'flat-with-badge'}
                             selected={item.selected}
                             isFirst={isFirst}
                             isLast={isLast}
@@ -353,7 +373,7 @@ export function SessionsList() {
                         />
                     );
             }
-        }, [pathname, dataWithSelected, compactSessionView]);
+        }, [pathname, dataWithSelected, compactSessionView, multiServerEnabled, multiServerPresentation]);
 
 
     // Remove this section as we'll use FlatList for all items now
@@ -386,8 +406,10 @@ export function SessionsList() {
 }
 
 // Sub-component that handles session message logic
-const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, variant, compact }: {
+const SessionItem = React.memo(({ session, serverName, showServerBadge, selected, isFirst, isLast, isSingle, variant, compact }: {
         session: Session;
+        serverName?: string;
+        showServerBadge?: boolean;
         selected?: boolean;
         isFirst?: boolean;
         isLast?: boolean;
@@ -490,6 +512,13 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle, 
                         ]} numberOfLines={1}> {/* {variant !== 'no-path' ? 1 : 2} - issue is we don't have anything to take this space yet and it looks strange - if summaries were more reliably generated, we can add this. While no summary - add something like "New session" or "Empty session", and extend summary to 2 lines once we have it */}
                             {sessionName}
                         </Text>
+                        {showServerBadge && serverName ? (
+                            <View style={styles.serverBadgeContainer}>
+                                <Text style={styles.serverBadgeText} numberOfLines={1}>
+                                    {serverName}
+                                </Text>
+                            </View>
+                        ) : null}
                     </View>
     
                     {/* Subtitle line */}
