@@ -18,7 +18,12 @@ export const cliCapability: Capability = {
         const acp = await (async () => {
             const probe = await probeCodexAcpLoadSessionSupport();
             return probe.ok
-                ? { ok: true as const, checkedAt: probe.checkedAt, loadSession: probe.loadSession }
+                ? {
+                    ok: true as const,
+                    checkedAt: probe.checkedAt,
+                    loadSession: probe.loadSession,
+                    agentCapabilities: probe.agentCapabilities,
+                }
                 : { ok: false as const, checkedAt: probe.checkedAt, error: probe.error };
         })();
 

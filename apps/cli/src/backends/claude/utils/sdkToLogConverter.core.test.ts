@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { SDKToLogConverter } from './sdkToLogConverter';
 import type { SDKAssistantMessage, SDKResultMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
-import { asRecord, conversionContext } from './sdkToLogConverter.testHelpers';
+import { asRecord, conversionContext } from './sdkToLogConverter.testkit';
 
 describe('SDKToLogConverter core conversion', () => {
   let converter: SDKToLogConverter;

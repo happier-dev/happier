@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { makeTraceEvent } from './testEvents.testHelpers';
+import { makeTraceEvent } from './testEvents.testkit';
 
 describe('makeTraceEvent', () => {
   it('applies defaults when direction/sessionId are explicitly undefined', () => {

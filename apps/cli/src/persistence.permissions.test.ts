@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testHelpers/env.testHelper';
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env.testkit';
 
 describe('persistence file permissions (posix)', () => {
   const envBackup = snapshotEnvValues(['HAPPIER_HOME_DIR']);

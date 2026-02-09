@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
-import { makeMode } from './claudeRemoteAgentSdk.testHelpers';
+import { makeMode } from './claudeRemoteAgentSdk.testkit';
 
 describe('claudeRemoteAgentSdk options and hooks', () => {
     it('sets allowDangerouslySkipPermissions only when permissionMode is bypassPermissions', async () => {

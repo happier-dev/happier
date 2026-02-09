@@ -7,7 +7,7 @@ import {
   firstFixtureEvent,
   loadFixtureV1,
   type ToolTraceEventV1,
-} from './fixtures.v1.testHelpers';
+} from './fixtures.v1.testkit';
 
 function normalizeFirstCallEvent(event: ToolTraceEventV1) {
   const payload = asRecord(event.payload) ?? {};

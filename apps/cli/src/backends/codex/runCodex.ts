@@ -46,8 +46,9 @@ import { syncCodexAcpSessionModeFromPermissionMode } from './acp/syncSessionMode
 import { applyStartupMetadataUpdateToSession, buildAcpSessionModeOverride, buildModelOverride, buildPermissionModeOverride } from '@/agent/runtime/startupMetadataUpdate';
 import { persistTerminalAttachmentInfoIfNeeded, primeAgentStateForUi, reportSessionToDaemonIfRunning, sendTerminalFallbackMessageIfNeeded } from '@/agent/runtime/startupSideEffects';
 import { codexLocalLauncher } from './codexLocalLauncher';
-import { confirmDiscardBeforeSwitchToLocal } from '@/backends/utils/confirmDiscardBeforeSwitchToLocal';
-import { applyLocalControlLaunchGating } from '@/backends/localControl/launchGating';
+import { confirmDiscardQueuedMessagesForSwitchToLocal } from '@/agent/localControl/confirmDiscardBeforeSwitchToLocal';
+import { discardPendingBeforeSwitchToLocal } from '@/agent/localControl/discardPendingBeforeSwitchToLocal';
+import { applyLocalControlLaunchGating } from '@/agent/localControl/launchGating';
 import {
     decideCodexLocalControlSupport,
     formatCodexLocalControlLaunchFallbackMessage,
@@ -632,31 +633,74 @@ export async function runCodex(opts: {
     const messageBuffer = new MessageBuffer();
     const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
     let inkInstance: any = null;
+    let remoteUiAllowsSwitchToLocal = false;
+    let requestedSwitchToLocal = false;
+
+    const resolveLocalSwitchAvailability = async (): Promise<
+        { ok: true } | { ok: false; reason: import('./localControl/localControlSupport').CodexLocalControlUnsupportedReason }
+    > => {
+        // Daemon-spawned sessions cannot safely switch to an interactive local TUI.
+        if (opts.startedBy === 'daemon') return { ok: false, reason: 'started-by-daemon' };
+        const support = await resolveLocalControlSupport({ includeAcpProbe: true });
+        const gated = applyLocalControlLaunchGating({ startingMode: 'local', support });
+        if (gated.mode === 'local') return { ok: true };
+        return { ok: false, reason: gated.fallback?.reason ?? 'resume-disabled' };
+    };
+
+    const requestSwitchToLocal = async (): Promise<void> => {
+        if (requestedSwitchToLocal) return;
+        requestedSwitchToLocal = true;
+        await handleAbort();
+    };
+
+    const requestSwitchToLocalIfSupported = async (): Promise<boolean> => {
+        const availability = await resolveLocalSwitchAvailability();
+        if (!availability.ok) {
+            const message = formatCodexLocalControlSwitchDeniedMessage(availability.reason);
+            messageBuffer.addMessage(message, 'status');
+            session.sendSessionEvent({
+                type: 'message',
+                message,
+            });
+            return false;
+        }
+
+        await requestSwitchToLocal();
+        return true;
+    };
+
+    const renderRemoteUi = () => React.createElement(CodexTerminalDisplay, {
+        messageBuffer,
+        logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
+        allowSwitchToLocal: remoteUiAllowsSwitchToLocal,
+        onExit: async () => {
+            // Exit the agent
+            logger.debug('[codex]: Exiting agent via Ctrl-C');
+            shouldExit = true;
+            await handleAbort();
+        },
+        onSwitchToLocal: async () => {
+            await requestSwitchToLocalIfSupported();
+        },
+    });
 
     const mountRemoteUi = () => {
         if (!hasTTY) return;
-        if (inkInstance) return;
+        if (!inkInstance) {
+            console.clear();
+            inkInstance = render(renderRemoteUi(), {
+                exitOnCtrlC: false,
+                patchConsole: false
+            });
 
-        console.clear();
-        inkInstance = render(React.createElement(CodexTerminalDisplay, {
-            messageBuffer,
-            logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
-            onExit: async () => {
-                // Exit the agent
-                logger.debug('[codex]: Exiting agent via Ctrl-C');
-                shouldExit = true;
-                await handleAbort();
+            process.stdin.resume();
+            if (process.stdin.isTTY) {
+                process.stdin.setRawMode(true);
             }
-        }), {
-            exitOnCtrlC: false,
-            patchConsole: false
-        });
-
-        process.stdin.resume();
-        if (process.stdin.isTTY) {
-            process.stdin.setRawMode(true);
+            process.stdin.setEncoding("utf8");
+            return;
         }
-        process.stdin.setEncoding("utf8");
+        inkInstance.rerender(renderRemoteUi());
     };
 
     const unmountRemoteUi = async () => {
@@ -686,10 +730,6 @@ export async function runCodex(opts: {
 
     if (localModeFallbackMessage) {
         messageBuffer.addMessage(localModeFallbackMessage, 'status');
-    }
-
-    if (mode === 'remote') {
-        mountRemoteUi();
     }
 
     //
@@ -981,7 +1021,6 @@ export async function runCodex(opts: {
     try {
         let wasCreated = false;
             let pending: { message: string; mode: EnhancedMode; isolate: boolean; hash: string } | null = null;
-            let requestedSwitchToLocal = false;
             let lastPublishedMode: 'local' | 'remote' | null = null;
             let switchHandlerRegistered = false;
 
@@ -1033,18 +1072,19 @@ export async function runCodex(opts: {
             modelSync?.syncFromMetadata();
         };
         
-                // Attach flows (and next_prompt apply timing) can result in a stable metadata snapshot
-                // that never changes during this process lifetime. Ensure we adopt the latest persisted
-                // permissionMode immediately, so local-control switches spawn Codex with the correct
-                // sandbox/approval policy even before the next user message.
-                syncRuntimeOverridesFromMetadata();
-                syncModelOverrideFromMetadata();
+        // Attach flows (and next_prompt apply timing) can result in a stable metadata snapshot
+        // that never changes during this process lifetime. Ensure we adopt the latest persisted
+        // permissionMode immediately, so local-control switches spawn Codex with the correct
+        // sandbox/approval policy even before the next user message.
+        syncRuntimeOverridesFromMetadata();
+        syncModelOverrideFromMetadata();
 
-                const publishModeState = async (nextMode: 'local' | 'remote'): Promise<void> => {
-                    if (lastPublishedMode !== nextMode) {
-                        session.sendSessionEvent({ type: 'switch', mode: nextMode });
-                        lastPublishedMode = nextMode;
+        const publishModeState = async (nextMode: 'local' | 'remote'): Promise<void> => {
+            if (lastPublishedMode !== nextMode) {
+                session.sendSessionEvent({ type: 'switch', mode: nextMode });
+                lastPublishedMode = nextMode;
             }
+
             session.updateAgentState((currentState) => ({
                 ...currentState,
                 controlledByUser: nextMode === 'local',
@@ -1052,16 +1092,12 @@ export async function runCodex(opts: {
             session.keepAlive(thinking, nextMode);
 
             if (nextMode === 'remote') {
+                remoteUiAllowsSwitchToLocal = (await resolveLocalSwitchAvailability()).ok;
                 mountRemoteUi();
             } else {
+                remoteUiAllowsSwitchToLocal = false;
                 await unmountRemoteUi();
             }
-        };
-
-        const requestSwitchToLocal = async (): Promise<void> => {
-            if (requestedSwitchToLocal) return;
-            requestedSwitchToLocal = true;
-            await handleAbort();
         };
 
         const registerRemoteSwitchHandler = (): void => {
@@ -1071,36 +1107,9 @@ export async function runCodex(opts: {
                 const to = params && typeof params === 'object' ? (params as any).to : undefined;
                 // Remote launcher is already in remote mode, so {to:'remote'} is a no-op.
                 if (to === 'remote') return false;
-                // Daemon-spawned sessions cannot safely switch to an interactive local TUI.
-                if (opts.startedBy === 'daemon') return false;
-                const support = await resolveLocalControlSupport({ includeAcpProbe: true });
-                const gated = applyLocalControlLaunchGating({ startingMode: 'local', support });
-                if (gated.mode === 'remote') {
-                    const reason = gated.fallback?.reason ?? 'resume-disabled';
-                    const message = formatCodexLocalControlSwitchDeniedMessage(reason);
-                    session.sendSessionEvent({
-                        type: 'message',
-                        message,
-                    });
-                    return false;
-                }
-
-                await requestSwitchToLocal();
-                return true;
+                return await requestSwitchToLocalIfSupported();
             });
         };
-
-        const confirmDiscardQueuedMessages = async (opts: {
-            queuedCount: number;
-            queuedPreview: string[];
-            serverCount: number;
-            serverPreview: string[];
-        }): Promise<boolean> => confirmDiscardBeforeSwitchToLocal({
-            queuedCount: opts.queuedCount,
-            queuedPreview: opts.queuedPreview,
-            pendingCount: opts.serverCount,
-            pendingPreview: opts.serverPreview,
-        });
 
         while (!shouldExit) {
             if (mode === 'local') {
@@ -1111,68 +1120,42 @@ export async function runCodex(opts: {
                 const queuedLocalIds = messageQueue.queue
                     .map((item) => item.mode?.localId)
                     .filter((id): id is string => typeof id === 'string' && id.length > 0);
-                const serverPendingV2LocalIds = await session.listPendingMessageQueueV2LocalIds();
+                const serverPendingV2Count = (await session.listPendingMessageQueueV2LocalIds()).length;
 
-                if (queuedCount > 0 || serverPendingV2LocalIds.length > 0) {
-                    const confirmed = await confirmDiscardQueuedMessages({
+                if (queuedCount > 0 || serverPendingV2Count > 0) {
+                    const discardResult = await discardPendingBeforeSwitchToLocal({
                         queuedCount,
-                        queuedPreview,
-                        serverCount: serverPendingV2LocalIds.length,
-                        serverPreview: [],
+                        queuedLocalIds,
+                        serverPendingCount: serverPendingV2Count,
+                        confirmDiscard: () =>
+                            confirmDiscardQueuedMessagesForSwitchToLocal({
+                                queuedCount,
+                                queuedPreview,
+                                serverCount: serverPendingV2Count,
+                                serverPreview: [],
+                            }),
+                        discardServerPending: () =>
+                            session.discardPendingMessageQueueV2All({ reason: 'switch_to_local' }),
+                        markQueuedAsDiscarded: (localIds) =>
+                            session.discardCommittedMessageLocalIds({ localIds: [...localIds], reason: 'switch_to_local' }),
+                        resetQueued: () => {
+                            messageQueue.reset();
+                        },
+                        sendStatusMessage: (message) => {
+                            session.sendSessionEvent({ type: 'message', message });
+                        },
+                        formatError: formatErrorForUi,
+                        onCancelled: () => {
+                            session.sendSessionEvent({
+                                type: 'message',
+                                message: 'Keeping queued messages; staying in remote mode.',
+                            });
+                        },
                     });
-                    if (!confirmed) {
-                        session.sendSessionEvent({
-                            type: 'message',
-                            message: 'Keeping queued messages; staying in remote mode.',
-                        });
+
+                    if (discardResult !== 'proceed') {
                         mode = 'remote';
                         continue;
-                    }
-
-                    let discardedServerV2Count = 0;
-                    try {
-                        if (serverPendingV2LocalIds.length > 0) {
-                            discardedServerV2Count = await session.discardPendingMessageQueueV2All({ reason: 'switch_to_local' });
-                        }
-                    } catch (e) {
-                        session.sendSessionEvent({
-                            type: 'message',
-                            message: `Failed to discard pending messages before switching to local mode: ${formatErrorForUi(e)}`,
-                        });
-                        mode = 'remote';
-                        continue;
-                    }
-
-                    try {
-                        if (queuedLocalIds.length > 0) {
-                            await session.discardCommittedMessageLocalIds({ localIds: queuedLocalIds, reason: 'switch_to_local' });
-                        }
-                    } catch (e) {
-                        session.sendSessionEvent({
-                            type: 'message',
-                            message: `Failed to mark queued messages as discarded before switching to local mode: ${formatErrorForUi(e)}`,
-                        });
-                        mode = 'remote';
-                        continue;
-                    }
-
-                    if (queuedCount > 0) {
-                        messageQueue.reset();
-                    }
-
-                    const parts: string[] = [];
-                    const discardedServerCount = discardedServerV2Count;
-                    if (discardedServerCount > 0) {
-                        parts.push(`${discardedServerCount} pending UI message${discardedServerCount === 1 ? '' : 's'}`);
-                    }
-                    if (queuedCount > 0) {
-                        parts.push(`${queuedCount} queued remote message${queuedCount === 1 ? '' : 's'}`);
-                    }
-                    if (parts.length > 0) {
-                        session.sendSessionEvent({
-                            type: 'message',
-                            message: `Discarded ${parts.join(' and ')} to switch to local mode. Please resend them from this terminal if needed.`,
-                        });
                     }
                 }
 

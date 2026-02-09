@@ -34,8 +34,12 @@ function coerceProfile(value: any): ServerProfile | null {
   const createdAt = Number.isFinite(value.createdAt) ? Number(value.createdAt) : 0;
   const updatedAt = Number.isFinite(value.updatedAt) ? Number(value.updatedAt) : 0;
   const lastUsedAt = Number.isFinite(value.lastUsedAt) ? Number(value.lastUsedAt) : 0;
-  if (!id || !name || !serverUrl || !webappUrl) return null;
-  return { id, name, serverUrl, webappUrl, createdAt, updatedAt, lastUsedAt };
+  if (!id || !serverUrl || !webappUrl) return null;
+  const displayName = id === 'official'
+    ? 'Happier Cloud'
+    : name;
+  if (!displayName) return null;
+  return { id, name: displayName, serverUrl, webappUrl, createdAt, updatedAt, lastUsedAt };
 }
 
 function findProfileIdByIdOrName(servers: Record<string, any>, identifierRaw: string): string | null {
@@ -187,7 +191,7 @@ export async function removeServerProfile(
     throw new Error(`Server profile not found: ${identifier}`);
   }
   if (resolvedId === 'official') {
-    throw new Error('Cannot remove the official server profile');
+    throw new Error('Cannot remove the Happier Cloud server profile');
   }
 
   if (resolvedId === activeServerId && !force) {

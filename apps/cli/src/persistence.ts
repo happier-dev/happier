@@ -92,7 +92,7 @@ const defaultSettings: Settings = {
   servers: {
     official: {
       id: 'official',
-      name: 'official',
+      name: 'Happier Cloud',
       serverUrl: 'https://api.happier.dev',
       webappUrl: 'https://app.happier.dev',
       createdAt: 0,
@@ -138,7 +138,7 @@ function migrateSettings(raw: any, fromVersion: number): any {
     migrated.servers = {
       [officialId]: {
         id: officialId,
-        name: 'official',
+        name: 'Happier Cloud',
         serverUrl: DEFAULT_SERVER_URL,
         webappUrl: DEFAULT_WEBAPP_URL,
         createdAt: now,

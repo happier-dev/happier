@@ -16,7 +16,7 @@ import {
   shouldRunDaemonReattachIntegration,
   spawnHappyLookingProcess,
   waitForPidInspection,
-} from './testHelpers/realIntegration.testHelpers';
+} from './testkit/realIntegration.testkit';
 
 describe.skipIf(!shouldRunDaemonReattachIntegration())(
   'reattach (real) integration tests (opt-in)',

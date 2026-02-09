@@ -7,7 +7,7 @@ import {
   createKimiPermissionHandlerFixture,
   createKimiSessionFixture,
   type KimiRuntimeCreateCall,
-} from './runtime.testHelpers';
+} from './runtime.testkit';
 
 describe('Kimi ACP runtime permissionMode wiring', () => {
   afterEach(() => {

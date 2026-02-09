@@ -13,7 +13,7 @@ import {
   createLocalSessionHarness,
   waitFor,
   writeFakeCodexScript,
-} from './codexLocalLauncher.testHelpers';
+} from './codexLocalLauncher.testkit';
 
 describe('codexLocalLauncher', () => {
   it('maps read-only permission mode to never approvalPolicy', async () => {

@@ -6,7 +6,7 @@ import {
   createBasicSessionClient,
   createDeferred,
   createFakeAcpRuntimeBackend,
-} from './createAcpRuntime.testHelpers';
+} from './createAcpRuntime.testkit';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 describe('createAcpRuntime (ensureBackend)', () => {

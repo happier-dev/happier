@@ -7,7 +7,7 @@ import {
   createOpenCodePermissionHandlerFixture,
   createOpenCodeSessionFixture,
   type OpenCodeRuntimeCreateCall,
-} from './runtime.testHelpers';
+} from './runtime.testkit';
 
 describe('OpenCode ACP runtime permission mode wiring', () => {
   afterEach(() => {

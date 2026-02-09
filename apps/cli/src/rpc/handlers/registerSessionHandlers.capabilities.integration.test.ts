@@ -13,7 +13,7 @@ import { tmpdir } from 'os';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { CapabilitiesDescribeResponse, CapabilitiesDetectRequest, CapabilitiesDetectResponse } from '@happier-dev/protocol';
 import { CHECKLIST_IDS, resumeChecklistId } from '@happier-dev/protocol/checklists';
-import { createEncryptedRpcTestClient } from './encryptedRpc.testHelper';
+import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 
 function createTestRpcManager(params?: { scopePrefix?: string }) {
     const scopePrefix = params?.scopePrefix ?? 'machine-test';

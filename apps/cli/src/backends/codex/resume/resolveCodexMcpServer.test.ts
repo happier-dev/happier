@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { join } from 'node:path';
-import { cleanupTempDir, makeTempHomeDir, withResumeEnv, writeExecutable } from './resumeResolve.testHelpers';
+import { cleanupTempDir, makeTempHomeDir, withResumeEnv, writeExecutable } from './resumeResolve.testkit';
 
 describe('resolveCodexMcpServerSpawn', () => {
   it('uses codex CLI spawn when ACP is enabled', async () => {

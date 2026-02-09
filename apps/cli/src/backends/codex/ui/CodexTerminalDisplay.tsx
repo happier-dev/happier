@@ -1,31 +1,37 @@
 /**
  * CodexTerminalDisplay
  *
- * Read-only terminal UI for Codex sessions started by Happy.
- * This UI intentionally does not accept prompts from stdin; it displays logs and exit controls only.
+ * Codex remote-mode terminal display built on the shared remote control shell.
  */
 
 import React from 'react';
 
-import { AgentLogShell } from '@/ui/ink/AgentLogShell';
+import { RemoteControlDisplay } from '@/ui/ink/RemoteControlDisplay';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
-import { buildReadOnlyFooterLines } from '@/ui/ink/readOnlyFooterLines';
 
 export type CodexTerminalDisplayProps = {
   messageBuffer: MessageBuffer;
   logPath?: string;
+  allowSwitchToLocal?: boolean;
   onExit?: () => void | Promise<void>;
+  onSwitchToLocal?: () => void | Promise<void>;
 };
 
-export const CodexTerminalDisplay: React.FC<CodexTerminalDisplayProps> = ({ messageBuffer, logPath, onExit }) => {
+export const CodexTerminalDisplay: React.FC<CodexTerminalDisplayProps> = ({
+  messageBuffer,
+  logPath,
+  allowSwitchToLocal,
+  onExit,
+  onSwitchToLocal,
+}) => {
   return (
-    <AgentLogShell
+    <RemoteControlDisplay
+      providerName="Codex"
       messageBuffer={messageBuffer}
-      title="🤖 Codex"
-      accentColor="green"
       logPath={logPath}
-      footerLines={buildReadOnlyFooterLines('Codex')}
+      allowSwitchToLocal={allowSwitchToLocal === true}
       onExit={onExit}
+      onSwitchToLocal={onSwitchToLocal}
     />
   );
 };

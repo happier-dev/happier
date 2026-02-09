@@ -7,12 +7,12 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import tweetnacl from 'tweetnacl';
 
-import { installAxiosFastifyAdapter } from '@/ui/testHelpers/axiosFastifyAdapter.testHelper';
+import { installAxiosFastifyAdapter } from '@/ui/testkit/axiosFastifyAdapter.testkit';
 import {
   captureConsoleLogAndMuteStdout,
   createEnvKeyScope,
   setStdioTtyForTest,
-} from '@/ui/testHelpers/authNonInteractiveGlobals.testHelper';
+} from '@/ui/testkit/authNonInteractiveGlobals.testkit';
 
 type LegacyRequestRow = { response: string | null; pollCount: number };
 

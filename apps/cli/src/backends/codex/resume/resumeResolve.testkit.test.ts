@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { withResumeEnv } from './resumeResolve.testHelpers';
+import { withResumeEnv } from './resumeResolve.testkit';
 
 describe('withResumeEnv', () => {
   it('keeps unspecified tracked env vars unchanged', async () => {

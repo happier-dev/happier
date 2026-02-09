@@ -41,4 +41,22 @@ describe('RemoteModeDisplay input handling', () => {
     const result = interpretRemoteModeKeypress({ confirmationMode: null, actionInProgress: null }, 'a', {});
     expect(result.action).toBe('none');
   });
+
+  it('does not trigger local switch controls when switch-to-local is disabled', () => {
+    const ctrlT = (interpretRemoteModeKeypress as any)(
+      { confirmationMode: null, actionInProgress: null },
+      't',
+      { ctrl: true },
+      { allowSwitchToLocal: false },
+    );
+    expect(ctrlT.action).toBe('none');
+
+    const space = (interpretRemoteModeKeypress as any)(
+      { confirmationMode: null, actionInProgress: null },
+      ' ',
+      {},
+      { allowSwitchToLocal: false },
+    );
+    expect(space.action).toBe('none');
+  });
 });

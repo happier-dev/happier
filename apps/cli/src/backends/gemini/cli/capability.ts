@@ -1,8 +1,8 @@
 import type { Capability } from '@/capabilities/service';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { probeAcpAgentCapabilities } from '@/capabilities/probes/acpProbe';
+import { buildAcpCapabilitySnapshot } from '@/capabilities/probes/acpCapabilitySnapshot';
 import { geminiTransport } from '@/backends/gemini/acp/transport';
-import { normalizeCapabilityProbeError } from '@/capabilities/utils/normalizeCapabilityProbeError';
 import { resolveAcpProbeTimeoutMs } from '@/capabilities/utils/acpProbeTimeout';
 
 export const cliCapability: Capability = {
@@ -29,9 +29,7 @@ export const cliCapability: Capability = {
             timeoutMs: resolveAcpProbeTimeoutMs('gemini'),
         });
 
-        const acp = probe.ok
-            ? { ok: true, checkedAt: probe.checkedAt, loadSession: probe.agentCapabilities?.loadSession === true }
-            : { ok: false, checkedAt: probe.checkedAt, error: normalizeCapabilityProbeError(probe.error) };
+        const acp = buildAcpCapabilitySnapshot(probe);
 
         return { ...base, acp };
     },

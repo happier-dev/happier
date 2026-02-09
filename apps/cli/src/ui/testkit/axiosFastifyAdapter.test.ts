@@ -2,7 +2,7 @@ import axios from 'axios';
 import fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { installAxiosFastifyAdapter } from './axiosFastifyAdapter.testHelper';
+import { installAxiosFastifyAdapter } from './axiosFastifyAdapter.testkit';
 
 describe('installAxiosFastifyAdapter', () => {
   let app: FastifyInstance | null = null;

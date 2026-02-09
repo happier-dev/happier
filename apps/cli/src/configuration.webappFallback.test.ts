@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { restoreProcessEnv, snapshotProcessEnv } from '@/testHelpers/env.testHelper';
+import { restoreProcessEnv, snapshotProcessEnv } from '@/testkit/env.testkit';
 
 describe('configuration env url fallback', () => {
   const envBackup = snapshotProcessEnv();

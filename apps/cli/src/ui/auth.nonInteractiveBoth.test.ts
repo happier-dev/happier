@@ -8,7 +8,7 @@ import {
   captureConsoleLogAndMuteStdout,
   createEnvKeyScope,
   setStdioTtyForTest,
-} from '@/ui/testHelpers/authNonInteractiveGlobals.testHelper';
+} from '@/ui/testkit/authNonInteractiveGlobals.testkit';
 
 type AxiosRequestResponse = { state: 'requested' };
 type AxiosClaimResponse = { state: 'authorized'; token: string; response: string };

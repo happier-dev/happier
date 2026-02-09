@@ -48,7 +48,14 @@ describe.sequential('probeCodexAcpLoadSessionSupport', () => {
     const { probeCodexAcpLoadSessionSupport } = await import('./probeLoadSessionSupport');
     const result = await probeCodexAcpLoadSessionSupport();
 
-    expect(result).toEqual({ ok: true, checkedAt: 123, loadSession: true });
+    expect(result).toMatchObject({
+      ok: true,
+      checkedAt: 123,
+      loadSession: true,
+      agentCapabilities: {
+        loadSession: true,
+      },
+    });
     expect(probeAcpAgentCapabilitiesMock).toHaveBeenCalledTimes(1);
 
     const args = probeAcpAgentCapabilitiesMock.mock.calls[0]?.[0];

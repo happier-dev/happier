@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SDKAssistantMessage, SDKMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import { convertSDKToLog } from './sdkToLogConverter';
-import { createConverter, conversionContext } from './sdkToLogConverter.testHelpers';
+import { createConverter, conversionContext } from './sdkToLogConverter.testkit';
 
 describe('SDKToLogConverter relationships and helpers', () => {
   describe('Sidechain user message helper', () => {

@@ -10,7 +10,7 @@ import {
   resolveAcpSdkEntryFromCwd,
   writeExecutableScript,
   writeFakeAcpAgentScript,
-} from './agentModelsProbe.testHelpers';
+} from './agentModelsProbe.testkit';
 
 function createApprovedPermissionHandler(): AcpPermissionHandler {
   return {

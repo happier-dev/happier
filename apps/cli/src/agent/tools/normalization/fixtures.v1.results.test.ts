@@ -7,7 +7,7 @@ import {
   firstFixtureEvent,
   getCallIdFromEvent,
   loadFixtureV1,
-} from './fixtures.v1.testHelpers';
+} from './fixtures.v1.testkit';
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string');

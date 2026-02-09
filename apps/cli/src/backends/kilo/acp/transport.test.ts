@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { asStatusErrorMessage, DEFAULT_TOOL_NAME_CONTEXT } from '@/backends/testHelpers/transport.testHelpers';
+import { asStatusErrorMessage, DEFAULT_TOOL_NAME_CONTEXT } from '@/testkit/backends/transport';
 import { KiloTransport } from './transport';
 
 describe('KiloTransport determineToolName', () => {

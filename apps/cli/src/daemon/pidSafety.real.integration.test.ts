@@ -14,7 +14,7 @@ import {
   shouldRunDaemonReattachIntegration,
   spawnHappyLookingProcess,
   waitForPidInspection,
-} from './testHelpers/realIntegration.testHelpers';
+} from './testkit/realIntegration.testkit';
 
 describe.skipIf(!shouldRunDaemonReattachIntegration())('pidSafety (real) integration tests (opt-in)', { timeout: 20_000 }, () => {
   const spawned: Array<() => void> = [];

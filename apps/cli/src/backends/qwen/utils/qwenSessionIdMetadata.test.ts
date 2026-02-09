@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createTestMetadata } from '@/backends/testHelpers/sessionMetadata.testHelpers';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import type { Metadata } from '@/api/types';
 import { maybeUpdateQwenSessionIdMetadata } from './qwenSessionIdMetadata';
 

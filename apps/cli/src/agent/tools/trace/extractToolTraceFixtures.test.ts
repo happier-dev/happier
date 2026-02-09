@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { extractToolTraceFixturesFromJsonlLines } from './extractToolTraceFixtures';
-import { makeTraceEvent, scenarioToolResultThenPermissionRequest, scenarioToolResultThenToolCall, toJsonlLines } from './testEvents.testHelpers';
+import { makeTraceEvent, scenarioToolResultThenPermissionRequest, scenarioToolResultThenToolCall, toJsonlLines } from './testEvents.testkit';
 
 describe('extractToolTraceFixturesFromJsonlLines', () => {
   it('groups tool events by protocol/provider/kind/tool name', () => {

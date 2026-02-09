@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ApiSessionClient } from '@/api/apiSession';
-import { JsonlFollower } from '@/backends/utils/jsonlFollower';
+import { JsonlFollower } from '@/agent/localControl/jsonlFollower';
 import { mapCodexRolloutEventToActions } from './rolloutMapper';
 
 export class CodexRolloutMirror {

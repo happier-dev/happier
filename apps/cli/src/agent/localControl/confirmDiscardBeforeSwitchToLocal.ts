@@ -6,6 +6,14 @@ export type ConfirmDiscardIo = Readonly<{
     question: (prompt: string) => Promise<string>;
 }>;
 
+export type ConfirmDiscardQueuedMessagesParams = Readonly<{
+    queuedCount: number;
+    queuedPreview: readonly string[];
+    serverCount: number;
+    serverPreview: readonly string[];
+    io?: ConfirmDiscardIo;
+}>;
+
 function createNodeIo(): ConfirmDiscardIo {
     return {
         isTty: Boolean(process.stdin.isTTY && process.stdout.isTTY),
@@ -69,4 +77,16 @@ export async function confirmDiscardBeforeSwitchToLocal(opts: {
     const answer = await io.question('Discard these messages and switch to local mode? (y/N) ');
     const normalized = answer.trim().toLowerCase();
     return normalized === 'y' || normalized === 'yes';
+}
+
+export async function confirmDiscardQueuedMessagesForSwitchToLocal(
+    opts: ConfirmDiscardQueuedMessagesParams,
+): Promise<boolean> {
+    return confirmDiscardBeforeSwitchToLocal({
+        queuedCount: opts.queuedCount,
+        queuedPreview: opts.queuedPreview,
+        pendingCount: opts.serverCount,
+        pendingPreview: opts.serverPreview,
+        io: opts.io,
+    });
 }

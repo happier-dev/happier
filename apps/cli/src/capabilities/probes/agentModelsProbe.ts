@@ -229,6 +229,10 @@ export async function probeAgentModelsBestEffort(params: {
   timeoutMs?: number;
 }): Promise<ProbedAgentModelsResult> {
   const fallback = buildStatic(params.agentId);
+  const modelConfig = getAgentModelConfig(params.agentId);
+  if (modelConfig.dynamicProbe === 'static-only') {
+    return fallback;
+  }
   const entry = AGENTS[params.agentId];
 
   const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 3500;

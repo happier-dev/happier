@@ -53,4 +53,13 @@ describe('AGENTS', () => {
       }
     }
   });
+
+  it('forces remote starting mode for claude headless tmux sessions', async () => {
+    const transform = await AGENTS.claude.getHeadlessTmuxArgvTransform!();
+    expect(transform(['--foo'])).toEqual(['--foo', '--happy-starting-mode', 'remote']);
+  });
+
+  it('does not define a headless tmux argv transform for codex', () => {
+    expect(AGENTS.codex.getHeadlessTmuxArgvTransform).toBeUndefined();
+  });
 });

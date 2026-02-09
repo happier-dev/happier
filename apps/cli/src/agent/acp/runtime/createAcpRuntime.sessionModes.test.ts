@@ -10,7 +10,7 @@ import {
   createDefaultMetadata,
   createFakeAcpRuntimeBackend,
   createSessionClientWithMetadata,
-} from './createAcpRuntime.testHelpers';
+} from './createAcpRuntime.testkit';
 
 describe('createAcpRuntime (session modes)', () => {
   it('publishes ACP session modes into session metadata', async () => {

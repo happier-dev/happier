@@ -42,6 +42,19 @@ export interface DetectCliEntry {
         ok: boolean;
         checkedAt: number;
         loadSession?: boolean | null;
+        agentCapabilities?: {
+            loadSession: boolean;
+            sessionCapabilities: Record<string, unknown>;
+            promptCapabilities: {
+                image: boolean;
+                audio: boolean;
+                embeddedContext: boolean;
+            };
+            mcpCapabilities: {
+                http: boolean;
+                sse: boolean;
+            };
+        } | null;
         error?: { message: string };
     };
 }

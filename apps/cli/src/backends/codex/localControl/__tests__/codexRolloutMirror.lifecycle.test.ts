@@ -5,7 +5,7 @@ const state = vi.hoisted(() => ({
   resolveStart: null as (() => void) | null,
 }));
 
-vi.mock('@/backends/utils/jsonlFollower', () => ({
+vi.mock('@/agent/localControl/jsonlFollower', () => ({
   JsonlFollower: class MockJsonlFollower {
     start = vi.fn(
       () =>

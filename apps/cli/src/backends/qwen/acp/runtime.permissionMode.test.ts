@@ -8,7 +8,7 @@ import {
   createQwenPermissionHandlerFixture,
   createQwenSessionFixture,
   type QwenRuntimeCreateCall,
-} from './runtime.testHelpers';
+} from './runtime.testkit';
 
 describe('Qwen ACP runtime permission mode wiring', () => {
   afterEach(() => {

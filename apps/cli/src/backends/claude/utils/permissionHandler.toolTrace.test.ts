@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { SDKAssistantMessage } from '../sdk';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
 import { PermissionHandler } from './permissionHandler';
-import { createPermissionHandlerSessionStub } from './permissionHandler.testHelpers';
+import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 
 describe('Claude PermissionHandler tool trace', () => {
   afterEach(() => {

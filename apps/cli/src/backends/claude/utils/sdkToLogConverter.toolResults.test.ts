@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SDKUserMessage } from '@/backends/claude/sdk';
 import { convertSDKToLog } from './sdkToLogConverter';
-import { asRecord, conversionContext, createConverter } from './sdkToLogConverter.testHelpers';
+import { asRecord, conversionContext, createConverter } from './sdkToLogConverter.testkit';
 
 type PermissionMode = 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
 

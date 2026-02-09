@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { registerSessionHandlers } from './registerSessionHandlers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createEncryptedRpcTestClient } from './encryptedRpc.testHelper';
+import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 
 function createTestRpcManager(params?: { scopePrefix?: string }) {
     const scopePrefix = params?.scopePrefix ?? 'machine-test';

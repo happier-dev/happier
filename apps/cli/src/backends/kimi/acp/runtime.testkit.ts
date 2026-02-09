@@ -5,7 +5,7 @@ import * as acpModule from '@/agent/acp';
 import type { AgentBackend, AgentMessageHandler } from '@/agent/core';
 import type { ApiSessionClient } from '@/api/apiSession';
 import type { PermissionMode } from '@/api/types';
-import { createTestMetadata } from '@/backends/testHelpers/sessionMetadata.testHelpers';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 
 export type KimiRuntimeCreateCall = {

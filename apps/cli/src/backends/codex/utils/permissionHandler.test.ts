@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { FakePermissionSession } from '@/backends/testHelpers/permissionHandler.testHelpers';
+import { FakePermissionSession } from '@/testkit/backends/permissionHandler';
 import { CodexPermissionHandler } from './permissionHandler';
 
 describe('CodexPermissionHandler', () => {

@@ -128,6 +128,7 @@
     "open": "^10.2.0",
     "ps-list": "^8.1.1",
     "qrcode-terminal": "^0.12.0",
+    "react-devtools-core": "^6.1.5",
     "react": "^19.2.0",
     "socket.io-client": "^4.8.1",
     "tar": "^7.5.2",

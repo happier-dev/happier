@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SpawnOptions } from 'node:child_process';
-import { createTmuxMockChildProcess, type TmuxSpawnCall } from './tmux.spawnMock.testHelpers';
+import { createTmuxMockChildProcess, type TmuxSpawnCall } from './tmux.spawnMock.testkit';
 
 const { spawnMock, getLastSpawnCall, setLastSpawnCall } = vi.hoisted(() => {
     let lastSpawnCall: TmuxSpawnCall | null = null;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { normalizeToolCallV2, normalizeToolResultV2 } from './index';
-import { asRecord, firstFixtureEvent, loadFixtureV1 } from './fixtures.v1.testHelpers';
+import { asRecord, firstFixtureEvent, loadFixtureV1 } from './fixtures.v1.testkit';
 
 describe('tool normalization fixtures (v1): catalog coverage', () => {
   it('includes baseline coverage across protocols/providers', () => {

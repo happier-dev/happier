@@ -6,7 +6,8 @@ import { createSessionScanner } from "./utils/sessionScanner";
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import type { PermissionMode } from "@/api/types";
 import { mapToClaudeMode } from "./utils/permissionMode";
-import { confirmDiscardBeforeSwitchToLocal } from "@/backends/utils/confirmDiscardBeforeSwitchToLocal";
+import { confirmDiscardQueuedMessagesForSwitchToLocal } from "@/agent/localControl/confirmDiscardBeforeSwitchToLocal";
+import { discardPendingBeforeSwitchToLocal } from "@/agent/localControl/discardPendingBeforeSwitchToLocal";
 import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissionModeFromMetadata';
 
 function upsertClaudePermissionModeArgs(args: string[] | undefined, mode: PermissionMode): string[] | undefined {
@@ -183,60 +184,32 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
         const serverPendingCount = await session.client.peekPendingMessageQueueV2Count();
 
         if (queuedCount > 0 || serverPendingCount > 0) {
-            const confirmed = await confirmDiscardQueuedMessages({
+            const discardResult = await discardPendingBeforeSwitchToLocal({
                 queuedCount,
-                queuedPreview: queued,
-                serverCount: serverPendingCount,
-                serverPreview: [],
+                queuedLocalIds,
+                serverPendingCount: serverPendingCount,
+                confirmDiscard: () =>
+                    confirmDiscardQueuedMessagesForSwitchToLocal({
+                        queuedCount,
+                        queuedPreview: queued,
+                        serverCount: serverPendingCount,
+                        serverPreview: [],
+                    }),
+                discardServerPending: () =>
+                    session.client.discardPendingMessageQueueV2All({ reason: 'switch_to_local' }),
+                markQueuedAsDiscarded: (localIds) =>
+                    session.client.discardCommittedMessageLocalIds({ localIds: [...localIds], reason: 'switch_to_local' }),
+                resetQueued: () => {
+                    session.queue.reset();
+                },
+                sendStatusMessage: (message) => {
+                    session.client.sendSessionEvent({ type: 'message', message });
+                },
+                formatError: formatErrorForUi,
             });
-            if (!confirmed) {
+
+            if (discardResult !== 'proceed') {
                 return { type: 'switch' };
-            }
-
-            // Discard server-side pending messages first, so remote mode does not replay them later.
-            let discardedServerCount = 0;
-            try {
-                if (serverPendingCount > 0) {
-                    discardedServerCount = await session.client.discardPendingMessageQueueV2All({ reason: 'switch_to_local' });
-                }
-            } catch (e) {
-                session.client.sendSessionEvent({
-                    type: 'message',
-                    message: `Failed to discard pending messages before switching to local mode: ${formatErrorForUi(e)}`,
-                });
-                return { type: 'switch' };
-            }
-
-            // Mark committed queued remote messages as discarded in session metadata so the UI can render them correctly.
-            try {
-                if (queuedLocalIds.length > 0) {
-                    await session.client.discardCommittedMessageLocalIds({ localIds: queuedLocalIds, reason: 'switch_to_local' });
-                }
-            } catch (e) {
-                session.client.sendSessionEvent({
-                    type: 'message',
-                    message: `Failed to mark queued messages as discarded before switching to local mode: ${formatErrorForUi(e)}`,
-                });
-                return { type: 'switch' };
-            }
-
-            if (queuedCount > 0) {
-                session.queue.reset();
-            }
-
-            const parts: string[] = [];
-            if (discardedServerCount > 0) {
-                parts.push(`${discardedServerCount} pending UI message${discardedServerCount === 1 ? '' : 's'}`);
-            }
-            if (queuedCount > 0) {
-                parts.push(`${queuedCount} queued remote message${queuedCount === 1 ? '' : 's'}`);
-            }
-
-            if (parts.length > 0) {
-                session.client.sendSessionEvent({
-                    type: 'message',
-                    message: `Discarded ${parts.join(' and ')} to switch to local mode. Please resend them from this terminal if needed.`,
-                });
             }
         }
 
@@ -367,11 +340,3 @@ export async function claudeLocalLauncher(session: Session): Promise<LauncherRes
     // Return
     return exitReason || { type: 'exit', code: 0 };
 }
-    async function confirmDiscardQueuedMessages(opts: { queuedCount: number; queuedPreview: string[]; serverCount: number; serverPreview: string[] }): Promise<boolean> {
-        return confirmDiscardBeforeSwitchToLocal({
-            queuedCount: opts.queuedCount,
-            queuedPreview: opts.queuedPreview,
-            pendingCount: opts.serverCount,
-            pendingPreview: opts.serverPreview,
-        });
-    }

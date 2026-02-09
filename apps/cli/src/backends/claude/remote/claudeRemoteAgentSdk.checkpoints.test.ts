@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
 import { claudeRemoteAgentSdk } from './claudeRemoteAgentSdk';
-import { makeMode } from './claudeRemoteAgentSdk.testHelpers';
+import { makeMode } from './claudeRemoteAgentSdk.testkit';
 
 describe('claudeRemoteAgentSdk checkpoints and rewind', () => {
     it('captures checkpoint ids and supports /rewind --confirm when file checkpointing is enabled', async () => {

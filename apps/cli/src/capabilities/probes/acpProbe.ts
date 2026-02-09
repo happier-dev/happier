@@ -16,7 +16,7 @@ import { logger } from '@/ui/logger';
 import type { TransportHandler } from '@/agent/transport';
 import { nodeToWebStreams } from '@/agent/acp/nodeToWebStreams';
 
-type AcpProbeResult =
+export type AcpProbeResult =
     | { ok: true; checkedAt: number; agentCapabilities: InitializeResponse['agentCapabilities'] }
     | { ok: false; checkedAt: number; error: { message: string } };
 

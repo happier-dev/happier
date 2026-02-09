@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { waitForPidInspection } from './realIntegration.testHelpers';
+import { waitForPidInspection } from './realIntegration.testkit';
 
 describe('waitForPidInspection', () => {
   it('accepts falsy non-null inspection values', async () => {

@@ -6,7 +6,7 @@ import {
     cleanupTempSessionDir,
     createTempSessionDir,
     writeSessionObjectLines,
-} from './sessionFixtures.testHelpers';
+} from './sessionFixtures.testkit';
 
 // Mock getProjectPath to use test directory
 vi.mock('./path', () => ({

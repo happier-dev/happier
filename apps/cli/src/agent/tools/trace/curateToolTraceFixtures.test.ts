@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { curateToolTraceFixturesFromJsonlLines } from './curateToolTraceFixtures';
-import { makeTraceEvent, scenarioToolResultThenPermissionRequest, scenarioToolResultThenToolCall, toJsonlLines } from './testEvents.testHelpers';
+import { makeTraceEvent, scenarioToolResultThenPermissionRequest, scenarioToolResultThenToolCall, toJsonlLines } from './testEvents.testkit';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;

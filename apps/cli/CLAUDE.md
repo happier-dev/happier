@@ -62,7 +62,7 @@ Top-level domains are “first class” and should remain few:
 - `src/integrations/` — OS/tool wrappers and services (tmux, ripgrep, difftastic, proxy, watcher)
 - `src/terminal/` — terminal UX/runtime integration (flags, attach plans, headless helpers)
 - `src/ui/` — user-facing UI and logging (Ink, formatting, QR, auth UI)
-- `src/commands/` — user-facing subcommands
+- `src/cli/commands/` — user-facing subcommands
 - `src/backends/claude/`, `src/backends/codex/`, `src/backends/gemini/`, `src/backends/opencode/` — agent backends (vendor-specific logic + entrypoints)
 - `src/cli/` — argument parsing and command dispatch (keeps `src/index.ts` small)
 - `src/utils/` — shared helpers; prefer named subfolders under `utils/` over dumping unrelated code at the root of `utils/`

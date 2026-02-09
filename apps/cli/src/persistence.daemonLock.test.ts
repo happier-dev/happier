@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testHelpers/env.testHelper';
+import { applyEnvValues, restoreEnvValues, snapshotEnvValues } from '@/testkit/env.testkit';
 
 describe('acquireDaemonLock', () => {
   const envBackup = snapshotEnvValues(['HAPPIER_HOME_DIR']);

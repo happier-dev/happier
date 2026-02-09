@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Metadata } from '@/api/types';
-import { createTestMetadata } from '@/backends/testHelpers/sessionMetadata.testHelpers';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { maybeUpdateCodexSessionIdMetadata } from './codexSessionIdMetadata';
 
 describe('maybeUpdateCodexSessionIdMetadata', () => {

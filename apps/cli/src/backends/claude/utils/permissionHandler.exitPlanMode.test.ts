@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SDKAssistantMessage } from '../sdk';
 import type { EnhancedMode } from '../loop';
-import { createPermissionHandlerSessionStub } from './permissionHandler.testHelpers';
+import { createPermissionHandlerSessionStub } from './permissionHandler.testkit';
 
 vi.mock('@/lib', () => ({
   logger: {

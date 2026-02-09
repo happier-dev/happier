@@ -20,7 +20,7 @@ import {
   type VoiceMediatorStopResponse,
 } from '@happier-dev/protocol';
 import type { AgentModelConfig } from '@happier-dev/agents';
-import { createEncryptedRpcTestClient } from './encryptedRpc.testHelper';
+import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 
 function fakeClaudeSource(): string {
   return `

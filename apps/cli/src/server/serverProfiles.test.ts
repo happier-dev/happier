@@ -50,6 +50,7 @@ describe('server profiles', () => {
 
     const before = await getActiveServerProfile();
     expect(before.id).toBe('official');
+    expect(before.name).toBe('Happier Cloud');
 
     const created = await addServerProfile({
       name: 'selfhost',

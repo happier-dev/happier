@@ -1,7 +1,7 @@
 import type { Capability } from '@/capabilities/service';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
 import { probeAcpAgentCapabilities } from '@/capabilities/probes/acpProbe';
-import { normalizeCapabilityProbeError } from '@/capabilities/utils/normalizeCapabilityProbeError';
+import { buildAcpCapabilitySnapshot } from '@/capabilities/probes/acpCapabilitySnapshot';
 import { resolveAcpProbeTimeoutMs } from '@/capabilities/utils/acpProbeTimeout';
 
 import { kiloTransport } from '@/backends/kilo/acp/transport';
@@ -30,11 +30,8 @@ export const cliCapability: Capability = {
       timeoutMs: resolveAcpProbeTimeoutMs('kilo'),
     });
 
-    const acp = probe.ok
-      ? { ok: true as const, checkedAt: probe.checkedAt, loadSession: probe.agentCapabilities?.loadSession === true }
-      : { ok: false as const, checkedAt: probe.checkedAt, error: normalizeCapabilityProbeError(probe.error) };
+    const acp = buildAcpCapabilitySnapshot(probe);
 
     return { ...base, acp };
   },
 };
-

@@ -8,7 +8,7 @@ import {
   createDeferred,
   createFakeAcpRuntimeBackend,
   createSessionClientWithMetadata,
-} from './createAcpRuntime.testHelpers';
+} from './createAcpRuntime.testkit';
 
 describe('createAcpRuntime (sidechain import)', () => {
   it('imports Task sub-session replay as sidechain messages when tool-result includes sessionId metadata', async () => {
