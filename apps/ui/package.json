@@ -16,7 +16,7 @@
     "prebuild": "rm -rf android ios && cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo prebuild",
     "ota": "APP_ENV=preview NODE_ENV=preview tsx sources/scripts/parseChangelog.ts && yarn typecheck && eas update --branch preview",
     "ota:production": "npx eas-cli@latest workflow:run ota.yaml",
-    "typecheck": "tsc -p tsconfig.typecheck.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate:imports": "tsx tools/migrations/rewrite-imports.ts",
     "migrate:verify": "tsx tools/migrations/verify-imports.ts",
     "postinstall:real": "node ./tools/postinstall.mjs",
