@@ -2,7 +2,7 @@
   "title": "Development",
   "pages": [
     "index",
-    "testing"
+    "testing",
+    "release-artifacts"
   ]
 }
-

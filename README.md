@@ -108,6 +108,12 @@ Happier is designed with privacy as a foundation, not an afterthought.
 ### Step 2: Install the CLI on your computer
 
 ```bash
+curl -fsSL https://happier.dev/install | bash
+```
+
+Power-user/npm option (still supported):
+
+```bash
 npm install -g @happier-dev/cli
 ```
 

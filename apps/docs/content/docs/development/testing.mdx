@@ -106,7 +106,21 @@ TypeScript typechecking for the main runtime packages (UI/CLI/server).
 yarn typecheck
 ```
 
-### 8) Extended DB matrix (Postgres/MySQL)
+### 8) Release contracts
+
+Security/release-pipeline contract checks for workflow/install/signing invariants.
+
+**Root command:**
+```bash
+yarn test:release:contracts
+```
+
+This runs:
+- `scripts/release/*.test.mjs`
+- including installer sync/security/publication invariants
+- and workflow policy guards like the production Tauri signing/notarization fail gate
+
+### 9) Extended DB matrix (Postgres/MySQL)
 
 Optional validation that core E2E and DB contract tests behave on non-embedded engines.
 In CI this runs via a dedicated workflow using service containers.
@@ -219,6 +233,7 @@ Default gate includes:
 - Unit (UI + app/unit lanes)
 - Integration (UI/CLI/Server/Stack app lanes)
 - Typecheck
+- Release contracts (release/workflow/install/signing guards)
 - Daemon integration E2E (`CLI + Server (light/pglite) E2E`)
 - Core E2E (pglite + sqlite)
 
@@ -249,6 +264,9 @@ When `run_checks=true`, the release runs the same reusable gate as PR CI (via `w
 - core e2e
 - providers (smoke/extended)
 - stress
+
+Release orchestration also forces release contract checks in this gate:
+- `run_release_contracts=true` in the reusable `CI — Tests` call.
 
 ## Contributor guidance
 

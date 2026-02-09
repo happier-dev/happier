@@ -26,7 +26,8 @@ If you use the same identity provider (for example GitHub) on two servers, they 
 Installers and setup commands can print one-click links:
 
 - `happier://server?url=<ENCODED_SERVER_URL>`
-- `<WEBAPP_URL>/server?url=<ENCODED_SERVER_URL>&auto=1`
+- `<WEBAPP_URL>/?server=<ENCODED_SERVER_URL>` (preferred)
+- `<WEBAPP_URL>/server?url=<ENCODED_SERVER_URL>&auto=1` (legacy)
 
 These prefill server settings so users do not have to paste URLs manually.
 

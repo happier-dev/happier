@@ -29,6 +29,18 @@ hstack setup --profile=dev
 Self-host profile (stable / production-ish):
 
 ```bash
+curl -fsSL https://happier.dev/self-host | bash
+```
+
+Direct hstack flow (same guided installer):
+
+```bash
+hstack self-host install
+```
+
+Legacy alias (still supported):
+
+```bash
 hstack setup --profile=selfhost
 ```
 
@@ -69,4 +81,3 @@ To confirm what hstack is actually using on your machine, run:
 ```bash
 hstack where
 ```
-

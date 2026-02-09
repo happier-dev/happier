@@ -18,7 +18,13 @@ If you want to **develop Happier** (worktrees, multiple stacks, upstream PR work
 ### Quickstart
 
 ```bash
-npx --yes -p @happier-dev/stack hstack setup --profile=selfhost
+curl -fsSL https://happier.dev/self-host | bash
+```
+
+Direct hstack flow:
+
+```bash
+hstack self-host install
 ```
 
 Follow the guided instructions to install Happier and launch it.
