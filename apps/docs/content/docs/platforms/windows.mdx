@@ -1,0 +1,30 @@
+---
+title: Windows
+description: Windows-specific behavior and troubleshooting.
+---
+
+## Console windows (remote sessions)
+
+When you start a session on a Windows machine **remotely** (from the app), Happier will usually launch the agent process in a way that **does not** open visible console windows. This prevents the “windows opening and closing / flickering” behavior some users reported.
+
+### Setting: show a visible console window
+
+On the machine details screen (for Windows machines only), you can enable:
+
+- `Show console for remote sessions`
+
+When enabled, remote session starts will open **one visible console window** on that Windows machine. This is useful when you want to come back to the machine later and interact locally (for example, switching an agent from remote to local usage inside the console).
+
+### Notes and limitations
+
+- This setting only applies to **Windows** machines.
+- The goal is to show a **single** console window for the long-running session, while still avoiding extra windows from short-lived subprocesses.
+- If you use tmux-based workflows, note that native Windows does not typically have tmux available unless you’re running inside WSL or another POSIX environment.
+
+## Environment variables (advanced)
+
+You can also control the default console mode on a machine via:
+
+- `HAPPIER_WINDOWS_REMOTE_SESSION_CONSOLE=visible` (or omit / any other value for hidden)
+
+If you set the in-app toggle for a machine, it will override this environment variable for sessions started from the app.
