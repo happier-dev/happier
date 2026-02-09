@@ -1,0 +1,8 @@
+{
+  "title": "Server",
+  "pages": [
+    "index",
+    "auth"
+  ]
+}
+

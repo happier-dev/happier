@@ -1,0 +1,265 @@
+---
+title: Auth
+description: Configure signup/login policies and GitHub enforcement for a self-hosted server.
+---
+
+Happier supports a **device-key** account model (each account is tied to a device secret), and can optionally enforce **provider-based authentication** and **eligibility policies** (enterprise/self-hosting).
+
+## Core concepts
+
+### Anonymous vs provider signup
+- **Anonymous signup** (default): users can create an account without an external provider.
+- **Provider signup**: users create an account via an external auth provider (GitHub and/or your configured OIDC providers).
+
+### Required providers for ongoing access
+You can enforce that a user must have one or more linked providers to keep using the server:
+- If a required provider is missing → requests are rejected (`403 provider-required`).
+- If allowlists are configured and the user becomes ineligible → requests are rejected (`403 not-eligible`).
+
+Eligibility is enforced for:
+- Authenticated HTTP routes
+- Socket.IO handshake (`/v1/updates`)
+
+### Offboarding behavior (per-request caching)
+When allowlists are configured and offboarding is enabled, the server re-checks eligibility periodically and caches results on the identity record.
+
+- Mode: `per-request-cache` only
+- Interval: `AUTH_OFFBOARDING_INTERVAL_SECONDS` (default `86400`)
+
+## Auth policy environment variables
+
+### Signup / login policy
+- `AUTH_ANONYMOUS_SIGNUP_ENABLED` (default `true`)
+  - If `false`, anonymous account creation is disabled.
+- `AUTH_SIGNUP_PROVIDERS` (CSV, default empty)
+  - Enables provider-based signup (e.g. `github`).
+- `AUTH_REQUIRED_LOGIN_PROVIDERS` (CSV, default empty)
+  - Enforces providers for ongoing access (e.g. `github`).
+
+### Offboarding / eligibility checks
+- `AUTH_OFFBOARDING_ENABLED`
+  - Defaults to `true` when any `AUTH_*_ALLOWED_*` allowlist is configured; otherwise `false`.
+- `AUTH_OFFBOARDING_INTERVAL_SECONDS` (default `86400`, clamp 60–86400)
+- `AUTH_OFFBOARDING_STRICT` (default `false`)
+  - When `true`, the server **fails closed** if it cannot re-check eligibility due to upstream downtime (enterprise lock-down mode).
+
+## GitHub OAuth (link identity + provider signup)
+
+GitHub OAuth is used to:
+- Link a GitHub identity to an existing account (connect flow)
+- Create an account via GitHub (provider signup flow), when enabled by policy
+
+### Server environment variables (OAuth)
+- `GITHUB_CLIENT_ID`
+- `GITHUB_CLIENT_SECRET`
+- `GITHUB_REDIRECT_URL` (preferred) or legacy `GITHUB_REDIRECT_URI`
+  - Set to: `https://YOUR_SERVER/v1/oauth/github/callback`
+- `HAPPIER_WEBAPP_URL` (default `https://app.happier.dev`)
+  - Base URL for the client app.
+- `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE` (optional)
+  - Override the base OAuth return URL to the client (without provider suffix).
+  - Example: `https://app.example.com/custom-oauth` → server redirects to `https://app.example.com/custom-oauth/github?...`
+- `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES` (optional)
+  - Allow additional OAuth return URL schemes (CSV/whitespace). Default allows `https://` and loopback `http://localhost`.
+  - Useful for mobile deep links (e.g. `myapp`).
+- `OAUTH_STATE_TTL_SECONDS` (default `600`, clamp 60–3600)
+  - How long the OAuth `state` token is valid for (connect + provider signup).
+- `GITHUB_HTTP_TIMEOUT_SECONDS` (default `10`, clamp 1–120)
+  - Timeout for GitHub OAuth and membership HTTP calls.
+
+OAuth scopes:
+- Default: `read:user`
+- If you use **org membership checks via user tokens** (`AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE=oauth_user_token`), the server requests: `read:user read:org`
+
+### GitHub allowlists (enterprise/self-hosting)
+
+#### User allowlist (logins)
+- `AUTH_GITHUB_ALLOWED_USERS` (CSV of lowercase GitHub logins)
+
+If set, users must match this allowlist (otherwise `403 not-eligible`).
+
+#### Org allowlist (hard offboarding)
+- `AUTH_GITHUB_ALLOWED_ORGS` (CSV of lowercase org slugs)
+- `AUTH_GITHUB_ORG_MATCH` (`any`/`all`, default `any`)
+
+If set, users must be in the allowed org(s), re-checked on the offboarding interval.
+
+#### Org membership source
+- `AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE`
+  - `github_app` (recommended when org allowlist is set)
+  - `oauth_user_token` (requires `read:org` and relies on user tokens)
+
+### GitHub App mode (recommended for org membership enforcement)
+
+GitHub App mode avoids relying on user OAuth tokens, and keeps org offboarding enforceable even if a user revokes OAuth.
+
+#### Server environment variables (GitHub App mode)
+- `AUTH_GITHUB_APP_ID`
+- `AUTH_GITHUB_APP_PRIVATE_KEY` (PEM)
+- `AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG` (CSV mapping like `acme=123,other=456`)
+
+#### GitHub setup steps (overview)
+1. Create a **GitHub App** (GitHub → Settings → Developer settings → GitHub Apps).
+2. Generate a private key and set `AUTH_GITHUB_APP_PRIVATE_KEY`.
+3. Grant the minimal permission needed for membership checks:
+   - Organization permissions → **Members: Read**
+4. Install the app into each allowed org.
+5. Capture the installation ID for each org and set `AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG`.
+
+## Generic OIDC providers (Okta/Auth0/Azure AD/Keycloak, etc.)
+
+Happier can be configured with **one or more** OIDC provider instances. This is intended for enterprise/self-hosting deployments where GitHub isn’t the desired identity provider.
+
+### What standard is supported?
+Happier’s “custom provider” support is **OpenID Connect (OIDC) 1.0** using **OAuth 2.0 Authorization Code Flow** with **PKCE**.
+
+- OIDC discovery is required (`/.well-known/openid-configuration` under your `issuer`)
+- The provider must support code exchange at the token endpoint
+- `id_token` claims are used as the primary identity profile; optional `/userinfo` can be enabled
+- Optional refresh tokens can be stored (encrypted) for offboarding re-checks
+
+If you need SAML, the recommended approach is to use your IdP’s “OIDC app” or a SAML→OIDC bridge (Okta/Auth0/Azure AD/Keycloak, etc.), and configure Happier using the OIDC options below.
+
+### Config sources
+You can configure providers via either:
+- `AUTH_PROVIDERS_CONFIG_PATH` (recommended): path to a JSON file on the server
+- `AUTH_PROVIDERS_CONFIG_JSON`: a JSON string (useful for simple deployments)
+
+### JSON schema (v1)
+The config must be a JSON array. Each entry defines one provider instance:
+
+```json
+[
+  {
+    "id": "okta",
+    "type": "oidc",
+    "displayName": "Acme Okta",
+    "issuer": "https://acme.okta.com/oauth2/default",
+    "clientId": "…",
+    "clientSecret": "…",
+    "redirectUrl": "https://YOUR_SERVER/v1/oauth/okta/callback",
+
+    "scopes": "openid profile email",
+    "httpTimeoutSeconds": 30,
+    "claims": {
+      "login": "preferred_username",
+      "email": "email",
+      "groups": "groups"
+    },
+    "allow": {
+      "usersAllowlist": ["alice", "bob"],
+      "emailDomains": ["example.com"],
+      "groupsAny": ["engineering", "platform"],
+      "groupsAll": ["employees"]
+    },
+    "fetchUserInfo": false,
+    "storeRefreshToken": false,
+    "ui": {
+      "buttonColor": "#111111",
+      "iconHint": "okta"
+    }
+  }
+]
+```
+
+Notes:
+- `id` becomes the provider id used in policy (`AUTH_SIGNUP_PROVIDERS=okta`) and in the callback URL (`/v1/oauth/:provider/callback`).
+- `issuer` must point at the provider’s OIDC issuer URL (discovery uses `/.well-known/openid-configuration`).
+- Make sure your OIDC app is configured to allow the exact `redirectUrl`.
+- `scopes` defaults to `openid profile email` and **must include `openid`**.
+- `httpTimeoutSeconds` (default `30`, clamp 1–120): timeout (seconds) for OIDC discovery and subsequent HTTP requests made by the OIDC client configuration.
+- `claims` lets you map where to read the provider login/email/groups from (defaults shown above).
+- `allow` restricts eligibility (all comparisons are lowercased):
+  - `usersAllowlist`: matches against the provider login claim.
+  - `emailDomains`: allows `user@domain` only if `domain` matches.
+  - `groupsAny`: user must be in *at least one* group.
+  - `groupsAll`: user must be in *all* groups.
+- `fetchUserInfo` (default `false`): if enabled, the server fetches `/userinfo` and merges it into the identity profile.
+- `storeRefreshToken` (default `false`): if enabled, the server stores an **encrypted refresh token** and uses refresh flows for periodic eligibility re-checks (offboarding) without requiring users to reconnect.
+- `ui` provides optional UI hints only (no security impact).
+
+### Group overage / external claims
+Some providers (notably Microsoft Entra ID / Azure AD) may omit groups from tokens and instead return an “overage” pointer (e.g. `_claim_names/_claim_sources`). If you configure `groupsAny`/`groupsAll`, Happier will **fail closed** when it detects group overage (treating the user as ineligible) unless it can read groups from the configured claim source (for example by enabling `fetchUserInfo` and mapping `claims.groups` appropriately).
+
+### Enabling OIDC signup / login enforcement
+Example: **Okta-only signup** + **Okta required for ongoing access**:
+
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=okta
+AUTH_REQUIRED_LOGIN_PROVIDERS=okta
+
+AUTH_PROVIDERS_CONFIG_PATH=/etc/happier/auth-providers.json
+```
+
+### Step-by-step: add a new OIDC provider
+1. Pick a provider id (lowercase), e.g. `okta` / `auth0` / `entra`.
+2. In your IdP admin console, create an **OIDC application**:
+   - Grant type: **Authorization Code**
+   - Enable **PKCE**
+   - Add redirect URI: `https://YOUR_SERVER/v1/oauth/<providerId>/callback`
+3. Put the provider config in `AUTH_PROVIDERS_CONFIG_PATH` (preferred) or `AUTH_PROVIDERS_CONFIG_JSON`:
+   - Set `issuer`, `clientId`, `clientSecret`, and `redirectUrl` exactly (must match step 2).
+4. Enable it in policy:
+   - Allow signup via this provider: `AUTH_SIGNUP_PROVIDERS=<providerId>`
+   - Make it mandatory for ongoing access: `AUTH_REQUIRED_LOGIN_PROVIDERS=<providerId>`
+   - Disable anonymous signup if desired: `AUTH_ANONYMOUS_SIGNUP_ENABLED=false`
+5. Make sure the client app can return from OAuth:
+   - Web: set `HAPPIER_WEBAPP_URL` (or `HAPPIER_WEBAPP_OAUTH_RETURN_URL_BASE`)
+   - Mobile deep link: allow the scheme via `HAPPIER_OAUTH_RETURN_ALLOWED_SCHEMES` (e.g. `myapp`)
+6. Validate:
+   - Restart the server (so it picks up env / config changes).
+   - Open the Happier app and confirm the new sign-in option appears on the welcome/login screen.
+   - If it doesn’t, double-check the redirect URL, issuer URL, and that `AUTH_SIGNUP_PROVIDERS` / `AUTH_REQUIRED_LOGIN_PROVIDERS` reference the same provider id. (For troubleshooting, you can also inspect `GET /v1/features`.)
+
+### “Custom providers” beyond OIDC
+At the moment, “custom providers” are supported via **OIDC configuration** (no plugin system for arbitrary protocols).
+If you need a non-OIDC provider, it must be implemented as a new provider module in the server and UI (similar to the built-in GitHub provider).
+
+## Recommended configurations
+
+### 1) Default (anonymous + optional GitHub connect)
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=true
+AUTH_SIGNUP_PROVIDERS=
+AUTH_REQUIRED_LOGIN_PROVIDERS=
+```
+
+### 2) GitHub-only signup + GitHub required for login
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=github
+```
+
+### 3) GitHub-only + restrict to an org (GitHub App mode)
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=github
+AUTH_REQUIRED_LOGIN_PROVIDERS=github
+
+AUTH_GITHUB_ALLOWED_ORGS=acme
+AUTH_GITHUB_ORG_MEMBERSHIP_SOURCE=github_app
+AUTH_GITHUB_APP_ID=...
+AUTH_GITHUB_APP_PRIVATE_KEY=...
+AUTH_GITHUB_APP_INSTALLATION_ID_BY_ORG=acme=123
+```
+
+### 4) Okta-only signup (OIDC)
+```bash
+AUTH_ANONYMOUS_SIGNUP_ENABLED=false
+AUTH_SIGNUP_PROVIDERS=okta
+AUTH_REQUIRED_LOGIN_PROVIDERS=okta
+
+AUTH_PROVIDERS_CONFIG_JSON='[
+  {
+    "id": "okta",
+    "type": "oidc",
+    "displayName": "Acme Okta",
+    "issuer": "https://acme.okta.com/oauth2/default",
+    "clientId": "…",
+    "clientSecret": "…",
+    "redirectUrl": "https://YOUR_SERVER/v1/oauth/okta/callback"
+  }
+]'
+```
