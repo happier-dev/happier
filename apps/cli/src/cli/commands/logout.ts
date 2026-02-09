@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 
-import { handleAuthCommand } from '@/commands/auth';
+import { handleAuthCommand } from '@/cli/commands/auth';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 

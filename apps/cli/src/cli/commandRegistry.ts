@@ -7,10 +7,12 @@ import { handleAuthCliCommand } from './commands/auth';
 import { handleConnectCliCommand } from './commands/connect';
 import { handleDaemonCliCommand } from './commands/daemon';
 import { handleDoctorCliCommand } from './commands/doctor';
+import { handleInstallCliCommand } from './commands/install';
 import { handleLogoutCliCommand } from './commands/logout';
 import { handleNotifyCliCommand } from './commands/notify';
 import { handleServerCliCommand } from './commands/server';
 import { handleSelfCliCommand } from './commands/self';
+import { handleSelfUpdateCliCommand } from './commands/selfUpdate';
 
 export type CommandContext = Readonly<{
   args: string[];
@@ -40,9 +42,11 @@ export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   connect: handleConnectCliCommand,
   daemon: handleDaemonCliCommand,
   doctor: handleDoctorCliCommand,
+  install: handleInstallCliCommand,
   logout: handleLogoutCliCommand,
   notify: handleNotifyCliCommand,
   server: handleServerCliCommand,
   self: handleSelfCliCommand,
+  'self-update': handleSelfUpdateCliCommand,
   ...buildAgentCommandRegistry(),
 };

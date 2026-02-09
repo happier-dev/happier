@@ -23,6 +23,7 @@ function usage(): string {
     `${chalk.bold('Usage:')}`,
     `  happier self check [--preview|--channel=preview] [--quiet]`,
     `  happier self update [--preview|--channel=preview] [--to <versionOrTag>]`,
+    `  happier self-update [--check] [--preview|--channel=preview] [--to <versionOrTag>]`,
     '',
     `${chalk.bold('Channels:')}`,
     `  stable  → npm dist-tag ${chalk.cyan('latest')}`,
@@ -96,6 +97,20 @@ export function computeSelfUpdateSpec(params: Readonly<{ packageName: string; ch
   return `${pkg}@${params.channel === 'preview' ? 'next' : 'latest'}`;
 }
 
+export function detectInstallSource(path: string): 'npm' | 'binary' {
+  const raw = String(path ?? '').trim();
+  const normalized = raw.replace(/\\/g, '/');
+  if (normalized.includes('/node_modules/')) return 'npm';
+  return 'binary';
+}
+
+function npmUpgradeCommand(params: Readonly<{ packageName: string; channel: SelfChannel; to: string }>): string {
+  const pkg = String(params.packageName ?? '').trim();
+  const to = String(params.to ?? '').trim();
+  if (to) return `npm install -g ${pkg}@${to}`;
+  return `npm install -g ${pkg}@${params.channel === 'preview' ? 'next' : 'latest'}`;
+}
+
 function cachePath(): string {
   return join(configuration.happyHomeDir, 'cache', 'update.json');
 }
@@ -161,6 +176,13 @@ async function cmdUpdate(argv: string[]): Promise<void> {
   })();
 
   const pkgName = resolveUpdatePackageName();
+  const installSource = detectInstallSource(process.argv[1] ?? '');
+  if (installSource === 'npm') {
+    const upgrade = npmUpgradeCommand({ packageName: pkgName, channel, to: toArg });
+    console.log(chalk.yellow('Detected npm-based install; in-place runtime update is disabled.'));
+    console.log(chalk.gray('Run instead:'), chalk.cyan(upgrade));
+    return;
+  }
   const spec = computeSelfUpdateSpec({ packageName: pkgName, channel, to: toArg });
   const res = installRuntimeFromNpm({ runtimeDir: runtimeDir(), spec, cwd: process.cwd(), env: process.env });
   if (!res.ok) {

@@ -9,10 +9,12 @@ import { getLatestDaemonLog } from '@/ui/logger';
 import { runDoctorCommand } from '@/ui/doctor';
 import { listDaemonStatusesForAllKnownServers, stopAllDaemonsBestEffort } from '@/daemon/multiDaemon';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
-import { readSettings } from '@/persistence';
+import { readCredentials, readSettings } from '@/persistence';
 import { homedir } from 'node:os';
 import { existsSync } from 'node:fs';
 import { resolveLaunchAgentPlistPath, resolveSystemdUserUnitPath } from '@/daemon/service/plan';
+import { configuration } from '@/configuration';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 
 import type { CommandContext } from '@/cli/commandRegistry';
 
@@ -109,6 +111,16 @@ export async function handleDaemonCliCommand(context: CommandContext): Promise<v
 
     if (started) {
       console.log('Daemon started successfully');
+      console.log(`  Server: ${configuration.serverUrl}`);
+      console.log(`  Server ID: ${configuration.activeServerId}`);
+      try {
+        const creds = await readCredentials();
+        const payload = creds?.token ? decodeJwtPayload(creds.token) : null;
+        const sub = typeof payload?.sub === 'string' ? payload.sub : '';
+        if (sub) console.log(`  Account: ${sub}`);
+      } catch {
+        // ignore
+      }
     } else {
       console.error('Failed to start daemon');
       process.exit(1);

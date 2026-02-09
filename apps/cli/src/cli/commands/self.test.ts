@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { computeSelfUpdateSpec, packageJsonPathForNodeModules, parseSelfChannel } from './self';
+import {
+  computeSelfUpdateSpec,
+  detectInstallSource,
+  packageJsonPathForNodeModules,
+  parseSelfChannel,
+} from './self';
 
 describe('self command helpers', () => {
   it('defaults to stable channel', () => {
@@ -45,5 +50,15 @@ describe('self command helpers', () => {
     expect(packageJsonPathForNodeModules({ rootDir: '/tmp/root', packageName: '@happier-dev/../evil' })).toBeNull();
     expect(packageJsonPathForNodeModules({ rootDir: '/tmp/root', packageName: './evil' })).toBeNull();
     expect(packageJsonPathForNodeModules({ rootDir: '/tmp/root', packageName: 'pkg/../../evil' })).toBeNull();
+  });
+
+  it('detects npm install source from node_modules paths', () => {
+    expect(detectInstallSource('/usr/local/lib/node_modules/@happier-dev/cli/bin/happier.mjs')).toBe('npm');
+    expect(detectInstallSource('/Users/me/.nvm/versions/node/v22/lib/node_modules/@happier-dev/cli/bin/happier.mjs')).toBe('npm');
+  });
+
+  it('detects binary install source from standalone executable paths', () => {
+    expect(detectInstallSource('/usr/local/bin/happier')).toBe('binary');
+    expect(detectInstallSource('/opt/happier/bin/happier')).toBe('binary');
   });
 });
