@@ -102,11 +102,11 @@ function copyToClipboard(text, buttonId) {
 
 // Copy install command buttons
 document.getElementById('copy-install')?.addEventListener('click', () => {
-  copyToClipboard('npm install -g @happier-dev/cli', 'copy-install');
+  copyToClipboard('curl -fsSL https://happier.dev/install | bash', 'copy-install');
 });
 
 document.getElementById('copy-install-footer')?.addEventListener('click', () => {
-  copyToClipboard('npm install -g @happier-dev/cli', 'copy-install-footer');
+  copyToClipboard('curl -fsSL https://happier.dev/install | bash', 'copy-install-footer');
 });
 
 // Toast notification

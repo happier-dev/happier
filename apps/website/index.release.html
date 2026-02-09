@@ -147,7 +147,7 @@
                 <p class="font-semibold text-gray-900 dark:text-white">Fully self-hostable</p>
                 <p class="text-sm text-gray-600 dark:text-gray-400">
                   Stay fully free and independent: run the whole stack on your machine, in one command with
-                  <code class="px-2 py-1 bg-gray-200 dark:bg-gray-800 rounded text-xs break-all whitespace-normal">npx --yes -p @happier-dev/stack hstack setup --profile=selfhost</code>.
+                  <code class="px-2 py-1 bg-gray-200 dark:bg-gray-800 rounded text-xs break-all whitespace-normal">curl -fsSL https://happier.dev/self-host | bash</code>.
                 </p>
               </div>
             </div>
@@ -173,7 +173,7 @@
         <!-- Install Command -->
         <div class="inline-flex items-center gap-3 px-6 py-3 bg-gray-900 dark:bg-gray-800 rounded-xl text-sm font-mono">
           <span class="text-gray-400">$</span>
-          <code class="text-accent">npm install -g @happier-dev/cli</code>
+          <code class="text-accent">curl -fsSL https://happier.dev/install | bash</code>
           <button id="copy-install" class="p-1.5 rounded-md hover:bg-gray-700 transition-colors" aria-label="Copy command">
             <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
           </button>
@@ -487,16 +487,16 @@
               </div>
               <div class="p-6 font-mono text-sm">
                 <div class="text-gray-400"># One-command setup (guided):</div>
-                <div class="text-accent mt-2">$ npx --yes -p @happier-dev/stack hstack setup --profile=selfhost</div>
+                <div class="text-accent mt-2">$ curl -fsSL https://happier.dev/self-host | bash</div>
                 <div class="mt-4 text-gray-400"># Start Happier anytime:</div>
-                <div class="text-accent mt-2">$ hstack start</div>
+                <div class="text-accent mt-2">$ hstack self-host status</div>
                 <div class="mt-4 text-gray-400"># Optional: secure remote access for mobile:</div>
                 <div class="text-accent mt-2">$ hstack tailscale enable</div>
                 <div class="text-accent">$ hstack tailscale url</div>
               </div>
             </div>
             <p class="mt-4 text-sm text-gray-600 dark:text-gray-400">
-              Prefer docs? See the self-hosting quickstart in our stack CLI README on GitHub.
+              Prefer npm? Power users can still install with <code class="text-xs">npm install -g @happier-dev/cli</code>.
               <a href="https://github.com/happier-dev/happier/tree/main/apps/stack" target="_blank" rel="noopener noreferrer" class="text-accent hover:text-accent-dark font-semibold transition-colors">Open hstack docs</a>
             </p>
           </div>
@@ -701,11 +701,12 @@
         <p class="text-sm text-gray-500 dark:text-gray-400">Install the CLI on your computer:</p>
         <div class="flex items-center gap-3 px-6 py-3 bg-gray-900 dark:bg-gray-800 rounded-xl text-sm font-mono">
           <span class="text-gray-400">$</span>
-          <code class="text-accent">npm install -g @happier-dev/cli</code>
+          <code class="text-accent">curl -fsSL https://happier.dev/install | bash</code>
           <button id="copy-install-footer" class="p-1.5 rounded-md hover:bg-gray-700 transition-colors" aria-label="Copy command">
             <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
           </button>
         </div>
+        <p class="text-xs text-gray-500 dark:text-gray-400">npm fallback: <code>npm install -g @happier-dev/cli</code></p>
       </div>
     </div>
   </section>
