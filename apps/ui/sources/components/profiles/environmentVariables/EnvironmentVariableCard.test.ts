@@ -79,7 +79,7 @@ vi.mock('react-native-unistyles', () => ({
     },
 }));
 
-vi.mock('@/components/Switch', () => ({
+vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: Record<string, unknown>) => React.createElement('Switch', props),
 }));
 

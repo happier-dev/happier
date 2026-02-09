@@ -1,5 +1,5 @@
 import React from 'react';
-import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/settings';
+import { getProfileEnvironmentVariables, type AIBackendProfile } from '@/sync/domains/settings/settings';
 
 // Optimized profile lookup utility
 export const useProfileMap = (profiles: AIBackendProfile[]) => {

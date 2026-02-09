@@ -2,13 +2,13 @@ import React from 'react';
 import { ActivityIndicator, Linking, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
-import { RoundButton } from '@/components/RoundButton';
-import { getServerFeatures } from '@/sync/apiFeatures';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { getServerFeatures } from '@/sync/api/capabilities/apiFeatures';
 import { t } from '@/text';
 import { getRandomBytesAsync } from '@/platform/cryptoRandom';
 import { encodeBase64 } from '@/encryption/base64';
 import sodium from '@/encryption/libsodium.lib';
-import { TokenStorage } from '@/auth/tokenStorage';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { Modal } from '@/modal';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';

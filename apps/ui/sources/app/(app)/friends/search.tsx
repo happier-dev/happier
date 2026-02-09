@@ -2,17 +2,17 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, FlatList } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { UserSearchResult } from '@/components/friends/UserSearchResult';
-import { searchUsersByUsername, sendFriendRequest } from '@/sync/apiFriends';
-import { useAuth } from '@/auth/AuthContext';
-import { UserProfile } from '@/sync/friendTypes';
+import { searchUsersByUsername, sendFriendRequest } from '@/sync/api/social/apiFriends';
+import { useAuth } from '@/auth/context/AuthContext';
+import { UserProfile } from '@/sync/domains/social/friendTypes';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { trackFriendsConnect } from '@/track';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useSearch } from '@/hooks/useSearch';
-import { useRequireInboxFriendsEnabled } from '@/hooks/useRequireInboxFriendsEnabled';
-import { HappyError } from '@/utils/errors';
+import { useSearch } from '@/hooks/search/useSearch';
+import { useRequireInboxFriendsEnabled } from '@/hooks/inbox/useRequireInboxFriendsEnabled';
+import { HappyError } from '@/utils/errors/errors';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 
 export default function SearchFriendsScreen() {

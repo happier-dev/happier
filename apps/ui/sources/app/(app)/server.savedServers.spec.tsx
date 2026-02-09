@@ -61,11 +61,11 @@ vi.mock('expo-router', () => ({
     useLocalSearchParams: () => localSearchParamsMock,
 }));
 
-vi.mock('@/sync/connectionManager', () => ({
+vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: (...args: unknown[]) => switchConnectionToActiveServerSpy(...args),
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: refreshFromActiveServerSpy }),
 }));
 
@@ -85,13 +85,13 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     ItemRowActions: () => null,
 }));
 
-vi.mock('@/components/RoundButton', () => ({
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: ({ title }: any) => React.createElement('Text', null, title),
 }));
 
 describe('ServerConfigScreen', () => {
     it('renders saved server profiles', async () => {
-        const { upsertServerProfile, setActiveServerId } = await import('@/sync/serverProfiles');
+        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
         setActiveServerId('official', { scope: 'device' });
 
@@ -119,7 +119,7 @@ describe('ServerConfigScreen', () => {
 
         (globalThis as any).fetch = vi.fn(async () => ({ ok: true, text: async () => 'Welcome to Happier Server!' }));
 
-        const { getActiveServerId, setActiveServerId } = await import('@/sync/serverProfiles');
+        const { getActiveServerId, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         setActiveServerId('official', { scope: 'device' });
 
         const Screen = (await import('./server')).default;

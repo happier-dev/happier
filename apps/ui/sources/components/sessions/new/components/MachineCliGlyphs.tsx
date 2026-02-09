@@ -3,12 +3,12 @@ import { Pressable, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
-import { useMachineCapabilitiesCache } from '@/hooks/useMachineCapabilitiesCache';
+import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { DetectedClisModal } from '@/components/machines/DetectedClisModal';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
-import { getAgentCore, getAgentCliGlyph } from '@/agents/catalog';
-import { useEnabledAgentIds } from '@/agents/useEnabledAgentIds';
-import type { CapabilityId } from '@/sync/capabilitiesProtocol';
+import { getAgentCore, getAgentCliGlyph } from '@/agents/catalog/catalog';
+import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 type Props = {
     machineId: string;

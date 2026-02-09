@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Metadata } from '../storageTypes';
+import type { Metadata } from '../domains/state/storageTypes';
 import {
     computeAcpPlanModeControl,
     computeAcpSessionModePickerControl,

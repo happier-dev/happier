@@ -1,5 +1,5 @@
-import type { Profile } from '../../profile';
-import { loadProfile, saveProfile } from '../../persistence';
+import type { Profile } from '../../domains/profiles/profile';
+import { loadProfile, saveProfile } from '../../domains/state/persistence';
 
 import type { StoreGet, StoreSet } from './_shared';
 

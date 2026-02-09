@@ -10,9 +10,9 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
-vi.mock('@/components/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
-vi.mock('@/components/MainView', () => ({ MainView: () => null }));
-vi.mock('@/components/RoundButton', () => ({ RoundButton: () => null }));
+vi.mock('@/components/navigation/shell/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
+vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null }));
+vi.mock('@/components/ui/buttons/RoundButton', () => ({ RoundButton: () => null }));
 vi.mock('@shopify/react-native-skia', () => ({}));
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
@@ -36,7 +36,7 @@ vi.mock('react-native', () => ({
     Linking: { openURL },
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
         isAuthenticated: false,
         credentials: null,
@@ -45,7 +45,7 @@ vi.mock('@/auth/AuthContext', () => ({
     }),
 }));
 
-vi.mock('@/sync/pendingTerminalConnect', () => ({
+vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => null,
     setPendingTerminalConnect: vi.fn(),
     clearPendingTerminalConnect: vi.fn(),
@@ -65,7 +65,7 @@ vi.mock('@/encryption/libsodium.lib', () => ({
     },
 }));
 
-vi.mock('@/auth/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getAuthAutoRedirectSuppressedUntil: () => getSuppressedUntilMock(),
         setPendingExternalAuth: () => setPendingExternalAuthMock(),
@@ -94,8 +94,8 @@ const getServerFeaturesMock = vi.fn(async () =>
     }),
 );
 
-vi.mock('@/sync/apiFeatures', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/apiFeatures')>('@/sync/apiFeatures');
+vi.mock('@/sync/api/capabilities/apiFeatures', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/api/capabilities/apiFeatures')>('@/sync/api/capabilities/apiFeatures');
     return {
         ...actual,
         getServerFeatures: getServerFeaturesMock,

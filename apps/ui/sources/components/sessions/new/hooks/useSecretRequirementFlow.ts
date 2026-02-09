@@ -5,9 +5,9 @@ import { shouldAutoPromptSecretRequirement } from '@/utils/secrets/secretRequire
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import { Modal } from '@/modal';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
-import type { AIBackendProfile, SavedSecret } from '@/sync/settings';
-import type { UseMachineEnvPresenceResult } from '@/hooks/useMachineEnvPresence';
-import { getTempData } from '@/utils/tempDataStore';
+import type { AIBackendProfile, SavedSecret } from '@/sync/domains/settings/settings';
+import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
+import { getTempData } from '@/utils/sessions/tempDataStore';
 
 export function useSecretRequirementFlow(params: Readonly<{
     router: { push: (options: any) => void };

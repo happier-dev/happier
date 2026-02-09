@@ -1,5 +1,5 @@
-import { apiSocket } from '@/sync/apiSocket';
-import { createRpcCallError } from '@/sync/rpcErrors';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { createRpcCallError } from '@/sync/runtime/rpcErrors';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   VoiceMediatorCommitResponseSchema,

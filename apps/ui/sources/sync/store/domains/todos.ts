@@ -1,4 +1,4 @@
-import type { TodoState } from '../../../-zen/model/ops';
+import type { TodoState } from '../../domains/todos/todoOps';
 
 import type { StoreGet, StoreSet } from './_shared';
 

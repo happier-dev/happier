@@ -1,11 +1,11 @@
 import * as React from 'react';
 import { ActivityIndicator, FlatList, Platform, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useHeaderHeight } from '@/utils/responsive';
-import { MessageView } from '@/components/MessageView';
-import { ChatFooter } from '@/components/ChatFooter';
-import type { Message } from '@/sync/typesMessage';
-import type { Metadata } from '@/sync/storageTypes';
+import { useHeaderHeight } from '@/utils/platform/responsive';
+import { MessageView } from '@/components/sessions/transcript/MessageView';
+import { ChatFooter } from '@/components/sessions/transcript/ChatFooter';
+import type { Message } from '@/sync/domains/messages/messageTypes';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 type TranscriptInteraction = {
     canSendMessages: boolean;

@@ -1,14 +1,14 @@
-import type { GitStatus, GitWorkingSnapshot, Machine, Session } from '../../storageTypes';
+import type { GitStatus, GitWorkingSnapshot, Machine, Session } from '../../domains/state/storageTypes';
 import { createReducer, reducer } from '../../reducer/reducer';
 import type { NormalizedMessage } from '../../typesRaw';
-import type { SessionListViewItem } from '../../sessionListViewData';
-import { nowServerMs } from '../../time';
-import { loadSessionDrafts, loadSessionLastViewed, loadSessionModelModeUpdatedAts, loadSessionModelModes, loadSessionPermissionModeUpdatedAts, loadSessionPermissionModes, saveSessionDrafts, saveSessionLastViewed, saveSessionModelModeUpdatedAts, saveSessionModelModes, saveSessionPermissionModeUpdatedAts, saveSessionPermissionModes } from '../../persistence';
-import { projectManager } from '../../projectManager';
+import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
+import { nowServerMs } from '../../runtime/time';
+import { loadSessionDrafts, loadSessionLastViewed, loadSessionModelModeUpdatedAts, loadSessionModelModes, loadSessionPermissionModeUpdatedAts, loadSessionPermissionModes, saveSessionDrafts, saveSessionLastViewed, saveSessionModelModeUpdatedAts, saveSessionModelModes, saveSessionPermissionModeUpdatedAts, saveSessionPermissionModes } from '../../domains/state/persistence';
+import { projectManager } from '../../runtime/orchestration/projectManager';
 import { getCurrentRealtimeSessionId, getVoiceSession } from '@/realtime/RealtimeSession';
-import { isModelMode, type PermissionMode } from '@/sync/permissionTypes';
-import { isModelSelectableForSession } from '@/sync/modelOptions';
-import { resolveAgentIdFromFlavor } from '@/agents/catalog';
+import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
+import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { parsePermissionIntentAlias, resolveMetadataStringOverrideV1, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
@@ -17,9 +17,9 @@ import type { StoreGet, StoreSet } from './_shared';
 import type { SessionMessages } from './messages';
 
 type SessionModelMode = NonNullable<Session['modelMode']>;
-type GitOperationLogEntry = import('../../projectManager').GitProjectOperationLogEntry;
-type GitInFlightOperation = import('../../projectManager').GitProjectInFlightOperation;
-type BeginGitOperationResult = import('../../projectManager').BeginGitProjectOperationResult;
+type GitOperationLogEntry = import('../../runtime/orchestration/projectManager').GitProjectOperationLogEntry;
+type GitInFlightOperation = import('../../runtime/orchestration/projectManager').GitProjectInFlightOperation;
+type BeginGitOperationResult = import('../../runtime/orchestration/projectManager').BeginGitProjectOperationResult;
 
 export type SessionsDomain = {
     sessions: Record<string, Session>;
@@ -43,9 +43,9 @@ export type SessionsDomain = {
     updateSessionPermissionMode: (sessionId: string, mode: PermissionMode) => void;
     updateSessionModelMode: (sessionId: string, mode: SessionModelMode) => void;
 
-    getProjects: () => import('../../projectManager').Project[];
-    getProject: (projectId: string) => import('../../projectManager').Project | null;
-    getProjectForSession: (sessionId: string) => import('../../projectManager').Project | null;
+    getProjects: () => import('../../runtime/orchestration/projectManager').Project[];
+    getProject: (projectId: string) => import('../../runtime/orchestration/projectManager').Project | null;
+    getProjectForSession: (sessionId: string) => import('../../runtime/orchestration/projectManager').Project | null;
     getProjectSessions: (projectId: string) => string[];
 
     getProjectGitStatus: (projectId: string) => GitStatus | null;
@@ -65,7 +65,7 @@ export type SessionsDomain = {
     getSessionProjectGitInFlightOperation: (sessionId: string) => GitInFlightOperation | null;
     beginSessionProjectGitOperation: (
         sessionId: string,
-        operation: import('../../projectManager').GitProjectOperationKind,
+        operation: import('../../runtime/orchestration/projectManager').GitProjectOperationKind,
     ) => BeginGitOperationResult;
     finishSessionProjectGitOperation: (sessionId: string, operationId: string) => boolean;
 
@@ -693,7 +693,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             projectManager.getSessionProjectGitInFlightOperation(sessionId),
         beginSessionProjectGitOperation: (
             sessionId: string,
-            operation: import('../../projectManager').GitProjectOperationKind,
+            operation: import('../../runtime/orchestration/projectManager').GitProjectOperationKind,
         ) => {
             const result = projectManager.beginSessionProjectGitOperation(sessionId, operation);
             if (result.started || result.reason === 'operation_in_flight') {

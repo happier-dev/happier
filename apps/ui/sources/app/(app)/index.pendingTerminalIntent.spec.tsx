@@ -7,14 +7,14 @@ import { t } from '@/text';
 
 vi.mock('react-native-reanimated', () => ({}));
 vi.mock('react-native-typography', () => ({ iOSUIKit: { title3: {} } }));
-vi.mock('@/components/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
-vi.mock('@/components/MainView', () => ({ MainView: () => null }));
+vi.mock('@/components/navigation/shell/HomeHeader', () => ({ HomeHeaderNotAuth: () => null }));
+vi.mock('@/components/navigation/shell/MainView', () => ({ MainView: () => null }));
 vi.mock('@shopify/react-native-skia', () => ({}));
 vi.mock('react-native-safe-area-context', () => ({
     useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
         isAuthenticated: false,
         credentials: null,
@@ -23,8 +23,8 @@ vi.mock('@/auth/AuthContext', () => ({
     }),
 }));
 
-vi.mock('@/sync/apiFeatures', async () => {
-    const actual = await vi.importActual<any>('@/sync/apiFeatures');
+vi.mock('@/sync/api/capabilities/apiFeatures', async () => {
+    const actual = await vi.importActual<any>('@/sync/api/capabilities/apiFeatures');
     return {
         ...actual,
         getServerFeatures: async () => ({
@@ -51,7 +51,7 @@ vi.mock('@/sync/apiFeatures', async () => {
     };
 });
 
-vi.mock('@/sync/pendingTerminalConnect', () => ({
+vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => ({ publicKeyB64Url: 'abc123', serverUrl: 'https://company.example.test' }),
     setPendingTerminalConnect: vi.fn(),
     clearPendingTerminalConnect: vi.fn(),

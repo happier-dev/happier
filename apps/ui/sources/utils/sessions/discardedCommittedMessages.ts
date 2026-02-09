@@ -1,4 +1,4 @@
-import type { Metadata } from '@/sync/storageTypes';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 export function isCommittedMessageDiscarded(metadata: Metadata | null, localId: string | null): boolean {
   if (!metadata) return false;

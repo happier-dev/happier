@@ -1,5 +1,5 @@
-import { getActiveServerSnapshot } from '../serverRuntime';
-import type { SessionListViewItem } from '../sessionListViewData';
+import { getActiveServerSnapshot } from '../domains/server/serverRuntime';
+import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
 
 export function setServerSessionListCache(
     current: Record<string, SessionListViewItem[] | null>,

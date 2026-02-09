@@ -13,19 +13,19 @@ import {
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/hooks/useOAuthProviderConfigured', () => ({
+vi.mock('@/hooks/server/useOAuthProviderConfigured', () => ({
     useOAuthProviderConfigured: () => true,
 }));
 
-vi.mock('@/hooks/useFriendsAllowUsernameSupport', () => ({
+vi.mock('@/hooks/server/useFriendsAllowUsernameSupport', () => ({
     useFriendsAllowUsernameSupport: () => false,
 }));
 
-vi.mock('@/hooks/useFriendsRequiredIdentityProviderId', () => ({
+vi.mock('@/hooks/server/useFriendsRequiredIdentityProviderId', () => ({
     useFriendsRequiredIdentityProviderId: () => 'fake',
 }));
 
-vi.mock('@/hooks/useFriendsIdentityReadiness', () => ({
+vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     useFriendsIdentityReadiness: () => ({
         isReady: false,
         isLoadingFeatures: false,
@@ -46,7 +46,7 @@ vi.mock('@/hooks/useFriendsIdentityReadiness', () => ({
     }),
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ credentials: { token: 't', secret: 's' } }),
 }));
 
@@ -67,18 +67,18 @@ vi.mock('@/auth/providers/registry', () => {
     };
 });
 
-vi.mock('@/auth/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         setPendingExternalConnect: async () => {},
     },
 }));
 
-vi.mock('@/sync/apiUsername', () => ({
+vi.mock('@/sync/api/account/apiUsername', () => ({
     setAccountUsername: async () => ({ username: 'x' }),
 }));
 
-vi.mock('@/utils/errors', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/utils/errors')>();
+vi.mock('@/utils/errors/errors', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/utils/errors/errors')>();
     return { ...actual };
 });
 
@@ -110,7 +110,7 @@ const hoistedStorage = vi.hoisted(() => {
     return { storage };
 });
 
-vi.mock('@/sync/storageStore', () => ({
+vi.mock('@/sync/domains/state/storageStore', () => ({
     storage: hoistedStorage.storage,
 }));
 

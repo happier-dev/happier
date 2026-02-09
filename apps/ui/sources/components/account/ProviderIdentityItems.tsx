@@ -5,19 +5,19 @@ import { Image } from 'expo-image';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Item } from '@/components/ui/lists/Item';
-import { Switch } from '@/components/Switch';
-import type { Profile } from '@/sync/profile';
-import { getLinkedProvider } from '@/sync/profile';
-import { useHappyAction } from '@/hooks/useHappyAction';
+import { Switch } from '@/components/ui/forms/Switch';
+import type { Profile } from '@/sync/domains/profiles/profile';
+import { getLinkedProvider } from '@/sync/domains/profiles/profile';
+import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
-import { HappyError } from '@/utils/errors';
-import { setAccountIdentityShowOnProfile } from '@/sync/apiIdentity';
-import { storage } from '@/sync/storageStore';
-import { TokenStorage, type AuthCredentials } from '@/auth/tokenStorage';
+import { HappyError } from '@/utils/errors/errors';
+import { setAccountIdentityShowOnProfile } from '@/sync/api/account/apiIdentity';
+import { storage } from '@/sync/domains/state/storageStore';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { authProviderRegistry, normalizeProviderId } from '@/auth/providers/registry';
-import { useOAuthProviderConfigured } from '@/hooks/useOAuthProviderConfigured';
+import { useOAuthProviderConfigured } from '@/hooks/server/useOAuthProviderConfigured';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 
 type ProviderIdentityItemsProps = Readonly<{

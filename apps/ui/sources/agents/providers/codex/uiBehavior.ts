@@ -1,9 +1,9 @@
-import { buildAcpLoadSessionPrefetchRequest, readAcpLoadSessionSupport, shouldPrefetchAcpCapabilities } from '@/agents/acpRuntimeResume';
-import type { ResumeCapabilityOptions } from '@/agents/resumeCapabilities';
+import { buildAcpLoadSessionPrefetchRequest, readAcpLoadSessionSupport, shouldPrefetchAcpCapabilities } from '@/agents/runtime/acpRuntimeResume';
+import type { ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import { getCodexAcpDepData } from '@/capabilities/codexAcpDep';
 import { getCodexMcpResumeDepData } from '@/capabilities/codexMcpResume';
 import { resumeChecklistId } from '@happier-dev/protocol/checklists';
-import type { CapabilitiesDetectRequest } from '@/sync/capabilitiesProtocol';
+import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 import type {
     AgentResumeExperiments,
@@ -12,7 +12,7 @@ import type {
     NewSessionPreflightIssue,
     NewSessionRelevantInstallableDepsContext,
     ResumePreflightContext,
-} from '@/agents/registryUiBehavior';
+} from '@/agents/registry/registryUiBehavior';
 
 const CODEX_SWITCH_RESUME_MCP = 'resumeMcp';
 const CODEX_SWITCH_RESUME_ACP = 'resumeAcp';

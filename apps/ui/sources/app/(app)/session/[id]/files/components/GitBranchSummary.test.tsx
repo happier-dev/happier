@@ -14,7 +14,7 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/components/StyledText', () => ({
+vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 

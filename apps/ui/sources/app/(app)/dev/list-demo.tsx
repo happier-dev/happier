@@ -3,7 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Switch } from '@/components/Switch';
+import { Switch } from '@/components/ui/forms/Switch';
 
 export default function ListDemoScreen() {
     const [isEnabled, setIsEnabled] = React.useState(false);

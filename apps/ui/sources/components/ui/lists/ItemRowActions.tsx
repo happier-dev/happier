@@ -5,7 +5,7 @@ import Color from 'color';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { type ItemAction } from '@/components/ui/lists/itemActions';
 import { Popover } from '@/components/ui/popover';
-import { FloatingOverlay } from '@/components/FloatingOverlay';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { ActionListSection, type ActionListItem } from '@/components/ui/lists/ActionListSection';
 
 export interface ItemRowActionsProps {

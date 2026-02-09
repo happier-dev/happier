@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { ScrollView } from 'react-native';
 
-import { Text } from '@/components/StyledText';
-import { SimpleSyntaxHighlighter } from '@/components/SimpleSyntaxHighlighter';
+import { Text } from '@/components/ui/text/StyledText';
+import { SimpleSyntaxHighlighter } from '@/components/ui/media/SimpleSyntaxHighlighter';
 import { GitDiffDisplay } from '@/components/git/diff/GitDiffDisplay';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';

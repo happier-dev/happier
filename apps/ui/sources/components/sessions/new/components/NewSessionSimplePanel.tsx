@@ -3,7 +3,7 @@ import type { ViewStyle } from 'react-native';
 import { Platform, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SessionTypeSelectorRows } from '@/components/SessionTypeSelector';
+import { SessionTypeSelectorRows } from '@/components/ui/forms/SessionTypeSelector';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';

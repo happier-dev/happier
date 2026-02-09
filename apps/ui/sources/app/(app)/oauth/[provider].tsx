@@ -2,15 +2,15 @@ import React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 
-import { useAuth } from '@/auth/AuthContext';
+import { useAuth } from '@/auth/context/AuthContext';
 import { Modal } from '@/modal';
-import { HappyError } from '@/utils/errors';
+import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
-import { TokenStorage } from '@/auth/tokenStorage';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
-import { authChallenge } from '@/auth/authChallenge';
+import { authChallenge } from '@/auth/flows/challenge';
 import { serverFetch } from '@/sync/http/client';
-import { isSessionSharingSupported } from '@/sync/apiFeatures';
+import { isSessionSharingSupported } from '@/sync/api/capabilities/apiFeatures';
 import { getAuthProvider } from '@/auth/providers/registry';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
 

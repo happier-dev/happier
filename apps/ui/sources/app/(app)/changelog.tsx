@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { getChangelogEntries, getLatestVersion, setLastViewedVersion } from '@/changelog';
 import { Typography } from '@/constants/Typography';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 
 const styles = StyleSheet.create((theme, runtime) => ({

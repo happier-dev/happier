@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 

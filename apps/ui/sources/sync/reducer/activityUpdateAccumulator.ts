@@ -1,4 +1,4 @@
-import type { ApiEphemeralActivityUpdate } from '../apiTypes';
+import type { ApiEphemeralActivityUpdate } from '../api/types/apiTypes';
 
 export class ActivityUpdateAccumulator {
     private pendingUpdates = new Map<string, ApiEphemeralActivityUpdate>();

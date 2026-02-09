@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 
-import { FileIcon } from '@/components/FileIcon';
-import { Text } from '@/components/StyledText';
+import { FileIcon } from '@/components/ui/media/FileIcon';
+import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 
 type FileHeaderProps = {

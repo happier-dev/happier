@@ -12,11 +12,11 @@ vi.mock('react-native', () => ({
     View: 'View',
 }));
 
-vi.mock('@/components/FileIcon', () => ({
+vi.mock('@/components/ui/media/FileIcon', () => ({
     FileIcon: 'FileIcon',
 }));
 
-vi.mock('@/components/StyledText', () => ({
+vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 

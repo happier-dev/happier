@@ -1,17 +1,17 @@
-import type { TodoState } from '@/-zen/model/ops';
+import type { TodoState } from '@/sync/domains/todos/todoOps';
 
-import type { DecryptedArtifact } from '../artifactTypes';
-import type { FeedItem } from '../feedTypes';
-import type { RelationshipUpdatedEvent, UserProfile } from '../friendTypes';
-import type { LocalSettings } from '../localSettings';
-import type { PendingMessage, Session, Machine, GitStatus, GitWorkingSnapshot, DiscardedPendingMessage } from '../storageTypes';
+import type { DecryptedArtifact } from '../domains/artifacts/artifactTypes';
+import type { FeedItem } from '../domains/social/feedTypes';
+import type { RelationshipUpdatedEvent, UserProfile } from '../domains/social/friendTypes';
+import type { LocalSettings } from '../domains/settings/localSettings';
+import type { PendingMessage, Session, Machine, GitStatus, GitWorkingSnapshot, DiscardedPendingMessage } from '../domains/state/storageTypes';
 import type { NormalizedMessage } from '../typesRaw';
-import type { PermissionMode } from '../permissionTypes';
-import type { Profile } from '../profile';
-import type { Purchases } from '../purchases';
-import type { Settings } from '../settings';
-import type { SessionListViewItem } from '../sessionListViewData';
-import type { CustomerInfo } from '../revenueCat/types';
+import type { PermissionMode } from '../domains/permissions/permissionTypes';
+import type { Profile } from '../domains/profiles/profile';
+import type { Purchases } from '../domains/purchases/purchases';
+import type { Settings } from '../domains/settings/settings';
+import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
+import type { CustomerInfo } from '../domains/purchases/types';
 import type { SessionMessages } from './domains/messages';
 import type { SessionPending } from './domains/pending';
 import type { NativeUpdateStatus, RealtimeMode, RealtimeStatus, SocketStatus, SyncError } from './domains/realtime';
@@ -118,9 +118,9 @@ export interface ArtifactsDomainSlice {
 }
 
 export interface ProjectDomainSlice {
-    getProjects: () => import('../projectManager').Project[];
-    getProject: (projectId: string) => import('../projectManager').Project | null;
-    getProjectForSession: (sessionId: string) => import('../projectManager').Project | null;
+    getProjects: () => import('../runtime/orchestration/projectManager').Project[];
+    getProject: (projectId: string) => import('../runtime/orchestration/projectManager').Project | null;
+    getProjectForSession: (sessionId: string) => import('../runtime/orchestration/projectManager').Project | null;
     getProjectSessions: (projectId: string) => string[];
     getProjectGitStatus: (projectId: string) => GitStatus | null;
     getSessionProjectGitStatus: (sessionId: string) => GitStatus | null;
@@ -131,16 +131,16 @@ export interface ProjectDomainSlice {
     getSessionProjectGitTouchedPaths: (sessionId: string) => string[];
     markSessionProjectGitTouchedPaths: (sessionId: string, paths: string[]) => void;
     pruneSessionProjectGitTouchedPaths: (sessionId: string, activePaths: Set<string>) => void;
-    getSessionProjectGitOperationLog: (sessionId: string) => import('../projectManager').GitProjectOperationLogEntry[];
+    getSessionProjectGitOperationLog: (sessionId: string) => import('../runtime/orchestration/projectManager').GitProjectOperationLogEntry[];
     appendSessionProjectGitOperation: (
         sessionId: string,
-        entry: Omit<import('../projectManager').GitProjectOperationLogEntry, 'id' | 'sessionId'>,
+        entry: Omit<import('../runtime/orchestration/projectManager').GitProjectOperationLogEntry, 'id' | 'sessionId'>,
     ) => void;
-    getSessionProjectGitInFlightOperation: (sessionId: string) => import('../projectManager').GitProjectInFlightOperation | null;
+    getSessionProjectGitInFlightOperation: (sessionId: string) => import('../runtime/orchestration/projectManager').GitProjectInFlightOperation | null;
     beginSessionProjectGitOperation: (
         sessionId: string,
-        operation: import('../projectManager').GitProjectOperationKind,
-    ) => import('../projectManager').BeginGitProjectOperationResult;
+        operation: import('../runtime/orchestration/projectManager').GitProjectOperationKind,
+    ) => import('../runtime/orchestration/projectManager').BeginGitProjectOperationResult;
     finishSessionProjectGitOperation: (sessionId: string, operationId: string) => boolean;
 }
 

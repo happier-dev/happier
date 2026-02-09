@@ -1,4 +1,4 @@
-import type { GitWorkingSnapshot } from '@/sync/storageTypes';
+import type { GitWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 export type GitStatusSummary = {
     branch: string | null;

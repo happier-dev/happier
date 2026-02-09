@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { View, ScrollView, ActivityIndicator, Platform, Pressable } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { GitDiffDisplay } from '@/components/git/diff/GitDiffDisplay';
 import { Typography } from '@/constants/Typography';
 import { sessionGitCommitRevert, sessionGitDiffCommit } from '@/sync/ops';
-import { storage, useSessionProjectGitInFlightOperation, useSessionProjectGitSnapshot, useSetting } from '@/sync/storage';
+import { storage, useSessionProjectGitInFlightOperation, useSessionProjectGitSnapshot, useSetting } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 import { gitStatusSync } from '@/sync/git/gitStatusSync';
 import { canRevertFromSnapshot } from '@/sync/git/operations/safety';

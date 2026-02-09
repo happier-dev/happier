@@ -1,4 +1,4 @@
-import type { ToolCall } from '../../typesMessage';
+import type { ToolCall } from '../../domains/messages/messageTypes';
 import type { TracedMessage } from '../reducerTracer';
 import type { ReducerMessage, ReducerState } from '../reducer';
 import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultIfMissing, mergeStreamingChunkIntoResult } from '../helpers/streamingToolResult';

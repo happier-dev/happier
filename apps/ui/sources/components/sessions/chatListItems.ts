@@ -1,5 +1,5 @@
-import type { PendingMessage } from '@/sync/storageTypes';
-import type { Message } from '@/sync/typesMessage';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 
 export type ChatListItem =
     | {

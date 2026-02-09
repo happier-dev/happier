@@ -1,10 +1,10 @@
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { t } from '@/text';
-import type { AgentId } from '@/agents/catalog';
-import { getAgentCore } from '@/agents/catalog';
+import type { AgentId } from '@/agents/catalog/catalog';
+import { getAgentCore } from '@/agents/catalog/catalog';
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
-import { hapticsLight } from '@/components/haptics';
+import { hapticsLight } from '@/components/ui/theme/haptics';
 import { formatResumeChipLabel, RESUME_CHIP_ICON_NAME, RESUME_CHIP_ICON_SIZE } from './ResumeChip';
 
 export function buildAgentInputActionMenuActions(opts: {

@@ -8,7 +8,7 @@ afterEach(() => {
 
 describe('serverFetch abort handling', () => {
     it('aborts in-flight requests when abortServerFetches is called', async () => {
-        vi.doMock('../serverRuntime', () => ({
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => ({
                 serverId: 'server-a',
                 serverUrl: 'https://api.example.test',
@@ -16,7 +16,7 @@ describe('serverFetch abort handling', () => {
                 generation: 1,
             }),
         }));
-        vi.doMock('@/auth/tokenStorage', () => ({
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
             TokenStorage: {
                 getCredentials: vi.fn(async () => null),
             },
@@ -52,7 +52,7 @@ describe('serverFetch abort handling', () => {
     });
 
     it('rejects authenticated absolute-URL requests that target a different host than the active server', async () => {
-        vi.doMock('../serverRuntime', () => ({
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => ({
                 serverId: 'server-a',
                 serverUrl: 'https://api.example.test',
@@ -60,7 +60,7 @@ describe('serverFetch abort handling', () => {
                 generation: 1,
             }),
         }));
-        vi.doMock('@/auth/tokenStorage', () => ({
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
             TokenStorage: {
                 getCredentials: vi.fn(async () => ({ token: 'token-a', secret: 'secret-a' })),
             },

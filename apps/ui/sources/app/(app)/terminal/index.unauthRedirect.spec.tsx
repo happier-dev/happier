@@ -16,21 +16,21 @@ vi.mock('expo-router', () => ({
     useLocalSearchParams: () => ({ key: 'abc123', server: 'https://example.test' }),
 }));
 
-vi.mock('@/hooks/useConnectTerminal', () => ({
+vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ processAuthUrl: vi.fn(async () => {}), isLoading: false }),
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: false, credentials: null }),
 }));
 
-vi.mock('@/sync/pendingTerminalConnect', () => ({
+vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     setPendingTerminalConnect: (...args: any[]) => setPendingMock(...args),
     clearPendingTerminalConnect: vi.fn(),
     getPendingTerminalConnect: () => null,
 }));
 
-vi.mock('@/sync/serverConfig', () => ({
+vi.mock('@/sync/domains/server/serverConfig', () => ({
     getServerUrl: () => 'https://api.happier.dev',
 }));
 
@@ -38,7 +38,7 @@ vi.mock('react-native', () => ({
     View: 'View',
 }));
 
-vi.mock('@/components/StyledText', () => ({
+vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 
@@ -56,7 +56,7 @@ vi.mock('react-native-unistyles', () => ({
     }),
 }));
 
-vi.mock('@/components/RoundButton', () => ({
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: () => null,
 }));
 

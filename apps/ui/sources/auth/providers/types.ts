@@ -1,4 +1,4 @@
-import type { AuthCredentials } from '@/auth/tokenStorage';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { AuthProviderId } from '@happier-dev/protocol';
 
 export type AuthProvider = Readonly<{

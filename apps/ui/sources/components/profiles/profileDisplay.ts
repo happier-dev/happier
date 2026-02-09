@@ -1,5 +1,5 @@
-import type { AIBackendProfile } from '@/sync/settings';
-import { getBuiltInProfileNameKey } from '@/sync/profileUtils';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
+import { getBuiltInProfileNameKey } from '@/sync/domains/profiles/profileUtils';
 import { t } from '@/text';
 
 export function getProfileDisplayName(profile: Pick<AIBackendProfile, 'id' | 'name' | 'isBuiltIn'>): string {

@@ -1,8 +1,8 @@
-import type { AIBackendProfile } from '@/sync/settings';
-import { buildProfileGroups, type ProfileGroups } from '@/sync/profileGrouping';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
+import { buildProfileGroups, type ProfileGroups } from '@/sync/domains/profiles/profileGrouping';
 import { t } from '@/text';
-import { getAgentCore, type AgentId } from '@/agents/catalog';
-import { isProfileCompatibleWithAgent } from '@/sync/settings';
+import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
+import { isProfileCompatibleWithAgent } from '@/sync/domains/settings/settings';
 
 export interface ProfileListStrings {
     builtInLabel: string;

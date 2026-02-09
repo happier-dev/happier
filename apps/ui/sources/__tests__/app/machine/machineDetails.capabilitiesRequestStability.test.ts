@@ -93,7 +93,7 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
 }));
 
-vi.mock('@/components/MultiTextInput', () => ({
+vi.mock('@/components/ui/forms/MultiTextInput', () => ({
     MultiTextInput: () => null,
 }));
 
@@ -101,7 +101,7 @@ vi.mock('@/components/machines/DetectedClisList', () => ({
     DetectedClisList: () => null,
 }));
 
-vi.mock('@/components/Switch', () => ({
+vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: () => null,
 }));
 
@@ -109,7 +109,7 @@ vi.mock('@/modal', () => {
     return { Modal: { alert: vi.fn(), confirm: vi.fn(), prompt: vi.fn(), show: vi.fn() } };
 });
 
-vi.mock('@/sync/storage', () => {
+vi.mock('@/sync/domains/state/storage', () => {
     const React = require('react');
     return {
         storage: { getState: () => ({ applyFriends: vi.fn() }) },
@@ -135,11 +135,11 @@ vi.mock('@/sync/storage', () => {
     };
 });
 
-vi.mock('@/hooks/useNavigateToSession', () => {
+vi.mock('@/hooks/session/useNavigateToSession', () => {
     return { useNavigateToSession: () => () => {} };
 });
 
-vi.mock('@/hooks/useMachineCapabilitiesCache', () => {
+vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => {
     type UseMachineCapabilitiesParams = {
         request: Record<string, unknown>;
     };
@@ -164,11 +164,11 @@ vi.mock('@/sync/sync', () => {
     return { sync: { refreshMachines: vi.fn(), retryNow: vi.fn() } };
 });
 
-vi.mock('@/utils/machineUtils', () => {
+vi.mock('@/utils/sessions/machineUtils', () => {
     return { isMachineOnline: () => true };
 });
 
-vi.mock('@/utils/sessionUtils', () => {
+vi.mock('@/utils/sessions/sessionUtils', () => {
     return {
         formatPathRelativeToHome: () => '',
         getSessionName: () => '',
@@ -176,11 +176,11 @@ vi.mock('@/utils/sessionUtils', () => {
     };
 });
 
-vi.mock('@/utils/pathUtils', () => {
+vi.mock('@/utils/path/pathUtils', () => {
     return { resolveAbsolutePath: () => '' };
 });
 
-vi.mock('@/sync/terminalSettings', () => {
+vi.mock('@/sync/domains/settings/terminalSettings', () => {
     return { resolveTerminalSpawnOptions: () => ({}) };
 });
 

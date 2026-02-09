@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { TodoView } from "@/-zen/components/TodoView";
+import { TodoView } from "@/components/zen/views/TodoView";
 import { Button, ScrollView, TextInput, View } from "react-native";
 import { randomUUID } from '@/platform/randomUUID';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { layout } from '@/components/layout';
-import { TodoList } from '@/-zen/components/TodoList';
+import { layout } from '@/components/ui/layout/layout';
+import { TodoList } from '@/components/zen/lists/TodoList';
 
 export default function TodoDemoScreen() {
 

@@ -3,7 +3,7 @@ import { Pressable, Text, View, Platform } from 'react-native';
 import { Stack, useRouter, useLocalSearchParams, useNavigation } from 'expo-router';
 import { CommonActions } from '@react-navigation/native';
 import { Typography } from '@/constants/Typography';
-import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/storage';
+import { useAllMachines, useSessions, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -11,8 +11,8 @@ import { MachineSelector } from '@/components/sessions/new/components/MachineSel
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
 import { Ionicons } from '@expo/vector-icons';
 import { sync } from '@/sync/sync';
-import { prefetchMachineCapabilities } from '@/hooks/useMachineCapabilitiesCache';
-import { invalidateMachineEnvPresence } from '@/hooks/useMachineEnvPresence';
+import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
+import { invalidateMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { HeaderTitleWithAction } from '@/components/navigation/HeaderTitleWithAction';
 

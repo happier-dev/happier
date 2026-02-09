@@ -3,7 +3,7 @@ import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-rout
 import { Platform, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 
-import { useSettingMutable } from '@/sync/storage';
+import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { SecretsList } from '@/components/secrets/SecretsList';
 import { useUnistyles } from 'react-native-unistyles';

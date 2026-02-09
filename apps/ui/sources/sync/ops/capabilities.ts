@@ -2,7 +2,7 @@
  * Capability probe operations (machine RPC)
  */
 
-import { apiSocket } from '../apiSocket';
+import { apiSocket } from '../api/session/apiSocket';
 import { isPlainObject } from './_shared';
 import { RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 import {
@@ -14,7 +14,7 @@ import {
     type CapabilitiesDetectResponse,
     type CapabilitiesInvokeRequest,
     type CapabilitiesInvokeResponse,
-} from '../capabilitiesProtocol';
+} from '../api/capabilities/capabilitiesProtocol';
 
 export type {
     CapabilitiesDescribeResponse,
@@ -22,7 +22,7 @@ export type {
     CapabilitiesDetectResponse,
     CapabilitiesInvokeRequest,
     CapabilitiesInvokeResponse,
-} from '../capabilitiesProtocol';
+} from '../api/capabilities/capabilitiesProtocol';
 
 export type MachineCapabilitiesDescribeResult =
     | { supported: true; response: CapabilitiesDescribeResponse }

@@ -4,8 +4,8 @@ import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { useSettingMutable, useLocalSettingMutable } from '@/sync/storage';
-import { Switch } from '@/components/Switch';
+import { useSettingMutable, useLocalSettingMutable } from '@/sync/domains/state/storage';
+import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
 
 export default React.memo(function FeaturesSettingsScreen() {

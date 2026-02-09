@@ -1,4 +1,4 @@
-import type { AgentUiBehavior } from '@/agents/registryUiBehavior';
+import type { AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 
 import { applyAuggieAllowIndexingEnv, AUGGIE_NEW_SESSION_OPTION_ALLOW_INDEXING } from './indexing';
 

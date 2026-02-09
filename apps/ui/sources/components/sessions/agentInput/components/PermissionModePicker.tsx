@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, Text, View } from 'react-native';
 
-import type { PermissionMode } from '@/sync/permissionTypes';
+import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 
 export type PermissionModePickerOption = Readonly<{
     value: PermissionMode;

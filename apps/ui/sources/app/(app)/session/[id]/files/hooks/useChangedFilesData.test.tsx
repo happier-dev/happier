@@ -2,7 +2,7 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
 
-import type { GitWorkingSnapshot } from '@/sync/storageTypes';
+import type { GitWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 import { useChangedFilesData, type UseChangedFilesDataResult } from './useChangedFilesData';
 

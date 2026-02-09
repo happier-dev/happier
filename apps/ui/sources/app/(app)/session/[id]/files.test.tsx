@@ -46,7 +46,7 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('@/components/StyledText', () => ({
+vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 
@@ -54,7 +54,7 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement('ItemList', null, children),
 }));
 
-vi.mock('@/components/layout', () => ({
+vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 999 },
 }));
 
@@ -80,11 +80,11 @@ vi.mock('@/sync/git/gitStatusSync', () => ({
     },
 }));
 
-vi.mock('@/sync/suggestionFile', () => ({
+vi.mock('@/sync/domains/input/suggestionFile', () => ({
     searchFiles: vi.fn(async () => []),
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: () => ({
             sessions: {

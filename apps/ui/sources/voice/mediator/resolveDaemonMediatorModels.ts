@@ -1,6 +1,6 @@
-import { describeEffectiveModelMode } from '@/sync/describeEffectiveModelMode';
-import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog';
-import type { Session } from '@/sync/storageTypes';
+import { describeEffectiveModelMode } from '@/sync/domains/models/describeEffectiveModelMode';
+import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 export function resolveDaemonVoiceMediatorModelIds(params: {
     session: Session;

@@ -1,5 +1,5 @@
 import { getVoiceSession, isVoiceSessionStarted } from '@/realtime/RealtimeSession';
-import { storage } from '@/sync/storage';
+import { storage } from '@/sync/domains/state/storage';
 import { appendLocalVoiceMediatorContextUpdate, isLocalVoiceMediatorActive } from '@/voice/local/localVoiceEngine';
 import type { VoiceContextSink } from './VoiceContextSink';
 

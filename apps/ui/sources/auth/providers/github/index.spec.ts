@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { AuthCredentials } from '@/auth/tokenStorage';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 
-vi.mock('@/sync/serverConfig', () => ({
+vi.mock('@/sync/domains/server/serverConfig', () => ({
     getServerUrl: () => 'https://server.test',
 }));
 
-vi.mock('@/utils/time', () => ({
+vi.mock('@/utils/timing/time', () => ({
     backoff: async <T>(fn: () => Promise<T>) => await fn(),
 }));
 

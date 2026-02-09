@@ -17,7 +17,7 @@ const {
     trackingCapture: vi.fn(),
 }));
 
-vi.mock('@/sync/apiSocket', () => ({
+vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
         sessionRPC: mockSessionRPC,
     },
@@ -54,8 +54,8 @@ vi.mock('@/track', () => ({
 }));
 
 import { sessionGitStatusSnapshot } from '@/sync/ops';
-import { projectManager } from '@/sync/projectManager';
-import { storage } from '@/sync/storage';
+import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import { storage } from '@/sync/domains/state/storage';
 import { createGitSessionRpcHarness, git, initRepo } from '@/sync/ops/__tests__/gitRepoHarness';
 import { useFileGitStageActions } from './useFileGitStageActions';
 

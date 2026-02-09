@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View, Text, ScrollView } from 'react-native';
-import { MultiTextInput, KeyPressEvent } from '@/components/MultiTextInput';
+import { MultiTextInput, KeyPressEvent } from '@/components/ui/forms/MultiTextInput';
 import { Typography } from '@/constants/Typography';
 
 export default function MultiTextInputDemo() {

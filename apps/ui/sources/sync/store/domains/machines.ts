@@ -1,6 +1,6 @@
-import type { Machine, Session } from '../../storageTypes';
-import type { Settings } from '../../settings';
-import type { SessionListViewItem } from '../../sessionListViewData';
+import type { Machine, Session } from '../../domains/state/storageTypes';
+import type { Settings } from '../../domains/settings/settings';
+import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
 

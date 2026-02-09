@@ -1,6 +1,6 @@
 import React from 'react';
 import { View } from 'react-native';
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 interface UsageBarProps {

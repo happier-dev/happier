@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 let snapshotMock: any = null;
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSessionProjectGitSnapshot: () => snapshotMock,
 }));
 

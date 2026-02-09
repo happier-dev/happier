@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { AIBackendProfile } from '@/sync/settings';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
 import { getProfileBackendSubtitle, getProfileSubtitle } from '@/components/profiles/profileListModel';
 
 vi.mock('@/text', () => ({

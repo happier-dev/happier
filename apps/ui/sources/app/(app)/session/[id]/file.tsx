@@ -9,10 +9,10 @@ import {
     sessionGitDiffFile,
     sessionReadFile,
 } from '@/sync/ops';
-import { storage, useSessionProjectGitInFlightOperation, useSessionProjectGitSnapshot, useSetting } from '@/sync/storage';
+import { storage, useSessionProjectGitInFlightOperation, useSessionProjectGitSnapshot, useSetting } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 import { decodeBase64 } from '@/encryption/base64';
 import { buildFileLineSelectionFingerprint, canUseLineSelection } from '@/sync/git/gitLineSelection';

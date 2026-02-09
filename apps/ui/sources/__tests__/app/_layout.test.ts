@@ -129,7 +129,7 @@ vi.mock('expo-router', () => {
     };
 });
 
-vi.mock('@/auth/AuthContext', () => {
+vi.mock('@/auth/context/AuthContext', () => {
     const React = require('react');
     return {
         useAuth: () => {
@@ -139,7 +139,7 @@ vi.mock('@/auth/AuthContext', () => {
     };
 });
 
-vi.mock('@/auth/authRouting', () => {
+vi.mock('@/auth/routing/authRouting', () => {
     return {
         isPublicRouteForUnauthenticated: () => false,
     };
@@ -163,7 +163,7 @@ vi.mock('react-native-unistyles', () => {
     };
 });
 
-vi.mock('@/utils/platform', () => {
+vi.mock('@/utils/platform/platform', () => {
     return { isRunningOnMac: () => false };
 });
 

@@ -3,19 +3,19 @@ import { View, Text, Pressable } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { t } from '@/text';
-import { StatusDot } from '@/components/StatusDot';
+import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Popover } from '@/components/ui/popover';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
-import { FloatingOverlay } from '@/components/FloatingOverlay';
-import { useSocketStatus, useSyncError, useLastSyncAt } from '@/sync/storage';
-import { getServerUrl } from '@/sync/serverConfig';
-import { getActiveServerId, listServerProfiles, setActiveServerId } from '@/sync/serverProfiles';
-import { useAuth } from '@/auth/AuthContext';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
+import { useSocketStatus, useSyncError, useLastSyncAt } from '@/sync/domains/state/storage';
+import { getServerUrl } from '@/sync/domains/server/serverConfig';
+import { getActiveServerId, listServerProfiles, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { useAuth } from '@/auth/context/AuthContext';
 import { useRouter } from 'expo-router';
 import { sync } from '@/sync/sync';
-import { switchConnectionToActiveServer } from '@/sync/connectionManager';
+import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { Typography } from '@/constants/Typography';
-import { OFFICIAL_SERVER_ID } from '@/sync/serverIdentity';
+import { OFFICIAL_SERVER_ID } from '@/sync/domains/server/serverIdentity';
 
 type Variant = 'sidebar' | 'header';
 

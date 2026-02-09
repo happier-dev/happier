@@ -6,11 +6,11 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { useSettingMutable } from '@/sync/storage';
+import { useSettingMutable } from '@/sync/domains/state/storage';
 import { machineCapabilitiesInvoke } from '@/sync/ops';
-import type { CapabilityId } from '@/sync/capabilitiesProtocol';
-import type { KnownSettings } from '@/sync/settings';
-import { compareVersions, parseVersion } from '@/utils/versionUtils';
+import type { CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import type { KnownSettings } from '@/sync/domains/settings/settings';
+import { compareVersions, parseVersion } from '@/utils/system/versionUtils';
 import { useUnistyles } from 'react-native-unistyles';
 
 type InstallableDepData = {

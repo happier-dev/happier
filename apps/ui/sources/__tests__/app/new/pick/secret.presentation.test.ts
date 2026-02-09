@@ -45,7 +45,7 @@ vi.mock('expo-router', () => ({
     useLocalSearchParams: () => ({ selectedId: '' }),
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSettingMutable: () => [[], vi.fn()],
 }));
 

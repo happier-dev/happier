@@ -1,11 +1,11 @@
-import type { PermissionMode } from '@/sync/permissionTypes';
-import { isMutableTool } from '@/components/tools/knownTools';
+import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import { isMutableTool } from '@/components/tools/catalog';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 import { createReducer, reducer, type ReducerState } from '../../reducer/reducer';
-import type { Message } from '../../typesMessage';
+import type { Message } from '../../domains/messages/messageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
-import type { Session } from '../../storageTypes';
+import type { Session } from '../../domains/state/storageTypes';
 
 import { persistSessionPermissionData } from './sessions';
 import type { SessionPending } from './pending';

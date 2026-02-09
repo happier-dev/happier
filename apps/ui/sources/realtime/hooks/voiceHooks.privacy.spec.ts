@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { storage } from '@/sync/storage';
-import { settingsDefaults } from '@/sync/settings';
-import type { Message } from '@/sync/typesMessage';
+import { storage } from '@/sync/domains/state/storage';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 
 const { fakeSink, getVoiceContextSinkForSession } = vi.hoisted(() => {
   const fakeSink = {

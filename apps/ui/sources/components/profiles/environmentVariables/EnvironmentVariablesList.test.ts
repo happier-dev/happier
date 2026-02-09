@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
 import React from 'react';
-import type { ProfileDocumentation } from '@/sync/profileUtils';
+import type { ProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
 import { EnvironmentVariablesList } from './EnvironmentVariablesList';
 
 (
@@ -39,7 +39,7 @@ const useEnvironmentVariablesMock = vi.fn(
     }),
 );
 
-vi.mock('@/hooks/useEnvironmentVariables', () => ({
+vi.mock('@/hooks/server/useEnvironmentVariables', () => ({
     useEnvironmentVariables: (
         machineId: string | null,
         refs: string[],

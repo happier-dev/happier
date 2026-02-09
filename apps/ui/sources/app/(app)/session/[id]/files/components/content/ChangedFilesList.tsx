@@ -2,9 +2,9 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { Item } from '@/components/ui/lists/Item';
-import { FileIcon } from '@/components/FileIcon';
+import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Typography } from '@/constants/Typography';
 import type { SessionAttributedFile, SessionAttributionReliability, ChangedFilesViewMode } from '@/sync/git/gitAttribution';
 import type { GitFileStatus } from '@/sync/git/gitStatusFiles';

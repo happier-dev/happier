@@ -9,11 +9,11 @@ vi.mock('react-native', () => ({
     ScrollView: 'ScrollView',
 }));
 
-vi.mock('@/components/StyledText', () => ({
+vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/components/SimpleSyntaxHighlighter', () => ({
+vi.mock('@/components/ui/media/SimpleSyntaxHighlighter', () => ({
     SimpleSyntaxHighlighter: 'SimpleSyntaxHighlighter',
 }));
 

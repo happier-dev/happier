@@ -1,4 +1,4 @@
-import type { DiscardedPendingMessage, PendingMessage } from '../../storageTypes';
+import type { DiscardedPendingMessage, PendingMessage } from '../../domains/state/storageTypes';
 
 import type { StoreGet, StoreSet } from './_shared';
 

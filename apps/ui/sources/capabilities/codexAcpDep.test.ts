@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CodexAcpDepData } from '@/sync/capabilitiesProtocol';
+import type { CodexAcpDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 import {
     buildCodexAcpRegistryDetectRequest,

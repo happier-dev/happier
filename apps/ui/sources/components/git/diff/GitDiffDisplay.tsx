@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 
 export type GitDiffDisplayProps = {

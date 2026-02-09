@@ -1,5 +1,5 @@
 import type { GitFileStatus } from './gitStatusFiles';
-import type { GitProjectOperationLogEntry } from '../projectManager';
+import type { GitProjectOperationLogEntry } from '../runtime/orchestration/projectManager';
 
 export type SessionAttributionConfidence = 'high' | 'inferred';
 export type ChangedFilesViewMode = 'repository' | 'session';

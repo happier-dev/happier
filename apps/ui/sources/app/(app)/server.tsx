@@ -1,28 +1,28 @@
 import React, { useState } from 'react';
 import { View, TextInput, KeyboardAvoidingView, Platform } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { type ItemAction } from '@/components/ui/lists/itemActions';
-import { RoundButton } from '@/components/RoundButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Modal } from '@/modal';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
-import { validateServerUrl } from '@/sync/serverConfig';
+import { validateServerUrl } from '@/sync/domains/server/serverConfig';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { parseServerConfigRouteParams } from './serverParams';
-import { type ServerProfile, getActiveServerId, listServerProfiles, removeServerProfile, renameServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/serverProfiles';
-import { TokenStorage } from '@/auth/tokenStorage';
+import { type ServerProfile, getActiveServerId, listServerProfiles, removeServerProfile, renameServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Ionicons } from '@expo/vector-icons';
-import { switchConnectionToActiveServer } from '@/sync/connectionManager';
-import { useAuth } from '@/auth/AuthContext';
-import { Switch } from '@/components/Switch';
-import { useSettingMutable } from '@/sync/storage';
-import { OFFICIAL_SERVER_ID } from '@/sync/serverIdentity';
+import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
+import { useAuth } from '@/auth/context/AuthContext';
+import { Switch } from '@/components/ui/forms/Switch';
+import { useSettingMutable } from '@/sync/domains/state/storage';
+import { OFFICIAL_SERVER_ID } from '@/sync/domains/server/serverIdentity';
 
 const stylesheet = StyleSheet.create((theme) => ({
     keyboardAvoidingView: {
@@ -232,7 +232,8 @@ export default function ServerConfigScreen() {
         autoHandledRef.current = true;
 
         void (async () => {
-            const url = route.url;
+            const url = typeof route.url === 'string' ? route.url : null;
+            if (!url) return;
             const validation = validateServerUrl(url);
             if (!validation.valid) {
                 setError(validation.error || t('errors.invalidFormat'));

@@ -6,8 +6,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { SearchHeader } from '@/components/ui/forms/SearchHeader';
 import { Typography } from '@/constants/Typography';
-import { formatPathRelativeToHome } from '@/utils/sessionUtils';
-import { resolveAbsolutePath } from '@/utils/pathUtils';
+import { formatPathRelativeToHome } from '@/utils/sessions/sessionUtils';
+import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { t } from '@/text';
 
 type PathSelectorBaseProps = {

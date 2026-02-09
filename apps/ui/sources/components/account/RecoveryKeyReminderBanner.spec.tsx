@@ -41,7 +41,7 @@ vi.mock('expo-router', () => ({
     useRouter: () => ({ push }),
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
         isAuthenticated: true,
         credentials: { token: 't', secret: 's' },
@@ -69,13 +69,13 @@ const getServerFeatures = vi.fn(async () => ({
         },
     },
 }));
-vi.mock('@/sync/apiFeatures', () => ({
+vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
     getServerFeatures: () => getServerFeatures(),
 }));
 
 const getRecoveryKeyReminderDismissed = vi.fn(async () => false);
 const setRecoveryKeyReminderDismissed = vi.fn(async () => true);
-vi.mock('@/auth/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getRecoveryKeyReminderDismissed,
         setRecoveryKeyReminderDismissed,

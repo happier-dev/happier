@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 
-import { Switch } from '@/components/Switch';
+import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';

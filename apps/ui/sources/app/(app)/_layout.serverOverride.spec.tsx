@@ -59,23 +59,23 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: refreshFromActiveServerSpy }),
 }));
 
-vi.mock('@/auth/authRouting', () => ({
+vi.mock('@/auth/routing/authRouting', () => ({
     isPublicRouteForUnauthenticated: () => true,
 }));
 
-vi.mock('@/hooks/useFriendsIdentityReadiness', () => ({
+vi.mock('@/hooks/server/useFriendsIdentityReadiness', () => ({
     useFriendsIdentityReadiness: () => ({ isReady: true }),
 }));
 
-vi.mock('@/utils/platform', () => ({
+vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
 
-vi.mock('@/utils/routeUtils', () => ({
+vi.mock('@/utils/path/routeUtils', () => ({
     coerceRelativeRoute: (value: string) => value,
 }));
 
@@ -83,26 +83,26 @@ vi.mock('@/components/navigation/Header', () => ({
     createHeader: () => null,
 }));
 
-vi.mock('@/sync/pendingTerminalConnect', () => ({
+vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => null,
 }));
 
-vi.mock('@/sync/pendingNotificationNav', () => ({
+vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
     getPendingNotificationNav: () => null,
     clearPendingNotificationNav: vi.fn(),
     setPendingNotificationNav: vi.fn(),
 }));
 
-vi.mock('@/sync/serverProfiles', () => ({
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
 }));
 
-vi.mock('@/sync/activeServerSwitch', () => ({
+vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
     upsertActivateAndSwitchServer: (...args: unknown[]) => upsertActivateAndSwitchServerSpy(...args),
 }));
 
-vi.mock('@/sync/apiFeatures', () => ({
+vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
     getServerFeatures: async () => null,
 }));
 

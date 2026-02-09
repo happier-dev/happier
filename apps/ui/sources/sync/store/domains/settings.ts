@@ -1,10 +1,10 @@
-import type { CustomerInfo } from '../../revenueCat/types';
-import type { Machine, Session } from '../../storageTypes';
-import type { SessionListViewItem } from '../../sessionListViewData';
-import { applyLocalSettings, type LocalSettings } from '../../localSettings';
-import { customerInfoToPurchases, type Purchases } from '../../purchases';
-import { applySettings, type Settings } from '../../settings';
-import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../persistence';
+import type { CustomerInfo } from '../../domains/purchases/types';
+import type { Machine, Session } from '../../domains/state/storageTypes';
+import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
+import { applyLocalSettings, type LocalSettings } from '../../domains/settings/localSettings';
+import { customerInfoToPurchases, type Purchases } from '../../domains/purchases/purchases';
+import { applySettings, type Settings } from '../../domains/settings/settings';
+import { loadLocalSettings, loadPurchases, loadSettings, saveLocalSettings, savePurchases, saveSettings } from '../../domains/state/persistence';
 import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
 

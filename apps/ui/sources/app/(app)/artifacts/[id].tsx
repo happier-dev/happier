@@ -1,16 +1,16 @@
 import React from 'react';
 import { View, ScrollView, ActivityIndicator, Pressable, Platform } from 'react-native';
-import { Text } from '@/components/StyledText';
-import { useArtifact } from '@/sync/storage';
+import { Text } from '@/components/ui/text/StyledText';
+import { useArtifact } from '@/sync/domains/state/storage';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 import { Ionicons } from '@expo/vector-icons';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
-import { deleteArtifact } from '@/sync/apiArtifacts';
-import { storage } from '@/sync/storage';
+import { deleteArtifact } from '@/sync/api/artifacts/apiArtifacts';
+import { storage } from '@/sync/domains/state/storage';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 
 const stylesheet = StyleSheet.create((theme) => ({

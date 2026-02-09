@@ -92,22 +92,22 @@ vi.mock('@/components/profiles/edit', () => ({
     ProfileEditForm: () => React.createElement('ProfileEditForm'),
 }));
 
-vi.mock('@/components/layout', () => ({
+vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 1024 },
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSettingMutable: () => [[], vi.fn()],
 }));
 
-vi.mock('@/sync/profileUtils', () => ({
+vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     DEFAULT_PROFILES: [],
     getBuiltInProfile: () => null,
     getBuiltInProfileNameKey: () => null,
     resolveProfileById: () => null,
 }));
 
-vi.mock('@/sync/profileMutations', () => ({
+vi.mock('@/sync/domains/profiles/profileMutations', () => ({
     convertBuiltInProfileToCustom: <T,>(profile: T) => profile,
     createEmptyCustomProfile: () => ({ id: 'new', name: '', isBuiltIn: false, compatibility: { claude: true, codex: true, gemini: true } }),
     duplicateProfileForEdit: <T,>(profile: T) => profile,

@@ -1,7 +1,7 @@
 import type {
     BeginGitProjectOperationResult,
     GitProjectOperationKind,
-} from '../../projectManager';
+} from '../../runtime/orchestration/projectManager';
 
 type GitOperationLockState = {
     beginSessionProjectGitOperation: (

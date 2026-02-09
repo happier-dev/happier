@@ -1,7 +1,7 @@
 import * as React from 'react';
 
-import type { GitProjectOperationLogEntry } from '@/sync/projectManager';
-import type { GitWorkingSnapshot } from '@/sync/storageTypes';
+import type { GitProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
+import type { GitWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import {
     buildChangedFilesAttribution,
     canOfferSessionChangedFilesView,

@@ -3,7 +3,7 @@
  * Uses the canonical Git working snapshot as single source of truth.
  */
 
-import type { GitWorkingEntry, GitWorkingSnapshot } from '../storageTypes';
+import type { GitWorkingEntry, GitWorkingSnapshot } from '../domains/state/storageTypes';
 
 export interface GitFileStatus {
     fileName: string;

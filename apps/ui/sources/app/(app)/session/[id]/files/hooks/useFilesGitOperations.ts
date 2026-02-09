@@ -1,13 +1,13 @@
 import * as React from 'react';
 
-import type { GitWorkingSnapshot } from '@/sync/storageTypes';
+import type { GitWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import {
     sessionGitCommitCreate,
     sessionGitRemoteFetch,
     sessionGitRemotePull,
     sessionGitRemotePush,
 } from '@/sync/ops';
-import { storage } from '@/sync/storage';
+import { storage } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { gitStatusSync } from '@/sync/git/gitStatusSync';

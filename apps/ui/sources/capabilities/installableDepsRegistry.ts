@@ -1,8 +1,8 @@
-import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/capabilitiesProtocol';
-import type { KnownSettings } from '@/sync/settings';
+import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
+import type { KnownSettings } from '@/sync/domains/settings/settings';
 import type { TranslationKey } from '@/text';
-import type { CodexAcpDepData } from '@/sync/capabilitiesProtocol';
-import type { CodexMcpResumeDepData } from '@/sync/capabilitiesProtocol';
+import type { CodexAcpDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
+import type { CodexMcpResumeDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { t } from '@/text';
 
 import {

@@ -67,7 +67,7 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useAllMachines: () => [],
     useSessions: () => [],
     useSetting: () => false,
@@ -90,11 +90,11 @@ vi.mock('@/sync/sync', () => ({
     sync: { refreshMachinesThrottled: vi.fn() },
 }));
 
-vi.mock('@/hooks/useMachineCapabilitiesCache', () => ({
+vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
     prefetchMachineCapabilities: vi.fn(),
 }));
 
-vi.mock('@/hooks/useMachineEnvPresence', () => ({
+vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
     invalidateMachineEnvPresence: vi.fn(),
 }));
 

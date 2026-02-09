@@ -1,7 +1,7 @@
 import * as z from 'zod';
 import { describe, expect, it } from 'vitest';
 
-import { AGENT_IDS } from '@/agents/catalog';
+import { AGENT_IDS } from '@/agents/catalog/catalog';
 import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
 import { assertProviderSettingsPluginsValid, getProviderSettingsPlugin } from '@/agents/providers/_registry/providerSettingsRegistry';
 

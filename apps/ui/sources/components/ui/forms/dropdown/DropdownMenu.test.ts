@@ -47,7 +47,7 @@ vi.mock('@/components/ui/popover', () => ({
     },
 }));
 
-vi.mock('@/components/FloatingOverlay', () => ({
+vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: (props: any) => {
         const React = require('react');
         return React.createElement('FloatingOverlay', props, props.children);

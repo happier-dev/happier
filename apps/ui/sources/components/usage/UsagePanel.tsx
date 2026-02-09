@@ -1,15 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { View, ActivityIndicator, ScrollView, Pressable } from 'react-native';
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useAuth } from '@/auth/AuthContext';
+import { useAuth } from '@/auth/context/AuthContext';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { UsageChart } from './UsageChart';
 import { UsageBar } from './UsageBar';
-import { getUsageForPeriod, calculateTotals, UsageDataPoint } from '@/sync/apiUsage';
+import { getUsageForPeriod, calculateTotals, UsageDataPoint } from '@/sync/api/account/apiUsage';
 import { Ionicons } from '@expo/vector-icons';
-import { HappyError } from '@/utils/errors';
+import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
 
 type TimePeriod = 'today' | '7days' | '30days';

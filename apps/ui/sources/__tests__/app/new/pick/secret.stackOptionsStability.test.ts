@@ -24,7 +24,7 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSettingMutable: () => React.useState<readonly unknown[]>([]),
 }));
 

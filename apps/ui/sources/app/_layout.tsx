@@ -5,13 +5,13 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as Fonts from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import { FontAwesome } from '@expo/vector-icons';
-import { AuthCredentials, TokenStorage } from '@/auth/tokenStorage';
-import { AuthProvider } from '@/auth/AuthContext';
+import { AuthCredentials, TokenStorage } from '@/auth/storage/tokenStorage';
+import { AuthProvider } from '@/auth/context/AuthContext';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { initialWindowMetrics, SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { SidebarNavigator } from '@/components/SidebarNavigator';
+import { SidebarNavigator } from '@/components/navigation/shell/SidebarNavigator';
 import sodium from '@/encryption/libsodium.lib';
 import { View, Platform } from 'react-native';
 import { ModalProvider } from '@/modal';
@@ -22,12 +22,12 @@ import { useTrackScreens } from '@/track/useTrackScreens';
 import { RealtimeProvider } from '@/realtime/RealtimeProvider';
 import { FaviconPermissionIndicator } from '@/components/web/FaviconPermissionIndicator';
 import { CommandPaletteProvider } from '@/components/CommandPalette/CommandPaletteProvider';
-import { StatusBarProvider } from '@/components/StatusBarProvider';
-import { DesktopUpdateBanner } from '@/components/DesktopUpdateBanner';
+import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
+import { DesktopUpdateBanner } from '@/components/ui/feedback/DesktopUpdateBanner';
 // import * as SystemUI from 'expo-system-ui';
-import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds } from '@/utils/remoteLogger';
+import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds } from '@/utils/system/remoteLogger';
 import { useUnistyles } from 'react-native-unistyles';
-import { AsyncLock } from '@/utils/lock';
+import { AsyncLock } from '@/utils/system/lock';
 
 // Configure notification handler for foreground notifications
 Notifications.setNotificationHandler({

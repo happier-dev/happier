@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/sync/apiSocket', () => ({
+vi.mock('@/sync/api/session/apiSocket', () => ({
   apiSocket: {
     sessionRPC: vi.fn(),
   },
@@ -8,12 +8,12 @@ vi.mock('@/sync/apiSocket', () => ({
 
 describe('DaemonMediatorClient', () => {
   beforeEach(async () => {
-    const { apiSocket } = await import('@/sync/apiSocket');
+    const { apiSocket } = await import('@/sync/api/session/apiSocket');
     vi.mocked(apiSocket.sessionRPC).mockReset();
   });
 
   it('throws RPC errors with rpcErrorCode for fallback handling', async () => {
-    const { apiSocket } = await import('@/sync/apiSocket');
+    const { apiSocket } = await import('@/sync/api/session/apiSocket');
     vi.mocked(apiSocket.sessionRPC).mockResolvedValueOnce({
       error: 'unsupported',
       errorCode: 'VOICE_MEDIATOR_UNSUPPORTED',
@@ -37,7 +37,7 @@ describe('DaemonMediatorClient', () => {
   });
 
   it('throws invalid_rpc_response for malformed start payloads', async () => {
-    const { apiSocket } = await import('@/sync/apiSocket');
+    const { apiSocket } = await import('@/sync/api/session/apiSocket');
     vi.mocked(apiSocket.sessionRPC).mockResolvedValueOnce({ mediatorId: 123 });
 
     const { DaemonMediatorClient } = await import('./daemonMediatorClient');
@@ -58,7 +58,7 @@ describe('DaemonMediatorClient', () => {
   });
 
   it('maps getModels response fields', async () => {
-    const { apiSocket } = await import('@/sync/apiSocket');
+    const { apiSocket } = await import('@/sync/api/session/apiSocket');
     vi.mocked(apiSocket.sessionRPC).mockResolvedValueOnce({
       availableModels: [{ id: 'm1', name: 'Model 1' }],
       supportsFreeform: true,

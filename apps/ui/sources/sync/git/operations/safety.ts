@@ -1,4 +1,4 @@
-import type { GitWorkingSnapshot } from '../../storageTypes';
+import type { GitWorkingSnapshot } from '../../domains/state/storageTypes';
 
 export function canRevertFromSnapshot(snapshot: GitWorkingSnapshot | null | undefined): boolean {
     if (!snapshot) return false;

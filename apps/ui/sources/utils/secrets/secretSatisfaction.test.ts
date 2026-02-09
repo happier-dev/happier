@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AIBackendProfile, SavedSecret } from '@/sync/settings';
+import type { AIBackendProfile, SavedSecret } from '@/sync/domains/settings/settings';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 
 function makeProfile(reqs: AIBackendProfile['envVarRequirements']): AIBackendProfile {

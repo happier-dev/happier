@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { HappyError } from '@/utils/errors';
+import { HappyError } from '@/utils/errors/errors';
 import { createExternalOAuthProvider } from './externalOAuthProvider';
 
-vi.mock('@/sync/serverConfig', () => ({
+vi.mock('@/sync/domains/server/serverConfig', () => ({
     getServerUrl: () => 'https://api.example.test',
 }));
 
-vi.mock('@/utils/time', () => ({
+vi.mock('@/utils/timing/time', () => ({
     backoff: async <T>(fn: () => Promise<T>) => await fn(),
 }));
 

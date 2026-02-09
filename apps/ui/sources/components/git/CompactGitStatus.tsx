@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text } from 'react-native';
-import { useSessionProjectGitSnapshot } from '@/sync/storage';
+import { useSessionProjectGitSnapshot } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { Ionicons } from '@expo/vector-icons';
 import { buildGitStatusSummaryFromSnapshot } from './statusSummary';

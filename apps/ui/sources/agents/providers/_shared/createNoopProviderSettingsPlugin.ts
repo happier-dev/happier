@@ -1,4 +1,4 @@
-import type { AgentId } from '@/agents/catalog';
+import type { AgentId } from '@/agents/catalog/catalog';
 
 import type { ProviderSettingsPlugin } from './providerSettingsPlugin';
 

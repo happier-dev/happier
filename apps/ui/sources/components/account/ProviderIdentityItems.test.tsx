@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { profileDefaults } from '@/sync/profile';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -23,14 +23,14 @@ vi.mock('@expo/vector-icons', () => ({
 
 const setPendingExternalConnect = vi.fn(async () => true);
 const clearPendingExternalConnect = vi.fn(async () => true);
-vi.mock('@/auth/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         setPendingExternalConnect,
         clearPendingExternalConnect,
     },
 }));
 
-vi.mock('@/hooks/useOAuthProviderConfigured', () => ({
+vi.mock('@/hooks/server/useOAuthProviderConfigured', () => ({
     useOAuthProviderConfigured: () => true,
 }));
 
@@ -38,11 +38,11 @@ vi.mock('@/sync/sync', () => ({
     sync: { refreshProfile: async () => {} },
 }));
 
-vi.mock('@/sync/apiIdentity', () => ({
+vi.mock('@/sync/api/account/apiIdentity', () => ({
     setAccountIdentityShowOnProfile: async () => {},
 }));
 
-vi.mock('@/sync/storageStore', () => ({
+vi.mock('@/sync/domains/state/storageStore', () => ({
     storage: {
         getState: () => ({ profile: profileDefaults }),
     },

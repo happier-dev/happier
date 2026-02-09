@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Session } from '@/sync/storageTypes';
-import type { Message } from '@/sync/typesMessage';
+import type { Session } from '@/sync/domains/state/storageTypes';
+import type { Message } from '@/sync/domains/messages/messageTypes';
 import { formatSessionFull, type VoiceContextFormatterPrefs } from './contextFormatters';
 
 function createSession(path: string | null, summaryText = 'Hello'): Session {

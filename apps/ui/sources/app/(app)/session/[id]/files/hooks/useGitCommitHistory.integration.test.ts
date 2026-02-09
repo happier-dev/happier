@@ -9,7 +9,7 @@ const { mockSessionRPC } = vi.hoisted(() => ({
     mockSessionRPC: vi.fn(),
 }));
 
-vi.mock('@/sync/apiSocket', () => ({
+vi.mock('@/sync/api/session/apiSocket', () => ({
     apiSocket: {
         sessionRPC: mockSessionRPC,
     },

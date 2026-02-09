@@ -4,11 +4,11 @@ import { useRouter } from 'expo-router';
 import { Modal } from '@/modal';
 import { CommandPalette } from './CommandPalette';
 import { Command } from './types';
-import { useGlobalKeyboard } from '@/hooks/useGlobalKeyboard';
-import { useAuth } from '@/auth/AuthContext';
-import { storage } from '@/sync/storage';
+import { useGlobalKeyboard } from '@/hooks/ui/useGlobalKeyboard';
+import { useAuth } from '@/auth/context/AuthContext';
+import { storage } from '@/sync/domains/state/storage';
 import { useShallow } from 'zustand/react/shallow';
-import { useNavigateToSession } from '@/hooks/useNavigateToSession';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 
 export function CommandPaletteProvider({ children }: { children: React.ReactNode }) {
     const router = useRouter();

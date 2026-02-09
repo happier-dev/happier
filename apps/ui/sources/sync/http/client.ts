@@ -1,5 +1,5 @@
-import { TokenStorage } from '@/auth/tokenStorage';
-import { getActiveServerSnapshot } from '../serverRuntime';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 export class StaleServerGenerationError extends Error {
     constructor() {

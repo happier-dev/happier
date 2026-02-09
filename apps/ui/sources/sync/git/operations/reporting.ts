@@ -2,7 +2,7 @@ import type {
     GitProjectOperationKind,
     GitProjectOperationLogEntry,
     GitProjectOperationStatus,
-} from '@/sync/projectManager';
+} from '@/sync/runtime/orchestration/projectManager';
 
 export interface GitOperationTracker {
     capture(event: string, props?: Record<string, unknown>): void;

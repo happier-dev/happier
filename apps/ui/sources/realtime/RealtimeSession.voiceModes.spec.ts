@@ -16,13 +16,13 @@ vi.mock('@/modal', () => ({
 
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 
-vi.mock('@/utils/microphonePermissions', () => ({
+vi.mock('@/utils/platform/microphonePermissions', () => ({
   requestMicrophonePermission: vi.fn(async () => ({ granted: true, canAskAgain: true })),
   showMicrophonePermissionDeniedAlert: vi.fn(),
 }));
 
 const getCredentials = vi.fn(async () => ({ token: 't', secret: 's' }));
-vi.mock('@/auth/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', () => ({
   TokenStorage: { getCredentials },
 }));
 
@@ -68,7 +68,7 @@ const state: {
   clearRealtimeModeDebounce: vi.fn(),
 };
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
   storage: { getState: () => state },
 }));
 

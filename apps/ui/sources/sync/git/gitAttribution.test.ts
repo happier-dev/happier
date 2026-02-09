@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { GitProjectOperationLogEntry } from '../projectManager';
+import type { GitProjectOperationLogEntry } from '../runtime/orchestration/projectManager';
 import type { GitFileStatus } from './gitStatusFiles';
 import {
     buildChangedFilesAttribution,

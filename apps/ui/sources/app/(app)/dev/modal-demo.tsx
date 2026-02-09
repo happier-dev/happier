@@ -6,7 +6,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Modal } from '@/modal';
 import { Typography } from '@/constants/Typography';
-import { RoundButton } from '@/components/RoundButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 // Example custom modal component
 function CustomContentModal({ onClose, title, message }: { onClose: () => void; title: string; message: string }) {

@@ -1,4 +1,4 @@
-import type { Session } from '@/sync/storageTypes';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 export function getRecentPathsForMachine(params: {
     machineId: string;

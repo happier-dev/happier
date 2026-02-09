@@ -7,11 +7,10 @@ import { Platform, Pressable } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { HeaderTitleWithAction } from '@/components/navigation/HeaderTitleWithAction';
 import { t } from '@/text';
-import { useSetting } from '@/sync/storage';
-import { getActiveServerSnapshot, listServerProfiles, type ServerProfile } from '@/sync/serverProfiles';
-import { getNewSessionServerTargeting } from '@/sync/multiServer';
+import { useSetting } from '@/sync/domains/state/storage';
+import { getActiveServerSnapshot, listServerProfiles, type ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { getNewSessionServerTargeting } from '@/sync/domains/server/multiServer';
 import { useUnistyles } from 'react-native-unistyles';
 
 export default React.memo(function ServerPickerScreen() {
@@ -108,16 +107,11 @@ export default React.memo(function ServerPickerScreen() {
         </Pressable>
     ), [router, theme.colors.header.tint]);
 
-    const headerTitle = React.useCallback(({ tintColor }: { children: string; tintColor?: string }) => (
-        <HeaderTitleWithAction
-            title={t('newSession.selectServerTitle')}
-            tintColor={tintColor ?? theme.colors.header.tint}
-        />
-    ), [theme.colors.header.tint]);
+    const headerTitle = React.useCallback(() => t('server.switchToServer'), []);
 
     const screenOptions = React.useMemo(() => ({
         headerShown: true,
-        title: t('newSession.selectServerTitle'),
+        title: t('server.switchToServer'),
         headerTitle,
         headerBackTitle: t('common.back'),
         presentation: Platform.OS === 'ios' ? ('containedModal' as const) : undefined,
@@ -128,7 +122,7 @@ export default React.memo(function ServerPickerScreen() {
         <>
             <Stack.Screen options={screenOptions} />
             <ItemList>
-                <ItemGroup title={t('newSession.selectServerTitle')}>
+                <ItemGroup title={t('server.switchToServer')}>
                     {eligibleProfiles.map((profile) => (
                         <Item
                             key={profile.id}

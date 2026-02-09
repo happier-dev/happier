@@ -49,8 +49,8 @@ function stubFetch(
     return fetchMock;
 }
 
-vi.mock('@/utils/time', async () => {
-    const actual = await vi.importActual<typeof import('@/utils/time')>('@/utils/time');
+vi.mock('@/utils/timing/time', async () => {
+    const actual = await vi.importActual<typeof import('@/utils/timing/time')>('@/utils/timing/time');
     return {
         ...actual,
         backoff: async (callback: () => Promise<unknown>) => await callback(),

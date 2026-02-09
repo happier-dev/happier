@@ -1,4 +1,4 @@
-import type { AgentId } from '@/agents/catalog';
+import type { AgentId } from '@/agents/catalog/catalog';
 
 import type { ProviderSettingsPlugin } from '../_shared/providerSettingsPlugin';
 import { AUGGIE_PROVIDER_SETTINGS_PLUGIN } from '../auggie/settings/plugin';

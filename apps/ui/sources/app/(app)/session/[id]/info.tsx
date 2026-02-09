@@ -6,25 +6,25 @@ import { Typography } from '@/constants/Typography';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Avatar } from '@/components/Avatar';
-import { useSession, useIsDataReady, useSetting } from '@/sync/storage';
-import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessionUtils';
+import { Avatar } from '@/components/ui/avatar/Avatar';
+import { useSession, useIsDataReady, useSetting } from '@/sync/domains/state/storage';
+import { getSessionName, useSessionStatus, formatOSPlatform, formatPathRelativeToHome, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
 import { sessionArchive, sessionDelete, sessionRename } from '@/sync/ops';
 import { useUnistyles } from 'react-native-unistyles';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
-import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/versionUtils';
+import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { getAttachCommandForSession, getTmuxFallbackReason, getTmuxTargetForSession } from '@/utils/sessions/terminalSessionDetails';
-import { CodeView } from '@/components/CodeView';
-import { Session } from '@/sync/storageTypes';
-import { useHappyAction } from '@/hooks/useHappyAction';
-import { HappyError } from '@/utils/errors';
-import { resolveProfileById } from '@/sync/profileUtils';
+import { CodeView } from '@/components/ui/media/CodeView';
+import { Session } from '@/sync/domains/state/storageTypes';
+import { useHappyAction } from '@/hooks/ui/useHappyAction';
+import { HappyError } from '@/utils/errors/errors';
+import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
-import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
-import { useSessionSharingSupport } from '@/hooks/useSessionSharingSupport';
+import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { useSessionSharingSupport } from '@/hooks/session/useSessionSharingSupport';
 
 // Animated status dot component
 function StatusDot({ color, isPulsing, size = 8 }: { color: string; isPulsing?: boolean; size?: number }) {

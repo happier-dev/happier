@@ -8,17 +8,17 @@ import type {
   Machine,
   PendingMessage,
   Session,
-} from '../storageTypes';
-import type { DecryptedArtifact } from '../artifactTypes';
-import type { LocalSettings } from '../localSettings';
-import type { Message } from '../typesMessage';
-import type { Settings } from '../settings';
-import type { SessionListViewItem } from '../sessionListViewData';
-import { computeHasUnreadActivity } from '../unread';
+} from '../domains/state/storageTypes';
+import type { DecryptedArtifact } from '../domains/artifacts/artifactTypes';
+import type { LocalSettings } from '../domains/settings/localSettings';
+import type { Message } from '../domains/messages/messageTypes';
+import type { Settings } from '../domains/settings/settings';
+import type { SessionListViewItem } from '../domains/session/listing/sessionListViewData';
+import { computeHasUnreadActivity } from '../domains/messages/unread';
 import { sync } from '../sync';
 
-import { getStorage } from '../storage';
-import type { KnownEntitlements } from '../storage';
+import { getStorage } from '../domains/state/storage';
+import type { KnownEntitlements } from '../domains/state/storage';
 
 export function useSessions() {
   return getStorage()(useShallow((state) => (state.isDataReady ? state.sessionsData : null)));

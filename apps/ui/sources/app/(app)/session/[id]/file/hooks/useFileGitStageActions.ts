@@ -4,8 +4,8 @@ import {
     sessionGitStageApply,
     sessionGitUnstageApply,
 } from '@/sync/ops';
-import { storage } from '@/sync/storage';
-import type { GitWorkingSnapshot } from '@/sync/storageTypes';
+import { storage } from '@/sync/domains/state/storage';
+import type { GitWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { gitStatusSync } from '@/sync/git/gitStatusSync';

@@ -1,5 +1,5 @@
-import type { CapabilitiesDetectRequest } from '@/sync/capabilitiesProtocol';
-import { AGENT_IDS, getAgentCore } from '@/agents/catalog';
+import type { CapabilitiesDetectRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { AGENT_IDS, getAgentCore } from '@/agents/catalog/catalog';
 import { CHECKLIST_IDS } from '@happier-dev/protocol/checklists';
 
 function buildCliLoginStatusOverrides(): Record<string, { params: { includeLoginStatus: true } }> {

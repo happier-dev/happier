@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createReducer, reducer } from './reducer';
 import type { NormalizedMessage } from '../typesRaw';
-import type { AgentState } from '../storageTypes';
+import type { AgentState } from '../domains/state/storageTypes';
 
 describe('Permission placeholder should not override real tool output', () => {
     it('updates an approved permission-only tool message when a tool-result arrives later (even without tool-call)', () => {

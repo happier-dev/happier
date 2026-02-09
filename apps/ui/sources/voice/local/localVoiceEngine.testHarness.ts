@@ -31,7 +31,7 @@ export function setNextRecorderPrepareError(next: Error | null) {
 }
 
 export async function getStorage() {
-    const { storage } = await import('@/sync/storage');
+    const { storage } = await import('@/sync/domains/state/storage');
     return storage as any;
 }
 
@@ -60,7 +60,7 @@ vi.mock('@/voice/mediator/daemonMediatorClient', () => ({
     },
 }));
 
-vi.mock('@/utils/microphonePermissions', () => ({
+vi.mock('@/utils/platform/microphonePermissions', () => ({
     requestMicrophonePermission: vi.fn(async () => ({ granted: true, canAskAgain: true })),
     showMicrophonePermissionDeniedAlert: vi.fn(),
 }));
@@ -122,7 +122,7 @@ vi.mock('expo-file-system', () => ({
     deleteAsync,
 }));
 
-vi.mock('@/sync/storage', () => {
+vi.mock('@/sync/domains/state/storage', () => {
     const subscribers = new Set<() => void>();
     let throwNextGetState: unknown = null;
     const state: any = {

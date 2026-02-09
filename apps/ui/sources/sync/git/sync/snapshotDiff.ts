@@ -1,4 +1,4 @@
-import type { GitWorkingSnapshot } from '@/sync/storageTypes';
+import type { GitWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 type SnapshotEntryComparable = {
     path: string;

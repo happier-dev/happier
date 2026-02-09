@@ -1,4 +1,4 @@
-import type { AIBackendProfile, SavedSecret } from '@/sync/settings';
+import type { AIBackendProfile, SavedSecret } from '@/sync/domains/settings/settings';
 
 export type SecretSatisfactionSource =
     | 'none'

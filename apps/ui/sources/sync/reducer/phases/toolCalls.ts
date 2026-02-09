@@ -1,6 +1,6 @@
 import type { TracedMessage } from '../reducerTracer';
-import type { ToolCall } from '../../typesMessage';
-import { compareToolCalls } from '../../../utils/toolComparison';
+import type { ToolCall } from '../../domains/messages/messageTypes';
+import { compareToolCalls } from '../../../utils/tools/toolComparison';
 import type { ReducerState } from '../reducer';
 
 export function runToolCallsPhase(params: Readonly<{

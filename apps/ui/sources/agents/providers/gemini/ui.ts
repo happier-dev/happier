@@ -1,4 +1,4 @@
-import type { AgentUiConfig } from '@/agents/registryUi';
+import type { AgentUiConfig } from '@/agents/registry/registryUi';
 
 export const GEMINI_UI: AgentUiConfig = {
     id: 'gemini',

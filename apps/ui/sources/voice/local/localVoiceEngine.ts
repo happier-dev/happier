@@ -2,8 +2,8 @@ import { AudioModule, RecordingPresets, createAudioPlayer } from 'expo-audio';
 import { Platform } from 'react-native';
 import { create } from 'zustand';
 
-import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/microphonePermissions';
-import { storage } from '@/sync/storage';
+import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
+import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { buildOpenAiSpeechRequest, buildOpenAiTranscriptionRequest } from './openaiCompat';
 import { DaemonMediatorClient } from '@/voice/mediator/daemonMediatorClient';
@@ -11,7 +11,7 @@ import { OpenAiCompatMediatorClient } from '@/voice/mediator/openaiCompatMediato
 import type { VoiceMediatorClient } from '@/voice/mediator/types';
 import { buildVoiceInitialContext } from '@/voice/context/buildVoiceInitialContext';
 import { resolveDaemonVoiceMediatorModelIds } from '@/voice/mediator/resolveDaemonMediatorModels';
-import { isRpcMethodNotAvailableError } from '@/sync/rpcErrors';
+import { isRpcMethodNotAvailableError } from '@/sync/runtime/rpcErrors';
 
 export type LocalVoiceStatus = 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
 

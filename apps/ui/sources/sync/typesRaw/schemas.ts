@@ -1,5 +1,5 @@
 import * as z from 'zod';
-import { MessageMetaSchema, MessageMeta } from '../typesMessageMeta';
+import { MessageMetaSchema, MessageMeta } from '../domains/messages/messageMetaTypes';
 import { PERMISSION_MODES } from '@/constants/PermissionModes';
 import { AGENT_IDS } from '@happier-dev/agents';
 

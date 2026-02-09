@@ -8,12 +8,12 @@ import { findLanguageByCode, getLanguageDisplayName, LANGUAGES } from '@/constan
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { useEnabledAgentIds } from '@/agents/useEnabledAgentIds';
-import { getAgentPickerOptions } from '@/agents/agentPickerOptions';
-import { useHappierVoiceSupport } from '@/hooks/useHappierVoiceSupport';
+import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
+import { getAgentPickerOptions } from '@/agents/catalog/agentPickerOptions';
+import { useHappierVoiceSupport } from '@/hooks/server/useHappierVoiceSupport';
 import { Modal } from '@/modal';
 import { createHappierElevenLabsAgent, updateHappierElevenLabsAgent } from '@/realtime/elevenlabs/autoprovision';
-import { useSettingMutable } from '@/sync/storage';
+import { useSettingMutable } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { normalizeSecretPromptInput } from '@/utils/secrets/normalizeSecretInput';

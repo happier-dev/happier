@@ -1,7 +1,7 @@
 import React from 'react';
 import { Stack } from 'expo-router';
 
-import { useSettingMutable } from '@/sync/storage';
+import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { SecretsList } from '@/components/secrets/SecretsList';
 

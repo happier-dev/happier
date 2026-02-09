@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { sync } from '@/sync/sync';
 import { sessionAllow, sessionDeny } from '@/sync/ops';
-import { storage } from '@/sync/storage';
+import { storage } from '@/sync/domains/state/storage';
 import { trackPermissionResponse } from '@/track';
 import { getCurrentRealtimeSessionId } from './RealtimeSession';
 

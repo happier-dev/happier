@@ -1,4 +1,4 @@
-import type { RelationshipUpdatedEvent, UserProfile } from '../../friendTypes';
+import type { RelationshipUpdatedEvent, UserProfile } from '../../domains/social/friendTypes';
 import type { StoreGet, StoreSet } from './_shared';
 
 export type FriendsDomain = {

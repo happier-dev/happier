@@ -2,12 +2,12 @@
  * Session operations for remote procedure calls
  */
 
-import { apiSocket } from '../apiSocket';
+import { apiSocket } from '../api/session/apiSocket';
 import { sync } from '../sync';
-import { isRpcMethodNotAvailableError } from '../rpcErrors';
-import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../resumeSessionPayload';
-import type { AgentId } from '@/agents/catalog';
-import type { PermissionMode } from '@/sync/permissionTypes';
+import { isRpcMethodNotAvailableError } from '../runtime/rpcErrors';
+import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
+import type { AgentId } from '@/agents/catalog/catalog';
+import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type {
     GitCommitCreateRequest,
     GitCommitCreateResponse,
@@ -745,7 +745,7 @@ export async function sessionRename(sessionId: string, title: string): Promise<S
         }
 
         // Get the current session from storage
-        const { storage } = await import('../storage');
+        const { storage } = await import('../domains/state/storage');
         const currentSession = storage.getState().sessions[sessionId];
         if (!currentSession) {
             return {

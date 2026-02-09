@@ -66,7 +66,7 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: () => false,
     useSettingMutable: () => [[], vi.fn()],
 }));
@@ -91,13 +91,13 @@ vi.mock('@/components/profiles/ProfilesList', () => ({
     },
 }));
 
-vi.mock('@/sync/profileUtils', () => ({
+vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     DEFAULT_PROFILES: [],
     getBuiltInProfileNameKey: () => null,
     resolveProfileById: () => null,
 }));
 
-vi.mock('@/sync/profileMutations', () => ({
+vi.mock('@/sync/domains/profiles/profileMutations', () => ({
     convertBuiltInProfileToCustom: <T,>(profile: T) => profile,
     createEmptyCustomProfile: () => ({ id: 'new', name: '', isBuiltIn: false, compatibility: { claude: true, codex: true, gemini: true } }),
     duplicateProfileForEdit: <T,>(profile: T) => profile,
@@ -112,7 +112,7 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
 vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: NativeChildrenProps) => React.createElement('Item', props, props.children),
 }));
-vi.mock('@/components/Switch', () => ({
+vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: NativeChildrenProps) => React.createElement('Switch', props, props.children),
 }));
 
@@ -124,7 +124,7 @@ vi.mock('@/utils/secrets/secretSatisfaction', () => ({
     getSecretSatisfaction: () => ({ isSatisfied: true, items: [] }),
 }));
 
-vi.mock('@/sync/profileSecrets', () => ({
+vi.mock('@/sync/domains/profiles/profileSecrets', () => ({
     getRequiredSecretEnvVarNames: () => [],
 }));
 

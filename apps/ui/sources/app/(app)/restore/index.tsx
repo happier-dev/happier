@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, ScrollView, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useAuth } from '@/auth/AuthContext';
-import { RoundButton } from '@/components/RoundButton';
+import { useAuth } from '@/auth/context/AuthContext';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Typography } from '@/constants/Typography';
 import { encodeBase64 } from '@/encryption/base64';
-import { generateAuthKeyPair, authQRStart } from '@/auth/authQRStart';
-import { authQRWait } from '@/auth/authQRWait';
-import { layout } from '@/components/layout';
+import { generateAuthKeyPair, authQRStart } from '@/auth/flows/qrStart';
+import { authQRWait } from '@/auth/flows/qrWait';
+import { layout } from '@/components/ui/layout/layout';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { QRCode } from '@/components/qr/QRCode';
-import { getServerFeatures } from '@/sync/apiFeatures';
+import { getServerFeatures } from '@/sync/api/capabilities/apiFeatures';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {

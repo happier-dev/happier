@@ -1,6 +1,6 @@
-import { Session } from "@/sync/storageTypes";
-import { Message } from "@/sync/typesMessage";
-import { trimIdent } from "@/utils/trimIdent";
+import { Session } from "@/sync/domains/state/storageTypes";
+import { Message } from "@/sync/domains/messages/messageTypes";
+import { trimIdent } from "@/utils/strings/trimIdent";
 
 interface SessionMetadata {
     summary?: { text?: string };

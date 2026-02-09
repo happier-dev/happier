@@ -23,7 +23,7 @@ vi.mock('expo-router', () => ({
     useRouter: () => ({ replace: vi.fn(), back: vi.fn(), push: vi.fn() }),
 }));
 
-vi.mock('@/components/RoundButton', () => ({
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: 'RoundButton',
 }));
 
@@ -36,7 +36,7 @@ vi.mock('@/modal', () => ({
 
 const setPendingExternalAuth = vi.fn(async () => true);
 const clearPendingExternalAuth = vi.fn(async () => true);
-vi.mock('@/auth/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         setPendingExternalAuth,
         clearPendingExternalAuth,
@@ -75,7 +75,7 @@ const baseWelcomeFeatures = createWelcomeFeaturesResponse({
     autoRedirectProviderId: null,
 });
 
-vi.mock('@/sync/apiFeatures', () => ({
+vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
     getServerFeatures: async () => ({
         ...baseWelcomeFeatures,
         features: {

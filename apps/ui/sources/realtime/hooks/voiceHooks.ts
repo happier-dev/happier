@@ -8,8 +8,8 @@ import {
     formatSessionOffline,
     formatSessionOnline
 } from './contextFormatters';
-import { storage } from '@/sync/storage';
-import { Message } from '@/sync/typesMessage';
+import { storage } from '@/sync/domains/state/storage';
+import { Message } from '@/sync/domains/messages/messageTypes';
 import { VOICE_CONFIG } from '../voiceConfig';
 import { getVoiceContextSinkForSession } from '@/voice/context/getVoiceContextSinkForSession';
 

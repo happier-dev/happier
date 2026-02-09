@@ -1,4 +1,4 @@
-import { ZenView } from '@/-zen/ZenView';
+import { ZenView } from '@/components/zen/screens/ZenView';
 
 export default function ZenViewScreen() {
     return <ZenView />;

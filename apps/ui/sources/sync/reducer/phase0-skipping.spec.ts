@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createReducer, reducer } from './reducer';
 import { NormalizedMessage } from '../typesRaw';
-import { AgentState } from '../storageTypes';
+import { AgentState } from '../domains/state/storageTypes';
 
 describe('Phase 0 permission skipping issue', () => {
     it('should handle permissions when AgentState and matching tools arrive together', () => {

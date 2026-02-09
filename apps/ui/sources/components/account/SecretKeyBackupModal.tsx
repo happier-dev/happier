@@ -7,8 +7,8 @@ import * as Clipboard from 'expo-clipboard';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { Modal } from '@/modal';
-import { formatSecretKeyForBackup } from '@/auth/secretKeyBackup';
-import { RoundButton } from '@/components/RoundButton';
+import { formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
 const stylesheet = StyleSheet.create((theme) => ({
     modal: {

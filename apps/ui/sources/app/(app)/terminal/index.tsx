@@ -1,20 +1,20 @@
 import React from 'react';
 import { View } from 'react-native';
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Typography } from '@/constants/Typography';
-import { RoundButton } from '@/components/RoundButton';
-import { useConnectTerminal } from '@/hooks/useConnectTerminal';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
 import { Ionicons } from '@expo/vector-icons';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
-import { useAuth } from '@/auth/AuthContext';
-import { getServerUrl } from '@/sync/serverConfig';
-import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/pendingTerminalConnect';
-import { buildTerminalConnectDeepLink } from '@/utils/terminalConnectUrl';
+import { useAuth } from '@/auth/context/AuthContext';
+import { getServerUrl } from '@/sync/domains/server/serverConfig';
+import { clearPendingTerminalConnect, setPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
+import { buildTerminalConnectDeepLink } from '@/utils/path/terminalConnectUrl';
 
 export default function TerminalScreen() {
     const router = useRouter();

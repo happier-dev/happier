@@ -1,26 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { View, ActivityIndicator, Linking } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { Text } from '@/components/StyledText';
-import { useAuth } from '@/auth/AuthContext';
-import { getUserProfile, sendFriendRequest, removeFriend } from '@/sync/apiFriends';
-import { UserProfile, getDisplayName } from '@/sync/friendTypes';
-import { Avatar } from '@/components/Avatar';
+import { Text } from '@/components/ui/text/StyledText';
+import { useAuth } from '@/auth/context/AuthContext';
+import { getUserProfile, sendFriendRequest, removeFriend } from '@/sync/api/social/apiFriends';
+import { UserProfile, getDisplayName } from '@/sync/domains/social/friendTypes';
+import { Avatar } from '@/components/ui/avatar/Avatar';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { layout } from '@/components/layout';
-import { useHappyAction } from '@/hooks/useHappyAction';
+import { layout } from '@/components/ui/layout/layout';
+import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { trackFriendsConnect } from '@/track';
 import { Ionicons } from '@expo/vector-icons';
-import { useAllSessions } from '@/sync/storage';
-import { useSessionSharingSupport } from '@/hooks/useSessionSharingSupport';
-import { HappyError } from '@/utils/errors';
+import { useAllSessions } from '@/sync/domains/state/storage';
+import { useSessionSharingSupport } from '@/hooks/session/useSessionSharingSupport';
+import { HappyError } from '@/utils/errors/errors';
 import { getAuthProvider } from '@/auth/providers/registry';
-import { isSafeBadgeUrl } from '@/utils/urlSafety';
+import { isSafeBadgeUrl } from '@/utils/url/urlSafety';
 
 export default function UserProfileScreen() {
     const { id } = useLocalSearchParams<{ id: string }>();

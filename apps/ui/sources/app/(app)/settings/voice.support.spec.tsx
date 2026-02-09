@@ -37,7 +37,7 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/hooks/useHappierVoiceSupport', () => ({
+vi.mock('@/hooks/server/useHappierVoiceSupport', () => ({
     useHappierVoiceSupport: () => false,
 }));
 
@@ -65,15 +65,15 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
         : trigger) ?? null,
 }));
 
-vi.mock('@/components/Switch', () => ({
+vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: (props: any) => React.createElement('Switch', props),
 }));
 
-vi.mock('@/agents/useEnabledAgentIds', () => ({
+vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['claude', 'codex', 'opencode'],
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSettingMutable: (key: string) => {
         switch (key) {
             case 'voiceAssistantLanguage':

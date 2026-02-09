@@ -1,7 +1,7 @@
 import { sessionGitStatusSnapshot } from '../ops';
-import { createProjectKey } from '../projectManager';
-import { storage } from '../storage';
-import type { GitStatus, GitWorkingSnapshot } from '../storageTypes';
+import { createProjectKey } from '../runtime/orchestration/projectManager';
+import { storage } from '../domains/state/storage';
+import type { GitStatus, GitWorkingSnapshot } from '../domains/state/storageTypes';
 
 function createEmptyGitSnapshot(input: {
     projectKey: string;

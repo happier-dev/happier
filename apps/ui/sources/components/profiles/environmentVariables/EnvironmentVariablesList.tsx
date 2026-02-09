@@ -4,11 +4,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { EnvironmentVariableCard } from './EnvironmentVariableCard';
-import type { ProfileDocumentation } from '@/sync/profileUtils';
+import type { ProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { useEnvironmentVariables } from '@/hooks/useEnvironmentVariables';
+import { useEnvironmentVariables } from '@/hooks/server/useEnvironmentVariables';
 import { parseEnvVarTemplate } from '@/utils/profiles/envVarTemplate';
 
 export interface EnvironmentVariablesListProps {

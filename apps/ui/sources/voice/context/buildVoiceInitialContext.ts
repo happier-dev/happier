@@ -1,4 +1,4 @@
-import { storage } from '@/sync/storage';
+import { storage } from '@/sync/domains/state/storage';
 import { formatSessionFull } from '@/realtime/hooks/contextFormatters';
 
 function getVoiceContextPrefs() {

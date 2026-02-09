@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { NormalizedMessage } from '../typesRaw';
 import { createReducer } from './reducer';
 import { reducer } from './reducer';
-import { AgentState } from '../storageTypes';
+import { AgentState } from '../domains/state/storageTypes';
 
 describe('reducer', () => {
     // it('should process golden cases', () => {

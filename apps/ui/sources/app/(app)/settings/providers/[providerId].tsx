@@ -7,13 +7,13 @@ import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Switch } from '@/components/Switch';
+import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 import { sync } from '@/sync/sync';
-import { useSettings } from '@/sync/storage';
-import { isAgentId, getAgentCore, type AgentId } from '@/agents/catalog';
+import { useSettings } from '@/sync/domains/state/storage';
+import { isAgentId, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { getProviderSettingsPlugin } from '@/agents/providers/_registry/providerSettingsRegistry';
 import { t } from '@/text';
 import { getAgentAdvancedModeCapabilities } from '@happier-dev/agents';
@@ -22,7 +22,7 @@ import {
     classifyRuntimeSwitchKind,
     classifySessionModeKind,
     describeResumeSupportKind,
-} from '@/agents/providerDetailsInfo';
+} from '@/agents/catalog/providerDetailsInfo';
 
 const ProviderSettingsNumberField = React.memo(function ProviderSettingsNumberField(props: {
     field: any;

@@ -1,5 +1,5 @@
-import type { Machine } from '@/sync/storageTypes';
-import type { Session } from '@/sync/storageTypes';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 export function getRecentMachinesFromSessions(params: {
     machines: Machine[];

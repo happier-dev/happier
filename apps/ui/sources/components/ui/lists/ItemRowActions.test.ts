@@ -4,7 +4,7 @@ import renderer, { act } from 'react-test-renderer';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('@/components/FloatingOverlay', () => {
+vi.mock('@/components/ui/overlays/FloatingOverlay', () => {
     const React = require('react');
     return {
         FloatingOverlay: (props: any) => React.createElement('FloatingOverlay', props, props.children),

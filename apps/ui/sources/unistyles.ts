@@ -3,7 +3,7 @@ import * as SystemUI from 'expo-system-ui';
 import { StyleSheet, UnistylesRuntime } from 'react-native-unistyles';
 
 import { darkTheme, lightTheme } from './theme';
-import { loadThemePreference } from './sync/persistence';
+import { loadThemePreference } from './sync/domains/state/persistence';
 
 const appThemes = {
     light: lightTheme,

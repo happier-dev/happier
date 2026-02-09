@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import type { GitProjectInFlightOperation } from '@/sync/projectManager';
+import type { GitProjectInFlightOperation } from '@/sync/runtime/orchestration/projectManager';
 
 export type FileDisplayMode = 'file' | 'diff';
 export type FileDiffMode = 'staged' | 'unstaged' | 'both';

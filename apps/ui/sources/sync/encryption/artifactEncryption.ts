@@ -1,5 +1,5 @@
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
-import { ArtifactHeader, ArtifactBody } from '../artifactTypes';
+import { ArtifactHeader, ArtifactBody } from '../domains/artifacts/artifactTypes';
 import { AES256Encryption } from './encryptor';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 

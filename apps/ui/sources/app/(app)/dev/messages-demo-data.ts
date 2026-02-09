@@ -1,7 +1,7 @@
 // TODO: Not sure where to put this demo data yet - temporary location
 // This contains mock message data for development and testing purposes
 
-import { Message, ToolCall } from '@/sync/typesMessage';
+import { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 
 // Helper to create a tool call with proper timestamps
 const createToolCall = (name: string, state: ToolCall['state'], input: any, result?: any, description?: string | null): ToolCall => ({

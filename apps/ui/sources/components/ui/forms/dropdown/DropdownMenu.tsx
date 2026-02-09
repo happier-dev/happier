@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Popover, type PopoverPlacement } from '@/components/ui/popover';
-import { FloatingOverlay } from '@/components/FloatingOverlay';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { t } from '@/text';
 import type { SelectableRowVariant } from '@/components/ui/lists/SelectableRow';
 import { SelectableMenuResults } from '@/components/ui/forms/dropdown/SelectableMenuResults';

@@ -1,4 +1,4 @@
-import type { DecryptedArtifact } from '../../artifactTypes';
+import type { DecryptedArtifact } from '../../domains/artifacts/artifactTypes';
 import type { StoreGet, StoreSet } from './_shared';
 
 export type ArtifactsDomain = {

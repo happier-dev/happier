@@ -9,7 +9,7 @@ import { ca } from './translations/ca';
 import { zhHans } from './translations/zh-Hans';
 import { zhHant } from './translations/zh-Hant';
 import { ja } from './translations/ja';
-import { loadSettings } from '@/sync/persistence';
+import { loadSettings } from '@/sync/domains/state/persistence';
 import { type SupportedLanguage, SUPPORTED_LANGUAGES, SUPPORTED_LANGUAGE_CODES, DEFAULT_LANGUAGE } from './_all';
 import { getDeviceLocales } from './deviceLocales';
 

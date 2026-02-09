@@ -2,7 +2,7 @@ import { Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { Pressable, Text } from 'react-native';
 
-import { hapticsLight } from '@/components/haptics';
+import { hapticsLight } from '@/components/ui/theme/haptics';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
 import { t } from '@/text';
 

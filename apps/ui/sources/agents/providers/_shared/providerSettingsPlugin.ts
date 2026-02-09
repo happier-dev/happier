@@ -1,6 +1,6 @@
 import type { ZodTypeAny } from 'zod';
 
-import type { AgentId } from '@/agents/catalog';
+import type { AgentId } from '@/agents/catalog/catalog';
 
 export type ProviderSettingFieldKind = 'boolean' | 'enum' | 'number' | 'text' | 'json';
 

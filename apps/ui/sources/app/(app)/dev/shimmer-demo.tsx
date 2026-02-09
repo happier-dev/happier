@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Text, ScrollView } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Stack } from 'expo-router';
-import { ShimmerView } from '@/components/ShimmerView';
+import { ShimmerView } from '@/components/ui/feedback/ShimmerView';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Ionicons } from '@expo/vector-icons';
 

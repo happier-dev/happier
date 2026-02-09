@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
 
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 import type { GitLogEntry } from '@happier-dev/protocol';
-import type { GitProjectInFlightOperation, GitProjectOperationLogEntry } from '@/sync/projectManager';
+import type { GitProjectInFlightOperation, GitProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 
 type GitOperationsPanelProps = {
     theme: any;

@@ -1,18 +1,18 @@
 import React from 'react';
 import { View, Text, Pressable, ActivityIndicator, TextInput, Linking } from 'react-native';
-import { useOAuthProviderConfigured } from '@/hooks/useOAuthProviderConfigured';
+import { useOAuthProviderConfigured } from '@/hooks/server/useOAuthProviderConfigured';
 import { type FriendsUsernameHint } from './resolveFriendsIdentityGate';
 import { t } from '@/text';
 import { FriendsGateCentered, FriendsProviderConnectControls, FriendsProviderGate } from './FriendsGate';
-import { useAuth } from '@/auth/AuthContext';
+import { useAuth } from '@/auth/context/AuthContext';
 import { getAuthProvider } from '@/auth/providers/registry';
-import { TokenStorage } from '@/auth/tokenStorage';
-import { setAccountUsername } from '@/sync/apiUsername';
-import { storage } from '@/sync/storageStore';
-import { HappyError } from '@/utils/errors';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { setAccountUsername } from '@/sync/api/account/apiUsername';
+import { storage } from '@/sync/domains/state/storageStore';
+import { HappyError } from '@/utils/errors/errors';
 import { Modal } from '@/modal';
 import { useUnistyles } from 'react-native-unistyles';
-import { useFriendsIdentityReadiness } from '@/hooks/useFriendsIdentityReadiness';
+import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 
 function translateUsernameHint(hint: FriendsUsernameHint): string {

@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "exclude": [
+    "node_modules",
+    ".expo/**/*",
+    "sources/trash/**/*",
+    "**/__tests__/**/*",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.testHelpers.ts",
+    "**/*.testHelpers.tsx",
+    "**/test/**/*"
+  ]
+}

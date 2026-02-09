@@ -15,7 +15,7 @@ vi.mock('react-native-unistyles', () => ({
     }),
 }));
 
-vi.mock('@/components/FloatingOverlay', () => ({
+vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement('FloatingOverlay', props, props.children),
 }));

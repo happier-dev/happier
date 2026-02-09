@@ -4,9 +4,9 @@ import { Ionicons } from '@expo/vector-icons';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useAuth } from '@/auth/AuthContext';
-import { TokenStorage } from '@/auth/tokenStorage';
-import { getServerFeatures } from '@/sync/apiFeatures';
+import { useAuth } from '@/auth/context/AuthContext';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { getServerFeatures } from '@/sync/api/capabilities/apiFeatures';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { SecretKeyBackupModal } from '@/components/account/SecretKeyBackupModal';

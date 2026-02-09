@@ -1,11 +1,11 @@
 import * as React from 'react';
 
-import type { AgentId } from '@/agents/registryCore';
+import type { AgentId } from '@/agents/registry/registryCore';
 import {
     getModelOptionsForAgentTypeOrPreflight,
     supportsFreeformModelSelectionForSession,
     type PreflightModelList,
-} from '@/sync/modelOptions';
+} from '@/sync/domains/models/modelOptions';
 import { machineCapabilitiesInvoke } from '@/sync/ops/capabilities';
 
 type MediatorAgentSource = 'session' | 'agent';

@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { Text, View, ActivityIndicator } from "react-native";
-import { useMessage, useSession, useSessionMessages } from "@/sync/storage";
+import { useMessage, useSession, useSessionMessages } from "@/sync/domains/state/storage";
 import { sync } from '@/sync/sync';
-import { Deferred } from "@/components/Deferred";
-import { ToolFullView } from '@/components/tools/ToolFullView';
-import { ToolHeader } from '@/components/tools/ToolHeader';
-import { ToolStatusIndicator } from '@/components/tools/ToolStatusIndicator';
-import { Message } from '@/sync/typesMessage';
+import { Deferred } from "@/components/ui/forms/Deferred";
+import { ToolFullView } from '@/components/tools/shell/views/ToolFullView';
+import { ToolHeader } from '@/components/tools/shell/presentation/ToolHeader';
+import { ToolStatusIndicator } from '@/components/tools/shell/presentation/ToolStatusIndicator';
+import { Message } from '@/sync/domains/messages/messageTypes';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 

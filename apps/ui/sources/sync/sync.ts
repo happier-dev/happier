@@ -1,20 +1,20 @@
 import Constants from 'expo-constants';
-import { apiSocket } from '@/sync/apiSocket';
-import { AuthCredentials } from '@/auth/tokenStorage';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
-import { storage } from './storage';
-import { ApiMessage } from './apiTypes';
-import type { ApiEphemeralActivityUpdate } from './apiTypes';
-import { Session, Machine, type Metadata } from './storageTypes';
-import { InvalidateSync } from '@/utils/sync';
+import { storage } from './domains/state/storage';
+import { ApiMessage } from './api/types/apiTypes';
+import type { ApiEphemeralActivityUpdate } from './api/types/apiTypes';
+import { Session, Machine, type Metadata } from './domains/state/storageTypes';
+import { InvalidateSync } from '@/utils/sessions/sync';
 import { ActivityUpdateAccumulator } from './reducer/activityUpdateAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
 import { Platform, AppState } from 'react-native';
-import { resolveSentFrom } from './sentFrom';
+import { resolveSentFrom } from './domains/messages/sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord } from './typesRaw';
-import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './settings';
-import { Profile, profileDefaults } from './profile';
+import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
+import { Profile, profileDefaults } from './domains/profiles/profile';
 import {
     loadPendingSettings,
     savePendingSettings,
@@ -22,42 +22,42 @@ import {
     saveSessionMaterializedMaxSeqById,
     loadChangesCursor,
     saveChangesCursor,
-} from './persistence';
+} from './domains/state/persistence';
 import { initializeTracking, tracking } from '@/track';
-import { parseToken } from '@/utils/parseToken';
-import { RevenueCat } from './revenueCat';
+import { parseToken } from '@/utils/auth/parseToken';
+import { RevenueCat } from './domains/purchases';
 import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
-import { getActiveServerSnapshot } from './serverRuntime';
+import { getActiveServerSnapshot } from './domains/server/serverRuntime';
 import { setActiveServerSessionListCache } from './store/sessionListCache';
 import { config } from '@/config';
 import { log } from '@/log';
 import { gitStatusSync } from './git/gitStatusSync';
-import { projectManager } from './projectManager';
+import { projectManager } from './runtime/orchestration/projectManager';
 import { voiceHooks } from '@/realtime/hooks/voiceHooks';
-import { Message } from './typesMessage';
+import { Message } from './domains/messages/messageTypes';
 import { EncryptionCache } from './encryption/encryptionCache';
-import { systemPrompt } from './prompt/systemPrompt';
-import { nowServerMs } from './time';
-import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog';
-import { computeNextReadStateV1 } from './readStateV1';
-import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './updateSessionMetadataWithRetry';
-import type { DecryptedArtifact } from './artifactTypes';
-import { getFriendsList, getUserProfile } from './apiFriends';
-import { kvBulkGet } from './apiKv';
-import { FeedItem } from './feedTypes';
-import { UserProfile } from './friendTypes';
-import { buildSendMessageMeta } from './buildSendMessageMeta';
-import { HappyError } from '@/utils/errors';
-import { dbgSettings, isSettingsSyncDebugEnabled, summarizeSettings, summarizeSettingsDelta } from './debugSettings';
-import { deriveSettingsSecretsKey, decryptSecretValue, encryptSecretString, sealSecretsDeep } from './secretSettings';
-import { didControlReturnToMobile } from './controlledByUserTransitions';
-import { chooseSubmitMode } from './submitMode';
-import type { SavedSecret } from './settings';
-import type { PermissionMode } from './permissionTypes';
-import { scheduleDebouncedPendingSettingsFlush } from './engine/pendingSettings';
-import { applySettingsLocalDelta, syncSettings as syncSettingsEngine } from './engine/settings';
-import { getOfferings as getOfferingsEngine, presentPaywall as presentPaywallEngine, purchaseProduct as purchaseProductEngine, syncPurchases as syncPurchasesEngine } from './engine/purchases';
-import { fetchChanges } from './apiChanges';
+import { systemPrompt } from '../agents/prompt/systemPrompt';
+import { nowServerMs } from './runtime/time';
+import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { computeNextReadStateV1 } from './domains/state/readStateV1';
+import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './domains/session/metadata/updateSessionMetadataWithRetry';
+import type { DecryptedArtifact } from './domains/artifacts/artifactTypes';
+import { getFriendsList, getUserProfile } from './api/social/apiFriends';
+import { kvBulkGet } from './api/account/apiKv';
+import { FeedItem } from './domains/social/feedTypes';
+import { UserProfile } from './domains/social/friendTypes';
+import { buildSendMessageMeta } from './domains/messages/buildSendMessageMeta';
+import { HappyError } from '@/utils/errors/errors';
+import { dbgSettings, isSettingsSyncDebugEnabled, summarizeSettings, summarizeSettingsDelta } from './domains/settings/debugSettings';
+import { deriveSettingsSecretsKey, decryptSecretValue, encryptSecretString, sealSecretsDeep } from './encryption/secretSettings';
+import { didControlReturnToMobile } from './domains/session/control/controlledByUserTransitions';
+import { chooseSubmitMode } from './domains/session/control/submitMode';
+import type { SavedSecret } from './domains/settings/settings';
+import type { PermissionMode } from './domains/permissions/permissionTypes';
+import { scheduleDebouncedPendingSettingsFlush } from './engine/pending/pendingSettings';
+import { applySettingsLocalDelta, syncSettings as syncSettingsEngine } from './engine/settings/syncSettings';
+import { getOfferings as getOfferingsEngine, presentPaywall as presentPaywallEngine, purchaseProduct as purchaseProductEngine, syncPurchases as syncPurchasesEngine } from './engine/purchases/syncPurchases';
+import { fetchChanges } from './api/session/apiChanges';
 import {
     createArtifactViaApi,
     fetchAndApplyArtifactsList,
@@ -66,19 +66,19 @@ import {
     handleNewArtifactSocketUpdate,
     handleUpdateArtifactSocketUpdate,
     updateArtifactViaApi,
-} from './engine/artifacts';
-import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSocketUpdate, handleTodoKvBatchUpdate } from './engine/feed';
-import { fetchAndApplyProfile, handleUpdateAccountSocketUpdate, registerPushTokenIfAvailable } from './engine/account';
-import { buildMachineFromMachineActivityEphemeralUpdate, buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines } from './engine/machines';
-import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as fetchTodosEngine } from './engine/todos';
-import { planSyncActionsFromChanges } from './changesPlanner';
-import { applyPlannedChangeActions } from './changesApplier';
-import { runSocketReconnectCatchUpViaChanges } from './socketReconnectViaChanges';
-import { socketEmitWithAckFallback } from './engine/socketEmitWithAckFallback';
-import { publishPermissionModeToMetadata as publishPermissionModeToMetadataEngine } from './engine/permissionModePublish';
-import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrideToMetadataEngine } from './engine/acpSessionModeOverridePublish';
-import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/modelOverridePublish';
-import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/acpConfigOptionOverridePublish';
+} from './engine/artifacts/syncArtifacts';
+import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSocketUpdate, handleTodoKvBatchUpdate } from './engine/social/syncFeed';
+import { fetchAndApplyProfile, handleUpdateAccountSocketUpdate, registerPushTokenIfAvailable } from './engine/account/syncAccount';
+import { buildMachineFromMachineActivityEphemeralUpdate, buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines } from './engine/machines/syncMachines';
+import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as fetchTodosEngine } from './engine/todos/syncTodos';
+import { planSyncActionsFromChanges } from './runtime/orchestration/changesPlanner';
+import { applyPlannedChangeActions } from './runtime/orchestration/changesApplier';
+import { runSocketReconnectCatchUpViaChanges } from './runtime/orchestration/socketReconnectViaChanges';
+import { socketEmitWithAckFallback } from './engine/socket/socketEmitWithAckFallback';
+import { publishPermissionModeToMetadata as publishPermissionModeToMetadataEngine } from './engine/overrides/permissionModePublish';
+import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrideToMetadataEngine } from './engine/overrides/acpSessionModeOverridePublish';
+import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/overrides/modelOverridePublish';
+import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/overrides/acpConfigOptionOverridePublish';
 import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
 import { serverFetch } from './http/client';
 import {
@@ -90,7 +90,7 @@ import {
     handleDeleteSessionSocketUpdate,
     handleNewMessageSocketUpdate,
     repairInvalidReadStateV1 as repairInvalidReadStateV1Engine,
-} from './engine/sessions';
+} from './engine/sessions/syncSessions';
 import {
     deleteDiscardedPendingMessageV2,
     deletePendingMessageV2,
@@ -100,14 +100,14 @@ import {
     reorderPendingMessagesV2,
     restoreDiscardedPendingMessageV2,
     updatePendingMessageV2,
-} from './engine/pendingQueueV2';
+} from './engine/pending/pendingQueueV2';
 import {
     flushActivityUpdates as flushActivityUpdatesEngine,
     handleEphemeralSocketUpdate,
     handleSocketReconnected,
     handleSocketUpdate,
     parseUpdateContainer,
-} from './engine/socket';
+} from './engine/socket/socket';
 
 const SESSION_MESSAGES_PAGE_SIZE = 150;
 
@@ -423,7 +423,7 @@ class Sync {
      * Encrypt a secret value into an encrypted-at-rest container.
      * Used for transient persistence (e.g. local drafts) where plaintext must never be stored.
      */
-    public encryptSecretValue(value: string): import('./secretSettings').SecretString | null {
+    public encryptSecretValue(value: string): import('./encryption/secretSettings').SecretString | null {
         const v = typeof value === 'string' ? value.trim() : '';
         if (!v) return null;
         if (!this.settingsSecretsKey) return null;
@@ -434,7 +434,7 @@ class Sync {
      * Generic secret-string decryption helper for settings-like objects.
      * Prefer this over adding per-field helpers unless a field needs special handling.
      */
-    public decryptSecretValue(input: import('./secretSettings').SecretString | null | undefined): string | null {
+    public decryptSecretValue(input: import('./encryption/secretSettings').SecretString | null | undefined): string | null {
         return decryptSecretValue(input, this.settingsSecretsKey);
     }
 

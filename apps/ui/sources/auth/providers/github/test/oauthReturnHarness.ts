@@ -1,7 +1,7 @@
 import React from 'react';
 import { vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { PendingExternalAuth, PendingExternalConnect } from '@/auth/tokenStorage';
+import type { PendingExternalAuth, PendingExternalConnect } from '@/auth/storage/tokenStorage';
 
 export const replaceSpy = vi.fn();
 export const localSearchParamsMock = vi.fn();
@@ -49,7 +49,7 @@ vi.mock('expo-router', () => ({
     useLocalSearchParams: localSearchParamsMock,
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
         isAuthenticated: authState.isAuthenticated,
         credentials: authState.credentials,
@@ -60,8 +60,8 @@ vi.mock('@/auth/AuthContext', () => ({
 
 vi.mock('@/modal', () => ({ Modal: modal }));
 
-vi.mock('@/sync/apiFeatures', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/apiFeatures')>('@/sync/apiFeatures');
+vi.mock('@/sync/api/capabilities/apiFeatures', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/api/capabilities/apiFeatures')>('@/sync/api/capabilities/apiFeatures');
     return {
         ...actual,
         isSessionSharingSupported: async () => false,
@@ -72,8 +72,8 @@ vi.mock('@/platform/cryptoRandom', () => ({
     getRandomBytes: () => new Uint8Array(32).fill(9),
 }));
 
-vi.mock('@/auth/tokenStorage', async () => {
-    const actual = await vi.importActual<typeof import('@/auth/tokenStorage')>('@/auth/tokenStorage');
+vi.mock('@/auth/storage/tokenStorage', async () => {
+    const actual = await vi.importActual<typeof import('@/auth/storage/tokenStorage')>('@/auth/storage/tokenStorage');
     return {
         ...actual,
         TokenStorage: {

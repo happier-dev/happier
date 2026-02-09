@@ -3,10 +3,10 @@ import { Pressable, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { AIBackendProfile } from '@/sync/settings';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
 import { t } from '@/text';
-import { useProfileEnvRequirements } from '@/hooks/useProfileEnvRequirements';
-import { hasRequiredSecret } from '@/sync/profileSecrets';
+import { useProfileEnvRequirements } from '@/hooks/session/useProfileEnvRequirements';
+import { hasRequiredSecret } from '@/sync/domains/profiles/profileSecrets';
 
 export interface ProfileRequirementsBadgeProps {
     profile: AIBackendProfile;

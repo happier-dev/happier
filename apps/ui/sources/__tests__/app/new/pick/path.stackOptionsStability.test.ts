@@ -35,7 +35,7 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: ItemGroupProps) => React.createElement('ItemList', null, children),
 }));
 
-vi.mock('@/components/layout', () => ({
+vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 720 },
 }));
 
@@ -82,7 +82,7 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useAllMachines: () => stableMachines,
     useSessions: () => stableSessions,
     useSetting: (key: string) => {

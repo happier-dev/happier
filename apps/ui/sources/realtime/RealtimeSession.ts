@@ -1,11 +1,11 @@
 import type { VoiceSession } from './types';
-import { completeHappierVoiceSession, fetchHappierVoiceToken } from '@/sync/apiVoice';
-import { storage } from '@/sync/storage';
+import { completeHappierVoiceSession, fetchHappierVoiceToken } from '@/sync/api/voice/apiVoice';
+import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
-import { TokenStorage } from '@/auth/tokenStorage';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { t } from '@/text';
-import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/microphonePermissions';
+import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { fetchElevenLabsConversationTokenByo } from './elevenLabsByo';
 import { VOICE_PROVIDER_IDS } from '@/voice/voiceProviders';
 

@@ -39,7 +39,7 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/components/layout', () => ({
+vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 999 },
 }));
 
@@ -50,7 +50,7 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/components/StyledText', () => ({
+vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 
@@ -68,7 +68,7 @@ vi.mock('@/sync/ops', () => ({
     })),
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: () => ({
             sessions: {

@@ -110,12 +110,12 @@
  * - Updated internal state for future processing
  */
 
-import { Message, ToolCall } from "../typesMessage";
+import { Message, ToolCall } from "../domains/messages/messageTypes";
 import { AgentEvent, NormalizedMessage, UsageData } from "../typesRaw";
 import { createTracer, traceMessages, TracerState } from "./reducerTracer";
-import { AgentState } from "../storageTypes";
-import { MessageMeta } from "../typesMessageMeta";
-import { compareToolCalls } from "../../utils/toolComparison";
+import { AgentState } from "../domains/state/storageTypes";
+import { MessageMeta } from "../domains/messages/messageMetaTypes";
+import { compareToolCalls } from "../../utils/tools/toolComparison";
 import { runMessageToEventConversion } from "./phases/messageToEventConversion";
 import { runAgentStatePermissionsPhase } from "./phases/agentStatePermissions";
 import { runUserAndTextPhase } from "./phases/userAndText";

@@ -1,6 +1,6 @@
-import { compareToolCalls } from '../../../utils/toolComparison';
-import type { AgentState } from '../../storageTypes';
-import type { ToolCall } from '../../typesMessage';
+import { compareToolCalls } from '../../../utils/tools/toolComparison';
+import type { AgentState } from '../../domains/state/storageTypes';
+import type { ToolCall } from '../../domains/messages/messageTypes';
 import { equalOptionalStringArrays } from '../helpers/arrays';
 import type { ReducerState } from '../reducer';
 

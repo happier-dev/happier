@@ -4,7 +4,7 @@ import { Stack } from 'expo-router';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { storage } from '@/sync/storage';
+import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Typography } from '@/constants/Typography';
 import { Ionicons } from '@expo/vector-icons';

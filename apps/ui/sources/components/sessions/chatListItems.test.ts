@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { PendingMessage } from '@/sync/storageTypes';
-import type { Message, ToolCall } from '@/sync/typesMessage';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
+import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import { buildChatListItems } from './chatListItems';
 
 function buildPending(params: {

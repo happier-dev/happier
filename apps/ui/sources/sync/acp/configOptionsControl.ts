@@ -1,5 +1,5 @@
-import type { AgentId } from '@/agents/catalog';
-import type { Metadata } from '@/sync/storageTypes';
+import type { AgentId } from '@/agents/catalog/catalog';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 import {
     parseAcpConfigOptionsState,

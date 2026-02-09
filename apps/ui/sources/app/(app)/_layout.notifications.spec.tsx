@@ -57,15 +57,15 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
-vi.mock('@/auth/authRouting', () => ({
+vi.mock('@/auth/routing/authRouting', () => ({
     isPublicRouteForUnauthenticated: () => true,
 }));
 
-vi.mock('@/utils/platform', () => ({
+vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
 
@@ -73,38 +73,38 @@ vi.mock('@/components/navigation/Header', () => ({
     createHeader: () => null,
 }));
 
-vi.mock('@/hooks/useFriendsAllowUsernameSupport', () => ({
+vi.mock('@/hooks/server/useFriendsAllowUsernameSupport', () => ({
     useFriendsAllowUsernameSupport: () => false,
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: () => ({ settings: { voiceProviderId: 'off' } }),
     },
     useProfile: () => ({ linkedProviders: [], username: 'u' }),
 }));
 
-vi.mock('@/sync/storageStore', () => ({
+vi.mock('@/sync/domains/state/storageStore', () => ({
     storage: (selector: (state: { profile: { linkedProviders: []; username: string } }) => unknown) =>
         selector({ profile: { linkedProviders: [], username: 'u' } }),
 }));
 
-vi.mock('@/sync/serverProfiles', () => ({
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
 }));
 
-vi.mock('@/sync/activeServerSwitch', () => ({
+vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
     upsertActivateAndSwitchServer: (...args: unknown[]) => upsertActivateAndSwitchServerSpy(...args),
 }));
 
-vi.mock('@/sync/pendingTerminalConnect', () => ({
+vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     getPendingTerminalConnect: () => pendingTerminalConnectValue,
     clearPendingTerminalConnect: () => clearPendingTerminalConnectSpy(),
     setPendingTerminalConnect: vi.fn(),
 }));
 
-vi.mock('@/sync/apiFeatures', () => ({
+vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
     getCachedServerFeatures: () => null,
     getServerFeatures: async () =>
         createRootLayoutFeaturesResponse({

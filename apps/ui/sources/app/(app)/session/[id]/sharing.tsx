@@ -2,15 +2,15 @@ import React, { memo, useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { Item } from '@/components/Item';
-import { ItemGroup } from '@/components/ItemGroup';
-import { ItemList } from '@/components/ItemList';
-import { useSession, useIsDataReady } from '@/sync/storage';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { useSession, useIsDataReady } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { FriendSelector, PublicLinkDialog, SessionShareDialog } from '@/components/session/sharing';
-import { SessionShare, PublicSessionShare, ShareAccessLevel } from '@/sync/sharingTypes';
+import { FriendSelector, PublicLinkDialog, SessionShareDialog } from '@/components/sessions/sharing';
+import { SessionShare, PublicSessionShare, ShareAccessLevel } from '@/sync/domains/social/sharingTypes';
 import {
     getSessionShares,
     createSessionShare,
@@ -19,15 +19,15 @@ import {
     getPublicShare,
     createPublicShare,
     deletePublicShare
-} from '@/sync/apiSharing';
+} from '@/sync/api/social/apiSharing';
 import { sync } from '@/sync/sync';
-import { useHappyAction } from '@/hooks/useHappyAction';
-import { HappyError } from '@/utils/errors';
-import { getFriendsList } from '@/sync/apiFriends';
-import { UserProfile } from '@/sync/friendTypes';
+import { useHappyAction } from '@/hooks/ui/useHappyAction';
+import { HappyError } from '@/utils/errors/errors';
+import { getFriendsList } from '@/sync/api/social/apiFriends';
+import { UserProfile } from '@/sync/domains/social/friendTypes';
 import { encryptDataKeyForPublicShare } from '@/sync/encryption/publicShareEncryption';
 import { getRandomBytes } from 'expo-crypto';
-import { encryptDataKeyForRecipientV0, verifyRecipientContentPublicKeyBinding } from '@/sync/directShareEncryption';
+import { encryptDataKeyForRecipientV0, verifyRecipientContentPublicKeyBinding } from '@/sync/encryption/directShareEncryption';
 
 function SharingManagementContent({ sessionId }: { sessionId: string }) {
     const { theme } = useUnistyles();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { GitWorkingSnapshot } from '@/sync/storageTypes';
+import type { GitWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { buildGitStatusSummaryFromSnapshot } from './statusSummary';
 
 function buildSnapshot(overrides?: Partial<GitWorkingSnapshot>): GitWorkingSnapshot {

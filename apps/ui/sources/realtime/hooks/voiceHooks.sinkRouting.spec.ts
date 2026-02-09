@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { storage } from '@/sync/storage';
-import { settingsDefaults } from '@/sync/settings';
+import { storage } from '@/sync/domains/state/storage';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { VoiceSession } from '@/realtime/types';
 
 const { realtimeState, appendLocalVoiceMediatorContextUpdate, isLocalVoiceMediatorActive } = vi.hoisted(() => ({

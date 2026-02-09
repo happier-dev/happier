@@ -1,7 +1,7 @@
-import { getServerProfileById } from '../serverProfiles';
-import { getActiveServerSnapshot } from '../serverRuntime';
-import { buildSessionListViewData, type SessionListViewItem } from '../sessionListViewData';
-import type { Machine, Session } from '../storageTypes';
+import { getServerProfileById } from '../domains/server/serverProfiles';
+import { getActiveServerSnapshot } from '../domains/server/serverRuntime';
+import { buildSessionListViewData, type SessionListViewItem } from '../domains/session/listing/sessionListViewData';
+import type { Machine, Session } from '../domains/state/storageTypes';
 
 export function buildSessionListViewDataWithServerScope(params: {
     sessions: Record<string, Session>;

@@ -7,12 +7,12 @@ export * from './ops/capabilities';
 export * from './ops/sessions';
 
 
-export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from './spawnSessionPayload';
-export { buildSpawnHappySessionRpcParams } from './spawnSessionPayload';
+export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from './domains/session/spawn/spawnSessionPayload';
+export { buildSpawnHappySessionRpcParams } from './domains/session/spawn/spawnSessionPayload';
 export type {
     CapabilitiesDescribeResponse,
     CapabilitiesDetectRequest,
     CapabilitiesDetectResponse,
     CapabilitiesInvokeRequest,
     CapabilitiesInvokeResponse,
-} from './capabilitiesProtocol';
+} from './api/capabilities/capabilitiesProtocol';

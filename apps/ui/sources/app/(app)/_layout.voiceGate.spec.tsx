@@ -42,15 +42,15 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true }),
 }));
 
-vi.mock('@/auth/authRouting', () => ({
+vi.mock('@/auth/routing/authRouting', () => ({
     isPublicRouteForUnauthenticated: () => true,
 }));
 
-vi.mock('@/utils/platform', () => ({
+vi.mock('@/utils/platform/platform', () => ({
     isRunningOnMac: () => false,
 }));
 
@@ -58,14 +58,14 @@ vi.mock('@/components/navigation/Header', () => ({
     createHeader: () => null,
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     storage: {
         getState: () => ({ settings: { voiceProviderId: 'happier_elevenlabs_agents' } }),
     },
     useProfile: () => ({ linkedProviders: [], username: null }),
 }));
 
-vi.mock('@/sync/storageStore', () => ({
+vi.mock('@/sync/domains/state/storageStore', () => ({
     storage: (selector: (state: { profile: { linkedProviders: []; username: null } }) => unknown) => selector({ profile: { linkedProviders: [], username: null } }),
 }));
 
@@ -73,7 +73,7 @@ vi.mock('@/sync/sync', () => ({
     sync: { applySettings: (delta: Record<string, unknown>) => applySettings(delta) },
 }));
 
-vi.mock('@/sync/apiFeatures', () => ({
+vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
     getCachedServerFeatures: () => null,
     getServerFeatures: async () =>
         createRootLayoutFeaturesResponse({

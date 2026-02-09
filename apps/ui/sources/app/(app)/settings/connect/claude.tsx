@@ -1,7 +1,7 @@
 import React from 'react';
 import { t } from '@/text';
 import { Platform, View } from 'react-native';
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { StyleSheet } from 'react-native-unistyles';
 
 export default function ClaudeOAuth() {

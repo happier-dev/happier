@@ -1,5 +1,5 @@
 import type { GitDiffFileMode } from '@happier-dev/protocol';
-import type { GitWorkingEntry } from '@/sync/storageTypes';
+import type { GitWorkingEntry } from '@/sync/domains/state/storageTypes';
 
 export function canUseLineSelection(input: {
     gitWriteEnabled: boolean;

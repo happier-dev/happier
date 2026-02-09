@@ -6,18 +6,18 @@ import { Typography } from '@/constants/Typography';
 import { createHeader } from '@/components/navigation/Header';
 import { Platform, TouchableOpacity, Text } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { isRunningOnMac } from '@/utils/platform';
-import { coerceRelativeRoute } from '@/utils/routeUtils';
+import { isRunningOnMac } from '@/utils/platform/platform';
+import { coerceRelativeRoute } from '@/utils/path/routeUtils';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
-import { useAuth } from '@/auth/AuthContext';
-import { isPublicRouteForUnauthenticated } from '@/auth/authRouting';
-import { useFriendsIdentityReadiness } from '@/hooks/useFriendsIdentityReadiness';
+import { useAuth } from '@/auth/context/AuthContext';
+import { isPublicRouteForUnauthenticated } from '@/auth/routing/authRouting';
+import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { VOICE_PROVIDER_IDS } from '@/voice/voiceProviders';
-import { getActiveServerUrl } from '@/sync/serverProfiles';
-import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/activeServerSwitch';
-import { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotificationNav } from '@/sync/pendingNotificationNav';
-import { getPendingTerminalConnect } from '@/sync/pendingTerminalConnect';
+import { getActiveServerUrl } from '@/sync/domains/server/serverProfiles';
+import { normalizeServerUrl, upsertActivateAndSwitchServer } from '@/sync/domains/server/activeServerSwitch';
+import { clearPendingNotificationNav, getPendingNotificationNav, setPendingNotificationNav } from '@/sync/domains/pending/pendingNotificationNav';
+import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 
 export const unstable_settings = {
     initialRouteName: 'index',
@@ -229,8 +229,8 @@ export default function RootLayout() {
                 // Defer loading sync/storage modules until needed to keep module evaluation light
                 // (important for test environments and faster route transitions).
                 const [{ getServerFeatures }, { storage }, { sync }] = await Promise.all([
-                    import('@/sync/apiFeatures'),
-                    import('@/sync/storage'),
+                    import('@/sync/api/capabilities/apiFeatures'),
+                    import('@/sync/domains/state/storage'),
                     import('@/sync/sync'),
                 ]);
 

@@ -1,4 +1,4 @@
-import type { Metadata } from '@/sync/storageTypes';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 export function getAttachCommandForSession(params: {
     sessionId: string;

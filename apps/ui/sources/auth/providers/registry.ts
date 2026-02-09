@@ -1,7 +1,7 @@
 import { authProviderModules } from '@/auth/providers/providerModules';
 import type { AuthProvider } from '@/auth/providers/types';
 import { createExternalOAuthProvider } from '@/auth/providers/externalOAuthProvider';
-import { getCachedServerFeatures } from '@/sync/apiFeatures';
+import { getCachedServerFeatures } from '@/sync/api/capabilities/apiFeatures';
 import type { AuthProviderId } from '@happier-dev/protocol';
 
 export type { AuthProvider } from '@/auth/providers/types';

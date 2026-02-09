@@ -1,4 +1,4 @@
-import type { AIBackendProfile } from '@/sync/settings';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
 
 export function getMissingRequiredConfigEnvVarNames(
     profile: AIBackendProfile | null | undefined,

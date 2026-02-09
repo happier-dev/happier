@@ -8,7 +8,7 @@ import {
     Platform
 } from 'react-native';
 import { Typography } from '@/constants/Typography';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { withItemGroupDividers } from './ItemGroup.dividers';
 import { countSelectableItems } from './ItemGroup.selectableCount';

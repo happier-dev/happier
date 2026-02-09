@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
-import { useSessionProjectGitSnapshot } from '@/sync/storage';
+import { useSessionProjectGitSnapshot } from '@/sync/domains/state/storage';
 import { useUnistyles } from 'react-native-unistyles';
 import { buildGitStatusSummaryFromSnapshot } from './statusSummary';
 

@@ -1,9 +1,9 @@
 import React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { storage } from '@/sync/storageStore';
-import { profileDefaults } from '@/sync/profile';
-import { formatSecretKeyForBackup } from '@/auth/secretKeyBackup';
+import { storage } from '@/sync/domains/state/storageStore';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
+import { formatSecretKeyForBackup } from '@/auth/recovery/secretKeyBackup';
 import { createAccountFeaturesResponse, getRequestUrl, isFeaturesRequest } from './account.testHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,7 +24,7 @@ vi.mock('expo-camera', () => ({
     },
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({
         isAuthenticated: true,
         credentials: { token: 't', secret: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' },

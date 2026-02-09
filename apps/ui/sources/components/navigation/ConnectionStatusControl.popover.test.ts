@@ -115,7 +115,7 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/components/StatusDot', () => ({
+vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
 
@@ -126,7 +126,7 @@ vi.mock('@/components/ui/lists/ActionListSection', () => ({
     },
 }));
 
-vi.mock('@/components/FloatingOverlay', () => ({
+vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
     FloatingOverlay: (props: { children?: React.ReactNode }) =>
         React.createElement(React.Fragment, null, props.children),
 }));
@@ -143,13 +143,13 @@ vi.mock('@/components/ui/popover', () => ({
     },
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSocketStatus: () => ({ status: 'connected' }),
     useSyncError: () => null,
     useLastSyncAt: () => null,
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: authMocks.refreshFromActiveServer }),
 }));
 
@@ -161,7 +161,7 @@ vi.mock('@/sync/sync', () => ({
     sync: { retryNow: vi.fn() },
 }));
 
-vi.mock('@/sync/connectionManager', () => ({
+vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: (...args: any[]) => connectionMocks.switchConnectionToActiveServer(...args),
 }));
 
@@ -211,7 +211,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
         try {
             vi.resetModules();
-            const profiles = await import('@/sync/serverProfiles');
+            const profiles = await import('@/sync/domains/server/serverProfiles');
             profiles.upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
             const ConnectionStatusControl = await importConnectionStatusControl();
 
@@ -249,7 +249,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
 
         try {
             vi.resetModules();
-            const profiles = await import('@/sync/serverProfiles');
+            const profiles = await import('@/sync/domains/server/serverProfiles');
             const company = profiles.upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
             const ConnectionStatusControl = await importConnectionStatusControl();
 
@@ -300,7 +300,7 @@ describe('ConnectionStatusControl (native popover config)', () => {
             const { Platform } = await import('react-native');
             const previousPlatform = Platform.OS;
             (Platform as any).OS = 'web';
-            const profiles = await import('@/sync/serverProfiles');
+            const profiles = await import('@/sync/domains/server/serverProfiles');
             profiles.upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
             const ConnectionStatusControl = await importConnectionStatusControl();
 

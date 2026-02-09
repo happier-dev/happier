@@ -2,11 +2,11 @@ import React from 'react';
 import { Platform } from 'react-native';
 import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
-import { useSetting, useSettingMutable } from '@/sync/storage';
-import { getBuiltInProfile } from '@/sync/profileUtils';
-import type { AIBackendProfile } from '@/sync/settings';
+import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
 import { SecretRequirementScreen, type SecretRequirementModalResult } from '@/components/secrets/requirements';
-import { storeTempData } from '@/utils/tempDataStore';
+import { storeTempData } from '@/utils/sessions/tempDataStore';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
 
 type SecretRequirementRoutePayload = Readonly<{

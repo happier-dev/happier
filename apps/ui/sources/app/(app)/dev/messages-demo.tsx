@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { FlatList, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { MessageView } from '@/components/MessageView';
+import { MessageView } from '@/components/sessions/transcript/MessageView';
 import { debugMessages } from './messages-demo-data';
-import { Message } from '@/sync/typesMessage';
-import { useDemoMessages } from '@/hooks/useDemoMessages';
+import { Message } from '@/sync/domains/messages/messageTypes';
+import { useDemoMessages } from '@/hooks/session/useDemoMessages';
 
 export default React.memo(function MessagesDemoScreen() {
     // Combine all demo messages

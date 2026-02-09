@@ -1,25 +1,25 @@
-import { RoundButton } from "@/components/RoundButton";
-import { useAuth } from "@/auth/AuthContext";
+import { RoundButton } from "@/components/ui/buttons/RoundButton";
+import { useAuth } from "@/auth/context/AuthContext";
 import { Text, View, Image, Platform, Linking } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as React from 'react';
 import { encodeBase64 } from "@/encryption/base64";
-import { authGetToken } from "@/auth/authGetToken";
+import { authGetToken } from "@/auth/flows/getToken";
 import { router, useRouter } from "expo-router";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { getRandomBytesAsync } from "@/platform/cryptoRandom";
-import { useIsLandscape } from "@/utils/responsive";
+import { useIsLandscape } from "@/utils/platform/responsive";
 import { Typography } from "@/constants/Typography";
 import { trackAccountCreated, trackAccountRestored } from '@/track';
-import { HomeHeaderNotAuth } from "@/components/HomeHeader";
-import { MainView } from "@/components/MainView";
+import { HomeHeaderNotAuth } from "@/components/navigation/shell/HomeHeader";
+import { MainView } from "@/components/navigation/shell/MainView";
 import { t } from '@/text';
-import { getServerFeatures } from "@/sync/apiFeatures";
-import { TokenStorage } from "@/auth/tokenStorage";
+import { getServerFeatures } from "@/sync/api/capabilities/apiFeatures";
+import { TokenStorage } from "@/auth/storage/tokenStorage";
 import sodium from '@/encryption/libsodium.lib';
 import { getAuthProvider } from "@/auth/providers/registry";
 import { Modal } from "@/modal";
-import { getPendingTerminalConnect } from "@/sync/pendingTerminalConnect";
+import { getPendingTerminalConnect } from "@/sync/domains/pending/pendingTerminalConnect";
 import { isSafeExternalAuthUrl } from "@/auth/providers/externalAuthUrl";
 
 export default function Home() {

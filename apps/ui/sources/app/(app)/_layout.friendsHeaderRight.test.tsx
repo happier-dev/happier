@@ -3,8 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import { Stack } from 'expo-router';
 
-import { storage } from '@/sync/storageStore';
-import { profileDefaults } from '@/sync/profile';
+import { storage } from '@/sync/domains/state/storageStore';
+import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 import { createOkFetchResponse, createRootLayoutFeaturesResponse } from './_layout.testHelpers';
 
@@ -24,11 +24,11 @@ type LinkedProvider = {
 
 vi.mock('react-native-reanimated', () => ({}));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: false }),
 }));
 
-vi.mock('@/auth/authRouting', () => ({
+vi.mock('@/auth/routing/authRouting', () => ({
     isPublicRouteForUnauthenticated: () => true,
 }));
 

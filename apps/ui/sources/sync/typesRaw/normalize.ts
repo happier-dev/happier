@@ -1,4 +1,4 @@
-import type { MessageMeta } from '../typesMessageMeta';
+import type { MessageMeta } from '../domains/messages/messageMetaTypes';
 import { rawRecordSchema, type AgentEvent, type RawRecord, type UsageData } from './schemas';
 
 // Normalized types

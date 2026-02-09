@@ -4,20 +4,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { Platform, Pressable } from 'react-native';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useSetting, useSettingMutable } from '@/sync/storage';
+import { useSetting, useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { AIBackendProfile } from '@/sync/settings';
+import { AIBackendProfile } from '@/sync/domains/settings/settings';
 import { Modal } from '@/modal';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { machinePreviewEnv } from '@/sync/ops';
-import { getProfileEnvironmentVariables } from '@/sync/settings';
-import { getRequiredSecretEnvVarNames } from '@/sync/profileSecrets';
-import { getTempData, storeTempData } from '@/utils/tempDataStore';
+import { getProfileEnvironmentVariables } from '@/sync/domains/settings/settings';
+import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
+import { getTempData, storeTempData } from '@/utils/sessions/tempDataStore';
 import { ProfilesList } from '@/components/profiles/ProfilesList';
 import { SecretRequirementModal, type SecretRequirementModalResult } from '@/components/secrets/requirements';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
-import { useMachineEnvPresence } from '@/hooks/useMachineEnvPresence';
+import { useMachineEnvPresence } from '@/hooks/machine/useMachineEnvPresence';
 import { PopoverPortalTargetProvider } from '@/components/ui/popover';
 
 export default React.memo(function ProfilePickerScreen() {

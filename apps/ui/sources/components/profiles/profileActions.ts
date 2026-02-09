@@ -1,5 +1,5 @@
 import type { ItemAction } from '@/components/ui/lists/itemActions';
-import type { AIBackendProfile } from '@/sync/settings';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
 import { t } from '@/text';
 
 export function buildProfileActions(params: {

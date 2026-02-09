@@ -6,28 +6,28 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupTitleWithAction } from '@/components/ui/lists/ItemGroupTitleWithAction';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
-import { useSessions, useAllMachines, useMachine, storage, useSetting, useSettingMutable, useSettings } from '@/sync/storage';
+import { useSessions, useAllMachines, useMachine, storage, useSetting, useSettingMutable, useSettings } from '@/sync/domains/state/storage';
 import { Ionicons, Octicons } from '@expo/vector-icons';
-import type { MachineMetadata, Session } from '@/sync/storageTypes';
+import type { MachineMetadata, Session } from '@/sync/domains/state/storageTypes';
 import {
     machineSpawnNewSession,
     machineStopDaemon,
     machineUpdateMetadata,
 } from '@/sync/ops';
 import { Modal } from '@/modal';
-import { formatPathRelativeToHome, getSessionName, getSessionSubtitle } from '@/utils/sessionUtils';
-import { isMachineOnline } from '@/utils/machineUtils';
+import { formatPathRelativeToHome, getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { sync } from '@/sync/sync';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
-import { useNavigateToSession } from '@/hooks/useNavigateToSession';
-import { resolveAbsolutePath } from '@/utils/pathUtils';
-import { MultiTextInput, type MultiTextInputHandle } from '@/components/MultiTextInput';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
+import { resolveAbsolutePath } from '@/utils/path/pathUtils';
+import { MultiTextInput, type MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { DetectedClisList } from '@/components/machines/DetectedClisList';
-import { useMachineCapabilitiesCache } from '@/hooks/useMachineCapabilitiesCache';
-import { resolveTerminalSpawnOptions } from '@/sync/terminalSettings';
-import { resolveWindowsRemoteSessionConsoleFromMachineMetadata } from '@/sync/windowsRemoteSessionConsole';
-import { Switch } from '@/components/Switch';
+import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
+import { resolveTerminalSpawnOptions } from '@/sync/domains/settings/terminalSettings';
+import { resolveWindowsRemoteSessionConsoleFromMachineMetadata } from '@/sync/domains/session/spawn/windowsRemoteSessionConsole';
+import { Switch } from '@/components/ui/forms/Switch';
 import { CAPABILITIES_REQUEST_MACHINE_DETAILS } from '@/capabilities/requests';
 import { InstallableDepInstaller } from '@/components/machines/InstallableDepInstaller';
 import { getInstallableDepRegistryEntries } from '@/capabilities/installableDepsRegistry';

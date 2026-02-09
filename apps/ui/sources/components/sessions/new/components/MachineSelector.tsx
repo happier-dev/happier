@@ -1,9 +1,9 @@
 import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
-import { SearchableListSelector } from '@/components/SearchableListSelector';
-import type { Machine } from '@/sync/storageTypes';
-import { isMachineOnline } from '@/utils/machineUtils';
+import { SearchableListSelector } from '@/components/ui/forms/SearchableListSelector';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { t } from '@/text';
 import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
 

@@ -16,25 +16,25 @@ vi.mock('expo-router', () => ({
     useRouter: () => ({ back: vi.fn(), replace: replaceMock }),
 }));
 
-vi.mock('@/hooks/useConnectTerminal', () => ({
+vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ processAuthUrl: vi.fn(async () => {}), isLoading: false }),
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: false, credentials: null }),
 }));
 
-vi.mock('@/sync/pendingTerminalConnect', () => ({
+vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     setPendingTerminalConnect: (...args: any[]) => setPendingMock(...args),
     clearPendingTerminalConnect: vi.fn(),
     getPendingTerminalConnect: () => null,
 }));
 
-vi.mock('@/sync/serverProfiles', () => ({
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => 'https://api.happier.dev',
 }));
 
-vi.mock('@/sync/activeServerSwitch', () => ({
+vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
     upsertActivateAndSwitchServer: (...args: any[]) => upsertActivateAndSwitchServerMock(...args),
 }));
@@ -44,7 +44,7 @@ vi.mock('react-native', () => ({
     Platform: { OS: 'web' },
 }));
 
-vi.mock('@/components/StyledText', () => ({
+vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 
@@ -56,7 +56,7 @@ vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));
 
-vi.mock('@/components/RoundButton', () => ({
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: () => null,
 }));
 

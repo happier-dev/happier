@@ -2,10 +2,10 @@ import React from 'react';
 import { Text, View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
-import type { AIBackendProfile } from '@/sync/settings';
-import { isProfileCompatibleWithAgent } from '@/sync/settings';
-import { getAgentCliGlyph, getAgentCore } from '@/agents/catalog';
-import { useEnabledAgentIds } from '@/agents/useEnabledAgentIds';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
+import { isProfileCompatibleWithAgent } from '@/sync/domains/settings/settings';
+import { getAgentCliGlyph, getAgentCore } from '@/agents/catalog/catalog';
+import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 
 type Props = {
     profile: Pick<AIBackendProfile, 'compatibility' | 'isBuiltIn'>;

@@ -1,4 +1,4 @@
-import { maybeParseJson } from '../utils/parseJson';
+import { maybeParseJson } from '../normalization/parse/parseJson';
 
 export function coerceToolResultRecord(value: unknown): Record<string, unknown> | null {
     const parsed = maybeParseJson(value);

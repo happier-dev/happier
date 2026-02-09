@@ -46,8 +46,8 @@ vi.mock('@/realtime/hooks/voiceHooks', () => ({
 }));
 
 import { Encryption } from '@/sync/encryption/encryption';
-import { storage } from './storage';
-import type { Session } from './storageTypes';
+import { storage } from './domains/state/storage';
+import type { Session } from './domains/state/storageTypes';
 
 const initialStorageState = storage.getState();
 

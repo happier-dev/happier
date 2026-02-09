@@ -5,13 +5,13 @@ import { CommonActions, useFocusEffect, useNavigation } from '@react-navigation/
 import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { MultiTextInput, type MultiTextInputHandle } from '@/components/MultiTextInput';
-import type { AgentId } from '@/agents/catalog';
-import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog';
+import { MultiTextInput, type MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
+import type { AgentId } from '@/agents/catalog/catalog';
+import { DEFAULT_AGENT_ID, getAgentCore, isAgentId } from '@/agents/catalog/catalog';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 
 const stylesheet = StyleSheet.create((theme) => ({

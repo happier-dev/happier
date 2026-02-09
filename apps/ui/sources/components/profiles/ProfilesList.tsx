@@ -9,19 +9,19 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 
-import type { AIBackendProfile } from '@/sync/settings';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
 import { ProfileCompatibilityIcon } from '@/components/sessions/new/components/ProfileCompatibilityIcon';
 import { ProfileRequirementsBadge } from '@/components/profiles/ProfileRequirementsBadge';
 import { ignoreNextRowPress } from '@/utils/ui/ignoreNextRowPress';
-import { toggleFavoriteProfileId } from '@/sync/profileGrouping';
+import { toggleFavoriteProfileId } from '@/sync/domains/profiles/profileGrouping';
 import { buildProfileActions } from '@/components/profiles/profileActions';
 import { getDefaultProfileListStrings, getProfileSubtitle, buildProfilesListGroups } from '@/components/profiles/profileListModel';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
 import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
-import { hasRequiredSecret } from '@/sync/profileSecrets';
-import { useSetting } from '@/sync/storage';
-import { getEnabledAgentIds } from '@/agents/enabled';
+import { hasRequiredSecret } from '@/sync/domains/profiles/profileSecrets';
+import { useSetting } from '@/sync/domains/state/storage';
+import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 
 export interface ProfilesListProps {
     customProfiles: AIBackendProfile[];

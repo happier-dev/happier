@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { ApiEphemeralActivityUpdate } from '../apiTypes';
+import type { ApiEphemeralActivityUpdate } from '../api/types/apiTypes';
 import { ActivityUpdateAccumulator } from './activityUpdateAccumulator';
 
 describe('ActivityUpdateAccumulator Smart Debounce', () => {

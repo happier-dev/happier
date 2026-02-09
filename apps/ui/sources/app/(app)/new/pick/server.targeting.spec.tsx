@@ -70,11 +70,11 @@ vi.mock('@react-navigation/native', () => ({
     },
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => (state.settings as any)[key],
 }));
 
-vi.mock('@/sync/serverProfiles', () => ({
+vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerSnapshot: () => ({
         serverId: state.activeServerId,
         serverUrl: state.activeServerUrl,

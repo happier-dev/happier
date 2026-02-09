@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { CapabilityDetectResult, CapabilityId } from '@/sync/capabilitiesProtocol';
+import type { CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 type RegistryState =
     | { ok: true; latestVersion: string | null }

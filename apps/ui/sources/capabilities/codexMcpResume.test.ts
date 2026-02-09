@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { CodexMcpResumeDepData } from '@/sync/capabilitiesProtocol';
+import type { CodexMcpResumeDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
 
 import {
     buildCodexMcpResumeRegistryDetectRequest,

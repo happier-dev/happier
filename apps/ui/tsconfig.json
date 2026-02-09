@@ -39,11 +39,11 @@
     "**/*.ts",
     "**/*.tsx",
     "expo-env.d.ts",
-    "nativewind-env.d.ts",
-    ".expo/types/**/*.ts"
+    "nativewind-env.d.ts"
   ],
   "exclude": [
     "sources/trash/**/*",
+    ".expo/**/*",
     "node_modules"
   ]
 }

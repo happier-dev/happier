@@ -18,7 +18,7 @@ vi.mock('@/constants/Typography', () => ({
     },
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSessionPendingMessages: () => ({
         isLoaded: true,
         messages: [

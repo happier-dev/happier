@@ -1,4 +1,4 @@
-import type { FeedItem } from '../../feedTypes';
+import type { FeedItem } from '../../domains/social/feedTypes';
 import type { StoreGet, StoreSet } from './_shared';
 
 export type FeedDomain = {

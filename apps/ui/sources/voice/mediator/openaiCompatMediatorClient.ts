@@ -1,4 +1,4 @@
-import { storage } from '@/sync/storage';
+import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { buildOpenAiChatCompletionRequest, parseOpenAiChatCompletionAssistantText, type OpenAiCompatChatMessage } from '@/voice/local/openaiCompatChat';
 

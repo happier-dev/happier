@@ -5,7 +5,7 @@ import { useRoute } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { Octicons } from '@expo/vector-icons';
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Typography } from '@/constants/Typography';
 import { GitFileStatus } from '@/sync/git/gitStatusFiles';
@@ -14,7 +14,7 @@ import { normalizeFilePath } from './files/utils';
 import { FilesToolbar } from './files/components/FilesToolbar';
 import { GitBranchSummary } from './files/components/GitBranchSummary';
 import { GitOperationsPanel } from './files/components/GitOperationsPanel';
-import { searchFiles, FileItem } from '@/sync/suggestionFile';
+import { searchFiles, FileItem } from '@/sync/domains/input/suggestionFile';
 import { SearchResultsList } from './files/components/content/SearchResultsList';
 import { ChangedFilesList } from './files/components/content/ChangedFilesList';
 import {
@@ -26,10 +26,10 @@ import {
     useProjectForSession,
     useProjectSessions,
     useSetting,
-} from '@/sync/storage';
+} from '@/sync/domains/state/storage';
 import { gitStatusSync } from '@/sync/git/gitStatusSync';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 import { useGitCommitHistory } from './files/hooks/useGitCommitHistory';
 import { useChangedFilesData } from './files/hooks/useChangedFilesData';
 import { useFilesGitOperations } from './files/hooks/useFilesGitOperations';

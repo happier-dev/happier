@@ -5,10 +5,10 @@ import { Typography } from '@/constants/Typography';
 import { Item } from '@/components/ui/lists/Item';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
-import type { MachineCapabilitiesCacheState } from '@/hooks/useMachineCapabilitiesCache';
-import type { CapabilityDetectResult, CapabilityId, CliCapabilityData, TmuxCapabilityData } from '@/sync/capabilitiesProtocol';
-import { getAgentCore } from '@/agents/catalog';
-import { useEnabledAgentIds } from '@/agents/useEnabledAgentIds';
+import type { MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
+import type { CapabilityDetectResult, CapabilityId, CliCapabilityData, TmuxCapabilityData } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { getAgentCore } from '@/agents/catalog/catalog';
+import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 
 type Props = {
     state: MachineCapabilitiesCacheState;

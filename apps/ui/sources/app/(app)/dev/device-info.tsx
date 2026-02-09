@@ -7,9 +7,9 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import Constants from 'expo-constants';
-import { useIsTablet, getDeviceType, calculateDeviceDimensions, useHeaderHeight } from '@/utils/responsive';
-import { layout } from '@/components/layout';
-import { isRunningOnMac } from '@/utils/platform';
+import { useIsTablet, getDeviceType, calculateDeviceDimensions, useHeaderHeight } from '@/utils/platform/responsive';
+import { layout } from '@/components/ui/layout/layout';
+import { isRunningOnMac } from '@/utils/platform/platform';
 
 export default function DeviceInfo() {
     const insets = useSafeAreaInsets();

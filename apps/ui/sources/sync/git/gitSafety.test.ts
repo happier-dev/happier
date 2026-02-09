@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { GitWorkingSnapshot } from '../storageTypes';
+import type { GitWorkingSnapshot } from '../domains/state/storageTypes';
 import {
     canCreateCommitFromSnapshot,
     canPullFromSnapshot,

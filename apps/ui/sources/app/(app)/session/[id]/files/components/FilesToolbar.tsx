@@ -2,7 +2,7 @@ import * as React from 'react';
 import { Platform, Pressable, TextInput, View } from 'react-native';
 import { Octicons } from '@expo/vector-icons';
 
-import { Text } from '@/components/StyledText';
+import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { ChangedFilesViewMode } from '@/sync/git/gitAttribution';

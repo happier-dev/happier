@@ -1,4 +1,4 @@
-import type { MachineMetadata } from '../storageTypes';
+import type { MachineMetadata } from '../domains/state/storageTypes';
 
 export function mergeMachineMetadataForVersionMismatch(params: Readonly<{
     latest: MachineMetadata;

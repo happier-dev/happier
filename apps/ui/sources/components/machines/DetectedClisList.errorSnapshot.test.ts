@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
-import type { MachineCapabilitiesCacheState } from '@/hooks/useMachineCapabilitiesCache';
-import type { CapabilityDetectResult, CapabilityId } from '@/sync/capabilitiesProtocol';
+import type { MachineCapabilitiesCacheState } from '@/hooks/server/useMachineCapabilitiesCache';
+import type { CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { DetectedClisList } from './DetectedClisList';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -31,11 +31,11 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: Record<string, unknown>) => React.createElement('Item', props),
 }));
 
-vi.mock('@/agents/useEnabledAgentIds', () => ({
+vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => ['claude', 'codex'],
 }));
 
-vi.mock('@/agents/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: (agentId: string) => {
         if (agentId === 'claude') {
             return { displayNameKey: 'agentInput.agent.claude', cli: { detectKey: 'claude' } };

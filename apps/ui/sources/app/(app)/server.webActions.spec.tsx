@@ -65,15 +65,15 @@ vi.mock('expo-router', () => ({
     useLocalSearchParams: () => ({}),
 }));
 
-vi.mock('@/sync/connectionManager', () => ({
+vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
     switchConnectionToActiveServer: vi.fn(async () => null),
 }));
 
-vi.mock('@/auth/AuthContext', () => ({
+vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
-vi.mock('@/auth/tokenStorage', () => ({
+vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getCredentialsForServerUrl: vi.fn(async () => null),
     },
@@ -103,11 +103,11 @@ vi.mock('@/components/ui/lists/ItemRowActions', () => ({
     },
 }));
 
-vi.mock('@/components/RoundButton', () => ({
+vi.mock('@/components/ui/buttons/RoundButton', () => ({
     RoundButton: ({ title }: any) => React.createElement('Text', null, title),
 }));
 
-vi.mock('@/components/Switch', () => ({
+vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: () => null,
 }));
 
@@ -117,7 +117,7 @@ afterEach(() => {
 
 describe('ServerConfigScreen (web row actions)', () => {
     it('adds per-row device switch action for server rows on web', async () => {
-        const { upsertServerProfile, setActiveServerId } = await import('@/sync/serverProfiles');
+        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
         setActiveServerId('official', { scope: 'device' });
 

@@ -5,8 +5,8 @@ import { useRouter } from 'expo-router';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { AGENT_IDS, getAgentCore } from '@/agents/catalog';
-import { useSetting } from '@/sync/storage';
+import { AGENT_IDS, getAgentCore } from '@/agents/catalog/catalog';
+import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 

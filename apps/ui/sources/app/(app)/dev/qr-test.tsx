@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, ScrollView } from 'react-native';
 import { QRCode } from '@/components/qr';
-import { RoundButton } from '@/components/RoundButton';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 

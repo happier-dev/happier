@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { useConversation } from '@elevenlabs/react';
 import { registerVoiceSession } from './RealtimeSession';
-import { storage } from '@/sync/storage';
+import { storage } from '@/sync/domains/state/storage';
 import { realtimeClientTools } from './realtimeClientTools';
 import { getElevenLabsCodeFromPreference } from '@/constants/Languages';
 import type { VoiceSession, VoiceSessionConfig } from './types';

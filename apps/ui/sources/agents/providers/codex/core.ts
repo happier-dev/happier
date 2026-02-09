@@ -1,4 +1,4 @@
-import type { AgentCoreConfig } from '@/agents/registryCore';
+import type { AgentCoreConfig } from '@/agents/registry/registryCore';
 import { getAgentModelConfig, getAgentSessionModesKind } from '@happier-dev/agents';
 
 export const CODEX_CORE: AgentCoreConfig = {

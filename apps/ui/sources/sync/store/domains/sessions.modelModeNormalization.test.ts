@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createSessionsDomain } from './sessions';
-import { clearPersistence, saveSessionModelModeUpdatedAts, saveSessionModelModes } from '../../persistence';
+import { clearPersistence, saveSessionModelModeUpdatedAts, saveSessionModelModes } from '../../domains/state/persistence';
 
 function createHarness() {
     let state: any = {

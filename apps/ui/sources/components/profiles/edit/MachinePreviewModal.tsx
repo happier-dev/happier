@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
-import type { Machine } from '@/sync/storageTypes';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 
 export interface MachinePreviewModalProps {
     machines: Machine[];

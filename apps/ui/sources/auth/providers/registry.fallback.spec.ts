@@ -95,8 +95,8 @@ function buildCachedFeatures(
     };
 }
 
-vi.mock('@/sync/apiFeatures', async () => {
-    const actual = await vi.importActual<typeof import('@/sync/apiFeatures')>('@/sync/apiFeatures');
+vi.mock('@/sync/api/capabilities/apiFeatures', async () => {
+    const actual = await vi.importActual<typeof import('@/sync/api/capabilities/apiFeatures')>('@/sync/api/capabilities/apiFeatures');
     return {
         ...actual,
         getCachedServerFeatures: () => cachedFeatures,

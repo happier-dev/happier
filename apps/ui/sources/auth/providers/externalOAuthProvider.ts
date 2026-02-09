@@ -1,6 +1,6 @@
-import type { AuthCredentials } from '@/auth/tokenStorage';
-import { HappyError } from '@/utils/errors';
-import { backoff } from '@/utils/time';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { HappyError } from '@/utils/errors/errors';
+import { backoff } from '@/utils/timing/time';
 import { serverFetch } from '@/sync/http/client';
 
 import type { AuthProvider } from '@/auth/providers/types';

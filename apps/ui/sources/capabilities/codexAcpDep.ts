@@ -1,5 +1,5 @@
-import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId, CodexAcpDepData } from '@/sync/capabilitiesProtocol';
-import { compareVersions, parseVersion } from '@/utils/versionUtils';
+import type { CapabilitiesDetectRequest, CapabilityDetectResult, CapabilityId, CodexAcpDepData } from '@/sync/api/capabilities/capabilitiesProtocol';
+import { compareVersions, parseVersion } from '@/utils/system/versionUtils';
 
 export const CODEX_ACP_DEP_ID = 'dep.codex-acp' as const satisfies CapabilityId;
 export const CODEX_ACP_DIST_TAG = 'latest' as const;

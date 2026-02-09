@@ -4,10 +4,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Modal } from '@/modal';
 import { Typography } from '@/constants/Typography';
-import type { PendingMessage } from '@/sync/storageTypes';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { PendingMessagesModal } from './PendingMessagesModal';
-import { layout } from '@/components/layout';
+import { layout } from '@/components/ui/layout/layout';
 
 export function PendingUserTextMessageView(props: {
     sessionId: string;

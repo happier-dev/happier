@@ -69,7 +69,7 @@ vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
 }));
 
-vi.mock('@/components/layout', () => ({
+vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 900 },
 }));
 
@@ -84,7 +84,7 @@ vi.mock('@/components/sessions/new/components/PathSelector', () => ({
     },
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useAllMachines: () => [{ id: 'm1', metadata: { homeDir: '/home' } }],
     useSessions: () => [],
     useSetting: (key: string) => {

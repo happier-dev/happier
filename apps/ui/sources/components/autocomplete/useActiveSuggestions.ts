@@ -1,4 +1,4 @@
-import { ValueSync } from '@/utils/sync';
+import { ValueSync } from '@/utils/sessions/sync';
 import * as React from 'react';
 
 interface SuggestionOptions {

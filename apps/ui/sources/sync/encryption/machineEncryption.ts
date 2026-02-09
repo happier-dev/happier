@@ -1,5 +1,5 @@
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
-import { MachineMetadata, MachineMetadataSchema } from '../storageTypes';
+import { MachineMetadata, MachineMetadataSchema } from '../domains/state/storageTypes';
 import { EncryptionCache } from './encryptionCache';
 import { Decryptor, Encryptor } from './encryptor';
 

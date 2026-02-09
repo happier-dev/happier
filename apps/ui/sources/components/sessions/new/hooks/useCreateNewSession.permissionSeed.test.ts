@@ -1,9 +1,9 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { PermissionMode, ModelMode } from '@/sync/permissionTypes';
-import type { Settings } from '@/sync/settings';
-import type { UseMachineEnvPresenceResult } from '@/hooks/useMachineEnvPresence';
+import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import type { Settings } from '@/sync/domains/settings/settings';
+import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,12 +36,12 @@ async function setupUseCreateNewSessionHarness() {
             sendMessage: vi.fn(),
         },
     }));
-    vi.doMock('@/sync/storage', () => ({
+    vi.doMock('@/sync/domains/state/storage', () => ({
         storage: {
             getState: () => ({ settings: {}, machines: { m1: { id: 'm1' } } }),
         },
     }));
-    vi.doMock('@/sync/serverRuntime', () => ({
+    vi.doMock('@/sync/domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: vi.fn(() => ({
             serverId: 'server-a',
             serverUrl: 'https://server-a.example.test',
@@ -50,18 +50,18 @@ async function setupUseCreateNewSessionHarness() {
         })),
         setActiveServer: (...args: unknown[]) => setActiveServerSpy(...args),
     }));
-    vi.doMock('@/sync/connectionManager', () => ({
+    vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
         switchConnectionToActiveServer: (...args: unknown[]) => switchConnectionToActiveServerSpy(...args),
     }));
-    vi.doMock('@/sync/terminalSettings', () => ({
+    vi.doMock('@/sync/domains/settings/terminalSettings', () => ({
         resolveTerminalSpawnOptions: vi.fn(() => null),
     }));
-    vi.doMock('@/hooks/useMachineCapabilitiesCache', () => ({
+    vi.doMock('@/hooks/server/useMachineCapabilitiesCache', () => ({
         getMachineCapabilitiesSnapshot: () => ({ supported: true, response: { protocolVersion: 1, results: {} } }),
         prefetchMachineCapabilities: vi.fn(async () => {}),
     }));
-    vi.doMock('@/agents/catalog', async () => {
-        const actual = await vi.importActual<typeof import('@/agents/catalog')>('@/agents/catalog');
+    vi.doMock('@/agents/catalog/catalog', async () => {
+        const actual = await vi.importActual<typeof import('@/agents/catalog/catalog')>('@/agents/catalog/catalog');
         return {
             ...actual,
             getAgentCore: vi.fn(() => ({ model: { supportsSelection: false } })),
@@ -73,10 +73,10 @@ async function setupUseCreateNewSessionHarness() {
             buildResumeCapabilityOptionsFromUiState: vi.fn(() => ({})),
         };
     });
-    vi.doMock('@/agents/acpRuntimeResume', () => ({
+    vi.doMock('@/agents/runtime/acpRuntimeResume', () => ({
         describeAcpLoadSessionSupport: vi.fn(() => ({ kind: 'unknown' })),
     }));
-    vi.doMock('@/agents/resumeCapabilities', () => ({
+    vi.doMock('@/agents/runtime/resumeCapabilities', () => ({
         canAgentResume: vi.fn(() => false),
     }));
     vi.doMock('@/components/sessions/new/modules/formatResumeSupportDetailCode', () => ({

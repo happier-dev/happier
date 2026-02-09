@@ -1,14 +1,14 @@
 import * as React from 'react';
 
-import type { AgentId } from '@/agents/catalog';
+import type { AgentId } from '@/agents/catalog/catalog';
 import { t } from '@/text';
-import { getRequiredSecretEnvVarNames } from '@/sync/profileSecrets';
-import type { AIBackendProfile, SavedSecret } from '@/sync/settings';
-import type { Machine } from '@/sync/storageTypes';
-import type { PermissionMode, ModelMode } from '@/sync/permissionTypes';
-import type { CLIAvailability } from '@/hooks/useCLIDetection';
-import type { UseMachineEnvPresenceResult } from '@/hooks/useMachineEnvPresence';
-import { prefetchMachineCapabilities } from '@/hooks/useMachineCapabilitiesCache';
+import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
+import type { AIBackendProfile, SavedSecret } from '@/sync/domains/settings/settings';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
+import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
+import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
 import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
 import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
 import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secretRequirementApply';

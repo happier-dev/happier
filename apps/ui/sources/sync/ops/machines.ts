@@ -6,15 +6,15 @@ import type { SpawnSessionResult } from '@happier-dev/protocol';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_METHODS, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpc';
 
-import { apiSocket } from '../apiSocket';
+import { apiSocket } from '../api/session/apiSocket';
 import { sync } from '../sync';
-import type { MachineMetadata } from '../storageTypes';
-import { buildSpawnHappySessionRpcParams, type SpawnHappySessionRpcParams, type SpawnSessionOptions } from '../spawnSessionPayload';
+import type { MachineMetadata } from '../domains/state/storageTypes';
+import { buildSpawnHappySessionRpcParams, type SpawnHappySessionRpcParams, type SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
 import { isPlainObject, normalizeSpawnSessionResult } from './_shared';
 import { mergeMachineMetadataForVersionMismatch } from './machineMetadataMerge';
 
-export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from '../spawnSessionPayload';
-export { buildSpawnHappySessionRpcParams } from '../spawnSessionPayload';
+export type { SpawnHappySessionRpcParams, SpawnSessionOptions } from '../domains/session/spawn/spawnSessionPayload';
+export { buildSpawnHappySessionRpcParams } from '../domains/session/spawn/spawnSessionPayload';
 
 // Exported session operation functions
 

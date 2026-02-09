@@ -1,15 +1,15 @@
 import React from 'react';
 import { View, FlatList } from 'react-native';
-import { Text } from '@/components/StyledText';
-import { useAllSessions } from '@/sync/storage';
-import { Session } from '@/sync/storageTypes';
-import { Avatar } from '@/components/Avatar';
-import { getSessionName, getSessionSubtitle, getSessionAvatarId } from '@/utils/sessionUtils';
+import { Text } from '@/components/ui/text/StyledText';
+import { useAllSessions } from '@/sync/domains/state/storage';
+import { Session } from '@/sync/domains/state/storageTypes';
+import { Avatar } from '@/components/ui/avatar/Avatar';
+import { getSessionName, getSessionSubtitle, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
-import { layout } from '@/components/layout';
-import { useNavigateToSession } from '@/hooks/useNavigateToSession';
+import { layout } from '@/components/ui/layout/layout';
+import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { Pressable } from 'react-native';
 import { t } from '@/text';
 

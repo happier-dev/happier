@@ -23,7 +23,7 @@ vi.mock('@/modal', () => ({
     Modal: { alert: vi.fn(), show: vi.fn() },
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => (key === 'useProfiles' ? false : false),
     useSettingMutable: () => [[], vi.fn()],
 }));
@@ -48,11 +48,11 @@ vi.mock('@/utils/secrets/secretSatisfaction', () => ({
     getSecretSatisfaction: () => ({ isSatisfied: true, items: [] }),
 }));
 
-vi.mock('@/sync/profileSecrets', () => ({
+vi.mock('@/sync/domains/profiles/profileSecrets', () => ({
     getRequiredSecretEnvVarNames: () => [],
 }));
 
-vi.mock('@/hooks/useMachineEnvPresence', () => ({
+vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
     useMachineEnvPresence: () => ({ isLoading: false, isPreviewEnvSupported: false, meta: {} }),
 }));
 
@@ -60,11 +60,11 @@ vi.mock('@/sync/ops', () => ({
     machinePreviewEnv: vi.fn(async () => ({ supported: false })),
 }));
 
-vi.mock('@/sync/settings', () => ({
+vi.mock('@/sync/domains/settings/settings', () => ({
     getProfileEnvironmentVariables: () => ({}),
 }));
 
-vi.mock('@/utils/tempDataStore', () => ({
+vi.mock('@/utils/sessions/tempDataStore', () => ({
     storeTempData: () => 'temp',
     getTempData: () => null,
 }));

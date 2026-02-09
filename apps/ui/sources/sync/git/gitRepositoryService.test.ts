@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { sessionGitStatusSnapshot } from '../ops';
-import { storage } from '../storage';
-import type { GitWorkingSnapshot } from '../storageTypes';
+import { storage } from '../domains/state/storage';
+import type { GitWorkingSnapshot } from '../domains/state/storageTypes';
 import { GitRepositoryService, snapshotToGitStatus } from './gitRepositoryService';
 
 vi.mock('../ops', () => ({

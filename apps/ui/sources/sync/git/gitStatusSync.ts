@@ -5,13 +5,13 @@
 
 import { AppState, type AppStateStatus } from 'react-native';
 
-import { InvalidateSync } from '@/utils/sync';
+import { InvalidateSync } from '@/utils/sessions/sync';
 import { gitRepositoryService, snapshotToGitStatus } from './gitRepositoryService';
 import { ATTRIBUTION_INVALIDATION_WINDOW_MS, shouldAttributeChangedPaths } from './sync/attribution';
 import { isSessionPathWithinRepoRoot } from './sync/paths';
 import { collectChangedPaths } from './sync/snapshotDiff';
-import { storage } from '../storage';
-import type { GitWorkingSnapshot } from '../storageTypes';
+import { storage } from '../domains/state/storage';
+import type { GitWorkingSnapshot } from '../domains/state/storageTypes';
 
 type InvalidationSource = 'unknown' | 'mutation';
 export { ATTRIBUTION_INVALIDATION_WINDOW_MS, shouldAttributeChangedPaths } from './sync/attribution';
@@ -254,7 +254,7 @@ export class GitStatusSync {
     }
 
     private async clearSearchCacheForProject(projectKey: string): Promise<void> {
-        const { fileSearchCache } = await import('../suggestionFile');
+        const { fileSearchCache } = await import('../domains/input/suggestionFile');
         for (const [sessionId, key] of this.sessionToProjectKey.entries()) {
             if (key === projectKey) {
                 fileSearchCache.clearCache(sessionId);

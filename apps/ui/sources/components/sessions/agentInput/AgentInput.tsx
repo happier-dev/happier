@@ -2,56 +2,56 @@ import { Ionicons, Octicons } from '@expo/vector-icons';
 import * as React from 'react';
 import { View, Platform, useWindowDimensions, ViewStyle, Text, ActivityIndicator, Pressable, ScrollView } from 'react-native';
 import { Image } from 'expo-image';
-import { layout } from '@/components/layout';
-import { MultiTextInput, KeyPressEvent } from '@/components/MultiTextInput';
-import { Switch } from '@/components/Switch';
+import { layout } from '@/components/ui/layout/layout';
+import { MultiTextInput, KeyPressEvent } from '@/components/ui/forms/MultiTextInput';
+import { Switch } from '@/components/ui/forms/Switch';
 import { Typography } from '@/constants/Typography';
-import type { PermissionMode, ModelMode } from '@/sync/permissionTypes';
-import { getModelOptionsForSession, supportsFreeformModelSelectionForSession } from '@/sync/modelOptions';
-import { describeEffectiveModelMode } from '@/sync/describeEffectiveModelMode';
+import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import { getModelOptionsForSession, supportsFreeformModelSelectionForSession } from '@/sync/domains/models/modelOptions';
+import { describeEffectiveModelMode } from '@/sync/domains/models/describeEffectiveModelMode';
 import { Modal } from '@/modal';
 import {
     getPermissionModeBadgeLabelForAgentType,
     getPermissionModeLabelForAgentType,
     getPermissionModeOptionsForSession,
     getPermissionModeTitleForAgentType,
-} from '@/sync/permissionModeOptions';
-import { describeEffectivePermissionMode } from '@/sync/describeEffectivePermissionMode';
-import { hapticsLight, hapticsError } from '@/components/haptics';
-import { Shaker, ShakeInstance } from '@/components/Shaker';
-import { StatusDot } from '@/components/StatusDot';
+} from '@/sync/domains/permissions/permissionModeOptions';
+import { describeEffectivePermissionMode } from '@/sync/domains/permissions/describeEffectivePermissionMode';
+import { hapticsLight, hapticsError } from '@/components/ui/theme/haptics';
+import { Shaker, ShakeInstance } from '@/components/ui/feedback/Shaker';
+import { StatusDot } from '@/components/ui/status/StatusDot';
 import { useActiveWord } from '@/components/autocomplete/useActiveWord';
 import { useActiveSuggestions } from '@/components/autocomplete/useActiveSuggestions';
 import { AgentInputAutocomplete } from './components/AgentInputAutocomplete';
-import { FloatingOverlay } from '@/components/FloatingOverlay';
+import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
-import { TextInputState, MultiTextInputHandle } from '@/components/MultiTextInput';
+import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
 import { GitStatusBadge, useHasMeaningfulGitStatus } from '@/components/git';
 import { ModelPickerOverlay } from '@/components/model/ModelPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { useSetting } from '@/sync/storage';
+import { useSetting } from '@/sync/domains/state/storage';
 import { Theme } from '@/theme';
 import { t } from '@/text';
-import { Metadata } from '@/sync/storageTypes';
-import { AIBackendProfile, getProfileEnvironmentVariables } from '@/sync/settings';
-import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog';
-import { resolveProfileById } from '@/sync/profileUtils';
+import { Metadata } from '@/sync/domains/state/storageTypes';
+import { AIBackendProfile, getProfileEnvironmentVariables } from '@/sync/domains/settings/settings';
+import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
+import { resolveProfileById } from '@/sync/domains/profiles/profileUtils';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ResumeChip, formatResumeChipLabel, RESUME_CHIP_ICON_NAME, RESUME_CHIP_ICON_SIZE } from './ResumeChip';
 import { PathAndResumeRow } from './PathAndResumeRow';
 import { getHasAnyAgentInputActions, shouldShowPathAndResumeRow } from './actionBarLogic';
-import { useKeyboardHeight } from '@/hooks/useKeyboardHeight';
+import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { computeAgentInputDefaultMaxHeight } from './inputMaxHeight';
 import { getContextWarning } from './contextWarning';
 import { buildAgentInputActionMenuActions } from './actionMenuActions';
 import { PermissionModePicker } from './components/PermissionModePicker';
-import { computeAcpPlanModeControl, computeAcpSessionModePickerControl } from '@/sync/acpSessionModeControl';
-import { computeAcpConfigOptionControls, type AcpConfigOptionValueId } from '@/sync/acpConfigOptionsControl';
+import { computeAcpPlanModeControl, computeAcpSessionModePickerControl } from '@/sync/acp/sessionModeControl';
+import { computeAcpConfigOptionControls, type AcpConfigOptionValueId } from '@/sync/acp/configOptionsControl';
 
 export type AgentInputExtraActionChipRenderContext = Readonly<{
     chipStyle: (pressed: boolean) => any;

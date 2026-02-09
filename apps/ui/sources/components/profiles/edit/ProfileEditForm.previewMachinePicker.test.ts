@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { AIBackendProfile } from '@/sync/settings';
+import type { AIBackendProfile } from '@/sync/domains/settings/settings';
 import { ProfileEditForm } from './ProfileEditForm';
 
 (
@@ -72,7 +72,7 @@ vi.mock('@/modal', () => ({
     },
 }));
 
-vi.mock('@/sync/storage', () => ({
+vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: () => ({}),
     useAllMachines: () => [{ id: 'm1', metadata: { displayName: 'M1' } }],
     useMachine: () => null,
@@ -88,7 +88,7 @@ vi.mock('@/components/sessions/new/components/MachineSelector', () => ({
     MachineSelector: () => null,
 }));
 
-vi.mock('@/hooks/useCLIDetection', () => ({
+vi.mock('@/hooks/auth/useCLIDetection', () => ({
     useCLIDetection: () => ({ status: 'unknown' }),
 }));
 
@@ -96,7 +96,7 @@ vi.mock('@/components/profiles/environmentVariables/EnvironmentVariablesList', (
     EnvironmentVariablesList: () => null,
 }));
 
-vi.mock('@/components/SessionTypeSelector', () => ({
+vi.mock('@/components/ui/forms/SessionTypeSelector', () => ({
     SessionTypeSelector: () => null,
 }));
 
@@ -104,11 +104,11 @@ vi.mock('@/components/ui/forms/OptionTiles', () => ({
     OptionTiles: () => null,
 }));
 
-vi.mock('@/agents/useEnabledAgentIds', () => ({
+vi.mock('@/agents/hooks/useEnabledAgentIds', () => ({
     useEnabledAgentIds: () => [],
 }));
 
-vi.mock('@/agents/catalog', () => ({
+vi.mock('@/agents/catalog/catalog', () => ({
     getAgentCore: () => ({ permissions: { modeGroup: 'default' } }),
 }));
 
@@ -133,29 +133,29 @@ vi.mock('@/components/ui/lists/Item', () => ({
     },
 }));
 
-vi.mock('@/components/Switch', () => ({
+vi.mock('@/components/ui/forms/Switch', () => ({
     Switch: () => null,
 }));
 
-vi.mock('@/utils/machineUtils', () => ({
+vi.mock('@/utils/sessions/machineUtils', () => ({
     isMachineOnline: () => true,
 }));
 
-vi.mock('@/sync/profileUtils', () => ({
+vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     getBuiltInProfileDocumentation: () => null,
 }));
 
-vi.mock('@/sync/permissionTypes', () => ({
+vi.mock('@/sync/domains/permissions/permissionTypes', () => ({
     normalizeProfileDefaultPermissionMode: <T,>(value: T) => value,
 }));
 
-vi.mock('@/sync/permissionModeOptions', () => ({
+vi.mock('@/sync/domains/permissions/permissionModeOptions', () => ({
     getPermissionModeLabelForAgentType: () => '',
     getPermissionModeOptionsForAgentType: () => [],
     normalizePermissionModeForAgentType: <T,>(value: T) => value,
 }));
 
-vi.mock('@/components/layout', () => ({
+vi.mock('@/components/ui/layout/layout', () => ({
     layout: { maxWidth: 900 },
 }));
 

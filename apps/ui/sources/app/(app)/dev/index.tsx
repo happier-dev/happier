@@ -7,11 +7,11 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { useRouter } from 'expo-router';
 import Constants from 'expo-constants';
 import * as Application from 'expo-application';
-import { useLocalSettingMutable, useSocketStatus } from '@/sync/storage';
+import { useLocalSettingMutable, useSocketStatus } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
-import { getServerUrl, setServerUrl, validateServerUrl } from '@/sync/serverConfig';
-import { Switch } from '@/components/Switch';
+import { getServerUrl, setServerUrl, validateServerUrl } from '@/sync/domains/server/serverConfig';
+import { Switch } from '@/components/ui/forms/Switch';
 import { useUnistyles } from 'react-native-unistyles';
 import { setLastViewedVersion, getLatestVersion } from '@/changelog';
 

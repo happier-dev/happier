@@ -1,13 +1,13 @@
 import React from 'react';
 import { View, Text } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { useAcceptedFriends, useFriendRequests, useRequestedFriends } from '@/sync/storage';
-import { UserCard } from '@/components/UserCard';
+import { useAcceptedFriends, useFriendRequests, useRequestedFriends } from '@/sync/domains/state/storage';
+import { UserCard } from '@/components/ui/cards/UserCard';
 import { t } from '@/text';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useRouter } from 'expo-router';
-import { useRequireInboxFriendsEnabled } from '@/hooks/useRequireInboxFriendsEnabled';
+import { useRequireInboxFriendsEnabled } from '@/hooks/inbox/useRequireInboxFriendsEnabled';
 import { RequireFriendsIdentityForFriends } from '@/components/friends/RequireFriendsIdentityForFriends';
 
 export default function FriendsManageScreen() {

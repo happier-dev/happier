@@ -46,7 +46,7 @@ describe('RealtimeVoiceSession.web', () => {
       useConversation: () => conversation,
     }));
 
-    vi.doMock('@/sync/storage', () => ({
+    vi.doMock('@/sync/domains/state/storage', () => ({
       storage: {
         getState: () => ({
           settings: { voiceAssistantLanguage: options?.languagePreference ?? 'en' },

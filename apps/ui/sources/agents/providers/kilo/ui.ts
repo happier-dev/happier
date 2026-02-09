@@ -1,6 +1,6 @@
 import type { UnistylesThemes } from 'react-native-unistyles';
 
-import type { AgentUiConfig } from '@/agents/registryUi';
+import type { AgentUiConfig } from '@/agents/registry/registryUi';
 
 export const KILO_UI: AgentUiConfig = {
     id: 'kilo',
