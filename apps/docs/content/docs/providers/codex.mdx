@@ -1,0 +1,60 @@
+---
+title: Codex
+description: Configure Codex in Happier, including MCP vs ACP behavior, switching, and permission mode limitations.
+---
+
+This page documents how Happier integrates with **Codex** and what Codex-specific behavior matters for day-to-day usage.
+
+## Install Codex
+
+Install Codex on your machine first, then restart Happier:
+
+```bash
+npm install -g @openai/codex
+codex --version
+```
+
+## Modes: MCP vs ACP (and local-control)
+
+Happier can run Codex using different backends depending on what’s available and what features you enable:
+
+- **Codex MCP**: Happier connects to Codex via MCP over stdio.
+- **Codex ACP** (experimental): Happier runs Codex through the Agent Client Protocol (ACP). Some agents expose “session modes” (for example “plan” vs “code”).
+- **Local-control**: Happier can switch a session into a “local control” mode that mirrors Codex activity (useful when moving control from the app back to your terminal).
+
+## Permissions
+
+Happier uses a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`, `plan`) and applies it to Codex in the best available way.
+
+For the full user guide (CLI flags, UI picker, defaults, apply timing), see:
+
+- [Permissions](../features/permissions)
+
+### What permission modes mean in Codex
+
+Codex enforcement is a combination of:
+- **Happier tool-approval gating** (what Happier will auto-approve vs deny vs prompt for), and
+- **provider-native sandbox/policy** (what the Codex backend enforces internally).
+
+Important notes:
+
+- `read-only` is enforced by Happier by **denying write-like actions** (edits/patches/exec) when Happier is the approver.
+- `safe-yolo` and `yolo` control whether Happier prompts vs auto-approves actions it can approve.
+- Codex backends may have sandbox policies that are **fixed at session start**. Changing permission mode mid-session can still update Happier’s approval behavior, but it may not change Codex’s internal sandbox until you start a new Codex session.
+
+### Plan mode
+
+`plan` is shown only when the current Codex backend/session advertises a compatible session mode.
+
+If `plan` is not supported for the current session, Happier will fall back to `default` and the UI will show that in the “Effective policy” line.
+
+## Switching and permission persistence
+
+When you change permission mode:
+- it is stored canonically in **session metadata**, and
+- it follows you when you open the same session on another device or switch local ↔ remote.
+
+If you choose **Apply timing: next prompt** in the app:
+- the selection applies to the next message you send (as message metadata), and
+- it becomes session-wide only after that message is committed.
+

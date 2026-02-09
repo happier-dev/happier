@@ -1,0 +1,9 @@
+{
+  "title": "Providers",
+  "pages": [
+    "index",
+    "claude",
+    "codex",
+    "kilo"
+  ]
+}

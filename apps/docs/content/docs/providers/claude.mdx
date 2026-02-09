@@ -1,0 +1,118 @@
+---
+title: Claude
+description: Configure Claude in Happier (remote mode), including Agent SDK, partial streaming, and /rewind.
+---
+
+This page documents how Happier integrates with **Claude Code** and what Claude-specific settings do.
+
+## Modes: local vs remote
+
+Happier supports two ways of running Claude:
+
+- **Local mode**: you run **Claude Code’s own TUI** directly in your terminal.
+- **Remote mode**: you drive Claude from the **Happier UI**, but Claude still runs **locally on your machine** (Happier spawns the `claude` process in the background).
+
+Remote mode currently has **two implementations**:
+
+- **Legacy remote** (default while we roll out): our existing “SDK-like” shim that spawns `claude` with a streaming output format and uses a hook-forwarding workaround for session info.
+- **Agent SDK remote** (opt-in): uses the official `@anthropic-ai/claude-agent-sdk` to run Claude, publish capabilities, and (optionally) enable file checkpointing.
+
+## Permissions
+
+Happier uses a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`, `plan`) and maps it to Claude’s native behaviors when needed.
+
+For the full user guide (CLI flags, UI picker, defaults, and apply timing), see:
+
+- [Permissions](../features/permissions)
+
+### Local ↔ remote switching
+
+Permission mode is stored canonically in **session metadata**, so it follows the session when you:
+- open the same session on another device, or
+- switch between **local** and **remote** mode.
+
+Some permission behavior is implemented by Happier (tool approval gating) and can update immediately; other behavior depends on Claude’s own session flags and may only take effect when Claude is launched/resumed. The in-session picker’s “Effective policy” line is the source of truth for what will apply right now.
+
+## Install Claude Code
+
+Install and authenticate Claude Code on your machine first, then restart Happier.
+
+Use Anthropic’s official setup guide:
+
+- https://docs.anthropic.com/en/docs/claude-code/getting-started
+- https://docs.anthropic.com/en/docs/claude-code/overview
+
+Anthropic currently supports both install paths. Prefer the native installer flow in their docs, and use npm (`npm install -g @anthropic-ai/claude-code`) when that better fits your environment.
+
+## Where to configure Claude in Happier
+
+In the app:
+
+1. **Settings**
+2. **AI provider settings**
+3. **Claude (remote)**
+
+All settings below affect **Claude remote mode only**. Local mode stays on the current implementation for now.
+
+## Settings reference (Claude remote)
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| **Use Agent SDK (remote)** | Off | Enables the official Agent SDK remote runner (`@anthropic-ai/claude-agent-sdk`). When off, Happier uses the legacy remote runner. |
+| **Setting sources** | Project only | Controls what Claude settings get loaded: **Project only** loads repo config (for example `CLAUDE.md`); **User + Project** includes user-global config too; **None** ignores both for maximum determinism. |
+| **Partial streaming updates** | Off | Shows partial assistant output while Claude is still responding (remote Agent SDK only). |
+| **File checkpointing + /rewind** | Off | Enables file checkpoint capture and the `/rewind` command (remote Agent SDK only). Adds overhead. |
+| **Max thinking tokens** | Default | Sets an upper bound on Claude’s internal thinking budget (remote Agent SDK only). |
+| **Disable TODOs** | Off | Adds a remote-mode system instruction that asks Claude not to create TODO items/lists in its output. |
+| **Strict MCP server config** | Off | Fails the remote start if any MCP server config is invalid (instead of trying to continue). |
+| **Advanced options (JSON)** | Empty | Power-user overrides for a limited allowlist of Agent SDK query options (remote Agent SDK only). Invalid JSON is ignored with a user-visible warning. |
+
+### Advanced options (JSON): allowlist
+
+The advanced JSON field is intentionally restricted so it can’t break Happier’s control plane (hooks, permissions, session handling).
+
+Currently allowlisted keys:
+
+- `plugins`
+- `betas`
+- `maxBudgetUsd`
+- `sandbox`
+- `additionalDirectories`
+- `permissionPromptToolName`
+- `tools`
+- `systemPrompt`
+- `debug`
+- `debugFile`
+- `stderr`
+
+All other keys are ignored.
+
+## File checkpointing and `/rewind`
+
+When **File checkpointing + /rewind** is enabled, Happier captures checkpoint IDs and exposes a rewind command:
+
+- `/checkpoints` shows captured checkpoint IDs (newest first).
+- `/rewind <checkpoint-id> --confirm` rewinds files to a specific checkpoint.
+- `/rewind --confirm` rewinds files to the most recent captured checkpoint.
+
+Important notes:
+
+- **Agent SDK rewind is filesystem-only.** It does not delete or rewrite the conversation.
+- This is different from Claude Code’s interactive `/rewind` command in the TUI, which can rewind conversation context and/or files. Happier remote uses the Agent SDK rewind behavior.
+- `/rewind` requires explicit confirmation because it can discard local file edits.
+- Checkpointing is **remote Agent SDK only** and may be slower because it captures/streams checkpoint information.
+- If you try to `/rewind` without checkpointing enabled (or before a checkpoint is captured), Happier will report that no checkpoint is available.
+
+## Troubleshooting
+
+### “Claude not found”
+
+Make sure Claude Code is installed on your machine, then restart Happier.
+
+### “Not authenticated”
+
+Log into Claude Code using its normal login flow, then retry.
+
+### Settings changes don’t seem to apply
+
+Some remote settings can be applied dynamically, but others require a remote runner restart. If in doubt, stop and restart the remote session after changing settings.
