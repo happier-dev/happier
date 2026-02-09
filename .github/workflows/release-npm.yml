@@ -471,3 +471,73 @@ jobs:
               if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then echo "- \`stack-v${stack_version}\`"; fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  mirror-cli-stable:
+    if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.cli_version != 'SKIP' }}
+    needs: release
+    uses: ./.github/workflows/publish-github-release.yml
+    secrets: inherit
+    with:
+      tag: cli-v${{ needs.release.outputs.cli_version }}
+      title: CLI v${{ needs.release.outputs.cli_version }}
+      target_sha: ${{ needs.release.outputs.sha }}
+      prerelease: false
+      rolling_tag: false
+      generate_notes: true
+      clobber: true
+      assets_artifact: npm-pack-cli
+      assets_artifact_path: dist/release-assets/cli
+      assets_dir: dist/release-assets/cli
+
+  mirror-cli-preview:
+    if: ${{ needs.release.outputs.channel == 'preview' && needs.release.outputs.cli_version != 'SKIP' }}
+    needs: release
+    uses: ./.github/workflows/publish-github-release.yml
+    secrets: inherit
+    with:
+      tag: cli-preview
+      title: CLI Preview
+      target_sha: ${{ needs.release.outputs.sha }}
+      prerelease: true
+      rolling_tag: true
+      generate_notes: false
+      notes: "Rolling preview build (npm dist-tag: next)."
+      clobber: true
+      assets_artifact: npm-pack-cli
+      assets_artifact_path: dist/release-assets/cli
+      assets_dir: dist/release-assets/cli
+
+  mirror-stack-stable:
+    if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.stack_version != 'SKIP' }}
+    needs: release
+    uses: ./.github/workflows/publish-github-release.yml
+    secrets: inherit
+    with:
+      tag: stack-v${{ needs.release.outputs.stack_version }}
+      title: Stack v${{ needs.release.outputs.stack_version }}
+      target_sha: ${{ needs.release.outputs.sha }}
+      prerelease: false
+      rolling_tag: false
+      generate_notes: true
+      clobber: true
+      assets_artifact: npm-pack-stack
+      assets_artifact_path: dist/release-assets/stack
+      assets_dir: dist/release-assets/stack
+
+  mirror-stack-preview:
+    if: ${{ needs.release.outputs.channel == 'preview' && needs.release.outputs.stack_version != 'SKIP' }}
+    needs: release
+    uses: ./.github/workflows/publish-github-release.yml
+    secrets: inherit
+    with:
+      tag: stack-preview
+      title: Stack Preview
+      target_sha: ${{ needs.release.outputs.sha }}
+      prerelease: true
+      rolling_tag: true
+      generate_notes: false
+      notes: "Rolling preview build (npm dist-tag: next)."
+      clobber: true
+      assets_artifact: npm-pack-stack
+      assets_artifact_path: dist/release-assets/stack
+      assets_dir: dist/release-assets/stack
