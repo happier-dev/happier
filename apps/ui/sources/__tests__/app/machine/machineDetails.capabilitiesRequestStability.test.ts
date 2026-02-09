@@ -7,7 +7,7 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
     expo?: unknown;
 };
 (globalThis as ReactActEnvironmentGlobal).IS_REACT_ACT_ENVIRONMENT = true;
-(globalThis as ReactActEnvironmentGlobal).expo = { EventEmitter: class {} };
+(globalThis as any).expo = { EventEmitter: class {} };
 
 const requests: Array<Record<string, unknown>> = [];
 const machineThemeColors = {

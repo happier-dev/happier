@@ -49,7 +49,7 @@ vi.mock('expo-updates', () => ({
 
 const routerReplaceMock = vi.fn();
 let localSearchParamsMock: Record<string, any> = {};
-const switchConnectionToActiveServerSpy = vi.fn(async () => null);
+const switchConnectionToActiveServerSpy = vi.fn(async (_params?: unknown) => null);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
 
 vi.mock('expo-router', () => ({
@@ -62,7 +62,7 @@ vi.mock('expo-router', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    switchConnectionToActiveServer: (...args: unknown[]) => switchConnectionToActiveServerSpy(...args),
+    switchConnectionToActiveServer: switchConnectionToActiveServerSpy,
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({

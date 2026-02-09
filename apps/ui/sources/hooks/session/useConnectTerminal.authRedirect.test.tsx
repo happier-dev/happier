@@ -5,10 +5,10 @@ import { describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerReplaceSpy = vi.fn();
-const setPendingTerminalConnectSpy = vi.fn();
-const modalAlertSpy = vi.fn();
+const setPendingTerminalConnectSpy = vi.fn((_pending: { publicKeyB64Url: string; serverUrl: string }) => {});
+const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
 const modalConfirmSpy = vi.fn(async () => true);
-const upsertActivateAndSwitchServerSpy = vi.fn(async () => true);
+const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string }) => true);
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'ios' },
@@ -43,8 +43,8 @@ vi.mock('@/hooks/ui/useCheckCameraPermissions', () => ({
 
 vi.mock('@/modal', () => ({
     Modal: {
-        alert: (...args: any[]) => modalAlertSpy(...args),
-        confirm: (...args: any[]) => modalConfirmSpy(...args),
+        alert: modalAlertSpy,
+        confirm: modalConfirmSpy,
     },
 }));
 
@@ -58,11 +58,11 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
-    upsertActivateAndSwitchServer: (...args: any[]) => upsertActivateAndSwitchServerSpy(...args),
+    upsertActivateAndSwitchServer: upsertActivateAndSwitchServerSpy,
 }));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
-    setPendingTerminalConnect: (...args: any[]) => setPendingTerminalConnectSpy(...args),
+    setPendingTerminalConnect: setPendingTerminalConnectSpy,
     getPendingTerminalConnect: () => null,
     clearPendingTerminalConnect: vi.fn(),
 }));

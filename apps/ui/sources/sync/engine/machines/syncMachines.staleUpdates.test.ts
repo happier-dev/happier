@@ -19,7 +19,13 @@ function buildMachine(overrides: Partial<Machine> = {}): Machine {
         updatedAt: 2,
         active: true,
         activeAt: 2,
-        metadata: { existing: true } as Machine['metadata'],
+        metadata: {
+            host: 'localhost',
+            platform: 'darwin',
+            homeDir: '/Users/tester',
+            happyHomeDir: '/Users/tester/.happier',
+            happyCliVersion: '0.0.0-test',
+        } as Machine['metadata'],
         metadataVersion: 5,
         daemonState: { existing: true },
         daemonStateVersion: 7,
@@ -53,7 +59,13 @@ describe('buildUpdatedMachineFromSocketUpdate stale guards', () => {
         expect(decryptMetadata).not.toHaveBeenCalled()
         expect(decryptDaemonState).toHaveBeenCalledTimes(1)
         expect(updated?.metadataVersion).toBe(5)
-        expect(updated?.metadata).toEqual({ existing: true })
+        expect(updated?.metadata).toEqual({
+            host: 'localhost',
+            platform: 'darwin',
+            homeDir: '/Users/tester',
+            happyHomeDir: '/Users/tester/.happier',
+            happyCliVersion: '0.0.0-test',
+        })
         expect(updated?.daemonStateVersion).toBe(8)
         expect(updated?.daemonState).toEqual({ d: true })
     })

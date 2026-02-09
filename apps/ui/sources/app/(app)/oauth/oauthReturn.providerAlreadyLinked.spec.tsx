@@ -30,11 +30,13 @@ describe('oauth/[provider] return', () => {
             pending: 'p1',
         });
         const originalFetch = globalThis.fetch;
-        vi.stubGlobal('fetch', vi.fn(async () => ({
-                ok: false,
+        const fetchMock = vi.fn(async () =>
+            new Response(JSON.stringify({ error: 'provider-already-linked' }), {
                 status: 409,
-                json: async () => ({ error: 'provider-already-linked' }),
-            })) as typeof fetch);
+                headers: { 'Content-Type': 'application/json' },
+            }),
+        );
+        vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
         await runWithOAuthScreen(async () => {
             await flushOAuthEffects();

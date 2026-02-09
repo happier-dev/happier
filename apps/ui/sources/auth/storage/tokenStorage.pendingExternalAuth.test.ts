@@ -9,7 +9,7 @@ vi.mock('expo-secure-store', () => ({}));
 
 describe('TokenStorage pending external auth (web)', () => {
     let restoreLocalStorage: (() => void) | null = null;
-    let localStorageHandle: LocalStorageMockHandle;
+    let localStorageHandle: LocalStorageMockHandle | null = null;
 
     beforeEach(() => {
         vi.resetModules();
@@ -47,6 +47,9 @@ describe('TokenStorage pending external auth (web)', () => {
     it('returns null for malformed pending external auth payloads', async () => {
         const { TokenStorage } = await import('./tokenStorage');
 
+        if (!localStorageHandle) {
+            throw new Error('Expected localStorage mock handle');
+        }
         localStorageHandle.getItemMock.mockReturnValueOnce(JSON.stringify({ provider: 123, secret: true }));
 
         await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();

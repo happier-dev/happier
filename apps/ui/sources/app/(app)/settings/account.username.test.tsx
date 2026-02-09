@@ -86,19 +86,23 @@ describe('Settings → Account (username)', () => {
             await act(async () => {
                 tree = renderer.create(<AccountScreen />);
             });
-            let items: Array<{ props: { onPress: () => Promise<void> | void } }> = [];
+            let items: renderer.ReactTestInstance[] = [];
             for (let attempt = 0; attempt < 5; attempt += 1) {
                 await act(async () => {});
                 items =
-                    (tree?.root.findAll(
+                    tree?.root.findAll(
                         (node) => node.props?.title === 'Username' && typeof node.props?.onPress === 'function',
-                    ) as Array<{ props: { onPress: () => Promise<void> | void } }>) ?? [];
+                    ) ?? [];
                 if (items.length > 0) break;
             }
             expect(items.length).toBeGreaterThan(0);
+            const firstItem = items[0];
+            if (!firstItem || typeof firstItem.props?.onPress !== 'function') {
+                throw new Error('Expected Username row onPress handler');
+            }
 
             await act(async () => {
-                await items[0].props.onPress();
+                await firstItem.props.onPress();
             });
 
             expect(promptSpy).toHaveBeenCalled();

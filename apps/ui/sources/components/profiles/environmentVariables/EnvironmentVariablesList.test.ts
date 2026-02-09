@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act, type ReactTestInstance } from 'react-test-renderer';
 import React from 'react';
 import type { ProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
+import type { EnvPreviewSecretsPolicy, PreviewEnvValue } from '@/sync/ops';
 import { EnvironmentVariablesList } from './EnvironmentVariablesList';
 
 (
@@ -29,11 +30,23 @@ vi.mock('react-native', () => ({
     },
 }));
 
+type EnvironmentVariablesHookResult = {
+    variables: Record<string, string | null>;
+    meta: Record<string, PreviewEnvValue>;
+    policy: EnvPreviewSecretsPolicy | null;
+    isPreviewEnvSupported: boolean;
+    isLoading: boolean;
+};
+
 const useEnvironmentVariablesMock = vi.fn(
-    (_machineId: string | null, _refs: string[], _options?: { extraEnv?: Record<string, string>; sensitiveKeys?: string[] }) => ({
+    (
+        _machineId: string | null,
+        _refs: string[],
+        _options?: { extraEnv?: Record<string, string>; sensitiveKeys?: string[] },
+    ): EnvironmentVariablesHookResult => ({
         variables: {},
         meta: {},
-        policy: null as null,
+        policy: null,
         isPreviewEnvSupported: false,
         isLoading: false,
     }),

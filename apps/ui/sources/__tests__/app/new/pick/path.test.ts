@@ -13,12 +13,19 @@ type NavigationState = {
     routes: Array<{ key: string }>;
 };
 
+function cloneNavigationState(state: { index: number; routes: ReadonlyArray<{ key: string }> }): NavigationState {
+    return {
+        index: state.index,
+        routes: state.routes.map((route) => ({ key: route.key })),
+    };
+}
+
 let lastPathSelectorProps: PathSelectorProps | null = null;
 let routerBackMock = vi.fn();
 let routerSetParamsMock = vi.fn();
 let navigationDispatchMock = vi.fn();
 let navigationGoBackMock = vi.fn();
-let navigationState: NavigationState = PICKER_NAV_STATE;
+let navigationState: NavigationState = cloneNavigationState(PICKER_NAV_STATE);
 
 enableReactActEnvironment();
 
@@ -101,7 +108,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
 describe('PathPickerScreen', () => {
     beforeEach(() => {
         lastPathSelectorProps = null;
-        navigationState = PICKER_NAV_STATE;
+        navigationState = cloneNavigationState(PICKER_NAV_STATE);
         routerBackMock.mockClear();
         routerSetParamsMock.mockClear();
         navigationDispatchMock.mockClear();

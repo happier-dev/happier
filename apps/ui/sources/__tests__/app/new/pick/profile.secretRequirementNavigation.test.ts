@@ -127,10 +127,14 @@ describe('ProfilePickerScreen (native secret requirement)', () => {
             renderer.create(React.createElement(ProfilePickerScreen));
         });
 
-        expect(typeof capturedProfilesListProps?.onPressProfile).toBe('function');
+        const profilesListProps = capturedProfilesListProps as CapturedProfilesListProps | null;
+        const onPressProfile = profilesListProps?.onPressProfile;
+        if (!onPressProfile) {
+            throw new Error('Expected ProfilesList onPressProfile handler');
+        }
 
         await act(async () => {
-            await capturedProfilesListProps?.onPressProfile?.({
+            await onPressProfile({
                 id: 'deepseek',
                 name: 'DeepSeek',
                 isBuiltIn: true,

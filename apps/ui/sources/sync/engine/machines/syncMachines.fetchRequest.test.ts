@@ -48,7 +48,7 @@ describe('fetchAndApplyMachines request override', () => {
         const fetchSpy = vi.fn();
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        const requestSpy = vi.fn(async () =>
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
             jsonResponse([
                 {
                     id: 'm1',
@@ -74,7 +74,7 @@ describe('fetchAndApplyMachines request override', () => {
             credentials: { token: 't', secret: 's' } satisfies AuthCredentials,
             encryption,
             machineDataKeys,
-            request: (path, init) => requestSpy(path, init),
+            request: requestSpy,
             applyMachines: (machines) => {
                 applied.push(machines);
             },

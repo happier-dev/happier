@@ -8,7 +8,7 @@ afterEach(() => {
 describe('switchConnectionToActiveServer', () => {
     it('aborts in-flight server fetches before switching sync server', async () => {
         const abortSpy = vi.fn();
-        const syncSwitchServerSpy = vi.fn(async () => {});
+        const syncSwitchServerSpy = vi.fn(async (_credentials: { token: string; secret: string }) => {});
 
         vi.doMock('@/sync/domains/server/serverRuntime', () => ({
             getActiveServerSnapshot: () => ({
@@ -42,7 +42,7 @@ describe('switchConnectionToActiveServer', () => {
         const abortSpy = vi.fn();
         const deferred: { resolve: (() => void) | null } = { resolve: null };
         let syncCallCount = 0;
-        const syncSwitchServerSpy = vi.fn(async () => {
+        const syncSwitchServerSpy = vi.fn(async (_credentials: { token: string; secret: string }) => {
             syncCallCount += 1;
             if (syncCallCount > 1) return;
             await new Promise<void>((resolve) => {

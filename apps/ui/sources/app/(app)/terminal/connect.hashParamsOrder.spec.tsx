@@ -89,7 +89,7 @@ describe('TerminalConnectScreen hash parsing', () => {
                 search: '',
             },
             history: { replaceState: vi.fn() },
-        } as Window;
+        } as unknown as Window;
     });
 
     afterEach(() => {
@@ -109,8 +109,11 @@ describe('TerminalConnectScreen hash parsing', () => {
                 tree = renderer.create(<Screen />);
             });
             await act(async () => {});
+            if (!tree) {
+                throw new Error('Expected terminal connect renderer');
+            }
 
-            const renderedItems = tree.root.findAll((node) => node.type === 'Item');
+            const renderedItems = tree.root.findAll((node) => (node.type as unknown) === 'Item');
             const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
             expect(publicKeyItem).toBeTruthy();
             expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');
@@ -130,7 +133,7 @@ describe('TerminalConnectScreen hash parsing', () => {
                 search: '',
             },
             history: { replaceState: vi.fn() },
-        } as Window;
+        } as unknown as Window;
 
         const Screen = (await import('./connect')).default;
         let tree: ReturnType<typeof renderer.create> | undefined;
@@ -139,6 +142,9 @@ describe('TerminalConnectScreen hash parsing', () => {
                 tree = renderer.create(<Screen />);
             });
             await act(async () => {});
+            if (!tree) {
+                throw new Error('Expected terminal connect renderer');
+            }
 
             const textValues = tree.root
                 .findAll((node) => typeof node.props?.children === 'string')

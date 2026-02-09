@@ -15,8 +15,8 @@ const runtime = vi.hoisted(() => ({
 }));
 
 const ops = vi.hoisted(() => ({
-    sessionDeny: vi.fn(async () => {}),
-    sessionAbort: vi.fn(async () => {}),
+    sessionDeny: vi.fn(async (..._args: unknown[]) => {}),
+    sessionAbort: vi.fn(async (..._args: unknown[]) => {}),
 }));
 
 vi.mock('react-native', () => ({
@@ -51,8 +51,8 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/sync/ops', () => ({
     sessionAllow: vi.fn(async () => {}),
-    sessionDeny: (...args: unknown[]) => ops.sessionDeny(...args),
-    sessionAbort: (...args: unknown[]) => ops.sessionAbort(...args),
+    sessionDeny: ops.sessionDeny,
+    sessionAbort: ops.sessionAbort,
 }));
 
 vi.mock('@/sync/domains/state/storage', () => ({

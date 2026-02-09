@@ -61,9 +61,9 @@ describe('useMachineCapabilitiesCache (race)', () => {
     });
     await p1;
 
-    let latest: ReturnType<typeof useMachineCapabilitiesCache>['state'] | null = null;
+    const latestRef: { current: ReturnType<typeof useMachineCapabilitiesCache>['state'] | null } = { current: null };
     function Test() {
-      latest = useMachineCapabilitiesCache({
+      latestRef.current = useMachineCapabilitiesCache({
         machineId: 'm1',
         enabled: false,
         request,
@@ -76,7 +76,15 @@ describe('useMachineCapabilitiesCache (race)', () => {
       renderer.create(React.createElement(Test));
     });
 
-    expect(latest?.status).toBe('loaded');
-    expect(latest?.snapshot?.response?.results?.['dep.test']?.data?.version).toBe('2');
+    if (!latestRef.current) {
+      throw new Error('Expected cache state');
+    }
+    expect(latestRef.current.status).toBe('loaded');
+    if (latestRef.current.status !== 'loaded') {
+      throw new Error('Expected loaded cache state');
+    }
+    const result = latestRef.current.snapshot?.response?.results?.['dep.test'];
+    const version = result && result.ok ? (result.data as { version?: string }).version : null;
+    expect(version).toBe('2');
   });
 });

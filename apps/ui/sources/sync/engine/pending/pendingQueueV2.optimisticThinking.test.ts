@@ -41,12 +41,13 @@ describe('pendingQueueV2 optimistic thinking', () => {
         storage.getState().applySessions([buildSession({ sessionId })]);
 
         const encryption = {
-            getSessionEncryption: () => ({
-                encryptRawRecord: async () => {
-                    throw new Error('encrypt-failed');
-                },
-            }),
-        } as Pick<Encryption, 'getSessionEncryption'> as Encryption;
+            getSessionEncryption: () =>
+                ({
+                    encryptRawRecord: async () => {
+                        throw new Error('encrypt-failed');
+                    },
+                }) as unknown as ReturnType<Encryption['getSessionEncryption']>,
+        } as unknown as Encryption;
 
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
 

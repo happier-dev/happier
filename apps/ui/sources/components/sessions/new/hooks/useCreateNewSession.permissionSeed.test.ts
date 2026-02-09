@@ -14,16 +14,16 @@ type SpawnPayloadCapture = {
 
 async function setupUseCreateNewSessionHarness() {
     const captured: { value: SpawnPayloadCapture } = { value: null };
-    const modalAlertSpy = vi.fn();
-    const setActiveServerSpy = vi.fn();
-    const switchConnectionToActiveServerSpy = vi.fn(async () => ({ token: 'next-token', secret: 'next-secret' }));
+    const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
+    const setActiveServerSpy = vi.fn((..._args: unknown[]) => {});
+    const switchConnectionToActiveServerSpy = vi.fn(async (..._args: unknown[]) => ({ token: 'next-token', secret: 'next-secret' }));
     const refreshMachinesSpy = vi.fn(async () => {});
     const refreshSessionsSpy = vi.fn(async () => {});
 
     vi.doMock('@/text', () => ({ t: (key: string) => key }));
     vi.doMock('@/modal', () => ({
         Modal: {
-            alert: (...args: unknown[]) => modalAlertSpy(...args),
+            alert: modalAlertSpy,
             confirm: vi.fn(async () => false),
         },
     }));
@@ -48,10 +48,10 @@ async function setupUseCreateNewSessionHarness() {
             kind: 'custom',
             generation: 1,
         })),
-        setActiveServer: (...args: unknown[]) => setActiveServerSpy(...args),
+        setActiveServer: setActiveServerSpy,
     }));
     vi.doMock('@/sync/runtime/orchestration/connectionManager', () => ({
-        switchConnectionToActiveServer: (...args: unknown[]) => switchConnectionToActiveServerSpy(...args),
+        switchConnectionToActiveServer: switchConnectionToActiveServerSpy,
     }));
     vi.doMock('@/sync/domains/settings/terminalSettings', () => ({
         resolveTerminalSpawnOptions: vi.fn(() => null),

@@ -62,7 +62,7 @@ function renderPicker(params: {
 }
 
 function findTextNodes(tree: renderer.ReactTestRenderer, text: string): ReactTestInstance[] {
-    return tree.root.findAll((node) => node.type === 'Text' && node.props.children === text);
+    return tree.root.findAll((node) => (node.type as unknown) === 'Text' && node.props.children === text);
 }
 
 describe('PermissionModePicker', () => {

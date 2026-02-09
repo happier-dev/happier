@@ -37,7 +37,7 @@ const authMocks = vi.hoisted(() => ({
 }));
 
 const connectionMocks = vi.hoisted(() => ({
-    switchConnectionToActiveServer: vi.fn(async () => null),
+    switchConnectionToActiveServer: vi.fn(async (_params?: unknown) => null),
 }));
 
 vi.mock('react-native', () => ({
@@ -162,7 +162,7 @@ vi.mock('@/sync/sync', () => ({
 }));
 
 vi.mock('@/sync/runtime/orchestration/connectionManager', () => ({
-    switchConnectionToActiveServer: (...args: any[]) => connectionMocks.switchConnectionToActiveServer(...args),
+    switchConnectionToActiveServer: connectionMocks.switchConnectionToActiveServer,
 }));
 
 function getActionLabels(): string[] {

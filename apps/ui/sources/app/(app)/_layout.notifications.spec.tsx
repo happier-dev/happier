@@ -18,7 +18,7 @@ vi.mock('expo-notifications', () => ({
 }));
 
 const pushSpy = vi.fn();
-const upsertActivateAndSwitchServerSpy = vi.fn(async () => true);
+const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
 const clearPendingTerminalConnectSpy = vi.fn();
 let activeServerUrl = 'https://api.happier.dev';
 let pendingTerminalConnectValue: { publicKeyB64Url: string; serverUrl: string } | null = null;
@@ -95,7 +95,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
-    upsertActivateAndSwitchServer: (...args: unknown[]) => upsertActivateAndSwitchServerSpy(...args),
+    upsertActivateAndSwitchServer: upsertActivateAndSwitchServerSpy,
 }));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
@@ -173,7 +173,19 @@ describe('App RootLayout notifications', () => {
         vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
             actionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
             notification: {
-                request: { content: { data: { sessionId: 's_123' } } },
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n1',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_123' },
+                    },
+                },
             },
         });
         vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));
@@ -188,7 +200,19 @@ describe('App RootLayout notifications', () => {
         vi.spyOn(Notifications, 'getLastNotificationResponseAsync').mockResolvedValue({
             actionIdentifier: Notifications.DEFAULT_ACTION_IDENTIFIER,
             notification: {
-                request: { content: { data: { sessionId: 's_456', serverUrl: 'https://company.example.test' } } },
+                date: Date.parse('2026-02-09T00:00:00.000Z'),
+                request: {
+                    identifier: 'n2',
+                    trigger: null,
+                    content: {
+                        title: null,
+                        subtitle: null,
+                        body: null,
+                        categoryIdentifier: null,
+                        sound: null,
+                        data: { sessionId: 's_456', serverUrl: 'https://company.example.test' },
+                    },
+                },
             },
         });
         vi.spyOn(Notifications, 'addNotificationResponseReceivedListener').mockImplementation(() => ({ remove: () => {} }));

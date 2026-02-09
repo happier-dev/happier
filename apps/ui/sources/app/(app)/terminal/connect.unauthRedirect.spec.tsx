@@ -5,8 +5,8 @@ import renderer, { act } from 'react-test-renderer';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const replaceMock = vi.fn();
-const setPendingMock = vi.fn();
-const upsertActivateAndSwitchServerMock = vi.fn(async () => true);
+const setPendingMock = vi.fn((_pending: { publicKeyB64Url: string; serverUrl: string }) => {});
+const upsertActivateAndSwitchServerMock = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth?: unknown }) => true);
 
 vi.mock('@/text', () => ({
     t: (key: string) => key,
@@ -25,7 +25,7 @@ vi.mock('@/auth/context/AuthContext', () => ({
 }));
 
 vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
-    setPendingTerminalConnect: (...args: any[]) => setPendingMock(...args),
+    setPendingTerminalConnect: setPendingMock,
     clearPendingTerminalConnect: vi.fn(),
     getPendingTerminalConnect: () => null,
 }));
@@ -36,7 +36,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
-    upsertActivateAndSwitchServer: (...args: any[]) => upsertActivateAndSwitchServerMock(...args),
+    upsertActivateAndSwitchServer: upsertActivateAndSwitchServerMock,
 }));
 
 vi.mock('react-native', () => ({

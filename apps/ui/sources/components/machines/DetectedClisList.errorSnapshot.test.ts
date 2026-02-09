@@ -60,7 +60,7 @@ function buildState(params: {
     results?: Record<string, CapabilityDetectResult>;
 }): MachineCapabilitiesCacheState {
     if (!params.results) {
-        return { status: params.status };
+        return { status: 'error' };
     }
 
     return {
@@ -92,7 +92,7 @@ function findItemByTitle(tree: renderer.ReactTestRenderer, title: string): React
 
 function subtitleContainsText(value: unknown, expectedText: string): boolean {
     if (typeof value === 'string') return value === expectedText;
-    if (React.isValidElement(value)) {
+    if (React.isValidElement<{ children?: unknown }>(value)) {
         const child = value.props?.children;
         if (typeof child === 'string') return child === expectedText;
         if (Array.isArray(child)) return child.some((entry) => subtitleContainsText(entry, expectedText));

@@ -33,8 +33,9 @@ type SessionRow = {
 };
 
 function buildSessionRow(overrides: Partial<SessionRow> & Pick<SessionRow, 'id'>): SessionRow {
+    const { id, ...rest } = overrides;
     return {
-        id: overrides.id,
+        id,
         seq: 1,
         createdAt: 1,
         updatedAt: 1,
@@ -46,7 +47,7 @@ function buildSessionRow(overrides: Partial<SessionRow> & Pick<SessionRow, 'id'>
         agentStateVersion: 0,
         dataEncryptionKey: null,
         share: null,
-        ...overrides,
+        ...rest,
     };
 }
 
@@ -189,7 +190,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
         const fetchSpy = vi.fn();
         vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
 
-        const requestSpy = vi.fn(async () =>
+        const requestSpy = vi.fn(async (_path: string, _init?: RequestInit) =>
             jsonResponse({
                 sessions: [buildSessionRow({ id: 's1', seq: 1 })],
                 nextCursor: null,
@@ -204,7 +205,7 @@ describe('fetchAndApplySessions (/v2/sessions snapshot)', () => {
             credentials: { token: 't', secret: 's' },
             encryption,
             sessionDataKeys,
-            request: (path, init) => requestSpy(path, init),
+            request: requestSpy,
             applySessions: (sessions) => {
                 appliedSessions.push(...(sessions as unknown as Array<Record<string, unknown>>));
             },

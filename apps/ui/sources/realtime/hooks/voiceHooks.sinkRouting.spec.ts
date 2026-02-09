@@ -10,7 +10,7 @@ const { realtimeState, appendLocalVoiceMediatorContextUpdate, isLocalVoiceMediat
     session: null as Pick<VoiceSession, 'sendContextualUpdate' | 'sendTextMessage'> | null,
   },
   appendLocalVoiceMediatorContextUpdate: vi.fn(),
-  isLocalVoiceMediatorActive: vi.fn(() => true),
+  isLocalVoiceMediatorActive: vi.fn((_sessionId: string) => true),
 }));
 
 vi.mock('@/realtime/RealtimeSession', () => ({

@@ -88,7 +88,11 @@ vi.mock('@/components/ui/scroll/useScrollEdgeFades', () => ({
 async function renderOverlay(props: Omit<React.ComponentProps<typeof FloatingOverlay>, 'children'>) {
     let tree: renderer.ReactTestRenderer | undefined;
     await act(async () => {
-        tree = renderer.create(React.createElement(FloatingOverlay, props, React.createElement(Child)));
+        const overlayProps: React.ComponentProps<typeof FloatingOverlay> = {
+            ...props,
+            children: React.createElement(Child),
+        };
+        tree = renderer.create(React.createElement(FloatingOverlay, overlayProps));
     });
     return tree!;
 }
@@ -116,7 +120,7 @@ describe('FloatingOverlay', () => {
             edgeFades: false,
         });
 
-        const indicators = tree.root.findAll((node) => node.type === 'ScrollEdgeIndicators');
+        const indicators = tree.root.findAll((node) => (node.type as unknown) === 'ScrollEdgeIndicators');
         expect(indicators).toHaveLength(1);
     });
 });

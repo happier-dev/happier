@@ -42,9 +42,9 @@ describe('useEnvironmentVariables (hook)', () => {
     it('returns empty non-loading state when machine id is missing', async () => {
         const { useEnvironmentVariables } = await import('./useEnvironmentVariables');
 
-        let latest: ReturnType<typeof useEnvironmentVariables> | null = null;
+        const latestRef: { current: ReturnType<typeof useEnvironmentVariables> | null } = { current: null };
         function Test() {
-            latest = useEnvironmentVariables(null, ['OPENAI_API_KEY']);
+            latestRef.current = useEnvironmentVariables(null, ['OPENAI_API_KEY']);
             return React.createElement('View');
         }
 
@@ -52,17 +52,20 @@ describe('useEnvironmentVariables (hook)', () => {
             renderer.create(React.createElement(Test));
         });
 
-        expect(latest?.isLoading).toBe(false);
-        expect(latest?.variables).toEqual({});
-        expect(latest?.isPreviewEnvSupported).toBe(false);
+        if (!latestRef.current) {
+            throw new Error('Expected hook result');
+        }
+        expect(latestRef.current.isLoading).toBe(false);
+        expect(latestRef.current.variables).toEqual({});
+        expect(latestRef.current.isPreviewEnvSupported).toBe(false);
     });
 
     it('finishes immediately when all variable names are invalid', async () => {
         const { useEnvironmentVariables } = await import('./useEnvironmentVariables');
 
-        let latest: ReturnType<typeof useEnvironmentVariables> | null = null;
+        const latestRef: { current: ReturnType<typeof useEnvironmentVariables> | null } = { current: null };
         function Test() {
-            latest = useEnvironmentVariables('m1', ['invalid-name', 'lowercase']);
+            latestRef.current = useEnvironmentVariables('m1', ['invalid-name', 'lowercase']);
             return React.createElement('View');
         }
 
@@ -71,8 +74,11 @@ describe('useEnvironmentVariables (hook)', () => {
             await flushHookEffects(3);
         });
 
-        expect(latest?.isLoading).toBe(false);
-        expect(latest?.variables).toEqual({});
-        expect(latest?.meta).toEqual({});
+        if (!latestRef.current) {
+            throw new Error('Expected hook result');
+        }
+        expect(latestRef.current.isLoading).toBe(false);
+        expect(latestRef.current.variables).toEqual({});
+        expect(latestRef.current.meta).toEqual({});
     });
 });

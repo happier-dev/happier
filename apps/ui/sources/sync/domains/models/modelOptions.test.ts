@@ -7,6 +7,15 @@ import {
     hasDynamicModelListForSession,
     isModelSelectableForSession,
 } from './modelOptions';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
+
+function withMetadata(overrides: Partial<Metadata>): Metadata {
+    return {
+        path: '/tmp/project',
+        host: 'localhost',
+        ...overrides,
+    };
+}
 
 describe('modelOptions', () => {
     it('builds generic options for unknown modes', () => {
@@ -44,7 +53,7 @@ describe('modelOptions', () => {
     it('prefers ACP session models when present', () => {
         const out = getModelOptionsForSession(
             'opencode',
-            {
+            withMetadata({
                 acpSessionModelsV1: {
                     v: 1,
                     provider: 'opencode',
@@ -55,7 +64,7 @@ describe('modelOptions', () => {
                         { id: 'model-b', name: 'Model B', description: 'Accurate' },
                     ],
                 },
-            } as const,
+            }),
         );
 
         expect(out.map((o) => o.value)).toEqual(['default', 'model-a', 'model-b']);
@@ -64,7 +73,7 @@ describe('modelOptions', () => {
     });
 
     it('treats ACP session models as selectable', () => {
-        const metadata = {
+        const metadata = withMetadata({
             acpSessionModelsV1: {
                 v: 1,
                 provider: 'opencode',
@@ -72,7 +81,7 @@ describe('modelOptions', () => {
                 currentModelId: 'model-a',
                 availableModels: [{ id: 'model-a', name: 'Model A' }],
             },
-        } as const;
+        });
 
         expect(isModelSelectableForSession('opencode', metadata, 'model-a')).toBe(true);
         expect(isModelSelectableForSession('opencode', metadata, 'default')).toBe(true);
@@ -95,9 +104,9 @@ describe('modelOptions', () => {
     it('adds metadata override model into options for freeform providers when not in static list', () => {
         const out = getModelOptionsForSession(
             'claude',
-            {
+            withMetadata({
                 modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'claude-custom-model' },
-            } as const,
+            }),
         );
 
         expect(out.some((option) => option.value === 'claude-custom-model')).toBe(true);
@@ -106,9 +115,9 @@ describe('modelOptions', () => {
     it('does not add metadata override model for providers without freeform selection', () => {
         const out = getModelOptionsForSession(
             'gemini',
-            {
+            withMetadata({
                 modelOverrideV1: { v: 1, updatedAt: 100, modelId: 'gemini-custom-model' },
-            } as const,
+            }),
         );
 
         expect(out.some((option) => option.value === 'gemini-custom-model')).toBe(false);
@@ -117,7 +126,7 @@ describe('modelOptions', () => {
     it('falls back to static options when dynamic list provider does not match agent', () => {
         const out = getModelOptionsForSession(
             'opencode',
-            {
+            withMetadata({
                 acpSessionModelsV1: {
                     v: 1,
                     provider: 'claude',
@@ -125,7 +134,7 @@ describe('modelOptions', () => {
                     currentModelId: 'model-a',
                     availableModels: [{ id: 'model-a', name: 'Model A' }],
                 },
-            } as const,
+            }),
         );
 
         expect(out.map((option) => option.value)).toEqual(['default']);
@@ -135,7 +144,7 @@ describe('modelOptions', () => {
         expect(
             hasDynamicModelListForSession(
                 'opencode',
-                {
+                withMetadata({
                     acpSessionModelsV1: {
                         v: 1,
                         provider: 'opencode',
@@ -143,14 +152,14 @@ describe('modelOptions', () => {
                         currentModelId: 'model-a',
                         availableModels: [{ id: 'model-a', name: 'Model A' }],
                     },
-                } as const,
+                }),
             ),
         ).toBe(true);
 
         expect(
             hasDynamicModelListForSession(
                 'opencode',
-                {
+                withMetadata({
                     acpSessionModelsV1: {
                         v: 1,
                         provider: 'gemini',
@@ -158,7 +167,7 @@ describe('modelOptions', () => {
                         currentModelId: 'model-a',
                         availableModels: [{ id: 'model-a', name: 'Model A' }],
                     },
-                } as const,
+                }),
             ),
         ).toBe(false);
     });

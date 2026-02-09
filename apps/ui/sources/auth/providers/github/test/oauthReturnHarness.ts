@@ -110,7 +110,7 @@ export async function runWithOAuthScreen(
         await runAssertions(tree);
     } finally {
         act(() => {
-            tree?.unmount();
+            tree.unmount();
         });
     }
 }
@@ -122,6 +122,9 @@ export async function renderOAuthReturnScreen() {
         tree = renderer.create(React.createElement(Screen));
     });
     await flushOAuthEffects();
+    if (!tree) {
+        throw new Error('Expected OAuth screen to render');
+    }
     return tree;
 }
 

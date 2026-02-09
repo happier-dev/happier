@@ -11,7 +11,7 @@ vi.mock('react-native-reanimated', () => ({}));
 
 const historyReplaceStateSpy = vi.fn();
 
-const upsertActivateAndSwitchServerSpy = vi.fn(async () => true);
+const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
 let activeServerUrl = 'https://api.happier.dev';
 
@@ -99,7 +99,7 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
 
 vi.mock('@/sync/domains/server/activeServerSwitch', () => ({
     normalizeServerUrl: (value: string) => String(value ?? '').trim().replace(/\/+$/, ''),
-    upsertActivateAndSwitchServer: (...args: unknown[]) => upsertActivateAndSwitchServerSpy(...args),
+    upsertActivateAndSwitchServer: upsertActivateAndSwitchServerSpy,
 }));
 
 vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
@@ -111,9 +111,7 @@ afterEach(() => {
     historyReplaceStateSpy.mockReset();
     upsertActivateAndSwitchServerSpy.mockReset();
     refreshFromActiveServerSpy.mockReset();
-    // @ts-expect-error test cleanup
     delete (globalThis as any).window;
-    // @ts-expect-error test cleanup
     delete (globalThis as any).document;
     vi.restoreAllMocks();
     vi.resetModules();

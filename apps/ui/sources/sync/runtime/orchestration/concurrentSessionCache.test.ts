@@ -16,6 +16,8 @@ describe('resolveConcurrentTargets', () => {
                 multiServerEnabled: true,
                 multiServerSelectedServerIds: ['server-a', 'server-c'],
                 multiServerPresentation: 'grouped',
+                multiServerProfiles: [],
+                multiServerActiveProfileId: null,
             },
         });
         expect(result).toEqual([
@@ -35,6 +37,8 @@ describe('resolveConcurrentTargets', () => {
                 multiServerEnabled: false,
                 multiServerSelectedServerIds: ['server-b'],
                 multiServerPresentation: 'flat-with-badge',
+                multiServerProfiles: [],
+                multiServerActiveProfileId: null,
             },
         });
         expect(result).toEqual([]);

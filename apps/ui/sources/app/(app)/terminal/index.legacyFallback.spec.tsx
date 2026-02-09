@@ -92,6 +92,9 @@ describe('TerminalScreen legacy deep-link fallback', () => {
                 tree = renderer.create(<Screen />);
             });
             await act(async () => {});
+            if (!tree) {
+                throw new Error('Expected terminal index renderer');
+            }
 
             const textValues = tree.root
                 .findAll((node) => typeof node.props?.children === 'string')
@@ -114,8 +117,11 @@ describe('TerminalScreen legacy deep-link fallback', () => {
                 tree = renderer.create(<Screen />);
             });
             await act(async () => {});
+            if (!tree) {
+                throw new Error('Expected terminal index renderer');
+            }
 
-            const renderedItems = tree.root.findAll((node) => node.type === 'Item');
+            const renderedItems = tree.root.findAll((node) => (node.type as unknown) === 'Item');
             const publicKeyItem = renderedItems.find((item) => item.props?.title === 'terminal.publicKey');
             expect(publicKeyItem).toBeTruthy();
             expect(publicKeyItem?.props?.detail).toBe('abcdefghijkl...');

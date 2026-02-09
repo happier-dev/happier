@@ -33,7 +33,7 @@ function mockServerConfig() {
 describe('setAccountUsername', () => {
     it('returns the username on success', async () => {
         mockServerConfig();
-        const fetchMock = vi.fn(async () => ({
+        const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({
             ok: true,
             status: 200,
             json: async () => ({ username: 'alice' }),
@@ -50,7 +50,10 @@ describe('setAccountUsername', () => {
                 headers: expect.any(Headers),
             }),
         );
-        const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+        const requestInit = fetchMock.mock.calls[0]?.[1];
+        if (!requestInit) {
+            throw new Error('Expected fetch to receive RequestInit');
+        }
         expect((requestInit.headers as Headers).get('Authorization')).toBe('Bearer t');
         expect((requestInit.headers as Headers).get('Content-Type')).toBe('application/json');
         expect(res).toEqual({ username: 'alice' });

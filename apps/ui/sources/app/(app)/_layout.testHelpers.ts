@@ -64,11 +64,11 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
 };
 
 export function createRootLayoutFeaturesResponse(overrides?: Partial<RootLayoutFeatures['features']>): RootLayoutFeatures {
-    const nextFeatures = overrides ?? {};
-    const nextAuth = nextFeatures.auth ?? {};
-    const nextSocial = nextFeatures.social ?? {};
-    const nextSharing = nextFeatures.sharing ?? {};
-    const nextOauth = nextFeatures.oauth ?? {};
+    const nextFeatures: Partial<RootLayoutFeatures['features']> = overrides ?? {};
+    const nextAuth: Partial<RootLayoutFeatures['features']['auth']> = nextFeatures.auth ?? {};
+    const nextSocial: Partial<RootLayoutFeatures['features']['social']> = nextFeatures.social ?? {};
+    const nextSharing: Partial<RootLayoutFeatures['features']['sharing']> = nextFeatures.sharing ?? {};
+    const nextOauth: Partial<RootLayoutFeatures['features']['oauth']> = nextFeatures.oauth ?? {};
     return {
         features: {
             ...BASE_ROOT_LAYOUT_FEATURES.features,

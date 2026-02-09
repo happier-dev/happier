@@ -89,7 +89,7 @@ vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
 }));
 
 function findProviderButtonAction(tree: renderer.ReactTestRenderer): () => Promise<void> | void {
-    const buttons = tree.root.findAll((node) => node.type === 'RoundButton');
+    const buttons = tree.root.findAll((node) => (node.type as unknown) === 'RoundButton');
     const providerButton = buttons.find((button) => typeof button.props?.action === 'function');
     expect(providerButton).toBeTruthy();
     return providerButton!.props.action as () => Promise<void> | void;
@@ -115,6 +115,9 @@ describe('/restore/lost-access', () => {
                 tree = renderer.create(<Screen />);
             });
             await act(async () => {});
+            if (!tree) {
+                throw new Error('Expected lost access screen renderer');
+            }
 
             const triggerProviderReset = findProviderButtonAction(tree);
             await act(async () => {
@@ -154,6 +157,9 @@ describe('/restore/lost-access', () => {
                 tree = renderer.create(<Screen />);
             });
             await act(async () => {});
+            if (!tree) {
+                throw new Error('Expected lost access screen renderer');
+            }
 
             const triggerProviderReset = findProviderButtonAction(tree);
             await act(async () => {

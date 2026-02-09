@@ -66,6 +66,9 @@ describe('/ (welcome) signup methods', () => {
                 tree = renderer.create(<Screen />);
             });
             await act(async () => {});
+            if (!tree) {
+                throw new Error('Expected welcome screen renderer');
+            }
 
             const textValues = tree.root
                 .findAll((n) => typeof n.props?.children === 'string')

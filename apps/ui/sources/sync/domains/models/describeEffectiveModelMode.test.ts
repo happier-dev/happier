@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { describeEffectiveModelMode } from './describeEffectiveModelMode';
 import { getAgentCore } from '@/agents/catalog/catalog';
-import type { Metadata } from './domains/state/storageTypes';
+import type { Metadata } from '@/sync/domains/state/storageTypes';
 
 function buildMetadata(overrides: Partial<Metadata> = {}): Metadata {
     return {
