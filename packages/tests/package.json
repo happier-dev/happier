@@ -20,6 +20,8 @@
     "providers:codex:extended": "yarn -s providers:run codex extended",
     "providers:kilo:smoke": "yarn -s providers:run kilo smoke",
     "providers:kilo:extended": "yarn -s providers:run kilo extended",
+    "providers:gemini:smoke": "yarn -s providers:run gemini smoke",
+    "providers:gemini:extended": "yarn -s providers:run gemini extended",
     "providers:qwen:smoke": "yarn -s providers:run qwen smoke",
     "providers:qwen:extended": "yarn -s providers:run qwen extended",
     "providers:kimi:smoke": "yarn -s providers:run kimi smoke",
@@ -34,6 +36,7 @@
     "providers:claude:smoke:update-baselines": "yarn -s providers:run claude smoke --update-baselines",
     "providers:codex:smoke:update-baselines": "yarn -s providers:run codex smoke --update-baselines",
     "providers:kilo:smoke:update-baselines": "yarn -s providers:run kilo smoke --update-baselines",
+    "providers:gemini:smoke:update-baselines": "yarn -s providers:run gemini smoke --update-baselines",
     "providers:qwen:smoke:update-baselines": "yarn -s providers:run qwen smoke --update-baselines",
     "providers:kimi:smoke:update-baselines": "yarn -s providers:run kimi smoke --update-baselines",
     "providers:auggie:smoke:update-baselines": "yarn -s providers:run auggie smoke --update-baselines"

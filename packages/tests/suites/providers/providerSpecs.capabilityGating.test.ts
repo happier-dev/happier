@@ -52,4 +52,17 @@ describe('providers: scenario capability gating', () => {
     expect(kimi).toBeTruthy();
     expect(kimi!.auth?.mode).toBe('auto');
   });
+
+  it('keeps gemini extended coverage focused on ACP capability/model inventory', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const gemini = providers.find((provider) => provider.id === 'gemini');
+    expect(gemini).toBeTruthy();
+
+    const extended = gemini!.scenarioRegistry.tiers.extended;
+    expect(extended).toContain('acp_probe_capabilities');
+    expect(extended).toContain('acp_probe_models');
+    expect(extended).toContain('acp_set_model_inventory');
+    expect(extended).not.toContain('acp_resume_load_session');
+    expect(extended).not.toContain('acp_resume_fresh_session_imports_history');
+  });
 });

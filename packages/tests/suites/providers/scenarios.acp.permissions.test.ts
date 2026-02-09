@@ -84,6 +84,44 @@ describe('providers: ACP scenario builders (permissions)', () => {
     expect(flat.some((key) => key.includes('/tool-result/'))).toBe(false);
   });
 
+  it('accepts Kimi unknown permission-request payloads and extracts path from toolCall content', async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'happier-acp-outside-kimi-'));
+    const outsidePath = join(tmpdir(), `happier-kimi-outside-${Date.now()}.txt`);
+    try {
+      const scenario = makeAcpPermissionOutsideWorkspaceScenario({
+        providerId: 'kimi',
+        content: 'KIMI_OUTSIDE_OK',
+        decision: 'approve',
+        expectPermissionRequest: true,
+        expectWriteCompletion: false,
+      });
+
+      await writeFile(outsidePath, 'KIMI_OUTSIDE_OK\n', 'utf8');
+
+      await scenario.verify?.({
+        workspaceDir,
+        fixtures: {
+          examples: {
+            'acp/kimi/permission-request/unknown': [
+              {
+                payload: {
+                  options: {
+                    toolCall: {
+                      content: [{ path: outsidePath, type: 'diff' }],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        } as any,
+      });
+    } finally {
+      await rm(outsidePath, { force: true });
+      await rm(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
   it('builds a permission deny outside-workspace read scenario', () => {
     const scenario = makeAcpPermissionDenyOutsideWorkspaceReadScenario({
       providerId: 'opencode',

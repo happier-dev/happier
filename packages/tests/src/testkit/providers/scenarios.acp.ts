@@ -29,6 +29,7 @@ export function makeAcpReadInWorkspaceScenario(params: {
   title?: string;
   filename?: string;
   content: string;
+  useAbsolutePath?: boolean;
 }): ProviderScenario {
   const filename = params.filename ?? 'e2e-read.txt';
   const filePathRel = filename;
@@ -43,7 +44,7 @@ export function makeAcpReadInWorkspaceScenario(params: {
     prompt: ({ workspaceDir }) =>
       [
         'Run exactly one tool call:',
-        `- Use the read tool to read: ${filePathRel}`,
+        `- Use the read tool to read: ${params.useAbsolutePath ? join(workspaceDir, filePathRel) : filePathRel}`,
         '- Then reply DONE.',
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
@@ -59,6 +60,7 @@ export function makeAcpReadMissingFileScenario(params: {
   filename?: string;
 }): ProviderScenario {
   const filename = params.filename ?? 'e2e-missing.txt';
+  const useKimiFallback = params.providerId === 'kimi';
   return {
     id: params.id ?? 'read_missing_file_in_workspace',
     title: params.title ?? 'read: missing file returns an error (no retries)',
@@ -67,13 +69,35 @@ export function makeAcpReadMissingFileScenario(params: {
     prompt: ({ workspaceDir }) =>
       [
         'Run exactly one tool call:',
-        `- Use the read tool to read a file that does NOT exist: ${filename}`,
+        `- Use the read tool to read a file that does NOT exist: ${useKimiFallback ? join(workspaceDir, filename) : filename}`,
+        ...(useKimiFallback
+          ? [
+              '',
+              'If Read fails, immediately use execute to run:',
+              `  cat "${join(workspaceDir, filename)}"`,
+            ]
+          : []),
         '',
         'This is an automated test. Do not create the file. Do not retry with other tools if it fails.',
         'Then reply DONE.',
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
-    requiredFixtureKeys: [k(params.providerId, 'tool-call', 'Read'), k(params.providerId, 'tool-result', 'Read')],
+    ...(useKimiFallback
+      ? {
+          requiredAnyFixtureKeys: [
+            [
+              k(params.providerId, 'tool-call', 'Read'),
+              ...executeToolCallFixtureKeys(params.providerId),
+            ],
+            [
+              k(params.providerId, 'tool-result', 'Read'),
+              ...executeToolResultFixtureKeys(params.providerId),
+            ],
+          ],
+        }
+      : {
+          requiredFixtureKeys: [k(params.providerId, 'tool-call', 'Read'), k(params.providerId, 'tool-result', 'Read')],
+        }),
     requiredTraceSubstrings: [filename],
     verify: async ({ workspaceDir }) => {
       // Ensure provider did not "helpfully" create the missing file.
@@ -248,8 +272,14 @@ export function makeAcpMultiFileEditScenario(params: {
         k(params.providerId, 'tool-call', 'Edit'),
         k(params.providerId, 'tool-call', 'Write'),
       ];
+      const resultKeys = [
+        k(params.providerId, 'tool-result', 'Patch'),
+        k(params.providerId, 'tool-result', 'Edit'),
+        k(params.providerId, 'tool-result', 'Write'),
+      ];
 
       const calls = callKeys.flatMap((key) => (Array.isArray((examples as any)[key]) ? (examples as any)[key] : []));
+      const results = resultKeys.flatMap((key) => (Array.isArray((examples as any)[key]) ? (examples as any)[key] : []));
 
       for (const f of params.files) {
         const hasPath = calls.some((e: any) => {
@@ -274,8 +304,25 @@ export function makeAcpMultiFileEditScenario(params: {
 
           return false;
         });
-        if (!hasPath) {
-          throw new Error(`Expected at least one tool-call fixture to reference ${f.filename}`);
+        const hasResultPath = results.some((e: any) => {
+          const output = e?.payload?.output;
+          if (!output || typeof output !== 'object') return false;
+
+          const metadata = output.metadata && typeof output.metadata === 'object' ? output.metadata : null;
+          const candidatePaths = [
+            metadata?.filepath,
+            metadata?.filePath,
+            metadata?.file_path,
+            output.filepath,
+            output.filePath,
+            output.file_path,
+            output?._acp?.title,
+          ];
+          return candidatePaths.some((p) => typeof p === 'string' && p.endsWith(`/${f.filename}`));
+        });
+
+        if (!hasPath && !hasResultPath) {
+          throw new Error(`Expected at least one tool fixture to reference ${f.filename}`);
         }
       }
     },
@@ -947,13 +994,14 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
       try {
         filepath = expectPermissionRequest
           ? (() => {
-              const key =
-                [
-                  k(params.providerId, 'permission-request', 'Edit'),
-                  k(params.providerId, 'permission-request', 'Write'),
-                  k(params.providerId, 'permission-request', 'edit'),
-                  k(params.providerId, 'permission-request', 'write'),
-                ].find((kk) => {
+              const keys = [
+                k(params.providerId, 'permission-request', 'Edit'),
+                k(params.providerId, 'permission-request', 'Write'),
+                k(params.providerId, 'permission-request', 'edit'),
+                k(params.providerId, 'permission-request', 'write'),
+                k(params.providerId, 'permission-request', 'unknown'),
+              ];
+              const key = keys.find((kk) => {
                   const v = fixtures?.examples?.[kk];
                   return Array.isArray(v) && v.length > 0;
                 }) ?? null;
@@ -964,7 +1012,9 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
               const requestedPath =
                 reqs[0]?.payload?.options?.input?.filepath ??
                 reqs[0]?.payload?.options?.input?.filePath ??
-                reqs[0]?.payload?.options?.input?.path;
+                reqs[0]?.payload?.options?.input?.path ??
+                reqs[0]?.payload?.options?.toolCall?.content?.find((entry: any) => typeof entry?.path === 'string')?.path ??
+                reqs[0]?.payload?.options?.input?.content?.find((entry: any) => typeof entry?.path === 'string')?.path;
               if (typeof requestedPath !== 'string' || requestedPath.length === 0) {
                 throw new Error('permission-request missing options.input.filepath');
               }

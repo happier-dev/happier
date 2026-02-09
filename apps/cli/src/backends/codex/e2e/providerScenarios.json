@@ -4,7 +4,9 @@
     "smoke": ["execute_trace_ok"],
     "extended": [
       "read_in_workspace",
+      "acp_probe_capabilities",
       "acp_probe_models",
+      "acp_set_model_dynamic",
       "search_known_token",
       "write_in_workspace",
       "glob_list_files",

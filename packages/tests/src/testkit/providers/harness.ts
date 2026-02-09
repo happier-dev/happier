@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -87,6 +87,46 @@ function formatProviderSkipWarning(params: { providerId: string; reason: string 
   const cleaned = params.reason.replace(/\s+/g, ' ').trim();
   const compact = cleaned.length > 240 ? `${cleaned.slice(0, 237)}...` : cleaned;
   return `[providers] skipping ${params.providerId}: ${compact}`;
+}
+
+type ProviderFailureReportV1 = {
+  v: 1;
+  providerId: string;
+  scenarioId: string;
+  error: string;
+  ts: number;
+};
+
+function providerFailureReportPathFromEnv(): string | null {
+  const raw = (
+    process.env.HAPPIER_E2E_PROVIDER_FAILURE_REPORT_PATH ??
+    process.env.HAPPY_E2E_PROVIDER_FAILURE_REPORT_PATH ??
+    ''
+  ).trim();
+  return raw.length > 0 ? raw : null;
+}
+
+async function resetProviderFailureReport(): Promise<void> {
+  const reportPath = providerFailureReportPathFromEnv();
+  if (!reportPath) return;
+  await rm(reportPath, { force: true }).catch(() => undefined);
+}
+
+async function writeProviderFailureReport(params: {
+  providerId: string;
+  scenarioId: string;
+  error: string;
+}): Promise<void> {
+  const reportPath = providerFailureReportPathFromEnv();
+  if (!reportPath) return;
+  const payload: ProviderFailureReportV1 = {
+    v: 1,
+    providerId: params.providerId,
+    scenarioId: params.scenarioId,
+    error: params.error,
+    ts: Date.now(),
+  };
+  await writeFile(reportPath, JSON.stringify(payload, null, 2), 'utf8').catch(() => undefined);
 }
 
 export function findFirstToolCallIdByName(events: Array<Pick<ToolTraceEventV1, 'kind' | 'payload'>>, toolName: string): string | null {
@@ -206,11 +246,65 @@ export function resolveYoloCliArgs(params: {
   if (!params.yolo) return [];
   if (
     params.hasExplicitPermissionModeArgs &&
-    ['codex', 'opencode', 'kilo', 'qwen', 'kimi', 'auggie'].includes(params.providerSubcommand)
+    ['codex', 'opencode', 'kilo', 'gemini', 'qwen', 'kimi', 'auggie'].includes(params.providerSubcommand)
   ) {
     return [];
   }
   return ['--yolo'];
+}
+
+function normalizeProviderModelEnvSuffix(providerId: string): string {
+  return providerId
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function parseProviderModelOverridesMap(raw: string | undefined, providerId: string): string | null {
+  const source = typeof raw === 'string' ? raw.trim() : '';
+  if (!source) return null;
+  const target = providerId.trim().toLowerCase();
+  if (!target) return null;
+
+  const entries = source
+    .split(/[\n,]/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  for (const entry of entries) {
+    const splitIndex = entry.indexOf('=');
+    if (splitIndex <= 0) continue;
+    const key = entry.slice(0, splitIndex).trim().toLowerCase();
+    const value = entry.slice(splitIndex + 1).trim();
+    if (key === target && value.length > 0) return value;
+  }
+  return null;
+}
+
+export function resolveProviderModelCliArgs(params: {
+  providerId: string;
+  env?: NodeJS.ProcessEnv;
+  nowMs?: () => number;
+}): string[] {
+  const env = params.env ?? process.env;
+  const providerSuffix = normalizeProviderModelEnvSuffix(params.providerId);
+  const providerModel =
+    env[`HAPPIER_E2E_PROVIDER_MODEL_${providerSuffix}`] ??
+    env[`HAPPY_E2E_PROVIDER_MODEL_${providerSuffix}`] ??
+    null;
+  const mappedModel =
+    parseProviderModelOverridesMap(
+      env.HAPPIER_E2E_PROVIDER_MODELS ?? env.HAPPY_E2E_PROVIDER_MODELS,
+      params.providerId,
+    ) ?? null;
+  const globalModel = env.HAPPIER_E2E_PROVIDER_MODEL ?? env.HAPPY_E2E_PROVIDER_MODEL ?? null;
+  const model = [providerModel, mappedModel, globalModel]
+    .find((candidate) => typeof candidate === 'string' && candidate.trim().length > 0)
+    ?.trim();
+  if (!model) return [];
+
+  const now = Math.floor((params.nowMs ?? Date.now)());
+  return ['--model', model, '--model-updated-at', String(now)];
 }
 
 function readJsonlEvents(raw: string): ToolTraceEventV1[] {
@@ -571,6 +665,9 @@ async function runOneScenario(params: {
           cliPermissionArgs.length > 0 ||
           (typeof scenarioMeta.permissionMode === 'string' && scenarioMeta.permissionMode.trim().length > 0),
       });
+      const modelCliArgs = resolveProviderModelCliArgs({
+        providerId: provider.id,
+      });
 
       const attachFile = await writeCliSessionAttachFile({
         cliHome,
@@ -610,6 +707,7 @@ async function runOneScenario(params: {
           params.sessionId,
           ...yoloCliArgs,
           ...cliPermissionArgs,
+          ...modelCliArgs,
           ...(params.extraCliArgs ?? []),
           ...(provider.cli.extraArgs ?? []),
         ],
@@ -707,6 +805,7 @@ async function runOneScenario(params: {
       const inactivityTimeoutMs = resolveProviderInactivityTimeoutMs(
         process.env.HAPPIER_E2E_PROVIDER_NO_ACTIVITY_TIMEOUT_MS ?? process.env.HAPPY_E2E_PROVIDER_NO_ACTIVITY_TIMEOUT_MS,
         maxWaitMs,
+        provider.id,
       );
       const permissionBlockTimeoutMs = resolveProviderPermissionBlockTimeoutMs(
         process.env.HAPPIER_E2E_PROVIDER_PERMISSION_BLOCK_TIMEOUT_MS ??
@@ -1176,6 +1275,8 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
     return { ok: true, skipped: { reason: 'providers disabled (set HAPPIER_E2E_PROVIDERS=1)' } };
   }
 
+  await resetProviderFailureReport();
+
   const catalog = await loadProvidersFromCliSpecs();
   const enabledProviders = catalog.filter((p) => envFlag(p.enableEnvVar, false));
   if (enabledProviders.length === 0) {
@@ -1277,6 +1378,11 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
             providerSkipped = true;
             break;
           }
+          await writeProviderFailureReport({
+            providerId: String(provider.id),
+            scenarioId: scenario.id,
+            error: reason,
+          });
           throw e;
         }
       }

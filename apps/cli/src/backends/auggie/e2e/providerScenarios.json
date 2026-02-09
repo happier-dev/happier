@@ -3,7 +3,9 @@
   "tiers": {
     "smoke": [],
     "extended": [
+      "acp_probe_capabilities",
       "acp_probe_models",
+      "acp_set_model_dynamic",
       "read_known_file",
       "search_known_token",
       "glob_list_files",

@@ -41,4 +41,30 @@ describe('providers harness: cli log fatal error detection', () => {
 
     await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toBeNull();
   });
+
+  it('detects account-verification errors from cli logs', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const logsDir = join(cliHome, 'logs');
+    await mkdir(logsDir, { recursive: true });
+    await writeFile(
+      join(logsDir, '2026-02-08-20-15-03-pid-88888.log'),
+      '[AcpBackend] Error sending prompt: {"code":403,"message":"Verify your account to continue."}\n',
+      'utf8',
+    );
+
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toContain('Account verification required');
+  });
+
+  it('detects prompt runtime failures from cli logs', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const logsDir = join(cliHome, 'logs');
+    await mkdir(logsDir, { recursive: true });
+    await writeFile(
+      join(logsDir, '2026-02-09-14-13-12-pid-36813.log'),
+      '[Kimi] Error during prompt: {}\n',
+      'utf8',
+    );
+
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toContain('Prompt request failed');
+  });
 });

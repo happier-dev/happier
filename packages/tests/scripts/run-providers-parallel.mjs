@@ -1,18 +1,33 @@
 import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
-import { filterProviderIdsForScenarioSelection, parseMaxParallel, resolveProviderPresetIds } from '../src/testkit/providers/presets.mjs';
+import {
+  filterProviderIdsForScenarioSelection,
+  parseMaxParallel,
+  parseScenarioSelection,
+  resolveProviderPresetIds,
+} from '../src/testkit/providers/presets.mjs';
 import { terminateProcessTreeByPid } from './processTree.mjs';
 
-function yarnCommand() {
-  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
-}
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(SCRIPT_DIR, '../../..');
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const args = argv.slice(2);
   const positional = [];
   let maxParallelRaw;
   let retrySerial = true;
   const flags = new Set();
+  const knownFlags = new Set([
+    '--update-baselines',
+    '--strict-keys',
+    '--flake-retry',
+    '--no-flake-retry',
+    '--no-retry-serial',
+  ]);
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -26,12 +41,16 @@ function parseArgs(argv) {
       continue;
     }
     if (arg.startsWith('-')) {
+      if (!knownFlags.has(arg)) throw new Error(`Unknown flag: ${arg}`);
       flags.add(arg);
       continue;
     }
     positional.push(arg);
   }
 
+  if (flags.has('--flake-retry') && flags.has('--no-flake-retry')) {
+    throw new Error('Conflicting flags: --flake-retry and --no-flake-retry');
+  }
   return {
     presetId: positional[0] ?? null,
     tier: positional[1] ?? null,
@@ -39,7 +58,7 @@ function parseArgs(argv) {
     retrySerial,
     updateBaselines: flags.has('--update-baselines'),
     strictKeys: flags.has('--strict-keys'),
-    flakeRetry: flags.has('--flake-retry'),
+    flakeRetry: !flags.has('--no-flake-retry'),
   };
 }
 
@@ -48,14 +67,15 @@ function usage(exitCode) {
   console.error(
     [
       'Usage:',
-      '  yarn providers:run:parallel <preset> <tier> [--max-parallel N] [--update-baselines] [--strict-keys] [--flake-retry] [--no-retry-serial]',
+      '  yarn providers:run:parallel <preset> <tier> [--max-parallel N] [--update-baselines] [--strict-keys] [--flake-retry|--no-flake-retry] [--no-retry-serial]',
       '',
-      'Presets: opencode | claude | codex | kilo | qwen | kimi | auggie | all',
+      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | all',
       'Tiers:   smoke | extended',
       '',
       'Notes:',
       '  - Default max parallel: 4',
       '  - Failures are retried serially once by default (disable with --no-retry-serial)',
+      '  - Serial retry first targets failed scenario tail (failed scenario -> end of tier)',
       '',
       'Examples:',
       '  yarn providers:run:parallel all extended',
@@ -63,26 +83,124 @@ function usage(exitCode) {
       '  yarn providers:run:parallel opencode extended --strict-keys',
     ].join('\n'),
   );
-  process.exit(exitCode);
+  return exitCode;
+}
+
+function yarnCommand() {
+  return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
+}
+
+function signalExitCode(signal) {
+  return signal ? 128 : 1;
+}
+
+export async function filterProviderIdsByScenarioRegistry(params) {
+  const providerIds = Array.isArray(params.providerIds) ? params.providerIds : [];
+  if (providerIds.length === 0) return [];
+
+  const scenarioSelection = parseScenarioSelection(params.scenarioSelectionRaw);
+  if (scenarioSelection.length === 0) return [...providerIds];
+
+  const filtered = [];
+  for (const providerId of providerIds) {
+    const scenariosPath = resolve(
+      REPO_ROOT,
+      'apps',
+      'cli',
+      'src',
+      'backends',
+      providerId,
+      'e2e',
+      'providerScenarios.json',
+    );
+
+    const raw = await readFile(scenariosPath, 'utf8').catch(() => null);
+    if (!raw) {
+      filtered.push(providerId);
+      continue;
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      filtered.push(providerId);
+      continue;
+    }
+
+    const tierIds = parsed?.tiers?.[params.tier];
+    if (!Array.isArray(tierIds)) {
+      filtered.push(providerId);
+      continue;
+    }
+
+    const hasAnySelectedScenario = scenarioSelection.some((scenarioId) => tierIds.includes(scenarioId));
+    if (hasAnySelectedScenario) filtered.push(providerId);
+  }
+
+  return filtered.length > 0 ? filtered : [...providerIds];
 }
 
 function buildProviderRunArgs(params) {
   const args = ['-s', 'providers:run', params.providerId, params.tier];
   if (params.updateBaselines) args.push('--update-baselines');
   if (params.strictKeys) args.push('--strict-keys');
-  if (params.flakeRetry) args.push('--flake-retry');
+  if (!params.flakeRetry) args.push('--no-flake-retry');
   return args;
 }
 
-const activeChildren = new Set();
-let shuttingDown = false;
-
-function signalExitCode(signal) {
-  return signal ? 128 : 1;
+export function parseFailureReportJson(raw) {
+  if (typeof raw !== 'string' || raw.trim().length === 0) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const report = parsed;
+  if (report.v !== 1) return null;
+  if (typeof report.providerId !== 'string' || report.providerId.length === 0) return null;
+  if (typeof report.scenarioId !== 'string' || report.scenarioId.length === 0) return null;
+  if (typeof report.error !== 'string' || report.error.length === 0) return null;
+  if (typeof report.ts !== 'number' || !Number.isFinite(report.ts)) return null;
+  return {
+    v: 1,
+    providerId: report.providerId,
+    scenarioId: report.scenarioId,
+    error: report.error,
+    ts: report.ts,
+  };
 }
 
-async function stopActiveChildren() {
-  const children = [...activeChildren];
+export function resolveRetryScenarioIds(params) {
+  const failed = typeof params.failedScenarioId === 'string' ? params.failedScenarioId.trim() : '';
+  if (!failed) return null;
+  const ordered = Array.isArray(params.orderedScenarioIds) ? params.orderedScenarioIds : [];
+  const clean = ordered
+    .filter((value) => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  const index = clean.indexOf(failed);
+  if (index < 0) return null;
+  return clean.slice(index);
+}
+
+async function readFailureReport(reportPath) {
+  const raw = await readFile(reportPath, 'utf8').catch(() => null);
+  if (!raw) return null;
+  return parseFailureReportJson(raw);
+}
+
+function createRunnerState() {
+  return {
+    activeChildren: new Set(),
+    shuttingDown: false,
+  };
+}
+
+async function stopActiveChildren(state) {
+  const children = [...state.activeChildren];
   await Promise.all(
     children.map(async (child) => {
       if (!child?.pid) return;
@@ -91,71 +209,78 @@ async function stopActiveChildren() {
   );
 }
 
-async function shutdownAndExit(code) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  try {
-    await stopActiveChildren();
-  } finally {
-    process.exit(code);
-  }
+async function shutdown(state) {
+  if (state.shuttingDown) return;
+  state.shuttingDown = true;
+  await stopActiveChildren(state);
 }
 
-for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-  process.on(signal, () => {
-    void shutdownAndExit(128);
-  });
-}
-
-function runProvider(params) {
-  return new Promise((resolve) => {
+async function runProvider(params, state) {
+  const reportDir = await mkdtemp(join(tmpdir(), 'happier-provider-failure-'));
+  const reportPath = join(reportDir, 'failure-report.json');
+  return new Promise((resolveResult) => {
     const startedAt = Date.now();
+    const scenarioSelection = Array.isArray(params.scenarioIds) ? params.scenarioIds.join(',') : '';
     const child = spawn(yarnCommand(), buildProviderRunArgs(params), {
       stdio: 'inherit',
-      env: process.env,
+      env: {
+        ...process.env,
+        HAPPIER_E2E_PROVIDER_FAILURE_REPORT_PATH: reportPath,
+        HAPPY_E2E_PROVIDER_FAILURE_REPORT_PATH: reportPath,
+        ...(scenarioSelection.length > 0
+          ? {
+              HAPPIER_E2E_PROVIDER_SCENARIOS: scenarioSelection,
+              HAPPY_E2E_PROVIDER_SCENARIOS: scenarioSelection,
+            }
+          : null),
+      },
       detached: process.platform !== 'win32',
     });
-    activeChildren.add(child);
+    state.activeChildren.add(child);
 
-    child.on('error', () => {
-      activeChildren.delete(child);
-      resolve({
-        providerId: params.providerId,
-        code: 1,
-        signal: null,
-        elapsedMs: Date.now() - startedAt,
-      });
-    });
-    child.on('exit', (code, signal) => {
-      activeChildren.delete(child);
-      resolve({
+    const finalize = async (code, signal) => {
+      state.activeChildren.delete(child);
+      const failureReport = await readFailureReport(reportPath);
+      await rm(reportDir, { recursive: true, force: true }).catch(() => undefined);
+      resolveResult({
         providerId: params.providerId,
         code: code ?? signalExitCode(signal),
         signal: signal ?? null,
         elapsedMs: Date.now() - startedAt,
+        failureReport,
       });
+    };
+
+    child.on('error', () => {
+      void finalize(1, null);
+    });
+    child.on('exit', (code, signal) => {
+      void finalize(code, signal);
     });
   });
 }
 
-async function runWithConcurrency(params) {
+async function runWithConcurrency(params, state) {
   const queue = [...params.providerIds];
   const results = [];
 
   const workers = Array.from({ length: Math.min(params.maxParallel, queue.length) }, async () => {
     while (queue.length > 0) {
-      if (shuttingDown) break;
+      if (state.shuttingDown) break;
       const providerId = queue.shift();
       if (!providerId) break;
       // eslint-disable-next-line no-console
       console.log(`[providers:parallel] start ${providerId} (${params.tier})`);
-      const result = await runProvider({
-        providerId,
-        tier: params.tier,
-        updateBaselines: params.updateBaselines,
-        strictKeys: params.strictKeys,
-        flakeRetry: params.flakeRetry,
-      });
+      const result = await runProvider(
+        {
+          providerId,
+          tier: params.tier,
+          updateBaselines: params.updateBaselines,
+          strictKeys: params.strictKeys,
+          flakeRetry: params.flakeRetry,
+        },
+        state,
+      );
       // eslint-disable-next-line no-console
       console.log(
         `[providers:parallel] done ${providerId} code=${result.code} elapsed=${Math.round(result.elapsedMs / 1000)}s`,
@@ -168,54 +293,182 @@ async function runWithConcurrency(params) {
   return results;
 }
 
-const parsed = parseArgs(process.argv);
-if (!parsed.presetId || !parsed.tier) usage(2);
+async function loadOrderedScenarioIdsForRetry(params) {
+  const explicitSelectionRaw = (
+    process.env.HAPPIER_E2E_PROVIDER_SCENARIOS ??
+    process.env.HAPPY_E2E_PROVIDER_SCENARIOS ??
+    ''
+  ).trim();
+  const explicitSelection = parseScenarioSelection(explicitSelectionRaw);
+  if (explicitSelection.length > 0) return explicitSelection;
 
-const resolvedProviderIds = resolveProviderPresetIds(parsed.presetId);
-if (!resolvedProviderIds) usage(2);
-if (parsed.tier !== 'smoke' && parsed.tier !== 'extended') usage(2);
+  const scenariosPath = resolve(
+    REPO_ROOT,
+    'apps',
+    'cli',
+    'src',
+    'backends',
+    params.providerId,
+    'e2e',
+    'providerScenarios.json',
+  );
+  const raw = await readFile(scenariosPath, 'utf8').catch(() => null);
+  if (!raw) return null;
 
-const maxParallel = parseMaxParallel(parsed.maxParallelRaw, 4);
-if (!maxParallel) usage(2);
-
-const providerIds = filterProviderIdsForScenarioSelection(
-  resolvedProviderIds,
-  process.env.HAPPIER_E2E_PROVIDER_SCENARIOS,
-);
-if (providerIds.length === 0) usage(2);
-
-const initial = await runWithConcurrency({
-  providerIds,
-  tier: parsed.tier,
-  maxParallel,
-  updateBaselines: parsed.updateBaselines,
-  strictKeys: parsed.strictKeys,
-  flakeRetry: parsed.flakeRetry,
-});
-
-const initialFailures = initial.filter((item) => item.code !== 0).map((item) => item.providerId);
-if (!parsed.retrySerial || initialFailures.length === 0) {
-  await shutdownAndExit(initialFailures.length === 0 ? 0 : 1);
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const list = parsed?.tiers?.[params.tier];
+  if (!Array.isArray(list)) return null;
+  return list
+    .filter((value) => typeof value === 'string')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
 }
 
-// eslint-disable-next-line no-console
-console.log(`[providers:parallel] retrying ${initialFailures.length} provider(s) serially`);
+export async function main(argv = process.argv) {
+  const parsed = parseArgs(argv);
+  if (!parsed.presetId || !parsed.tier) return usage(2);
 
-const retryFailures = [];
-for (const providerId of initialFailures) {
-  if (shuttingDown) break;
-  // eslint-disable-next-line no-console
-  console.log(`[providers:parallel] retry start ${providerId}`);
-  const retry = await runProvider({
-    providerId,
+  const resolvedProviderIds = resolveProviderPresetIds(parsed.presetId);
+  if (!resolvedProviderIds) return usage(2);
+  if (parsed.tier !== 'smoke' && parsed.tier !== 'extended') return usage(2);
+
+  const maxParallel = parseMaxParallel(parsed.maxParallelRaw, 4);
+  if (!maxParallel) return usage(2);
+
+  const providerIdsPre = filterProviderIdsForScenarioSelection(
+    resolvedProviderIds,
+    process.env.HAPPIER_E2E_PROVIDER_SCENARIOS,
+  );
+  const providerIds = await filterProviderIdsByScenarioRegistry({
+    providerIds: providerIdsPre,
     tier: parsed.tier,
-    updateBaselines: parsed.updateBaselines,
-    strictKeys: parsed.strictKeys,
-    flakeRetry: parsed.flakeRetry,
+    scenarioSelectionRaw:
+      process.env.HAPPIER_E2E_PROVIDER_SCENARIOS ?? process.env.HAPPY_E2E_PROVIDER_SCENARIOS ?? '',
   });
-  // eslint-disable-next-line no-console
-  console.log(`[providers:parallel] retry done ${providerId} code=${retry.code} elapsed=${Math.round(retry.elapsedMs / 1000)}s`);
-  if (retry.code !== 0) retryFailures.push(providerId);
+  if (providerIds.length === 0) return usage(2);
+
+  const state = createRunnerState();
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(signal, () => {
+      if (state.shuttingDown) return;
+      state.shuttingDown = true;
+      void stopActiveChildren(state).finally(() => process.exit(128));
+    });
+  }
+
+  try {
+    const initial = await runWithConcurrency(
+      {
+        providerIds,
+        tier: parsed.tier,
+        maxParallel,
+        updateBaselines: parsed.updateBaselines,
+        strictKeys: parsed.strictKeys,
+        flakeRetry: parsed.flakeRetry,
+      },
+      state,
+    );
+
+    const initialFailures = initial.filter((item) => item.code !== 0);
+    if (!parsed.retrySerial || initialFailures.length === 0) {
+      return initialFailures.length === 0 ? 0 : 1;
+    }
+
+    // eslint-disable-next-line no-console
+    console.log(`[providers:parallel] retrying ${initialFailures.length} provider(s) serially`);
+
+    const retryFailures = [];
+    for (const failed of initialFailures) {
+      if (state.shuttingDown) break;
+      const providerId = failed.providerId;
+      const failedScenarioId =
+        failed.failureReport && failed.failureReport.providerId === providerId
+          ? failed.failureReport.scenarioId
+          : null;
+
+      let targetedRetrySucceeded = false;
+      if (typeof failedScenarioId === 'string' && failedScenarioId.length > 0) {
+        const orderedScenarioIds = await loadOrderedScenarioIdsForRetry({
+          providerId,
+          tier: parsed.tier,
+        });
+        const tailScenarioIds = resolveRetryScenarioIds({
+          orderedScenarioIds: orderedScenarioIds ?? [],
+          failedScenarioId,
+        });
+        const scenarioIds = tailScenarioIds && tailScenarioIds.length > 0 ? tailScenarioIds : [failedScenarioId];
+        // eslint-disable-next-line no-console
+        console.log(`[providers:parallel] retry start ${providerId} scenarios=${scenarioIds.join(',')}`);
+        const retry = await runProvider(
+          {
+            providerId,
+            tier: parsed.tier,
+            updateBaselines: parsed.updateBaselines,
+            strictKeys: parsed.strictKeys,
+            flakeRetry: parsed.flakeRetry,
+            scenarioIds,
+          },
+          state,
+        );
+        // eslint-disable-next-line no-console
+        console.log(
+          `[providers:parallel] retry done ${providerId} code=${retry.code} elapsed=${Math.round(retry.elapsedMs / 1000)}s`,
+        );
+        if (retry.code === 0) {
+          targetedRetrySucceeded = true;
+        } else {
+          // eslint-disable-next-line no-console
+          console.log(`[providers:parallel] targeted retry failed for ${providerId}; falling back to full provider retry`);
+        }
+      }
+
+      if (targetedRetrySucceeded) continue;
+
+      // eslint-disable-next-line no-console
+      console.log(`[providers:parallel] retry start ${providerId}`);
+      const retry = await runProvider(
+        {
+          providerId,
+          tier: parsed.tier,
+          updateBaselines: parsed.updateBaselines,
+          strictKeys: parsed.strictKeys,
+          flakeRetry: parsed.flakeRetry,
+        },
+        state,
+      );
+      // eslint-disable-next-line no-console
+      console.log(
+        `[providers:parallel] retry done ${providerId} code=${retry.code} elapsed=${Math.round(retry.elapsedMs / 1000)}s`,
+      );
+      if (retry.code !== 0) retryFailures.push(providerId);
+    }
+
+    return retryFailures.length === 0 ? 0 : 1;
+  } finally {
+    await shutdown(state);
+  }
 }
 
-await shutdownAndExit(retryFailures.length === 0 ? 0 : 1);
+function isMain() {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  return import.meta.url === pathToFileURL(entry).href;
+}
+
+if (isMain()) {
+  main()
+    .then((code) => {
+      if (typeof code === 'number' && Number.isFinite(code)) process.exit(code);
+      process.exit(1);
+    })
+    .catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+      process.exit(1);
+    });
+}

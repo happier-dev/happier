@@ -4,7 +4,8 @@
     "smoke": [],
     "extended": [
       "acp_probe_capabilities",
-      "acp_probe_models"
+      "acp_probe_models",
+      "acp_set_model_inventory"
     ]
   }
 }

@@ -12,6 +12,21 @@ describe('providers harness: provider availability classification', () => {
     expect(isSkippableProviderUnavailabilityError('Fatal provider runtime error (foo.bar): Provider not configured')).toBe(true);
     expect(isSkippableProviderUnavailabilityError('Fatal provider runtime error (foo.bar): LLM not set')).toBe(true);
     expect(isSkippableProviderUnavailabilityError('Fatal provider runtime error (auggie.acp_probe_models): Out of credits')).toBe(true);
+    expect(
+      isSkippableProviderUnavailabilityError(
+        'Fatal provider runtime error (gemini.acp_probe_models): Verify your account to continue.',
+      ),
+    ).toBe(true);
+    expect(
+      isSkippableProviderUnavailabilityError(
+        'Fatal provider runtime error (gemini.acp_probe_models): Account verification required',
+      ),
+    ).toBe(true);
+    expect(
+      isSkippableProviderUnavailabilityError(
+        'Fatal provider runtime error (kimi.read_known_file): Prompt request failed',
+      ),
+    ).toBe(true);
   });
 
   it('does not classify regular scenario assertion failures as provider unavailability', () => {

@@ -10,4 +10,8 @@ describe('providers harness: inactivity timeout', () => {
   it('clamps inactivity timeout to max wait', () => {
     expect(resolveProviderInactivityTimeoutMs('500000', 240_000)).toBe(240_000);
   });
+
+  it('uses a longer default inactivity timeout for kimi', () => {
+    expect(resolveProviderInactivityTimeoutMs(undefined, 240_000, 'kimi')).toBe(240_000);
+  });
 });

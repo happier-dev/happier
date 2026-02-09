@@ -5,6 +5,8 @@
     "extended": [
       "acp_resume_load_session",
       "acp_resume_fresh_session_imports_history",
+      "acp_probe_capabilities",
+      "acp_set_model_dynamic",
       "read_known_file",
       "search_known_token",
       "glob_list_files",

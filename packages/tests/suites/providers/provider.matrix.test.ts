@@ -12,6 +12,7 @@ describe('providers: contract matrix (harness)', () => {
     // loaded developer machines; keep this higher to avoid false timeout failures.
     { id: 'codex', envVar: 'HAPPIER_E2E_PROVIDER_CODEX', timeoutMs: 4_800_000 },
     { id: 'kilo', envVar: 'HAPPIER_E2E_PROVIDER_KILO', timeoutMs: 2_400_000 },
+    { id: 'gemini', envVar: 'HAPPIER_E2E_PROVIDER_GEMINI', timeoutMs: 2_400_000 },
     { id: 'qwen', envVar: 'HAPPIER_E2E_PROVIDER_QWEN', timeoutMs: 1_200_000 },
     { id: 'kimi', envVar: 'HAPPIER_E2E_PROVIDER_KIMI', timeoutMs: 1_200_000 },
     { id: 'auggie', envVar: 'HAPPIER_E2E_PROVIDER_AUGGIE', timeoutMs: 1_200_000 },

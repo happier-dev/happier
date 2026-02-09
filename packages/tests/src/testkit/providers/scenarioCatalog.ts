@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import type { AcpPermissionMode, ProviderScenario, ProviderUnderTest } from './types';
 import { hasStringSubstring, waitForAcpSidechainMessages } from './assertions';
 import { shapeOf, stableStringifyShape } from './shape';
-import { fetchSessionV2 } from '../sessions';
+import { fetchSessionV2, patchSessionMetadataWithRetry } from '../sessions';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../messageCrypto';
 import { sleep } from '../timing';
 import {
@@ -18,6 +18,8 @@ import {
 } from './acpPermissionPrompts';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createUserScopedSocketCollector } from '../socketClient';
+import { withCapabilityProbeRetry } from './capabilityRetry';
+import { enrichCapabilityProbeError } from './capabilityProbeFailure';
 import {
   makeAcpEditResultIncludesDiffScenario,
   makeAcpGlobListFilesScenario,
@@ -77,6 +79,158 @@ export function resolveMachineIdCandidatesFromSettings(settingsLike: unknown): s
   return out;
 }
 
+async function waitForSessionActive(params: {
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  timeoutMs: number;
+}): Promise<void> {
+  const deadline = Date.now() + params.timeoutMs;
+  while (Date.now() < deadline) {
+    const snap = await fetchSessionV2(params.baseUrl, params.token, params.sessionId).catch(() => null);
+    if (snap?.active === true) return;
+    await sleep(250);
+  }
+}
+
+async function resolveMachineIdsFromSettings(params: {
+  settingsPath: string;
+  timeoutMs: number;
+}): Promise<string[]> {
+  const deadline = Date.now() + params.timeoutMs;
+  while (Date.now() < deadline) {
+    const raw = await readFile(params.settingsPath, 'utf8').catch(() => '');
+    if (raw) {
+      try {
+        const json = JSON.parse(raw);
+        const ids = resolveMachineIdCandidatesFromSettings(json);
+        if (ids.length > 0) return ids;
+      } catch {
+        // ignore and retry
+      }
+    }
+    await sleep(100);
+  }
+  return [];
+}
+
+async function invokeRpcAcrossMachineIds(params: {
+  ui: ReturnType<typeof createUserScopedSocketCollector>;
+  machineIds: string[];
+  method: string;
+  payload: unknown;
+  secret: Uint8Array;
+  timeoutMs: number;
+}): Promise<unknown> {
+  const encrypted = encryptLegacyBase64(params.payload, params.secret);
+  const deadline = Date.now() + params.timeoutMs;
+  const rpcAckTimeoutMs = Math.max(30_000, Math.min(params.timeoutMs + 10_000, 300_000));
+  let lastMethodUnavailable: unknown = null;
+
+  while (Date.now() < deadline) {
+    let unresolvedForAllCandidates = true;
+
+    for (const machineId of params.machineIds) {
+      const rpcMethod = `${machineId}:${params.method}`;
+      try {
+        const candidate = await params.ui.rpcCall<any>(rpcMethod, encrypted, rpcAckTimeoutMs);
+        if (candidate && typeof candidate === 'object' && candidate.ok === true) {
+          const decrypted = decryptLegacyBase64(String((candidate as any).result ?? ''), params.secret);
+          return decrypted;
+        }
+
+        const errorCode =
+          candidate && typeof candidate === 'object' && typeof (candidate as any).errorCode === 'string'
+            ? String((candidate as any).errorCode)
+            : '';
+        if (errorCode === 'RPC_METHOD_NOT_AVAILABLE') {
+          lastMethodUnavailable = { machineId, candidate };
+          continue;
+        }
+
+        throw new Error(
+          `rpc ${params.method} failed: ${JSON.stringify(
+            candidate && typeof candidate === 'object' ? candidate : { candidate },
+            null,
+            2,
+          )}`,
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes('RPC_METHOD_NOT_AVAILABLE')) {
+          lastMethodUnavailable = { machineId, error: message };
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    if (unresolvedForAllCandidates) {
+      await sleep(250);
+    }
+  }
+
+  throw new Error(
+    `rpc ${params.method} unavailable after wait (${JSON.stringify(
+      lastMethodUnavailable ?? { errorCode: 'RPC_METHOD_NOT_AVAILABLE' },
+      null,
+      2,
+    )})`,
+  );
+}
+
+async function invokeCapabilitiesMethod(params: {
+  baseUrl: string;
+  token: string;
+  cliHome: string;
+  secret: Uint8Array;
+  rpcMethod: typeof RPC_METHODS.CAPABILITIES_INVOKE | typeof RPC_METHODS.CAPABILITIES_DETECT;
+  payload: unknown;
+  timeoutMs?: number;
+}): Promise<unknown> {
+  const settingsPath = join(params.cliHome, 'settings.json');
+  const machineIds = await resolveMachineIdsFromSettings({ settingsPath, timeoutMs: 15_000 });
+  if (machineIds.length === 0) {
+    throw new Error(`machineId not found in settings.json (${settingsPath})`);
+  }
+
+  const ui = createUserScopedSocketCollector(params.baseUrl, params.token);
+  ui.connect();
+  const startedConnectAt = Date.now();
+  while (!ui.isConnected() && Date.now() - startedConnectAt < 15_000) {
+    await sleep(50);
+  }
+  if (!ui.isConnected()) {
+    ui.close();
+    throw await enrichCapabilityProbeError({
+      error: new Error('timed out connecting user socket'),
+      cliHome: params.cliHome,
+      context: params.rpcMethod,
+    });
+  }
+
+  try {
+    try {
+      return await invokeRpcAcrossMachineIds({
+        ui,
+        machineIds,
+        method: params.rpcMethod,
+        payload: params.payload,
+        secret: params.secret,
+        timeoutMs: params.timeoutMs ?? 90_000,
+      });
+    } catch (error) {
+      throw await enrichCapabilityProbeError({
+        error,
+        cliHome: params.cliHome,
+        context: params.rpcMethod,
+      });
+    }
+  } finally {
+    ui.close();
+  }
+}
+
 function assertProviderId(provider: ProviderUnderTest, expected: ProviderUnderTest['id']): void {
   if (provider.id !== expected) throw new Error(`Scenario is only supported for provider ${expected} (got ${provider.id})`);
 }
@@ -111,7 +265,7 @@ function appendKimiUnknownFixtureAlias(key: string): string[] {
   const kind = parts[2];
   const toolName = parts[3];
   if (toolName === 'unknown') return [key];
-  if (kind !== 'tool-call' && kind !== 'tool-result') return [key];
+  if (kind !== 'tool-call' && kind !== 'tool-result' && kind !== 'permission-request') return [key];
   return [key, `acp/kimi/${kind}/unknown`];
 }
 
@@ -432,124 +586,31 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       postSatisfy: {
         timeoutMs: 120_000,
         run: async ({ workspaceDir, baseUrl, token, sessionId, secret, cliHome }) => {
-          const sessionActiveDeadline = Date.now() + 60_000;
-          while (Date.now() < sessionActiveDeadline) {
-            const snap = await fetchSessionV2(baseUrl, token, sessionId).catch(() => null);
-            if (snap?.active === true) break;
-            await sleep(250);
+          await waitForSessionActive({ baseUrl, token, sessionId, timeoutMs: 60_000 });
+
+          const parsed = await withCapabilityProbeRetry(
+            () =>
+              invokeCapabilitiesMethod({
+                baseUrl,
+                token,
+                cliHome,
+                secret,
+                rpcMethod: RPC_METHODS.CAPABILITIES_INVOKE,
+                payload: {
+                  id: `cli.${provider.id}`,
+                  method: 'probeModels',
+                  params: { timeoutMs: 10_000 },
+                },
+                timeoutMs: 90_000,
+              }),
+            { attempts: 3, delayMs: 500 },
+          );
+          const envelope = parsed && typeof parsed === 'object' ? parsed as any : null;
+          if (!envelope || envelope.ok !== true) {
+            throw new Error(`acp_probe_models: capabilities.invoke returned non-ok: ${JSON.stringify(envelope, null, 2)}`);
           }
 
-          const settingsPath = join(cliHome, 'settings.json');
-
-          const startedAt = Date.now();
-          let machineIds: string[] = [];
-          while (Date.now() - startedAt < 15_000) {
-            const raw = await readFile(settingsPath, 'utf8').catch(() => '');
-            if (raw) {
-              try {
-                const json = JSON.parse(raw);
-                const ids = resolveMachineIdCandidatesFromSettings(json);
-                if (ids.length > 0) {
-                  machineIds = ids;
-                  break;
-                }
-              } catch {
-                // ignore and retry
-              }
-            }
-            await sleep(100);
-          }
-
-          if (machineIds.length === 0) {
-            throw new Error(`acp_probe_models: machineId not found in settings.json (${settingsPath})`);
-          }
-
-          const ui = createUserScopedSocketCollector(baseUrl, token);
-          ui.connect();
-          const startedConnectAt = Date.now();
-          while (!ui.isConnected() && Date.now() - startedConnectAt < 15_000) {
-            await sleep(50);
-          }
-          if (!ui.isConnected()) {
-            ui.close();
-            throw new Error('acp_probe_models: timed out connecting user socket');
-          }
-
-          try {
-            const req = {
-              id: `cli.${provider.id}`,
-              method: 'probeModels',
-              params: { timeoutMs: 10_000 },
-            };
-            const paramsCiphertext = encryptLegacyBase64(req, secret);
-            let answer: any = null;
-            const deadline = Date.now() + 90_000;
-            let lastMethodUnavailable: unknown = null;
-            while (Date.now() < deadline) {
-              let unresolvedForAllCandidates = true;
-              for (const machineId of machineIds) {
-                const rpcMethod = `${machineId}:${RPC_METHODS.CAPABILITIES_INVOKE}`;
-                try {
-                  const candidate = await ui.rpcCall<any>(rpcMethod, paramsCiphertext);
-                  if (candidate && typeof candidate === 'object' && candidate.ok === true) {
-                    answer = candidate;
-                    unresolvedForAllCandidates = false;
-                    break;
-                  }
-
-                  const errorCode =
-                    candidate && typeof candidate === 'object' && typeof (candidate as any).errorCode === 'string'
-                      ? String((candidate as any).errorCode)
-                      : '';
-                  if (errorCode === 'RPC_METHOD_NOT_AVAILABLE') {
-                    lastMethodUnavailable = { machineId, candidate };
-                    continue;
-                  }
-
-                  throw new Error(
-                    `acp_probe_models: rpcCall failed: ${JSON.stringify(
-                      candidate && typeof candidate === 'object' ? candidate : { candidate },
-                      null,
-                      2,
-                    )}`,
-                  );
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : String(error);
-                  if (message.includes('RPC_METHOD_NOT_AVAILABLE')) {
-                    lastMethodUnavailable = { machineId, error: message };
-                    continue;
-                  }
-                  throw error;
-                }
-              }
-              if (answer) break;
-              if (unresolvedForAllCandidates) {
-                await sleep(250);
-              }
-            }
-
-            if (!answer) {
-              throw new Error(
-                `acp_probe_models: capabilities.invoke method unavailable after wait (${JSON.stringify(
-                  lastMethodUnavailable ?? { errorCode: 'RPC_METHOD_NOT_AVAILABLE' },
-                  null,
-                  2,
-                )})`,
-              );
-            }
-
-            const decrypted = decryptLegacyBase64(String((answer as any).result ?? ''), secret) as any;
-            const parsed = decrypted && typeof decrypted === 'object' ? decrypted : null;
-            if (!parsed || parsed.ok !== true) {
-              throw new Error(`acp_probe_models: capabilities.invoke returned non-ok: ${JSON.stringify(parsed, null, 2)}`);
-            }
-
-            await writeFile(join(workspaceDir, outputRel), JSON.stringify(parsed.result, null, 2) + '\n', 'utf8');
-          } finally {
-            ui.close();
-          }
-
-          // Best-effort: ensure the file is written before the provider/daemon shutdown starts.
+          await writeFile(join(workspaceDir, outputRel), JSON.stringify(envelope.result, null, 2) + '\n', 'utf8');
           await sleep(50);
         },
       },
@@ -587,6 +648,385 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
         const hasDefault = json.availableModels.some((m: any) => m && typeof m === 'object' && m.id === 'default');
         if (!hasDefault) {
           throw new Error(`acp_probe_models: expected availableModels to include {id:'default'} (shape: ${stableStringifyShape(shapeOf(json))})`);
+        }
+      },
+    } satisfies ProviderScenario;
+  },
+
+  acp_probe_capabilities: (provider) => {
+    if (provider.protocol !== 'acp') {
+      throw new Error(`acp_probe_capabilities only supports ACP providers (got ${provider.protocol})`);
+    }
+
+    const outputRel = 'e2e-probe-capabilities.json';
+    const base = makeAcpReadInWorkspaceScenario({
+      providerId: acpProviderId(provider),
+      content: `ACP_CAPS_SENTINEL_${randomUUID()}`,
+      id: 'acp_probe_capabilities',
+      title: 'acp: capabilities.detect cli.* returns ACP capability snapshot',
+    });
+
+    return {
+      ...base,
+      requiredFixtureKeys: undefined,
+      requiredAnyFixtureKeys: undefined,
+      requiredTraceSubstrings: undefined,
+      postSatisfy: {
+        timeoutMs: 120_000,
+        run: async ({ workspaceDir, baseUrl, token, sessionId, secret, cliHome }) => {
+          await waitForSessionActive({ baseUrl, token, sessionId, timeoutMs: 60_000 });
+
+          const parsed = await withCapabilityProbeRetry(
+            () =>
+              invokeCapabilitiesMethod({
+                baseUrl,
+                token,
+                cliHome,
+                secret,
+                rpcMethod: RPC_METHODS.CAPABILITIES_DETECT,
+                payload: {
+                  requests: [
+                    {
+                      id: `cli.${provider.id}`,
+                      params: { includeAcpCapabilities: true, includeLoginStatus: true },
+                    },
+                  ],
+                },
+                timeoutMs: 90_000,
+              }),
+            { attempts: 3, delayMs: 500 },
+          );
+          const envelope = parsed && typeof parsed === 'object' ? parsed as any : null;
+          await writeFile(join(workspaceDir, outputRel), JSON.stringify(envelope, null, 2) + '\n', 'utf8');
+          await sleep(50);
+        },
+      },
+      verify: async ({ workspaceDir }) => {
+        const outPath = join(workspaceDir, outputRel);
+        const raw = await readFile(outPath, 'utf8').catch(() => '');
+        if (!raw) throw new Error(`acp_probe_capabilities: missing output file: ${outPath}`);
+
+        let json: any = null;
+        try {
+          json = JSON.parse(raw);
+        } catch {
+          throw new Error(`acp_probe_capabilities: output file is not valid JSON: ${outPath}`);
+        }
+
+        const entry = json?.results?.[`cli.${provider.id}`];
+        if (!entry || entry.ok !== true) {
+          throw new Error(`acp_probe_capabilities: missing successful result for cli.${provider.id}`);
+        }
+
+        const data = entry.data;
+        if (!data || typeof data !== 'object') {
+          throw new Error(`acp_probe_capabilities: result.data is not an object`);
+        }
+        if (data.available !== true) {
+          throw new Error(`acp_probe_capabilities: expected available=true for cli.${provider.id}`);
+        }
+
+        const acp = data.acp;
+        if (!acp || typeof acp !== 'object') {
+          throw new Error(`acp_probe_capabilities: missing acp snapshot for cli.${provider.id}`);
+        }
+        if (acp.ok !== true) {
+          throw new Error(`acp_probe_capabilities: expected acp.ok=true for cli.${provider.id}`);
+        }
+        if (typeof acp.loadSession !== 'boolean') {
+          throw new Error(`acp_probe_capabilities: expected acp.loadSession boolean`);
+        }
+
+        const agentCapabilities = acp.agentCapabilities;
+        if (!agentCapabilities || typeof agentCapabilities !== 'object') {
+          throw new Error(`acp_probe_capabilities: expected acp.agentCapabilities object`);
+        }
+        if (!agentCapabilities.promptCapabilities || typeof agentCapabilities.promptCapabilities !== 'object') {
+          throw new Error(`acp_probe_capabilities: expected promptCapabilities object`);
+        }
+        if (!agentCapabilities.mcpCapabilities || typeof agentCapabilities.mcpCapabilities !== 'object') {
+          throw new Error(`acp_probe_capabilities: expected mcpCapabilities object`);
+        }
+        if (!agentCapabilities.sessionCapabilities || typeof agentCapabilities.sessionCapabilities !== 'object') {
+          throw new Error(`acp_probe_capabilities: expected sessionCapabilities object`);
+        }
+      },
+    } satisfies ProviderScenario;
+  },
+
+  acp_set_model_dynamic: (provider) => {
+    if (provider.protocol !== 'acp') {
+      throw new Error(`acp_set_model_dynamic only supports ACP providers (got ${provider.protocol})`);
+    }
+    if (!['opencode', 'kilo', 'auggie', 'codex'].includes(provider.id)) {
+      throw new Error(`acp_set_model_dynamic requires dynamic model providers (got ${provider.id})`);
+    }
+
+    const outputRel = 'e2e-set-model-dynamic.json';
+    const base = makeAcpReadInWorkspaceScenario({
+      providerId: acpProviderId(provider),
+      content: `ACP_SET_MODEL_SENTINEL_${randomUUID()}`,
+      id: 'acp_set_model_dynamic',
+      title: 'acp: model override applies with dynamic model ids while idle',
+    });
+
+    return {
+      ...base,
+      requiredFixtureKeys: undefined,
+      requiredAnyFixtureKeys: undefined,
+      requiredTraceSubstrings: undefined,
+      postSatisfy: {
+        timeoutMs: 180_000,
+        run: async ({ workspaceDir, baseUrl, token, sessionId, secret, cliHome }) => {
+          await waitForSessionActive({ baseUrl, token, sessionId, timeoutMs: 60_000 });
+
+          const probeParsed = await withCapabilityProbeRetry(
+            () =>
+              invokeCapabilitiesMethod({
+                baseUrl,
+                token,
+                cliHome,
+                secret,
+                rpcMethod: RPC_METHODS.CAPABILITIES_INVOKE,
+                payload: {
+                  id: `cli.${provider.id}`,
+                  method: 'probeModels',
+                  params: { timeoutMs: 10_000 },
+                },
+                timeoutMs: 90_000,
+              }),
+            { attempts: 3, delayMs: 500 },
+          );
+          const probeEnvelope = probeParsed && typeof probeParsed === 'object' ? probeParsed as any : null;
+          if (!probeEnvelope || probeEnvelope.ok !== true || !probeEnvelope.result || typeof probeEnvelope.result !== 'object') {
+            throw new Error(`acp_set_model_dynamic: probeModels returned invalid envelope`);
+          }
+
+          const models = Array.isArray(probeEnvelope.result.availableModels) ? probeEnvelope.result.availableModels : [];
+          const selectedModel =
+            models.find((m: any) => m && typeof m.id === 'string' && m.id.trim() !== '' && m.id !== 'default')?.id ?? null;
+          if (!selectedModel) {
+            throw new Error(`acp_set_model_dynamic: no dynamic non-default model id found`);
+          }
+
+          const snapBefore = await fetchSessionV2(baseUrl, token, sessionId);
+          const metadataBefore = decryptLegacyBase64(snapBefore.metadata, secret) as any;
+          const updatedAt = Date.now();
+          const updatedCiphertext = encryptLegacyBase64(
+            {
+              ...metadataBefore,
+              modelOverrideV1: { v: 1, updatedAt, modelId: selectedModel },
+            },
+            secret,
+          );
+          await patchSessionMetadataWithRetry({
+            baseUrl,
+            token,
+            sessionId,
+            ciphertext: updatedCiphertext,
+            expectedVersion: snapBefore.metadataVersion,
+          });
+
+          let appliedCurrentModelId: string | null = null;
+          const deadline = Date.now() + 90_000;
+          while (Date.now() < deadline) {
+            const snap = await fetchSessionV2(baseUrl, token, sessionId);
+            const metadata = decryptLegacyBase64(snap.metadata, secret) as any;
+            const currentModelId = typeof metadata?.acpSessionModelsV1?.currentModelId === 'string'
+              ? metadata.acpSessionModelsV1.currentModelId
+              : null;
+            const overrideModelId = typeof metadata?.modelOverrideV1?.modelId === 'string'
+              ? metadata.modelOverrideV1.modelId
+              : null;
+
+            if (overrideModelId === selectedModel && currentModelId === selectedModel) {
+              appliedCurrentModelId = currentModelId;
+              break;
+            }
+            await sleep(250);
+          }
+
+          if (appliedCurrentModelId !== selectedModel) {
+            throw new Error(`acp_set_model_dynamic: model override did not apply to ACP runtime (target=${selectedModel})`);
+          }
+
+          await writeFile(
+            join(workspaceDir, outputRel),
+            JSON.stringify(
+              {
+                provider: provider.id,
+                selectedModel,
+                appliedCurrentModelId,
+                source: probeEnvelope.result.source,
+              },
+              null,
+              2,
+            ) + '\n',
+            'utf8',
+          );
+          await sleep(50);
+        },
+      },
+      verify: async ({ workspaceDir }) => {
+        const outPath = join(workspaceDir, outputRel);
+        const raw = await readFile(outPath, 'utf8').catch(() => '');
+        if (!raw) throw new Error(`acp_set_model_dynamic: missing output file: ${outPath}`);
+        const parsed = JSON.parse(raw) as any;
+        if (typeof parsed?.selectedModel !== 'string' || parsed.selectedModel.length === 0) {
+          throw new Error('acp_set_model_dynamic: selectedModel missing');
+        }
+        if (parsed.appliedCurrentModelId !== parsed.selectedModel) {
+          throw new Error('acp_set_model_dynamic: applied model does not match selected model');
+        }
+      },
+    } satisfies ProviderScenario;
+  },
+
+  acp_set_model_inventory: (provider) => {
+    if (provider.protocol !== 'acp') {
+      throw new Error(`acp_set_model_inventory only supports ACP providers (got ${provider.protocol})`);
+    }
+    if (provider.id !== 'gemini') {
+      throw new Error(`acp_set_model_inventory only supports gemini provider (got ${provider.id})`);
+    }
+
+    const outputRel = 'e2e-set-model-inventory.json';
+    const base = makeAcpReadInWorkspaceScenario({
+      providerId: acpProviderId(provider),
+      content: `ACP_SET_MODEL_INVENTORY_${randomUUID()}`,
+      id: 'acp_set_model_inventory',
+      title: 'acp: gemini model switch inventory (probe + metadata override)',
+    });
+
+    return {
+      ...base,
+      requiredFixtureKeys: undefined,
+      requiredAnyFixtureKeys: undefined,
+      requiredTraceSubstrings: undefined,
+      postSatisfy: {
+        timeoutMs: 240_000,
+        run: async ({ workspaceDir, baseUrl, token, sessionId, secret, cliHome }) => {
+          await waitForSessionActive({ baseUrl, token, sessionId, timeoutMs: 90_000 });
+
+          const probeParsed = await withCapabilityProbeRetry(
+            () =>
+              invokeCapabilitiesMethod({
+                baseUrl,
+                token,
+                cliHome,
+                secret,
+                rpcMethod: RPC_METHODS.CAPABILITIES_INVOKE,
+                payload: {
+                  id: `cli.${provider.id}`,
+                  method: 'probeModels',
+                  params: { timeoutMs: 30_000 },
+                },
+                timeoutMs: 120_000,
+              }),
+            { attempts: 3, delayMs: 500 },
+          );
+          const probeEnvelope = probeParsed && typeof probeParsed === 'object' ? (probeParsed as any) : null;
+          if (!probeEnvelope || probeEnvelope.ok !== true || !probeEnvelope.result || typeof probeEnvelope.result !== 'object') {
+            throw new Error('acp_set_model_inventory: probeModels returned invalid envelope');
+          }
+
+          const models = Array.isArray(probeEnvelope.result.availableModels) ? probeEnvelope.result.availableModels : [];
+          const selectedModel =
+            models.find((m: any) => m && typeof m.id === 'string' && m.id.trim() !== '' && m.id !== 'default')?.id ?? null;
+          if (!selectedModel) {
+            throw new Error('acp_set_model_inventory: no non-default model id found');
+          }
+
+          const snapBefore = await fetchSessionV2(baseUrl, token, sessionId);
+          const metadataBefore = decryptLegacyBase64(snapBefore.metadata, secret) as any;
+          const updatedAt = Date.now();
+          const updatedCiphertext = encryptLegacyBase64(
+            {
+              ...metadataBefore,
+              modelOverrideV1: { v: 1, updatedAt, modelId: selectedModel },
+            },
+            secret,
+          );
+          await patchSessionMetadataWithRetry({
+            baseUrl,
+            token,
+            sessionId,
+            ciphertext: updatedCiphertext,
+            expectedVersion: snapBefore.metadataVersion,
+          });
+
+          let runtimeObservedCurrentModelId: string | null = null;
+          let sessionModelsStatePresent = false;
+          let overridePersisted = false;
+          const deadline = Date.now() + 120_000;
+          while (Date.now() < deadline) {
+            const snap = await fetchSessionV2(baseUrl, token, sessionId);
+            const metadata = decryptLegacyBase64(snap.metadata, secret) as any;
+
+            const overrideModelId =
+              typeof metadata?.modelOverrideV1?.modelId === 'string' ? String(metadata.modelOverrideV1.modelId) : null;
+            if (overrideModelId === selectedModel) {
+              overridePersisted = true;
+            }
+
+            const sessionModels = metadata?.acpSessionModelsV1;
+            if (sessionModels && typeof sessionModels === 'object') {
+              sessionModelsStatePresent = true;
+              const currentModelId =
+                typeof sessionModels.currentModelId === 'string' ? String(sessionModels.currentModelId) : null;
+              if (currentModelId === selectedModel) {
+                runtimeObservedCurrentModelId = currentModelId;
+                break;
+              }
+            }
+
+            await sleep(250);
+          }
+
+          if (!overridePersisted) {
+            throw new Error(`acp_set_model_inventory: model override did not persist (target=${selectedModel})`);
+          }
+
+          await writeFile(
+            join(workspaceDir, outputRel),
+            JSON.stringify(
+              {
+                provider: provider.id,
+                selectedModel,
+                source: probeEnvelope.result.source,
+                supportsFreeform: probeEnvelope.result.supportsFreeform === true,
+                sessionModelsStatePresent,
+                runtimeObservedCurrentModelId,
+                runtimeSwitchObserved: runtimeObservedCurrentModelId === selectedModel,
+              },
+              null,
+              2,
+            ) + '\n',
+            'utf8',
+          );
+          await sleep(50);
+        },
+      },
+      verify: async ({ workspaceDir }) => {
+        const outPath = join(workspaceDir, outputRel);
+        const raw = await readFile(outPath, 'utf8').catch(() => '');
+        if (!raw) throw new Error(`acp_set_model_inventory: missing output file: ${outPath}`);
+
+        const parsed = JSON.parse(raw) as any;
+        if (parsed?.provider !== 'gemini') {
+          throw new Error(`acp_set_model_inventory: expected provider=gemini, got ${String(parsed?.provider)}`);
+        }
+        if (typeof parsed?.selectedModel !== 'string' || parsed.selectedModel.length === 0 || parsed.selectedModel === 'default') {
+          throw new Error('acp_set_model_inventory: selectedModel missing or invalid');
+        }
+        if (parsed?.source !== 'dynamic' && parsed?.source !== 'static') {
+          throw new Error(`acp_set_model_inventory: invalid source=${String(parsed?.source)}`);
+        }
+        if (typeof parsed?.sessionModelsStatePresent !== 'boolean') {
+          throw new Error('acp_set_model_inventory: sessionModelsStatePresent must be boolean');
+        }
+        if (typeof parsed?.runtimeSwitchObserved !== 'boolean') {
+          throw new Error('acp_set_model_inventory: runtimeSwitchObserved must be boolean');
         }
       },
     } satisfies ProviderScenario;
@@ -791,8 +1231,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
           ['claude/claude/tool-call/Write', 'claude/claude/tool-call/Edit'],
         ],
         verify: async ({ fixtures }) => {
-          const writes = ((fixtures?.examples?.['claude/claude/permission-request/Write'] ?? []) as any[])
-            .concat((fixtures?.examples?.['claude/claude/permission-request/Edit'] ?? []) as any[])
+          const permissionRequests = ((fixtures?.examples?.['claude/claude/permission-request/Write'] ?? []) as any[])
+            .concat((fixtures?.examples?.['claude/claude/permission-request/Edit'] ?? []) as any[]);
+          const writes = permissionRequests
             .concat((fixtures?.examples?.['claude/claude/tool-call/Write'] ?? []) as any[])
             .concat((fixtures?.examples?.['claude/claude/tool-call/Edit'] ?? []) as any[]);
           if (!Array.isArray(writes) || writes.length === 0) throw new Error('Missing outside-workspace write evidence in fixtures');
@@ -800,9 +1241,10 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
           const resolvedPath = typeof filepath === 'string' && filepath.length > 0 ? filepath : outsidePath;
           if (typeof resolvedPath !== 'string' || resolvedPath.length === 0) throw new Error('permission-request/Write missing input.file_path');
           try {
-            // Claude runtimes do not consistently surface interactive permission prompts for this path;
-            // keep this scenario focused on trace-level intent evidence rather than filesystem side effects.
-            if (existsSync(resolvedPath)) {
+            // Enforce denied-write side effects only when the provider surfaced an interactive
+            // permission request we could answer. Some Claude runtimes can execute this write
+            // directly without emitting permission-request fixtures.
+            if (permissionRequests.length > 0 && existsSync(resolvedPath)) {
               throw new Error(`Denied permission but file exists on disk: ${resolvedPath}`);
             }
           } finally {

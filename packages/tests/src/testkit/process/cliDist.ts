@@ -128,36 +128,42 @@ function shouldReclaimCliDistBuildLock(lockPath: string, staleAfterMs: number, n
 }
 
 function findMissingDistChunkImports(distDir: string): string[] {
-  // Sanity check: ensure dynamic imports produced by pkgroll resolve to files that exist on disk.
+  // Sanity check: ensure local chunk imports resolve to files that exist on disk.
   // This catches partially-written dist folders (e.g. interrupted build) which otherwise cause
-  // flaky provider E2E failures when the daemon executes capability probes.
-  //
-  // Today, the most common failure is missing `capability-*.mjs` referenced from `api-*.mjs`.
-  let apiFiles: string[] = [];
+  // flaky provider E2E failures when the daemon executes bundled commands.
+  let distFiles: string[] = [];
   try {
-    apiFiles = readdirSync(distDir).filter((f) => f.startsWith('api-') && f.endsWith('.mjs'));
+    distFiles = readdirSync(distDir).filter((f) => f.endsWith('.mjs'));
   } catch {
     return [];
   }
 
   const missing = new Set<string>();
-  const importRe = /import\(['"]\.\/(capability-[^'"]+\.mjs)['"]\)/g;
+  const importPatterns = [
+    /import\(['"]\.\/([^'"]+\.mjs)['"]\)/g,
+    /\bimport\s+['"]\.\/([^'"]+\.mjs)['"]/g,
+    /\bimport\s+[^'"]+\s+from\s+['"]\.\/([^'"]+\.mjs)['"]/g,
+    /\bexport\s+[^'"]+\s+from\s+['"]\.\/([^'"]+\.mjs)['"]/g,
+  ];
 
-  for (const f of apiFiles) {
+  for (const f of distFiles) {
     let text = '';
     try {
       text = readFileSync(resolve(distDir, f), 'utf8');
     } catch {
       continue;
     }
-    for (const match of text.matchAll(importRe)) {
-      const rel = match[1];
-      if (!rel) continue;
-      if (!existsSync(resolve(distDir, rel))) missing.add(rel);
+
+    for (const pattern of importPatterns) {
+      for (const match of text.matchAll(pattern)) {
+        const rel = match[1];
+        if (!rel) continue;
+        if (!existsSync(resolve(distDir, rel))) missing.add(rel);
+      }
     }
   }
 
-  return [...missing];
+  return [...missing].sort();
 }
 
 function resolveCliSharedDepsOutputPaths(rootDir: string): string[] {

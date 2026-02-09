@@ -134,6 +134,36 @@ describe('providers: CLI dist build lock discipline', () => {
     expect(buildCalls).toBe(0);
   });
 
+  it('fails without rebuilding when any dist chunk import is missing (not only capability chunks)', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-dist-no-rebuild-generic-missing-'));
+    const lockPath = resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');
+    const testDir = resolve(repoRoot, 'logs');
+    const distDir = resolve(repoRoot, 'apps', 'cli', 'dist');
+    const entrypoint = resolve(distDir, 'index.mjs');
+
+    mkdirSync(distDir, { recursive: true });
+    mkdirSync(testDir, { recursive: true });
+    writeFileSync(entrypoint, "export async function run(){ await import('./doctor-missing.mjs'); }\n", 'utf8');
+
+    let buildCalls = 0;
+    await expect(
+      ensureCliDistBuilt(
+        { testDir, env: {} },
+        {
+          repoRoot,
+          lockPath,
+          allowRebuild: false,
+          waitForAvailabilityMs: 1,
+          runCommand: async () => {
+            buildCalls += 1;
+          },
+        },
+      ),
+    ).rejects.toThrow(/missing chunk imports/i);
+
+    expect(buildCalls).toBe(0);
+  });
+
   it('waits for dist entrypoint to reappear when rebuilds are disabled', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-dist-no-rebuild-wait-'));
     const lockPath = resolve(repoRoot, '.project', 'tmp', 'cli-dist-build.lock');

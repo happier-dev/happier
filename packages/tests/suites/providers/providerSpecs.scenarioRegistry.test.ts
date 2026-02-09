@@ -45,4 +45,42 @@ describe('providers: cli provider scenario registry', () => {
     expect(extended).not.toContain('glob_list_files');
     expect(extended).not.toContain('search_ls_equivalence');
   });
+
+  it('does not include unsupported edit/diff scenarios for kimi in extended tier', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const kimi = providers.find((p) => p.id === 'kimi');
+    expect(kimi).toBeTruthy();
+
+    const kimiObj = kimi as Record<string, unknown> | undefined;
+    const registry =
+      kimiObj && typeof kimiObj.scenarioRegistry === 'object' && kimiObj.scenarioRegistry !== null
+        ? (kimiObj.scenarioRegistry as Record<string, unknown>)
+        : null;
+    const tiers = registry && typeof registry.tiers === 'object' && registry.tiers !== null
+      ? (registry.tiers as Record<string, unknown>)
+      : null;
+    const extended = Array.isArray(tiers?.extended) ? (tiers?.extended as string[]) : [];
+
+    expect(extended).not.toContain('edit_result_includes_diff');
+    expect(extended).not.toContain('multi_file_edit_in_workspace');
+    expect(extended).not.toContain('multi_file_edit_in_workspace_includes_diff');
+  });
+
+  it('does not include missing-file read scenario for kimi in extended tier', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const kimi = providers.find((p) => p.id === 'kimi');
+    expect(kimi).toBeTruthy();
+
+    const kimiObj = kimi as Record<string, unknown> | undefined;
+    const registry =
+      kimiObj && typeof kimiObj.scenarioRegistry === 'object' && kimiObj.scenarioRegistry !== null
+        ? (kimiObj.scenarioRegistry as Record<string, unknown>)
+        : null;
+    const tiers = registry && typeof registry.tiers === 'object' && registry.tiers !== null
+      ? (registry.tiers as Record<string, unknown>)
+      : null;
+    const extended = Array.isArray(tiers?.extended) ? (tiers?.extended as string[]) : [];
+
+    expect(extended).not.toContain('read_missing_file_in_workspace');
+  });
 });

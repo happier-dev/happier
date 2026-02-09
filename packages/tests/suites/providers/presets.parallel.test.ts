@@ -13,6 +13,7 @@ describe('providers: parallel preset helpers', () => {
       'claude',
       'codex',
       'kilo',
+      'gemini',
       'qwen',
       'kimi',
       'auggie',
@@ -21,6 +22,7 @@ describe('providers: parallel preset helpers', () => {
 
   it('resolves a single provider for specific preset', () => {
     expect(resolveProviderPresetIds('codex')).toEqual(['codex']);
+    expect(resolveProviderPresetIds('gemini')).toEqual(['gemini']);
     expect(resolveProviderPresetIds('qwen')).toEqual(['qwen']);
   });
 
@@ -46,6 +48,7 @@ describe('providers: parallel preset helpers', () => {
       'opencode',
       'codex',
       'kilo',
+      'gemini',
       'qwen',
       'kimi',
       'auggie',

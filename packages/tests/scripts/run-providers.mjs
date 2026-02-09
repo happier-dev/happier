@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { resolveProviderRunPreset } from '../src/testkit/providers/presets.mjs';
 import { terminateProcessTreeByPid } from './processTree.mjs';
 
-const KNOWN_FLAGS = new Set(['--update-baselines', '--strict-keys', '--flake-retry']);
+const KNOWN_FLAGS = new Set(['--update-baselines', '--strict-keys', '--flake-retry', '--no-flake-retry']);
 
 function yarnCommand() {
   return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
@@ -30,12 +30,15 @@ export function parseArgs(argv) {
 
   const presetId = positional[0] ?? null;
   const tier = positional[1] ?? null;
+  if (flags.has('--flake-retry') && flags.has('--no-flake-retry')) {
+    throw new Error('Conflicting flags: --flake-retry and --no-flake-retry');
+  }
   return {
     presetId,
     tier,
     updateBaselines: flags.has('--update-baselines'),
     strictKeys: flags.has('--strict-keys'),
-    flakeRetry: flags.has('--flake-retry'),
+    flakeRetry: !flags.has('--no-flake-retry'),
   };
 }
 
@@ -51,9 +54,9 @@ function usage(exitCode, message) {
   console.error(
     [
       'Usage:',
-      '  yarn providers:run <preset> <tier> [--update-baselines] [--strict-keys] [--flake-retry]',
+      '  yarn providers:run <preset> <tier> [--update-baselines] [--strict-keys] [--flake-retry|--no-flake-retry]',
       '',
-      'Presets: opencode | claude | codex | kilo | qwen | kimi | auggie | all',
+      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | all',
       'Tiers:   smoke | extended',
       '',
       'Examples:',

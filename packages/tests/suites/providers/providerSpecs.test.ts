@@ -12,6 +12,7 @@ describe('providers: cli provider specs', () => {
     // Codex spec is expected to exist even if codex-acp is not installed.
     expect(ids).toContain('codex');
     expect(ids).toContain('kilo');
+    expect(ids).toContain('gemini');
     expect(ids).toContain('qwen');
     expect(ids).toContain('kimi');
     expect(ids).toContain('auggie');

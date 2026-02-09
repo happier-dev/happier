@@ -7,7 +7,7 @@ import {
   resolveProviderRunPreset as resolveProviderRunPresetImpl,
 } from './presets.mjs';
 
-export type ProviderPresetId = 'opencode' | 'claude' | 'codex' | 'kilo' | 'qwen' | 'kimi' | 'auggie' | 'all';
+export type ProviderPresetId = 'opencode' | 'claude' | 'codex' | 'kilo' | 'gemini' | 'qwen' | 'kimi' | 'auggie' | 'all';
 export type ProviderScenarioTier = 'smoke' | 'extended';
 export type ProviderConcretePresetId = Exclude<ProviderPresetId, 'all'>;
 export type ProviderAcpPresetId = Exclude<ProviderConcretePresetId, 'claude'>;

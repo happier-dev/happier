@@ -115,8 +115,8 @@ export class SocketCollector {
     });
   }
 
-  async rpcCall<T = RpcResponseEnvelope>(method: string, params: string): Promise<T> {
-    return await this.emitWithAck(SOCKET_RPC_EVENTS.CALL, { method, params }, 30_000);
+  async rpcCall<T = RpcResponseEnvelope>(method: string, params: string, timeoutMs = 30_000): Promise<T> {
+    return await this.emitWithAck(SOCKET_RPC_EVENTS.CALL, { method, params }, timeoutMs);
   }
 
   emit(event: string, data: unknown): void {

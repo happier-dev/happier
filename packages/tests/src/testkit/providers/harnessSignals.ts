@@ -13,6 +13,8 @@ const fatalAssistantErrorSubstrings = [
   'api key',
   'unauthorized',
   '401',
+  'verify your account',
+  'validation required',
 ];
 
 const fatalCliLogSubstrings = [
@@ -23,6 +25,10 @@ const fatalCliLogSubstrings = [
   'unauthorized',
   'api key',
   'not configured',
+  'verify your account',
+  'validation_required',
+  'permission_denied',
+  'error during prompt',
 ];
 
 const providerUnavailabilityErrorSubstrings = [
@@ -37,6 +43,12 @@ const providerUnavailabilityErrorSubstrings = [
   'out of credits',
   'unauthorized',
   'api key',
+  'verify your account',
+  'account verification required',
+  'validation required',
+  'validation_required',
+  'prompt request failed',
+  'error during prompt',
 ];
 
 export function resolveResumeSessionMode(resume: ProviderScenario['resume'] | undefined): 'same' | 'fresh' {
@@ -113,6 +125,10 @@ export async function readFatalProviderErrorFromCliLogs(params: { cliHome: strin
     if (fatal === 'unauthorized') return 'Unauthorized';
     if (fatal === 'api key') return 'API key error';
     if (fatal === 'not configured') return 'Provider not configured';
+    if (fatal === 'verify your account' || fatal === 'validation_required' || fatal === 'permission_denied') {
+      return 'Account verification required';
+    }
+    if (fatal === 'error during prompt') return 'Prompt request failed';
     return 'Provider fatal error';
   }
 
@@ -124,8 +140,13 @@ export function resolveSessionActiveWaitMs(globalWaitMsRaw: string | undefined):
   return Math.max(60_000, Math.min(globalWaitMs, 240_000));
 }
 
-export function resolveProviderInactivityTimeoutMs(raw: string | undefined, maxWaitMs: number): number {
-  const parsed = parsePositiveInt(raw, 120_000);
+export function resolveProviderInactivityTimeoutMs(
+  raw: string | undefined,
+  maxWaitMs: number,
+  providerId?: string,
+): number {
+  const defaultTimeoutMs = providerId === 'kimi' ? 240_000 : 120_000;
+  const parsed = parsePositiveInt(raw, defaultTimeoutMs);
   return Math.max(30_000, Math.min(parsed, maxWaitMs));
 }
 
