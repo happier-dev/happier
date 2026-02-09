@@ -1,6 +1,6 @@
 import { db } from "@/storage/db";
 import { inTx, afterTx } from "@/storage/inTx";
-import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter, buildKVBatchUpdateUpdate } from "@/app/events/eventRouter";
 import * as privacyKit from "privacy-kit";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";

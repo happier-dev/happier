@@ -9,7 +9,7 @@ describe("oidcProviderModuleFactory", () => {
             anonymousSignupEnabled: true,
             signupProviders: [],
             requiredLoginProviders: [],
-            offboarding: { enabled: true, intervalSeconds: 3600, mode: "per-request-cache" },
+            offboarding: { enabled: true, strict: false, intervalSeconds: 3600, mode: "per-request-cache" },
         };
 
         const provider = createOidcProviderModule({
@@ -21,6 +21,7 @@ describe("oidcProviderModuleFactory", () => {
             clientSecret: "secret",
             redirectUrl: "https://api.example.test/v1/oauth/okta/callback",
             scopes: "openid profile email",
+            httpTimeoutSeconds: 15,
             claims: { login: "preferred_username", email: "email", groups: "groups" },
             allow: {
                 usersAllowlist: ["alice"],
@@ -33,7 +34,8 @@ describe("oidcProviderModuleFactory", () => {
             ui: { buttonColor: "#111111", iconHint: "okta" },
         });
 
-        const features = provider.auth.resolveFeatures({ env: {}, policy });
+        expect(provider.auth).toBeDefined();
+        const features = provider.auth!.resolveFeatures({ env: {}, policy });
 
         expect(features.enabled).toBe(true);
         expect(features.configured).toBe(true);
@@ -51,4 +53,3 @@ describe("oidcProviderModuleFactory", () => {
         expect(features.offboarding.source).toBe("oidc_refresh_token");
     });
 });
-

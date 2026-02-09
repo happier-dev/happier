@@ -1,5 +1,5 @@
 import * as privacyKit from "privacy-kit";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 
 interface TokenCacheEntry {
     userId: string;

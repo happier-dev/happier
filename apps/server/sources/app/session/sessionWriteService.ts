@@ -1,11 +1,10 @@
-import { getSessionParticipantUserIds } from "@/app/share/sessionParticipants";
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { markSessionParticipantsChanged, type SessionParticipantCursor } from "@/app/session/changeTracking/markSessionParticipantsChanged";
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 import { isPrismaErrorCode } from "@/storage/prisma";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 
-type ParticipantCursor = { accountId: string; cursor: number };
+type ParticipantCursor = SessionParticipantCursor;
 
 type EnsureSessionEditAccessResult =
     | { ok: true; sessionOwnerId: string }
@@ -109,17 +108,11 @@ export async function createSessionMessage(params: {
                 select: { id: true, seq: true, localId: true, content: true, createdAt: true, updatedAt: true },
             });
 
-            const participantUserIds = await getSessionParticipantUserIds({ sessionId, tx });
-            const participantCursors: ParticipantCursor[] = [];
-            for (const participantUserId of participantUserIds) {
-                const cursor = await markAccountChanged(tx, {
-                    accountId: participantUserId,
-                    kind: "session",
-                    entityId: sessionId,
-                    hint: { lastMessageSeq: created.seq, lastMessageId: created.id },
-                });
-                participantCursors.push({ accountId: participantUserId, cursor });
-            }
+            const participantCursors = await markSessionParticipantsChanged({
+                tx,
+                sessionId,
+                hint: { lastMessageSeq: created.seq, lastMessageId: created.id },
+            });
 
             return {
                 ok: true,
@@ -215,12 +208,7 @@ export async function updateSessionMetadata(params: {
                 };
             }
 
-            const participantUserIds = await getSessionParticipantUserIds({ sessionId, tx });
-            const participantCursors: ParticipantCursor[] = [];
-            for (const participantUserId of participantUserIds) {
-                const cursor = await markAccountChanged(tx, { accountId: participantUserId, kind: "session", entityId: sessionId });
-                participantCursors.push({ accountId: participantUserId, cursor });
-            }
+            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
 
             return { ok: true, version: expectedVersion + 1, metadata: metadataCiphertext, participantCursors };
         });
@@ -288,12 +276,7 @@ export async function updateSessionAgentState(params: {
                 };
             }
 
-            const participantUserIds = await getSessionParticipantUserIds({ sessionId, tx });
-            const participantCursors: ParticipantCursor[] = [];
-            for (const participantUserId of participantUserIds) {
-                const cursor = await markAccountChanged(tx, { accountId: participantUserId, kind: "session", entityId: sessionId });
-                participantCursors.push({ accountId: participantUserId, cursor });
-            }
+            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
 
             return { ok: true, version: expectedVersion + 1, agentState: agentStateCiphertext, participantCursors };
         });
@@ -418,12 +401,7 @@ export async function patchSession(params: {
                 };
             }
 
-            const participantUserIds = await getSessionParticipantUserIds({ sessionId, tx });
-            const participantCursors: ParticipantCursor[] = [];
-            for (const participantUserId of participantUserIds) {
-                const cursor = await markAccountChanged(tx, { accountId: participantUserId, kind: "session", entityId: sessionId });
-                participantCursors.push({ accountId: participantUserId, cursor });
-            }
+            const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
 
             return {
                 ok: true,

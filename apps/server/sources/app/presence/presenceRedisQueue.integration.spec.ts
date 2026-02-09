@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const xadd = vi.fn(async () => "0-0");
 const getRedisClient = vi.fn(() => ({ xadd }));
 
-vi.mock("@/storage/redis", () => ({ getRedisClient }));
+vi.mock("@/storage/redis/redis", () => ({ getRedisClient }));
 
 describe("presenceRedisQueue", () => {
     const originalStreamMaxLen = process.env.HAPPY_PRESENCE_STREAM_MAXLEN;

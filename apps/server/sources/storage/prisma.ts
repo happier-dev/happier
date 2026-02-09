@@ -3,7 +3,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { acquirePgliteDirLock } from "./pgliteLock";
+import { acquirePgliteDirLock } from "./locks/pgliteLock";
 
 export { Prisma };
 export type TransactionClient = Prisma.TransactionClient;

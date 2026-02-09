@@ -1,5 +1,5 @@
 import { db } from "@/storage/db";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 
 type PruneKind = "session" | "share" | "machine" | "artifact";
 

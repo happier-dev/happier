@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { UiConfig } from "@/app/api/uiConfig";
 import { extname, resolve, sep } from "node:path";
 import { readFile, stat } from "node:fs/promises";
-import { warn } from "@/utils/log";
+import { warn } from "@/utils/logging/log";
 import { existsSync } from "node:fs";
 
 type AnyFastifyInstance = FastifyInstance<any, any, any, any, any>;

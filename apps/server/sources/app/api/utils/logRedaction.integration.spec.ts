@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const logSpy = vi.fn();
 
-vi.mock('@/utils/log', () => ({
+vi.mock('@/utils/logging/log', () => ({
     log: logSpy,
 }));
 

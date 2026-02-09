@@ -1,8 +1,8 @@
 import { Context } from "@/context";
 import { inTx, afterTx } from "@/storage/inTx";
 import { eventRouter, buildDeleteSessionUpdate } from "@/app/events/eventRouter";
-import { randomKeyNaked } from "@/utils/randomKeyNaked";
-import { log } from "@/utils/log";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import { log } from "@/utils/logging/log";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 
 /**

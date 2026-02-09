@@ -1,8 +1,8 @@
 import { websocketEventsCounter } from "@/app/monitoring/metrics2";
 import { buildNewArtifactUpdate, buildUpdateArtifactUpdate, buildDeleteArtifactUpdate, eventRouter } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
-import { log } from "@/utils/log";
-import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { log } from "@/utils/logging/log";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { Socket } from "socket.io";
 import * as privacyKit from "privacy-kit";
 import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";

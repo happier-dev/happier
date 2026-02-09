@@ -1,4 +1,4 @@
-import { ImageRef } from "./storage/files";
+import { ImageRef } from "./storage/blob/files";
 import type { LinkedProvider } from "./app/auth/providers/linkedProviders";
 
 export type AccountProfile = {

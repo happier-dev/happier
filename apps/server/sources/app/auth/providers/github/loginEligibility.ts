@@ -1,6 +1,6 @@
 import { decryptString } from "@/modules/encrypt";
 import { db } from "@/storage/db";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 import type { AuthPolicy } from "@/app/auth/authPolicy";
 import type { LoginEligibilityResult } from "@/app/auth/loginEligibilityResult";
 import { isGithubOrgMemberViaApp, isGithubOrgMemberViaUserToken } from "./orgMembership";

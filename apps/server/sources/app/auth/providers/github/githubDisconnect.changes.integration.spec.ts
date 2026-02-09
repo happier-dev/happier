@@ -13,12 +13,12 @@ vi.mock("@/app/events/eventRouter", () => ({
 }));
 
 const randomKeyNaked = vi.fn(() => "upd-id");
-vi.mock("@/utils/randomKeyNaked", () => ({ randomKeyNaked }));
+vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
 
 const markAccountChanged = vi.fn(async () => 333);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
-vi.mock("@/utils/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 const dbAccountFindUnique = vi.fn();
 const dbAccountIdentityFindFirst = vi.fn();

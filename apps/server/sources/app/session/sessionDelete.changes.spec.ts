@@ -16,7 +16,7 @@ vi.mock("@/app/events/eventRouter", () => ({
 const randomKeyNaked = vi.fn()
     .mockReturnValueOnce("upd-owner")
     .mockReturnValueOnce("upd-u2");
-vi.mock("@/utils/randomKeyNaked", () => ({ randomKeyNaked }));
+vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
 
 const markAccountChanged = vi.fn(async (_tx: any, params: any) => {
     if (params.accountId === "owner") return 301;
@@ -25,7 +25,7 @@ const markAccountChanged = vi.fn(async (_tx: any, params: any) => {
 });
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
-vi.mock("@/utils/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 vi.mock("@/storage/inTx", () => {
     const { inTx, afterTx } = createInTxHarness(() => ({

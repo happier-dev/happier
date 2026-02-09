@@ -3,7 +3,7 @@ import type { LoginEligibilityResult } from "@/app/auth/loginEligibilityResult";
 import { isAccountDisabled } from "@/app/auth/accountDisable";
 import { findIdentityProviderById } from "@/app/auth/providers/identityProviders/registry";
 import { db } from "@/storage/db";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 
 export async function enforceLoginEligibility(params: {
     accountId: string;

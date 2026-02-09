@@ -32,8 +32,8 @@ vi.mock("@/storage/db", () => ({
 installStartServerCommonWiringMocks();
 
 // Avoid hanging in tests: startServer calls awaitShutdown().
-vi.mock("@/utils/shutdown", async () => {
-    const actual = await vi.importActual<any>("@/utils/shutdown");
+vi.mock("@/utils/process/shutdown", async () => {
+    const actual = await vi.importActual<any>("@/utils/process/shutdown");
     return { ...actual, awaitShutdown: vi.fn(async () => {}) };
 });
 
@@ -57,7 +57,7 @@ describe("startServer light shutdown ordering", () => {
         });
 
         const { startServer } = await import("./startServer");
-        const { initiateShutdown } = await import("@/utils/shutdown");
+        const { initiateShutdown } = await import("@/utils/process/shutdown");
 
         await startServer("light");
         await initiateShutdown("test");

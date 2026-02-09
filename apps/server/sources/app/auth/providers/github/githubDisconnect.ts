@@ -1,8 +1,8 @@
 import { db } from "@/storage/db";
 import { Context } from "@/context";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 import { buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
-import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { fetchLinkedProvidersForAccount } from "@/app/auth/providers/linkedProviders";

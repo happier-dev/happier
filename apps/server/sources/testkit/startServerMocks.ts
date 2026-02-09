@@ -63,12 +63,12 @@ export function installStartServerCommonWiringMocks(): void {
   }))
   vi.mock('@/modules/encrypt', () => ({ initEncrypt: vi.fn(async () => {}) }))
   vi.mock('@/app/auth/providers/github/webhooks', () => ({ initGithub: vi.fn(async () => {}) }))
-  vi.mock('@/storage/files', () => ({
+  vi.mock('@/storage/blob/files', () => ({
     loadFiles: vi.fn(async () => {}),
     initFilesLocalFromEnv: vi.fn(() => {}),
     initFilesS3FromEnv: vi.fn(() => {}),
   }))
-  vi.mock('@/utils/log', () => ({ log: vi.fn() }))
+  vi.mock('@/utils/logging/log', () => ({ log: vi.fn() }))
   vi.mock('@/app/changes/accountChangeCleanup', () => ({
     startAccountChangeCleanupFromEnv: vi.fn(() => null),
   }))

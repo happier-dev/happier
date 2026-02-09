@@ -1,7 +1,7 @@
 import { activityCache } from "./sessionCache";
 import { shouldPublishPresenceToRedis } from "./presenceMode";
 import { publishMachineAlive, publishSessionAlive } from "./presenceRedisQueue";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 
 export async function recordSessionAlive(params: { accountId: string; sessionId: string; timestamp: number }): Promise<void> {
     const shouldPersist = activityCache.queueSessionUpdate(params.sessionId, params.accountId, params.timestamp);

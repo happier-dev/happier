@@ -1,4 +1,4 @@
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 import { FastifyError } from "fastify";
 import { Fastify } from "../types";
 import { readFile, stat } from "node:fs/promises";

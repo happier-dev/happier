@@ -95,9 +95,12 @@ export async function isGithubOrgMemberViaUserToken(params: {
     const org = params.org.toString().trim().toLowerCase();
     const username = params.username.toString().trim();
     const accessToken = params.accessToken.toString();
-    const timeoutMs = Number.isFinite(params.timeoutMs as any) && (params.timeoutMs as any) > 0 ? Number(params.timeoutMs) : null;
+    const timeoutMs =
+        Number.isFinite(params.timeoutMs as any) && (params.timeoutMs as any) > 0
+            ? Number(params.timeoutMs)
+            : undefined;
 
-    const controller = timeoutMs ? new AbortController() : null;
+    const controller = typeof timeoutMs === "number" ? new AbortController() : null;
     const timeoutId = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     let response: Response;
     try {

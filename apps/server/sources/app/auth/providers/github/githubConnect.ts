@@ -1,11 +1,11 @@
 import { db } from "@/storage/db";
 import { Context } from "@/context";
 import { encryptString } from "@/modules/encrypt";
-import { uploadImage } from "@/storage/uploadImage";
-import { separateName } from "@/utils/separateName";
+import { uploadImage } from "@/storage/blob/uploadImage";
+import { separateName } from "@/utils/strings/separateName";
 import { type GitHubProfile } from "@/app/auth/providers/github/types";
 import { buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
-import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { resolveGitHubAuthRestrictionsFromEnv } from "@/app/auth/providers/github/restrictions";

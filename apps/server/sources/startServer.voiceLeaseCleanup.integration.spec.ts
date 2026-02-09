@@ -10,10 +10,10 @@ const cleanupStop = vi.fn();
 const startVoiceSessionLeaseCleanupFromEnv = vi.fn(() => ({ stop: cleanupStop }));
 
 vi.mock("@/app/voice/voiceSessionLeaseCleanup", () => ({
-    startVoiceSessionLeaseCleanupFromEnv: (...args: any[]) => startVoiceSessionLeaseCleanupFromEnv(...args),
+    startVoiceSessionLeaseCleanupFromEnv,
 }));
 
-vi.mock("@/storage/redis", () => ({
+vi.mock("@/storage/redis/redis", () => ({
     getRedisClient: () => ({ ping: vi.fn(async () => "PONG") }),
 }));
 
@@ -33,8 +33,8 @@ vi.mock("@/storage/db", () => ({
 installStartServerCommonWiringMocks();
 
 const onShutdown = vi.fn();
-vi.mock("@/utils/shutdown", () => ({
-    onShutdown: (...args: any[]) => onShutdown(...args),
+vi.mock("@/utils/process/shutdown", () => ({
+    onShutdown,
     awaitShutdown: vi.fn(async () => {}),
 }));
 

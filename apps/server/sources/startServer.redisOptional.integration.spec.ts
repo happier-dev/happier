@@ -7,7 +7,7 @@ import {
 } from "@/testkit/startServerMocks";
 
 const ping = vi.fn(async () => "PONG");
-vi.mock("@/storage/redis", () => ({
+vi.mock("@/storage/redis/redis", () => ({
     getRedisClient: () => ({ ping }),
 }));
 
@@ -26,7 +26,7 @@ vi.mock("@/storage/db", () => ({
 
 installStartServerCommonWiringMocks();
 
-vi.mock("@/utils/shutdown", () => ({
+vi.mock("@/utils/process/shutdown", () => ({
     onShutdown: vi.fn(),
     awaitShutdown: vi.fn(async () => {}),
 }));

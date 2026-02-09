@@ -1,4 +1,4 @@
-import { getPublicUrl } from "@/storage/files";
+import { getPublicUrl } from "@/storage/blob/files";
 
 /**
  * Common select for user profile information

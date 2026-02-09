@@ -18,7 +18,7 @@ vi.mock("@/app/events/eventRouter", () => ({
 }));
 
 const randomKeyNaked = vi.fn(() => "upd-id");
-vi.mock("@/utils/randomKeyNaked", () => ({ randomKeyNaked }));
+vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
 
 const markAccountChanged = vi.fn(async () => 909);
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
@@ -50,7 +50,7 @@ describe("feedPost (AccountChange integration)", () => {
             },
         });
 
-        const result = await feedPost(tx, { uid: "u1" } as any, { kind: "friend_request", uid: "u2" } as any, "rk");
+        const result = await feedPost(tx as any, { uid: "u1" } as any, { kind: "friend_request", uid: "u2" } as any, "rk");
         await flushAfterTxCallbacks(tx);
 
         expect(markAccountChanged).toHaveBeenCalledWith(

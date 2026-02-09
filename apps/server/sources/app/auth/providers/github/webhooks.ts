@@ -1,7 +1,7 @@
 import { App } from "octokit";
 import { Webhooks } from "@octokit/webhooks";
 import type { EmitterWebhookEvent } from "@octokit/webhooks";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 
 let app: App | null = null;
 let webhooks: Webhooks | null = null;

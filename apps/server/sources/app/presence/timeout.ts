@@ -1,7 +1,7 @@
 import { db } from "@/storage/db";
-import { delay } from "@/utils/delay";
-import { forever } from "@/utils/forever";
-import { shutdownSignal } from "@/utils/shutdown";
+import { delay } from "@/utils/runtime/delay";
+import { forever } from "@/utils/runtime/forever";
+import { shutdownSignal } from "@/utils/process/shutdown";
 import { buildMachineActivityEphemeral, buildSessionActivityEphemeral, eventRouter } from "@/app/events/eventRouter";
 
 export function startTimeout() {

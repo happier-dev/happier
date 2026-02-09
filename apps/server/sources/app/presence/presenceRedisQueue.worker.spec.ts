@@ -9,7 +9,7 @@ const xack = vi.fn(async () => 1);
 const xautoclaim: any = vi.fn(async () => ["0-0", []]);
 
 const getRedisClient = vi.fn(() => ({ xgroup, xreadgroup, xack, xautoclaim }));
-vi.mock("@/storage/redis", () => ({ getRedisClient }));
+vi.mock("@/storage/redis/redis", () => ({ getRedisClient }));
 
 const dbSessionUpdate = vi.fn(async () => ({}));
 const dbMachineUpdate = vi.fn(async () => ({}));
@@ -20,14 +20,14 @@ vi.mock("@/storage/db", () => ({
     },
 }));
 
-vi.mock("@/utils/forever", () => ({
+vi.mock("@/utils/runtime/forever", () => ({
     forever: (_name: string, fn: () => Promise<void>) => {
         void fn();
     },
 }));
 
-vi.mock("@/utils/shutdown", async () => {
-    const actual = await vi.importActual<any>("@/utils/shutdown");
+vi.mock("@/utils/process/shutdown", async () => {
+    const actual = await vi.importActual<any>("@/utils/process/shutdown");
     return {
         ...actual,
         get shutdownSignal() {
@@ -36,7 +36,7 @@ vi.mock("@/utils/shutdown", async () => {
     };
 });
 
-vi.mock("@/utils/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 describe("presenceRedisQueue worker", () => {
     const originalInstanceId = process.env.HAPPY_INSTANCE_ID;

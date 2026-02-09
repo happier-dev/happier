@@ -10,7 +10,7 @@ vi.mock("socket.io", () => ({
     },
 }));
 
-vi.mock("@/utils/shutdown", () => ({
+vi.mock("@/utils/process/shutdown", () => ({
     onShutdown: vi.fn(),
 }));
 
@@ -20,7 +20,7 @@ vi.mock("@socket.io/redis-streams-adapter", () => ({
 }));
 
 const getRedisClient = vi.fn(() => ({ name: "redis" }));
-vi.mock("@/storage/redis", () => ({
+vi.mock("@/storage/redis/redis", () => ({
     getRedisClient: () => getRedisClient(),
 }));
 

@@ -25,7 +25,7 @@ let keyCounter = 0;
 const randomKeyNaked = vi.fn()
     .mockImplementation(() => `upd-${++keyCounter}`);
 
-vi.mock("@/utils/randomKeyNaked", () => ({ randomKeyNaked }));
+vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
 
 const markAccountChanged = vi.fn(async (_tx: any, params: any) => {
     if (params.accountId === "owner") return 101;
@@ -43,7 +43,7 @@ vi.mock("@/app/monitoring/metrics2", () => ({
     socketMessageAckCounter: { inc: socketMessageAckInc },
 }));
 
-vi.mock("@/utils/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 vi.mock("@/app/presence/sessionCache", () => ({
     activityCache: {

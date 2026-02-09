@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { isLoopbackHostname } from "@/utils/urlSafety";
+import { isLoopbackHostname } from "@/utils/network/urlSafety";
 
 export type OidcAuthProviderInstanceConfig = Readonly<{
     id: string;

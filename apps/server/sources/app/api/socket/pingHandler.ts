@@ -1,4 +1,4 @@
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 import { Socket } from "socket.io";
 
 export function pingHandler(socket: Socket) {

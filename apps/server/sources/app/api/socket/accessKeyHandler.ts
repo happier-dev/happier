@@ -1,6 +1,6 @@
 import { Socket } from "socket.io";
 import { db } from "@/storage/db";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 import { eventRouter } from "@/app/events/eventRouter";
 
 export function accessKeyHandler(userId: string, socket: Socket) {

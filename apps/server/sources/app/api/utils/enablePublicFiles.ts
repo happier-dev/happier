@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { extname } from "node:path";
-import { hasPublicFileRead, readPublicFile } from "@/storage/files";
+import { hasPublicFileRead, readPublicFile } from "@/storage/blob/files";
 import { normalizePublicPath } from "@/flavors/light/files";
 
 type AnyFastifyInstance = FastifyInstance<any, any, any, any, any>;

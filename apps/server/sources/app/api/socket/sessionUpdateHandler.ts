@@ -2,13 +2,13 @@ import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCoun
 import { activityCache } from "@/app/presence/sessionCache";
 import { buildNewMessageUpdate, buildPendingChangedUpdate, buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
 import { db } from "@/storage/db";
-import { AsyncLock } from "@/utils/lock";
-import { log } from "@/utils/log";
-import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { AsyncLock } from "@/utils/runtime/lock";
+import { log } from "@/utils/logging/log";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { Socket } from "socket.io";
 import { createSessionMessage, updateSessionAgentState, updateSessionMetadata } from "@/app/session/sessionWriteService";
 import { recordSessionAlive } from "@/app/presence/presenceRecorder";
-import { materializeNextPendingMessage } from "@/app/sessionPending/sessionPendingService";
+import { materializeNextPendingMessage } from "@/app/session/pending/pendingMessageService";
 
 export function sessionUpdateHandler(userId: string, socket: Socket, connection: ClientConnection) {
     socket.on('update-metadata', async (data: any, callback: (response: any) => void) => {

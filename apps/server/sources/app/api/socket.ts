@@ -1,8 +1,8 @@
-import { onShutdown } from "@/utils/shutdown";
+import { onShutdown } from "@/utils/process/shutdown";
 import { Fastify } from "./types";
 import { buildMachineActivityEphemeral, ClientConnection, eventRouter } from "@/app/events/eventRouter";
 import { Server, Socket } from "socket.io";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
 import { decrementWebSocketConnection, incrementWebSocketConnection, websocketEventsCounter } from "../monitoring/metrics2";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
@@ -15,7 +15,7 @@ import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { getSocketRooms } from "./socketRooms";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
-import { getRedisClient } from "@/storage/redis";
+import { getRedisClient } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
 import { getSocketAdapterFromEnv, isRedisStreamsEnabled } from "@/config/backends";
 

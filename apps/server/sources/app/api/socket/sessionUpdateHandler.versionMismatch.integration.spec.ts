@@ -17,8 +17,8 @@ vi.mock("@/app/events/eventRouter", () => ({
     buildSessionActivityEphemeral: vi.fn(),
 }));
 
-vi.mock("@/utils/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "id") }));
-vi.mock("@/utils/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked: vi.fn(() => "id") }));
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 vi.mock("@/app/monitoring/metrics2", () => ({
     sessionAliveEventsCounter: { inc: vi.fn() },
     socketMessageAckCounter: { inc: vi.fn() },

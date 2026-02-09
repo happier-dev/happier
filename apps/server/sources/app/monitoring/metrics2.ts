@@ -1,8 +1,8 @@
 import { register, Counter, Gauge, Histogram } from 'prom-client';
 import { db } from '@/storage/db';
-import { forever } from '@/utils/forever';
-import { delay } from '@/utils/delay';
-import { shutdownSignal } from '@/utils/shutdown';
+import { forever } from '@/utils/runtime/forever';
+import { delay } from '@/utils/runtime/delay';
+import { shutdownSignal } from '@/utils/process/shutdown';
 
 // Application metrics
 export const websocketConnectionsGauge = new Gauge({

@@ -1,4 +1,4 @@
-import { ImageRef as ImageRefType } from "./files";
+import { ImageRef as ImageRefType } from "./blob/files";
 declare global {
     namespace PrismaJson {
         // Session message content types

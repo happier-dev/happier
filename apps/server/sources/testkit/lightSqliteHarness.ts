@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
 import { auth } from "@/app/auth/auth";
 import { initEncrypt } from "@/modules/encrypt";
-import { initFilesLocalFromEnv, loadFiles } from "@/storage/files";
+import { initFilesLocalFromEnv, loadFiles } from "@/storage/blob/files";
 import { db, initDbSqlite } from "@/storage/db";
 
 export type LightSqliteHarness = {

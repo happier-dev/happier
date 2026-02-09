@@ -1,16 +1,11 @@
 import { extractGitHubLinkedProvider } from "./linkedProvider";
+import { resolveProfileLogin } from "./resolveProfileLogin";
 
 export function extractGitHubProfileBadge(params: {
     profile: unknown;
     providerLogin: string | null;
 }): { label: string; url: string } | null {
-    const raw: any = params.profile as any;
-    const login =
-        typeof raw?.login === "string" && raw.login.trim()
-            ? raw.login.trim()
-            : params.providerLogin && params.providerLogin.trim()
-                ? params.providerLogin.trim()
-                : null;
+    const login = resolveProfileLogin(params);
     if (!login) return null;
 
     const linked = extractGitHubLinkedProvider({ profile: params.profile, providerLogin: params.providerLogin });
@@ -18,4 +13,3 @@ export function extractGitHubProfileBadge(params: {
 
     return { label: `@${login}`, url: linked.profileUrl };
 }
-

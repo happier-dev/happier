@@ -1,5 +1,5 @@
 import { Fastify } from "../types";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
 

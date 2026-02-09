@@ -48,7 +48,7 @@ This document contains the development guidelines and instructions for the Happi
 - Use functional and declarative programming patterns; avoid classes
 - Prefer iteration and modularization over code duplication
 - Use descriptive variable names with auxiliary verbs (e.g., isLoading, hasError)
-- All sources must be imported using "@/" prefix (e.g., `import "@/utils/log"`)
+- All sources must be imported using "@/" prefix (e.g., `import "@/utils/logging/log"`)
 - Always use absolute imports
 - Prefer interfaces over types
 - Avoid enums; use maps instead

@@ -6,10 +6,10 @@ import { activityCache } from '@/app/presence/sessionCache';
 import { startTimeout } from '@/app/presence/timeout';
 import { initEncrypt } from '@/modules/encrypt';
 import { initGithub } from '@/app/auth/providers/github/webhooks';
-import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/files';
+import { loadFiles, initFilesLocalFromEnv, initFilesS3FromEnv } from '@/storage/blob/files';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres, initDbPglite, initDbSqlite, shutdownDbPglite } from '@/storage/db';
-import { log } from '@/utils/log';
-import { awaitShutdown, onShutdown } from '@/utils/shutdown';
+import { log } from '@/utils/logging/log';
+import { awaitShutdown, onShutdown } from '@/utils/process/shutdown';
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from '@/flavors/light/env';
 import {
     getFilesBackendFromEnv,
@@ -21,7 +21,7 @@ import {
 import http from 'node:http';
 import { Server as SocketIOServer } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-streams-adapter';
-import { getRedisClient } from '@/storage/redis';
+import { getRedisClient } from '@/storage/redis/redis';
 import { eventRouter } from '@/app/events/eventRouter';
 import { startAccountChangeCleanupFromEnv } from '@/app/changes/accountChangeCleanup';
 import { shouldConsumePresenceFromRedis, shouldEnableLocalPresenceDbFlush } from '@/app/presence/presenceMode';

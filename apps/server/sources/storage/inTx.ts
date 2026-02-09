@@ -1,4 +1,4 @@
-import { delay } from "@/utils/delay";
+import { delay } from "@/utils/runtime/delay";
 import { db } from "@/storage/db";
 import { getDbProviderFromEnv, isPrismaErrorCode, type TransactionClient } from "@/storage/prisma";
 

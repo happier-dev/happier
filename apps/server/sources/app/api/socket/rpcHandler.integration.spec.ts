@@ -37,7 +37,7 @@ describe("rpcHandler", () => {
     const evalFn = vi.fn();
     const multi = vi.fn(() => ({ hset: () => ({ expire: () => ({ exec: vi.fn() }) }) }));
 
-    vi.doMock("@/storage/redis", () => ({
+    vi.doMock("@/storage/redis/redis", () => ({
       getRedisClient: () => ({ hmget, eval: evalFn, multi }),
     }));
 
@@ -49,12 +49,12 @@ describe("rpcHandler", () => {
     const to = vi.fn(() => ({ emitWithAck }));
     const timeout = vi.fn(() => ({ to }));
     const io = { timeout } as any;
-    const socket = createFakeSocket({ emit: vi.fn(), timeout });
+    const socket = createFakeSocket({ emit: vi.fn(), timeout: timeout as any });
 
     rpcHandler("user-1", socket as any, userRpcListeners as any, allRpcListeners as any, {
       io,
       redisRegistry: { enabled: true, instanceId: "instance-1", ttlSeconds: 120 },
-    });
+    } as any);
 
     const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL);
 
@@ -82,7 +82,7 @@ describe("rpcHandler", () => {
     const evalFn = vi.fn();
     const multi = vi.fn(() => ({ hset: () => ({ expire: () => ({ exec: vi.fn() }) }) }));
 
-    vi.doMock("@/storage/redis", () => ({
+    vi.doMock("@/storage/redis/redis", () => ({
       getRedisClient: () => ({ hmget, eval: evalFn, multi }),
     }));
 
@@ -94,12 +94,12 @@ describe("rpcHandler", () => {
     const to = vi.fn(() => ({ emitWithAck }));
     const timeout = vi.fn(() => ({ to }));
     const io = { timeout } as any;
-    const socket = createFakeSocket({ emit: vi.fn(), timeout });
+    const socket = createFakeSocket({ emit: vi.fn(), timeout: timeout as any });
 
     rpcHandler("user-1", socket as any, userRpcListeners as any, allRpcListeners as any, {
       io,
       redisRegistry: { enabled: true, instanceId: "instance-1", ttlSeconds: 120 },
-    });
+    } as any);
 
     const handler = getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL);
 

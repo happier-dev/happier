@@ -12,7 +12,7 @@ import * as privacyKit from "privacy-kit";
 
 import { initDbSqlite, db } from "@/storage/db";
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from "@/flavors/light/env";
-import { connectRoutes } from "@/app/api/routes/connectRoutes";
+import { connectRoutes } from "@/app/api/routes/connect/connectRoutes";
 import { auth } from "@/app/auth/auth";
 import { initEncrypt } from "@/modules/encrypt";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";

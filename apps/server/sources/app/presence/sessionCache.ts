@@ -1,5 +1,5 @@
 import { db } from "@/storage/db";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 import { sessionCacheCounter, databaseUpdatesSkippedCounter } from "@/app/monitoring/metrics2";
 import { checkSessionAccess } from "@/app/share/accessControl";
 

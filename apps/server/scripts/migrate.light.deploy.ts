@@ -4,7 +4,7 @@ import { applyLightDefaultEnv } from '@/flavors/light/env';
 import { requireLightDataDir } from './migrate.light.deployPlan';
 import { PGlite } from '@electric-sql/pglite';
 import { PGLiteSocketServer } from '@electric-sql/pglite-socket';
-import { acquirePgliteDirLock } from '@/storage/pgliteLock';
+import { acquirePgliteDirLock } from '@/storage/locks/pgliteLock';
 
 function run(cmd: string, args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {

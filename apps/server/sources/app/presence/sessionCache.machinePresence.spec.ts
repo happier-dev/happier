@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/utils/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 vi.mock("@/app/monitoring/metrics2", () => ({
     sessionCacheCounter: { inc: vi.fn() },

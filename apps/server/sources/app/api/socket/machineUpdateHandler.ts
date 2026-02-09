@@ -1,10 +1,10 @@
 import { machineAliveEventsCounter, websocketEventsCounter } from "@/app/monitoring/metrics2";
 import { activityCache } from "@/app/presence/sessionCache";
 import { buildMachineActivityEphemeral, buildUpdateMachineUpdate, eventRouter } from "@/app/events/eventRouter";
-import { log } from "@/utils/log";
+import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
 import { Socket } from "socket.io";
-import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { recordMachineAlive } from "@/app/presence/presenceRecorder";

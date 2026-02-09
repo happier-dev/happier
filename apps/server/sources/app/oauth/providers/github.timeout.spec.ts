@@ -56,7 +56,7 @@ describe("githubOAuthProvider timeouts", () => {
         vi.stubGlobal("fetch", fetchSpy as any);
 
         await githubOAuthProvider.exchangeCodeForAccessToken({ env, code: "code" });
-        const opts = fetchSpy.mock.calls[0]?.[1] as any;
+        const opts = (fetchSpy as any).mock.calls[0]?.[1] as any;
         const body = JSON.parse(String(opts?.body ?? "{}"));
         expect(body.redirect_uri).toBe(env.GITHUB_REDIRECT_URL);
     });

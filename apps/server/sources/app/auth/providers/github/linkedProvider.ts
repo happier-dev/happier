@@ -1,14 +1,11 @@
+import { resolveProfileLogin } from "./resolveProfileLogin";
+
 export function extractGitHubLinkedProvider(params: {
     profile: unknown;
     providerLogin: string | null;
 }): { displayName: string | null; avatarUrl: string | null; profileUrl: string | null } {
     const raw: any = params.profile as any;
-    const login =
-        typeof raw?.login === "string" && raw.login.trim()
-            ? raw.login.trim()
-            : params.providerLogin && params.providerLogin.trim()
-                ? params.providerLogin.trim()
-                : null;
+    const login = resolveProfileLogin(params);
 
     const name = typeof raw?.name === "string" && raw.name.trim() ? raw.name.trim() : null;
     const avatarUrl = typeof raw?.avatar_url === "string" && raw.avatar_url.trim() ? raw.avatar_url.trim() : null;
@@ -16,4 +13,3 @@ export function extractGitHubLinkedProvider(params: {
 
     return { displayName: name, avatarUrl, profileUrl };
 }
-

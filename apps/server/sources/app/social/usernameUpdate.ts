@@ -1,7 +1,7 @@
 import { db } from "@/storage/db";
 import { Context } from "@/context";
 import { buildUpdateAccountUpdate, eventRouter } from "@/app/events/eventRouter";
-import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 

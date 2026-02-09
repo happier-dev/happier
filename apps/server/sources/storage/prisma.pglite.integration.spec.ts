@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { initDbPglite, shutdownDbPglite } from "./prisma";
-import { acquirePgliteDirLock } from "./pgliteLock";
+import { acquirePgliteDirLock } from "./locks/pgliteLock";
 
 const createdDirs: string[] = [];
 

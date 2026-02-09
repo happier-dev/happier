@@ -1,10 +1,10 @@
-import { getRedisClient } from "@/storage/redis";
+import { getRedisClient } from "@/storage/redis/redis";
 import { PresenceBatcher } from "./presenceBatcher";
 import { db } from "@/storage/db";
-import { forever } from "@/utils/forever";
-import { delay } from "@/utils/delay";
-import { shutdownSignal } from "@/utils/shutdown";
-import { log } from "@/utils/log";
+import { forever } from "@/utils/runtime/forever";
+import { delay } from "@/utils/runtime/delay";
+import { shutdownSignal } from "@/utils/process/shutdown";
+import { log } from "@/utils/logging/log";
 import { randomUUID } from "node:crypto";
 
 const STREAM_KEY = "presence:alive:v1";

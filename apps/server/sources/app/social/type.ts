@@ -1,4 +1,4 @@
-import { getPublicUrl, ImageRef } from "@/storage/files";
+import { getPublicUrl, ImageRef } from "@/storage/blob/files";
 import type { RelationshipStatus } from "@/storage/prisma";
 import * as privacyKit from "privacy-kit";
 import type { UserProfile } from "@happier-dev/protocol";

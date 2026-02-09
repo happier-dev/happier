@@ -8,7 +8,7 @@ vi.mock("@/storage/db", () => ({
     },
 }));
 
-vi.mock("@/utils/delay", () => ({ delay: vi.fn(async () => {}) }));
+vi.mock("@/utils/runtime/delay", () => ({ delay: vi.fn(async () => {}) }));
 
 describe("inTx", () => {
     const originalEnv = process.env;

@@ -15,7 +15,7 @@ const publishSessionAlive = vi.fn(async () => {});
 const publishMachineAlive = vi.fn(async () => {});
 vi.mock("./presenceRedisQueue", () => ({ publishSessionAlive, publishMachineAlive }));
 
-vi.mock("@/utils/log", () => ({ log: vi.fn() }));
+vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 describe("presenceRecorder", () => {
     beforeEach(() => {
