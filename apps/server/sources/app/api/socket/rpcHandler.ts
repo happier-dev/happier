@@ -11,6 +11,25 @@ type RpcRedisRegistryConfig =
     | { enabled: false }
     | { enabled: true; instanceId: string; ttlSeconds?: number };
 
+function parsePositiveIntOrDefault(value: string | undefined, fallback: number): number {
+    if (typeof value !== 'string') return fallback;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const RPC_FORWARD_TIMEOUT_MS = parsePositiveIntOrDefault(process.env.HAPPIER_RPC_FORWARD_TIMEOUT_MS, 30_000);
+const RPC_FORWARD_CAPABILITIES_TIMEOUT_MS = parsePositiveIntOrDefault(
+    process.env.HAPPIER_RPC_FORWARD_CAPABILITIES_TIMEOUT_MS,
+    120_000,
+);
+
+function resolveRpcForwardTimeoutMs(method: string): number {
+    if (method.endsWith(':capabilities.invoke') || method.endsWith(':capabilities.detect') || method.endsWith(':capabilities.describe')) {
+        return RPC_FORWARD_CAPABILITIES_TIMEOUT_MS;
+    }
+    return RPC_FORWARD_TIMEOUT_MS;
+}
+
 export function rpcHandler(
     userId: string,
     socket: Socket,
@@ -206,6 +225,7 @@ export function rpcHandler(
 
             // Log RPC call initiation
             const startTime = Date.now();
+            const forwardTimeoutMs = resolveRpcForwardTimeoutMs(method);
             // log({ module: 'websocket-rpc' }, `RPC call initiated: ${socket.id} -> ${method} (target: ${targetSocket.id})`);
 
             try {
@@ -232,7 +252,7 @@ export function rpcHandler(
                         return;
                     }
 
-                    const responses = await ctx.io.timeout(30000).to(socketId).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, {
+                    const responses = await ctx.io.timeout(forwardTimeoutMs).to(socketId).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, {
                         method,
                         params: callParams,
                     });
@@ -292,7 +312,10 @@ export function rpcHandler(
                 }
 
                 // Forward the RPC request to the target socket using emitWithAck (single-process path).
-                const response = await targetSocket.timeout(30000).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, { method, params: callParams });
+                const response = await targetSocket.timeout(forwardTimeoutMs).emitWithAck(SOCKET_RPC_EVENTS.REQUEST, {
+                    method,
+                    params: callParams,
+                });
 
                 const duration = Date.now() - startTime;
                 // log({ module: 'websocket-rpc' }, `RPC call succeeded: ${method} (${duration}ms)`);

@@ -4,6 +4,18 @@ import * as semver from 'semver';
 import { ANDROID_UP_TO_DATE, IOS_UP_TO_DATE } from "@/versions";
 
 export function versionRoutes(app: Fastify) {
+    app.get('/v1/version', {
+        schema: {
+            response: {
+                200: z.object({
+                    ok: z.literal(true),
+                }),
+            },
+        },
+    }, async () => {
+        return { ok: true };
+    });
+
     app.post('/v1/version', {
         schema: {
             body: z.object({

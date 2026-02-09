@@ -119,4 +119,37 @@ describe("rpcHandler", () => {
       }),
     );
   });
+
+  it("uses a longer forward timeout for capabilities RPC calls", async () => {
+    vi.resetModules();
+    const { rpcHandler } = await import("./rpcHandler");
+    const userRpcListeners = new Map<string, any>();
+    const allRpcListeners = new Map<string, any>();
+
+    const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true, result: "{}" });
+    const targetTimeout = vi.fn(() => ({ emitWithAck: targetEmitWithAck }));
+    const targetSocket = createFakeSocket({ connected: true, timeout: targetTimeout });
+    userRpcListeners.set("machine-1:capabilities.invoke", targetSocket as any);
+
+    const callerSocket = createFakeSocket({ emit: vi.fn() });
+    rpcHandler("user-1", callerSocket as any, userRpcListeners as any, allRpcListeners as any, {
+      io: {} as any,
+      redisRegistry: { enabled: false },
+    });
+
+    const handler = getSocketHandler(callerSocket, SOCKET_RPC_EVENTS.CALL);
+    const callback = vi.fn();
+    await handler({ method: "machine-1:capabilities.invoke", params: { id: "cli.gemini", method: "probeModels" } }, callback);
+
+    expect(targetTimeout).toHaveBeenCalledWith(120000);
+    expect(targetEmitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, {
+      method: "machine-1:capabilities.invoke",
+      params: { id: "cli.gemini", method: "probeModels" },
+    });
+    expect(callback).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ok: true,
+      }),
+    );
+  });
 });
