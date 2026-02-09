@@ -99,7 +99,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-npm-${{ github.ref }}
@@ -107,6 +107,9 @@ concurrency:
 
 jobs:
   release:
+    permissions:
+      contents: write
+      id-token: write
     runs-on: ubuntu-latest
     outputs:
       sha: ${{ steps.meta.outputs.sha }}
@@ -318,12 +321,46 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is required to publish." >&2
+            echo "NPM_TOKEN is required for npm publish." >&2
             exit 1
           fi
           cd apps/cli
           yarn prepublishOnly
-          npm publish --access public --tag "${{ inputs.npm_tag }}"
+          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}"
+
+      - name: npm pack (cli)
+        if: inputs.publish_cli
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-assets/cli
+          cd apps/cli
+          pack_json="$(npm pack --json)"
+          tgz="$(
+            PACK_JSON="${pack_json}" node -e '
+              const raw = (process.env.PACK_JSON ?? "").trim();
+              const parsed = raw ? JSON.parse(raw) : [];
+              const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+              const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
+              if (!filename) process.exit(1);
+              process.stdout.write(filename);
+            '
+          )" || {
+            echo "npm pack --json did not return a valid filename" >&2
+            exit 1
+          }
+          if [ -z "${tgz:-}" ] || [ ! -f "$tgz" ] || [ "${tgz##*.}" != "tgz" ]; then
+            echo "npm pack did not produce an expected .tgz file: '$tgz'" >&2
+            exit 1
+          fi
+          mv "$tgz" "../../dist/release-assets/cli/cli-${{ steps.meta.outputs.cli_version }}.tgz"
+
+      - name: Upload npm pack artifact (cli)
+        if: inputs.publish_cli
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-pack-cli
+          path: dist/release-assets/cli
+          if-no-files-found: error
 
       - name: npm publish (stack)
         if: inputs.publish_stack
@@ -332,11 +369,45 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is required to publish." >&2
+            echo "NPM_TOKEN is required for npm publish." >&2
             exit 1
           fi
           cd apps/stack
-          npm publish --access public --tag "${{ inputs.npm_tag }}"
+          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}"
+
+      - name: npm pack (stack)
+        if: inputs.publish_stack
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release-assets/stack
+          cd apps/stack
+          pack_json="$(npm pack --json)"
+          tgz="$(
+            PACK_JSON="${pack_json}" node -e '
+              const raw = (process.env.PACK_JSON ?? "").trim();
+              const parsed = raw ? JSON.parse(raw) : [];
+              const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+              const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
+              if (!filename) process.exit(1);
+              process.stdout.write(filename);
+            '
+          )" || {
+            echo "npm pack --json did not return a valid filename" >&2
+            exit 1
+          }
+          if [ -z "${tgz:-}" ] || [ ! -f "$tgz" ] || [ "${tgz##*.}" != "tgz" ]; then
+            echo "npm pack did not produce an expected .tgz file: '$tgz'" >&2
+            exit 1
+          fi
+          mv "$tgz" "../../dist/release-assets/stack/stack-${{ steps.meta.outputs.stack_version }}.tgz"
+
+      - name: Upload npm pack artifact (stack)
+        if: inputs.publish_stack
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-pack-stack
+          path: dist/release-assets/stack
+          if-no-files-found: error
 
       - name: Promote main to deploy branch (cli) (optional)
         if: inputs.update_deploy_branch && inputs.publish_cli
