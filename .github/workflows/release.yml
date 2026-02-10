@@ -787,6 +787,8 @@ jobs:
   deploy_server:
     if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.checks.outputs.bump_server != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
+    permissions:
+      contents: write
     uses: ./.github/workflows/promote-server.yml
     secrets: inherit
     with:
