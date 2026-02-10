@@ -267,7 +267,9 @@ process.exit(1);
     );
 
     const prevPath = process.env.PATH;
+    const prevOverride = process.env.HAPPIER_AUGGIE_PATH;
     process.env.PATH = `${binDir}${delimiter}${prevPath ?? ''}`;
+    delete process.env.HAPPIER_AUGGIE_PATH;
     try {
       const res = await probeAgentModelsBestEffort({ agentId: 'auggie', cwd: fixture.dir, timeoutMs: 750 });
       expect(res.source).toBe('dynamic');
@@ -276,6 +278,11 @@ process.exit(1);
       expect(res.availableModels.some((m) => m.id === 'opus4.6' && m.name === 'Claude Opus 4.6')).toBe(true);
     } finally {
       process.env.PATH = prevPath;
+      if (typeof prevOverride === 'string') {
+        process.env.HAPPIER_AUGGIE_PATH = prevOverride;
+      } else {
+        delete process.env.HAPPIER_AUGGIE_PATH;
+      }
       await fixture.cleanup();
     }
   }, 20_000);

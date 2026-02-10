@@ -59,6 +59,7 @@ export async function probeAcpAgentCapabilities(params: {
     const timeoutMs = typeof params.timeoutMs === 'number' ? params.timeoutMs : 2500;
 
     let child: ChildProcess | null = null;
+    let spawnErrorPromise: Promise<never> | null = null;
     try {
         const isWindows = process.platform === 'win32';
         const env = { ...process.env, ...params.env };
@@ -79,9 +80,28 @@ export async function probeAcpAgentCapabilities(params: {
             });
         }
 
+        // Missing ACP binaries surface as async spawn errors; if not consumed they bubble up
+        // as uncaught exceptions and can crash the daemon process.
+        //
+        // NOTE: This must never create an unhandled rejection if we return early (e.g. due to a setup error).
+        // Use a resolving promise and convert it into a rejecting one only for the initialize race.
+        const spawnError = new Promise<Error>((resolve) => {
+            child?.once('error', (error) => {
+                const normalized = error instanceof Error ? error : new Error(String(error));
+                logger.debug(`[acpProbe] spawn error (${params.transport.agentName}): ${normalized.message}`);
+                resolve(normalized);
+            });
+        });
+
         if (!child.stdin || !child.stdout || !child.stderr) {
             throw new Error('Failed to create stdio pipes');
         }
+
+        // Only create a rejecting promise once we know we won't exit early.
+        // This ensures async spawn errors do not produce unhandledRejection events.
+        spawnErrorPromise = spawnError.then((error) => {
+            throw error;
+        });
 
         child.stderr.on('data', (data: Buffer) => {
             const text = data.toString();
@@ -160,6 +180,7 @@ export async function probeAcpAgentCapabilities(params: {
         const initResponse = await Promise.race([
             connection.initialize(initRequest),
             new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`ACP initialize timeout after ${timeoutMs}ms`)), timeoutMs)),
+            ...(spawnErrorPromise ? [spawnErrorPromise] : []),
         ]);
 
         return { ok: true, checkedAt, agentCapabilities: initResponse.agentCapabilities };

@@ -33,7 +33,7 @@ export function createAcpCliCapability(params: {
           DEBUG: '',
         },
         transport: params.transport,
-        timeoutMs: resolveAcpProbeTimeoutMs(params.agentId),
+        timeoutMs: resolveAcpProbeTimeoutMs(params.agentId, params.transport.getInitTimeout()),
       });
 
       const acp = buildAcpCapabilitySnapshot(probe);
