@@ -550,7 +550,7 @@ jobs:
     name: deploy_plan (source → deploy branches)
     runs-on: ubuntu-latest
     environment: release-shared
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped')
+    if: always() && needs.checks.result == 'success'
     needs: [checks, bump_versions_dev, promote_main]
     outputs:
       deploy_ui_needed: ${{ steps.plan.outputs.deploy_ui_needed }}
@@ -682,7 +682,7 @@ jobs:
     # GitHub skips dependent jobs when a needed job is skipped unless we use always().
     # In production, bump_versions_dev is frequently skipped (bump=none), but we still
     # must promote dev -> main so downstream deploy/publish jobs can run.
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && inputs.dry_run != true && inputs.environment == 'production'
+    if: always() && needs.checks.result == 'success' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && inputs.dry_run != true && inputs.environment == 'production'
     needs: [checks, bump_versions_dev]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
@@ -786,7 +786,7 @@ jobs:
           git push origin HEAD:dev
 
   deploy_ui:
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.checks.outputs.bump_app != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.checks.outputs.bump_app != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: write
@@ -806,7 +806,7 @@ jobs:
       run_tests: false
 
   deploy_server:
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.checks.outputs.bump_server != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.checks.outputs.bump_server != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: write
@@ -820,7 +820,7 @@ jobs:
       run_tests: false
 
   deploy_website:
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.checks.outputs.bump_website != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.checks.outputs.bump_website != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     uses: ./.github/workflows/promote-website.yml
     secrets: inherit
@@ -832,7 +832,7 @@ jobs:
       run_build: true
 
   deploy_docs:
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && needs.deploy_plan.outputs.deploy_docs_needed == 'true' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && needs.deploy_plan.outputs.deploy_docs_needed == 'true' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     uses: ./.github/workflows/promote-docs.yml
     secrets: inherit
@@ -843,7 +843,7 @@ jobs:
       run_build: true
 
   publish_npm:
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && (needs.checks.outputs.publish_cli == 'true' || needs.checks.outputs.publish_stack == 'true' || needs.checks.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && (needs.checks.outputs.publish_cli == 'true' || needs.checks.outputs.publish_stack == 'true' || needs.checks.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main]
     permissions:
       contents: write
