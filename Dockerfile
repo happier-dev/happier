@@ -10,13 +10,14 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
 COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/protocol
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/protocol
 COPY apps/ui/package.json apps/ui/
 COPY apps/server/package.json apps/server/
 COPY apps/cli/package.json apps/cli/
 COPY apps/website/package.json apps/website/
 COPY apps/docs/package.json apps/docs/
 COPY packages/agents/package.json packages/agents/
+COPY packages/cli-common/package.json packages/cli-common/
 COPY packages/protocol/package.json packages/protocol/
 
 RUN yarn install --frozen-lockfile --ignore-engines
@@ -29,13 +30,14 @@ ENV REDISMS_DISABLE_POSTINSTALL=1
 ENV YARN_CACHE_FOLDER=/tmp/.yarn-cache
 
 COPY package.json yarn.lock ./
-RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/protocol
+RUN mkdir -p apps/ui apps/server apps/cli apps/website apps/docs packages/agents packages/cli-common packages/protocol
 COPY apps/ui/package.json apps/ui/
 COPY apps/server/package.json apps/server/
 COPY apps/cli/package.json apps/cli/
 COPY apps/website/package.json apps/website/
 COPY apps/docs/package.json apps/docs/
 COPY packages/agents/package.json packages/agents/
+COPY packages/cli-common/package.json packages/cli-common/
 COPY packages/protocol/package.json packages/protocol/
 
 RUN yarn install --frozen-lockfile --ignore-engines
