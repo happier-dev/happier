@@ -402,8 +402,10 @@ export const en = {
         failedToLoadProfile: 'Failed to load user profile',
         userNotFound: 'User not found',
         invalidShareLink: 'Invalid or expired share link',
-        sessionDeleted: 'Session has been deleted',
-        sessionDeletedDescription: 'This session has been permanently removed',
+        // NOTE: We can't always distinguish a hard-delete from access revocation (e.g. share revoked),
+        // so this messaging is intentionally neutral.
+        sessionDeleted: 'Session isn’t available',
+        sessionDeletedDescription: 'It may have been deleted or you may no longer have access.',
 
         // Error functions with context
         fieldError: ({ field, reason }: { field: string; reason: string }) =>
@@ -657,6 +659,7 @@ export const en = {
             canEditDescription: 'Can send messages.',
             canManage: 'Can manage',
             canManageDescription: 'Can manage sharing settings.',
+            manageSharingDenied: 'You don’t have permission to manage sharing settings for this session.',
             stopSharing: 'Stop sharing',
             recipientMissingKeys: 'This user hasn’t registered encryption keys yet.',
             permissionApprovals: 'Can approve permissions',
@@ -749,11 +752,11 @@ export const en = {
         advancedFeatureFooter: "This is an advanced feature. Only change the server if you know what you're doing. You will need to log out and log in again after changing servers.",
         useThisServer: 'Use this server',
         autoConfigHint: 'If you’re self-hosting: configure the server first, then sign in (or create an account), then connect your terminal.',
-        cannotRenameOfficial: 'The Happier Cloud server cannot be renamed.',
+        cannotRenameCloud: 'The Happier Cloud server cannot be renamed.',
         renameServer: 'Rename server',
         renameServerPrompt: 'Enter a new name for this server.',
         serverNamePlaceholder: 'Server name',
-        cannotRemoveOfficial: 'The Happier Cloud server cannot be removed.',
+        cannotRemoveCloud: 'The Happier Cloud server cannot be removed.',
         removeServer: 'Remove server',
         removeServerConfirm: ({ name }: { name: string }) => `Remove "${name}" from saved servers?`,
         signOutThisServer: 'Also sign out from this server?',
@@ -1139,17 +1142,25 @@ export const en = {
         noChanges: 'No changes to display',
     },
 
-    settingsSession: {
-        messageSending: {
-            title: 'Message sending',
-            footer: 'Controls what happens when you send a message while the agent is running.',
-            queueInAgentTitle: 'Queue in agent (current)',
-            queueInAgentSubtitle: 'Write to transcript immediately; agent processes when ready.',
-            interruptTitle: 'Interrupt & send',
-            interruptSubtitle: 'Abort current turn, then send immediately.',
-            pendingTitle: 'Pending until ready',
-            pendingSubtitle: 'Keep messages in a pending queue; agent pulls when ready.',
-        },
+	    settingsSession: {
+	        messageSending: {
+	            title: 'Message sending',
+	            footer: 'Controls what happens when you send a message while the agent is running.',
+	            queueInAgentTitle: 'Queue in agent (current)',
+	            queueInAgentSubtitle: 'Write to transcript immediately; agent processes when ready.',
+	            interruptTitle: 'Interrupt & send',
+	            interruptSubtitle: 'Abort current turn, then send immediately.',
+	            pendingTitle: 'Pending until ready',
+	            pendingSubtitle: 'Keep messages in a pending queue; agent pulls when ready.',
+	            busySteerPolicyTitle: 'When the agent is busy (steer-capable)',
+	            busySteerPolicyFooter: 'If the agent supports in-flight steering, choose whether messages steer immediately or go to Pending first.',
+	            busySteerPolicy: {
+	                steerImmediatelyTitle: 'Steer immediately',
+	                steerImmediatelySubtitle: 'Send right away and steer the current turn (no interrupt).',
+	                queueForReviewTitle: 'Queue in Pending',
+	                queueForReviewSubtitle: 'Put messages into Pending first; send later using “Steer now”.',
+	            },
+	        },
         toolRendering: {
             title: 'Tool rendering',
             footer: 'Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior.',
@@ -1197,9 +1208,33 @@ export const en = {
         byo: {
             title: 'Use My ElevenLabs',
             configured: 'Configured. Voice usage will be billed to your ElevenLabs account.',
-            notConfigured: 'Enter your ElevenLabs API key and Agent ID to use voice without a subscription.',
+            notConfigured:
+                'Setup (2 minutes):\n' +
+                '1) Create an ElevenLabs account (or sign in).\n' +
+                '2) Create an API key (Settings → API keys).\n' +
+                '3) Paste the API key in Happier.\n' +
+                '4) Tap "Create Happier Agent" to auto-provision (it fills the Agent ID).\n\n' +
+                'Tip: Your API key is only stored on this device (encrypted). If you rotate it in ElevenLabs, paste the new one here.',
+            createAccount: 'Create ElevenLabs account',
+            createAccountSubtitle: 'Sign up (or sign in), then return here to connect',
+            openApiKeys: 'Open ElevenLabs API keys',
+            openApiKeysSubtitle:
+                'In ElevenLabs: Settings → API keys → Create API key → Copy the key (you might only see it once). Tip: name it “Happier”.',
+            apiKeyHelp: 'How to create an API key',
+            apiKeyHelpSubtitle: 'Step-by-step help for creating and copying your ElevenLabs API key',
+            apiKeyHelpDialogTitle: 'Create an ElevenLabs API key',
+            apiKeyHelpDialogBody:
+                '1) Open ElevenLabs (web).\n' +
+                '2) Go to Settings → API keys (if you don’t see Settings, open the profile menu first).\n' +
+                '3) Click "Create API key" (name it “Happier”).\n' +
+                '4) Copy the key (you may only be able to see it once).\n' +
+                '5) Back in Happier, tap "API Key" and paste it.\n' +
+                '6) Tap "Create Happier Agent" to provision automatically (it fills the Agent ID).\n\n' +
+                'If you prefer manual setup:\n' +
+                '- Create an agent in ElevenLabs, then copy/paste its Agent ID into Happier.\n\n' +
+                'Security tip: treat API keys like passwords. If you think it leaked, revoke it and create a new one. (Most ElevenLabs keys start with "xi-".)',
             autoprovCreate: 'Create Happier Agent',
-            autoprovCreateSubtitle: 'Create and configure a Happier agent in your ElevenLabs account using your API key',
+            autoprovCreateSubtitle: 'Creates a Happier agent in your ElevenLabs account and fills the Agent ID automatically',
             autoprovUpdate: 'Update Agent',
             autoprovUpdateSubtitle: 'Update your agent to the latest Happier template',
             autoprovCreated: ({ agentId }: { agentId: string }) => `Created agent: ${agentId}`,
@@ -1209,13 +1244,15 @@ export const en = {
             agentIdSet: 'Set',
             agentIdNotSet: 'Not set',
             agentIdTitle: 'ElevenLabs Agent ID',
-            agentIdDescription: 'Enter the Agent ID from your ElevenLabs dashboard.',
+            agentIdDescription: 'If you used "Create Happier Agent", this is filled automatically. Otherwise copy the Agent ID from ElevenLabs.',
             agentIdPlaceholder: 'agent_...',
             apiKey: 'API Key',
             apiKeySet: 'Set',
             apiKeyNotSet: 'Not set',
             apiKeyTitle: 'ElevenLabs API Key',
-            apiKeyDescription: 'Enter your ElevenLabs API key. This is stored encrypted on-device.',
+            apiKeyDescription:
+                'Create an API key in ElevenLabs → Settings → API keys → Create API key.\n' +
+                'Paste it here (stored encrypted on-device).',
             apiKeyPlaceholder: 'xi-api-key',
             apiKeySaveFailed: 'Failed to save API key. Please try again.',
             disconnect: 'Disconnect',
@@ -1226,7 +1263,7 @@ export const en = {
         },
         local: {
             title: 'Local OSS Voice',
-            footer: 'Configure OpenAI-compatible endpoints for speech-to-text (STT) and text-to-speech (TTS).',
+            footer: 'Configure OpenAI-compatible endpoints for speech-to-text (STT) and text-to-speech (TTS).\n\nWeb note: your endpoint must allow CORS (and respond to OPTIONS preflight) for Test STT/TTS to work in the browser.',
             localhostWarning: 'Note: "localhost" and "127.0.0.1" usually won’t work on phones. Use your computer’s LAN IP or a tunnel.',
             notSet: 'Not set',
             apiKeySet: 'Set',
@@ -1322,6 +1359,11 @@ export const en = {
             ttsVoiceDescription: 'Voice name/id to send to your TTS server (OpenAI-compatible field).',
             ttsFormat: 'TTS Format',
             ttsFormatSubtitle: 'Audio format returned by TTS',
+            testTts: 'Test TTS',
+            testTtsSubtitle: 'Play a short sample using your configured endpoint (uses the selected TTS Format)',
+            testTtsSample: 'Hello from Happier. This is a test of your local TTS endpoint.',
+            testTtsMissingBaseUrl: 'Set a TTS Base URL first.',
+            testTtsFailed: 'TTS test failed. Check your base URL, API key, model, voice, and TTS Format (some endpoints only support mp3 or wav).',
             autoSpeak: 'Auto-speak replies',
             autoSpeakSubtitle: 'Speak the next assistant reply after sending your voice message',
         },
@@ -1858,7 +1900,7 @@ export const en = {
         duplicateName: 'A profile with this name already exists',
         setupInstructions: {
             title: 'Setup Instructions',
-            viewOfficialGuide: 'View Official Setup Guide',
+            viewCloudGuide: 'View Happier Cloud Setup Guide',
         },
         machineLogin: {
             title: 'CLI login',

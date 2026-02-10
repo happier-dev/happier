@@ -119,7 +119,9 @@ if (!found) {
                     chineseVariant = 'zh-Hant';
                 }
 
-                console.log(`[i18n] Chinese script code: ${l.languageScriptCode} -> ${chineseVariant}`);
+                if (process.env.EXPO_PUBLIC_DEBUG) {
+                    console.log(`[i18n] Chinese script code: ${l.languageScriptCode} -> ${chineseVariant}`);
+                }
                 if (chineseVariant && chineseVariant in translations) {
                     currentLanguage = chineseVariant as SupportedLanguage;
                     break;
