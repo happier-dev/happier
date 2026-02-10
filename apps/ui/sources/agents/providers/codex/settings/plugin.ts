@@ -1,18 +1,11 @@
 import * as z from 'zod';
 
+import { buildCodexProviderSettingsShape, CODEX_PROVIDER_SETTINGS_DEFAULTS } from '@happier-dev/agents';
+
 import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
 
-const shape = {
-    codexBackendMode: z.enum(['mcp', 'mcp_resume', 'acp']),
-    codexMcpResumeInstallSpec: z.string(),
-    codexAcpInstallSpec: z.string(),
-} as const;
-
-const defaults: Record<keyof typeof shape, unknown> = {
-    codexBackendMode: 'mcp',
-    codexMcpResumeInstallSpec: '',
-    codexAcpInstallSpec: '',
-};
+const shape = buildCodexProviderSettingsShape(z);
+const defaults: Record<keyof typeof shape, unknown> = CODEX_PROVIDER_SETTINGS_DEFAULTS;
 
 export const CODEX_PROVIDER_SETTINGS_PLUGIN = {
     providerId: 'codex',
@@ -73,4 +66,3 @@ export const CODEX_PROVIDER_SETTINGS_PLUGIN = {
     ],
     buildOutgoingMessageMetaExtras: () => ({}),
 } as const satisfies ProviderSettingsPlugin;
-

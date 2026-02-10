@@ -1,54 +1,15 @@
 import * as z from 'zod';
 
+import {
+    buildClaudeRemoteOutgoingMessageMetaExtras,
+    buildClaudeRemoteProviderSettingsShape,
+    CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS,
+} from '@happier-dev/agents';
+
 import type { ProviderSettingsPlugin } from '@/agents/providers/_shared/providerSettingsPlugin';
 
-const MAX_ADVANCED_OPTIONS_JSON_CHARS = 16_384;
-
-function isValidAdvancedOptionsJson(raw: string): boolean {
-    const trimmed = raw.trim();
-    if (!trimmed) return true;
-    if (trimmed.length > MAX_ADVANCED_OPTIONS_JSON_CHARS) return false;
-    try {
-        const parsed = JSON.parse(trimmed) as unknown;
-        return Boolean(parsed && typeof parsed === 'object' && !Array.isArray(parsed));
-    } catch {
-        return false;
-    }
-}
-
-function normalizeAdvancedOptionsJson(raw: unknown): string {
-    if (typeof raw !== 'string') return '';
-    const trimmed = raw.trim();
-    if (!trimmed) return '';
-    if (!isValidAdvancedOptionsJson(trimmed)) return '';
-    const parsed = JSON.parse(trimmed) as unknown;
-    const normalized = JSON.stringify(parsed);
-    return normalized.length <= MAX_ADVANCED_OPTIONS_JSON_CHARS ? normalized : '';
-}
-
-const shape = {
-    claudeRemoteAgentSdkEnabled: z.boolean(),
-    claudeRemoteSettingSources: z.enum(['project', 'user_project', 'none']),
-    claudeRemoteIncludePartialMessages: z.boolean(),
-    claudeRemoteEnableFileCheckpointing: z.boolean(),
-    claudeRemoteMaxThinkingTokens: z.number().int().positive().nullable(),
-    claudeRemoteDisableTodos: z.boolean(),
-    claudeRemoteStrictMcpServerConfig: z.boolean(),
-    claudeRemoteAdvancedOptionsJson: z.string().refine(isValidAdvancedOptionsJson, {
-        message: 'Must be empty or a valid JSON object string',
-    }),
-} as const;
-
-const defaults: Record<keyof typeof shape, unknown> = {
-    claudeRemoteAgentSdkEnabled: false,
-    claudeRemoteSettingSources: 'project',
-    claudeRemoteIncludePartialMessages: false,
-    claudeRemoteEnableFileCheckpointing: false,
-    claudeRemoteMaxThinkingTokens: null,
-    claudeRemoteDisableTodos: false,
-    claudeRemoteStrictMcpServerConfig: false,
-    claudeRemoteAdvancedOptionsJson: '',
-};
+const shape = buildClaudeRemoteProviderSettingsShape(z);
+const defaults: Record<keyof typeof shape, unknown> = CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFAULTS;
 
 export const CLAUDE_PROVIDER_SETTINGS_PLUGIN = {
     providerId: 'claude',
@@ -139,16 +100,6 @@ export const CLAUDE_PROVIDER_SETTINGS_PLUGIN = {
         },
     ],
     buildOutgoingMessageMetaExtras: ({ settings }) => {
-        return {
-            claudeRemoteAgentSdkEnabled: Boolean(settings.claudeRemoteAgentSdkEnabled),
-            claudeRemoteSettingSources: typeof settings.claudeRemoteSettingSources === 'string' ? settings.claudeRemoteSettingSources : 'project',
-            claudeRemoteIncludePartialMessages: Boolean(settings.claudeRemoteIncludePartialMessages),
-            claudeRemoteEnableFileCheckpointing: Boolean(settings.claudeRemoteEnableFileCheckpointing),
-            claudeRemoteMaxThinkingTokens:
-                typeof settings.claudeRemoteMaxThinkingTokens === 'number' ? settings.claudeRemoteMaxThinkingTokens : null,
-            claudeRemoteDisableTodos: Boolean(settings.claudeRemoteDisableTodos),
-            claudeRemoteStrictMcpServerConfig: Boolean(settings.claudeRemoteStrictMcpServerConfig),
-            claudeRemoteAdvancedOptionsJson: normalizeAdvancedOptionsJson(settings.claudeRemoteAdvancedOptionsJson),
-        };
+        return buildClaudeRemoteOutgoingMessageMetaExtras(settings);
     },
 } as const satisfies ProviderSettingsPlugin;

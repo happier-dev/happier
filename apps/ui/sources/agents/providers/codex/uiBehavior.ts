@@ -72,15 +72,7 @@ export function getCodexNewSessionPreflightIssues(ctx: NewSessionPreflightContex
     };
 
     const issues: NewSessionPreflightIssue[] = [];
-    if (extras?.experimentalCodexAcp === true && deps.codexAcpInstalled === false) {
-        issues.push({
-            id: 'codex-acp-not-installed',
-            titleKey: 'errors.codexAcpNotInstalledTitle',
-            messageKey: 'errors.codexAcpNotInstalledMessage',
-            confirmTextKey: 'connect.openMachine',
-            action: 'openMachine',
-        });
-    }
+    // Codex ACP can run via npx fallback; do not block new sessions when the optional dep isn't installed.
     if (extras?.experimentalCodexResume === true && deps.codexMcpResumeInstalled === false) {
         issues.push({
             id: 'codex-mcp-resume-not-installed',
@@ -124,15 +116,7 @@ export function getCodexResumePreflightIssues(ctx: ResumePreflightContext): read
     };
 
     const issues: NewSessionPreflightIssue[] = [];
-    if (extras.experimentalCodexAcp === true && deps.codexAcpInstalled === false) {
-        issues.push({
-            id: 'codex-acp-not-installed',
-            titleKey: 'errors.codexAcpNotInstalledTitle',
-            messageKey: 'errors.codexAcpNotInstalledMessage',
-            confirmTextKey: 'connect.openMachine',
-            action: 'openMachine',
-        });
-    }
+    // Codex ACP can run via npx fallback; do not block resume when the optional dep isn't installed.
     if (extras.experimentalCodexResume === true && deps.codexMcpResumeInstalled === false) {
         issues.push({
             id: 'codex-mcp-resume-not-installed',

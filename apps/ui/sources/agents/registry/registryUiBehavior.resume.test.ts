@@ -26,7 +26,7 @@ describe('getResumePreflightIssues', () => {
         ]);
     });
 
-    it('returns a blocking issue when codex backend mode is acp but the acp dep is not installed', () => {
+    it('does not block when codex backend mode is acp and the optional dep is not installed (npx fallback)', () => {
         const settings = makeSettings({ codexBackendMode: 'acp' });
         expect(getResumePreflightIssues({
             agentId: 'codex',
@@ -34,12 +34,7 @@ describe('getResumePreflightIssues', () => {
             results: {
                 'dep.codex-acp': { ok: true, checkedAt: 1, data: { installed: false } },
             },
-        })).toEqual([
-            expect.objectContaining({
-                id: 'codex-acp-not-installed',
-                action: 'openMachine',
-            }),
-        ]);
+        })).toEqual([]);
     });
 
     it('returns empty when deps are unknown', () => {

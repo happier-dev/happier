@@ -59,8 +59,7 @@ describe('getNewSessionPreflightIssues', () => {
                 'dep.codex-acp': okCapability({ installed: false }),
             }),
         });
-        expect(issues.length).toBeGreaterThan(0);
-        expect(issues[0]).toEqual(expect.objectContaining({ id: 'codex-acp-not-installed' }));
-        expect(issues).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'codex-mcp-resume-not-installed' })]));
+        // Codex ACP can run via npx fallback now; do not block new sessions when the optional dep isn't installed.
+        expect(issues).toEqual([]);
     });
 });
