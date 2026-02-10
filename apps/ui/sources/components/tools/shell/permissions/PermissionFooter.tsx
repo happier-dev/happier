@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, Platform } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { sessionAbort, sessionAllow, sessionDeny } from '@/sync/ops';
+import { sync } from '@/sync/sync';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { storage } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -49,6 +50,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
     const agentId = resolveAgentIdForPermissionUi({ flavor: metadata?.flavor, toolName });
     const copy = getPermissionFooterCopy(agentId);
     const isCodexDecision = copy.protocol === 'codexDecision';
+    const isNativeCodexAgent = agentId === 'codex';
     // Codex always provides proposed_execpolicy_amendment
     const execPolicyCommand = (() => {
         const proposedAmendment = toolInput?.proposedExecpolicyAmendment ?? toolInput?.proposed_execpolicy_amendment;
@@ -57,11 +59,26 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         }
         return [];
     })();
-    const canApproveExecPolicy = isCodexDecision && execPolicyCommand.length > 0;
+    const canApproveExecPolicy = isCodexDecision && isNativeCodexAgent && execPolicyCommand.length > 0;
+
+    const sendStopAndExplainMessage = async () => {
+        // UX: the stop/abort action promises an explanation. Ensure we ask the agent explicitly,
+        // otherwise aborting the run can leave the user with no response.
+        try {
+            const summary = formatPermissionRequestSummary({ toolName, toolInput });
+            await sync.sendMessage(
+                sessionId,
+                `I denied the permission request (${summary}). ` +
+                    `Please explain what I should do manually to achieve the same result, without running any tools.`,
+            );
+        } catch (error) {
+            console.error('Failed to request explanation after abort:', error);
+        }
+    };
 
     if (!canApprovePermissions && permission.status === 'pending') {
         const summary = formatPermissionRequestSummary({ toolName, toolInput });
-        const message =
+        const disabledMessage =
             disabledReason === 'public'
                 ? t('session.sharing.permissionApprovalsDisabledPublic')
                 : disabledReason === 'readOnly'
@@ -81,7 +98,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         {t('session.sharing.permissionApprovalsDisabledTitle')}
                     </Text>
                     <Text style={{ color: theme.colors.textSecondary }}>
-                        {message}
+                        {disabledMessage}
                     </Text>
                     <Text style={{ color: theme.colors.textSecondary, fontSize: 12 }}>
                         {summary}
@@ -201,6 +218,14 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
             // Denying a single tool call is not always enough to stop the agent from continuing.
             // Also abort the current session run so the agent stops and waits for the user.
             await sessionAbort(sessionId);
+            // Enforce a tool-free explanation turn. Without this, some agents will immediately
+            // attempt tools again and re-trigger permission prompts.
+            storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
+            // Codex can deadlock the turn when we auto-send a synthetic follow-up immediately
+            // after an abort decision. Leave Codex ready for the next user-authored message.
+            if (!isNativeCodexAgent) {
+                await sendStopAndExplainMessage();
+            }
         } catch (error) {
             console.error('Failed to deny permission:', error);
         } finally {
@@ -260,10 +285,14 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         
         setLoadingButton('abort');
         try {
-            await sessionDeny(sessionId, permission.id, undefined, undefined, 'abort');
-            // Denying a single tool call is not always enough to stop the agent from continuing.
-            // Also abort the current session run so the agent stops and waits for the user.
-            await sessionAbort(sessionId);
+            // Codex `abort` decisions can leave the in-flight turn unresolved in MCP mode.
+            // Use an explicit denial decision instead so the turn completes cleanly.
+            await sessionDeny(sessionId, permission.id, undefined, undefined, 'denied');
+            // Enforce a tool-free explanation turn. Without this, some agents will immediately
+            // attempt tools again and re-trigger permission prompts.
+            storage.getState().updateSessionPermissionMode(sessionId, 'read-only');
+            // Avoid synthetic follow-up prompts for Codex; they can leave the turn waiting forever
+            // after an abort and block subsequent user-authored prompts.
         } catch (error) {
             console.error('Failed to abort permission:', error);
         } finally {
@@ -603,7 +632,8 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                         )}
                     </TouchableOpacity>
 
-                    {/* Codex: Stop, and explain what to do button */}
+                    {/* Codex-style decision UI: only native Codex uses the abort workaround.
+                        Other codex-decision agents keep the generic stop+explain behavior. */}
                     <TouchableOpacity
                         style={[
                             styles.button,
@@ -611,7 +641,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
                             isCodexAborted && styles.buttonSelected,
                             (isCodexApproved || isCodexApprovedForSession || isCodexApprovedExecPolicy) && styles.buttonInactive
                         ]}
-                        onPress={handleCodexAbort}
+                        onPress={isNativeCodexAgent ? handleCodexAbort : handleDeny}
                         disabled={!isPending || loadingButton !== null || loadingForSession || loadingExecPolicy}
                         activeOpacity={isPending ? 0.7 : 1}
                     >

@@ -9,8 +9,17 @@ import { BashInputV2Schema, BashResultV2Schema, ExitPlanModeInputV2Schema } from
 export const coreTerminalTools = {
     'Bash': {
         title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            if (opts.tool.description) {
-                return opts.tool.description;
+            const rawDescription = typeof opts.tool.description === 'string' ? opts.tool.description.trim() : '';
+            // Some providers (and permission-wrapped ACP tools) emit a generic marker like "execute"
+            // rather than a helpful "Run <cmd>" title. Prefer deriving a stable title from the input.
+            if (rawDescription && rawDescription.toLowerCase() !== 'execute') {
+                return rawDescription;
+            }
+
+            const cmd = extractShellCommand(opts.tool.input);
+            if (typeof cmd === 'string' && cmd.length > 0) {
+                const clipped = cmd.length > 80 ? `${cmd.slice(0, 77)}...` : cmd;
+                return `Run ${clipped}`;
             }
             return t('tools.names.terminal');
         },

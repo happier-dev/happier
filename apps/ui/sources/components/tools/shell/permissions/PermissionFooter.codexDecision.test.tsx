@@ -41,6 +41,12 @@ vi.mock('@/sync/ops', () => ({
     sessionAbort: vi.fn(async () => {}),
 }));
 
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        sendMessage: vi.fn(async () => {}),
+    },
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
     storage: { getState: () => ({ updateSessionPermissionMode: vi.fn() }) },
 }));

@@ -121,7 +121,9 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
         }
     }
 
-    if (usedInferenceFallback && typeof toolForRendering.description === 'string' && toolForRendering.description.trim().length > 0) {
+    // If we inferred a known/canonical tool name, keep the known tool title.
+    // The fallback description is only a better title when the inferred tool is still unknown.
+    if (usedInferenceFallback && !knownTool && typeof toolForRendering.description === 'string' && toolForRendering.description.trim().length > 0) {
         toolTitle = toolForRendering.description.trim();
     }
 
@@ -292,6 +294,29 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 // into the full view by tapping the header).
                 if (effectiveDetailLevel === 'title') {
                     return null;
+                }
+
+                // When a permission is denied/canceled, the tool body often has no result payload.
+                // Render an explicit status so the user understands why the tool did not run.
+                if (toolForRendering.permission && (toolForRendering.permission.status === 'denied' || toolForRendering.permission.status === 'canceled')) {
+                    const canBlameReadOnlyMode = (() => {
+                        if (props.metadata?.permissionMode !== 'read-only') return false;
+                        const agentId = resolveAgentIdFromFlavor(props.metadata?.flavor);
+                        if (!agentId) return false;
+                        const core = getAgentCore(agentId);
+                        return core.permissions?.modeGroup === 'codexLike';
+                    })();
+                    const message =
+                        toolForRendering.permission.status === 'denied'
+                            ? canBlameReadOnlyMode
+                                ? 'Denied by Read Only mode (write actions are denied).'
+                                : t('errors.permissionDenied')
+                            : 'Permission canceled';
+                    return (
+                        <View style={styles.content}>
+                            <ToolError message={message} />
+                        </View>
+                    );
                 }
 
                 // Try to use a specific tool view component first

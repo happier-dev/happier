@@ -73,4 +73,30 @@ describe('BashView', () => {
             }),
         );
     });
+
+    it('does not dump structured JSON when stdout/stderr are empty', async () => {
+        commandViewSpy.mockClear();
+        const { BashView } = await import('./BashView');
+
+        const tool = makeToolCall({
+            name: 'Bash',
+            state: 'completed',
+            input: { command: ['/bin/zsh', '-lc', 'echo hi > /tmp/x'] },
+            result: {
+                stdout: '',
+                stderr: '',
+                exit_code: 0,
+                aggregated_output: '',
+                formatted_output: '',
+            },
+        });
+
+        await act(async () => {
+            renderer.create(React.createElement(BashView, makeToolViewProps(tool)));
+        });
+
+        const lastCallProps = commandViewSpy.mock.calls.at(-1)?.[0] as { stdout?: unknown; stderr?: unknown };
+        expect(lastCallProps.stdout == null || lastCallProps.stdout === '').toBe(true);
+        expect(lastCallProps.stderr == null || lastCallProps.stderr === '').toBe(true);
+    });
 });

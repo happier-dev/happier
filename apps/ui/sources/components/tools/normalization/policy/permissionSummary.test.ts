@@ -29,6 +29,14 @@ describe('formatPermissionRequestSummary', () => {
         expect(summary).toBe('Run: echo hello');
     });
 
+    it('normalizes toolName before inferring a shell summary', () => {
+        const summary = formatPermissionRequestSummary({
+            toolName: ' bash ',
+            toolInput: { command: 'echo hello' },
+        });
+        expect(summary).toBe('Run: echo hello');
+    });
+
     it('summarizes file read permissions', () => {
         const summary = formatPermissionRequestSummary({
             toolName: 'read',
@@ -67,6 +75,14 @@ describe('formatPermissionRequestSummary', () => {
             toolInput: null,
         });
         expect(summary).toBe('Permission required: custom_tool (details unavailable)');
+    });
+
+    it('uses a generic label when tool name is unknown and details are unavailable', () => {
+        const summary = formatPermissionRequestSummary({
+            toolName: 'unknown',
+            toolInput: null,
+        });
+        expect(summary).toBe('Permission required: tool operation (details unavailable)');
     });
 
     it('falls back to generic summary when object input has unrecognized keys', () => {

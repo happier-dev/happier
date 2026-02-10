@@ -5,6 +5,16 @@ type FormatPermissionRequestSummaryParams = {
     toolInput: unknown;
 };
 
+function normalizeToolLabel(toolName: string): string {
+    const raw = toolName.trim();
+    if (!raw) return 'tool operation';
+    const lower = raw.toLowerCase();
+    if (lower === 'unknown' || lower === 'unknown tool' || lower === 'other') {
+        return 'tool operation';
+    }
+    return raw;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     return value as Record<string, unknown>;
@@ -78,7 +88,8 @@ function extractFilePathLike(input: unknown): string | null {
 }
 
 export function formatPermissionRequestSummary(params: FormatPermissionRequestSummaryParams): string {
-    const toolName = params.toolName || 'unknown';
+    const rawToolName = params.toolName || 'unknown';
+    const toolName = normalizeToolLabel(rawToolName);
     const lower = toolName.toLowerCase();
 
     const obj = asRecord(params.toolInput);

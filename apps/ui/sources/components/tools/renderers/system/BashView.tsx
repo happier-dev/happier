@@ -21,7 +21,15 @@ export const BashView = React.memo((props: { tool: ToolCall; metadata: Metadata 
         if (typeof parsedMaybe === 'string') {
             unparsedOutput = parsedMaybe;
         } else if (!parsedStreams) {
-            unparsedOutput = JSON.stringify(parsedMaybe);
+            // When providers return a structured "bash result" envelope with empty stdout/stderr,
+            // don't dump the entire object into the transcript.
+            const obj = parsedMaybe && typeof parsedMaybe === 'object' && !Array.isArray(parsedMaybe) ? (parsedMaybe as Record<string, unknown>) : null;
+            const hasStdEnvelope =
+                !!obj &&
+                ('stdout' in obj || 'stderr' in obj || 'aggregated_output' in obj || 'formatted_output' in obj);
+            if (!hasStdEnvelope && isFullView) {
+                unparsedOutput = JSON.stringify(parsedMaybe);
+            }
         }
     } else if (state === 'error' && typeof result === 'string') {
         error = result;

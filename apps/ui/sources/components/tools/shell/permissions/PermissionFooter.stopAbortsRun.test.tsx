@@ -19,6 +19,14 @@ const ops = vi.hoisted(() => ({
     sessionAbort: vi.fn(async (..._args: unknown[]) => {}),
 }));
 
+const sessionStore = vi.hoisted(() => ({
+    updateSessionPermissionMode: vi.fn((..._args: unknown[]) => {}),
+}));
+
+const syncMock = vi.hoisted(() => ({
+    sendMessage: vi.fn(async (..._args: unknown[]) => {}),
+}));
+
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
@@ -55,8 +63,14 @@ vi.mock('@/sync/ops', () => ({
     sessionAbort: ops.sessionAbort,
 }));
 
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        sendMessage: syncMock.sendMessage,
+    },
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
-    storage: { getState: () => ({ updateSessionPermissionMode: vi.fn() }) },
+    storage: { getState: () => sessionStore },
 }));
 
 vi.mock('@/text', () => ({
@@ -94,6 +108,19 @@ describe('PermissionFooter stop action', () => {
             flavor: 'codex' as const,
             toolName: 'execute',
             toolInput: { command: 'pwd' },
+            shouldSendFollowupPrompt: false,
+            shouldAbortRun: false,
+            expectedDecision: 'denied' as const,
+        },
+        {
+            name: 'codex decision protocol on non-codex agent',
+            protocol: 'codexDecision' as const,
+            flavor: 'opencode' as const,
+            toolName: 'bash',
+            toolInput: { command: 'pwd' },
+            shouldSendFollowupPrompt: true,
+            shouldAbortRun: true,
+            expectedDecision: 'abort' as const,
         },
         {
             name: 'non-codex protocol',
@@ -101,11 +128,16 @@ describe('PermissionFooter stop action', () => {
             flavor: 'opencode' as const,
             toolName: 'Read',
             toolInput: { filepath: '/etc/hosts' },
+            shouldSendFollowupPrompt: true,
+            shouldAbortRun: true,
+            expectedDecision: 'abort' as const,
         },
-    ])('Stop denies permission and aborts the run for $name', async ({ protocol, flavor, toolName, toolInput }) => {
+    ])('Stop denies permission and handles run control for $name', async ({ protocol, flavor, toolName, toolInput, shouldSendFollowupPrompt, shouldAbortRun, expectedDecision }) => {
         runtime.setProtocol(protocol, flavor);
         ops.sessionDeny.mockClear();
         ops.sessionAbort.mockClear();
+        syncMock.sendMessage.mockClear();
+        sessionStore.updateSessionPermissionMode.mockClear();
 
         let tree: renderer.ReactTestRenderer | undefined;
         await act(async () => {
@@ -129,7 +161,23 @@ describe('PermissionFooter stop action', () => {
         });
 
         expect(ops.sessionDeny).toHaveBeenCalledTimes(1);
-        expect(ops.sessionDeny.mock.calls[0]?.[4]).toBe('abort');
-        expect(ops.sessionAbort).toHaveBeenCalledTimes(1);
+        expect(ops.sessionDeny.mock.calls[0]?.[4]).toBe(expectedDecision);
+        if (shouldAbortRun) {
+            expect(ops.sessionAbort).toHaveBeenCalledTimes(1);
+        } else {
+            expect(ops.sessionAbort).not.toHaveBeenCalled();
+        }
+        expect(sessionStore.updateSessionPermissionMode).toHaveBeenCalledTimes(1);
+        expect(sessionStore.updateSessionPermissionMode).toHaveBeenCalledWith('s1', 'read-only');
+        if (shouldSendFollowupPrompt) {
+            expect(syncMock.sendMessage).toHaveBeenCalledTimes(1);
+            expect(sessionStore.updateSessionPermissionMode.mock.invocationCallOrder[0]).toBeLessThan(
+                syncMock.sendMessage.mock.invocationCallOrder[0],
+            );
+            expect(syncMock.sendMessage.mock.calls[0]?.[0]).toBe('s1');
+            expect(String(syncMock.sendMessage.mock.calls[0]?.[1] ?? '')).toMatch(/explain/i);
+        } else {
+            expect(syncMock.sendMessage).not.toHaveBeenCalled();
+        }
     });
 });
