@@ -19,6 +19,7 @@ import { t } from '@/text';
 import { normalizeSecretPromptInput } from '@/utils/secrets/normalizeSecretInput';
 import { VOICE_PROVIDER_IDS } from '@/voice/voiceProviders';
 import { fetchOpenAiCompatSpeechAudio } from '@/voice/local/fetchOpenAiCompatSpeechAudio';
+import { formatVoiceTestFailureMessage } from '@/voice/local/formatVoiceTestFailureMessage';
 import { playAudioBytes } from '@/voice/local/playAudioBytes';
 
 import { ByoElevenLabsSection } from './voice/ByoElevenLabsSection';
@@ -385,8 +386,8 @@ export default function VoiceSettingsScreen() {
 
             // Web-only for now (native playback support can be added once we choose a single audio runtime).
             await playAudioBytes({ bytes, format });
-        } catch {
-            Modal.alert(t('common.error'), t('settingsVoice.local.testTtsFailed'));
+        } catch (err) {
+            Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err));
         } finally {
             setIsTestingLocalTts(false);
         }
