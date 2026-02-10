@@ -32,8 +32,13 @@ yarn-error.*
 
 # local caches (dev / CI)
 .tmp-home/
+.playwright-cli/
 .yarn-cache/
 .yarn-global/
+
+# local build/log artifacts
+apps/cli/.dist.hstack-backup/
+apps/stack/resume-invocations.log
 
 # macOS
 .DS_Store
