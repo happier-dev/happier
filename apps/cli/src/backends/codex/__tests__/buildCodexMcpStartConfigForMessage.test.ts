@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { CHANGE_TITLE_INSTRUCTION } from '@/agent/runtime/changeTitleInstruction';
+import { EXEC_SEQUENCING_INSTRUCTION } from '@/agent/runtime/execSequencingInstruction';
 
 import { buildCodexMcpStartConfigForMessage } from '../utils/buildCodexMcpStartConfigForMessage';
 
@@ -16,7 +17,7 @@ describe('buildCodexMcpStartConfigForMessage', () => {
     });
 
     expect(config).toMatchObject({
-      prompt: `Hello\n\n${CHANGE_TITLE_INSTRUCTION}`,
+      prompt: `Hello\n\n${CHANGE_TITLE_INSTRUCTION}\n\n${EXEC_SEQUENCING_INSTRUCTION}`,
       model: 'gpt-5-codex-high',
     });
   });

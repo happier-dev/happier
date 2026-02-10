@@ -50,7 +50,8 @@
       "HEADLESS": "1",
       "HAPPIER_VARIANT": "dev",
       "HAPPIER_EXPERIMENTAL_CODEX_ACP": "1",
-      "HAPPIER_CODEX_ACP_ALLOW_NPX": "1",
+      "HAPPIER_E2E_ACP_TRACE_MARKERS": "1",
+      "HAPPIER_CODEX_ACP_NPX_MODE": "auto",
       "HAPPIER_ACP_PROBE_TIMEOUT_CODEX_MS": "20000"
     },
     "envFrom": {

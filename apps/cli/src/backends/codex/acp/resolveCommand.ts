@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve as resolvePath } from 'node:path';
+import { delimiter as pathDelimiter } from 'node:path';
 
 import { isCodexPermissionMode, type PermissionMode } from '@/api/types';
 import { configuration } from '@/configuration';
@@ -9,6 +10,41 @@ export type ResolveCodexAcpSpawnOptions = { permissionMode?: PermissionMode };
 
 function isTruthyEnv(value: string | undefined): boolean {
   return typeof value === 'string' && ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
+}
+
+type NpxMode = 'auto' | 'never' | 'force';
+
+function readCodexAcpNpxMode(): NpxMode {
+  const raw = typeof process.env.HAPPIER_CODEX_ACP_NPX_MODE === 'string'
+    ? process.env.HAPPIER_CODEX_ACP_NPX_MODE.trim().toLowerCase()
+    : '';
+  if (raw === 'never' || raw === 'force' || raw === 'auto') return raw;
+
+  // Backward-compat: legacy allow flag. (Default is already auto.)
+  if (isTruthyEnv(process.env.HAPPIER_CODEX_ACP_ALLOW_NPX)) return 'auto';
+
+  return 'auto';
+}
+
+function isCodexAcpOnPath(): boolean {
+  const path = typeof process.env.PATH === 'string' ? process.env.PATH : '';
+  if (!path) return false;
+  const candidates = process.platform === 'win32'
+    ? ['codex-acp.cmd', 'codex-acp.exe', 'codex-acp']
+    : ['codex-acp'];
+
+  for (const dir of path.split(pathDelimiter)) {
+    const trimmed = dir.trim();
+    if (!trimmed) continue;
+    for (const name of candidates) {
+      try {
+        if (existsSync(join(trimmed, name))) return true;
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return false;
 }
 
 function readCodexAcpConfigOverrides(): string[] {
@@ -48,8 +84,8 @@ export function resolveCodexAcpCommand(): string {
  * Order:
  * 1) Explicit env override: HAPPIER_CODEX_ACP_BIN
  * 2) Capability install under HAPPIER_HOME_DIR/tools/codex-acp
- * 3) PATH fallback (`codex-acp`)
- * 4) Optional npx fallback when explicitly enabled (HAPPIER_CODEX_ACP_ALLOW_NPX=1)
+ * 3) PATH fallback (`codex-acp`) when available
+ * 4) npx fallback (default) when not installed
  */
 export function resolveCodexAcpSpawn(opts: ResolveCodexAcpSpawnOptions = {}): SpawnSpec {
   return resolveCodexAcpSpawnWithOptions(opts);
@@ -60,10 +96,12 @@ export function resolveCodexAcpSpawnWithOptions(opts: ResolveCodexAcpSpawnOption
     ? process.env.HAPPIER_CODEX_ACP_BIN.trim()
     : '';
   if (envOverride) {
-    if (!existsSync(envOverride)) {
-      throw new Error(`Codex ACP is enabled but HAPPIER_CODEX_ACP_BIN does not exist: ${envOverride}`);
+    // Normalize to absolute so spawn works even when the provider changes cwd (e.g. session workspace).
+    const resolved = isAbsolute(envOverride) ? envOverride : resolvePath(process.cwd(), envOverride);
+    if (!existsSync(resolved)) {
+      throw new Error(`Codex ACP is enabled but HAPPIER_CODEX_ACP_BIN does not exist: ${resolved}`);
     }
-    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: envOverride, args: [] }), opts);
+    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: resolved, args: [] }), opts);
   }
 
   const binName = process.platform === 'win32' ? 'codex-acp.cmd' : 'codex-acp';
@@ -72,13 +110,26 @@ export function resolveCodexAcpSpawnWithOptions(opts: ResolveCodexAcpSpawnOption
     return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: defaultPath, args: [] }), opts);
   }
 
-  // Default to PATH fallback to avoid implicit package execution via npx.
-  if (!isTruthyEnv(process.env.HAPPIER_CODEX_ACP_ALLOW_NPX)) {
+  const npxMode = readCodexAcpNpxMode();
+  if (npxMode === 'force') {
+    return appendPermissionModeDerivedOverrides(
+      appendConfigOverridesArgs({ command: 'npx', args: ['-y', '@zed-industries/codex-acp'] }),
+      opts,
+    );
+  }
+
+  if (npxMode === 'never') {
     return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: 'codex-acp', args: [] }), opts);
   }
 
-  // Optional npx fallback for explicitly opted-in environments.
-  return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: 'npx', args: ['-y', '@zed-industries/codex-acp'] }), opts);
+  // Default: prefer installed CLI on PATH when present; otherwise use npx.
+  if (isCodexAcpOnPath()) {
+    return appendPermissionModeDerivedOverrides(appendConfigOverridesArgs({ command: 'codex-acp', args: [] }), opts);
+  }
+  return appendPermissionModeDerivedOverrides(
+    appendConfigOverridesArgs({ command: 'npx', args: ['-y', '@zed-industries/codex-acp'] }),
+    opts,
+  );
 }
 
 function appendPermissionModeDerivedOverrides(spec: SpawnSpec, opts: ResolveCodexAcpSpawnOptions): SpawnSpec {

@@ -1,6 +1,7 @@
 import { AGENTS_CORE } from '@happier-dev/agents';
 
 import { checklists } from './cli/checklists';
+import { codexDaemonSpawnHooks } from '@/backends/codex/daemon/spawnHooks';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
@@ -11,7 +12,7 @@ export const agent = {
   getCapabilities: async () => (await import('@/backends/codex/cli/extraCapabilities')).capabilities,
   getCliDetect: async () => (await import('@/backends/codex/cli/detect')).cliDetect,
   getCloudConnectTarget: async () => (await import('@/backends/codex/cloud/connect')).codexCloudConnect,
-  getDaemonSpawnHooks: async () => (await import('@/backends/codex/daemon/spawnHooks')).codexDaemonSpawnHooks,
+  getDaemonSpawnHooks: async () => codexDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.codex.resume.vendorResume,
   getVendorResumeSupport: async () => (await import('@/backends/codex/resume/vendorResumeSupport')).supportsCodexVendorResume,
   getAcpBackendFactory: async () => {
@@ -20,4 +21,3 @@ export const agent = {
   },
   checklists,
 } satisfies AgentCatalogEntry;
-

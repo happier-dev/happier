@@ -32,6 +32,7 @@ export class CodexPermissionHandler extends CodexLikePermissionHandler {
     opts?: {
       onAbortRequested?: (() => void | Promise<void>) | null;
       toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
+      triggerAbortCallbackOnAbortDecision?: boolean;
     },
   ) {
     super({
@@ -39,6 +40,7 @@ export class CodexPermissionHandler extends CodexLikePermissionHandler {
       logPrefix: '[Codex]',
       onAbortRequested: opts?.onAbortRequested ?? null,
       toolTrace: opts?.toolTrace ?? null,
+      triggerAbortCallbackOnAbortDecision: opts?.triggerAbortCallbackOnAbortDecision,
     });
   }
 }

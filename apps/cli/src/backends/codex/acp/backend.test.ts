@@ -113,7 +113,7 @@ describe('createCodexAcpBackend', () => {
       await withEnv({
         HAPPIER_VARIANT: 'stable',
         HAPPIER_HOME_DIR: homeDir,
-        HAPPIER_CODEX_ACP_ALLOW_NPX: '1',
+        HAPPIER_CODEX_ACP_NPX_MODE: 'force',
       }, async () => {
         const mod = await import('./backend');
         const created = mod.createCodexAcpBackend({ cwd: homeDir, env: {} });
@@ -131,7 +131,7 @@ describe('createCodexAcpBackend', () => {
       await withEnv({
         HAPPIER_VARIANT: 'stable',
         HAPPIER_HOME_DIR: homeDir,
-        HAPPIER_CODEX_ACP_ALLOW_NPX: '1',
+        HAPPIER_CODEX_ACP_NPX_MODE: 'force',
         HAPPIER_CODEX_ACP_CONFIG_OVERRIDES: undefined,
       }, async () => {
         const mod = await import('./backend');

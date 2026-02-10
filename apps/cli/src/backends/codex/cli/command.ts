@@ -9,6 +9,7 @@ export async function handleCodexCliCommand(context: CommandContext): Promise<vo
   await runBackendSessionCliCommand({
     context,
     loadRun: async () => (await import('@/backends/codex/runCodex')).runCodex,
+    agentIdForAccountSettings: 'codex',
     resolveExtraOptions: (args) => {
       const startingModeRaw = readOptionalFlagValue(args, '--happy-starting-mode');
       const startingMode: 'local' | 'remote' | undefined =

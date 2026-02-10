@@ -9,9 +9,11 @@ export function createCodexPermissionHandler(params: {
   session: ApiSessionClient;
   onAbortRequested?: (() => void | Promise<void>) | null;
   toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
+  triggerAbortCallbackOnAbortDecision?: boolean;
 }): CodexRuntimePermissionHandler {
   return new CodexPermissionHandler(params.session, {
     onAbortRequested: params.onAbortRequested ?? null,
     toolTrace: params.toolTrace ?? null,
+    triggerAbortCallbackOnAbortDecision: params.triggerAbortCallbackOnAbortDecision,
   });
 }

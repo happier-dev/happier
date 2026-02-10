@@ -1,10 +1,10 @@
 {
   "v": 1,
   "tiers": {
-    "smoke": ["execute_trace_ok"],
+    "smoke": ["execute_trace_ok", "acp_probe_capabilities"],
     "extended": [
       "read_in_workspace",
-      "acp_probe_capabilities",
+      "acp_in_flight_steer",
       "acp_probe_models",
       "acp_set_model_dynamic",
       "search_known_token",

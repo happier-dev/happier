@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { delimiter, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 
 import { buildCodexAcpEnvOverrides } from './env';
+import { projectPath } from '@/projectPath';
 
 describe('buildCodexAcpEnvOverrides', () => {
   it('prepends the CLI shims directory to PATH', () => {
@@ -18,5 +20,9 @@ describe('buildCodexAcpEnvOverrides', () => {
     const shimsDir = resolve(projectDir, 'scripts', 'shims');
     expect(out.PATH).toBe(shimsDir);
   });
-});
 
+  it('ships a git shim in the shims directory', () => {
+    const shimsDir = resolve(projectPath(), 'scripts', 'shims');
+    expect(existsSync(resolve(shimsDir, 'git'))).toBe(true);
+  });
+});

@@ -22,6 +22,8 @@ export function createCodexAcpRuntime(params: {
   onThinkingChange: (thinking: boolean) => void;
 }) {
   const lastCodexAcpThreadIdPublished: { value: string | null } = { value: null };
+  const drainPendingDuringTurn =
+    (process.env.HAPPIER_E2E_ACP_TRACE_MARKERS ?? '').toString().trim() === '1';
 
   return createAcpRuntime({
     provider: 'codex',
@@ -31,6 +33,15 @@ export function createCodexAcpRuntime(params: {
     mcpServers: params.mcpServers,
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
+    // Codex ACP supports in-flight steering by submitting additional prompt messages while a turn is active.
+    inFlightSteer: { enabled: true },
+    pendingQueue: {
+      // Drain server-pending messages mid-turn only in the provider harness / e2e context.
+      // In normal interactive use, "queue for review" semantics should not be defeated.
+      drainDuringTurn: drainPendingDuringTurn,
+      waitForMetadataUpdate: (signal) => params.session.waitForMetadataUpdate(signal),
+      popPendingMessage: () => params.session.popPendingMessage(),
+    },
     ensureBackend: async () => {
       const permissionModeRaw = params.getPermissionMode?.() ?? params.permissionMode;
       const permissionMode = typeof permissionModeRaw === 'string' ? permissionModeRaw : undefined;

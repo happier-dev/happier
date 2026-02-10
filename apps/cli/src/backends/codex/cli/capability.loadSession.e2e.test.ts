@@ -63,7 +63,7 @@ describe('cli.codex capability (ACP)', () => {
 
   probeIt(`detects session/load support when codex ACP is available [${gate.reason}]`, async () => {
     const originalAcpBin = process.env.HAPPIER_CODEX_ACP_BIN;
-    const originalAllowNpx = process.env.HAPPIER_CODEX_ACP_ALLOW_NPX;
+    const originalNpxMode = process.env.HAPPIER_CODEX_ACP_NPX_MODE;
 
     // This is a real binary probe. Keep it opt-in (mirrors provider harness gating).
     try {
@@ -76,7 +76,7 @@ describe('cli.codex capability (ACP)', () => {
       }
       // Provider tests run in ephemeral environments where `codex-acp` is not installed.
       // Prefer the documented `npx -y @zed-industries/codex-acp` path when probing.
-      process.env.HAPPIER_CODEX_ACP_ALLOW_NPX = '1';
+      process.env.HAPPIER_CODEX_ACP_NPX_MODE = 'force';
 
       const resolvedCodexPath = resolveBinaryOnPath('codex');
       expect(resolvedCodexPath).toBeTruthy();
@@ -118,11 +118,11 @@ describe('cli.codex capability (ACP)', () => {
       } else {
         process.env.HAPPIER_CODEX_ACP_BIN = originalAcpBin;
       }
-      if (originalAllowNpx === undefined) {
+      if (originalNpxMode === undefined) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-        delete process.env.HAPPIER_CODEX_ACP_ALLOW_NPX;
+        delete process.env.HAPPIER_CODEX_ACP_NPX_MODE;
       } else {
-        process.env.HAPPIER_CODEX_ACP_ALLOW_NPX = originalAllowNpx;
+        process.env.HAPPIER_CODEX_ACP_NPX_MODE = originalNpxMode;
       }
     }
   }, 60_000);

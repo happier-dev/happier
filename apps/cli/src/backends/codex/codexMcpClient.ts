@@ -14,6 +14,12 @@ import { registerCodexPermissionHandlers, type CodexMcpPermissionHandler } from 
 import { getCodexElicitationToolCallId, getCodexEventToolCallId } from './mcp/elicitationTypes';
 
 const DEFAULT_TIMEOUT = 14 * 24 * 60 * 60 * 1000; // 14 days
+const CodexEventNotificationSchema = z.object({
+    method: z.literal('codex/event'),
+    params: z.object({
+        msg: z.any()
+    })
+}).passthrough() as any;
 
 export { getCodexElicitationToolCallId, getCodexEventToolCallId };
 
@@ -34,20 +40,16 @@ export class CodexMcpClient {
         this.codexCommand = options?.command ?? 'codex';
         this.mode = options?.mode ?? 'codex-cli';
         this.mcpServerArgs = options?.args ?? [];
+        this.client = this.createClient();
+    }
 
-        this.client = new Client(
+    private createClient(): Client {
+        const client = new Client(
             { name: 'happy-codex-client', version: '1.0.0' },
             { capabilities: { elicitation: {} } }
         );
 
-        const CodexEventNotificationSchema = z.object({
-            method: z.literal('codex/event'),
-            params: z.object({
-                msg: z.any()
-            })
-        }).passthrough() as any;
-
-        this.client.setNotificationHandler(CodexEventNotificationSchema, (data: any) => {
+        client.setNotificationHandler(CodexEventNotificationSchema, (data: any) => {
             const msg = data.params.msg as Record<string, unknown> | null;
             this.updateIdentifiersFromEvent(msg);
             this.handler?.(msg);
@@ -60,6 +62,8 @@ export class CodexMcpClient {
                 }
             }
         });
+
+        return client;
     }
 
     setHandler(handler: ((event: any) => void) | null): void {
@@ -93,18 +97,52 @@ export class CodexMcpClient {
         logger.debug('[CodexMCP] Connected to Codex');
     }
 
+    private isClosedTransportError(error: unknown): boolean {
+        const record = error as { code?: unknown; message?: unknown } | null;
+        const code = typeof record?.code === 'number' ? record.code : null;
+        if (code === -32000) {
+            return true;
+        }
+        const message = typeof record?.message === 'string' ? record.message.toLowerCase() : '';
+        if (code === -32001 && message.includes('aborterror')) {
+            return true;
+        }
+        return message.includes('connection closed') || message.includes('not connected');
+    }
+
+    private async callToolWithReconnectRetry<T>(call: () => Promise<T>): Promise<T> {
+        try {
+            return await call();
+        } catch (error) {
+            if (!this.isClosedTransportError(error)) {
+                throw error;
+            }
+
+            logger.debug('[CodexMCP] Transport closed during tool call; reconnecting and retrying once');
+            try {
+                await this.disconnect();
+            } catch {
+                // Best effort: continue to connect retry path.
+            }
+            await this.connect();
+            return await call();
+        }
+    }
+
     async startSession(config: CodexSessionConfig, options?: { signal?: AbortSignal }): Promise<CodexToolResponse> {
         if (!this.connected) await this.connect();
 
         logger.debug('[CodexMCP] Starting Codex session:', config);
 
-        const response = await this.client.callTool({
-            name: 'codex',
-            arguments: config as any
-        }, undefined, {
-            signal: options?.signal,
-            timeout: DEFAULT_TIMEOUT,
-        });
+        const response = await this.callToolWithReconnectRetry(() =>
+            this.client.callTool({
+                name: 'codex',
+                arguments: config as any
+            }, undefined, {
+                signal: options?.signal,
+                timeout: DEFAULT_TIMEOUT,
+            }),
+        );
 
         logger.debug('[CodexMCP] startSession response:', response);
         this.extractIdentifiers(response);
@@ -130,13 +168,15 @@ export class CodexMcpClient {
         }
         logger.debug('[CodexMCP] Continuing Codex session:', args);
 
-        const response = await this.client.callTool({
-            name: 'codex-reply',
-            arguments: args
-        }, undefined, {
-            signal: options?.signal,
-            timeout: DEFAULT_TIMEOUT
-        });
+        const response = await this.callToolWithReconnectRetry(() =>
+            this.client.callTool({
+                name: 'codex-reply',
+                arguments: args
+            }, undefined, {
+                signal: options?.signal,
+                timeout: DEFAULT_TIMEOUT
+            }),
+        );
 
         logger.debug('[CodexMCP] continueSession response:', response);
         this.extractIdentifiers(response);
@@ -299,6 +339,7 @@ export class CodexMcpClient {
 
         this.transport = null;
         this.connected = false;
+        this.client = this.createClient();
         logger.debug(`[CodexMCP] Disconnected; session ${this.threadId ?? 'none'} preserved`);
     }
 }

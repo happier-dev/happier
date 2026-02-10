@@ -37,6 +37,7 @@ import { normalizePermissionModeToIntent, resolvePermissionModeUpdatedAtFromMess
 import { maybeUpdateCodexSessionIdMetadata } from './utils/codexSessionIdMetadata';
 import { createCodexAcpRuntime } from './acp/runtime';
 import { syncCodexAcpSessionModeFromPermissionMode } from './acp/syncSessionModeFromPermissionMode';
+import { publishInFlightSteerCapability } from './utils/publishInFlightSteerCapability';
 import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMetadataOverrides';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
@@ -236,6 +237,10 @@ export async function runCodex(opts: {
         // Intentionally ignore model in the mode hash: Codex cannot reliably switch models mid-session
         // without losing in-memory context.
     }));
+    const messageBuffer = new MessageBuffer();
+
+    // Late-initialized when Codex ACP is enabled; referenced by the user-message binding for in-flight steering.
+    let codexAcpRuntime: ReturnType<typeof createCodexAcpRuntime> | null = null;
 
     // Track current overrides to apply per message
     // Use shared PermissionMode type from api/types for cross-agent compatibility
@@ -247,6 +252,7 @@ export async function runCodex(opts: {
     session.onUserMessage((message) => {
         // Resolve permission mode (accept all modes, will be mapped in switch statement)
         let messagePermissionMode = currentPermissionMode;
+        let didChangePermissionMode = false;
         if (message.meta?.permissionMode) {
             const nextPermissionMode = normalizePermissionModeToIntent(message.meta.permissionMode);
             if (nextPermissionMode) {
@@ -259,6 +265,7 @@ export async function runCodex(opts: {
                 });
                 currentPermissionMode = res.currentPermissionMode;
                 messagePermissionMode = currentPermissionMode;
+                didChangePermissionMode = res.didChange;
                 if (res.didChange) {
                     currentPermissionModeUpdatedAt = updatedAt;
                     logger.debug(`[Codex] Permission mode updated from user message to: ${currentPermissionMode}`);
@@ -280,9 +287,32 @@ export async function runCodex(opts: {
             localId: message.localId ?? null,
             model: messageModel,
         };
+
+        const text = message.content.text;
+        const special = parseSpecialCommand(text);
+        const runtime = codexAcpRuntime;
+        if (
+            runtime &&
+            runtime.supportsInFlightSteer() &&
+            runtime.isTurnInFlight() &&
+            !didChangePermissionMode &&
+            special.type === null
+        ) {
+            // This message will not go through the main prompt loop queue; display it immediately.
+            messageBuffer.addMessage(text, 'user');
+            void runtime.steerPrompt(text).catch(() => {
+                pushTextToMessageQueueWithSpecialCommands({
+                    queue: messageQueue,
+                    text,
+                    mode: enhancedMode,
+                });
+            });
+            return;
+        }
+
         pushTextToMessageQueueWithSpecialCommands({
             queue: messageQueue,
-            text: message.content.text,
+            text,
             mode: enhancedMode,
         });
     });
@@ -396,7 +426,7 @@ export async function runCodex(opts: {
     }
     let happierMcpServer: { url: string; stop: () => void } | null = null;
     let client: CodexMcpClient | null = null;
-    let codexAcpRuntime: ReturnType<typeof createCodexAcpRuntime> | null = null;
+    // codexAcpRuntime is declared above to allow the onUserMessage binding to steer mid-turn.
 
     /**
      * Handles aborting the current task/inference without exiting the process.
@@ -478,7 +508,6 @@ export async function runCodex(opts: {
     // Initialize Ink UI
     //
 
-    const messageBuffer = new MessageBuffer();
     const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
     let requestedSwitchToLocal = false;
 
@@ -583,6 +612,7 @@ export async function runCodex(opts: {
                 session,
                 onAbortRequested: handleAbort,
                 toolTrace: { protocol: useCodexAcp ? 'acp' : 'codex', provider: 'codex' },
+                triggerAbortCallbackOnAbortDecision: useCodexAcp,
             });
             applyPermissionModeToCodexPermissionHandler({
                 permissionHandler,
@@ -635,6 +665,11 @@ export async function runCodex(opts: {
             getPermissionMode: () => currentPermissionMode ?? initialPermissionMode,
             onThinkingChange: (value) => { thinking = value; },
         });
+        try {
+            publishInFlightSteerCapability({ session, runtime: codexAcpRuntime });
+        } catch (e) {
+            logger.debug('[codex] Failed to publish in-flight steer capability (non-fatal)', e);
+        }
     }
 
     if (client) {
