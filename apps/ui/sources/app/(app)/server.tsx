@@ -15,14 +15,14 @@ import { t } from '@/text';
 import { validateServerUrl } from '@/sync/domains/server/serverConfig';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { parseServerConfigRouteParams } from './serverParams';
-import { type ServerProfile, getActiveServerId, listServerProfiles, removeServerProfile, renameServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { type ServerProfile, getActiveServerId, getResetToDefaultServerId, isCloudServerProfileId, listServerProfiles, removeServerProfile, renameServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { filterMultiServerGroupProfilesToAvailable, normalizeStoredMultiServerGroupProfiles, type MultiServerGroupProfile } from '@/sync/domains/server/multiServerGroups';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Ionicons } from '@expo/vector-icons';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { useAuth } from '@/auth/context/AuthContext';
 import { Switch } from '@/components/ui/forms/Switch';
 import { useSettingMutable } from '@/sync/domains/state/storage';
-import { OFFICIAL_SERVER_ID } from '@/sync/domains/server/serverIdentity';
 
 const stylesheet = StyleSheet.create((theme) => ({
     keyboardAvoidingView: {
@@ -103,49 +103,6 @@ function defaultServerName(rawUrl: string): string {
     }
 }
 
-type MultiServerGroupProfile = {
-    id: string;
-    name: string;
-    serverIds: string[];
-    presentation: 'grouped' | 'flat-with-badge';
-};
-
-function normalizeMultiServerGroupProfiles(
-    raw: unknown,
-    validServerIds: ReadonlySet<string>,
-): MultiServerGroupProfile[] {
-    if (!Array.isArray(raw)) return [];
-    const seenIds = new Set<string>();
-    const result: MultiServerGroupProfile[] = [];
-    for (const item of raw) {
-        if (!item || typeof item !== 'object') continue;
-        const record = item as Record<string, unknown>;
-        const id = String(record.id ?? '').trim();
-        const name = String(record.name ?? '').trim();
-        if (!id || !name) continue;
-        if (seenIds.has(id)) continue;
-        seenIds.add(id);
-        const idsRaw = Array.isArray(record.serverIds) ? record.serverIds : [];
-        const serverIds: string[] = [];
-        const seenServerIds = new Set<string>();
-        for (const rawServerId of idsRaw) {
-            const serverId = String(rawServerId ?? '').trim();
-            if (!serverId) continue;
-            if (!validServerIds.has(serverId)) continue;
-            if (seenServerIds.has(serverId)) continue;
-            seenServerIds.add(serverId);
-            serverIds.push(serverId);
-        }
-        result.push({
-            id,
-            name,
-            serverIds,
-            presentation: record.presentation === 'flat-with-badge' ? 'flat-with-badge' : 'grouped',
-        });
-    }
-    return result;
-}
-
 function toGroupProfileId(rawName: string): string {
     const base = String(rawName ?? '').trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/-+/g, '-');
     return base || `group-${Date.now()}`;
@@ -169,6 +126,9 @@ export default function ServerConfigScreen() {
     const [multiServerProfiles, setMultiServerProfiles] = useSettingMutable('multiServerProfiles');
     const [multiServerActiveProfileId, setMultiServerActiveProfileId] = useSettingMutable('multiServerActiveProfileId');
     const autoHandledRef = React.useRef(false);
+    const seedSelectedServerIdsRef = React.useRef<string[]>(
+        Array.isArray(multiServerSelectedServerIds) ? multiServerSelectedServerIds : [],
+    );
     const route = React.useMemo(() => {
         return parseServerConfigRouteParams({ url: searchParams.url, auto: searchParams.auto });
     }, [searchParams.auto, searchParams.url]);
@@ -280,9 +240,13 @@ export default function ServerConfigScreen() {
         return new Set(servers.map((profile) => profile.id));
     }, [servers]);
 
+    const storedMultiServerProfiles = React.useMemo(() => {
+        return normalizeStoredMultiServerGroupProfiles(multiServerProfiles);
+    }, [multiServerProfiles]);
+
     const normalizedMultiServerProfiles = React.useMemo(() => {
-        return normalizeMultiServerGroupProfiles(multiServerProfiles, validServerIds);
-    }, [multiServerProfiles, validServerIds]);
+        return filterMultiServerGroupProfilesToAvailable(storedMultiServerProfiles, validServerIds);
+    }, [storedMultiServerProfiles, validServerIds]);
 
     const activeMultiServerProfileId = React.useMemo(() => {
         const id = String(multiServerActiveProfileId ?? '').trim();
@@ -317,6 +281,8 @@ export default function ServerConfigScreen() {
 
     React.useEffect(() => {
         const current = Array.isArray(multiServerSelectedServerIds) ? multiServerSelectedServerIds : [];
+        seedSelectedServerIdsRef.current = current;
+        if (validServerIds.size === 0) return;
         const next = current.filter((id) => validServerIds.has(id));
         if (next.length !== current.length || next.some((id, index) => id !== current[index])) {
             setMultiServerSelectedServerIds(next);
@@ -324,13 +290,14 @@ export default function ServerConfigScreen() {
     }, [multiServerSelectedServerIds, setMultiServerSelectedServerIds, validServerIds]);
 
     React.useEffect(() => {
-        const normalized = normalizeMultiServerGroupProfiles(multiServerProfiles, validServerIds);
-        if (JSON.stringify(normalized) !== JSON.stringify(multiServerProfiles)) {
-            setMultiServerProfiles(normalized as any);
+        const normalizedStored = normalizeStoredMultiServerGroupProfiles(multiServerProfiles);
+        const rawComparable = Array.isArray(multiServerProfiles) ? multiServerProfiles : [];
+        if (JSON.stringify(normalizedStored) !== JSON.stringify(rawComparable)) {
+            setMultiServerProfiles(normalizedStored as any);
             return;
         }
         const id = String(multiServerActiveProfileId ?? '').trim();
-        if (id && !normalized.some((profile) => profile.id === id)) {
+        if (id && !normalizedStored.some((profile) => profile.id === id)) {
             setMultiServerActiveProfileId(null);
         }
     }, [
@@ -338,7 +305,6 @@ export default function ServerConfigScreen() {
         multiServerProfiles,
         setMultiServerActiveProfileId,
         setMultiServerProfiles,
-        validServerIds,
     ]);
 
     const selectedConcurrentServerIds = React.useMemo(() => {
@@ -352,7 +318,7 @@ export default function ServerConfigScreen() {
         try {
             return getActiveServerId();
         } catch {
-            return OFFICIAL_SERVER_ID;
+            return getResetToDefaultServerId();
         }
     }, [revision]);
 
@@ -395,7 +361,7 @@ export default function ServerConfigScreen() {
         );
 
         if (confirmed) {
-            await switchServer(OFFICIAL_SERVER_ID, 'device');
+            await switchServer(getResetToDefaultServerId(), 'device');
             setInputUrl('');
             setInputName('');
             setRevision((r) => r + 1);
@@ -409,7 +375,7 @@ export default function ServerConfigScreen() {
 
     const handleToggleConcurrentServer = React.useCallback((serverId: string) => {
         if (activeMultiServerProfileId) {
-            const currentProfiles = normalizeMultiServerGroupProfiles(multiServerProfiles, validServerIds);
+            const currentProfiles = normalizeStoredMultiServerGroupProfiles(multiServerProfiles);
             const nextProfiles = currentProfiles.map((profile) => {
                 if (profile.id !== activeMultiServerProfileId) return profile;
                 const exists = profile.serverIds.includes(serverId);
@@ -428,22 +394,25 @@ export default function ServerConfigScreen() {
         const current = Array.isArray(multiServerSelectedServerIds) ? multiServerSelectedServerIds : [];
         const exists = current.includes(serverId);
         if (exists) {
-            setMultiServerSelectedServerIds(current.filter((id) => id !== serverId));
+            const next = current.filter((id) => id !== serverId);
+            seedSelectedServerIdsRef.current = next;
+            setMultiServerSelectedServerIds(next);
             return;
         }
-        setMultiServerSelectedServerIds([...current, serverId]);
+        const next = [...current, serverId];
+        seedSelectedServerIdsRef.current = next;
+        setMultiServerSelectedServerIds(next);
     }, [
         activeMultiServerProfileId,
         multiServerProfiles,
         multiServerSelectedServerIds,
         setMultiServerProfiles,
         setMultiServerSelectedServerIds,
-        validServerIds,
     ]);
 
     const handleTogglePresentation = React.useCallback(() => {
         if (activeMultiServerProfileId) {
-            const currentProfiles = normalizeMultiServerGroupProfiles(multiServerProfiles, validServerIds);
+            const currentProfiles = normalizeStoredMultiServerGroupProfiles(multiServerProfiles);
             const nextProfiles = currentProfiles.map((profile) => {
                 if (profile.id !== activeMultiServerProfileId) return profile;
                 return {
@@ -461,7 +430,6 @@ export default function ServerConfigScreen() {
         multiServerProfiles,
         setMultiServerPresentation,
         setMultiServerProfiles,
-        validServerIds,
     ]);
 
     const handleActivateConcurrentProfile = React.useCallback((profileId: string | null) => {
@@ -487,7 +455,13 @@ export default function ServerConfigScreen() {
             suffix += 1;
         }
 
-        const seedServerIds = Array.from(selectedConcurrentServerIds);
+        const seedSourceIds = activeMultiServerProfile
+            ? activeMultiServerProfile.serverIds
+            : seedSelectedServerIdsRef.current;
+        const seedServerIds = Array.from(new Set(seedSourceIds.map((value) => String(value ?? '').trim()).filter(Boolean)));
+        if (seedServerIds.length === 0 && activeServerId) {
+            seedServerIds.push(activeServerId);
+        }
         const presentation = activeMultiServerProfile?.presentation
             ?? (multiServerPresentation === 'flat-with-badge' ? 'flat-with-badge' : 'grouped');
         const nextProfile: MultiServerGroupProfile = {
@@ -500,6 +474,7 @@ export default function ServerConfigScreen() {
         setMultiServerProfiles(nextProfiles as any);
         setMultiServerActiveProfileId(nextProfile.id);
     }, [
+        activeServerId,
         activeMultiServerProfile,
         multiServerPresentation,
         normalizedMultiServerProfiles,
@@ -542,8 +517,8 @@ export default function ServerConfigScreen() {
     }, [activeMultiServerProfileId, normalizedMultiServerProfiles, setMultiServerActiveProfileId, setMultiServerProfiles]);
 
     const handleRename = React.useCallback(async (profile: ServerProfile) => {
-        if (profile.id === OFFICIAL_SERVER_ID) {
-            Modal.alert(t('common.error'), t('server.cannotRenameOfficial'));
+        if (isCloudServerProfileId(profile.id)) {
+            Modal.alert(t('common.error'), t('server.cannotRenameCloud'));
             return;
         }
         const next = await Modal.prompt(
@@ -561,8 +536,8 @@ export default function ServerConfigScreen() {
     }, []);
 
     const handleRemove = React.useCallback(async (profile: ServerProfile) => {
-        if (profile.id === OFFICIAL_SERVER_ID) {
-            Modal.alert(t('common.error'), t('server.cannotRemoveOfficial'));
+        if (isCloudServerProfileId(profile.id)) {
+            Modal.alert(t('common.error'), t('server.cannotRemoveCloud'));
             return;
         }
 

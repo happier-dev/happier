@@ -1,6 +1,6 @@
 import React from 'react';
 import renderer, { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,6 +69,13 @@ vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => ({ isAuthenticated: true, refreshFromActiveServer: refreshFromActiveServerSpy }),
 }));
 
+vi.mock('@/auth/storage/tokenStorage', () => ({
+    TokenStorage: {
+        getCredentialsForServerUrl: vi.fn(async () => null),
+    },
+    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
+}));
+
 vi.mock('@/components/ui/lists/ItemList', () => ({
     ItemList: ({ children }: any) => React.createElement(React.Fragment, null, children),
 }));
@@ -90,17 +97,29 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
 }));
 
 describe('ServerConfigScreen', () => {
+    beforeEach(() => {
+        vi.resetModules();
+        localSearchParamsMock = {};
+        routerReplaceMock.mockReset();
+        switchConnectionToActiveServerSpy.mockReset();
+        refreshFromActiveServerSpy.mockReset();
+        delete (globalThis as any).fetch;
+    });
+
+    afterEach(() => {
+        localSearchParamsMock = {};
+    });
+
     it('renders saved server profiles', async () => {
         const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
-        setActiveServerId('official', { scope: 'device' });
+        setActiveServerId('cloud', { scope: 'device' });
 
         const Screen = (await import('./server')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
         await act(async () => {
             tree = renderer.create(React.createElement(Screen));
-            await Promise.resolve();
         });
 
         expect(tree).toBeTruthy();
@@ -120,17 +139,15 @@ describe('ServerConfigScreen', () => {
         (globalThis as any).fetch = vi.fn(async () => ({ ok: true, text: async () => 'Welcome to Happier Server!' }));
 
         const { getActiveServerId, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
-        setActiveServerId('official', { scope: 'device' });
+        setActiveServerId('cloud', { scope: 'device' });
 
         const Screen = (await import('./server')).default;
 
         await act(async () => {
             renderer.create(React.createElement(Screen));
-            await Promise.resolve();
         });
-        await act(async () => {});
 
-        expect(getActiveServerId()).not.toEqual('official');
+        expect(getActiveServerId()).not.toEqual('cloud');
         expect(switchConnectionToActiveServerSpy).toHaveBeenCalledTimes(1);
         expect(refreshFromActiveServerSpy).toHaveBeenCalledTimes(1);
         expect(routerReplaceMock).toHaveBeenCalledWith('/');

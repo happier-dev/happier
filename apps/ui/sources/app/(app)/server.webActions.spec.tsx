@@ -77,6 +77,7 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getCredentialsForServerUrl: vi.fn(async () => null),
     },
+    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
 
 vi.mock('@/components/ui/lists/ItemList', () => ({
@@ -119,12 +120,11 @@ describe('ServerConfigScreen (web row actions)', () => {
     it('adds per-row device switch action for server rows on web', async () => {
         const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
         upsertServerProfile({ serverUrl: 'https://company.example.test', name: 'Company' });
-        setActiveServerId('official', { scope: 'device' });
+        setActiveServerId('cloud', { scope: 'device' });
 
         const Screen = (await import('./server')).default;
         await act(async () => {
             renderer.create(React.createElement(Screen));
-            await Promise.resolve();
         });
 
         const companyRow = capturedActions.rows.find((row) => row.title === 'Company');
