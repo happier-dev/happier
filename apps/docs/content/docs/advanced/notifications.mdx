@@ -26,9 +26,9 @@ If you’re self-hosting the server, see: `Deployment` → `Docker` / `Environme
 For self-hosting, the recommended flow is:
 
 1. Self-host the **server**, then
-2. Use the official Happier app and set its **Server URL** to your instance.
+2. Use the Happier app and set its **Server URL** to your instance.
 
-In this setup, you do **not** need to configure APNs/FCM yourself. The official app already includes the required push notification credentials; your server just stores the user’s Expo push tokens.
+In this setup, you do **not** need to configure APNs/FCM yourself. The app already includes the required push notification credentials; your server just stores the user’s Expo push tokens.
 
 ### 3) CLI (sender)
 
@@ -47,7 +47,7 @@ If a user runs their **own server + CLI**, they must:
 ### Recommended (server-only)
 
 1. Deploy the server.
-2. In the official Happier app, set **Server URL** to your server.
+2. In the Happier app, set **Server URL** to your server.
 3. Run the CLI against that same server URL.
 
 Once the app has registered a push token to your server, the CLI can send notifications (including permission notifications) via Expo.
