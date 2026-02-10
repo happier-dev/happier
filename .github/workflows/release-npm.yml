@@ -25,8 +25,8 @@ on:
         required: true
         default: true
         type: boolean
-      bump:
-        description: "Publish (CLI) — Version bump (preview: prerelease base in working tree, production: commit on main)"
+      version_bump_cli:
+        description: "Version bump (CLI) — Preview: prerelease base in working tree. Production: version already bumped on main."
         required: true
         type: choice
         options:
@@ -47,8 +47,8 @@ on:
         required: true
         default: false
         type: boolean
-      stack_bump:
-        description: "Publish (Stack) — Version bump (preview: prerelease base in working tree, production: commit on main)"
+      version_bump_stack:
+        description: "Version bump (Stack) — Preview: prerelease base in working tree. Production: version already bumped on main."
         required: true
         type: choice
         default: none
@@ -83,8 +83,8 @@ on:
         required: false
         default: true
         type: boolean
-      bump:
-        description: "Publish (CLI) — Version bump (preview: prerelease base in working tree, production: commit on main)"
+      version_bump_cli:
+        description: "Version bump (CLI) — Preview: prerelease base in working tree. Production: version already bumped on main."
         required: true
         type: string
       npm_tag:
@@ -97,8 +97,8 @@ on:
         required: false
         default: false
         type: boolean
-      stack_bump:
-        description: "Publish (Stack) — Version bump (preview: prerelease base in working tree, production: commit on main)"
+      version_bump_stack:
+        description: "Version bump (Stack) — Preview: prerelease base in working tree. Production: version already bumped on main."
         required: false
         default: none
         type: string
@@ -136,8 +136,8 @@ jobs:
           INPUT_NPM_TAG: ${{ inputs.npm_tag }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
-          INPUT_BUMP: ${{ inputs.bump }}
-          INPUT_STACK_BUMP: ${{ inputs.stack_bump }}
+          INPUT_VERSION_BUMP_CLI: ${{ inputs.version_bump_cli }}
+          INPUT_VERSION_BUMP_STACK: ${{ inputs.version_bump_stack }}
         run: |
           set -euo pipefail
           if [ "${INPUT_PUBLISH_CLI}" != "true" ] && [ "${INPUT_PUBLISH_STACK}" != "true" ]; then
@@ -303,19 +303,19 @@ jobs:
         env:
           PUBLISH_CLI: ${{ inputs.publish_cli }}
           PUBLISH_STACK: ${{ inputs.publish_stack }}
-          CLI_PREVIEW_BUMP: ${{ inputs.bump }}
-          STACK_PREVIEW_BUMP: ${{ inputs.stack_bump }}
+          CLI_PREVIEW_BUMP: ${{ inputs.version_bump_cli }}
+          STACK_PREVIEW_BUMP: ${{ inputs.version_bump_stack }}
 
       - name: Bump cli version (main)
         id: bump_cli
         if: inputs.channel == 'production'
         run: |
           set -euo pipefail
-          if [ "${{ inputs.publish_cli }}" != "true" ] || [ "${{ inputs.bump }}" = "none" ]; then
+          if [ "${{ inputs.publish_cli }}" != "true" ] || [ "${{ inputs.version_bump_cli }}" = "none" ]; then
             echo "version=SKIP" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          out="$(node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.bump }}")"
+          out="$(node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.version_bump_cli }}")"
           echo "version=$out" >> "$GITHUB_OUTPUT"
 
       - name: Bump stack version (main)
@@ -323,12 +323,12 @@ jobs:
         if: inputs.channel == 'production'
         run: |
           set -euo pipefail
-          if [ "${{ inputs.publish_stack }}" != "true" ] || [ "${{ inputs.stack_bump }}" = "none" ]; then
+          if [ "${{ inputs.publish_stack }}" != "true" ] || [ "${{ inputs.version_bump_stack }}" = "none" ]; then
             echo "version=SKIP" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          out="$(node scripts/release/bump-version.mjs --component stack --bump "${{ inputs.stack_bump }}")"
+          out="$(node scripts/release/bump-version.mjs --component stack --bump "${{ inputs.version_bump_stack }}")"
           echo "version=$out" >> "$GITHUB_OUTPUT"
 
       - name: Run cli tests

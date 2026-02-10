@@ -99,7 +99,7 @@ on:
           - build_only
           - build_and_publish
       bump:
-        description: "Versions — Version bump to apply (only for changed components)"
+        description: "Version bump (Default) — Production-only bump to apply to changed components (app/server/website). Preview releases never commit this."
         required: true
         type: choice
         default: none
@@ -108,8 +108,8 @@ on:
           - patch
           - minor
           - major
-      app_preview_bump:
-        description: "Publish (App Preview) — Preview-only app version bump for UI deploy (none=skip)"
+      version_bump_app:
+        description: "Version bump (App) — Preview: bump app before UI deploy. Production: overrides the default bump for app (none=use default bump)."
         required: true
         type: choice
         default: none
@@ -118,8 +118,8 @@ on:
           - patch
           - minor
           - major
-      cli_release_bump:
-        description: "Publish (CLI) — Release bump (none=skip; preview uses bumped base for prerelease version)"
+      version_bump_cli:
+        description: "Version bump (CLI) — Preview: derive prerelease base in working tree. Production: bump version on main before npm publish."
         required: true
         type: choice
         default: none
@@ -128,8 +128,8 @@ on:
           - patch
           - minor
           - major
-      stack_release_bump:
-        description: "Publish (Stack) — Release bump (none=skip; preview uses bumped base for prerelease version)"
+      version_bump_stack:
+        description: "Version bump (Stack) — Preview: derive prerelease base in working tree. Production: bump version on main before npm publish."
         required: true
         type: choice
         default: none
@@ -365,9 +365,9 @@ jobs:
             echo "- dry_run: \`${{ inputs.dry_run }}\`"
             echo "- deploy_targets: \`${{ inputs.deploy_targets }}\`"
             echo "- bump: \`${{ inputs.bump }}\`"
-            echo "- app_preview_bump: \`${{ inputs.app_preview_bump }}\`"
-            echo "- cli_release_bump: \`${{ inputs.cli_release_bump }}\`"
-            echo "- stack_release_bump: \`${{ inputs.stack_release_bump }}\`"
+            echo "- version_bump_app: \`${{ inputs.version_bump_app }}\`"
+            echo "- version_bump_cli: \`${{ inputs.version_bump_cli }}\`"
+            echo "- version_bump_stack: \`${{ inputs.version_bump_stack }}\`"
             echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
             echo "- desktop_mode: \`${{ inputs.desktop_mode }}\`"
             echo ""
@@ -538,7 +538,7 @@ jobs:
         id: decide
         run: |
           set -euo pipefail
-          if [ "${{ inputs.bump }}" != "none" ] || [ "${{ inputs.cli_release_bump }}" != "none" ] || [ "${{ inputs.stack_release_bump }}" != "none" ]; then
+          if [ "${{ inputs.bump }}" != "none" ] || [ "${{ inputs.version_bump_app }}" != "none" ] || [ "${{ inputs.version_bump_cli }}" != "none" ] || [ "${{ inputs.version_bump_stack }}" != "none" ]; then
             echo "should_bump=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_bump=false" >> "$GITHUB_OUTPUT"
@@ -588,31 +588,38 @@ jobs:
         run: |
           set -euo pipefail
 
-          bump="${{ inputs.bump }}"
+          default_bump="${{ inputs.bump }}"
+          app_bump="${default_bump}"
+          if [ "${{ inputs.version_bump_app }}" != "none" ]; then
+            app_bump="${{ inputs.version_bump_app }}"
+          fi
           bumped=()
 
-          if [ "$bump" != "none" ]; then
+          if [ "$app_bump" != "none" ]; then
             if [ "${{ needs.checks.outputs.changed_ui }}" = "true" ] || [ "${{ needs.checks.outputs.changed_shared }}" = "true" ]; then
-              node scripts/release/bump-version.mjs --component app --bump "$bump" >/tmp/bump_app.txt
+              node scripts/release/bump-version.mjs --component app --bump "$app_bump" >/tmp/bump_app.txt
               bumped+=("app")
             fi
+          fi
+
+          if [ "$default_bump" != "none" ]; then
             if [ "${{ needs.checks.outputs.changed_server }}" = "true" ] || [ "${{ needs.checks.outputs.changed_shared }}" = "true" ]; then
-              node scripts/release/bump-version.mjs --component server --bump "$bump" >/tmp/bump_server.txt
+              node scripts/release/bump-version.mjs --component server --bump "$default_bump" >/tmp/bump_server.txt
               bumped+=("server")
             fi
             if [ "${{ needs.checks.outputs.changed_website }}" = "true" ]; then
-              node scripts/release/bump-version.mjs --component website --bump "$bump" >/tmp/bump_website.txt
+              node scripts/release/bump-version.mjs --component website --bump "$default_bump" >/tmp/bump_website.txt
               bumped+=("website")
             fi
           fi
 
-          if [ "${{ inputs.cli_release_bump }}" != "none" ]; then
-            node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.cli_release_bump }}" >/tmp/bump_cli.txt
+          if [ "${{ inputs.version_bump_cli }}" != "none" ]; then
+            node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.version_bump_cli }}" >/tmp/bump_cli.txt
             bumped+=("cli")
           fi
 
-          if [ "${{ inputs.stack_release_bump }}" != "none" ]; then
-            node scripts/release/bump-version.mjs --component stack --bump "${{ inputs.stack_release_bump }}" >/tmp/bump_stack.txt
+          if [ "${{ inputs.version_bump_stack }}" != "none" ]; then
+            node scripts/release/bump-version.mjs --component stack --bump "${{ inputs.version_bump_stack }}" >/tmp/bump_stack.txt
             bumped+=("stack")
           fi
 
@@ -638,7 +645,7 @@ jobs:
           git push origin HEAD:main
 
   deploy_ui:
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || (inputs.environment == 'preview' && inputs.app_preview_bump != 'none')) && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || (inputs.environment == 'preview' && inputs.version_bump_app != 'none')) && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
     needs: [checks, promote_main, bump_versions, deploy_plan]
     permissions:
       contents: write
@@ -648,7 +655,7 @@ jobs:
       environment: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
-      bump: ${{ inputs.environment == 'preview' && inputs.app_preview_bump || 'none' }}
+      bump: ${{ inputs.environment == 'preview' && inputs.version_bump_app || 'none' }}
       deploy_web: true
       expo_action: ${{ inputs.ui_expo_action }}
       expo_profile: ${{ inputs.ui_expo_profile }}
@@ -693,7 +700,7 @@ jobs:
       run_build: true
 
   publish_npm:
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && (inputs.cli_release_bump != 'none' || inputs.stack_release_bump != 'none') && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && (inputs.version_bump_cli != 'none' || inputs.version_bump_stack != 'none') && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
     needs: [checks, promote_main, bump_versions]
     permissions:
       contents: write
@@ -701,15 +708,15 @@ jobs:
     uses: ./.github/workflows/release-npm.yml
     secrets: inherit
     with:
-      publish_cli: ${{ inputs.cli_release_bump != 'none' }}
-      publish_stack: ${{ inputs.stack_release_bump != 'none' }}
+      publish_cli: ${{ inputs.version_bump_cli != 'none' }}
+      publish_stack: ${{ inputs.version_bump_stack != 'none' }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
-      bump: ${{ inputs.environment == 'preview' && inputs.cli_release_bump || 'none' }}
-      stack_bump: ${{ inputs.environment == 'preview' && inputs.stack_release_bump || 'none' }}
+      version_bump_cli: ${{ inputs.environment == 'preview' && inputs.version_bump_cli || 'none' }}
+      version_bump_stack: ${{ inputs.environment == 'preview' && inputs.version_bump_stack || 'none' }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
-      update_deploy_branch: ${{ inputs.cli_release_bump != 'none' || inputs.stack_release_bump != 'none' }}
+      update_deploy_branch: ${{ inputs.version_bump_cli != 'none' || inputs.version_bump_stack != 'none' }}
 
   sync_dev:
     if: inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')
