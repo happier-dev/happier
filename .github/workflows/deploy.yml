@@ -61,7 +61,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || startsWith(github.ref_name, 'deploy/production/') || startsWith(github.ref_name, 'deploy/preview/')
+    # Deploy branches are promoted from release workflows. Those pushes may be authored by bots,
+    # and we prefer deploying via explicit workflow_call (to avoid relying on push-trigger semantics).
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || startsWith(github.ref_name, 'deploy/production/') || startsWith(github.ref_name, 'deploy/preview/')) && !(github.event_name == 'push' && contains(github.actor, '[bot]'))
     environment: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.environment || (startsWith(github.ref_name, 'deploy/production/') && 'production' || 'preview') }}
     steps:
       - name: Enforce trusted refs for manual dispatch
