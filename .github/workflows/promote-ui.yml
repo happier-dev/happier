@@ -224,6 +224,12 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
@@ -327,7 +333,7 @@ jobs:
             exit 1
           fi
           cd apps/ui
-          npx --yes eas-cli@latest build --platform "${{ inputs.expo_platform }}" --profile "${{ steps.expo_profile.outputs.profile }}" --non-interactive --json > /tmp/eas_build.json
+          npx --yes eas-cli@14.2.0 build --platform "${{ inputs.expo_platform }}" --profile "${{ steps.expo_profile.outputs.profile }}" --non-interactive --json > /tmp/eas_build.json
 
       - name: Download Android APK (EAS *-apk profiles)
         id: download_apk
@@ -385,7 +391,7 @@ jobs:
           if [ -z "${artifact_url:-}" ]; then
             build_view_json="$(
               cd apps/ui
-              npx --yes eas-cli@latest build:view "${build_id}" --json
+                  npx --yes eas-cli@14.2.0 build:view "${build_id}" --json
             )"
             artifact_url="$(
               BUILD_VIEW_JSON="${build_view_json}" node - <<'NODE'
@@ -514,7 +520,7 @@ jobs:
             exit 1
           fi
           cd apps/ui
-          npx --yes eas-cli@latest submit --platform "${{ inputs.expo_platform }}" --latest --non-interactive
+          npx --yes eas-cli@14.2.0 submit --platform "${{ inputs.expo_platform }}" --latest --non-interactive
 
       - name: Promote source ref to deploy branch (web)
         if: inputs.deploy_web

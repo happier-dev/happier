@@ -18,3 +18,21 @@ test('workflows use Node 22 policy and do not pin Node 20', async () => {
     assert.doesNotMatch(raw, /node-version:\s*\[[^\]]*\b20\b[^\]]*\]/, `${file} must not include Node 20 in a matrix`);
   }
 });
+
+test('release workflows pin Yarn via Corepack (avoid runner drift)', async () => {
+  const expected = /corepack prepare yarn@1\.22\.22 --activate/;
+  const files = [
+    'release.yml',
+    'release-npm.yml',
+    'promote-ui.yml',
+    'promote-server.yml',
+    'promote-website.yml',
+    'promote-docs.yml',
+    'build-tauri.yml',
+  ];
+
+  for (const file of files) {
+    const raw = await readFile(join(workflowsDir, file), 'utf8');
+    assert.match(raw, expected, `${file} should pin Yarn via corepack prepare yarn@1.22.22`);
+  }
+});

@@ -61,6 +61,16 @@ test('stack version bumps use shared bump-version script across release workflow
   assert.match(orchestrator, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ needs\.checks\.outputs\.bump_stack \}\}"/);
   assert.doesNotMatch(orchestrator, /BUMP="\$\{\{ needs\.checks\.outputs\.bump_stack \}\}" node - <<'NODE'/);
 
-  assert.match(releaseNpm, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ inputs\.version_bump_stack \}\}"/);
-  assert.doesNotMatch(releaseNpm, /npm version "\$\{\{ inputs\.version_bump_stack \}\}" --no-git-tag-version/);
+  // Version bumps are centralized in the release orchestrator (dev commit),
+  // so release-npm must not bump versions on main for production.
+  assert.doesNotMatch(releaseNpm, /bump-version\.mjs --component cli/, 'release-npm should not bump cli on main');
+  assert.doesNotMatch(releaseNpm, /bump-version\.mjs --component stack/, 'release-npm should not bump stack on main');
+  assert.doesNotMatch(releaseNpm, /npm version "\$\{\{ inputs\.version_bump_stack \}\}"/, 'release-npm must not use npm version for stack bumps');
+});
+
+test('release-npm does not manage deploy/* branches (deploy is for server/web apps)', async () => {
+  const raw = await loadWorkflow('release-npm.yml');
+  assert.doesNotMatch(raw, /update_deploy_branch:/, 'release-npm should not expose update_deploy_branch input');
+  assert.doesNotMatch(raw, /deploy\/\$\{\{\s*inputs\.channel\s*\}\}\/cli/, 'release-npm should not promote deploy/<channel>/cli');
+  assert.doesNotMatch(raw, /deploy\/\$\{\{\s*inputs\.channel\s*\}\}\/stack/, 'release-npm should not promote deploy/<channel>/stack');
 });

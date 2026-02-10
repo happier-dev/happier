@@ -23,7 +23,6 @@ on:
           - server
           - website
           - docs
-          - cli
       confirm:
         description: "Confirm — Choose the exact deploy action (mobile-friendly)"
         required: true
@@ -33,12 +32,10 @@ on:
           - deploy production server
           - deploy production website
           - deploy production docs
-          - deploy production cli
           - deploy preview ui
           - deploy preview server
           - deploy preview website
           - deploy preview docs
-          - deploy preview cli
 
 permissions:
   contents: read
@@ -106,7 +103,7 @@ jobs:
           esac
 
           case "$component" in
-            ui|server|website|docs|cli) ;;
+            ui|server|website|docs) ;;
             *)
               echo "Unsupported component: $component" >&2
               exit 1
@@ -135,7 +132,6 @@ jobs:
           HAPPIER_DOCS_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_DOCS_DEPLOY_WEBHOOKS || secrets.HAPPIER_DOCS_DEPLOY_WEBHOOKS }}
           HAPPIER_SERVER_API_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS }}
           HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS || secrets.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS }}
-          HAPPIER_CLI_DEPLOY_WEBHOOKS: ${{ vars.HAPPIER_CLI_DEPLOY_WEBHOOKS != '' && vars.HAPPIER_CLI_DEPLOY_WEBHOOKS || secrets.HAPPIER_CLI_DEPLOY_WEBHOOKS }}
           COMPONENT: ${{ steps.target.outputs.component }}
           ENVIRONMENT: ${{ steps.target.outputs.environment }}
           REF_NAME: ${{ github.ref_name }}
@@ -205,7 +201,8 @@ jobs:
               payload="$(REF="$REF" SHA="$AFTER_SHA" REPOSITORY="$REPOSITORY" python3 -c 'import json, os; ref=os.environ.get("REF", ""); sha=os.environ.get("SHA", ""); repo=os.environ.get("REPOSITORY", ""); owner, name = ((repo.split("/", 1) + [""])[:2] if repo else ("", "")); print(json.dumps({"ref": ref, "before": "0"*40, "after": sha, "repository": {"full_name": repo, "name": name, "owner": {"name": owner}, "default_branch": "main"}}))')"
 
               triggered=$((triggered + 1))
-              echo "POST ${url}"
+              # Avoid leaking full hook URLs if operators configure full URLs that may embed secrets.
+              echo "POST deploy hook (${label}) #${triggered}"
               echo "Request headers: Content-Type, X-GitHub-Event, X-GitHub-Delivery, CF-Access-Client-Id, CF-Access-Client-Secret"
               echo "Request body: ${payload}"
               resp_file="$(mktemp)"
@@ -267,9 +264,6 @@ jobs:
               # Enforce order: API first, then worker.
               trigger_hooks "server api" "${HAPPIER_SERVER_API_DEPLOY_WEBHOOKS:-}"
               trigger_hooks "server worker" "${HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS:-}"
-              ;;
-            cli)
-              trigger_hooks "cli" "${HAPPIER_CLI_DEPLOY_WEBHOOKS:-}"
               ;;
             *)
               echo "Unsupported component: $COMPONENT" >&2

@@ -137,6 +137,12 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
+      - name: Enable Corepack (Yarn)
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"

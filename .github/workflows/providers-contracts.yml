@@ -41,6 +41,34 @@ on:
         required: true
         default: ""
         type: string
+  workflow_call:
+    inputs:
+      preset:
+        description: "Preset"
+        required: true
+        type: string
+      tier:
+        description: "Tier"
+        required: true
+        type: string
+      strict_keys:
+        description: "Fail on new fixture keys"
+        required: true
+        type: boolean
+      flake_retry:
+        description: "Retry once to classify flakes"
+        required: true
+        type: boolean
+      model_default:
+        description: "Optional default model override for all providers"
+        required: false
+        default: ""
+        type: string
+      model_overrides:
+        description: "Optional provider-specific model overrides (comma/newline list: provider=model)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read

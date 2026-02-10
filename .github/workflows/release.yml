@@ -859,7 +859,6 @@ jobs:
       version_bump_stack: none
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
-      update_deploy_branch: ${{ needs.checks.outputs.publish_cli == 'true' || needs.checks.outputs.publish_stack == 'true' }}
 
   sync_dev:
     if: inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')

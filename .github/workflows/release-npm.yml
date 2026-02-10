@@ -26,7 +26,7 @@ on:
         default: true
         type: boolean
       version_bump_cli:
-        description: "Version bump (CLI) — Preview: prerelease base in working tree. Production: version already bumped on main."
+        description: "Version bump (CLI) — Preview only. Production: must be none (versions are bumped on dev and promoted)."
         required: true
         type: choice
         options:
@@ -48,7 +48,7 @@ on:
         default: false
         type: boolean
       version_bump_stack:
-        description: "Version bump (Stack) — Preview: prerelease base in working tree. Production: version already bumped on main."
+        description: "Version bump (Stack) — Preview only. Production: must be none (versions are bumped on dev and promoted)."
         required: true
         type: choice
         default: none
@@ -57,11 +57,6 @@ on:
           - patch
           - minor
           - major
-      update_deploy_branch:
-        description: "Deploy — Also promote main to deploy/<channel>/* (optional audit trail)"
-        required: true
-        default: false
-        type: boolean
   workflow_call:
     inputs:
       channel:
@@ -84,7 +79,7 @@ on:
         default: true
         type: boolean
       version_bump_cli:
-        description: "Version bump (CLI) — Preview: prerelease base in working tree. Production: version already bumped on main."
+        description: "Version bump (CLI) — Preview only. Production: must be none (versions are bumped on dev and promoted)."
         required: true
         type: string
       npm_tag:
@@ -98,15 +93,10 @@ on:
         default: false
         type: boolean
       version_bump_stack:
-        description: "Version bump (Stack) — Preview: prerelease base in working tree. Production: version already bumped on main."
+        description: "Version bump (Stack) — Preview only. Production: must be none (versions are bumped on dev and promoted)."
         required: false
         default: none
         type: string
-      update_deploy_branch:
-        description: "Deploy — Also promote main to deploy/<channel>/* (optional audit trail)"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -143,6 +133,12 @@ jobs:
           if [ "${INPUT_PUBLISH_CLI}" != "true" ] && [ "${INPUT_PUBLISH_STACK}" != "true" ]; then
             echo "At least one of publish_cli or publish_stack must be true." >&2
             exit 1
+          fi
+          if [ "${INPUT_CHANNEL}" = "production" ]; then
+            if [ "${INPUT_VERSION_BUMP_CLI}" != "none" ] || [ "${INPUT_VERSION_BUMP_STACK}" != "none" ]; then
+              echo "For production releases, version bumps must be performed on dev via the release orchestrator. Set version_bump_cli=none and version_bump_stack=none." >&2
+              exit 1
+            fi
           fi
           expected_tag="latest"
           if [ "${INPUT_CHANNEL}" = "preview" ]; then
@@ -306,31 +302,6 @@ jobs:
           CLI_PREVIEW_BUMP: ${{ inputs.version_bump_cli }}
           STACK_PREVIEW_BUMP: ${{ inputs.version_bump_stack }}
 
-      - name: Bump cli version (main)
-        id: bump_cli
-        if: inputs.channel == 'production'
-        run: |
-          set -euo pipefail
-          if [ "${{ inputs.publish_cli }}" != "true" ] || [ "${{ inputs.version_bump_cli }}" = "none" ]; then
-            echo "version=SKIP" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          out="$(node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.version_bump_cli }}")"
-          echo "version=$out" >> "$GITHUB_OUTPUT"
-
-      - name: Bump stack version (main)
-        id: bump_stack
-        if: inputs.channel == 'production'
-        run: |
-          set -euo pipefail
-          if [ "${{ inputs.publish_stack }}" != "true" ] || [ "${{ inputs.version_bump_stack }}" = "none" ]; then
-            echo "version=SKIP" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          out="$(node scripts/release/bump-version.mjs --component stack --bump "${{ inputs.version_bump_stack }}")"
-          echo "version=$out" >> "$GITHUB_OUTPUT"
-
       - name: Run cli tests
         if: inputs.publish_cli && inputs.run_tests
         run: |
@@ -342,33 +313,6 @@ jobs:
         run: |
           yarn --cwd apps/stack test:unit
           yarn --cwd apps/stack test:integration
-
-      - name: Commit version bump(s) (main)
-        if: inputs.channel == 'production' && (steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP')
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          bumped=()
-          if [ "${{ steps.bump_cli.outputs.version }}" != "SKIP" ]; then
-            git add apps/cli/package.json
-            bumped+=("cli")
-          fi
-          if [ "${{ steps.bump_stack.outputs.version }}" != "SKIP" ]; then
-            git add apps/stack/package.json
-            bumped+=("stack")
-          fi
-
-          if [ "${#bumped[@]}" -eq 0 ]; then
-            echo "No version bumps requested." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          git commit -m "chore(release): bump versions (${bumped[*]})"
-
-      - name: Push main
-        if: inputs.channel == 'production' && (steps.bump_cli.outputs.version != 'SKIP' || steps.bump_stack.outputs.version != 'SKIP')
-        run: git push origin HEAD:main
 
       - name: Release metadata
         id: meta
@@ -600,32 +544,6 @@ jobs:
           name: npm-pack-stack
           path: dist/release-assets/stack
           if-no-files-found: error
-
-      - name: Promote main to deploy branch (cli) (optional)
-        if: inputs.update_deploy_branch && inputs.publish_cli
-        env:
-          DEPLOY_REF: deploy/${{ inputs.channel }}/cli
-        run: |
-          set -euo pipefail
-          remote_sha="$(git ls-remote --heads origin "$DEPLOY_REF" | awk '{print $1}')"
-          if [ -n "$remote_sha" ]; then
-            git push origin HEAD:"$DEPLOY_REF" --force-with-lease="refs/heads/$DEPLOY_REF:$remote_sha"
-          else
-            git push origin HEAD:"$DEPLOY_REF"
-          fi
-
-      - name: Promote main to deploy branch (stack) (optional)
-        if: inputs.update_deploy_branch && inputs.publish_stack
-        env:
-          DEPLOY_REF: deploy/${{ inputs.channel }}/stack
-        run: |
-          set -euo pipefail
-          remote_sha="$(git ls-remote --heads origin "$DEPLOY_REF" | awk '{print $1}')"
-          if [ -n "$remote_sha" ]; then
-            git push origin HEAD:"$DEPLOY_REF" --force-with-lease="refs/heads/$DEPLOY_REF:$remote_sha"
-          else
-            git push origin HEAD:"$DEPLOY_REF"
-          fi
 
       - name: Step summary
         if: always()
