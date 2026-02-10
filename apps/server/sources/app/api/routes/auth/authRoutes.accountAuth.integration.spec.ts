@@ -228,8 +228,8 @@ describe("authRoutes (account auth request) (integration)", () => {
         await app.close();
     });
 
-    it("returns authorized with encrypted token and no plaintext token from /v1/auth/account/request", async () => {
-        const { secretKeyRaw, publicKeyBase64 } = createAccountKeypair();
+    it("returns authorized with plaintext token from /v1/auth/account/request", async () => {
+        const { publicKeyBase64 } = createAccountKeypair();
 
         const account = await db.account.create({
             data: { publicKey: `pk-${Date.now()}` },
@@ -262,6 +262,60 @@ describe("authRoutes (account auth request) (integration)", () => {
         const authorizedRes = await app.inject({
             method: "POST",
             url: "/v1/auth/account/request",
+            payload: { publicKey: publicKeyBase64 },
+        });
+        expect(authorizedRes.statusCode).toBe(200);
+        const json = authorizedRes.json() as any;
+        expect(json.state).toBe("authorized");
+        expect(typeof json.token).toBe("string");
+        expect(json.tokenEncrypted).toBeUndefined();
+        expect(typeof json.response).toBe("string");
+
+        const whoamiRes = await app.inject({
+            method: "GET",
+            url: "/_test/whoami",
+            headers: { authorization: `Bearer ${json.token}` },
+        });
+        expect(whoamiRes.statusCode).toBe(200);
+        expect(whoamiRes.json()).toEqual({ userId: account.id });
+
+        await app.close();
+    });
+
+    it("returns authorized with encrypted token and no plaintext token from /v2/auth/account/request", async () => {
+        const { secretKeyRaw, publicKeyBase64 } = createAccountKeypair();
+
+        const account = await db.account.create({
+            data: { publicKey: `pk-${Date.now()}` },
+            select: { id: true },
+        });
+        const token = await auth.createToken(account.id);
+
+        const app = createTestApp();
+        authRoutes(app as any);
+        app.get("/_test/whoami", { preHandler: (app as any).authenticate }, async (request: any) => {
+            return { userId: request.userId };
+        });
+        await app.ready();
+
+        const createRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/account/request",
+            payload: { publicKey: publicKeyBase64 },
+        });
+        expect(createRes.statusCode).toBe(200);
+
+        const approveRes = await app.inject({
+            method: "POST",
+            url: "/v1/auth/account/response",
+            headers: { authorization: `Bearer ${token}` },
+            payload: { publicKey: publicKeyBase64, response: "hello" },
+        });
+        expect(approveRes.statusCode).toBe(200);
+
+        const authorizedRes = await app.inject({
+            method: "POST",
+            url: "/v2/auth/account/request",
             payload: { publicKey: publicKeyBase64 },
         });
         expect(authorizedRes.statusCode).toBe(200);
