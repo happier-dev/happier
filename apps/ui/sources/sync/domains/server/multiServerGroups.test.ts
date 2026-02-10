@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     filterMultiServerGroupProfilesToAvailable,
     normalizeStoredMultiServerGroupProfiles,
+    toggleMultiServerGroupServerIdEnsuringNonEmpty,
 } from './multiServerGroups';
 
 describe('normalizeStoredMultiServerGroupProfiles', () => {
@@ -84,5 +85,35 @@ describe('filterMultiServerGroupProfilesToAvailable', () => {
         expect(filtered).toEqual([
             { id: 'g1', name: 'G1', serverIds: [], presentation: 'grouped' },
         ]);
+    });
+});
+
+describe('toggleMultiServerGroupServerIdEnsuringNonEmpty', () => {
+    it('adds an id when not present', () => {
+        expect(toggleMultiServerGroupServerIdEnsuringNonEmpty([], 'a')).toEqual({
+            nextServerIds: ['a'],
+            preventedEmpty: false,
+        });
+    });
+
+    it('removes an id when present (if more than one)', () => {
+        expect(toggleMultiServerGroupServerIdEnsuringNonEmpty(['a', 'b'], 'a')).toEqual({
+            nextServerIds: ['b'],
+            preventedEmpty: false,
+        });
+    });
+
+    it('prevents removing the last remaining id', () => {
+        expect(toggleMultiServerGroupServerIdEnsuringNonEmpty(['a'], 'a')).toEqual({
+            nextServerIds: ['a'],
+            preventedEmpty: true,
+        });
+    });
+
+    it('normalizes ids by trimming and de-duping', () => {
+        expect(toggleMultiServerGroupServerIdEnsuringNonEmpty([' a ', 'b', 'a'], ' b ')).toEqual({
+            nextServerIds: ['a'],
+            preventedEmpty: false,
+        });
     });
 });

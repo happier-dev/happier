@@ -16,7 +16,7 @@ import { validateServerUrl } from '@/sync/domains/server/serverConfig';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { parseServerConfigRouteParams } from './serverParams';
 import { type ServerProfile, getActiveServerId, getResetToDefaultServerId, isCloudServerProfileId, listServerProfiles, removeServerProfile, renameServerProfile, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { filterMultiServerGroupProfilesToAvailable, normalizeStoredMultiServerGroupProfiles, type MultiServerGroupProfile } from '@/sync/domains/server/multiServerGroups';
+import { filterMultiServerGroupProfilesToAvailable, normalizeStoredMultiServerGroupProfiles, toggleMultiServerGroupServerIdEnsuringNonEmpty, type MultiServerGroupProfile } from '@/sync/domains/server/multiServerGroups';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { Ionicons } from '@expo/vector-icons';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
@@ -378,10 +378,12 @@ export default function ServerConfigScreen() {
             const currentProfiles = normalizeStoredMultiServerGroupProfiles(multiServerProfiles);
             const nextProfiles = currentProfiles.map((profile) => {
                 if (profile.id !== activeMultiServerProfileId) return profile;
-                const exists = profile.serverIds.includes(serverId);
-                const serverIds = exists
-                    ? profile.serverIds.filter((id) => id !== serverId)
-                    : [...profile.serverIds, serverId];
+                const toggle = toggleMultiServerGroupServerIdEnsuringNonEmpty(profile.serverIds, serverId);
+                if (toggle.preventedEmpty) {
+                    Modal.alert(t('common.error'), 'A server group must include at least one server.');
+                    return profile;
+                }
+                const serverIds = toggle.nextServerIds;
                 return {
                     ...profile,
                     serverIds,
@@ -392,16 +394,13 @@ export default function ServerConfigScreen() {
         }
 
         const current = Array.isArray(multiServerSelectedServerIds) ? multiServerSelectedServerIds : [];
-        const exists = current.includes(serverId);
-        if (exists) {
-            const next = current.filter((id) => id !== serverId);
-            seedSelectedServerIdsRef.current = next;
-            setMultiServerSelectedServerIds(next);
+        const toggle = toggleMultiServerGroupServerIdEnsuringNonEmpty(current, serverId);
+        if (toggle.preventedEmpty) {
+            Modal.alert(t('common.error'), 'At least one server must be selected.');
             return;
         }
-        const next = [...current, serverId];
-        seedSelectedServerIdsRef.current = next;
-        setMultiServerSelectedServerIds(next);
+        seedSelectedServerIdsRef.current = toggle.nextServerIds;
+        setMultiServerSelectedServerIds(toggle.nextServerIds);
     }, [
         activeMultiServerProfileId,
         multiServerProfiles,

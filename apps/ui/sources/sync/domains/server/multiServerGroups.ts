@@ -7,6 +7,11 @@ export type MultiServerGroupProfile = Readonly<{
     presentation: MultiServerGroupPresentation;
 }>;
 
+export type ToggleMultiServerGroupServerIdResult = Readonly<{
+    nextServerIds: string[];
+    preventedEmpty: boolean;
+}>;
+
 function normalizeId(raw: unknown): string {
     return String(raw ?? '').trim();
 }
@@ -31,6 +36,31 @@ function normalizeServerIds(raw: unknown): string[] {
         result.push(id);
     }
     return result;
+}
+
+export function toggleMultiServerGroupServerIdEnsuringNonEmpty(
+    currentServerIds: ReadonlyArray<string>,
+    serverIdRaw: string,
+): ToggleMultiServerGroupServerIdResult {
+    const serverId = normalizeId(serverIdRaw);
+    const normalizedCurrent = normalizeServerIds(currentServerIds);
+    if (!serverId) {
+        return { nextServerIds: normalizedCurrent.slice(), preventedEmpty: false };
+    }
+
+    const exists = normalizedCurrent.includes(serverId);
+    if (!exists) {
+        return { nextServerIds: [...normalizedCurrent, serverId], preventedEmpty: false };
+    }
+
+    if (normalizedCurrent.length <= 1) {
+        return { nextServerIds: normalizedCurrent.slice(), preventedEmpty: true };
+    }
+
+    return {
+        nextServerIds: normalizedCurrent.filter((id) => id !== serverId),
+        preventedEmpty: false,
+    };
 }
 
 // Storage normalization must not depend on currently-known server profiles.
