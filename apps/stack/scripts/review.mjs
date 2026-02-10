@@ -1344,9 +1344,15 @@ async function main() {
             };
           }
           if (reviewer === 'augment') {
-            const usePromptMode = depth === 'deep';
-            const fileCount = await countChangedFiles({ cwd: repoDir, env: process.env, base: base.baseRef });
-            const autoChunks = usePromptMode && fileCount > maxFiles;
+            // Augment CLI (`auggie`) always requires an instruction in `--print` mode.
+            // Unlike Codex, it has no `--uncommitted` target we can rely on, so we always provide a prompt.
+            const usePromptMode = true;
+            const uncommittedOps = changeType === 'uncommitted' ? await getUncommittedOps({ cwd: repoDir, env: process.env }) : null;
+            const fileCount =
+              changeType === 'uncommitted'
+                ? (uncommittedOps?.all?.size ?? 0)
+                : await countChangedFiles({ cwd: repoDir, env: process.env, base: base.baseRef });
+            const autoChunks = fileCount > maxFiles;
             const cacheDir = (process.env.HAPPIER_STACK_AUGMENT_CACHE_DIR ?? '').toString().trim();
             const model = (process.env.HAPPIER_STACK_AUGMENT_MODEL ?? '').toString().trim();
             const maxTurnsRaw = (process.env.HAPPIER_STACK_AUGMENT_MAX_TURNS ?? '').toString().trim();
@@ -1431,11 +1437,9 @@ async function main() {
               };
             }
 
-            const prompt = usePromptMode
-              ? monorepo
-                ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType })
-                : buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType })
-              : '';
+            const prompt = monorepo
+              ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType })
+              : buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType });
             const logFile = join(runDir, 'raw', `augment-${sanitizeLabel(component)}.log`);
             const res = await runAugmentReview({
               repoDir,
