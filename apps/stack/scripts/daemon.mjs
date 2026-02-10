@@ -113,14 +113,7 @@ export function checkDaemonState(cliHomeDir, options = {}) {
   const env = resolveEnvFromOptions(options);
   const { statePath, lockPath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl, env });
 
-  const alive = (pid) => {
-    try {
-      process.kill(pid, 0);
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  const alive = isPidAlive;
 
   if (existsSync(statePath)) {
     try {
@@ -147,7 +140,51 @@ export function checkDaemonState(cliHomeDir, options = {}) {
     }
   }
 
+  const fallback = findRunningDaemonStateInHome(cliHomeDir, alive);
+  if (fallback) {
+    return fallback;
+  }
+
   return { status: 'stopped', pid: null };
+}
+
+function isPidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findRunningDaemonStateInHome(cliHomeDir, alive) {
+  try {
+    const serversDir = join(cliHomeDir, 'servers');
+    const entries = readdirSync(serversDir, { withFileTypes: true }).filter((ent) => ent.isDirectory());
+    const matches = [];
+    for (const entry of entries) {
+      const statePath = join(serversDir, entry.name, 'daemon.state.json');
+      if (!existsSync(statePath)) continue;
+      let state;
+      try {
+        state = JSON.parse(readFileSync(statePath, 'utf-8'));
+      } catch {
+        continue;
+      }
+      const pid = Number(state?.pid);
+      if (!Number.isFinite(pid) || pid <= 0) continue;
+      if (!alive(pid)) continue;
+      matches.push({ status: 'running', pid });
+    }
+    if (matches.length === 1) return matches[0];
+    if (matches.length > 1 && process.env.DEBUG) {
+      const pids = matches.map((m) => m.pid).join(', ');
+      console.warn(`[daemon] multiple running daemons detected for ${cliHomeDir} (pids: ${pids}); reporting stopped`);
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function isDaemonRunning(cliHomeDir, options = {}) {
@@ -215,23 +252,81 @@ function resolveHappierCliDistEntrypoint(cliBin) {
   }
 }
 
+function extractRelativeMjsImportSpecifiers(source) {
+  const specs = new Set();
+  const patterns = [
+    /(?:^|[^\w$])import\s+(?:[^'"]*?\s+from\s*)?['"]([^'"]+)['"]/gm,
+    /(?:^|[^\w$])export\s+[^'"]*?\s+from\s*['"]([^'"]+)['"]/gm,
+    /import\s*\(\s*['"]([^'"]+)['"]\s*\)/gm,
+  ];
+  for (const re of patterns) {
+    for (const match of source.matchAll(re)) {
+      const spec = String(match?.[1] ?? '').trim();
+      if (!spec || !spec.startsWith('.')) continue;
+      if (!spec.endsWith('.mjs')) continue;
+      specs.add(spec);
+    }
+  }
+  return [...specs];
+}
+
+function findMissingDistModules(entrypoint, maxFiles = 400) {
+  const missing = [];
+  const seen = new Set();
+  const queue = [entrypoint];
+  while (queue.length > 0 && seen.size < maxFiles) {
+    const filePath = queue.shift();
+    if (!filePath || seen.has(filePath)) continue;
+    seen.add(filePath);
+
+    let source = '';
+    try {
+      source = readFileSync(filePath, 'utf-8');
+    } catch {
+      missing.push(filePath);
+      continue;
+    }
+
+    const imports = extractRelativeMjsImportSpecifiers(source);
+    for (const spec of imports) {
+      const target = join(dirname(filePath), spec);
+      if (!existsSync(target)) {
+        missing.push(target);
+        continue;
+      }
+      if (!seen.has(target)) {
+        queue.push(target);
+      }
+    }
+  }
+  return missing;
+}
+
 async function ensureHappierCliDistExists({ cliBin }) {
   const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
   if (!distEntrypoint) return { ok: false, distEntrypoint: null, built: false, reason: 'unknown_cli_bin' };
   const cliDir = join(dirname(cliBin), '..');
+  const buildCli =
+    (process.env.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
 
-  // Fast path: if dist already exists, never trigger a rebuild here.
+  const readIntegrity = () => {
+    if (!existsSync(distEntrypoint)) return { ok: false, reason: 'missing_entrypoint' };
+    const missing = findMissingDistModules(distEntrypoint);
+    if (missing.length === 0) return { ok: true, reason: 'exists' };
+    return { ok: false, reason: `incomplete:${missing[0]}` };
+  };
+
+  // Fast path: if dist exists and import graph is complete, never trigger rebuild here.
   // Rebuilding inside daemon restart can race with live restarts and transiently remove dist/.
-  if (existsSync(distEntrypoint)) {
-    return { ok: true, distEntrypoint, built: false, reason: 'exists' };
+  const before = readIntegrity();
+  if (before.ok) {
+    return { ok: true, distEntrypoint, built: false, reason: before.reason };
   }
 
   // Try to recover automatically: missing dist is a common first-run worktree issue.
   // We build in-place using the cliDir that owns this cliBin (../ from bin/).
-  const buildCli =
-    (process.env.HAPPIER_STACK_CLI_BUILD ?? '1').toString().trim() !== '0';
   if (!buildCli) {
-    return { ok: false, distEntrypoint, built: false, reason: 'build_disabled' };
+    return { ok: false, distEntrypoint, built: false, reason: before.reason };
   }
 
   let buildRes = null;
@@ -246,7 +341,8 @@ async function ensureHappierCliDistExists({ cliBin }) {
     return { ok: false, distEntrypoint, built: false, reason: String(e?.message ?? e) };
   }
 
-  if (existsSync(distEntrypoint)) {
+  const after = readIntegrity();
+  if (after.ok) {
     return {
       ok: true,
       distEntrypoint,
@@ -254,7 +350,12 @@ async function ensureHappierCliDistExists({ cliBin }) {
       reason: buildRes?.built ? (buildRes.reason ?? 'rebuilt') : 'exists',
     };
   }
-  return { ok: false, distEntrypoint, built: Boolean(buildRes?.built), reason: buildRes?.built ? 'rebuilt_but_missing' : 'missing' };
+  return {
+    ok: false,
+    distEntrypoint,
+    built: Boolean(buildRes?.built),
+    reason: after.reason,
+  };
 }
 
 function excerptIndicatesMissingAuth(excerpt) {
@@ -673,9 +774,15 @@ export async function startLocalDaemonWithAuth({
   const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
   const distCheck = await ensureHappierCliDistExists({ cliBin });
   if (!distCheck.ok) {
+    const reason = String(distCheck.reason ?? '').trim();
+    const missingModule = reason.startsWith('incomplete:') ? reason.slice('incomplete:'.length) : '';
+    const detail = missingModule
+      ? `[local] Missing module referenced by dist entrypoint: ${missingModule}\n`
+      : '';
     throw new Error(
-      `[local] happier-cli dist entrypoint is missing (${distEntrypoint}).\n` +
+      `[local] happier-cli dist entrypoint is missing or incomplete (${distEntrypoint}).\n` +
         `[local] Refusing to start/restart daemon because it would crash with MODULE_NOT_FOUND.\n` +
+        detail +
         `[local] Fix: rebuild happier-cli in the active checkout/worktree.\n` +
         (distCheck.reason ? `[local] Detail: ${distCheck.reason}\n` : '')
     );
@@ -940,12 +1047,114 @@ export async function startLocalDaemonWithAuth({
   }
 }
 
-export async function daemonStatusSummary({ cliBin, cliHomeDir, internalServerUrl, publicServerUrl }) {
-  const env = getDaemonEnv({
-    baseEnv: process.env,
+export async function daemonStatusSummary({
+  cliBin,
+  cliHomeDir,
+  internalServerUrl,
+  publicServerUrl,
+  env = process.env,
+  stackName = null,
+  cliIdentity = null,
+}) {
+  const daemonEnv = getDaemonEnv({
+    baseEnv: env,
     cliHomeDir,
     internalServerUrl,
     publicServerUrl,
+    stackName,
+    cliIdentity,
   });
-  return await runCapture('node', [cliBin, 'daemon', 'status'], { env });
+  const distEntrypoint = resolveHappierCliDistEntrypoint(cliBin);
+  try {
+    return await runCapture(process.execPath, [cliBin, 'daemon', 'status'], { env: daemonEnv });
+  } catch (error) {
+    if (isMissingDistStatusError({ error, distEntrypoint })) {
+      return buildDistMissingStatusFallback({
+        cliHomeDir,
+        internalServerUrl,
+        env: daemonEnv,
+        distEntrypoint,
+      });
+    }
+    throw error;
+  }
+}
+
+function isMissingDistStatusError({ error, distEntrypoint }) {
+  const text = String(error?.message ?? error ?? '');
+  if (!text.includes('MODULE_NOT_FOUND') && !text.includes('ERR_MODULE_NOT_FOUND')) return false;
+  if (distEntrypoint && text.includes(distEntrypoint)) return true;
+  return text.includes('/dist/index.mjs');
+}
+
+function buildDistMissingStatusFallback({ cliHomeDir, internalServerUrl, env, distEntrypoint }) {
+  const state = checkDaemonState(cliHomeDir, { serverUrl: internalServerUrl, env });
+  const { statePath } = resolvePreferredStackDaemonStatePaths({ cliHomeDir, serverUrl: internalServerUrl, env });
+
+  let stateData = null;
+  try {
+    if (existsSync(statePath)) {
+      stateData = JSON.parse(readFileSync(statePath, 'utf-8'));
+    }
+  } catch {
+    stateData = null;
+  }
+
+  const statusLine =
+    state.status === 'running'
+      ? '✓ Daemon is running'
+      : state.status === 'starting'
+        ? '⚠ Daemon is starting'
+        : '❌ Daemon is not running';
+
+  const redactedState =
+    stateData && typeof stateData === 'object'
+      ? {
+          ...stateData,
+          ...(Object.prototype.hasOwnProperty.call(stateData, 'controlToken') ? { controlToken: '<redacted>' } : {}),
+        }
+      : null;
+
+  const lines = [
+    '🩺 Happier CLI Doctor',
+    '',
+    '',
+    '🤖 Daemon Status',
+    statusLine,
+  ];
+
+  const pid = Number(stateData?.pid ?? state?.pid);
+  if (Number.isFinite(pid) && pid > 0) {
+    lines.push(`  PID: ${pid}`);
+  }
+  const startedAtRaw = stateData?.startedAt;
+  const startedAtNum =
+    typeof startedAtRaw === 'string'
+      ? (() => {
+          const trimmed = startedAtRaw.trim();
+          const asNumber = Number(trimmed);
+          if (Number.isFinite(asNumber)) return asNumber;
+          return Date.parse(trimmed);
+        })()
+      : Number(startedAtRaw);
+  if (Number.isFinite(startedAtNum) && startedAtNum > 0) {
+    lines.push(`  Started: ${new Date(startedAtNum).toLocaleString()}`);
+  }
+  if (typeof stateData?.startedWithCliVersion === 'string' && stateData.startedWithCliVersion.trim()) {
+    lines.push(`  CLI Version: ${stateData.startedWithCliVersion}`);
+  }
+  const httpPort = Number(stateData?.httpPort);
+  if (Number.isFinite(httpPort) && httpPort > 0) {
+    lines.push(`  HTTP Port: ${httpPort}`);
+  }
+
+  lines.push('');
+  lines.push('📄 Daemon State:');
+  lines.push(`Location: ${statePath}`);
+  lines.push(redactedState ? JSON.stringify(redactedState, null, 2) : '(missing or unreadable)');
+  lines.push('');
+  lines.push(`ℹ️ Fallback status used because CLI dist entrypoint is missing: ${distEntrypoint ?? 'unknown'}`);
+  lines.push('');
+  lines.push('✅ Doctor diagnosis complete!');
+  return lines.join('\n');
 }

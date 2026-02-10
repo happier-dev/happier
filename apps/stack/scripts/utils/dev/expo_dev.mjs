@@ -204,32 +204,17 @@ function expoModeLabel({ wantWeb, wantDevClient }) {
   return 'disabled';
 }
 
-export async function ensureDevExpoServer({
-  startUi,
-  startMobile,
-  uiDir,
-  expoProjectDir = '',
-  autostart,
+export function buildExpoDevEnv({
   baseEnv,
   apiServerUrl,
-  restart,
+  wantDevClient,
+  wantWeb,
   stackMode,
-  runtimeStatePath,
   stackName,
-  envPath,
-  children,
-  spawnOptions = {},
-  expoTailscale = false,
-  quiet = false,
 } = {}) {
-  const wantWeb = Boolean(startUi);
-  const wantDevClient = Boolean(startMobile);
-  if (!wantWeb && !wantDevClient) {
-    return { ok: true, skipped: true, reason: 'disabled' };
-  }
-
   const env = { ...(baseEnv || process.env) };
   delete env.CI;
+
   // Expo app config: this is what both web + native app use to reach the Happy server.
   // When dev-client is enabled, `localhost` / `*.localhost` are not reachable from the phone,
   // so rewrite to LAN IP here (centralized) to avoid relying on call sites.
@@ -242,7 +227,11 @@ export async function ensureDevExpoServer({
         serverPort: Number.isFinite(serverPortFromEnv) ? serverPortFromEnv : null,
       })
     : apiServerUrl;
+
   env.EXPO_PUBLIC_HAPPY_SERVER_URL = effectiveApiServerUrl;
+  if (stackMode && !env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT) {
+    env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+  }
   env.EXPO_PUBLIC_DEBUG = env.EXPO_PUBLIC_DEBUG ?? '1';
 
   // Optional: allow per-stack storage isolation inside a single dev-client build by
@@ -268,6 +257,42 @@ export async function ensureDevExpoServer({
   // We own the browser opening behavior in hstack so we can reliably open the correct origin.
   env.EXPO_NO_BROWSER = '1';
   env.BROWSER = 'none';
+
+  return env;
+}
+
+export async function ensureDevExpoServer({
+  startUi,
+  startMobile,
+  uiDir,
+  expoProjectDir = '',
+  autostart,
+  baseEnv,
+  apiServerUrl,
+  restart,
+  stackMode,
+  runtimeStatePath,
+  stackName,
+  envPath,
+  children,
+  spawnOptions = {},
+  expoTailscale = false,
+  quiet = false,
+} = {}) {
+  const wantWeb = Boolean(startUi);
+  const wantDevClient = Boolean(startMobile);
+  if (!wantWeb && !wantDevClient) {
+    return { ok: true, skipped: true, reason: 'disabled' };
+  }
+
+  const env = buildExpoDevEnv({
+    baseEnv,
+    apiServerUrl,
+    wantDevClient,
+    wantWeb,
+    stackMode,
+    stackName,
+  });
 
   // Mobile config is needed for `--scheme` and for the app's environment.
   let scheme = '';
@@ -350,7 +375,30 @@ export async function ensureDevExpoServer({
     };
   }
 
-  const metroPort = await pickExpoDevMetroPort({ env: baseEnv, stackMode, stackName });
+  const reservedMetroPorts = new Set();
+
+  if (restart && running.state?.pid) {
+    const prevPid = Number(running.state.pid);
+    const prevPort = Number(running.state?.port);
+    const res = await killProcessGroupOwnedByStack(prevPid, { stackName, envPath, label: 'expo', json: true });
+    if (!res.killed) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[local] expo: not stopping existing Expo pid=${prevPid} because it does not look stack-owned.\n` +
+          `[local] expo: continuing by starting a new Expo process on a free port.`
+      );
+      if (Number.isFinite(prevPort) && prevPort > 0) {
+        reservedMetroPorts.add(prevPort);
+      }
+    }
+  }
+
+  const metroPort = await pickExpoDevMetroPort({
+    env: baseEnv,
+    stackMode,
+    stackName,
+    reservedPorts: reservedMetroPorts,
+  });
   env.RCT_METRO_PORT = String(metroPort);
   const host = resolveExpoDevHost({ env });
   const args = buildExpoStartArgs({
@@ -361,18 +409,6 @@ export async function ensureDevExpoServer({
     scheme,
     clearCache: wantsExpoClearCache({ env: baseEnv || process.env }),
   });
-
-  if (restart && running.state?.pid) {
-    const prevPid = Number(running.state.pid);
-    const res = await killProcessGroupOwnedByStack(prevPid, { stackName, envPath, label: 'expo', json: true });
-    if (!res.killed) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        `[local] expo: not stopping existing Expo pid=${prevPid} because it does not look stack-owned.\n` +
-          `[local] expo: continuing by starting a new Expo process on a free port.`
-      );
-    }
-  }
 
   if (!quiet) {
     // eslint-disable-next-line no-console

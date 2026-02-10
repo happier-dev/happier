@@ -8,6 +8,12 @@ import { applyStackActiveServerScopeEnv } from '../utils/auth/stable_scope_id.mj
 import { getStackRuntimeStatePath, isPidAlive, readStackRuntimeStateFile } from '../utils/stack/runtime_state.mjs';
 
 const readExistingEnv = readTextOrEmpty;
+const STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS = [
+  'HAPPIER_SERVER_URL',
+  'HAPPIER_PUBLIC_SERVER_URL',
+  'HAPPIER_WEBAPP_URL',
+  'HAPPIER_HOME_DIR',
+];
 
 function stringifyEnv(env) {
   const lines = [];
@@ -56,7 +62,10 @@ export async function withStackEnv({ stackName, fn, extraEnv = {} }) {
   // IMPORTANT: stack env file should be authoritative. If the user has HAPPIER_STACK_*
   // exported in their shell, it would otherwise "win" because utils/env.mjs only sets
   // env vars if they are missing/empty.
-  const cleaned = scrubHappierStackEnv(process.env, { keepHappierStackKeys: STACK_WRAPPER_PRESERVE_KEYS });
+  const cleaned = scrubHappierStackEnv(process.env, {
+    keepHappierStackKeys: STACK_WRAPPER_PRESERVE_KEYS,
+    clearUnprefixedKeys: STACK_WRAPPER_CLEAR_UNPREFIXED_KEYS,
+  });
   const raw = await readExistingEnv(envPath);
   const stackEnv = parseEnvToObject(raw);
 
@@ -80,9 +89,20 @@ export async function withStackEnv({ stackName, fn, extraEnv = {} }) {
     cliIdentity: (env.HAPPIER_STACK_CLI_IDENTITY ?? '').toString().trim() || 'default',
   });
 
-  // Runtime-only port overlay (ephemeral stacks): only trust it when the owner pid is still alive.
+  // Runtime-only port overlay (ephemeral stacks): prefer stack.runtime.json ports when the stack
+  // is still running, even if the original "owner" process is gone (common during dev restarts).
   const ownerPid = Number(runtimeState?.ownerPid);
-  if (isPidAlive(ownerPid)) {
+  const processes = runtimeState?.processes && typeof runtimeState.processes === 'object' ? runtimeState.processes : {};
+  const serverPid = Number(processes.serverPid);
+  const expoPid = Number(processes.expoPid);
+  const daemonPid = Number(processes.daemonPid);
+  const shouldTrustRuntimePorts =
+    isPidAlive(ownerPid) ||
+    isPidAlive(serverPid) ||
+    isPidAlive(expoPid) ||
+    isPidAlive(daemonPid);
+
+  if (shouldTrustRuntimePorts) {
     const ports = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : {};
     const applyPort = (suffix, value) => {
       const n = Number(value);

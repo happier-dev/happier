@@ -119,3 +119,53 @@ test('startLocalDaemonWithAuth does not require a second CLI build when dist/ind
     await rm(tmp, { recursive: true, force: true });
   }
 });
+
+test('startLocalDaemonWithAuth rejects incomplete dist when index imports missing chunks', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-dist-incomplete-'));
+  try {
+    const cliDir = join(tmp, 'apps', 'cli');
+    const cliBin = await writeStubHappyCli({ cliDir });
+
+    // Simulate a partially built dist where entrypoint exists but references a missing chunk.
+    await writeFile(
+      join(cliDir, 'dist', 'index.mjs'),
+      "import './doctor-missing-chunk.mjs';\nexport {};\n",
+      'utf-8',
+    );
+
+    await writeFile(join(tmp, 'package.json'), '{}\n', 'utf-8');
+    runGit(['init'], tmp);
+    runGit(['config', 'user.email', 'test@example.com'], tmp);
+    runGit(['config', 'user.name', 'Test User'], tmp);
+    runGit(['add', '.'], tmp);
+    runGit(['commit', '-m', 'init'], tmp);
+
+    const cliHomeDir = join(tmp, 'stack', 'cli');
+    await mkdir(cliHomeDir, { recursive: true });
+    await writeFile(join(cliHomeDir, 'access.key'), 'dummy\n', 'utf-8');
+    await writeFile(join(cliHomeDir, 'settings.json'), JSON.stringify({ machineId: 'test-machine' }) + '\n', 'utf-8');
+
+    const env = {
+      ...process.env,
+      HAPPIER_STACK_CLI_BUILD: '0',
+    };
+
+    await assert.rejects(
+      () =>
+        startLocalDaemonWithAuth({
+          cliBin,
+          cliHomeDir,
+          internalServerUrl: 'http://127.0.0.1:4101',
+          publicServerUrl: 'http://localhost:4101',
+          isShuttingDown: () => false,
+          forceRestart: true,
+          env,
+          stackName: 'dev',
+          cliIdentity: 'default',
+        }),
+      /dist entrypoint is missing or incomplete|missing_module/i,
+    );
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});

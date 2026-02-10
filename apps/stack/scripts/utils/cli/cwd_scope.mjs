@@ -5,7 +5,36 @@ import { WORKTREE_CATEGORIES, getWorktreeCategoryRoot } from '../git/worktrees.m
 import { getDevRepoDir, getRepoDir, getWorkspaceDir, happyMonorepoSubdirForComponent, isHappyMonorepoRoot } from '../paths/paths.mjs';
 
 export function getInvokedCwd(env = process.env) {
-  return String(env.HAPPIER_STACK_INVOKED_CWD ?? env.PWD ?? process.cwd()).trim();
+  const explicit = String(env.HAPPIER_STACK_INVOKED_CWD ?? '').trim();
+  if (explicit) return explicit;
+
+  const pwd = String(env.PWD ?? '').trim();
+  // Prefer PWD when it already looks like a checkout/worktree root.
+  // This avoids surprising behavior when OLDPWD points at a different repo/worktree.
+  if (pwd) {
+    try {
+      if (existsSync(pwd) && existsSync(join(pwd, '.git'))) {
+        return pwd;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const oldPwd = String(env.OLDPWD ?? '').trim();
+  // Some wrapper scripts `cd` into the primary checkout before invoking subcommands, which makes `PWD`
+  // point at the wrong worktree. When available, fall back to `OLDPWD` if it still looks like a checkout/worktree.
+  if (oldPwd) {
+    try {
+      if (existsSync(oldPwd) && existsSync(join(oldPwd, '.git'))) {
+        return oldPwd;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return pwd || String(process.cwd()).trim();
 }
 
 function hasGitMarker(dir) {

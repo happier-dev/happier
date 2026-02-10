@@ -107,6 +107,7 @@ export async function startDevDaemon({
   startLocalDaemonWithAuthImpl = startLocalDaemonWithAuth,
 } = {}) {
   if (!startDaemon) return;
+
   await startLocalDaemonWithAuthImpl({
     cliBin,
     cliHomeDir,

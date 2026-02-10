@@ -5,11 +5,12 @@ import { findExistingStackCredentialPath } from '../utils/auth/credentials_paths
 import { parseArgs } from '../utils/cli/args.mjs';
 import { printResult, wantsHelp } from '../utils/cli/cli.mjs';
 import { isTty, promptSelect, withRl } from '../utils/cli/wizard.mjs';
-import { getDaemonEnv, startLocalDaemonWithAuth, stopLocalDaemon } from '../daemon.mjs';
+import { daemonStatusSummary, startLocalDaemonWithAuth, stopLocalDaemon } from '../daemon.mjs';
 import { getComponentDir, resolveStackEnvPath } from '../utils/paths/paths.mjs';
-import { run, runCapture } from '../utils/proc/proc.mjs';
+import { run } from '../utils/proc/proc.mjs';
 import { resolveServerPortFromEnv, resolveServerUrls } from '../utils/server/urls.mjs';
 import { parseCliIdentityOrThrow, resolveCliHomeDirForIdentity } from '../utils/stack/cli_identities.mjs';
+import { readStackRuntimeStateFile, isPidAlive } from '../utils/stack/runtime_state.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 import { banner, cmd as cmdFmt, sectionTitle } from '../utils/ui/layout.mjs';
 import { cyan, green } from '../utils/ui/ansi.mjs';
@@ -65,7 +66,21 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
       const cliBin = join(cliDir, 'bin', 'happier.mjs');
       const baseCliHomeDir = (env.HAPPIER_STACK_CLI_HOME_DIR ?? join(resolveStackEnvPath(stackName).baseDir, 'cli')).toString();
       const cliHomeDir = resolveCliHomeDirForIdentity({ cliHomeDir: baseCliHomeDir, identity });
-      const serverPort = resolveServerPortFromEnv({ env, defaultPort: 3005 });
+
+      // Stack env files don't always include a server port; for running stacks, prefer runtime state.
+      // This avoids accidentally targeting the main stack default (3005) for stacks on other ports.
+      let runtimePort = null;
+      const runtimePath = (env.HAPPIER_STACK_RUNTIME_STATE_PATH ?? '').toString().trim();
+      if (runtimePath) {
+        const state = await readStackRuntimeStateFile(runtimePath).catch(() => null);
+        const candidate = Number(state?.ports?.server);
+        const serverPid = Number(state?.processes?.serverPid);
+        if (Number.isFinite(candidate) && candidate > 0 && isPidAlive(serverPid)) {
+          runtimePort = candidate;
+        }
+      }
+
+      const serverPort = runtimePort ?? resolveServerPortFromEnv({ env, defaultPort: 3005 });
       const urls = await resolveServerUrls({ env, serverPort, allowEnable: false });
       const internalServerUrl = urls.internalServerUrl;
       const publicServerUrl = urls.publicServerUrl;
@@ -80,14 +95,6 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           : {}),
       };
       await mkdir(cliHomeDir, { recursive: true }).catch(() => {});
-      const daemonEnv = getDaemonEnv({
-        baseEnv: envForIdentity,
-        cliHomeDir,
-        internalServerUrl,
-        publicServerUrl,
-        stackName,
-        cliIdentity: identity,
-      });
 
       if (action === 'start' || action === 'restart') {
         // UX: if this identity is not authenticated yet and we're in a real TTY, offer to run the
@@ -149,7 +156,15 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           stackName,
           cliIdentity: identity,
         });
-        const status = await runCapture(process.execPath, [cliBin, 'daemon', 'status'], { cwd: rootDir, env: daemonEnv });
+        const status = await daemonStatusSummary({
+          cliBin,
+          cliHomeDir,
+          internalServerUrl,
+          publicServerUrl,
+          env: envForIdentity,
+          stackName,
+          cliIdentity: identity,
+        });
         return { ok: true, action, cliIdentity: identity, cliHomeDir, status: status.trim() };
       }
 
@@ -163,11 +178,27 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json }) 
           stackName,
           cliIdentity: identity,
         });
-        const status = await runCapture(process.execPath, [cliBin, 'daemon', 'status'], { cwd: rootDir, env: daemonEnv }).catch(() => '');
+        const status = await daemonStatusSummary({
+          cliBin,
+          cliHomeDir,
+          internalServerUrl,
+          publicServerUrl,
+          env: envForIdentity,
+          stackName,
+          cliIdentity: identity,
+        }).catch(() => '');
         return { ok: true, action, cliIdentity: identity, cliHomeDir, status: status.trim() || null };
       }
 
-      const status = await runCapture(process.execPath, [cliBin, 'daemon', 'status'], { cwd: rootDir, env: daemonEnv });
+      const status = await daemonStatusSummary({
+        cliBin,
+        cliHomeDir,
+        internalServerUrl,
+        publicServerUrl,
+        env: envForIdentity,
+        stackName,
+        cliIdentity: identity,
+      });
       return { ok: true, action, cliIdentity: identity, cliHomeDir, status: status.trim() };
     },
   });

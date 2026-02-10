@@ -271,3 +271,43 @@ test('ensureCliBuilt restores previous dist output when build fails', async (t) 
   const restored = await readFile(distIndex, 'utf-8');
   assert.equal(restored, 'export const stable = true;\n');
 });
+
+test('ensureCliBuilt restores dist from .dist.hstack-backup when previous build was interrupted', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-build-interrupted-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const cliDir = join(root, 'apps', 'cli');
+  await mkdir(cliDir, { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), '{ "name": "cli-test" }\n', 'utf-8');
+  await writeFile(join(cliDir, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await mkdir(join(cliDir, 'node_modules'), { recursive: true });
+  await writeFile(join(cliDir, 'node_modules', '.yarn-integrity'), 'ok\n', 'utf-8');
+
+  // Simulate: dist/ was moved out of the way to .dist.hstack-backup/, then the build process
+  // was killed before it restored dist/. Next run should recover without invoking `yarn build`.
+  const distBackupDir = join(cliDir, '.dist.hstack-backup');
+  const backupIndex = join(distBackupDir, 'index.mjs');
+  await mkdir(dirname(backupIndex), { recursive: true });
+  await writeFile(backupIndex, 'export const stable = true;\n', 'utf-8');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnArgDumpStub({ binDir, outputPath });
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_CLI_BUILD_MODE: 'auto',
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await ensureCliBuilt(cliDir, { buildCli: true, quiet: true });
+
+  const distIndex = join(cliDir, 'dist', 'index.mjs');
+  const recovered = await readFile(distIndex, 'utf-8');
+  assert.equal(recovered, 'export const stable = true;\n');
+  const argv = await readFile(outputPath, 'utf-8');
+  assert.ok(!argv.includes('build'), `expected no build invocation, got: ${argv}`);
+});

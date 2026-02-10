@@ -28,6 +28,15 @@ import { openUrlInBrowser } from '../utils/ui/browser.mjs';
 import { collectReservedStackPorts, getDefaultPortStart } from './port_reservation.mjs';
 import { withStackEnv } from './stack_environment.mjs';
 
+export function hasRecordedRuntimePortsForRestart(runtimeState = null) {
+  const ports = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : null;
+  return Number(ports?.server) > 0;
+}
+
+export function shouldReuseRuntimePortsOnRestart({ wantsRestart = false, runtimeState = null, wasRunning = false } = {}) {
+  return Boolean(wantsRestart && (wasRunning || hasRecordedRuntimePortsForRestart(runtimeState)));
+}
+
 export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPath, args, extraEnv = {}, background = false }) {
   await withStackEnv({
     stackName,
@@ -53,10 +62,20 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
       const existingPort = Number(runtimeState?.ports?.server);
       const existingUiPort = Number(runtimeState?.expo?.webPort);
       const existingPorts = runtimeState?.ports && typeof runtimeState.ports === 'object' ? runtimeState.ports : null;
-      const wasRunning = isPidAlive(existingOwnerPid);
+      const infraRuntimePids = [
+        Number(runtimeState?.processes?.serverPid),
+        Number(runtimeState?.processes?.expoPid),
+        Number(runtimeState?.processes?.expoTailscaleForwarderPid),
+      ].filter((pid) => Number.isFinite(pid) && pid > 1);
+      const infraPidAlive = infraRuntimePids.some((pid) => isPidAlive(pid));
+      const serverPortOccupied =
+        Number.isFinite(existingPort) && existingPort > 0
+          ? !(await isTcpPortFree(existingPort, { host: '127.0.0.1' }).catch(() => true))
+          : false;
+      const wasRunning = isPidAlive(existingOwnerPid) || infraPidAlive || serverPortOccupied;
       // True restart = there was an active runner for this stack. If the stack is not running,
       // `--restart` should behave like a normal start (allocate new ephemeral ports if needed).
-      const isTrueRestart = wantsRestart && wasRunning;
+      const isTrueRestart = shouldReuseRuntimePortsOnRestart({ wantsRestart, runtimeState, wasRunning });
 
       // Restart semantics (stack mode):
       // - Stop stack-owned processes first (runner, daemon, Expo, etc.)

@@ -50,7 +50,7 @@ export function buildStackStableScopeId({ stackName = 'main', cliIdentity = 'def
   if (isScopeIdSafe(compact)) return compact;
 
   const fallback = `stack_${hash}`;
-  return isScopeIdSafe(fallback) ? fallback : 'official';
+  return isScopeIdSafe(fallback) ? fallback : 'cloud';
 }
 
 export function isStableScopeDisabled(env = process.env) {

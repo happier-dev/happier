@@ -43,7 +43,17 @@ async function writeFailingStubHappyCli({ cliDir, errorMessage }) {
 
 async function createHappyStackFixture(
   t,
-  { prefix, stackName = 'exp-test', serverPort = 3999, stubType = 'success', message = 'hello', errorMessage = 'stub failure' } = {}
+  {
+    prefix,
+    stackName = 'exp-test',
+    serverPort = 3999,
+    stubType = 'success',
+    message = 'hello',
+    errorMessage = 'stub failure',
+    includePinnedServerPortInEnvFile = true,
+    runtimeOwnerPid = null,
+    runtimeServerPid = null,
+  } = {}
 ) {
   const tmp = await mkdtemp(join(tmpdir(), prefix));
   t.after(async () => {
@@ -71,11 +81,30 @@ async function createHappyStackFixture(
     [
       `HAPPIER_STACK_REPO_DIR=${monoRoot}`,
       `HAPPIER_STACK_CLI_HOME_DIR=${stackCliHome}`,
-      `HAPPIER_STACK_SERVER_PORT=${serverPort}`,
+      ...(includePinnedServerPortInEnvFile ? [`HAPPIER_STACK_SERVER_PORT=${serverPort}`] : []),
       '',
     ].join('\n'),
     'utf-8'
   );
+
+  if (runtimeOwnerPid !== null || runtimeServerPid !== null) {
+    await writeFile(
+      join(storageDir, stackName, 'stack.runtime.json'),
+      JSON.stringify(
+        {
+          version: 1,
+          stackName,
+          ephemeral: true,
+          ownerPid: runtimeOwnerPid,
+          ports: { server: serverPort },
+          processes: { serverPid: runtimeServerPid },
+        },
+        null,
+        2
+      ) + '\n',
+      'utf-8'
+    );
+  }
 
   return {
     stackName,
@@ -109,6 +138,54 @@ test('hstack stack happier <name> runs CLI under that stack env', async (t) => {
   assert.ok(String(out.envFile).endsWith(`/${fixture.stackName}/env`), `expected envFile to end with /${fixture.stackName}/env, got: ${out.envFile}`);
   assert.equal(out.homeDir, join(fixture.storageDir, fixture.stackName, 'cli'));
   assert.equal(out.serverUrl, 'http://127.0.0.1:3999');
+});
+
+test('hstack stack happier <name> overrides pre-set HAPPIER_* env vars with stack-scoped values', async (t) => {
+  const fixture = await createHappyStackFixture(t, {
+    prefix: 'happier-stack-stack-happy-override-',
+    message: 'override',
+    serverPort: 4123,
+  });
+
+  const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
+    cwd: rootDir,
+    env: {
+      ...fixture.baseEnv,
+      HAPPIER_HOME_DIR: join(fixture.storageDir, 'wrong', 'cli'),
+      HAPPIER_SERVER_URL: 'http://127.0.0.1:3005',
+      HAPPIER_WEBAPP_URL: 'http://wrong-webapp.example.test',
+    },
+  });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim());
+  assert.equal(out.message, 'override');
+  assert.equal(out.stack, fixture.stackName);
+  assert.equal(out.homeDir, join(fixture.storageDir, fixture.stackName, 'cli'));
+  assert.equal(out.serverUrl, 'http://127.0.0.1:4123');
+});
+
+test('hstack stack happier <name> uses stack.runtime.json ports when env file does not pin HAPPIER_STACK_SERVER_PORT', async (t) => {
+  const fixture = await createHappyStackFixture(t, {
+    prefix: 'happier-stack-stack-happy-runtime-ports-',
+    message: 'runtime-ports',
+    serverPort: 4777,
+    includePinnedServerPortInEnvFile: false,
+    // Simulate a stale owner pid but a still-running server process.
+    runtimeOwnerPid: 999999,
+    runtimeServerPid: process.pid,
+  });
+
+  const res = await runNodeCapture([join(rootDir, 'bin', 'hstack.mjs'), 'stack', 'happier', fixture.stackName], {
+    cwd: rootDir,
+    env: fixture.baseEnv,
+  });
+  assert.equal(res.code, 0, `expected exit 0, got ${res.code}\nstdout:\n${res.stdout}\nstderr:\n${res.stderr}`);
+
+  const out = JSON.parse(res.stdout.trim());
+  assert.equal(out.message, 'runtime-ports');
+  assert.equal(out.stack, fixture.stackName);
+  assert.equal(out.serverUrl, 'http://127.0.0.1:4777');
 });
 
 test('hstack stack happier <name> --identity=<name> uses identity-scoped HAPPIER_HOME_DIR', async (t) => {

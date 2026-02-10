@@ -36,7 +36,7 @@ export async function pickMetroPort({
   host = '127.0.0.1',
 } = {}) {
   const forced = coercePositiveInt(forcedPort);
-  if (forced) {
+  if (forced && !reservedPorts.has(forced)) {
     const ok = await isTcpPortFree(forced, { host });
     if (ok) return forced;
   }

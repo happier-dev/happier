@@ -112,3 +112,43 @@ test('getInvokedCwd falls back to process.cwd() when PWD is not set (Windows)', 
   const actual = await realpath(getInvokedCwd({})).catch(() => getInvokedCwd({}));
   assert.equal(actual, expected);
 });
+
+test('getInvokedCwd prefers OLDPWD when it looks like the real repo/worktree root', async (t) => {
+  const rootDir = await withTempRoot(t);
+  const oldPwd = join(rootDir, 'dev');
+  const pwd = join(rootDir, 'main');
+  await mkdir(oldPwd, { recursive: true });
+  await mkdir(pwd, { recursive: true });
+  await writeFile(join(oldPwd, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
+
+  withMockedProcessCwd(t, pwd);
+  const actual = getInvokedCwd({ PWD: pwd, OLDPWD: oldPwd });
+  assert.equal(actual, oldPwd);
+});
+
+test('getInvokedCwd prefers PWD when both PWD and OLDPWD look like repo/worktree roots', async (t) => {
+  const rootDir = await withTempRoot(t);
+  const oldPwd = join(rootDir, 'dev');
+  const pwd = join(rootDir, 'main');
+  await mkdir(oldPwd, { recursive: true });
+  await mkdir(pwd, { recursive: true });
+  await writeFile(join(oldPwd, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
+  await writeFile(join(pwd, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
+
+  withMockedProcessCwd(t, pwd);
+  const actual = getInvokedCwd({ PWD: pwd, OLDPWD: oldPwd });
+  assert.equal(actual, pwd);
+});
+
+test('getInvokedCwd falls back to OLDPWD when PWD does not look like a checkout/worktree root', async (t) => {
+  const rootDir = await withTempRoot(t);
+  const oldPwd = join(rootDir, 'dev');
+  const pwd = join(rootDir, 'not-a-worktree');
+  await mkdir(oldPwd, { recursive: true });
+  await mkdir(pwd, { recursive: true });
+  await writeFile(join(oldPwd, '.git'), 'gitdir: /tmp/fake\n', 'utf-8');
+
+  withMockedProcessCwd(t, pwd);
+  const actual = getInvokedCwd({ PWD: pwd, OLDPWD: oldPwd });
+  assert.equal(actual, oldPwd);
+});

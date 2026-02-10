@@ -1569,10 +1569,29 @@ async function cmdInfo({ rootDir, argv }) {
   console.log(`- env: ${out.envPath}`);
   console.log(`- runtime: ${out.runtimeStatePath}`);
   console.log(`- server: ${out.serverComponent}`);
-  console.log(`- running: ${out.runtime.running ? 'yes' : 'no'}${out.runtime.ownerPid ? ` (pid=${out.runtime.ownerPid})` : ''}`);
+  const runningPid = Number(out.runtime?.runningPid);
+  const ownerPid = Number(out.runtime?.ownerPid);
+  const runningPidSuffix = Number.isFinite(runningPid) && runningPid > 1
+    ? ` (pid=${runningPid})`
+    : Number.isFinite(ownerPid) && ownerPid > 1
+      ? ` (ownerPid=${ownerPid})`
+      : '';
+  console.log(`- running: ${out.runtime?.running ? 'yes' : 'no'}${runningPidSuffix}`);
+  if (typeof out.runtime?.health?.status === 'string' && out.runtime.health.status) {
+    const issues = Array.isArray(out.runtime.health.issues) ? out.runtime.health.issues : [];
+    const issueSuffix = issues.length > 0 ? ` (${issues.join(',')})` : '';
+    console.log(`- health: ${out.runtime.health.status}${issueSuffix}`);
+  }
   if (out.ports.server) console.log(`- port: server=${out.ports.server}${out.ports.backend ? ` backend=${out.ports.backend}` : ''}`);
-  if (out.ports.ui) console.log(`- port: ui=${out.ports.ui}`);
-  if (out.urls.uiUrl) console.log(`- ui: ${out.urls.uiUrl}`);
+  if (out.ports.ui) {
+    const uiRunning = out.runtime?.components?.ui?.running !== false;
+    console.log(`- port: ui=${out.ports.ui}${uiRunning ? '' : ' (unreachable)'}`);
+  }
+  if (out.urls.uiUrl && out.runtime?.components?.ui?.running !== false) {
+    console.log(`- ui: ${out.urls.uiUrl}`);
+  } else if (out.ports.ui && out.runtime?.components?.ui?.running === false) {
+    console.log(`- ui: unavailable (re-run: hstack stack dev ${stackName} --restart)`);
+  }
   if (out.urls.internalServerUrl) console.log(`- internal: ${out.urls.internalServerUrl}`);
   if (out.pinned.serverPort) console.log(`- pinned: serverPort=${out.pinned.serverPort}`);
   if (out.repo?.dir) {

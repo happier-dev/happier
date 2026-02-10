@@ -71,9 +71,8 @@ async function writeServerScopedAuth({ cliHomeDir, serverUrl }) {
 async function writeStubHappyCli({ cliDir }) {
   await mkdir(join(cliDir, 'bin'), { recursive: true });
   await mkdir(join(cliDir, 'dist'), { recursive: true });
-  await writeFile(join(cliDir, 'dist', 'index.mjs'), 'export {};\n', 'utf-8');
 
-  const script = `
+const distScript = `
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -113,6 +112,9 @@ if (sub === 'stop') {
 
 if (sub === 'start') {
   append('start');
+  // Capture resolved target server so integration tests can assert correct stack port selection.
+  append('server_url=' + String(process.env.HAPPIER_SERVER_URL || ''));
+  append('webapp_url=' + String(process.env.HAPPIER_WEBAPP_URL || ''));
   const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' });
   child.unref();
   writeFileSync(state, JSON.stringify({ pid: child.pid, httpPort: 0, startTime: new Date().toISOString() }) + '\\n', 'utf-8');
@@ -138,7 +140,8 @@ append('other:' + sub);
 process.exit(0);
 `;
 
-  await writeFile(join(cliDir, 'bin', 'happier.mjs'), script.trimStart(), 'utf-8');
+  await writeFile(join(cliDir, 'dist', 'index.mjs'), distScript.trimStart(), 'utf-8');
+  await writeFile(join(cliDir, 'bin', 'happier.mjs'), "import '../dist/index.mjs';\n", 'utf-8');
 }
 
 async function ensureMinimalHappierMonorepo({ monoRoot }) {
@@ -333,6 +336,116 @@ test('hstack daemon status targets main stack', async (t) => {
   const logPath = join(fixture.stackCliHome, 'stub-daemon.log');
   const logText = await readLogText(logPath);
   assert.ok(logText.includes('status'), `expected stub daemon status to be called\n${logText}`);
+});
+
+test('hstack stack daemon <name> status does not include global process inventory', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-daemon-status-scope-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+
+  const startRes = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env: fixture.baseEnv });
+  assertExitOk(startRes, 'stack daemon start for scoped status');
+
+  const statusRes = await runHstack(['stack', 'daemon', fixture.stackName, 'status', '--json'], { env: fixture.baseEnv });
+  assertExitOk(statusRes, 'stack daemon status');
+
+  const parsed = JSON.parse(statusRes.stdout.trim());
+  const statusText = String(parsed?.status ?? '');
+  assert.equal(
+    statusText.includes('🔍 All Happier CLI Processes'),
+    false,
+    `expected stack-scoped daemon status to omit global process inventory\n${statusText}`
+  );
+});
+
+test('hstack stack daemon <name> status falls back when cli dist entrypoint is missing', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-daemon-status-fallback-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+  await fixture.writeStackEnv();
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+
+  const startRes = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env: fixture.baseEnv });
+  assertExitOk(startRes, 'stack daemon start for fallback status');
+
+  const distEntrypoint = join(fixture.baseEnv.HAPPIER_STACK_WORKSPACE_DIR, 'happier', 'apps', 'cli', 'dist', 'index.mjs');
+  await rm(distEntrypoint, { force: true });
+
+  const statusRes = await runHstack(['stack', 'daemon', fixture.stackName, 'status', '--json'], { env: fixture.baseEnv });
+  assertExitOk(statusRes, 'stack daemon status fallback');
+
+  const parsed = JSON.parse(statusRes.stdout.trim());
+  const statusText = String(parsed?.status ?? '');
+  assert.ok(
+    statusText.includes('Fallback status used because CLI dist entrypoint is missing'),
+    `expected fallback marker in daemon status output\n${statusText}`
+  );
+  assert.ok(
+    statusText.includes('Daemon Status'),
+    `expected daemon status section in fallback output\n${statusText}`
+  );
+});
+
+test('hstack stack daemon <name> start uses runtime server port when env port is missing', async (t) => {
+  const fixture = await createDaemonFixture(t, {
+    prefix: 'happy-stacks-stack-daemon-runtime-port-',
+    stackName: 'exp-test',
+    serverPort: 4101,
+  });
+
+  await writeDummyAuth({ cliHomeDir: fixture.stackCliHome });
+
+  // Write a stack env *without* HAPPIER_STACK_SERVER_PORT so the command must fall back to runtime state.
+  await fixture.writeStackEnv({ port: '' });
+
+  // Create a runtime state file that indicates the stack server is running on fixture.serverPort.
+  const serverStub = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  t.after(() => {
+    try {
+      serverStub.kill('SIGTERM');
+    } catch {
+      // ignore
+    }
+  });
+
+  const runtimePath = join(fixture.storageDir, fixture.stackName, 'stack.runtime.json');
+  await writeFile(
+    runtimePath,
+    JSON.stringify(
+      {
+        version: 1,
+        stackName: fixture.stackName,
+        ephemeral: true,
+        ports: { server: fixture.serverPort },
+        processes: { serverPid: serverStub.pid },
+      },
+      null,
+      2
+    ) + '\n',
+    'utf-8'
+  );
+
+  registerDaemonCleanup(t, { env: fixture.baseEnv, stackName: fixture.stackName });
+
+  const startRes = await runHstack(['stack', 'daemon', fixture.stackName, 'start', '--json'], { env: fixture.baseEnv });
+  assertExitOk(startRes, 'stack daemon start uses runtime port');
+
+  const logPath = join(fixture.stackCliHome, 'stub-daemon.log');
+  const logText = await readLogText(logPath);
+  assert.ok(
+    logText.includes(`server_url=http://127.0.0.1:${fixture.serverPort}`),
+    `expected daemon env to target runtime port ${fixture.serverPort}\n${logText}`
+  );
 });
 
 test('hstack stack auth <name> login --identity=<name> --print prints identity-scoped HAPPIER_HOME_DIR', async (t) => {

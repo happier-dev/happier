@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { startLocalDaemonWithAuth } from './daemon.mjs';
+import { checkDaemonState, startLocalDaemonWithAuth } from './daemon.mjs';
 
 function runNode(args, { cwd, env }) {
   return new Promise((resolve, reject) => {
@@ -249,6 +249,48 @@ try {
     const res = await runNode([runnerPath], { cwd: tmp, env: process.env });
     assert.match(res.stdout + res.stderr, /\[daemon\] .*already running/i);
   } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('checkDaemonState falls back to any running daemon state when active server scope differs', async () => {
+  const tmp = await mkdtemp(join(tmpdir(), 'happy-stacks-daemon-state-fallback-'));
+  const cliHomeDir = join(tmp, 'stack', 'cli');
+  await mkdir(cliHomeDir, { recursive: true });
+
+  const dummy = spawn(process.execPath, ['-e', 'setInterval(()=>{}, 1e6)'], {
+    env: {
+      ...process.env,
+      HAPPIER_HOME_DIR: cliHomeDir,
+      HAPPIER_SERVER_URL: 'http://127.0.0.1:4301',
+      HAPPIER_WEBAPP_URL: 'http://localhost:4301',
+    },
+    stdio: ['ignore', 'ignore', 'ignore'],
+    detached: true,
+  });
+
+  try {
+    const serverDir = join(cliHomeDir, 'servers', 'stack_dev__id_default');
+    await mkdir(serverDir, { recursive: true });
+    await writeFile(
+      join(serverDir, 'daemon.state.json'),
+      JSON.stringify({ pid: dummy.pid, httpPort: 1, startedAt: Date.now(), startedWithCliVersion: 'test' }) + '\n',
+      'utf-8'
+    );
+
+    const env = {
+      ...process.env,
+      HAPPIER_ACTIVE_SERVER_ID: 'stack_dev2__id_default',
+    };
+    const state = checkDaemonState(cliHomeDir, { serverUrl: 'http://127.0.0.1:4301', env });
+    assert.equal(state.status, 'running');
+    assert.equal(state.pid, dummy.pid);
+  } finally {
+    try {
+      process.kill(-dummy.pid, 'SIGTERM');
+    } catch {
+      // ignore
+    }
     await rm(tmp, { recursive: true, force: true });
   }
 });

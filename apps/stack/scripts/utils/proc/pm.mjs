@@ -251,6 +251,13 @@ export async function ensureCliBuilt(cliDir, { buildCli, quiet = false, env: env
   const gitSig = await computeGitWorktreeSignature(cliDir);
   const prev = await readJsonIfExists(buildStatePath);
 
+  // Recovery: if a previous build was interrupted after moving dist/ aside, we can be left with
+  // dist/ missing but .dist.hstack-backup/ present. Restore it so the stack remains runnable
+  // (and so subsequent "auto" mode checks can correctly treat the CLI as already built).
+  if (!(await pathExists(distDir)) && (await pathExists(distBackupDir))) {
+    await rename(distBackupDir, distDir);
+  }
+
   // "never" should prevent rebuild churn, but it must not make the stack unrunnable.
   // If the dist entrypoint is missing, build once even in "never" mode.
   if (mode === 'never') {
