@@ -146,8 +146,6 @@ concurrency:
 
 jobs:
   promote:
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
     environment: release-shared
     outputs:

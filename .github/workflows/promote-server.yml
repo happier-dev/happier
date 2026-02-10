@@ -72,8 +72,6 @@ concurrency:
 jobs:
   promote:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     environment: release-shared
     steps:
       - name: Resolve source ref
