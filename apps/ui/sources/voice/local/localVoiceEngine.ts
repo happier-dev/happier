@@ -5,7 +5,8 @@ import { create } from 'zustand';
 import { requestMicrophonePermission, showMicrophonePermissionDeniedAlert } from '@/utils/platform/microphonePermissions';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { buildOpenAiSpeechRequest, buildOpenAiTranscriptionRequest } from './openaiCompat';
+import { buildOpenAiTranscriptionRequest } from './openaiCompat';
+import { fetchOpenAiCompatSpeechAudio } from './fetchOpenAiCompatSpeechAudio';
 import { DaemonMediatorClient } from '@/voice/mediator/daemonMediatorClient';
 import { OpenAiCompatMediatorClient } from '@/voice/mediator/openaiCompatMediatorClient';
 import type { VoiceMediatorClient } from '@/voice/mediator/types';
@@ -466,21 +467,14 @@ async function speakText(opts: {
   format: 'mp3' | 'wav';
   input: string;
 }): Promise<void> {
-  const req = buildOpenAiSpeechRequest({
+  const buffer = await fetchOpenAiCompatSpeechAudio({
     baseUrl: opts.baseUrl,
     apiKey: opts.apiKey,
     model: opts.model,
     voice: opts.voice,
-    responseFormat: opts.format,
+    format: opts.format,
     input: opts.input,
   });
-
-  const res = await fetch(req.url, req.init);
-  if (!res.ok) {
-    throw new Error('tts_failed');
-  }
-
-  const buffer = await res.arrayBuffer();
 
   if (Platform.OS === 'web') {
     const blob = new Blob([buffer], { type: opts.format === 'wav' ? 'audio/wav' : 'audio/mpeg' });

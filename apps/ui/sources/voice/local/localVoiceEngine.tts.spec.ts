@@ -47,7 +47,7 @@ describe('local voice engine TTS behavior', () => {
         const { toggleLocalVoiceTurn } = await import('./localVoiceEngine');
         await toggleLocalVoiceTurn('s1');
         const stopPromise = toggleLocalVoiceTurn('s1');
-        for (let i = 0; i < 20 && createdAudioPlayers.length === 0; i++) {
+        for (let i = 0; i < 200 && createdAudioPlayers.length === 0; i++) {
             await Promise.resolve();
         }
         expect(createdAudioPlayers.length).toBeGreaterThan(0);
@@ -98,7 +98,7 @@ describe('local voice engine TTS behavior', () => {
             resolved = true;
         });
 
-        for (let i = 0; i < 20 && createdAudioPlayers.length === 0; i++) {
+        for (let i = 0; i < 200 && createdAudioPlayers.length === 0; i++) {
             await Promise.resolve();
         }
         expect(createdAudioPlayers.length).toBeGreaterThan(0);
