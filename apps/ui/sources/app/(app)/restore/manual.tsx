@@ -121,7 +121,9 @@ export default function Restore() {
                         placeholderTextColor={theme.colors.input.placeholder}
                         value={restoreKey}
                         onChangeText={setRestoreKey}
-                        autoCapitalize="characters"
+                        // Secret keys may be pasted in base64url (case-sensitive) or the grouped base32 backup format.
+                        // Auto-capitalization would corrupt base64url keys, so keep it disabled.
+                        autoCapitalize="none"
                         autoCorrect={false}
                         multiline={true}
                         numberOfLines={4}
