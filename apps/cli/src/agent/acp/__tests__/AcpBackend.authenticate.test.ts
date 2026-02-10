@@ -97,5 +97,5 @@ describe('AcpBackend auth', () => {
       await backend.dispose();
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

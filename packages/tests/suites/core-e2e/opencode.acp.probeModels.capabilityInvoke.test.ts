@@ -62,6 +62,20 @@ describe('core e2e: capabilities.invoke(cli.* probeModels) machine RPC transport
     const secret = Uint8Array.from(randomBytes(32));
     const machineId = randomUUID();
 
+    // Machine-scoped sockets are rejected unless the machine id is registered to the account.
+    // Register the machine first so the socket handshake can succeed.
+    const machineRes = await fetch(`${server.baseUrl}/v1/machines`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${auth.token}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ id: machineId, metadata: 'e2e-machine-metadata' }),
+    });
+    if (!machineRes.ok) {
+      throw new Error(`Failed to create machine (${machineRes.status}): ${await machineRes.text()}`);
+    }
+
     const ui = createUserScopedSocketCollector(server.baseUrl, auth.token);
     ui.connect();
 
@@ -143,4 +157,3 @@ describe('core e2e: capabilities.invoke(cli.* probeModels) machine RPC transport
     }
   }, 120_000);
 });
-

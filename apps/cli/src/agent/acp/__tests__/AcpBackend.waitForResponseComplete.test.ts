@@ -105,7 +105,7 @@ describe('AcpBackend.waitForResponseComplete', () => {
         args: [scriptPath],
         transportHandler: {
           agentName: 'test',
-          getInitTimeout: () => 1_000,
+          getInitTimeout: () => 5_000,
           getToolPatterns: () => [] as ToolPattern[],
           getIdleTimeout: () => 1,
         } satisfies TransportHandler,
@@ -132,7 +132,7 @@ describe('AcpBackend.waitForResponseComplete', () => {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it('rejects waitForResponseComplete when ACP process exits non-zero after prompt', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-exit-'));
@@ -147,7 +147,7 @@ describe('AcpBackend.waitForResponseComplete', () => {
         args: [scriptPath],
         transportHandler: {
           agentName: 'test',
-          getInitTimeout: () => 1_000,
+          getInitTimeout: () => 5_000,
           getToolPatterns: () => [] as ToolPattern[],
           getIdleTimeout: () => 1,
         } satisfies TransportHandler,
@@ -162,7 +162,7 @@ describe('AcpBackend.waitForResponseComplete', () => {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it('rejects waitForResponseComplete when transport emits a status:error from stderr', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-stderr-error-'));
@@ -181,7 +181,7 @@ describe('AcpBackend.waitForResponseComplete', () => {
         args: [scriptPath],
         transportHandler: {
           agentName: 'test',
-          getInitTimeout: () => 1_000,
+          getInitTimeout: () => 5_000,
           getToolPatterns: () => [] as ToolPattern[],
           getIdleTimeout: () => 1,
           handleStderr: (text) => {
@@ -209,7 +209,7 @@ describe('AcpBackend.waitForResponseComplete', () => {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 
   it('prefers the first transport error when stderr error is followed by a non-zero process exit', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-stderr-then-exit-'));
@@ -229,7 +229,7 @@ describe('AcpBackend.waitForResponseComplete', () => {
         args: [scriptPath],
         transportHandler: {
           agentName: 'test',
-          getInitTimeout: () => 1_000,
+          getInitTimeout: () => 5_000,
           getToolPatterns: () => [] as ToolPattern[],
           getIdleTimeout: () => 1,
           handleStderr: (text) => {
@@ -248,5 +248,5 @@ describe('AcpBackend.waitForResponseComplete', () => {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });

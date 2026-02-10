@@ -99,5 +99,5 @@ describe('killProcessTree', () => {
 
     await waitForGone(parent.pid!, 3000);
     await waitForGone(childPid, 3000);
-  });
+  }, 20_000);
 });

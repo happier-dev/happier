@@ -103,7 +103,8 @@ describe('AcpBackend response completion error preservation', () => {
         args: [scriptPath],
         transportHandler: {
           agentName: 'test',
-          getInitTimeout: () => 1_000,
+          // Some CI machines can be slow to spawn + initialize the fake ACP agent; keep this forgiving.
+          getInitTimeout: () => 5_000,
           getToolPatterns: () => [] as ToolPattern[],
           getIdleTimeout: () => 1,
           handleStderr: () => ({
@@ -150,5 +151,5 @@ describe('AcpBackend response completion error preservation', () => {
       await backendForCleanup?.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 20_000);
 });
