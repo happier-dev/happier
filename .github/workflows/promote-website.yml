@@ -83,8 +83,6 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     environment: release-shared
-    outputs:
-      deploy_dispatch_needed: ${{ steps.dispatch_needed.outputs.needed }}
     steps:
       - name: Resolve source ref
         id: resolve
@@ -243,25 +241,6 @@ jobs:
           src="${{ steps.resolve.outputs.ref }}"
           git push origin "HEAD:refs/heads/$src"
 
-      - name: Determine whether to dispatch deploy (force_deploy)
-        id: dispatch_needed
-        env:
-          FORCE_DEPLOY: ${{ inputs.force_deploy }}
-          DEPLOY_REF: deploy/${{ inputs.environment }}/website
-        run: |
-          set -euo pipefail
-          if [ "${FORCE_DEPLOY}" != "true" ]; then
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          local_sha="$(git rev-parse HEAD)"
-          remote_sha="$(git ls-remote --heads origin "${DEPLOY_REF}" | awk '{print $1}')"
-          if [ -n "${remote_sha:-}" ] && [ "${remote_sha}" = "${local_sha}" ]; then
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Promote source ref to deploy branch
         env:
           DEPLOY_REF: deploy/${{ inputs.environment }}/website
@@ -275,7 +254,7 @@ jobs:
           fi
 
   deploy_dispatch:
-    if: needs.promote.outputs.deploy_dispatch_needed == 'true'
+    if: needs.promote.result == 'success'
     needs: [promote]
     uses: ./.github/workflows/deploy.yml
     secrets: inherit

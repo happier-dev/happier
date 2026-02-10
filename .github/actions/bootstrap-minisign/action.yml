@@ -1,0 +1,11 @@
+name: Bootstrap minisign
+description: Install a pinned minisign binary (no package manager) and add it to PATH
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        bash "${{ github.action_path }}/bootstrap-minisign.sh"
+

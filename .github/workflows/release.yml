@@ -478,46 +478,46 @@ jobs:
           bump_server="$(should_bump_component "${changed_server}" "${bump_preset}")"
           bump_website="$(should_bump_component "${CHANGED_WEBSITE}" "${bump_preset}")"
 
-	          if [ "${ENVIRONMENT}" = "production" ]; then
-	            if [ "${publish_cli}" = "true" ] && [ "${bump_cli}" = "none" ]; then
-	              dev_version="$(node -p 'require(\"./apps/cli/package.json\").version' | tr -d '\n' || true)"
-	              main_version="$(git show origin/main:apps/cli/package.json | node -e 'const fs=require(\"node:fs\"); const raw=fs.readFileSync(0,\"utf8\"); process.stdout.write(String(JSON.parse(raw).version||\"\"))')"
-	              if [ -z "${dev_version:-}" ] || [ -z "${main_version:-}" ]; then
-	                echo "Unable to resolve cli versions for production validation." >&2
-	                exit 1
-	              fi
-	              if [ "${dev_version}" = "${main_version}" ]; then
-	                echo "Refusing production deploy_targets includes cli without a version change (dev and main both at ${dev_version}). Set bump!=none or bump_cli_override!=none." >&2
-	                exit 1
-	              fi
-	            fi
-	            if [ "${publish_stack}" = "true" ] && [ "${bump_stack}" = "none" ]; then
-	              dev_version="$(node -p 'require(\"./apps/stack/package.json\").version' | tr -d '\n' || true)"
-	              main_version="$(git show origin/main:apps/stack/package.json | node -e 'const fs=require(\"node:fs\"); const raw=fs.readFileSync(0,\"utf8\"); process.stdout.write(String(JSON.parse(raw).version||\"\"))')"
-	              if [ -z "${dev_version:-}" ] || [ -z "${main_version:-}" ]; then
-	                echo "Unable to resolve stack versions for production validation." >&2
-	                exit 1
-	              fi
-	              if [ "${dev_version}" = "${main_version}" ]; then
-	                echo "Refusing production deploy_targets includes stack without a version change (dev and main both at ${dev_version}). Set bump!=none or bump_stack_override!=none." >&2
-	                exit 1
-	              fi
-	            fi
-	            if [ "${publish_server}" = "true" ] && [ "${bump_server}" = "none" ]; then
-	              runner_dev_pkg="./packages/relay-server/package.json"
-	              if [ ! -f "${runner_dev_pkg}" ]; then
-	                echo "Unable to resolve server runner package.json (expected ${runner_dev_pkg})." >&2
-	                exit 1
-	              fi
+          if [ "${ENVIRONMENT}" = "production" ]; then
+            if [ "${publish_cli}" = "true" ] && [ "${bump_cli}" = "none" ]; then
+              dev_version="$(node -p 'require("./apps/cli/package.json").version' | tr -d '\n' || true)"
+              main_version="$(git show origin/main:apps/cli/package.json | node -e 'const fs=require("node:fs"); const raw=fs.readFileSync(0,"utf8"); process.stdout.write(String(JSON.parse(raw).version||""))')"
+              if [ -z "${dev_version:-}" ] || [ -z "${main_version:-}" ]; then
+                echo "Unable to resolve cli versions for production validation." >&2
+                exit 1
+              fi
+              if [ "${dev_version}" = "${main_version}" ]; then
+                echo "Refusing production deploy_targets includes cli without a version change (dev and main both at ${dev_version}). Set bump!=none or bump_cli_override!=none." >&2
+                exit 1
+              fi
+            fi
+            if [ "${publish_stack}" = "true" ] && [ "${bump_stack}" = "none" ]; then
+              dev_version="$(node -p 'require("./apps/stack/package.json").version' | tr -d '\n' || true)"
+              main_version="$(git show origin/main:apps/stack/package.json | node -e 'const fs=require("node:fs"); const raw=fs.readFileSync(0,"utf8"); process.stdout.write(String(JSON.parse(raw).version||""))')"
+              if [ -z "${dev_version:-}" ] || [ -z "${main_version:-}" ]; then
+                echo "Unable to resolve stack versions for production validation." >&2
+                exit 1
+              fi
+              if [ "${dev_version}" = "${main_version}" ]; then
+                echo "Refusing production deploy_targets includes stack without a version change (dev and main both at ${dev_version}). Set bump!=none or bump_stack_override!=none." >&2
+                exit 1
+              fi
+            fi
+            if [ "${publish_server}" = "true" ] && [ "${bump_server}" = "none" ]; then
+              runner_dev_pkg="./packages/relay-server/package.json"
+              if [ ! -f "${runner_dev_pkg}" ]; then
+                echo "Unable to resolve server runner package.json (expected ${runner_dev_pkg})." >&2
+                exit 1
+              fi
 
-	              dev_version=$(node -p "require('${runner_dev_pkg}').version" 2>/dev/null | tr -d '\n' || true)
-	              main_version="$(git show \"origin/main:packages/relay-server/package.json\" 2>/dev/null | node -e 'const fs=require(\"node:fs\"); const raw=fs.readFileSync(0,\"utf8\"); try { process.stdout.write(String(JSON.parse(raw).version||\"\")) } catch { process.stdout.write(\"\") }' || true)"
-	              if [ -n "${main_version:-}" ] && [ -n "${dev_version:-}" ] && [ "${dev_version}" = "${main_version}" ]; then
-	                echo "Refusing production deploy_targets includes server without a version change (dev and main both at ${dev_version}). Set bump!=none." >&2
-	                exit 1
-	              fi
-	            fi
-	          fi
+              dev_version="$(node -p \"require('${runner_dev_pkg}').version\" 2>/dev/null | tr -d '\n' || true)"
+              main_version="$(git show "origin/main:packages/relay-server/package.json" 2>/dev/null | node -e 'const fs=require("node:fs"); const raw=fs.readFileSync(0,"utf8"); try { process.stdout.write(String(JSON.parse(raw).version||"")) } catch { process.stdout.write("") }' || true)"
+              if [ -n "${main_version:-}" ] && [ -n "${dev_version:-}" ] && [ "${dev_version}" = "${main_version}" ]; then
+                echo "Refusing production deploy_targets includes server without a version change (dev and main both at ${dev_version}). Set bump!=none." >&2
+                exit 1
+              fi
+            fi
+          fi
 
           should_bump="false"
           for v in "${bump_app}" "${bump_cli}" "${bump_stack}" "${bump_server}" "${bump_website}"; do
@@ -800,7 +800,7 @@ jobs:
           git push origin HEAD:dev
 
   deploy_ui:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.checks.outputs.bump_app != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.checks.outputs.bump_app != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: write
@@ -821,7 +821,7 @@ jobs:
       run_tests: false
 
   deploy_server:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.checks.outputs.bump_server != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.checks.outputs.bump_server != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: write
@@ -836,7 +836,7 @@ jobs:
       run_tests: false
 
   deploy_website:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.checks.outputs.bump_website != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.checks.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     uses: ./.github/workflows/promote-website.yml
     secrets: inherit
@@ -849,7 +849,7 @@ jobs:
       run_build: true
 
   deploy_docs:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && needs.deploy_plan.outputs.deploy_docs_needed == 'true' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     uses: ./.github/workflows/promote-docs.yml
     secrets: inherit

@@ -161,7 +161,6 @@ jobs:
     outputs:
       source_ref: ${{ steps.resolve.outputs.ref }}
       release_sha: ${{ steps.release_sha.outputs.sha }}
-      deploy_dispatch_needed: ${{ steps.deploy_dispatch_needed.outputs.needed }}
       mobile_tag: ${{ steps.mobile_meta.outputs.tag }}
       mobile_title: ${{ steps.mobile_meta.outputs.title }}
       mobile_prerelease: ${{ steps.mobile_meta.outputs.prerelease }}
@@ -531,26 +530,6 @@ jobs:
           cd apps/ui
           npx --yes eas-cli@14.2.0 submit --platform "${{ inputs.expo_platform }}" --latest --non-interactive
 
-      - name: Determine whether to dispatch deploy (force_deploy)
-        id: deploy_dispatch_needed
-        if: inputs.deploy_web
-        env:
-          FORCE_DEPLOY: ${{ inputs.force_deploy }}
-          DEPLOY_REF: deploy/${{ inputs.environment }}/ui
-        run: |
-          set -euo pipefail
-          if [ "${FORCE_DEPLOY}" != "true" ]; then
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          local_sha="$(git rev-parse HEAD)"
-          remote_sha="$(git ls-remote --heads origin "${DEPLOY_REF}" | awk '{print $1}')"
-          if [ -n "${remote_sha:-}" ] && [ "${remote_sha}" = "${local_sha}" ]; then
-            echo "needed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Promote source ref to deploy branch (web)
         if: inputs.deploy_web
         env:
@@ -565,7 +544,7 @@ jobs:
           fi
 
   deploy_dispatch:
-    if: ${{ inputs.deploy_web == true && needs.promote.outputs.deploy_dispatch_needed == 'true' }}
+    if: ${{ inputs.deploy_web == true && needs.promote.result == 'success' }}
     needs: [promote]
     uses: ./.github/workflows/deploy.yml
     secrets: inherit

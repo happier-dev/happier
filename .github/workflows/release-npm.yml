@@ -312,26 +312,32 @@ jobs:
           if [ "${INPUT_CHANNEL}" = "preview" ]; then
             echo "npm_tag=next" >> "$GITHUB_OUTPUT"
           else
-	          echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
-	        fi
-	        if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
-	          cli_version="$(node -p 'require(\"./apps/cli/package.json\").version' | tr -d '\n')"
-	          echo "cli_version=${cli_version}" >> "$GITHUB_OUTPUT"
-	        else
-	          echo "cli_version=SKIP" >> "$GITHUB_OUTPUT"
-	        fi
-	        if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
-	          stack_version="$(node -p 'require(\"./apps/stack/package.json\").version' | tr -d '\n')"
-	          echo "stack_version=${stack_version}" >> "$GITHUB_OUTPUT"
-	        else
-	          echo "stack_version=SKIP" >> "$GITHUB_OUTPUT"
-	        fi
-	        if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
-	          server_version="$(node -p 'require(\"./\" + process.env.SERVER_RUNNER_DIR + \"/package.json\").version' | tr -d '\n')"
-	          echo "server_version=${server_version}" >> "$GITHUB_OUTPUT"
-	        else
-	          echo "server_version=SKIP" >> "$GITHUB_OUTPUT"
-	        fi
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
+            cli_version="$(node -p 'require("./apps/cli/package.json").version' | tr -d '\n')"
+            echo "cli_version=${cli_version}" >> "$GITHUB_OUTPUT"
+          else
+            echo "cli_version=SKIP" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
+            stack_version="$(node -p 'require("./apps/stack/package.json").version' | tr -d '\n')"
+            echo "stack_version=${stack_version}" >> "$GITHUB_OUTPUT"
+          else
+            echo "stack_version=SKIP" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
+            server_version="$(node -p 'require("./" + process.env.SERVER_RUNNER_DIR + "/package.json").version' | tr -d '\n')"
+            echo "server_version=${server_version}" >> "$GITHUB_OUTPUT"
+          else
+            echo "server_version=SKIP" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bootstrap minisign
+        uses: ./.github/actions/bootstrap-minisign
 
       - name: Build CLI binaries
         if: inputs.publish_cli
