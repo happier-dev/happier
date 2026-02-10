@@ -35,7 +35,7 @@ import { t } from '@/text';
 import { tracking, trackMessageSent } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
-import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, useSessionStatus } from '@/utils/sessions/sessionUtils';
+import { formatPathRelativeToHome, getSessionAvatarId, getSessionName, shouldShowAbortButtonForSessionState, useSessionStatus } from '@/utils/sessions/sessionUtils';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/system/versionUtils';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { describeAcpLoadSessionSupport } from '@/agents/runtime/acpRuntimeResume';
@@ -49,6 +49,7 @@ import { chooseSubmitMode } from '@/sync/domains/session/control/submitMode';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
+import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
@@ -287,7 +288,10 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
     const [isResuming, setIsResuming] = React.useState(false);
 
     const machine = useMachine(typeof machineId === 'string' ? machineId : '');
-    const isMachineReachable = Boolean(machine) && isMachineOnline(machine!);
+    const isMachineReachable = resolveSessionMachineReachability({
+        machineIsKnown: Boolean(machine),
+        machineIsOnline: machine ? isMachineOnline(machine) : false,
+    });
 
     const inactiveUi = React.useMemo(() => {
         return getInactiveSessionUiState({
@@ -729,7 +733,8 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                     trackMessageSent();
 
                     const configuredMode = storage.getState().settings.sessionMessageSendMode;
-                    const submitMode = chooseSubmitMode({ configuredMode, session });
+                    const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
+                    const submitMode = chooseSubmitMode({ configuredMode, busySteerSendPolicy, session });
 
                     if (submitMode === 'server_pending') {
                         void (async () => {
@@ -746,6 +751,9 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                                 session,
                                 resumeCapabilityOptions,
                                 permissionOverride: getPermissionModeOverrideForSpawn(session),
+                                // Only attempt machine RPC wakeups when we can encrypt them.
+                                // Collaborators won't have machine encryption, but can still enqueue pending messages.
+                                canWakeMachineId: (machineId) => Boolean(sync.encryption.getMachineEncryption(machineId)),
                             });
                             if (!wakeOpts) return;
 
@@ -821,7 +829,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
                 isMicActive={micButtonState.isMicActive}
                 extraActionChips={voiceExtraActionChips}
                 onAbort={() => sessionAbort(sessionId)}
-                showAbortButton={sessionStatus.state === 'thinking' || sessionStatus.state === 'waiting'}
+                showAbortButton={shouldShowAbortButtonForSessionState(sessionStatus.state)}
                 onFileViewerPress={() => router.push(`/session/${sessionId}/files`)}
                 // Autocomplete configuration
                 autocompletePrefixes={['@', '/']}

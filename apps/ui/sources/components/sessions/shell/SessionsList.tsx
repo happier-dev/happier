@@ -1,36 +1,21 @@
 import React from 'react';
-import { View, Pressable, FlatList, Platform } from 'react-native';
-import { Swipeable } from 'react-native-gesture-handler';
+import { View, FlatList } from 'react-native';
 import { Text } from '@/components/ui/text/StyledText';
 import { usePathname } from 'expo-router';
-import { SessionListViewItem, useHasUnreadMessages } from '@/sync/domains/state/storage';
-import { Ionicons } from '@expo/vector-icons';
-import { getSessionName, useSessionStatus, getSessionSubtitle, getSessionAvatarId } from '@/utils/sessions/sessionUtils';
-import { Avatar } from '@/components/ui/avatar/Avatar';
+import { SessionListViewItem } from '@/sync/domains/state/storage';
 import { ActiveSessionsGroup } from './ActiveSessionsGroup';
 import { ActiveSessionsGroupCompact } from './ActiveSessionsGroupCompact';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useVisibleSessionListViewData } from '@/hooks/session/useVisibleSessionListViewData';
 import { Typography } from '@/constants/Typography';
-import { Session } from '@/sync/domains/state/storageTypes';
-import { StatusDot } from '@/components/ui/status/StatusDot';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { requestReview } from '@/utils/system/requestReview';
 import { UpdateBanner } from '@/components/ui/feedback/UpdateBanner';
 import { RecoveryKeyReminderBanner } from '@/components/account/RecoveryKeyReminderBanner';
 import { layout } from '@/components/ui/layout/layout';
-import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { t } from '@/text';
-import { useRouter } from 'expo-router';
-import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useHappyAction } from '@/hooks/ui/useHappyAction';
-import { sessionDelete } from '@/sync/ops';
-import { HappyError } from '@/utils/errors/errors';
-import { formatPendingCountBadge } from '@/components/sessions/pendingBadge';
-import { Modal } from '@/modal';
+import { SessionItem } from './SessionItem';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -274,11 +259,9 @@ export function SessionsList() {
     const data = useVisibleSessionListViewData();
     const pathname = usePathname();
     const isTablet = useIsTablet();
-    const navigateToSession = useNavigateToSession();
     const compactSessionView = useSetting('compactSessionView');
     const multiServerEnabled = useSetting('multiServerEnabled');
     const multiServerPresentation = useSetting('multiServerPresentation');
-    const router = useRouter();
     const selectable = isTablet;
     const dataWithSelected = selectable ? React.useMemo(() => {
         return data?.map(item => ({
@@ -335,6 +318,7 @@ export function SessionsList() {
                     <ActiveComponent
                         sessions={item.sessions}
                         selectedSessionId={selectedId}
+                        serverId={item.serverId}
                     />
                 );
 
@@ -362,6 +346,7 @@ export function SessionsList() {
                     return (
                         <SessionItem
                             session={item.session}
+                            serverId={item.serverId}
                             serverName={item.serverName}
                             showServerBadge={multiServerEnabled && multiServerPresentation === 'flat-with-badge'}
                             selected={item.selected}
@@ -404,185 +389,3 @@ export function SessionsList() {
         </View>
     );
 }
-
-// Sub-component that handles session message logic
-const SessionItem = React.memo(({ session, serverName, showServerBadge, selected, isFirst, isLast, isSingle, variant, compact }: {
-        session: Session;
-        serverName?: string;
-        showServerBadge?: boolean;
-        selected?: boolean;
-        isFirst?: boolean;
-        isLast?: boolean;
-        isSingle?: boolean;
-        variant?: 'default' | 'no-path';
-        compact?: boolean;
-    }) => {
-    const styles = stylesheet;
-    const sessionStatus = useSessionStatus(session);
-    const sessionName = getSessionName(session);
-    const sessionSubtitle = getSessionSubtitle(session);
-    const navigateToSession = useNavigateToSession();
-    const isTablet = useIsTablet();
-    const swipeableRef = React.useRef<Swipeable | null>(null);
-    const swipeEnabled = Platform.OS !== 'web';
-
-    const [deletingSession, performDelete] = useHappyAction(async () => {
-        const result = await sessionDelete(session.id);
-        if (!result.success) {
-            throw new HappyError(result.message || t('sessionInfo.failedToDeleteSession'), false);
-        }
-    });
-
-    const handleDelete = React.useCallback(() => {
-        swipeableRef.current?.close();
-        Modal.alert(
-            t('sessionInfo.deleteSession'),
-            t('sessionInfo.deleteSessionWarning'),
-            [
-                { text: t('common.cancel'), style: 'cancel' },
-                {
-                    text: t('sessionInfo.deleteSession'),
-                    style: 'destructive',
-                    onPress: performDelete
-                }
-            ]
-        );
-    }, [performDelete]);
-
-    const avatarId = React.useMemo(() => {
-        return getSessionAvatarId(session);
-    }, [session]);
-    const hasUnreadMessages = useHasUnreadMessages(session.id);
-    const pendingCount = session.pendingCount ?? 0;
-    const pendingBadge = formatPendingCountBadge(pendingCount);
-
-        const itemContent = (
-            <Pressable
-                style={[
-                    styles.sessionItem,
-                    compact ? styles.sessionItemCompact : null,
-                    selected && styles.sessionItemSelected,
-                    isSingle ? styles.sessionItemSingle :
-                        isFirst ? styles.sessionItemFirst :
-                            isLast ? styles.sessionItemLast : {}
-                ]}
-            onPressIn={() => {
-                if (isTablet) {
-                    navigateToSession(session.id);
-                }
-            }}
-            onPress={() => {
-                if (!isTablet) {
-                    navigateToSession(session.id);
-                }
-            }}
-            >
-                <View style={[styles.avatarContainer, compact ? styles.avatarContainerCompact : null]}>
-                    <Avatar
-                        id={avatarId}
-                        size={compact ? 40 : 48}
-                        monochrome={!sessionStatus.isConnected}
-                        flavor={session.metadata?.flavor}
-                        hasUnreadMessages={hasUnreadMessages}
-                    />
-                    {pendingBadge && (
-                        <View style={[styles.pendingCountContainer, compact ? styles.pendingCountContainerCompact : null]}>
-                            <Text style={styles.pendingCountText} numberOfLines={1}>
-                                {pendingBadge}
-                            </Text>
-                        </View>
-                    )}
-                    {session.draft && (
-                        <View style={[styles.draftIconContainer, compact ? styles.draftIconContainerCompact : null]}>
-                            <Ionicons
-                                name="create-outline"
-                                size={compact ? 11 : 12}
-                                style={styles.draftIconOverlay}
-                            />
-                        </View>
-                    )}
-                </View>
-                <View style={[styles.sessionContent, compact ? styles.sessionContentCompact : null]}>
-                    {/* Title line */}
-                    <View style={styles.sessionTitleRow}>
-                        <Text style={[
-                            styles.sessionTitle,
-                            compact ? styles.sessionTitleCompact : null,
-                            sessionStatus.isConnected ? styles.sessionTitleConnected : styles.sessionTitleDisconnected
-                        ]} numberOfLines={1}> {/* {variant !== 'no-path' ? 1 : 2} - issue is we don't have anything to take this space yet and it looks strange - if summaries were more reliably generated, we can add this. While no summary - add something like "New session" or "Empty session", and extend summary to 2 lines once we have it */}
-                            {sessionName}
-                        </Text>
-                        {showServerBadge && serverName ? (
-                            <View style={styles.serverBadgeContainer}>
-                                <Text style={styles.serverBadgeText} numberOfLines={1}>
-                                    {serverName}
-                                </Text>
-                            </View>
-                        ) : null}
-                    </View>
-    
-                    {/* Subtitle line */}
-                    {variant !== 'no-path' && (
-                        <Text style={[styles.sessionSubtitle, compact ? styles.sessionSubtitleCompact : null]} numberOfLines={1}>
-                            {sessionSubtitle}
-                        </Text>
-                    )}
-    
-                    {/* Status line with dot */}
-                    <View style={styles.statusRow}>
-                        <View style={[styles.statusDotContainer, compact ? styles.statusDotContainerCompact : null]}>
-                            <StatusDot color={sessionStatus.statusDotColor} isPulsing={sessionStatus.isPulsing} />
-                        </View>
-                        <Text style={[
-                            styles.statusText,
-                            compact ? styles.statusTextCompact : null,
-                            { color: sessionStatus.statusColor }
-                        ]}>
-                            {sessionStatus.statusText}
-                        </Text>
-                    </View>
-                </View>
-            </Pressable>
-        );
-
-    const containerStyles = [
-        styles.sessionItemContainer,
-        isSingle ? styles.sessionItemContainerSingle :
-            isFirst ? styles.sessionItemContainerFirst :
-                isLast ? styles.sessionItemContainerLast : {}
-    ];
-
-    if (!swipeEnabled) {
-        return (
-            <View style={containerStyles}>
-                {itemContent}
-            </View>
-        );
-    }
-
-    const renderRightActions = () => (
-        <Pressable
-            style={styles.swipeAction}
-            onPress={handleDelete}
-            disabled={deletingSession}
-        >
-            <Ionicons name="trash-outline" size={20} color="#FFFFFF" />
-            <Text style={styles.swipeActionText} numberOfLines={2}>
-                {t('sessionInfo.deleteSession')}
-            </Text>
-        </Pressable>
-    );
-
-    return (
-        <View style={containerStyles}>
-            <Swipeable
-                ref={swipeableRef}
-                renderRightActions={renderRightActions}
-                overshootRight={false}
-                enabled={!deletingSession}
-            >
-                {itemContent}
-            </Swipeable>
-        </View>
-    );
-});

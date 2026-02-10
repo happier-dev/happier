@@ -13,6 +13,8 @@ const sessionAbort = vi.fn();
 const modalConfirm = vi.fn();
 const modalAlert = vi.fn();
 
+let sessionValue: any = null;
+
 vi.mock('@/constants/Typography', () => ({
     Typography: {
         default: () => ({}),
@@ -27,6 +29,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         ],
         discarded: [],
     }),
+    useSession: () => sessionValue,
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -96,6 +99,7 @@ describe('PendingMessagesModal', () => {
         sessionAbort.mockReset();
         modalConfirm.mockReset();
         modalAlert.mockReset();
+        sessionValue = null;
     });
 
     function findPressableByTestId(tree: renderer.ReactTestRenderer, testID: string): ReactTestInstance | undefined {
@@ -136,6 +140,39 @@ describe('PendingMessagesModal', () => {
         expect(abortOrder).toBeLessThan(sendOrder);
         expect(sendOrder).toBeLessThan(deleteOrder);
         expect(deleteOrder).toBeLessThan(closeOrder);
+    });
+
+    it('offers steer-now while a steer-capable session is thinking and does not abort the turn', async () => {
+        sessionValue = {
+            thinking: true,
+            presence: 'online',
+            agentStateVersion: 1,
+            agentState: { controlledByUser: false, capabilities: { inFlightSteer: true } },
+        };
+
+        modalConfirm.mockResolvedValueOnce(true);
+        sendMessage.mockResolvedValueOnce(undefined);
+        deletePendingMessage.mockResolvedValueOnce(undefined);
+
+        const onClose = vi.fn();
+        const { PendingMessagesModal } = await import('./PendingMessagesModal');
+
+        let tree: ReturnType<typeof renderer.create> | undefined;
+        await act(async () => {
+            tree = renderer.create(React.createElement(PendingMessagesModal, { sessionId: 's1', onClose }));
+        });
+
+        const steerNow = findPressableByTestId(tree!, 'pendingMessages.steerNow:p1');
+        expect(steerNow).toBeTruthy();
+
+        await act(async () => {
+            await steerNow!.props.onPress();
+        });
+
+        expect(sessionAbort).toHaveBeenCalledTimes(0);
+        expect(sendMessage).toHaveBeenCalledTimes(1);
+        expect(deletePendingMessage).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalledTimes(1);
     });
 
     it('renders with app theme shape (no secondary background / no danger box)', async () => {

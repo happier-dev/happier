@@ -18,6 +18,7 @@ export type PathAndResumeRowProps = {
     iconColor: string;
     currentPath?: string | null;
     onPathClick?: () => void;
+    emptyPathLabel: string;
     resumeSessionId?: string | null;
     onResumeClick?: () => void;
     resumeLabelTitle: string;
@@ -25,7 +26,7 @@ export type PathAndResumeRowProps = {
 };
 
 export function PathAndResumeRow(props: PathAndResumeRowProps) {
-    const hasPath = Boolean(props.currentPath && props.onPathClick);
+    const hasPath = Boolean(props.onPathClick);
     const hasResume = Boolean(props.onResumeClick);
     if (!hasPath && !hasResume) return null;
 
@@ -53,7 +54,9 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
                             ellipsizeMode="middle"
                             style={[props.styles.actionChipText, { flexShrink: 1 }]}
                         >
-                            {props.currentPath}
+                            {typeof props.currentPath === 'string' && props.currentPath.length > 0
+                                ? props.currentPath
+                                : props.emptyPathLabel}
                         </Text>
                     </Pressable>
                 ) : null}

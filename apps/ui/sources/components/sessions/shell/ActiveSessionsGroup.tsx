@@ -213,10 +213,11 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
 interface ActiveSessionsGroupProps {
     sessions: Session[];
     selectedSessionId?: string;
+    serverId?: string;
 }
 
 
-export function ActiveSessionsGroup({ sessions, selectedSessionId }: ActiveSessionsGroupProps) {
+export function ActiveSessionsGroup({ sessions, selectedSessionId, serverId }: ActiveSessionsGroupProps) {
     const styles = stylesheet;
     const machines = useAllMachines();
     const machinesMap = React.useMemo(() => {
@@ -336,6 +337,7 @@ export function ActiveSessionsGroup({ sessions, selectedSessionId }: ActiveSessi
                                             <CompactSessionRow
                                                 key={session.id}
                                                 session={session}
+                                                serverId={serverId}
                                                 selected={selectedSessionId === session.id}
                                                 showBorder={index < machineGroup.sessions.length - 1 ||
                                                     Array.from(projectGroup.machines.keys()).indexOf(machineId) < projectGroup.machines.size - 1}
@@ -352,7 +354,7 @@ export function ActiveSessionsGroup({ sessions, selectedSessionId }: ActiveSessi
 }
 
 // Compact session row component with status line
-const CompactSessionRow = React.memo(({ session, selected, showBorder }: { session: Session; selected?: boolean; showBorder?: boolean }) => {
+const CompactSessionRow = React.memo(({ session, serverId, selected, showBorder }: { session: Session; serverId?: string; selected?: boolean; showBorder?: boolean }) => {
     const styles = stylesheet;
     const sessionStatus = useSessionStatus(session);
     const sessionName = getSessionName(session);
@@ -404,12 +406,12 @@ const CompactSessionRow = React.memo(({ session, selected, showBorder }: { sessi
             ]}
             onPressIn={() => {
                 if (isTablet) {
-                    navigateToSession(session.id);
+                    navigateToSession(session.id, serverId ? { serverId } : undefined);
                 }
             }}
             onPress={() => {
                 if (!isTablet) {
-                    navigateToSession(session.id);
+                    navigateToSession(session.id, serverId ? { serverId } : undefined);
                 }
             }}
         >

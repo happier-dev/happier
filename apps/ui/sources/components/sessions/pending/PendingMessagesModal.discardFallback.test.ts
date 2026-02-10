@@ -26,6 +26,7 @@ vi.mock('@/sync/domains/state/storage', () => ({
         ],
         discarded: [],
     }),
+    useSession: () => null,
 }));
 
 vi.mock('@/sync/sync', () => ({

@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-nati
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
-import { useSessionPendingMessages } from '@/sync/domains/state/storage';
+import { useSession, useSessionPendingMessages } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { Modal } from '@/modal';
 import { sessionAbort } from '@/sync/ops';
@@ -11,6 +11,15 @@ import { sessionAbort } from '@/sync/ops';
 export function PendingMessagesModal(props: { sessionId: string; onClose: () => void }) {
     const { theme } = useUnistyles();
     const { messages, discarded, isLoaded } = useSessionPendingMessages(props.sessionId);
+    const session = useSession(props.sessionId);
+
+    const canSteerNow = Boolean(
+        session?.thinking
+        && session?.presence === 'online'
+        && (session?.agentStateVersion ?? 0) > 0
+        && session?.agentState?.controlledByUser !== true
+        && session?.agentState?.capabilities?.inFlightSteer === true
+    );
 
     React.useEffect(() => {
         void sync.fetchPendingMessages(props.sessionId);
@@ -45,11 +54,36 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
         }
     }, [props.sessionId]);
 
+    const handleSteerNow = React.useCallback(async (pendingId: string, text: string) => {
+        const confirmed = await Modal.confirm(
+            'Steer now?',
+            "This will add this message to the current turn without stopping it.",
+            { confirmText: 'Steer now' }
+        );
+        if (!confirmed) return;
+
+        try {
+            await sync.sendMessage(props.sessionId, text);
+            try {
+                await sync.deletePendingMessage(props.sessionId, pendingId);
+            } catch (deleteError) {
+                try {
+                    await sync.discardPendingMessage(props.sessionId, pendingId);
+                } catch {
+                    throw deleteError;
+                }
+            }
+            props.onClose();
+        } catch (e) {
+            Modal.alert('Error', e instanceof Error ? e.message : 'Failed to send pending message');
+        }
+    }, [props.sessionId, props.onClose]);
+
     const handleSendNow = React.useCallback(async (pendingId: string, text: string) => {
         const confirmed = await Modal.confirm(
-            'Send now?',
+            canSteerNow ? 'Send now (interrupt)?' : 'Send now?',
             'This will stop the current turn and send this message immediately.',
-            { confirmText: 'Send now' }
+            { confirmText: canSteerNow ? 'Send now (interrupt)' : 'Send now' }
         );
         if (!confirmed) return;
 
@@ -69,7 +103,7 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
         } catch (e) {
             Modal.alert('Error', e instanceof Error ? e.message : 'Failed to send pending message');
         }
-    }, [props.sessionId, props.onClose]);
+    }, [props.sessionId, props.onClose, canSteerNow]);
 
     const handleRequeueDiscarded = React.useCallback(async (pendingId: string) => {
         try {
@@ -93,11 +127,28 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
         }
     }, [props.sessionId]);
 
+    const handleSteerDiscardedNow = React.useCallback(async (pendingId: string, text: string) => {
+        const confirmed = await Modal.confirm(
+            'Steer now?',
+            "This will add this message to the current turn without stopping it.",
+            { confirmText: 'Steer now' }
+        );
+        if (!confirmed) return;
+
+        try {
+            await sync.sendMessage(props.sessionId, text);
+            await sync.deleteDiscardedPendingMessage(props.sessionId, pendingId);
+            props.onClose();
+        } catch (e) {
+            Modal.alert('Error', e instanceof Error ? e.message : 'Failed to send discarded message');
+        }
+    }, [props.sessionId, props.onClose]);
+
     const handleSendDiscardedNow = React.useCallback(async (pendingId: string, text: string) => {
         const confirmed = await Modal.confirm(
-            'Send now?',
+            canSteerNow ? 'Send now (interrupt)?' : 'Send now?',
             'This will stop the current turn and send this message immediately.',
-            { confirmText: 'Send now' }
+            { confirmText: canSteerNow ? 'Send now (interrupt)' : 'Send now' }
         );
         if (!confirmed) return;
 
@@ -109,7 +160,7 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
         } catch (e) {
             Modal.alert('Error', e instanceof Error ? e.message : 'Failed to send discarded message');
         }
-    }, [props.sessionId, props.onClose]);
+    }, [props.sessionId, props.onClose, canSteerNow]);
 
     const handleMove = React.useCallback(async (pendingId: string, dir: 'up' | 'down') => {
         const ids = messages.map((m) => m.id);
@@ -213,8 +264,16 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
                                     destructive
                                     testID={`pendingMessages.remove:${m.id}`}
                                 />
+                                {canSteerNow && (
+                                    <ActionButton
+                                        title="Steer now"
+                                        onPress={() => handleSteerNow(m.id, m.text)}
+                                        theme={theme}
+                                        testID={`pendingMessages.steerNow:${m.id}`}
+                                    />
+                                )}
                                 <ActionButton
-                                    title="Send now"
+                                    title={canSteerNow ? 'Send now (interrupt)' : 'Send now'}
                                     onPress={() => handleSendNow(m.id, m.text)}
                                     theme={theme}
                                     testID={`pendingMessages.sendNow:${m.id}`}
@@ -277,8 +336,16 @@ export function PendingMessagesModal(props: { sessionId: string; onClose: () => 
                                             destructive
                                             testID={`pendingMessages.discarded.remove:${m.id}`}
                                         />
+                                        {canSteerNow && (
+                                            <ActionButton
+                                                title="Steer now"
+                                                onPress={() => handleSteerDiscardedNow(m.id, m.text)}
+                                                theme={theme}
+                                                testID={`pendingMessages.discarded.steerNow:${m.id}`}
+                                            />
+                                        )}
                                         <ActionButton
-                                            title="Send now"
+                                            title={canSteerNow ? 'Send now (interrupt)' : 'Send now'}
                                             onPress={() => handleSendDiscardedNow(m.id, m.text)}
                                             theme={theme}
                                             testID={`pendingMessages.discarded.sendNow:${m.id}`}

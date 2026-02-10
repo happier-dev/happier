@@ -48,6 +48,7 @@ import { getHasAnyAgentInputActions, shouldShowPathAndResumeRow } from './action
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { computeAgentInputDefaultMaxHeight } from './inputMaxHeight';
 import { getContextWarning } from './contextWarning';
+import { shouldRenderPermissionChip } from './permissionChipVisibility';
 import { buildAgentInputActionMenuActions } from './actionMenuActions';
 import { PermissionModePicker } from './components/PermissionModePicker';
 import { computeAcpPlanModeControl, computeAcpSessionModePickerControl } from '@/sync/acp/sessionModeControl';
@@ -675,11 +676,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const hasProfile = Boolean(props.onProfileClick);
     const hasEnvVars = Boolean(props.onEnvVarsClick);
     const hasAgent = Boolean(props.agentType && props.onAgentClick);
-    const hasMachine = Boolean(props.machineName !== undefined && props.onMachineClick);
-    const hasPath = Boolean(props.currentPath && props.onPathClick);
+    const hasMachine = Boolean(props.onMachineClick);
+    const hasPath = Boolean(props.onPathClick);
     const hasResume = Boolean(props.onResumeClick);
     const hasFiles = Boolean(props.sessionId && props.onFileViewerPress);
-    const hasStop = Boolean(props.onAbort);
+    const hasStop = Boolean(props.onAbort && props.showAbortButton);
     const hasAnyActions = getHasAnyAgentInputActions({
         showPermissionChip,
         hasProfile,
@@ -750,7 +751,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             onPathClick: props.onPathClick,
             onResumeClick: props.onResumeClick,
             onFileViewerPress: props.onFileViewerPress,
-            canStop: Boolean(props.onAbort),
+            canStop: Boolean(props.onAbort && props.showAbortButton),
             onStop: () => {
                 void handleAbortPress();
             },
@@ -1245,7 +1246,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             )}
                         </View>
                         <View style={styles.permissionModeContainer}>
-                            {permissionChipLabel && (
+                            {shouldRenderPermissionChip(permissionChipLabel) ? (
                                 <Text
                                     style={[
                                         styles.permissionModeText,
@@ -1262,7 +1263,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 >
                                     {permissionChipLabel}
                                 </Text>
-                            )}
+                            ) : null}
                         </View>
                     </View>
                 )}
@@ -1437,7 +1438,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         </Pressable>
                                     ) : null;
 
-                                    const machineChip = ((props.machineName !== undefined) && props.onMachineClick) ? (
+                                    const machineChip = props.onMachineClick ? (
                                         <Pressable
                                             key="machine"
                                             onPress={() => {
@@ -1456,13 +1457,15 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                                 <Text style={styles.actionChipText}>
                                                     {props.machineName === null
                                                         ? t('agentInput.noMachinesAvailable')
-                                                        : truncateWithEllipsis(props.machineName, 12)}
+                                                        : (typeof props.machineName === 'string'
+                                                            ? truncateWithEllipsis(props.machineName, 12)
+                                                            : t('newSession.selectMachineTitle'))}
                                                 </Text>
                                             ) : null}
                                         </Pressable>
                                     ) : null;
 
-                                    const pathChip = (props.currentPath && props.onPathClick) ? (
+                                    const pathChip = props.onPathClick ? (
                                         <Pressable
                                             key="path"
                                             onPress={() => {
@@ -1479,7 +1482,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             />
                                             {showChipLabels ? (
                                                 <Text style={styles.actionChipText}>
-                                                    {props.currentPath}
+                                                    {typeof props.currentPath === 'string' && props.currentPath.length > 0
+                                                        ? props.currentPath
+                                                        : t('newSession.selectPathTitle')}
                                                 </Text>
                                             ) : null}
                                         </Pressable>
@@ -1504,7 +1509,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         />
                                     ) : null;
 
-                                    const abortButton = props.onAbort && !actionBarIsCollapsed ? (
+                                    const abortButton = props.onAbort && props.showAbortButton && !actionBarIsCollapsed ? (
                                         <Shaker key="abort" ref={shakerRef}>
                                             <Pressable
                                                 style={(p) => [
@@ -1611,17 +1616,29 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             ? styles.sendButtonActive
                                             : styles.sendButtonInactive
                                     ]}
-                                >
-                                    <Pressable
-                                        style={(p) => [
-                                            styles.sendButtonInner,
-                                            p.pressed ? styles.sendButtonInnerPressed : null,
-                                        ]}
-                                        hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                                        onPress={() => {
-                                            hapticsLight();
-                                            if (hasText) {
-                                                props.onSend();
+	                                >
+	                                    <Pressable
+	                                        style={(p) => [
+	                                            styles.sendButtonInner,
+	                                            p.pressed ? styles.sendButtonInnerPressed : null,
+	                                        ]}
+	                                        accessibilityRole="button"
+	                                        accessibilityLabel={hasText
+	                                            ? (props.sessionId ? t('voiceMediator.commitSend') : t('newSession.title'))
+	                                            : (props.onMicPress ? t('voiceAssistant.label') : (props.sessionId ? t('voiceMediator.commitSend') : t('newSession.title')))}
+	                                        accessibilityHint={
+                                                (!hasText && !props.onMicPress)
+                                                    ? t('session.inputPlaceholder')
+                                                    : undefined
+                                            }
+	                                        accessibilityState={{
+	                                            disabled: Boolean(props.disabled || props.isSendDisabled || props.isSending || (!hasText && !props.onMicPress)),
+	                                        }}
+	                                        hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
+	                                        onPress={() => {
+	                                            hapticsLight();
+	                                            if (hasText) {
+	                                                props.onSend();
                                             } else {
                                                 props.onMicPress?.();
                                             }
@@ -1682,6 +1699,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 	                                    showChipLabels={showChipLabels}
 	                                    iconColor={theme.colors.button.secondary.tint}
 	                                    currentPath={props.currentPath}
+	                                    emptyPathLabel={t('newSession.selectPathTitle')}
 	                                    onPathClick={props.onPathClick ? () => {
 	                                        hapticsLight();
 	                                        props.onPathClick?.();

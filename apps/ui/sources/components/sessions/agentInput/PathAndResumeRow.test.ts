@@ -48,6 +48,7 @@ describe('PathAndResumeRow', () => {
                     iconColor: '#000',
                     currentPath: '/Users/leeroy/Development/happy-local',
                     onPathClick: () => {},
+                    emptyPathLabel: 'Select Path',
                     resumeSessionId: null,
                     onResumeClick: () => {},
                     resumeLabelTitle: 'Resume session',
