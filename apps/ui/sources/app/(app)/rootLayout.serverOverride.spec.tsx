@@ -10,6 +10,8 @@ type ReactActEnvironmentGlobal = typeof globalThis & {
 vi.mock('react-native-reanimated', () => ({}));
 
 const historyReplaceStateSpy = vi.fn();
+const routerPushSpy = vi.fn();
+const routerReplaceSpy = vi.fn();
 
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
 const refreshFromActiveServerSpy = vi.fn(async () => {});
@@ -20,7 +22,7 @@ vi.mock('expo-router', () => ({
         ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children),
         { Screen: ({ children }: React.PropsWithChildren<Record<string, never>>) => React.createElement(React.Fragment, null, children) }
     ),
-    router: { push: vi.fn(), replace: vi.fn() },
+    router: { push: routerPushSpy, replace: routerReplaceSpy },
     useSegments: () => ['(app)'],
 }));
 
@@ -109,6 +111,8 @@ vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
 afterEach(() => {
     activeServerUrl = 'https://api.happier.dev';
     historyReplaceStateSpy.mockReset();
+    routerPushSpy.mockReset();
+    routerReplaceSpy.mockReset();
     upsertActivateAndSwitchServerSpy.mockReset();
     refreshFromActiveServerSpy.mockReset();
     delete (globalThis as any).window;
@@ -169,5 +173,24 @@ describe('App RootLayout server override', () => {
             refreshAuth: refreshFromActiveServerSpy,
         });
         expect(historyReplaceStateSpy).toHaveBeenCalledWith(null, '', '/server');
+    });
+
+    it('redirects legacy `/?id=<sessionId>` deep-links to the canonical session route on web', async () => {
+        (globalThis as any).document = {};
+        (globalThis as any).window = {
+            location: {
+                href: 'https://app.example.test/?id=session-123',
+                pathname: '/',
+                search: '?id=session-123',
+                hash: '',
+                reload: vi.fn(),
+            },
+            history: { replaceState: historyReplaceStateSpy },
+        };
+
+        await renderRootLayout();
+
+        expect(historyReplaceStateSpy).toHaveBeenCalledWith(null, '', '/');
+        expect(routerReplaceSpy).toHaveBeenCalledWith('/session/session-123');
     });
 });

@@ -6,7 +6,7 @@ import { Stack } from 'expo-router';
 import { storage } from '@/sync/domains/state/storageStore';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
-import { createOkFetchResponse, createRootLayoutFeaturesResponse } from './_layout.testHelpers';
+import { createOkFetchResponse, createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -49,12 +49,27 @@ function stubRootLayoutFeaturesFetch() {
     vi.stubGlobal('fetch', vi.fn(fetchMock));
 }
 
+async function flushMicrotasks(limit = 20) {
+    // `useServerFeatureValue` resolves via async/await chains (no timers), so yielding a few
+    // microtasks is the most deterministic way to let effects settle.
+    for (let i = 0; i < limit; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.resolve();
+    }
+}
+
+async function flushEffects(): Promise<void> {
+    // `useServerFeatureValue` performs an async fetch inside a `useEffect`, which React flushes
+    // on the next tick in these test environments. Matching other hook tests, yield a macrotask.
+    await new Promise((r) => setTimeout(r, 0));
+}
+
 async function renderRootLayout() {
     const { default: RootLayout } = await import('./_layout');
     let tree: ReturnType<typeof renderer.create> | undefined;
     await act(async () => {
         tree = renderer.create(<RootLayout />);
-        await Promise.resolve();
+        await flushEffects();
     });
     return tree;
 }
@@ -106,6 +121,12 @@ describe('RootLayout', () => {
             });
 
             const tree = await renderRootLayout();
+            // Let `useServerFeatureValue` fetch + apply server features so the headerRight opacity
+            // reflects the computed friends identity readiness.
+            await act(async () => {
+                await flushEffects();
+            });
+
             const friendsManage = getFriendsManageScreen(tree);
             expect(friendsManage).toBeTruthy();
 

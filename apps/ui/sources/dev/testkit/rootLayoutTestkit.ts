@@ -1,34 +1,4 @@
-type RootLayoutFeatures = {
-    features: {
-        sharing: {
-            session: { enabled: boolean };
-            public: { enabled: boolean };
-            contentKeys: { enabled: boolean };
-            pendingQueueV2: { enabled: boolean };
-        };
-        voice: {
-            enabled: boolean;
-            configured: boolean;
-            provider: string | null;
-        };
-        social: {
-            friends: {
-                enabled: boolean;
-                allowUsername: boolean;
-                requiredIdentityProviderId: string | null;
-            };
-        };
-        oauth: {
-            providers: Record<string, { enabled: boolean; configured: boolean }>;
-        };
-        auth: {
-            signup: { methods: Array<{ id: string; enabled: boolean }> };
-            login: { requiredProviders: string[] };
-            providers: Record<string, unknown>;
-            misconfig: string[];
-        };
-    };
-};
+import type { FeaturesResponse as RootLayoutFeatures } from '@happier-dev/protocol';
 
 const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     features: {
@@ -50,6 +20,13 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
         auth: {
             signup: { methods: [{ id: 'anonymous', enabled: true }] },
             login: { requiredProviders: [] },
+            recovery: {
+                providerReset: { enabled: false, providers: [] },
+            },
+            ui: {
+                autoRedirect: { enabled: false, providerId: null },
+                recoveryKeyReminder: { enabled: true },
+            },
             providers: {
                 github: {
                     enabled: true,
@@ -107,6 +84,14 @@ export function createRootLayoutFeaturesResponse(overrides?: Partial<RootLayoutF
                 login: {
                     ...BASE_ROOT_LAYOUT_FEATURES.features.auth.login,
                     ...(nextAuth.login ?? {}),
+                },
+                recovery: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.auth.recovery,
+                    ...(nextAuth.recovery ?? {}),
+                },
+                ui: {
+                    ...BASE_ROOT_LAYOUT_FEATURES.features.auth.ui,
+                    ...(nextAuth.ui ?? {}),
                 },
                 providers: {
                     ...BASE_ROOT_LAYOUT_FEATURES.features.auth.providers,

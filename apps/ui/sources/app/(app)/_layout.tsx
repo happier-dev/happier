@@ -56,6 +56,27 @@ function readServerUrlOverrideFromWebLocation(): Readonly<{ serverUrl: string; c
     }
 }
 
+function readLegacySessionIdFromWebLocation(): Readonly<{ sessionId: string; cleanedRelativeUrl: string }> | null {
+    if (typeof window === 'undefined') return null;
+    if (typeof window.location?.href !== 'string') return null;
+
+    try {
+        const current = new URL(window.location.href);
+        // Legacy deep-link format: `/?id=<sessionId>` (no longer generated, but may be in old links or buggy flows).
+        if (current.pathname !== '/') return null;
+
+        const rawSessionId = (current.searchParams.get('id') ?? '').trim();
+        if (!rawSessionId) return null;
+
+        current.searchParams.delete('id');
+        const search = current.searchParams.toString();
+        const cleanedRelativeUrl = `${current.pathname}${search ? `?${search}` : ''}${current.hash ?? ''}`;
+        return { sessionId: rawSessionId, cleanedRelativeUrl };
+    } catch {
+        return null;
+    }
+}
+
 export default function RootLayout() {
     const auth = useAuth();
     const segments = useSegments();
@@ -103,6 +124,24 @@ export default function RootLayout() {
         }
     }, [auth]);
 
+    const legacySessionDeepLinkHandledRef = React.useRef(false);
+    React.useEffect(() => {
+        if (legacySessionDeepLinkHandledRef.current) return;
+        if (!auth.isAuthenticated) return;
+
+        const legacy = readLegacySessionIdFromWebLocation();
+        if (!legacy) return;
+        legacySessionDeepLinkHandledRef.current = true;
+
+        try {
+            window.history.replaceState(null, '', legacy.cleanedRelativeUrl);
+        } catch {
+            // ignore
+        }
+
+        router.replace(`/session/${encodeURIComponent(legacy.sessionId)}`);
+    }, [auth.isAuthenticated]);
+
     const shouldRedirect = !auth.isAuthenticated && !isPublicRouteForUnauthenticated(segments);
     const pendingTerminalHandledRef = React.useRef(false);
     React.useEffect(() => {
@@ -119,7 +158,7 @@ export default function RootLayout() {
         const pendingTerminalConnect = getPendingTerminalConnect();
         if (pendingTerminalConnect) {
             if (pendingTerminalHandledRef.current) return;
-            const route = `/terminal/index?key=${encodeURIComponent(pendingTerminalConnect.publicKeyB64Url)}&server=${encodeURIComponent(pendingTerminalConnect.serverUrl)}`;
+            const route = `/terminal?key=${encodeURIComponent(pendingTerminalConnect.publicKeyB64Url)}&server=${encodeURIComponent(pendingTerminalConnect.serverUrl)}`;
 
             const active = normalizeServerUrl(getActiveServerUrl());
             const target = normalizeServerUrl(pendingTerminalConnect.serverUrl);

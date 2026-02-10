@@ -2,7 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createRootLayoutFeaturesResponse } from './_layout.testHelpers';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;

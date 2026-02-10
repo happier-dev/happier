@@ -2,7 +2,7 @@ import React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createRootLayoutFeaturesResponse } from './_layout.testHelpers';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/rootLayoutTestkit';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -19,9 +19,13 @@ vi.mock('expo-notifications', () => ({
 
 const pushSpy = vi.fn();
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string; refreshAuth: unknown }) => true);
+const applySettingsSpy = vi.fn();
 const clearPendingTerminalConnectSpy = vi.fn();
+const clearPendingNotificationNavSpy = vi.fn();
 let activeServerUrl = 'https://api.happier.dev';
 let pendingTerminalConnectValue: { publicKeyB64Url: string; serverUrl: string } | null = null;
+let pendingNotificationNavValue: { serverUrl: string; route: string } | null = null;
+let lastRenderer: renderer.ReactTestRenderer | null = null;
 
 vi.mock('expo-router', () => ({
     Stack: Object.assign(
@@ -89,6 +93,12 @@ vi.mock('@/sync/domains/state/storageStore', () => ({
         selector({ profile: { linkedProviders: [], username: 'u' } }),
 }));
 
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        applySettings: (...args: unknown[]) => applySettingsSpy(...args),
+    },
+}));
+
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerUrl: () => activeServerUrl,
 }));
@@ -104,6 +114,17 @@ vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
     setPendingTerminalConnect: vi.fn(),
 }));
 
+vi.mock('@/sync/domains/pending/pendingNotificationNav', () => ({
+    getPendingNotificationNav: () => pendingNotificationNavValue,
+    setPendingNotificationNav: (next: { serverUrl: string; route: string }) => {
+        pendingNotificationNavValue = next;
+    },
+    clearPendingNotificationNav: () => {
+        clearPendingNotificationNavSpy();
+        pendingNotificationNavValue = null;
+    },
+}));
+
 vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
     getCachedServerFeatures: () => null,
     getServerFeatures: async () =>
@@ -115,9 +136,17 @@ vi.mock('@/sync/api/capabilities/apiFeatures', () => ({
 afterEach(() => {
     activeServerUrl = 'https://api.happier.dev';
     pendingTerminalConnectValue = null;
+    pendingNotificationNavValue = null;
+    try {
+        lastRenderer?.unmount();
+    } catch {
+        // ignore
+    }
+    lastRenderer = null;
     pushSpy.mockClear();
     upsertActivateAndSwitchServerSpy.mockReset();
     clearPendingTerminalConnectSpy.mockClear();
+    clearPendingNotificationNavSpy.mockClear();
     vi.restoreAllMocks();
     vi.resetModules();
 });
@@ -125,7 +154,12 @@ afterEach(() => {
 async function renderRootLayout() {
     const RootLayout = (await import('./_layout')).default;
     await act(async () => {
-        renderer.create(React.createElement(RootLayout));
+        try {
+            lastRenderer?.unmount();
+        } catch {
+            // ignore
+        }
+        lastRenderer = renderer.create(React.createElement(RootLayout));
         await Promise.resolve();
     });
 }
@@ -143,7 +177,7 @@ describe('App RootLayout notifications', () => {
 
         await renderRootLayout();
 
-        expect(pushSpy).toHaveBeenCalledWith('/terminal/index?key=abc123&server=https%3A%2F%2Fapi.happier.dev');
+        expect(pushSpy).toHaveBeenCalledWith('/terminal?key=abc123&server=https%3A%2F%2Fapi.happier.dev');
         expect(upsertActivateAndSwitchServerSpy).not.toHaveBeenCalled();
     });
 
@@ -165,7 +199,7 @@ describe('App RootLayout notifications', () => {
             scope: 'device',
             refreshAuth: expect.any(Function),
         });
-        expect(pushSpy).toHaveBeenCalledWith('/terminal/index?key=abc123&server=https%3A%2F%2Fcompany.example.test');
+        expect(pushSpy).toHaveBeenCalledWith('/terminal?key=abc123&server=https%3A%2F%2Fcompany.example.test');
     });
 
     it('navigates to the session when a notification contains sessionId', async () => {
