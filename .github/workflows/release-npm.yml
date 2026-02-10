@@ -39,7 +39,7 @@ on:
         default: false
         type: boolean
       publish_server:
-        description: "Publish (Server) — Publish server runner (@happier-dev/server) to npm"
+        description: "Publish (Server) — Publish server runner (@happier-dev/relay-server) to npm"
         required: true
         default: false
         type: boolean
@@ -75,7 +75,7 @@ on:
         default: false
         type: boolean
       publish_server:
-        description: "Publish (Server) — Publish server runner (@happier-dev/server) to npm"
+        description: "Publish (Server) — Publish server runner (@happier-dev/relay-server) to npm"
         required: false
         default: false
         type: boolean
@@ -124,7 +124,7 @@ jobs:
             echo "npm_tag must be '${expected_tag}' for channel='${INPUT_CHANNEL}' (got '${INPUT_NPM_TAG}')." >&2
             exit 1
           fi
-  
+
       - name: Resolve source ref
         id: resolve_source
         env:

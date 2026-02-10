@@ -1,5 +1,5 @@
 {
-  "name": "@happier-dev/server",
+  "name": "@happier-dev/relay-server",
   "version": "0.1.2",
   "description": "Happier server runner (downloads and verifies the correct server binary for your platform).",
   "repository": "https://github.com/happier-dev/happier.git",
@@ -7,6 +7,7 @@
   "license": "MIT",
   "type": "module",
   "bin": {
+    "relay-server": "bin/happier-server.mjs",
     "happier-server": "bin/happier-server.mjs"
   },
   "files": [
