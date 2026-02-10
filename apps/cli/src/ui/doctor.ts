@@ -114,6 +114,10 @@ export async function runDoctorDaemon(): Promise<void> {
     return runDoctorCommand('daemon');
 }
 
+export function shouldShowGlobalProcessInventory(filter: 'all' | 'daemon'): boolean {
+    return filter === 'all';
+}
+
 export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void> {
     // Default to 'all' if no filter specified
     if (!filter) {
@@ -210,50 +214,52 @@ export async function runDoctorCommand(filter?: 'all' | 'daemon'): Promise<void>
             console.log(chalk.gray(JSON.stringify(redactDaemonStateForDisplay(state), null, 2)));
         }
 
-        // All Happier processes
-        const allProcesses = await findAllHappyProcesses();
-        if (allProcesses.length > 0) {
-            console.log(chalk.bold('\n🔍 All Happier CLI Processes'));
+        if (shouldShowGlobalProcessInventory(filter)) {
+            // All Happier processes
+            const allProcesses = await findAllHappyProcesses();
+            if (allProcesses.length > 0) {
+                console.log(chalk.bold('\n🔍 All Happier CLI Processes'));
 
-            // Group by type
-            const grouped = allProcesses.reduce((groups, process) => {
-                if (!groups[process.type]) groups[process.type] = [];
-                groups[process.type].push(process);
-                return groups;
-            }, {} as Record<string, typeof allProcesses>);
+                // Group by type
+                const grouped = allProcesses.reduce((groups, process) => {
+                    if (!groups[process.type]) groups[process.type] = [];
+                    groups[process.type].push(process);
+                    return groups;
+                }, {} as Record<string, typeof allProcesses>);
 
-            // Display each group
-            Object.entries(grouped).forEach(([type, processes]) => {
-                const typeLabels: Record<string, string> = {
-                    'current': '📍 Current Process',
-                    'daemon': '🤖 Daemon',
-                    'daemon-version-check': '🔍 Daemon Version Check (stuck)',
-                    'daemon-spawned-session': '🔗 Daemon-Spawned Sessions',
-                    'user-session': '👤 User Sessions',
-                    'dev-daemon': '🛠️  Dev Daemon',
-                    'dev-daemon-version-check': '🛠️  Dev Daemon Version Check (stuck)',
-                    'dev-session': '🛠️  Dev Sessions',
-                    'dev-doctor': '🛠️  Dev Doctor',
-                    'dev-related': '🛠️  Dev Related',
-                    'doctor': '🩺 Doctor',
-                    'unknown': '❓ Unknown'
-                };
+                // Display each group
+                Object.entries(grouped).forEach(([type, processes]) => {
+                    const typeLabels: Record<string, string> = {
+                        'current': '📍 Current Process',
+                        'daemon': '🤖 Daemon',
+                        'daemon-version-check': '🔍 Daemon Version Check (stuck)',
+                        'daemon-spawned-session': '🔗 Daemon-Spawned Sessions',
+                        'user-session': '👤 User Sessions',
+                        'dev-daemon': '🛠️  Dev Daemon',
+                        'dev-daemon-version-check': '🛠️  Dev Daemon Version Check (stuck)',
+                        'dev-session': '🛠️  Dev Sessions',
+                        'dev-doctor': '🛠️  Dev Doctor',
+                        'dev-related': '🛠️  Dev Related',
+                        'doctor': '🩺 Doctor',
+                        'unknown': '❓ Unknown'
+                    };
 
-                console.log(chalk.blue(`\n${typeLabels[type] || type}:`));
-                processes.forEach(({ pid, command }) => {
-                    const color = type === 'current' ? chalk.green :
-                        type.startsWith('dev') ? chalk.cyan :
-                            type.includes('daemon') ? chalk.blue : chalk.gray;
-                    console.log(`  ${color(`PID ${pid}`)}: ${chalk.gray(command)}`);
+                    console.log(chalk.blue(`\n${typeLabels[type] || type}:`));
+                    processes.forEach(({ pid, command }) => {
+                        const color = type === 'current' ? chalk.green :
+                            type.startsWith('dev') ? chalk.cyan :
+                                type.includes('daemon') ? chalk.blue : chalk.gray;
+                        console.log(`  ${color(`PID ${pid}`)}: ${chalk.gray(command)}`);
+                    });
                 });
-            });
-        } else {
-            console.log(chalk.red('❌ No happier processes found'));
-        }
+            } else {
+                console.log(chalk.red('❌ No happier processes found'));
+            }
 
-        if (filter === 'all' && allProcesses.length > 1) { // More than just current process
-            console.log(chalk.bold('\n💡 Process Management'));
-            console.log(chalk.gray('To clean up runaway processes: happier doctor clean'));
+            if (allProcesses.length > 1) { // More than just current process
+                console.log(chalk.bold('\n💡 Process Management'));
+                console.log(chalk.gray('To clean up runaway processes: happier doctor clean'));
+            }
         }
     } catch (error) {
         console.log(chalk.red('❌ Error checking daemon status'));

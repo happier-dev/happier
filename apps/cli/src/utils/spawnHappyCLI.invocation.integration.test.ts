@@ -110,14 +110,13 @@ describe('happier-cli subprocess invocation', () => {
         const inv = mod.buildHappyCliSubprocessInvocation(['daemon', 'start-sync']);
 
         expect(inv.runtime).toBe('node');
+        const importIndex = inv.argv.indexOf('--import');
+        expect(importIndex).toBeGreaterThanOrEqual(0);
+        // Node can accept either `--import tsx` or a fully-resolved tsx loader path, depending on resolution strategy.
+        expect(inv.argv[importIndex + 1]).toMatch(/(^tsx$|\/tsx\/dist\/esm\/index\.mjs$)/);
         expect(inv.argv).toEqual(
-            expect.arrayContaining([
-                '--import',
-                'tsx',
-                expect.stringMatching(/src\/index\.ts$/),
-                'daemon',
-                'start-sync',
-            ]),
+            expect.arrayContaining([expect.stringMatching(/src\/index\.ts$/), 'daemon', 'start-sync']),
         );
+        expect(inv.env?.TSX_TSCONFIG_PATH).toEqual(expect.stringMatching(/[\\/]apps[\\/]cli[\\/]tsconfig\.json$/));
     });
 });

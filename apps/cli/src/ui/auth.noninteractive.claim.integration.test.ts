@@ -202,4 +202,85 @@ describe('authAndSetupMachineIfNeeded (non-TTY) (status+claim)', () => {
       await app.close().catch(() => {});
     }
   }, 15_000);
+
+  it('stores dataKey credentials using the private key from the v2 response', async () => {
+    const requests = new Map<string, ClaimRequestRow>();
+    const app = fastify({ logger: false });
+
+    app.post('/v1/auth/request', async (req, reply) => {
+      const parsed = parseAuthRequestBody(req.body);
+      if (!parsed) return reply.code(400).send({ error: 'claim_required' });
+
+      if (!requests.has(parsed.publicKey)) {
+        requests.set(parsed.publicKey, {
+          claimSecretHash: parsed.claimSecretHash,
+          response: null,
+          statusChecks: 0,
+        });
+      }
+      return reply.send({ state: 'requested' });
+    });
+
+    app.get('/v1/auth/request/status', async (req, reply) => {
+      const query = req.query as { publicKey?: unknown } | undefined;
+      const publicKey = typeof query?.publicKey === 'string' ? query.publicKey : '';
+      const row = requests.get(publicKey);
+      if (!row) return reply.send({ status: 'not_found', supportsV2: false });
+
+      row.statusChecks += 1;
+      if (!row.response && row.statusChecks >= 1) {
+        const recipientPk = new Uint8Array(Buffer.from(publicKey, 'base64'));
+        const privateKey = new Uint8Array(32).fill(9);
+        const bundle = new Uint8Array(privateKey.length + 1);
+        bundle[0] = 0;
+        bundle.set(privateKey, 1);
+        row.response = encryptForTerminal(recipientPk, bundle);
+      }
+
+      if (row.response) return reply.send({ status: 'authorized', supportsV2: true });
+      return reply.send({ status: 'pending', supportsV2: true });
+    });
+
+    app.post('/v1/auth/request/claim', async (req, reply) => {
+      const body = req.body as { publicKey?: unknown; claimSecret?: unknown } | undefined;
+      const publicKey = typeof body?.publicKey === 'string' ? body.publicKey : '';
+      const row = requests.get(publicKey);
+      if (!row) return reply.code(410).send({ error: 'expired' });
+
+      const claimSecret = typeof body?.claimSecret === 'string' ? body.claimSecret : '';
+      const claimBytes = Buffer.from(claimSecret, 'base64url');
+      if (sha256Base64Url(claimBytes) !== row.claimSecretHash) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+      if (!row.response) return reply.send({ state: 'requested' });
+      return reply.send({ state: 'authorized', token: 'token-1', response: row.response });
+    });
+
+    await app.ready();
+    const restoreAxios = installAxiosFastifyAdapter({
+      app,
+      origin: process.env.HAPPIER_SERVER_URL ?? '',
+    });
+    vi.resetModules();
+    const { authAndSetupMachineIfNeeded } = await import('./auth');
+    const output = captureConsoleLogAndMuteStdout();
+
+    try {
+      const result = await authAndSetupMachineIfNeeded();
+      const privateKey = new Uint8Array(32).fill(9);
+      const expectedPublic = tweetnacl.box.keyPair.fromSecretKey(privateKey).publicKey;
+
+      expect(result.credentials.token).toBe('token-1');
+      expect(result.credentials.encryption.type).toBe('dataKey');
+      if (result.credentials.encryption.type !== 'dataKey') {
+        throw new Error('Expected dataKey credentials');
+      }
+      expect(result.credentials.encryption.machineKey).toEqual(privateKey);
+      expect(result.credentials.encryption.publicKey).toEqual(expectedPublic);
+    } finally {
+      output.restore();
+      restoreAxios();
+      await app.close().catch(() => {});
+    }
+  }, 15_000);
 });

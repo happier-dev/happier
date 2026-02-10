@@ -55,11 +55,30 @@ import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { existsSync } from 'node:fs';
 import { isBun } from './runtime';
+import { createRequire } from 'node:module';
+import { dirname } from 'node:path';
 
 function getSubprocessRuntime(): 'node' | 'bun' {
   const override = process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
   if (override === 'node' || override === 'bun') return override;
   return isBun() ? 'bun' : 'node';
+}
+
+function resolveTsxImportHookPath(): string | null {
+  // `node --import tsx` resolves `tsx` relative to the current working directory.
+  // Daemon-spawned sessions intentionally run in arbitrary `cwd`s (e.g. /Users/leeroy),
+  // so we must use an absolute path to the tsx ESM register hook.
+  try {
+    const req = createRequire(import.meta.url);
+    // Avoid package export maps by resolving package.json and building a file path.
+    const pkgJsonPath = req.resolve('tsx/package.json');
+    const pkgDir = dirname(pkgJsonPath);
+    const hookPath = join(pkgDir, 'dist', 'esm', 'index.mjs');
+    if (existsSync(hookPath)) return hookPath;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 function resolveSubprocessEntrypoint(): string {
@@ -79,15 +98,37 @@ function resolveDevTsxFallbackEntrypoint(entrypoint: string): string {
   return join(projectPath(), 'src', 'index.ts');
 }
 
+function resolveCliTsxTsconfigPath(): string {
+  // The TSX loader resolves TS path aliases (`@/...`) using the tsconfig it finds.
+  // Daemon-spawned subprocesses intentionally run in arbitrary `cwd`s, so TSX may
+  // pick up the wrong tsconfig (or none) unless we provide an explicit path.
+  //
+  // TSX supports this via `TSX_TSCONFIG_PATH`, but we only want to set it for the
+  // spawned subprocess, not mutate the parent process environment.
+  return join(projectPath(), 'tsconfig.json');
+}
+
 function shouldAllowDevTsxFallback(): boolean {
-  if (process.env.HAPPIER_VARIANT !== 'dev') return false;
   const raw = (process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK ?? '').trim().toLowerCase();
-  if (!raw) return true;
-  if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+  if (raw) {
+    if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
+    return true;
+  }
+  const isDevVariant = process.env.HAPPIER_VARIANT === 'dev';
+  const hasStackContext = Boolean(
+    process.env.HAPPIER_STACK_REPO_DIR ||
+      process.env.HAPPIER_STACK_CLI_ROOT_DIR ||
+      process.env.HAPPIER_STACK_STACK
+  );
+  if (!isDevVariant && !hasStackContext) return false;
   return true;
 }
 
-export function buildHappyCliSubprocessInvocation(args: string[]): { runtime: 'node' | 'bun'; argv: string[] } {
+export function buildHappyCliSubprocessInvocation(args: string[]): {
+  runtime: 'node' | 'bun';
+  argv: string[];
+  env?: Record<string, string>;
+} {
   const entrypoint = resolveSubprocessEntrypoint();
   const runtime = getSubprocessRuntime();
 
@@ -105,9 +146,16 @@ export function buildHappyCliSubprocessInvocation(args: string[]): { runtime: 'n
     if (runtime === 'node' && allowTsxFallback) {
       const tsxEntrypoint = resolveDevTsxFallbackEntrypoint(entrypoint);
       if (existsSync(tsxEntrypoint)) {
+        const tsxHook = resolveTsxImportHookPath();
+        if (!tsxHook) {
+          const errorMessage = `tsx is required for TSX fallback but could not be resolved from the cli package`;
+          logger.debug(`[SPAWN HAPPIER CLI] ${errorMessage}`);
+          throw new Error(errorMessage);
+        }
         return {
           runtime: 'node',
-          argv: ['--no-warnings', '--no-deprecation', '--import', 'tsx', tsxEntrypoint, ...args],
+          argv: ['--no-warnings', '--no-deprecation', '--import', tsxHook, tsxEntrypoint, ...args],
+          env: { TSX_TSCONFIG_PATH: resolveCliTsxTsconfigPath() },
         };
       }
     }
@@ -146,6 +194,9 @@ export function spawnHappyCLI(args: string[], options: SpawnOptions = {}): Child
   const fullCommand = `happier ${args.join(' ')}`;
   logger.debug(`[SPAWN HAPPIER CLI] Spawning: ${fullCommand} in ${directory}`);
 
-  const { runtime, argv } = buildHappyCliSubprocessInvocation(args);
-  return spawn(runtime, argv, options);
+  const { runtime, argv, env } = buildHappyCliSubprocessInvocation(args);
+  const spawnOptions: SpawnOptions = env
+    ? { ...options, env: { ...(options.env ?? process.env), ...env } }
+    : options;
+  return spawn(runtime, argv, spawnOptions);
 }

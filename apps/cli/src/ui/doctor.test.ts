@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { maskValue, redactDaemonStateForDisplay } from './doctor';
+import { maskValue, redactDaemonStateForDisplay, shouldShowGlobalProcessInventory } from './doctor';
 
 describe('doctor redaction', () => {
     it('does not treat ${VAR:-default} templates as safe', () => {
@@ -54,5 +54,15 @@ describe('doctor redaction', () => {
         })).toMatchObject({
             controlToken: '',
         });
+    });
+});
+
+describe('doctor process inventory visibility', () => {
+    it('hides global process inventory for daemon-only status output', () => {
+        expect(shouldShowGlobalProcessInventory('daemon')).toBe(false);
+    });
+
+    it('shows global process inventory for full doctor output', () => {
+        expect(shouldShowGlobalProcessInventory('all')).toBe(true);
     });
 });

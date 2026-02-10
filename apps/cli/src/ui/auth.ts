@@ -7,6 +7,7 @@ import { displayQRCode } from "./qrcode";
 import { delay } from "@/utils/time";
 import { writeCredentialsLegacy, readCredentials, updateSettings, Credentials, writeCredentialsDataKey } from "@/persistence";
 import { generateWebAuthUrl } from "@/api/webAuth";
+import { sanitizeServerIdForFilesystem } from "@/server/serverId";
 import { openBrowser } from '@/ui/openBrowser';
 import { AuthSelector, AuthMethod } from "./ink/AuthSelector";
 import { render } from 'ink';
@@ -34,7 +35,10 @@ function isAuthorizedWithTokenAndResponse(
 }
 
 export async function doAuth(): Promise<Credentials | null> {
-    const isInteractive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+    // Ink requires raw mode support; in daemon/non-tty contexts we must never render Ink
+    // (it will crash with "Raw mode is not supported on the current process.stdin").
+    const hasRawMode = Boolean(process.stdin.isTTY && typeof (process.stdin as any).setRawMode === 'function');
+    const isInteractive = Boolean(hasRawMode && process.stdout.isTTY);
     if (isInteractive) {
         console.clear();
     }
@@ -119,7 +123,7 @@ async function doBothAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; clai
     console.log('');
 
     console.log('Step 0 — Configure your app/web (self-host only)');
-    console.log('If you are using the official hosted Happier server, you can skip this.');
+    console.log('If you are using Happier Cloud, you can skip this.');
     console.log('');
     console.log('Web (prefill + confirm):');
     console.log(configureLinks.webUrl);
@@ -339,8 +343,8 @@ async function waitForAuthentication(params: Readonly<{ keypair: tweetnacl.BoxKe
                     }
 
                     if (decrypted[0] === 0) {
-                        const publicKeyBytes = decrypted.slice(1, 33);
-                        const machineKey = randomBytes(32);
+                        const machineKey = decrypted.slice(1, 33);
+                        const publicKeyBytes = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
                         await writeCredentialsDataKey({ publicKey: publicKeyBytes, machineKey, token });
                         console.log('\n\n✓ Authentication successful\n');
                         return { encryption: { type: 'dataKey', publicKey: publicKeyBytes, machineKey }, token };
@@ -503,7 +507,10 @@ export async function authAndSetupMachineIfNeeded(): Promise<{
     // Make sure we have a machine ID
     // Server machine entity will be created either by the daemon or by the CLI
     const settings = await updateSettings(async s => {
-        const activeServerId = configuration.activeServerId || 'official';
+        const activeServerId = sanitizeServerIdForFilesystem(
+            configuration.activeServerId ?? s.activeServerId ?? 'cloud',
+            'cloud',
+        );
         const currentMap = { ...(s.machineIdByServerId ?? {}) };
         const current = currentMap[activeServerId];
 

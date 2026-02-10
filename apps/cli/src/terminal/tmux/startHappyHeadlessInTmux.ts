@@ -78,7 +78,7 @@ export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
       windowName,
       cwd: process.cwd(),
     },
-    buildWindowEnv(),
+    { ...buildWindowEnv(), ...(inv.env ?? {}) },
   );
 
   if (!result.success) {
