@@ -15,6 +15,6 @@ test('workflows use Node 22 policy and do not pin Node 20', async () => {
     const raw = await readFile(join(workflowsDir, file), 'utf8');
     assert.doesNotMatch(raw, /node-version:\s*20\b/, `${file} must not use node-version: 20`);
     assert.doesNotMatch(raw, /NODE_VERSION:\s*"20"/, `${file} must not use NODE_VERSION=20`);
-    assert.doesNotMatch(raw, /node-version:\s*\[\s*20\s*,\s*24\s*\]/, `${file} must not include a Node 20 matrix`);
+    assert.doesNotMatch(raw, /node-version:\s*\[[^\]]*\b20\b[^\]]*\]/, `${file} must not include Node 20 in a matrix`);
   }
 });

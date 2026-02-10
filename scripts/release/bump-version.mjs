@@ -7,7 +7,7 @@
  * - so workflows can then promote that commit to deploy branches.
  *
  * Supported:
- * - --component app|cli|server|website (required)
+ * - --component app|cli|server|website|stack (required)
  * - --bump none|patch|minor|major (required)
  *
  * For "app", this updates:
@@ -135,6 +135,7 @@ function main() {
     cli: path.join(repoRoot, 'apps', 'cli'),
     server: path.join(repoRoot, 'apps', 'server'),
     website: path.join(repoRoot, 'apps', 'website'),
+    stack: path.join(repoRoot, 'apps', 'stack'),
   };
 
   if (!component || !(component in componentDirByName)) {

@@ -328,15 +328,8 @@ jobs:
             exit 0
           fi
 
-          cd apps/stack
-          npm version "${{ inputs.stack_bump }}" --no-git-tag-version >/tmp/bump_stack.txt
-          # `npm version` outputs "vX.Y.Z"
-          v="$(cat /tmp/bump_stack.txt | tr -d '\n' | sed 's/^v//')"
-          if [ -z "${v:-}" ]; then
-            echo "Failed to determine bumped stack version." >&2
-            exit 1
-          fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
+          out="$(node scripts/release/bump-version.mjs --component stack --bump "${{ inputs.stack_bump }}")"
+          echo "version=$out" >> "$GITHUB_OUTPUT"
 
       - name: Run cli tests
         if: inputs.publish_cli && inputs.run_tests

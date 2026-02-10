@@ -23,6 +23,8 @@ test('release workflow only promotes/bumps on production and routes source_ref b
   assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'dev' \}\}/);
   assert.match(raw, /publish_npm:[\s\S]*?bump:\s*\$\{\{\s*inputs\.environment == 'preview' && inputs\.cli_release_bump \|\| 'none'\s*\}\}/);
   assert.match(raw, /publish_npm:[\s\S]*?stack_bump:\s*\$\{\{\s*inputs\.environment == 'preview' && inputs\.stack_release_bump \|\| 'none'\s*\}\}/);
+  assert.match(raw, /deploy_ui:[\s\S]*?bump:\s*\$\{\{\s*inputs\.environment == 'preview' && inputs\.app_preview_bump \|\| 'none'\s*\}\}/);
+  assert.match(raw, /deploy_ui:[\s\S]*?if:[\s\S]*?inputs\.environment == 'preview' && inputs\.app_preview_bump != 'none'/);
   assert.match(raw, /sync_dev:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
 });
 
@@ -51,4 +53,15 @@ test('release-npm can derive preview versions from requested bump level', async 
   assert.match(raw, /versions\.stack = setPreviewVersion\(join\('apps', 'stack', 'package\.json'\), process\.env\.STACK_PREVIEW_BUMP\);/);
   assert.match(raw, /CLI_PREVIEW_BUMP:\s*\$\{\{\s*inputs\.bump\s*\}\}/);
   assert.match(raw, /STACK_PREVIEW_BUMP:\s*\$\{\{\s*inputs\.stack_bump\s*\}\}/);
+});
+
+test('stack version bumps use shared bump-version script across release workflows', async () => {
+  const orchestrator = await loadWorkflow('release.yml');
+  const releaseNpm = await loadWorkflow('release-npm.yml');
+
+  assert.match(orchestrator, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ inputs\.stack_release_bump \}\}"/);
+  assert.doesNotMatch(orchestrator, /BUMP="\$\{\{ inputs\.stack_release_bump \}\}" node - <<'NODE'/);
+
+  assert.match(releaseNpm, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ inputs\.stack_bump \}\}"/);
+  assert.doesNotMatch(releaseNpm, /npm version "\$\{\{ inputs\.stack_bump \}\}" --no-git-tag-version/);
 });

@@ -108,6 +108,16 @@ on:
           - patch
           - minor
           - major
+      app_preview_bump:
+        description: "Publish (App Preview) — Preview-only app version bump for UI deploy (none=skip)"
+        required: true
+        type: choice
+        default: none
+        options:
+          - none
+          - patch
+          - minor
+          - major
       cli_release_bump:
         description: "Publish (CLI) — Release bump (none=skip; preview uses bumped base for prerelease version)"
         required: true
@@ -355,6 +365,7 @@ jobs:
             echo "- dry_run: \`${{ inputs.dry_run }}\`"
             echo "- deploy_targets: \`${{ inputs.deploy_targets }}\`"
             echo "- bump: \`${{ inputs.bump }}\`"
+            echo "- app_preview_bump: \`${{ inputs.app_preview_bump }}\`"
             echo "- cli_release_bump: \`${{ inputs.cli_release_bump }}\`"
             echo "- stack_release_bump: \`${{ inputs.stack_release_bump }}\`"
             echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
@@ -601,38 +612,7 @@ jobs:
           fi
 
           if [ "${{ inputs.stack_release_bump }}" != "none" ]; then
-            BUMP="${{ inputs.stack_release_bump }}" node - <<'NODE' >/tmp/bump_stack.txt
-            const fs = require('node:fs');
-            const pkgPath = 'apps/stack/package.json';
-            const bump = String(process.env.BUMP || '').trim();
-
-            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-            const raw = String(pkg.version ?? '').trim();
-            const m = /^(\d+)\.(\d+)\.(\d+)(?:-.+)?$/.exec(raw);
-            if (!m) throw new Error(`Invalid semver "${raw}"`);
-
-            let major = Number(m[1]);
-            let minor = Number(m[2]);
-            let patch = Number(m[3]);
-
-            if (bump === 'major') {
-              major += 1;
-              minor = 0;
-              patch = 0;
-            } else if (bump === 'minor') {
-              minor += 1;
-              patch = 0;
-            } else if (bump === 'patch') {
-              patch += 1;
-            } else {
-              throw new Error(`Unknown bump "${bump}"`);
-            }
-
-            const next = `${major}.${minor}.${patch}`;
-            pkg.version = next;
-            fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-            process.stdout.write(`${next}\n`);
-            NODE
+            node scripts/release/bump-version.mjs --component stack --bump "${{ inputs.stack_release_bump }}" >/tmp/bump_stack.txt
             bumped+=("stack")
           fi
 
@@ -658,7 +638,7 @@ jobs:
           git push origin HEAD:main
 
   deploy_ui:
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && needs.deploy_plan.outputs.deploy_ui_needed == 'true' && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || (inputs.environment == 'preview' && inputs.app_preview_bump != 'none')) && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
     needs: [checks, promote_main, bump_versions, deploy_plan]
     permissions:
       contents: write
@@ -668,7 +648,7 @@ jobs:
       environment: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
-      bump: none
+      bump: ${{ inputs.environment == 'preview' && inputs.app_preview_bump || 'none' }}
       deploy_web: true
       expo_action: ${{ inputs.ui_expo_action }}
       expo_profile: ${{ inputs.ui_expo_profile }}
