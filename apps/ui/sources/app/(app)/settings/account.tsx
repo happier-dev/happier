@@ -27,6 +27,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { useInboxFriendsEnabled } from '@/hooks/server/useInboxFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
 import { ProviderIdentityItems } from '@/components/account/ProviderIdentityItems';
+import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 
 export default React.memo(() => {
     const { theme } = useUnistyles();
@@ -41,8 +42,11 @@ export default React.memo(() => {
     const applyProfile = storage((state) => state.applyProfile);
 
     // Get the current secret key
-    const currentSecret = auth.credentials?.secret || '';
-    const formattedSecret = currentSecret ? formatSecretKeyForBackup(currentSecret) : '';
+    const legacySecret =
+        auth.credentials && isLegacyAuthCredentials(auth.credentials)
+            ? auth.credentials.secret
+            : '';
+    const formattedSecret = legacySecret ? formatSecretKeyForBackup(legacySecret) : '';
 
     // Profile display values
     const displayName = getDisplayName(profile);
@@ -113,6 +117,7 @@ export default React.memo(() => {
     };
 
     const handleCopySecret = async () => {
+        if (!formattedSecret) return;
         try {
             await Clipboard.setStringAsync(formattedSecret);
             setCopiedRecently(true);
@@ -248,29 +253,35 @@ export default React.memo(() => {
                 })()}
 
                 {/* Backup Section */}
-                <ItemGroup
-                    title={t('settingsAccount.backup')}
-                    footer={t('settingsAccount.backupDescription')}
-                >
-                    <Item
-                        title={t('settingsAccount.secretKey')}
-                        subtitle={showSecret ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
-                        icon={<Ionicons name={showSecret ? "eye-off-outline" : "eye-outline"} size={29} color="#FF9500" />}
-                        onPress={handleShowSecret}
-                        rightElement={
-                            <Pressable
-                                onPress={handleCopySecret}
-                                hitSlop={12}
-                            >
-                                <Ionicons name="copy-outline" size={18} color={theme.colors.textSecondary} />
-                            </Pressable>
-                        }
-                        showChevron={false}
-                    />
-                </ItemGroup>
+                {formattedSecret ? (
+                    <ItemGroup title={t('settingsAccount.backup')} footer={t('settingsAccount.backupDescription')}>
+                        <Item
+                            title={t('settingsAccount.secretKey')}
+                            subtitle={showSecret ? t('settingsAccount.tapToHide') : t('settingsAccount.tapToReveal')}
+                            icon={
+                                <Ionicons
+                                    name={showSecret ? 'eye-off-outline' : 'eye-outline'}
+                                    size={29}
+                                    color="#FF9500"
+                                />
+                            }
+                            onPress={handleShowSecret}
+                            rightElement={
+                                <Pressable onPress={handleCopySecret} hitSlop={12}>
+                                    <Ionicons
+                                        name="copy-outline"
+                                        size={18}
+                                        color={theme.colors.textSecondary}
+                                    />
+                                </Pressable>
+                            }
+                            showChevron={false}
+                        />
+                    </ItemGroup>
+                ) : null}
 
                 {/* Secret Key Display */}
-                {showSecret && (
+                {formattedSecret && showSecret && (
                     <ItemGroup>
                         <Pressable onPress={handleCopySecret}>
                             <View style={{

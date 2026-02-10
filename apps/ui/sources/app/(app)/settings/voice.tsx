@@ -18,6 +18,8 @@ import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { normalizeSecretPromptInput } from '@/utils/secrets/normalizeSecretInput';
 import { VOICE_PROVIDER_IDS } from '@/voice/voiceProviders';
+import { fetchOpenAiCompatSpeechAudio } from '@/voice/local/fetchOpenAiCompatSpeechAudio';
+import { playAudioBytes } from '@/voice/local/playAudioBytes';
 
 import { ByoElevenLabsSection } from './voice/ByoElevenLabsSection';
 import { LocalOssVoiceSection, type VoiceSettingsOpenMenu } from './voice/LocalOssVoiceSection';
@@ -84,6 +86,7 @@ export default function VoiceSettingsScreen() {
 
     const [isAutoprovCreating, setIsAutoprovCreating] = React.useState(false);
     const [isAutoprovUpdating, setIsAutoprovUpdating] = React.useState(false);
+    const [isTestingLocalTts, setIsTestingLocalTts] = React.useState(false);
 
     const { daemonMediatorModelOptions, daemonMediatorSupportsFreeform } = useModelPreflight({
         source: mediatorAgentSource,
@@ -355,6 +358,40 @@ export default function VoiceSettingsScreen() {
         setVoiceRecentMessagesCount(Math.floor(parsed));
     };
 
+    const testLocalTts = async () => {
+        if (isTestingLocalTts) return;
+
+        const baseUrl = (voiceLocalTtsBaseUrl ?? '').trim();
+        if (!baseUrl) {
+            Modal.alert(t('common.error'), t('settingsVoice.local.testTtsMissingBaseUrl'));
+            return;
+        }
+
+        const apiKey = (sync.decryptSecretValue(voiceLocalTtsApiKey) ?? '').trim();
+        const model = String(voiceLocalTtsModel ?? 'tts-1');
+        const voice = String(voiceLocalTtsVoice ?? 'alloy');
+        const format = (voiceLocalTtsFormat ?? 'mp3') === 'wav' ? 'wav' : 'mp3';
+
+        setIsTestingLocalTts(true);
+        try {
+            const bytes = await fetchOpenAiCompatSpeechAudio({
+                baseUrl,
+                apiKey: apiKey ? apiKey : null,
+                model,
+                voice,
+                format,
+                input: t('settingsVoice.local.testTtsSample'),
+            });
+
+            // Web-only for now (native playback support can be added once we choose a single audio runtime).
+            await playAudioBytes({ bytes, format });
+        } catch {
+            Modal.alert(t('common.error'), t('settingsVoice.local.testTtsFailed'));
+        } finally {
+            setIsTestingLocalTts(false);
+        }
+    };
+
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <VoiceModeSection
@@ -421,6 +458,7 @@ export default function VoiceSettingsScreen() {
                 voiceLocalTtsVoice={voiceLocalTtsVoice}
                 voiceLocalTtsFormat={voiceLocalTtsFormat}
                 voiceLocalAutoSpeakReplies={!!voiceLocalAutoSpeakReplies}
+                isTestingLocalTts={isTestingLocalTts}
                 onSetVoiceLocalConversationMode={(mode) => setVoiceLocalConversationMode(mode as any)}
                 onToggleVoiceLocalMediatorBackend={() => {
                     setVoiceLocalMediatorBackend((voiceLocalMediatorBackend ?? 'daemon') === 'daemon' ? ('openai_compat' as any) : ('daemon' as any));
@@ -487,6 +525,9 @@ export default function VoiceSettingsScreen() {
                     setVoiceLocalTtsFormat((voiceLocalTtsFormat ?? 'mp3') === 'mp3' ? 'wav' : 'mp3');
                 }}
                 onSetVoiceLocalAutoSpeakReplies={(value) => setVoiceLocalAutoSpeakReplies(value as any)}
+                onTestLocalTts={() => {
+                    void testLocalTts();
+                }}
             />
 
             <ItemGroup

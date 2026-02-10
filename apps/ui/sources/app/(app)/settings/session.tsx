@@ -12,7 +12,7 @@ import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { useSettingMutable } from '@/sync/domains/state/storage';
-import type { MessageSendMode } from '@/sync/domains/session/control/submitMode';
+import type { BusySteerSendPolicy, MessageSendMode } from '@/sync/domains/session/control/submitMode';
 import { getPermissionModeLabelForAgentType, getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
@@ -112,6 +112,7 @@ export default React.memo(function SessionSettingsScreen() {
     const [tmuxTmpDir, setTmuxTmpDir] = useSettingMutable('sessionTmuxTmpDir');
 
     const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
+    const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
 
     const [toolViewDetailLevelDefault, setToolViewDetailLevelDefault] = useSettingMutable('toolViewDetailLevelDefault');
     const [toolViewDetailLevelDefaultLocalControl, setToolViewDetailLevelDefaultLocalControl] = useSettingMutable('toolViewDetailLevelDefaultLocalControl');
@@ -155,6 +156,19 @@ export default React.memo(function SessionSettingsScreen() {
         },
     ];
 
+    const busySteerOptions: Array<{ key: BusySteerSendPolicy; title: string; subtitle: string }> = [
+        {
+            key: 'steer_immediately',
+            title: t('settingsSession.messageSending.busySteerPolicy.steerImmediatelyTitle'),
+            subtitle: t('settingsSession.messageSending.busySteerPolicy.steerImmediatelySubtitle'),
+        },
+        {
+            key: 'server_pending',
+            title: t('settingsSession.messageSending.busySteerPolicy.queueForReviewTitle'),
+            subtitle: t('settingsSession.messageSending.busySteerPolicy.queueForReviewSubtitle'),
+        },
+    ];
+
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
             <ItemGroup title={t('settingsSession.messageSending.title')} footer={t('settingsSession.messageSending.footer')}>
@@ -170,6 +184,25 @@ export default React.memo(function SessionSettingsScreen() {
                     />
                 ))}
             </ItemGroup>
+
+            {messageSendMode === 'agent_queue' || messageSendMode === 'server_pending' ? (
+                <ItemGroup
+                    title={t('settingsSession.messageSending.busySteerPolicyTitle')}
+                    footer={t('settingsSession.messageSending.busySteerPolicyFooter')}
+                >
+                    {busySteerOptions.map((option) => (
+                        <Item
+                            key={option.key}
+                            title={option.title}
+                            subtitle={option.subtitle}
+                            icon={<Ionicons name="git-branch-outline" size={29} color="#007AFF" />}
+                            rightElement={busySteerSendPolicy === option.key ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                            onPress={() => setBusySteerSendPolicy(option.key)}
+                            showChevron={false}
+                        />
+                    ))}
+                </ItemGroup>
+            ) : null}
 
             <ItemGroup
                 title={t('settingsSession.toolRendering.title')}

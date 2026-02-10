@@ -56,6 +56,7 @@ type LocalOssVoiceSectionProps = Readonly<{
     voiceLocalTtsVoice: string | null;
     voiceLocalTtsFormat: string | null;
     voiceLocalAutoSpeakReplies: boolean;
+    isTestingLocalTts: boolean;
     onSetVoiceLocalConversationMode: (mode: 'mediator' | 'direct_session') => void;
     onToggleVoiceLocalMediatorBackend: () => void;
     onToggleVoiceMediatorAgentSource: () => void;
@@ -78,6 +79,7 @@ type LocalOssVoiceSectionProps = Readonly<{
     onSetLocalText: (kind: 'sttModel' | 'ttsModel' | 'ttsVoice') => void;
     onToggleVoiceLocalTtsFormat: () => void;
     onSetVoiceLocalAutoSpeakReplies: (value: boolean) => void;
+    onTestLocalTts: () => void;
 }>;
 
 export function LocalOssVoiceSection(props: LocalOssVoiceSectionProps) {
@@ -425,6 +427,13 @@ export function LocalOssVoiceSection(props: LocalOssVoiceSectionProps) {
                 icon={<Ionicons name="musical-notes-outline" size={29} color="#8E8E93" />}
                 detail={String(props.voiceLocalTtsFormat ?? 'mp3')}
                 onPress={props.onToggleVoiceLocalTtsFormat}
+            />
+            <Item
+                title={t('settingsVoice.local.testTts')}
+                subtitle={t('settingsVoice.local.testTtsSubtitle')}
+                icon={<Ionicons name="play-circle-outline" size={29} color="#34C759" />}
+                loading={props.isTestingLocalTts}
+                onPress={props.onTestLocalTts}
             />
             <Item
                 title={t('settingsVoice.local.autoSpeak')}
