@@ -22,6 +22,9 @@
     "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(!fs.existsSync('tsconfig.json'))process.exit(0);const yarn=process.platform==='win32'?'yarn.cmd':'yarn';const r=cp.spawnSync(yarn,['-s','postinstall:real'],{stdio:'inherit'});process.exit(r.status??1);\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
+  "dependencies": {
+    "zod": "3.25.76"
+  },
   "devDependencies": {
     "typescript": "^5.9.2"
   }

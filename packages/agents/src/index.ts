@@ -53,3 +53,5 @@ export {
   computeNextPermissionIntentMetadata,
   computeNextMetadataConfigOptionOverrideV1,
 } from './sessionControls/publish.js';
+
+export * from './providerSettings/index.js';
