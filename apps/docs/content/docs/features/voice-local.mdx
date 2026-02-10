@@ -14,6 +14,12 @@ In the app, configure **Settings → Voice → Local OSS Voice**:
 - **TTS Base URL** (typically `http://<host>:<port>/v1`)
 - Optional API keys (stored encrypted), model/voice fields, and output format
 
+## What you need (minimum)
+
+- **STT is required** to use voice input (talking into the mic).
+- **TTS is optional** (it is only required if you want spoken replies).
+- STT and TTS can be hosted on the same server (if it supports both endpoints), or on two separate servers.
+
 ## Direct-to-session vs mediator mode
 
 Local OSS Voice supports two conversation modes:

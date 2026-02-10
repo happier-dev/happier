@@ -10,6 +10,14 @@ Happier supports optional voice conversations with these providers:
 - **Use my ElevenLabs**: the client uses your own ElevenLabs `xi-api-key` (and agent id) and calls ElevenLabs directly (Happier never sees your key).
 - **Local OSS Voice**: a turn-based mic → STT → send message → TTS pipeline using **OpenAI-compatible** STT/TTS endpoints you run yourself.
 
+## Glossary (STT vs TTS vs mediator)
+
+- **STT (speech-to-text)**: converts microphone audio into text. Without STT, you cannot "talk to Happier".
+- **TTS (text-to-speech)**: converts text into spoken audio. Without TTS, you can still use voice input, but replies won't be spoken aloud.
+- **Mediator**: an optional middle step between STT and the session transcript.
+  - **Direct-to-session** sends the STT text into the session as a normal message.
+  - **Mediator mode** sends the STT text into an ephemeral multi-turn chat, then you **Commit** a single final instruction message into the session when ready.
+
 ## App settings
 
 In the app, open **Settings → Voice** and choose one of:
@@ -61,6 +69,12 @@ In **Settings → Voice → Local OSS Voice**, configure:
 - **STT Base URL** (typically ends with `/v1`)
 - **TTS Base URL** (typically ends with `/v1`)
 - Optional API keys, model/voice fields, and format (`mp3`/`wav`)
+
+Minimum configuration notes:
+
+- To use the mic and send spoken input, you must configure **STT Base URL**.
+- To hear spoken replies, configure **TTS Base URL** and enable auto-speak.
+- Mediator mode is optional. If you don't enable it, Local OSS Voice uses direct-to-session mode.
 
 ### Mediator mode (local voice)
 
