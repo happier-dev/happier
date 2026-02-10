@@ -20,6 +20,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { calculateCost } from '@/utils/pricing';
 import { buildAcpAgentMessageEnvelope, shouldTraceAcpMessageType } from './acpMessageEnvelope';
 import { normalizeAcpSessionMessageBody, normalizeCodexSessionMessageBody } from './sessionOutboundMessageNormalization';
+import { buildUsageReportFromAcpTokenCount } from './acpTokenCountUsageReport';
 import {
     fetchLatestUserPermissionIntentFromEncryptedTranscript,
     fetchRecentTranscriptTextItemsForAcpImportFromServer,
@@ -829,6 +830,22 @@ export class ApiSessionClient extends EventEmitter {
             localId,
             logErrorMessage: '[SOCKET] Failed to commit Codex message (non-fatal)',
         });
+
+        // Best-effort: allow ACP providers to report token usage via a token_count message.
+        if (normalizedBody?.type === 'token_count') {
+            try {
+                const report = buildUsageReportFromAcpTokenCount({
+                    provider: 'codex',
+                    sessionId: this.sessionId,
+                    body: normalizedBody,
+                });
+                if (report) {
+                    this.socket.emit('usage-report', report);
+                }
+            } catch (error) {
+                logger.debug('[SOCKET] Failed to send token_count usage report (non-fatal)', error);
+            }
+        }
     }
 
     private prepareAcpAgentMessage(params: {
@@ -893,6 +910,22 @@ export class ApiSessionClient extends EventEmitter {
             localId,
             logErrorMessage: '[SOCKET] Failed to commit agent message (non-fatal)',
         });
+
+        // Best-effort: allow ACP providers to report token usage via a token_count message.
+        if (normalizedBody.type === 'token_count') {
+            try {
+                const report = buildUsageReportFromAcpTokenCount({
+                    provider,
+                    sessionId: this.sessionId,
+                    body: normalizedBody,
+                });
+                if (report) {
+                    this.socket.emit('usage-report', report);
+                }
+            } catch (error) {
+                logger.debug('[SOCKET] Failed to send token_count usage report (non-fatal)', error);
+            }
+        }
     }
 
     sendUserTextMessage(text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) {
