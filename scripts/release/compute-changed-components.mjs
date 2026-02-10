@@ -76,4 +76,8 @@ function main() {
   }
 }
 
-main().catch((err) => fail(err?.stack || String(err)));
+try {
+  main();
+} catch (err) {
+  fail(err?.stack || String(err));
+}
