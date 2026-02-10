@@ -7,24 +7,24 @@ import { parse } from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
-const workflowPath = join(repoRoot, '.github', 'workflows', 'release-dev-to-main.yml');
+const workflowPath = join(repoRoot, '.github', 'workflows', 'release.yml');
 
 async function loadWorkflow() {
   const raw = await readFile(workflowPath, 'utf8');
   return { raw, parsed: parse(raw) };
 }
 
-test('release-dev-to-main workflow keeps workflow_dispatch inputs under GitHub limit', async () => {
+test('release workflow keeps workflow_dispatch inputs under GitHub limit', async () => {
   const { parsed } = await loadWorkflow();
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
   assert.ok(Object.keys(inputs).length <= 25, 'workflow_dispatch inputs must stay <= 25');
 });
 
-test('release-dev-to-main workflow uses compact grouped inputs', async () => {
+test('release workflow uses compact grouped inputs', async () => {
   const { parsed } = await loadWorkflow();
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
 
-  for (const key of ['custom_checks', 'deploy_targets', 'desktop_mode']) {
+  for (const key of ['custom_checks', 'deploy_targets', 'desktop_mode', 'cli_release_bump', 'stack_release_bump']) {
     assert.ok(inputs[key], `expected grouped input ${key}`);
   }
 
@@ -43,12 +43,14 @@ test('release-dev-to-main workflow uses compact grouped inputs', async () => {
     'deploy_docs',
     'desktop_build',
     'desktop_publish_release',
+    'cli_bump',
+    'stack_bump',
   ]) {
     assert.equal(inputs[legacyKey], undefined, `legacy input ${legacyKey} should be removed`);
   }
 });
 
-test('release-dev-to-main workflow derives promote mode from confirm and uses grouped toggles', async () => {
+test('release workflow derives promote mode from confirm and uses grouped toggles', async () => {
   const { raw } = await loadWorkflow();
 
   assert.match(raw, /confirm="\$\{\{ inputs\.confirm \}\}"/, 'confirm should be read as the only promotion selector');
@@ -69,4 +71,8 @@ test('release-dev-to-main workflow derives promote mode from confirm and uses gr
 
   assert.match(raw, /desktop_build:\s*\$\{\{ inputs\.desktop_mode != 'none' \}\}/);
   assert.match(raw, /desktop_publish_release:\s*\$\{\{ inputs\.desktop_mode == 'build_and_publish' \}\}/);
+  assert.match(raw, /inputs\.cli_release_bump/);
+  assert.match(raw, /inputs\.stack_release_bump/);
+  assert.doesNotMatch(raw, /inputs\.cli_bump/);
+  assert.doesNotMatch(raw, /inputs\.stack_bump/);
 });

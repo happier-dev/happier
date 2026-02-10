@@ -1,7 +1,7 @@
 {
   "name": "@happier-dev/app",
   "main": "index.ts",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "scripts": {
     "start": "cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo start",
     "android": "cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo run:android",

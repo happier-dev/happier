@@ -24,8 +24,8 @@ test('release workflows scope shared signing/publishing secrets to release-share
     ['reset-branch.yml', 'reset', 'release-shared'],
     ['build-tauri.yml', 'build', 'release-shared'],
     ['publish-github-release.yml', 'publish', 'release-shared'],
-    ['release-dev-to-main.yml', 'checks', 'release-shared'],
-    ['release-dev-to-main.yml', 'deploy_plan', 'release-shared'],
+    ['release.yml', 'checks', 'release-shared'],
+    ['release.yml', 'deploy_plan', 'release-shared'],
   ];
 
   for (const [file, job, expected] of checks) {
@@ -51,8 +51,8 @@ test('stress workflows do not inherit secrets into reusable tests workflow', asy
   assert.equal(parsed?.jobs?.['stress-manual']?.secrets, undefined, 'stress-manual should not inherit secrets');
 });
 
-test('release-dev-to-main defaults providers off and isolates provider secret usage', async () => {
-  const { parsed } = await loadWorkflow('release-dev-to-main.yml');
+test('release workflow defaults providers off and isolates provider secret usage', async () => {
+  const { parsed } = await loadWorkflow('release.yml');
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
 
   assert.equal(inputs?.run_providers?.default, false, 'run_providers should default to false');
@@ -70,7 +70,7 @@ test('release-dev-to-main defaults providers off and isolates provider secret us
 
 test('manual secret-bearing workflows enforce trusted refs', async () => {
   const files = [
-    'release-dev-to-main.yml',
+    'release.yml',
     'release-npm.yml',
     'promote-ui.yml',
     'promote-server.yml',

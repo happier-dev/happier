@@ -256,18 +256,6 @@ Workflow: `CI — Stress Tests` (`.github/workflows/stress-tests.yml`)
 
 Workflow: `CI — Extended DB Matrix` (`.github/workflows/extended-db-tests.yml`)
 
-## Releases
-
-Workflow: `RELEASE — Dev → Main` (`.github/workflows/release-dev-to-main.yml`)
-
-When `run_checks=true`, the release runs the same reusable gate as PR CI (via `workflow_call` into `CI — Tests`), and can optionally include:
-- core e2e
-- providers (smoke/extended)
-- stress
-
-Release orchestration also forces release contract checks in this gate:
-- `run_release_contracts=true` in the reusable `CI — Tests` call.
-
 ## Contributor guidance
 
 1. Default local loop: run the smallest unit target first.

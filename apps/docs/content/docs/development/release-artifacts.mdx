@@ -1,6 +1,6 @@
 ---
 title: Release Artifacts
-description: Binary artifacts, channels, checksums/signatures, manifests, and workflow ownership.
+description: Binary artifacts, channels, checksums/signatures, and manifests.
 ---
 
 ## Channels
@@ -50,19 +50,6 @@ Each platform manifest includes:
 - `notesUrl`
 - `build.commitSha`
 - `build.workflowRunId`
-
-## Workflow ownership
-
-- `.github/workflows/release-npm.yml`
-  - Publishes npm packages (unchanged behavior).
-  - Builds/signs CLI + hstack binaries.
-  - Generates/publishes CLI + hstack manifests.
-- `.github/workflows/promote-server.yml`
-  - Promotes server deploy branch.
-  - Builds/signs self-host server runtime binaries.
-  - Generates/publishes server manifests.
-- `.github/workflows/release-dev-to-main.yml`
-  - Orchestrates release flow and keeps npm + binary publication gates coherent.
 
 ## Rollback policy
 

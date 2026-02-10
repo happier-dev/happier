@@ -1,4 +1,4 @@
-name: RELEASE — Dev → Main
+name: RELEASE — Publish (preview + production)
 
 on:
   workflow_dispatch:
@@ -108,8 +108,8 @@ on:
           - patch
           - minor
           - major
-      cli_bump:
-        description: "Publish — Publish CLI to npm (none=skip)"
+      cli_release_bump:
+        description: "Publish (CLI) — Release bump (none=skip; preview uses bumped base for prerelease version)"
         required: true
         type: choice
         default: none
@@ -118,8 +118,8 @@ on:
           - patch
           - minor
           - major
-      stack_bump:
-        description: "Publish — Publish Stack to npm (none=skip)"
+      stack_release_bump:
+        description: "Publish (Stack) — Release bump (none=skip; preview uses bumped base for prerelease version)"
         required: true
         type: choice
         default: none
@@ -129,10 +129,11 @@ on:
           - minor
           - major
       confirm:
-        description: "Confirm — Choose the exact action"
+        description: "Confirm — Choose the exact action for this environment"
         required: true
         type: choice
         options:
+          - release preview from dev
           - release dev to main
           - reset main from dev
 
@@ -140,7 +141,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-dev-to-main
+  group: release-unified
   cancel-in-progress: false
 
 jobs:
@@ -198,26 +199,21 @@ jobs:
         run: |
           set -euo pipefail
           confirm="${{ inputs.confirm }}"
+          env_name="${{ inputs.environment }}"
           mode=""
 
-          if [ "$confirm" = "release dev to main" ]; then
-            mode="fast_forward"
-            expected="release dev to main"
-            if [ "$confirm" != "$expected" ]; then
-              echo "Confirmation mismatch." >&2
-              echo "Expected: $expected" >&2
+          if [ "$env_name" = "preview" ]; then
+            if [ "$confirm" != "release preview from dev" ]; then
+              echo "Confirmation mismatch for preview releases." >&2
+              echo "Expected: release preview from dev" >&2
               echo "Got:      $confirm" >&2
               exit 1
             fi
+            mode="preview_release"
+          elif [ "$confirm" = "release dev to main" ]; then
+            mode="fast_forward"
           elif [ "$confirm" = "reset main from dev" ]; then
             mode="reset"
-            expected="reset main from dev"
-            if [ "$confirm" != "$expected" ]; then
-              echo "Confirmation mismatch." >&2
-              echo "Expected: $expected" >&2
-              echo "Got:      $confirm" >&2
-              exit 1
-            fi
           else
             echo "Unknown confirmation phrase: $confirm" >&2
             exit 1
@@ -255,7 +251,7 @@ jobs:
         if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (contains(format(',{0},', inputs.custom_checks), ',build_website,') || contains(format(',{0},', inputs.custom_checks), ',build_docs,') || contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,'))) }}
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -359,8 +355,8 @@ jobs:
             echo "- dry_run: \`${{ inputs.dry_run }}\`"
             echo "- deploy_targets: \`${{ inputs.deploy_targets }}\`"
             echo "- bump: \`${{ inputs.bump }}\`"
-            echo "- cli_bump: \`${{ inputs.cli_bump }}\`"
-            echo "- stack_bump: \`${{ inputs.stack_bump }}\`"
+            echo "- cli_release_bump: \`${{ inputs.cli_release_bump }}\`"
+            echo "- stack_release_bump: \`${{ inputs.stack_release_bump }}\`"
             echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
             echo "- desktop_mode: \`${{ inputs.desktop_mode }}\`"
             echo ""
@@ -377,10 +373,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   deploy_plan:
-    name: deploy_plan (main → deploy branches)
+    name: deploy_plan (source → deploy branches)
     runs-on: ubuntu-latest
     environment: release-shared
-    if: always()
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped')
     needs: [checks, promote_main, bump_versions]
     outputs:
       deploy_ui_needed: ${{ steps.plan.outputs.deploy_ui_needed }}
@@ -395,17 +391,18 @@ jobs:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-      - name: Checkout main
+      - name: Checkout release source
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
           fetch-depth: 0
           token: ${{ steps.app_token.outputs.token }}
 
-      - name: Compute deploy plan (deploy/<env>/* behind main?)
+      - name: Compute deploy plan (deploy/<env>/* behind release source?)
         id: plan
         env:
           ENVIRONMENT: ${{ inputs.environment }}
+          SOURCE_REF: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
           DEPLOY_UI: ${{ contains(format(',{0},', inputs.deploy_targets), ',ui,') }}
           DEPLOY_SERVER: ${{ contains(format(',{0},', inputs.deploy_targets), ',server,') }}
           DEPLOY_WEBSITE: ${{ contains(format(',{0},', inputs.deploy_targets), ',website,') }}
@@ -415,10 +412,10 @@ jobs:
 
           env_name="${ENVIRONMENT}"
 
-          main_ref="main"
-          main_sha="$(git rev-parse HEAD)"
-          git fetch origin "${main_ref}" --prune --tags
-          main_sha="$(git rev-parse "origin/${main_ref}")"
+          source_ref="${SOURCE_REF}"
+          source_sha="$(git rev-parse HEAD)"
+          git fetch origin "${source_ref}" --prune --tags
+          source_sha="$(git rev-parse "origin/${source_ref}")"
 
           ui_ref="deploy/${env_name}/ui"
           server_ref="deploy/${env_name}/server"
@@ -446,17 +443,17 @@ jobs:
             fi
 
             local commits=""
-            commits="$(git rev-list --count "${deploy_sha}..${main_sha}" 2>/dev/null || echo 0)"
+            commits="$(git rev-list --count "${deploy_sha}..${source_sha}" 2>/dev/null || echo 0)"
 
             local base=""
-            base="$(git merge-base "${deploy_sha}" "${main_sha}" 2>/dev/null || true)"
+            base="$(git merge-base "${deploy_sha}" "${source_sha}" 2>/dev/null || true)"
             if [ -z "${base:-}" ]; then
               base="${deploy_sha}"
             fi
 
             local changed=false
             if [ "${commits}" != "0" ]; then
-              git diff --name-only "${base}..${main_sha}" > "/tmp/changed_${key}.txt" || true
+              git diff --name-only "${base}..${source_sha}" > "/tmp/changed_${key}.txt" || true
               while IFS= read -r p; do
                 for pat in "${patterns[@]}"; do
                   case "$p" in
@@ -493,10 +490,11 @@ jobs:
           plan_one "deploy_docs" "${docs_ref}" "${DEPLOY_DOCS}" "apps/docs/*"
 
           {
-            echo "## Deploy plan (main → deploy branches)"
+            echo "## Deploy plan (source → deploy branches)"
             echo ""
             echo "- environment: \`${env_name}\`"
-            echo "- origin/main: \`${main_sha}\`"
+            echo "- source ref: \`${source_ref}\`"
+            echo "- origin/${source_ref}: \`${source_sha}\`"
             echo ""
             echo "| component | enabled | deploy ref | commits behind | relevant changes | will run |"
             echo "|---|---:|---|---:|---:|---:|"
@@ -507,7 +505,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   promote_main:
-    if: inputs.dry_run != true
+    if: inputs.dry_run != true && inputs.environment == 'production'
     needs: [checks]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
@@ -520,7 +518,7 @@ jobs:
       confirm: ${{ inputs.confirm == 'reset main from dev' && 'reset main from dev' || 'promote main from dev' }}
 
   bump_versions:
-    if: inputs.dry_run != true
+    if: inputs.dry_run != true && inputs.environment == 'production'
     needs: [checks, promote_main]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -529,7 +527,7 @@ jobs:
         id: decide
         run: |
           set -euo pipefail
-          if [ "${{ inputs.bump }}" != "none" ] || [ "${{ inputs.cli_bump }}" != "none" ] || [ "${{ inputs.stack_bump }}" != "none" ]; then
+          if [ "${{ inputs.bump }}" != "none" ] || [ "${{ inputs.cli_release_bump }}" != "none" ] || [ "${{ inputs.stack_release_bump }}" != "none" ]; then
             echo "should_bump=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_bump=false" >> "$GITHUB_OUTPUT"
@@ -556,7 +554,7 @@ jobs:
         if: steps.decide.outputs.should_bump == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -597,13 +595,13 @@ jobs:
             fi
           fi
 
-          if [ "${{ inputs.cli_bump }}" != "none" ]; then
-            node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.cli_bump }}" >/tmp/bump_cli.txt
+          if [ "${{ inputs.cli_release_bump }}" != "none" ]; then
+            node scripts/release/bump-version.mjs --component cli --bump "${{ inputs.cli_release_bump }}" >/tmp/bump_cli.txt
             bumped+=("cli")
           fi
 
-          if [ "${{ inputs.stack_bump }}" != "none" ]; then
-            BUMP="${{ inputs.stack_bump }}" node - <<'NODE' >/tmp/bump_stack.txt
+          if [ "${{ inputs.stack_release_bump }}" != "none" ]; then
+            BUMP="${{ inputs.stack_release_bump }}" node - <<'NODE' >/tmp/bump_stack.txt
             const fs = require('node:fs');
             const pkgPath = 'apps/stack/package.json';
             const bump = String(process.env.BUMP || '').trim();
@@ -660,7 +658,7 @@ jobs:
           git push origin HEAD:main
 
   deploy_ui:
-    if: inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && needs.deploy_plan.outputs.deploy_ui_needed == 'true'
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && needs.deploy_plan.outputs.deploy_ui_needed == 'true' && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
     needs: [checks, promote_main, bump_versions, deploy_plan]
     permissions:
       contents: write
@@ -668,7 +666,7 @@ jobs:
     secrets: inherit
     with:
       environment: ${{ inputs.environment }}
-      source_ref: main
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       bump: none
       deploy_web: true
@@ -680,42 +678,42 @@ jobs:
       run_tests: false
 
   deploy_server:
-    if: inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && needs.deploy_plan.outputs.deploy_server_needed == 'true'
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && needs.deploy_plan.outputs.deploy_server_needed == 'true' && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
     needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-server.yml
     secrets: inherit
     with:
       environment: ${{ inputs.environment }}
-      source_ref: main
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       bump: none
       run_tests: false
 
   deploy_website:
-    if: inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && needs.deploy_plan.outputs.deploy_website_needed == 'true'
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && needs.deploy_plan.outputs.deploy_website_needed == 'true' && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
     needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-website.yml
     secrets: inherit
     with:
       environment: ${{ inputs.environment }}
-      source_ref: main
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       bump: none
       run_build: true
 
   deploy_docs:
-    if: inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && needs.deploy_plan.outputs.deploy_docs_needed == 'true'
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && needs.deploy_plan.outputs.deploy_docs_needed == 'true' && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
     needs: [checks, promote_main, bump_versions, deploy_plan]
     uses: ./.github/workflows/promote-docs.yml
     secrets: inherit
     with:
       environment: ${{ inputs.environment }}
-      source_ref: main
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       run_build: true
 
   publish_npm:
-    if: inputs.dry_run != true && (inputs.cli_bump != 'none' || inputs.stack_bump != 'none')
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && (inputs.cli_release_bump != 'none' || inputs.stack_release_bump != 'none') && (inputs.environment != 'production' || needs.promote_main.result == 'success') && (inputs.environment != 'production' || needs.bump_versions.result == 'success' || needs.bump_versions.result == 'skipped')
     needs: [checks, promote_main, bump_versions]
     permissions:
       contents: write
@@ -723,17 +721,18 @@ jobs:
     uses: ./.github/workflows/release-npm.yml
     secrets: inherit
     with:
-      publish_cli: ${{ inputs.cli_bump != 'none' }}
-      publish_stack: ${{ inputs.stack_bump != 'none' }}
+      publish_cli: ${{ inputs.cli_release_bump != 'none' }}
+      publish_stack: ${{ inputs.stack_release_bump != 'none' }}
       channel: ${{ inputs.environment }}
-      bump: none
-      stack_bump: none
+      source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
+      bump: ${{ inputs.environment == 'preview' && inputs.cli_release_bump || 'none' }}
+      stack_bump: ${{ inputs.environment == 'preview' && inputs.stack_release_bump || 'none' }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
-      update_deploy_branch: ${{ inputs.cli_bump != 'none' || inputs.stack_bump != 'none' }}
+      update_deploy_branch: ${{ inputs.cli_release_bump != 'none' || inputs.stack_release_bump != 'none' }}
 
   sync_dev:
-    if: inputs.dry_run != true && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')
+    if: inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')
     needs: [checks, promote_main, bump_versions]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
