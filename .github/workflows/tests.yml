@@ -259,7 +259,7 @@ jobs:
         if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -267,7 +267,7 @@ jobs:
         if: env.ACT == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
 
       - name: Enable Corepack
         run: |
@@ -299,7 +299,7 @@ jobs:
         if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -307,7 +307,7 @@ jobs:
         if: env.ACT == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
 
       - name: Enable Corepack
         run: |
@@ -353,7 +353,7 @@ jobs:
         if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -361,7 +361,7 @@ jobs:
         if: env.ACT == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
 
       - name: Enable Corepack
         run: |
@@ -403,7 +403,7 @@ jobs:
         if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -411,7 +411,7 @@ jobs:
         if: env.ACT == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
 
       - name: Enable Corepack
         run: |
@@ -477,7 +477,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -510,7 +510,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -635,7 +635,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -673,7 +673,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -710,7 +710,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -752,7 +752,7 @@ jobs:
         if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -760,7 +760,7 @@ jobs:
         if: env.ACT == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
 
       - name: Enable Corepack
         run: |
@@ -979,7 +979,7 @@ jobs:
         if: env.ACT != 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -987,7 +987,7 @@ jobs:
         if: env.ACT == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
 
       - name: Enable Corepack
         run: |
@@ -1027,7 +1027,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 
@@ -1167,7 +1167,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
 

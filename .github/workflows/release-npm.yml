@@ -10,6 +10,11 @@ on:
         options:
           - production
           - preview
+      source_ref:
+        description: "Promotion — Source ref to release from (auto: preview→dev, production→main)"
+        required: true
+        default: auto
+        type: string
       run_tests:
         description: "Checks — Run publish checks/tests before publishing"
         required: true
@@ -21,7 +26,7 @@ on:
         default: true
         type: boolean
       bump:
-        description: "Publish (CLI) — Version bump on main (set none if already bumped)"
+        description: "Publish (CLI) — Version bump (preview: prerelease base in working tree, production: commit on main)"
         required: true
         type: choice
         options:
@@ -43,7 +48,7 @@ on:
         default: false
         type: boolean
       stack_bump:
-        description: "Publish (Stack) — Version bump on main (set none if already bumped)"
+        description: "Publish (Stack) — Version bump (preview: prerelease base in working tree, production: commit on main)"
         required: true
         type: choice
         default: none
@@ -63,6 +68,11 @@ on:
         description: "Target — Release channel"
         required: true
         type: string
+      source_ref:
+        description: "Promotion — Source ref to release from (auto: preview→dev, production→main)"
+        required: false
+        default: auto
+        type: string
       run_tests:
         description: "Checks — Run publish checks/tests before publishing"
         required: false
@@ -74,7 +84,7 @@ on:
         default: true
         type: boolean
       bump:
-        description: "Publish (CLI) — Version bump on main (set none if already bumped)"
+        description: "Publish (CLI) — Version bump (preview: prerelease base in working tree, production: commit on main)"
         required: true
         type: string
       npm_tag:
@@ -88,7 +98,7 @@ on:
         default: false
         type: boolean
       stack_bump:
-        description: "Publish (Stack) — Version bump on main (set none if already bumped)"
+        description: "Publish (Stack) — Version bump (preview: prerelease base in working tree, production: commit on main)"
         required: false
         default: none
         type: string
@@ -114,6 +124,7 @@ jobs:
     environment: release-shared
     outputs:
       sha: ${{ steps.meta.outputs.sha }}
+      source_ref: ${{ steps.meta.outputs.source_ref }}
       channel: ${{ steps.meta.outputs.channel }}
       npm_tag: ${{ steps.meta.outputs.npm_tag }}
       cli_version: ${{ steps.meta.outputs.cli_version }}
@@ -141,11 +152,34 @@ jobs:
             echo "npm_tag must be '${expected_tag}' for channel='${INPUT_CHANNEL}' (got '${INPUT_NPM_TAG}')." >&2
             exit 1
           fi
-          if [ "${INPUT_CHANNEL}" = "preview" ]; then
-            if [ "${INPUT_BUMP}" != "none" ] || [ "${INPUT_STACK_BUMP}" != "none" ]; then
-              echo "::warning::Preview channel ignores bump/stack_bump (versions are set to X.Y.Z-preview.<run>.<attempt> in the working tree only)."
+
+      - name: Resolve source ref
+        id: resolve_source
+        env:
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          channel="${INPUT_CHANNEL}"
+          src="${INPUT_SOURCE_REF}"
+          if [ "$src" = "auto" ]; then
+            if [ "$channel" = "preview" ]; then
+              src="dev"
+            else
+              src="main"
             fi
           fi
+
+          if [ "$channel" = "preview" ] && [ "$src" != "dev" ]; then
+            echo "Preview releases must run from dev (got source_ref='${src}')." >&2
+            exit 1
+          fi
+          if [ "$channel" = "production" ] && [ "$src" != "main" ]; then
+            echo "Production releases must run from main (got source_ref='${src}')." >&2
+            exit 1
+          fi
+
+          echo "ref=$src" >> "$GITHUB_OUTPUT"
 
       - name: Enforce trusted refs for manual dispatch
         run: |
@@ -168,20 +202,26 @@ jobs:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-      - name: Checkout main
+      - name: Checkout source ref
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ steps.resolve_source.outputs.ref }}
           fetch-depth: 0
           token: ${{ steps.app_token.outputs.token }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22.x
           registry-url: https://registry.npmjs.org
           cache: yarn
           cache-dependency-path: yarn.lock
+
+      - name: Upgrade npm for trusted publishing (OIDC)
+        run: |
+          set -euo pipefail
+          npm install --global npm@11.5.1
+          npm --version
 
       - name: Setup Corepack (Yarn 1.22.22)
         run: |
@@ -218,9 +258,31 @@ jobs:
             if (!m) throw new Error(`Invalid version: ${version}`);
             return `${m[1]}.${m[2]}.${m[3]}`;
           }
-          function setPreviewVersion(pkgPath) {
+          function bumpBase(base, bump) {
+            if (!bump || bump === 'none') return base;
+            const m = String(base).match(/^(\d+)\.(\d+)\.(\d+)$/);
+            if (!m) throw new Error(`Invalid base version: ${base}`);
+            let major = Number(m[1]);
+            let minor = Number(m[2]);
+            let patch = Number(m[3]);
+            if (bump === 'major') {
+              major += 1;
+              minor = 0;
+              patch = 0;
+            } else if (bump === 'minor') {
+              minor += 1;
+              patch = 0;
+            } else if (bump === 'patch') {
+              patch += 1;
+            } else {
+              throw new Error(`Unknown bump: ${bump}`);
+            }
+            return `${major}.${minor}.${patch}`;
+          }
+          function setPreviewVersion(pkgPath, bump) {
             const raw = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-            const base = normalizeBase(raw.version);
+            const normalized = normalizeBase(raw.version);
+            const base = bumpBase(normalized, bump);
             const runNumberRaw = Number(process.env.GITHUB_RUN_NUMBER ?? '0');
             const run = Number.isFinite(runNumberRaw) ? Math.max(0, Math.floor(runNumberRaw)) : 0;
             const runAttemptRaw = Number(process.env.GITHUB_RUN_ATTEMPT ?? '1');
@@ -231,16 +293,18 @@ jobs:
           }
           const versions = {};
           if (process.env.PUBLISH_CLI === 'true') {
-            versions.cli = setPreviewVersion(join('apps', 'cli', 'package.json'));
+            versions.cli = setPreviewVersion(join('apps', 'cli', 'package.json'), process.env.CLI_PREVIEW_BUMP);
           }
           if (process.env.PUBLISH_STACK === 'true') {
-            versions.stack = setPreviewVersion(join('apps', 'stack', 'package.json'));
+            versions.stack = setPreviewVersion(join('apps', 'stack', 'package.json'), process.env.STACK_PREVIEW_BUMP);
           }
           console.log(JSON.stringify(versions));
           NODE
         env:
           PUBLISH_CLI: ${{ inputs.publish_cli }}
           PUBLISH_STACK: ${{ inputs.publish_stack }}
+          CLI_PREVIEW_BUMP: ${{ inputs.bump }}
+          STACK_PREVIEW_BUMP: ${{ inputs.stack_bump }}
 
       - name: Bump cli version (main)
         id: bump_cli
@@ -323,6 +387,7 @@ jobs:
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "source_ref=${{ steps.resolve_source.outputs.ref }}" >> "$GITHUB_OUTPUT"
           echo "channel=${INPUT_CHANNEL}" >> "$GITHUB_OUTPUT"
           if [ "${INPUT_CHANNEL}" = "preview" ]; then
             echo "npm_tag=next" >> "$GITHUB_OUTPUT"
@@ -396,13 +461,17 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is required for npm publish." >&2
-            exit 1
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "Using NPM_TOKEN authentication."
+          else
+            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
           fi
           cd apps/cli
           yarn prepublishOnly
-          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}"
+          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}" || {
+            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
+            exit 1
+          }
 
       - name: npm pack (cli)
         if: inputs.publish_cli
@@ -444,12 +513,16 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is required for npm publish." >&2
-            exit 1
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "Using NPM_TOKEN authentication."
+          else
+            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
           fi
           cd apps/stack
-          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}"
+          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}" || {
+            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
+            exit 1
+          }
 
       - name: npm pack (stack)
         if: inputs.publish_stack
@@ -578,6 +651,7 @@ jobs:
           {
             echo "### npm publish"
             echo ""
+            echo "- source ref: \`${{ steps.meta.outputs.source_ref }}\`"
             echo "- channel: \`${INPUT_CHANNEL}\`"
             echo "- npm dist-tag: \`${npm_tag}\`"
             if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then

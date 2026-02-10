@@ -70,7 +70,7 @@ export default {
     expo: {
         name,
         slug,
-        version: "1.6.2",
+        version: "0.1.0",
         runtimeVersion: "18",
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
