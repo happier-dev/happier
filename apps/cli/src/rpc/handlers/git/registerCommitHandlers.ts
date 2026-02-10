@@ -44,7 +44,9 @@ function parseGitLogEntries(rawOutput: string): GitLogEntry[] {
     }
 
     return rows.map((row) => {
-        const timestampRaw = Number(row[4] || 0);
+        // git `%at` emits UNIX epoch seconds; normalize to milliseconds for Date.now compatibility.
+        const timestampSeconds = Number(row[4] || 0);
+        const timestampRaw = Number.isFinite(timestampSeconds) ? timestampSeconds * 1000 : 0;
         return {
             sha: row[0] || '',
             shortSha: row[1] || '',

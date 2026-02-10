@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { normalizeCommitRef } from './runtime';
 
 describe('normalizeCommitRef', () => {
+  it('accepts commit refs with leading/trailing whitespace (trims input)', () => {
+    expect(normalizeCommitRef('  abc1234 \n')).toEqual({
+      ok: true,
+      commit: 'abc1234',
+    });
+  });
+
   it('rejects extended revision syntax using ~', () => {
     expect(normalizeCommitRef('main~3')).toEqual({
       ok: false,

@@ -145,7 +145,9 @@ export function normalizeCommitRef(rawCommit: string): { ok: true; commit: strin
     if (!commit) {
         return { ok: false, error: 'Commit reference cannot be empty' };
     }
-    if (/\s/.test(rawCommit)) {
+    // Accept accidental leading/trailing whitespace (common when values come from UI/clipboard),
+    // but reject internal whitespace since git rev specs can't contain it.
+    if (/\s/.test(commit)) {
         return { ok: false, error: 'Commit reference must not contain whitespace' };
     }
     if (commit.startsWith('-')) {

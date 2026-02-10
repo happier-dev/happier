@@ -78,39 +78,51 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
 export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerManager): void {
     let servicePromise: Promise<ReturnType<typeof createCapabilitiesService>> | null = null;
 
+    const createService = async (): Promise<ReturnType<typeof createCapabilitiesService>> => {
+        const cliCapabilities = await Promise.all(
+            (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
+                if (entry.getCliCapabilityOverride) {
+                    const override = await entry.getCliCapabilityOverride();
+                    return augmentCliCapabilityWithProbeModels(override, entry.id);
+                }
+                return createGenericCliCapability(entry.id);
+            }),
+        );
+
+        const extraCapabilitiesNested = await Promise.all(
+            (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
+                if (!entry.getCapabilities) return [];
+                return [...(await entry.getCapabilities())];
+            }),
+        );
+        const extraCapabilities: Capability[] = extraCapabilitiesNested.flat();
+
+        return createCapabilitiesService({
+            capabilities: [
+                ...cliCapabilities,
+                ...extraCapabilities,
+                tmuxCapability,
+            ],
+            checklists,
+            buildContext: buildDetectContext,
+        });
+    };
+
     const getService = (): Promise<ReturnType<typeof createCapabilitiesService>> => {
         if (servicePromise) return servicePromise;
-        servicePromise = (async () => {
-            const cliCapabilities = await Promise.all(
-                (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
-                    if (entry.getCliCapabilityOverride) {
-                        const override = await entry.getCliCapabilityOverride();
-                        return augmentCliCapabilityWithProbeModels(override, entry.id);
-                    }
-                    return createGenericCliCapability(entry.id);
-                }),
-            );
-
-            const extraCapabilitiesNested = await Promise.all(
-                (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
-                    if (!entry.getCapabilities) return [];
-                    return [...(await entry.getCapabilities())];
-                }),
-            );
-            const extraCapabilities: Capability[] = extraCapabilitiesNested.flat();
-
-            return createCapabilitiesService({
-                capabilities: [
-                    ...cliCapabilities,
-                    ...extraCapabilities,
-                    tmuxCapability,
-                ],
-                checklists,
-                buildContext: buildDetectContext,
-            });
-        })();
-        return servicePromise;
+        const pending = createService().catch((error) => {
+            if (servicePromise === pending) {
+                servicePromise = null;
+            }
+            throw error;
+        });
+        servicePromise = pending;
+        return pending;
     };
+
+    // Warm capability loaders at daemon boot to avoid late dynamic-import failures
+    // if the local CLI dist is rebuilt while the daemon process is already running.
+    void getService().catch(() => undefined);
 
     rpcHandlerManager.registerHandler<{}, CapabilitiesDescribeResponse>(RPC_METHODS.CAPABILITIES_DESCRIBE, async () => {
         return (await getService()).describe();

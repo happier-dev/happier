@@ -477,6 +477,10 @@ describe('git RPC handlers', () => {
 
         expect(response.success).toBe(true);
         expect(response.entries).toHaveLength(2);
+        // Protocol timestamps should be UNIX epoch milliseconds (Date.now-compatible).
+        // Regression guard: git's `%at` is seconds, so we normalize to ms.
+        expect(response.entries[0].timestamp).toBeGreaterThan(1_000_000_000_000);
+        expect(response.entries[1].timestamp).toBeGreaterThan(1_000_000_000_000);
         expect(response.entries[0].subject).toBe('second');
         expect(response.entries[0].body).toContain('second body');
         expect(response.entries[1].subject).toBe('first');
