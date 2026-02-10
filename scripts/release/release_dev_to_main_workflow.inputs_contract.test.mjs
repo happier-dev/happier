@@ -24,7 +24,7 @@ test('release workflow uses compact grouped inputs', async () => {
   const { parsed } = await loadWorkflow();
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
 
-  for (const key of ['custom_checks', 'deploy_targets', 'desktop_mode', 'publish_targets', 'bump_app_override', 'bump_cli_override', 'bump_stack_override']) {
+  for (const key of ['custom_checks', 'deploy_targets', 'desktop_mode', 'bump_app_override', 'bump_cli_override', 'bump_stack_override']) {
     assert.ok(inputs[key], `expected grouped input ${key}`);
   }
 

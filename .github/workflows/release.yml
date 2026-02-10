@@ -55,7 +55,7 @@ on:
           - preview
           - production
       deploy_targets:
-        description: "Deploy — Comma-separated targets: ui,server,website,docs"
+        description: "Deploy — Comma-separated targets: ui,server,website,docs,cli,stack"
         required: true
         default: ui,server,website,docs
         type: string
@@ -98,11 +98,6 @@ on:
           - none
           - build_only
           - build_and_publish
-      publish_targets:
-        description: "Publish — Comma-separated targets: cli,stack"
-        required: true
-        default: ""
-        type: string
       bump:
         description: "Version bump (Preset) — Default bump for changed components. Preview bumps commit to dev; production bumps commit to dev then promote dev->main."
         required: true
@@ -245,17 +240,17 @@ jobs:
             exit 1
           fi
 
-          # Validate publish_targets
-          raw_targets="${{ inputs.publish_targets }}"
+          # Validate deploy_targets extras (cli/stack are publishable targets).
+          raw_targets="${{ inputs.deploy_targets }}"
           norm="$(printf '%s' "${raw_targets}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')"
           if [ -n "${norm:-}" ]; then
             IFS=',' read -r -a parts <<< "${norm}"
             for p in "${parts[@]}"; do
               [ -z "${p:-}" ] && continue
               case "${p}" in
-                cli|stack) ;;
+                ui|server|website|docs|cli|stack) ;;
                 *)
-                  echo "Unknown publish_targets entry: '${p}'. Expected: cli,stack" >&2
+                  echo "Unknown deploy_targets entry: '${p}'. Expected: ui,server,website,docs,cli,stack" >&2
                   exit 1
                   ;;
               esac
@@ -397,7 +392,6 @@ jobs:
             echo "- confirm: \`${{ inputs.confirm }}\`"
             echo "- dry_run: \`${{ inputs.dry_run }}\`"
             echo "- deploy_targets: \`${{ inputs.deploy_targets }}\`"
-            echo "- publish_targets: \`${{ inputs.publish_targets }}\`"
             echo "- bump: \`${{ inputs.bump }}\`"
             echo "- bump_app_override: \`${{ inputs.bump_app_override }}\`"
             echo "- bump_cli_override: \`${{ inputs.bump_cli_override }}\`"
@@ -425,7 +419,7 @@ jobs:
           BUMP_APP_OVERRIDE: ${{ inputs.bump_app_override }}
           BUMP_CLI_OVERRIDE: ${{ inputs.bump_cli_override }}
           BUMP_STACK_OVERRIDE: ${{ inputs.bump_stack_override }}
-          PUBLISH_TARGETS: ${{ inputs.publish_targets }}
+          DEPLOY_TARGETS: ${{ inputs.deploy_targets }}
           CHANGED_UI: ${{ steps.plan.outputs.changed_ui }}
           CHANGED_CLI: ${{ steps.plan.outputs.changed_cli }}
           CHANGED_SERVER: ${{ steps.plan.outputs.changed_server }}
@@ -463,7 +457,7 @@ jobs:
 
           publish_cli="false"
           publish_stack="false"
-          pt="$(normalize_csv "${PUBLISH_TARGETS}")"
+          pt="$(normalize_csv "${DEPLOY_TARGETS}")"
           if [ -n "${pt:-}" ]; then
             IFS=',' read -r -a parts <<< "${pt}"
             for p in "${parts[@]}"; do
@@ -509,7 +503,7 @@ jobs:
                 exit 1
               fi
               if [ "${dev_version}" = "${main_version}" ]; then
-                echo "Refusing production publish_targets=cli without a version change (dev and main both at ${dev_version}). Set bump!=none or bump_cli_override!=none." >&2
+                echo "Refusing production deploy_targets includes cli without a version change (dev and main both at ${dev_version}). Set bump!=none or bump_cli_override!=none." >&2
                 exit 1
               fi
             fi
@@ -521,7 +515,7 @@ jobs:
                 exit 1
               fi
               if [ "${dev_version}" = "${main_version}" ]; then
-                echo "Refusing production publish_targets=stack without a version change (dev and main both at ${dev_version}). Set bump!=none or bump_stack_override!=none." >&2
+                echo "Refusing production deploy_targets includes stack without a version change (dev and main both at ${dev_version}). Set bump!=none or bump_stack_override!=none." >&2
                 exit 1
               fi
             fi
