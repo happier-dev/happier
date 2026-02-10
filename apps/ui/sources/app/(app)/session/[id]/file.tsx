@@ -9,7 +9,14 @@ import {
     sessionGitDiffFile,
     sessionReadFile,
 } from '@/sync/ops';
-import { storage, useSessionProjectGitInFlightOperation, useSessionProjectGitSnapshot, useSetting } from '@/sync/domains/state/storage';
+import {
+    storage,
+    useSession,
+    useSessions,
+    useSessionProjectGitInFlightOperation,
+    useSessionProjectGitSnapshot,
+    useSetting,
+} from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
@@ -20,6 +27,7 @@ import { resolveGitWriteEnabled } from '@/sync/git/operations/featureFlags';
 import { getFileLanguageFromPath, isBinaryContent, isKnownBinaryPath } from '@/sync/git/utils/filePresentation';
 import { decodeSessionFilePathParam } from '@/sync/git/utils/filePathParam';
 import { useFileGitStageActions } from './file/hooks/useFileGitStageActions';
+import { resolveSessionPathState } from './file/utils/sessionPathState';
 
 interface FileContent {
     content: string;
@@ -43,7 +51,9 @@ export default function FileScreen() {
         experiments,
         expGitOperations,
     });
-    const sessionPath = storage.getState().sessions[sessionId]?.metadata?.path ?? null;
+    const session = useSession(sessionId);
+    const sessionsReady = useSessions() !== null;
+    const sessionPath = session?.metadata?.path ?? null;
 
     const encodedPath = searchParams.path as string;
     const filePath = decodeSessionFilePathParam(encodedPath);
@@ -103,21 +113,27 @@ export default function FileScreen() {
     const refreshAll = React.useCallback(async () => {
         let failedReadError: string | null = null;
         let latestDiff: string | null = null;
+        let sessionState: ReturnType<typeof resolveSessionPathState> | null = null;
 
         try {
             setIsLoading(true);
             setError(null);
 
-            const session = storage.getState().sessions[sessionId];
-            const sessionPath = session?.metadata?.path;
-
-            if (!sessionPath || !sessionId) {
-                setError('Session path is unavailable');
+            sessionState = resolveSessionPathState({
+                sessionId,
+                sessionPath,
+                sessionsReady,
+            });
+            if (sessionState.status === 'waiting') {
+                return;
+            }
+            if (sessionState.status === 'error') {
+                setError(sessionState.error);
                 return;
             }
 
             const diffResponse = await sessionGitDiffFile(sessionId, {
-                cwd: sessionPath,
+                cwd: sessionPath ?? undefined,
                 path: filePath,
                 mode: diffMode,
             });
@@ -153,9 +169,11 @@ export default function FileScreen() {
                     setError(failedReadError);
                 }
             }
-            setIsLoading(false);
+            if (sessionState?.status !== 'waiting') {
+                setIsLoading(false);
+            }
         }
-    }, [diffMode, fileEntry?.kind, filePath, sessionId]);
+    }, [diffMode, fileEntry?.kind, filePath, sessionId, sessionPath, sessionsReady]);
 
     React.useEffect(() => {
         refreshAll();
@@ -235,6 +253,7 @@ export default function FileScreen() {
                     onDiffMode={setDiffMode}
                     hasUnstagedDelta={hasUnstagedDelta}
                     hasStagedDelta={hasStagedDelta}
+                    isUntrackedFile={fileEntry?.kind === 'untracked'}
                     gitWriteEnabled={gitWriteEnabled}
                     lineSelectionEnabled={lineSelectionEnabled}
                     selectedLineCount={selectedLineIndexes.size}

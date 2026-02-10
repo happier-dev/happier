@@ -1,11 +1,18 @@
 import * as React from 'react';
 import { View, ScrollView, ActivityIndicator, Platform, Pressable } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/ui/text/StyledText';
 import { GitDiffDisplay } from '@/components/git/diff/GitDiffDisplay';
 import { Typography } from '@/constants/Typography';
 import { sessionGitCommitRevert, sessionGitDiffCommit } from '@/sync/ops';
-import { storage, useSessionProjectGitInFlightOperation, useSessionProjectGitSnapshot, useSetting } from '@/sync/domains/state/storage';
+import {
+    storage,
+    useSession,
+    useSessions,
+    useSessionProjectGitInFlightOperation,
+    useSessionProjectGitSnapshot,
+    useSetting,
+} from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
@@ -30,10 +37,13 @@ function decodeSha(value: string): string {
 
 export default function CommitScreen() {
     const { theme } = useUnistyles();
+    const router = useRouter();
     const { id: sessionIdParam } = useLocalSearchParams<{ id: string }>();
     const sessionId = sessionIdParam || '';
     const { sha: shaParam } = useLocalSearchParams<{ sha: string }>();
-    const sha = decodeSha(shaParam || '');
+    // Commit refs cannot contain whitespace; accept accidental "oneline" strings by taking the first token.
+    const shaRaw = decodeSha(shaParam || '').trim();
+    const sha = shaRaw.split(/\s+/)[0] ?? '';
 
     const experiments = useSetting('experiments');
     const expGitOperations = useSetting('expGitOperations');
@@ -50,10 +60,31 @@ export default function CommitScreen() {
     const [diff, setDiff] = React.useState<string>('');
     const [error, setError] = React.useState<string | null>(null);
 
-    const sessionPath = storage.getState().sessions[sessionId]?.metadata?.path ?? null;
+    // Avoid reading sessionPath via storage.getState() because deep-links can render
+    // before session metadata is hydrated. We need a subscription so the screen can
+    // recover once storage becomes ready.
+    const sessionsData = useSessions();
+    const isStorageReady = sessionsData !== null;
+    const session = useSession(sessionId);
+    const sessionPath = session?.metadata?.path ?? null;
 
     const loadCommit = React.useCallback(async () => {
-        if (!sessionId || !sessionPath || !sha) {
+        if (!sessionId || !sha) {
+            setError('Missing commit context');
+            setIsLoading(false);
+            return;
+        }
+
+        // Deep-links can happen before storage is ready. Keep the loading state until we have
+        // enough context to run the diff request, or until we can conclusively say the session
+        // is missing.
+        if (!isStorageReady) {
+            setIsLoading(true);
+            setError(null);
+            return;
+        }
+
+        if (!session || !sessionPath) {
             setError('Missing commit context');
             setIsLoading(false);
             return;
@@ -80,7 +111,7 @@ export default function CommitScreen() {
         } finally {
             setIsLoading(false);
         }
-    }, [sessionId, sessionPath, sha]);
+    }, [isStorageReady, session, sessionId, sessionPath, sha]);
 
     React.useEffect(() => {
         loadCommit();
@@ -201,7 +232,34 @@ export default function CommitScreen() {
     if (error) {
         return (
             <View style={styles.centered}>
-                <Text style={{ color: theme.colors.textDestructive, ...Typography.default('semiBold') }}>{error}</Text>
+                <View style={{ width: '100%', maxWidth: layout.maxWidth, paddingHorizontal: 16 }}>
+                    <Text style={{ color: theme.colors.text, fontSize: 16, ...Typography.default('semiBold') }}>
+                        Commit diff unavailable
+                    </Text>
+                    <Text style={{ marginTop: 6, color: theme.colors.textDestructive, ...Typography.default('semiBold') }}>
+                        {error}
+                    </Text>
+                    <Text style={{ marginTop: 10, color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
+                        Try opening the commit again from the Files screen.
+                    </Text>
+                    <Pressable
+                        onPress={() => router.back()}
+                        style={{
+                            marginTop: 14,
+                            alignSelf: 'flex-start',
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
+                            borderRadius: 10,
+                            borderWidth: 1,
+                            borderColor: theme.colors.divider,
+                            backgroundColor: theme.colors.surfaceHigh ?? theme.colors.surface,
+                        }}
+                    >
+                        <Text style={{ color: theme.colors.text, fontSize: 12, ...Typography.default('semiBold') }}>
+                            Back
+                        </Text>
+                    </Pressable>
+                </View>
             </View>
         );
     }

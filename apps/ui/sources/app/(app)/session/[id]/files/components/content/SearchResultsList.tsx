@@ -85,7 +85,7 @@ export function SearchResultsList({
                 >
                     {searchQuery ? t('files.noFilesFound') : t('files.noFilesInProject')}
                 </Text>
-                {searchQuery && (
+                {Boolean(searchQuery) && (
                     <Text
                         style={{
                             fontSize: 14,
@@ -104,7 +104,7 @@ export function SearchResultsList({
 
     return (
         <>
-            {searchQuery && (
+            {Boolean(searchQuery) && (
                 <View
                     style={{
                         backgroundColor: theme.colors.surfaceHigh,

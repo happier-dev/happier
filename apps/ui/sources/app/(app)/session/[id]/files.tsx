@@ -188,12 +188,12 @@ export default function FilesScreen() {
         }
 
         const safePath = normalizeFilePath(file.fullPath);
-        const encodedPath = encodeURIComponent(safePath);
         router.push({
             pathname: '/session/[id]/file',
             params: {
                 id: sessionId,
-                path: encodedPath,
+                // expo-router will encode query params; pre-encoding here can lead to double-encoding.
+                path: safePath,
             },
         } as any);
     }, [router, sessionId]);
@@ -247,11 +247,13 @@ export default function FilesScreen() {
                         void loadCommitHistory();
                     }}
                     onOpenCommit={(sha) => {
+                        const safeSha = sha.trim().split(/\s+/)[0] ?? '';
                         router.push({
                             pathname: '/session/[id]/commit',
                             params: {
                                 id: sessionId,
-                                sha: encodeURIComponent(sha),
+                                // expo-router will encode query params; pre-encoding here can lead to double-encoding.
+                                sha: safeSha,
                             },
                         } as any);
                     }}

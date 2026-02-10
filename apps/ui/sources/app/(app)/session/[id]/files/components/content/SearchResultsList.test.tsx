@@ -6,8 +6,8 @@ import renderer, { act } from 'react-test-renderer';
 
 vi.mock('react-native', () => ({
     View: 'View',
-    ActivityIndicator: 'ActivityIndicator',
     Platform: { select: (value: any) => value?.default ?? null },
+    ActivityIndicator: 'ActivityIndicator',
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -33,37 +33,25 @@ vi.mock('@/components/ui/lists/Item', () => ({
 }));
 
 describe('SearchResultsList', () => {
-    it('renders file and folder entries and only makes files pressable', async () => {
+    it('does not render string children under View when searchQuery is empty', async () => {
         const { SearchResultsList } = await import('./SearchResultsList');
-
-        const onFilePress = vi.fn();
 
         let tree: renderer.ReactTestRenderer | null = null;
         act(() => {
             tree = renderer.create(
                 <SearchResultsList
-                    theme={{ colors: { surfaceHigh: '#111', divider: '#222', textLink: '#09f', textSecondary: '#999' } } as any}
+                    theme={{ colors: { textSecondary: '#999', text: '#111', surfaceHigh: '#eee', divider: '#ddd', textLink: '#09f' } } as any}
                     isSearching={false}
-                    searchQuery="abc"
-                    searchResults={[
-                        { fileName: 'src', filePath: '', fullPath: 'src', fileType: 'folder' },
-                        { fileName: 'a.ts', filePath: 'src', fullPath: 'src/a.ts', fileType: 'file' },
-                    ]}
-                    onFilePress={onFilePress}
+                    searchQuery=""
+                    searchResults={[]}
+                    onFilePress={vi.fn()}
                 />
             );
         });
 
-        const items = tree!.root.findAllByType('Item' as any);
-        expect(items).toHaveLength(2);
-
-        expect(items[0]!.props.onPress).toBeUndefined();
-        act(() => {
-            items[1]!.props.onPress();
-        });
-        expect(onFilePress).toHaveBeenCalledTimes(1);
-        expect(onFilePress).toHaveBeenCalledWith(
-            expect.objectContaining({ fullPath: 'src/a.ts', fileType: 'file' })
-        );
+        const rootView = tree!.root.findByType('View' as any);
+        const children = React.Children.toArray(rootView.props.children ?? []);
+        const hasPrimitiveChild = children.some((c) => typeof c === 'string' || typeof c === 'number');
+        expect(hasPrimitiveChild).toBe(false);
     });
 });

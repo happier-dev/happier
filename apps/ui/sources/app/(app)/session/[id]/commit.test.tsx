@@ -5,6 +5,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 let gitWriteEnabled = true;
+let searchParams: { id: string; sha: string } = { id: 'session-1', sha: 'abc123' };
+let routerBack: ReturnType<typeof vi.fn> = vi.fn();
+let isStorageDataReady = true;
+let sessionById: Record<string, any> = {
+    'session-1': {
+        metadata: {
+            path: '/repo',
+        },
+    },
+};
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -32,7 +42,8 @@ vi.mock('react-native-unistyles', () => ({
 }));
 
 vi.mock('expo-router', () => ({
-    useLocalSearchParams: () => ({ id: 'session-1', sha: 'abc123' }),
+    useLocalSearchParams: () => searchParams,
+    useRouter: () => ({ back: routerBack }),
 }));
 
 vi.mock('@/text', () => ({
@@ -80,6 +91,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
             },
         }),
     },
+    useSessions: () => (isStorageDataReady ? [] : null),
+    useSession: (id: string) => sessionById[id] ?? null,
     useSessionProjectGitInFlightOperation: () => null,
     useSessionProjectGitSnapshot: () => ({
         repo: { isGitRepo: true, rootPath: '/repo' },
@@ -142,7 +155,91 @@ vi.mock('@/sync/git/gitStatusSync', () => ({
 describe('CommitScreen', () => {
     beforeEach(() => {
         gitWriteEnabled = true;
+        searchParams = { id: 'session-1', sha: 'abc123' };
+        routerBack = vi.fn();
+        isStorageDataReady = true;
+        sessionById = {
+            'session-1': {
+                metadata: {
+                    path: '/repo',
+                },
+            },
+        };
         vi.clearAllMocks();
+    });
+
+    it('loads commit diff after session path becomes available (deep-link hydration)', async () => {
+        // Simulate a deep-link where storage isn't ready yet, then becomes ready with session metadata.
+        isStorageDataReady = false;
+        sessionById = {};
+
+        const { sessionGitDiffCommit } = await import('@/sync/ops');
+        const Screen = (await import('./commit')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        // Still loading; no diff call yet.
+        expect(tree!.root.findAllByType('ActivityIndicator' as any).length).toBeGreaterThan(0);
+        expect(vi.mocked(sessionGitDiffCommit)).not.toHaveBeenCalled();
+
+        // Storage rehydrates.
+        isStorageDataReady = true;
+        sessionById = {
+            'session-1': {
+                metadata: {
+                    path: '/repo',
+                },
+            },
+        };
+
+        await act(async () => {
+            tree!.update(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(vi.mocked(sessionGitDiffCommit)).toHaveBeenCalled();
+        const [, request] = vi.mocked(sessionGitDiffCommit).mock.calls.at(-1)!;
+        expect(request.cwd).toBe('/repo');
+        expect(request.commit).toBe('abc123');
+    });
+
+    it('shows missing context error when storage is ready but session is unknown', async () => {
+        isStorageDataReady = true;
+        sessionById = {};
+        const Screen = (await import('./commit')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        const labels = tree!
+            .root
+            .findAllByType('Text' as any)
+            .map((node) => String(node.props.children));
+        expect(labels).toContain('Missing commit context');
+    });
+
+    it('strips accidental whitespace suffixes from commit refs passed via URL params', async () => {
+        // This mirrors the UI bug where a commit "ref" string included the oneline subject.
+        searchParams = { id: 'session-1', sha: '0338a0f chore: stage b.txt' };
+
+        const { sessionGitDiffCommit } = await import('@/sync/ops');
+        const Screen = (await import('./commit')).default;
+
+        await act(async () => {
+            renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(vi.mocked(sessionGitDiffCommit)).toHaveBeenCalled();
+        const [, request] = vi.mocked(sessionGitDiffCommit).mock.calls[0]!;
+        expect(request.commit).toBe('0338a0f');
     });
 
     it('hides revert action when git write operations are disabled', async () => {
@@ -195,6 +292,34 @@ describe('CommitScreen', () => {
             .findAllByType('Text' as any)
             .map((node) => String(node.props.children));
         expect(labels).toContain('network down');
+    });
+
+    it('shows a back button when commit diff fails to load', async () => {
+        const { sessionGitDiffCommit } = await import('@/sync/ops');
+        vi.mocked(sessionGitDiffCommit).mockResolvedValueOnce({
+            success: false,
+            error: 'Commit reference must not contain whitespace',
+        } as any);
+
+        const Screen = (await import('./commit')).default;
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        const pressables = tree!.root.findAllByType('Pressable' as any);
+        const backButton = pressables.find((node) => {
+            const textNodes = node.findAllByType('Text' as any);
+            return textNodes.some((textNode) => String(textNode.props.children) === 'Back');
+        });
+        expect(backButton).toBeTruthy();
+
+        await act(async () => {
+            backButton!.props.onPress();
+        });
+        expect(routerBack).toHaveBeenCalledTimes(1);
     });
 
     it('shows an error alert when revert throws unexpectedly', async () => {

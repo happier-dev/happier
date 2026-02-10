@@ -26,37 +26,37 @@ function renderFileIcon(file: GitFileStatus) {
     return <FileIcon fileName={file.fileName} size={32} />;
 }
 
-function renderStatusIcon(file: GitFileStatus, darkTheme: boolean) {
+function renderStatusIcon(file: GitFileStatus, theme: any, darkTheme: boolean) {
     let statusColor: string;
     let statusIcon: string;
 
     switch (file.status) {
         case 'modified':
-            statusColor = '#FF9500';
+            statusColor = theme?.colors?.warning ?? '#FF9500';
             statusIcon = 'diff-modified';
             break;
         case 'added':
-            statusColor = '#34C759';
+            statusColor = theme?.colors?.success ?? '#34C759';
             statusIcon = 'diff-added';
             break;
         case 'deleted':
-            statusColor = '#FF3B30';
+            statusColor = theme?.colors?.textDestructive ?? '#FF3B30';
             statusIcon = 'diff-removed';
             break;
         case 'renamed':
-            statusColor = '#007AFF';
+            statusColor = theme?.colors?.textLink ?? '#007AFF';
             statusIcon = 'arrow-right';
             break;
         case 'copied':
-            statusColor = '#007AFF';
+            statusColor = theme?.colors?.textLink ?? '#007AFF';
             statusIcon = 'copy';
             break;
         case 'conflicted':
-            statusColor = '#FF3B30';
+            statusColor = theme?.colors?.textDestructive ?? '#FF3B30';
             statusIcon = 'alert';
             break;
         case 'untracked':
-            statusColor = darkTheme ? '#b0b0b0' : '#8E8E93';
+            statusColor = theme?.colors?.textSecondary ?? (darkTheme ? '#b0b0b0' : '#8E8E93');
             statusIcon = 'file';
             break;
         default:
@@ -90,9 +90,8 @@ function SectionHeader({ theme, color, children }: { theme: any; color: string; 
             <Text
                 style={{
                     fontSize: 14,
-                    fontWeight: '600',
                     color,
-                    ...Typography.default(),
+                    ...Typography.default('semiBold'),
                 }}
             >
                 {children}
@@ -125,7 +124,7 @@ export function ChangedFilesList({
                         title={file.fileName}
                         subtitle={renderFileSubtitle(file)}
                         icon={renderFileIcon(file)}
-                        rightElement={renderStatusIcon(file, isDarkTheme)}
+                        rightElement={renderStatusIcon(file, theme, isDarkTheme)}
                         onPress={() => onFilePress(file)}
                         showDivider={index < allRepositoryChangedFiles.length - 1}
                     />
@@ -148,9 +147,8 @@ export function ChangedFilesList({
                 <Text
                     style={{
                         fontSize: 14,
-                        fontWeight: '600',
-                        color: theme.colors.textLink,
-                        ...Typography.default(),
+                        color: theme.colors.text,
+                        ...Typography.default('semiBold'),
                     }}
                 >
                     {t('files.sessionAttributedChanges', { count: sessionAttributedFiles.length })}
@@ -206,7 +204,7 @@ export function ChangedFilesList({
                         title={entry.file.fileName}
                         subtitle={renderSessionAttributionSubtitle(entry.file, entry.confidence)}
                         icon={renderFileIcon(entry.file)}
-                        rightElement={renderStatusIcon(entry.file, isDarkTheme)}
+                        rightElement={renderStatusIcon(entry.file, theme, isDarkTheme)}
                         onPress={() => onFilePress(entry.file)}
                         showDivider={index < sessionAttributedFiles.length - 1}
                     />
@@ -224,7 +222,7 @@ export function ChangedFilesList({
                             title={file.fileName}
                             subtitle={renderFileSubtitle(file)}
                             icon={renderFileIcon(file)}
-                            rightElement={renderStatusIcon(file, isDarkTheme)}
+                            rightElement={renderStatusIcon(file, theme, isDarkTheme)}
                             onPress={() => onFilePress(file)}
                             showDivider={index < repositoryOnlyFiles.length - 1}
                         />

@@ -34,6 +34,56 @@ export function FilesToolbar(props: FilesToolbarProps) {
         onChangedFilesViewMode,
     } = props;
 
+    const chipStyle = (active: boolean) => ({
+        paddingVertical: 8,
+        paddingHorizontal: 10,
+        borderRadius: 12,
+        backgroundColor: active ? theme.colors.surfaceHigh : theme.colors.surface,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+    }) as const;
+
+    const Chip = (p: {
+        active: boolean;
+        label: string;
+        icon: React.ReactNode;
+        badge?: React.ReactNode;
+        onPress: () => void;
+    }) => {
+        return (
+            <Pressable onPress={p.onPress} style={chipStyle(p.active)}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                    {p.icon}
+                    <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
+                        {p.label}
+                    </Text>
+                    {p.badge}
+                </View>
+            </Pressable>
+        );
+    };
+
+    const CountBadge = ({ count }: { count: number }) => {
+        if (count <= 0) return null;
+        return (
+            <View
+                style={{
+                    minWidth: 20,
+                    paddingHorizontal: 6,
+                    paddingVertical: 2,
+                    borderRadius: 999,
+                    borderWidth: 1,
+                    borderColor: theme.colors.divider,
+                    backgroundColor: theme.colors.surfaceHigh,
+                }}
+            >
+                <Text style={{ fontSize: 11, color: theme.colors.textSecondary, ...Typography.mono('semiBold') }}>
+                    {String(count)}
+                </Text>
+            </View>
+        );
+    };
+
     return (
         <View
             style={{
@@ -50,6 +100,8 @@ export function FilesToolbar(props: FilesToolbarProps) {
                     borderRadius: 10,
                     paddingHorizontal: 12,
                     paddingVertical: 8,
+                    borderWidth: 1,
+                    borderColor: theme.colors.divider,
                 }}
             >
                 <Octicons name="search" size={16} color={theme.colors.textSecondary} style={{ marginRight: 8 }} />
@@ -69,92 +121,62 @@ export function FilesToolbar(props: FilesToolbarProps) {
             </View>
 
             <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
-                <Pressable
+                <Chip
+                    active={!showAllRepositoryFiles}
+                    label="Changed files"
+                    icon={<Octicons name="diff" size={14} color={theme.colors.textSecondary} />}
+                    badge={!showAllRepositoryFiles ? <CountBadge count={changedFilesCount} /> : undefined}
                     onPress={onShowChangedFiles}
-                    style={{
-                        paddingVertical: 6,
-                        paddingHorizontal: 10,
-                        borderRadius: 8,
-                        backgroundColor: !showAllRepositoryFiles ? theme.colors.surfaceHigh : theme.colors.surface,
-                        borderWidth: 1,
-                        borderColor: theme.colors.divider,
-                    }}
-                >
-                    <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
-                        Changed files
-                    </Text>
-                </Pressable>
-                <Pressable
+                />
+                <Chip
+                    active={showAllRepositoryFiles}
+                    label="All repository files"
+                    icon={<Octicons name="repo" size={14} color={theme.colors.textSecondary} />}
                     onPress={onShowAllRepositoryFiles}
-                    style={{
-                        paddingVertical: 6,
-                        paddingHorizontal: 10,
-                        borderRadius: 8,
-                        backgroundColor: showAllRepositoryFiles ? theme.colors.surfaceHigh : theme.colors.surface,
-                        borderWidth: 1,
-                        borderColor: theme.colors.divider,
-                    }}
-                >
-                    <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
-                        All repository files
-                    </Text>
-                </Pressable>
+                />
             </View>
 
             {!showAllRepositoryFiles && changedFilesCount > 0 && (
                 <View style={{ flexDirection: 'row', marginTop: 10, gap: 8 }}>
-                    <Pressable
+                    <Chip
+                        active={changedFilesViewMode === 'repository'}
+                        label="Repository view"
+                        icon={<Octicons name="list-unordered" size={14} color={theme.colors.textSecondary} />}
                         onPress={() => onChangedFilesViewMode('repository')}
-                        style={{
-                            paddingVertical: 6,
-                            paddingHorizontal: 10,
-                            borderRadius: 8,
-                            backgroundColor:
-                                changedFilesViewMode === 'repository'
-                                    ? theme.colors.surfaceHigh
-                                    : theme.colors.surface,
-                            borderWidth: 1,
-                            borderColor: theme.colors.divider,
-                        }}
-                    >
-                        <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
-                            Repository view
-                        </Text>
-                    </Pressable>
+                    />
                     {showSessionViewToggle && (
-                        <Pressable
+                        <Chip
+                            active={changedFilesViewMode === 'session'}
+                            label="Session view"
+                            icon={<Octicons name="history" size={14} color={theme.colors.textSecondary} />}
                             onPress={() => onChangedFilesViewMode('session')}
-                            style={{
-                                paddingVertical: 6,
-                                paddingHorizontal: 10,
-                                borderRadius: 8,
-                                backgroundColor:
-                                    changedFilesViewMode === 'session'
-                                        ? theme.colors.surfaceHigh
-                                        : theme.colors.surface,
-                                borderWidth: 1,
-                                borderColor: theme.colors.divider,
-                            }}
-                        >
-                            <Text style={{ fontSize: 12, color: theme.colors.text, ...Typography.default('semiBold') }}>
-                                Session view
-                            </Text>
-                        </Pressable>
+                        />
                     )}
                 </View>
             )}
 
             {!showAllRepositoryFiles && changedFilesCount > 0 && !showSessionViewToggle && (
-                <Text
+                <View
                     style={{
-                        marginTop: 8,
-                        fontSize: 11,
-                        color: theme.colors.textSecondary,
-                        ...Typography.default(),
+                        marginTop: 10,
+                        paddingHorizontal: 10,
+                        paddingVertical: 8,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: theme.colors.divider,
+                        backgroundColor: theme.colors.surfaceHigh,
                     }}
                 >
-                    {t('files.attributionReliabilityLimited')}
-                </Text>
+                    <Text
+                        style={{
+                            fontSize: 11,
+                            color: theme.colors.textSecondary,
+                            ...Typography.default(),
+                        }}
+                    >
+                        {t('files.attributionReliabilityLimited')}
+                    </Text>
+                </View>
             )}
         </View>
     );

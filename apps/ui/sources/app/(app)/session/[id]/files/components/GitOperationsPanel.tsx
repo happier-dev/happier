@@ -3,6 +3,7 @@ import { ActivityIndicator, Platform, Pressable, View } from 'react-native';
 
 import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
+import { Octicons } from '@expo/vector-icons';
 import type { GitLogEntry } from '@happier-dev/protocol';
 import type { GitProjectInFlightOperation, GitProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 
@@ -82,38 +83,130 @@ export function GitOperationsPanel(props: GitOperationsPanelProps) {
         return entries.slice(0, 5);
     }, [currentSessionId, operationLog, operationLogScope]);
 
+    const showBlockedHints = (!commitAllowed && commitBlockedMessage)
+        || (!pullAllowed && pullBlockedMessage)
+        || (!pushAllowed && pushBlockedMessage);
+
+    const actionChipStyle = React.useCallback((opts: {
+        pressed: boolean;
+        disabled: boolean;
+        variant: 'primary' | 'secondary';
+    }) => {
+        const { pressed, disabled, variant } = opts;
+        const bgBase = variant === 'primary'
+            ? theme.colors.success
+            : (theme.colors.surfaceHigh ?? theme.colors.input.background);
+        const bg = pressed && !disabled ? (theme.colors.surfaceHigh ?? bgBase) : bgBase;
+        const border = variant === 'primary' ? theme.colors.success : theme.colors.divider;
+        return {
+            paddingHorizontal: 10,
+            paddingVertical: 8,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: border,
+            backgroundColor: bg,
+            opacity: disabled ? 0.55 : pressed ? 0.85 : 1,
+        } as const;
+    }, [theme.colors]);
+
+    const ActionChip = (p: {
+        variant: 'primary' | 'secondary';
+        label: string;
+        iconName: string;
+        disabled: boolean;
+        onPress: () => void;
+    }) => {
+        const labelColor = p.variant === 'primary' ? 'white' : theme.colors.text;
+        const iconColor = p.variant === 'primary' ? 'white' : theme.colors.textSecondary;
+        return (
+            <Pressable
+                disabled={p.disabled}
+                onPress={p.onPress}
+                style={(s) => actionChipStyle({
+                    pressed: s.pressed,
+                    disabled: p.disabled,
+                    variant: p.variant,
+                })}
+            >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Octicons name={p.iconName as any} size={14} color={iconColor} />
+                    <Text style={{ color: labelColor, fontSize: 12, ...Typography.default('semiBold') }}>
+                        {p.label}
+                    </Text>
+                </View>
+            </Pressable>
+        );
+    };
+
     return (
         <View
             style={{
-                paddingHorizontal: 16,
-                paddingVertical: 12,
+                padding: 16,
                 borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
                 borderBottomColor: theme.colors.divider,
+                backgroundColor: theme.colors.surface,
             }}
         >
-            <Text
-                style={{
-                    fontSize: 13,
-                    color: theme.colors.textSecondary,
-                    marginBottom: 8,
-                    ...Typography.default('semiBold'),
-                }}
-            >
-                Git operations (experimental)
-            </Text>
-
-            {inFlightGitOperation && (
-                <Text
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Octicons name="git-commit" size={16} color={theme.colors.textSecondary} />
+                    <Text
+                        style={{
+                            fontSize: 14,
+                            color: theme.colors.text,
+                            letterSpacing: 0.3,
+                            ...Typography.default('semiBold'),
+                        }}
+                    >
+                        Git operations
+                    </Text>
+                </View>
+                <View
                     style={{
-                        fontSize: 12,
-                        color: theme.colors.textSecondary,
-                        marginBottom: 8,
-                        ...Typography.default(),
+                        paddingHorizontal: 8,
+                        paddingVertical: 3,
+                        borderRadius: 999,
+                        borderWidth: 1,
+                        borderColor: theme.colors.divider,
+                        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
                     }}
                 >
-                    Running: {inFlightGitOperation.operation} {' · '}
-                    {formatOperationActor(inFlightGitOperation.sessionId)}
-                </Text>
+                    <Text
+                        style={{
+                            fontSize: 10,
+                            letterSpacing: 0.3,
+                            color: theme.colors.textSecondary,
+                            ...Typography.default('semiBold'),
+                        }}
+                    >
+                        EXPERIMENTAL
+                    </Text>
+                </View>
+            </View>
+
+            {inFlightGitOperation && (
+                <View
+                    style={{
+                        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: theme.colors.divider,
+                        paddingHorizontal: 10,
+                        paddingVertical: 8,
+                        marginBottom: 10,
+                    }}
+                >
+                    <Text
+                        style={{
+                            fontSize: 12,
+                            color: theme.colors.textSecondary,
+                            ...Typography.default(),
+                        }}
+                    >
+                        Running: {inFlightGitOperation.operation} {' · '}
+                        {formatOperationActor(inFlightGitOperation.sessionId)}
+                    </Text>
+                </View>
             )}
 
             {isLockedByOtherSession && (
@@ -121,7 +214,7 @@ export function GitOperationsPanel(props: GitOperationsPanelProps) {
                     style={{
                         fontSize: 12,
                         color: theme.colors.warning,
-                        marginBottom: 8,
+                        marginBottom: 10,
                         ...Typography.default('semiBold'),
                     }}
                 >
@@ -134,7 +227,7 @@ export function GitOperationsPanel(props: GitOperationsPanelProps) {
                     style={{
                         fontSize: 12,
                         color: theme.colors.textSecondary,
-                        marginBottom: 8,
+                        marginBottom: 10,
                         ...Typography.default(),
                     }}
                 >
@@ -147,7 +240,7 @@ export function GitOperationsPanel(props: GitOperationsPanelProps) {
                     style={{
                         fontSize: 12,
                         color: theme.colors.warning,
-                        marginBottom: 8,
+                        marginBottom: 10,
                         ...Typography.default('semiBold'),
                     }}
                 >
@@ -155,104 +248,85 @@ export function GitOperationsPanel(props: GitOperationsPanelProps) {
                 </Text>
             )}
 
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
-                <Pressable
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: showBlockedHints ? 8 : 12 }}>
+                <ActionChip
+                    variant="primary"
+                    label="Commit staged"
+                    iconName="check"
                     disabled={gitOperationBusy || hasGlobalOperationInFlight || !commitAllowed}
                     onPress={onCreateCommit}
-                    style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 7,
-                        borderRadius: 8,
-                        backgroundColor: theme.colors.success,
-                        opacity: gitOperationBusy || hasGlobalOperationInFlight || !commitAllowed ? 0.6 : 1,
-                    }}
-                >
-                    <Text style={{ color: 'white', fontSize: 12, ...Typography.default('semiBold') }}>
-                        Commit staged
-                    </Text>
-                </Pressable>
-                <Pressable
+                />
+                <ActionChip
+                    variant="secondary"
+                    label="Fetch"
+                    iconName="sync"
                     disabled={gitOperationBusy || hasGlobalOperationInFlight}
                     onPress={onFetch}
-                    style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 7,
-                        borderRadius: 8,
-                        backgroundColor: theme.colors.input.background,
-                        opacity: gitOperationBusy || hasGlobalOperationInFlight ? 0.6 : 1,
-                    }}
-                >
-                    <Text style={{ color: theme.colors.text, fontSize: 12, ...Typography.default('semiBold') }}>
-                        Fetch
-                    </Text>
-                </Pressable>
-                <Pressable
+                />
+                <ActionChip
+                    variant="secondary"
+                    label="Pull"
+                    iconName="arrow-down"
                     disabled={gitOperationBusy || hasGlobalOperationInFlight || !pullAllowed}
                     onPress={onPull}
-                    style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 7,
-                        borderRadius: 8,
-                        backgroundColor: theme.colors.input.background,
-                        opacity: gitOperationBusy || hasGlobalOperationInFlight || !pullAllowed ? 0.6 : 1,
-                    }}
-                >
-                    <Text style={{ color: theme.colors.text, fontSize: 12, ...Typography.default('semiBold') }}>
-                        Pull
-                    </Text>
-                </Pressable>
-                <Pressable
+                />
+                <ActionChip
+                    variant="secondary"
+                    label="Push"
+                    iconName="arrow-up"
                     disabled={gitOperationBusy || hasGlobalOperationInFlight || !pushAllowed}
                     onPress={onPush}
-                    style={{
-                        paddingHorizontal: 10,
-                        paddingVertical: 7,
-                        borderRadius: 8,
-                        backgroundColor: theme.colors.input.background,
-                        opacity: gitOperationBusy || hasGlobalOperationInFlight || !pushAllowed ? 0.6 : 1,
-                    }}
-                >
-                    <Text style={{ color: theme.colors.text, fontSize: 12, ...Typography.default('semiBold') }}>
-                        Push
-                    </Text>
-                </Pressable>
+                />
             </View>
 
-            {(!commitAllowed && commitBlockedMessage) && (
-                <Text
+            {showBlockedHints && (
+                <View
                     style={{
-                        fontSize: 11,
-                        color: theme.colors.textSecondary,
-                        marginBottom: 4,
-                        ...Typography.default(),
+                        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
+                        borderRadius: 10,
+                        borderWidth: 1,
+                        borderColor: theme.colors.divider,
+                        paddingHorizontal: 10,
+                        paddingVertical: 8,
+                        marginBottom: 12,
                     }}
                 >
-                    Commit blocked: {commitBlockedMessage}
-                </Text>
-            )}
-            {(!pullAllowed && pullBlockedMessage) && (
-                <Text
-                    style={{
-                        fontSize: 11,
-                        color: theme.colors.textSecondary,
-                        marginBottom: 4,
-                        ...Typography.default(),
-                    }}
-                >
-                    Pull blocked: {pullBlockedMessage}
-                </Text>
-            )}
-            {(!pushAllowed && pushBlockedMessage) && (
-                <Text
-                    style={{
-                        fontSize: 11,
-                        color: theme.colors.textSecondary,
-                        marginBottom: 8,
-                        ...Typography.default(),
-                    }}
-                >
-                    Push blocked: {pushBlockedMessage}
-                </Text>
+                    {(!commitAllowed && commitBlockedMessage) && (
+                        <Text
+                            style={{
+                                fontSize: 11,
+                                color: theme.colors.textSecondary,
+                                marginBottom: 4,
+                                ...Typography.default(),
+                            }}
+                        >
+                            Commit blocked: {commitBlockedMessage}
+                        </Text>
+                    )}
+                    {(!pullAllowed && pullBlockedMessage) && (
+                        <Text
+                            style={{
+                                fontSize: 11,
+                                color: theme.colors.textSecondary,
+                                marginBottom: 4,
+                                ...Typography.default(),
+                            }}
+                        >
+                            Pull blocked: {pullBlockedMessage}
+                        </Text>
+                    )}
+                    {(!pushAllowed && pushBlockedMessage) && (
+                        <Text
+                            style={{
+                                fontSize: 11,
+                                color: theme.colors.textSecondary,
+                                ...Typography.default(),
+                            }}
+                        >
+                            Push blocked: {pushBlockedMessage}
+                        </Text>
+                    )}
+                </View>
             )}
 
             {historyLoading && historyEntries.length === 0 ? (
@@ -270,20 +344,69 @@ export function GitOperationsPanel(props: GitOperationsPanelProps) {
                         Recent commits
                     </Text>
                     {historyEntries.slice(0, 5).map((entry) => (
-                        <Pressable key={entry.sha} onPress={() => onOpenCommit(entry.sha)} style={{ paddingVertical: 6 }}>
-                            <Text style={{ color: theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}>
-                                {entry.shortSha} {entry.subject}
-                            </Text>
-                            <Text style={{ color: theme.colors.textSecondary, fontSize: 11, ...Typography.default() }}>
-                                {new Date(entry.timestamp).toLocaleString()}
-                            </Text>
+                        <Pressable
+                            key={entry.sha}
+                            onPress={() => onOpenCommit(entry.sha)}
+                            style={(p) => ({
+                                paddingVertical: 10,
+                                paddingHorizontal: 10,
+                                borderRadius: 12,
+                                backgroundColor: p.pressed
+                                    ? (theme.colors.surfaceHigh ?? theme.colors.input.background)
+                                    : 'transparent',
+                            })}
+                        >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <View
+                                    style={{
+                                        paddingHorizontal: 8,
+                                        paddingVertical: 6,
+                                        borderRadius: 10,
+                                        borderWidth: 1,
+                                        borderColor: theme.colors.divider,
+                                        backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
+                                    }}
+                                >
+                                    <Text style={{ color: theme.colors.textSecondary, fontSize: 11, ...Typography.mono('semiBold') }}>
+                                        {entry.shortSha}
+                                    </Text>
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text
+                                        style={{ color: theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}
+                                        numberOfLines={1}
+                                    >
+                                        {entry.subject}
+                                    </Text>
+                                    <Text style={{ color: theme.colors.textSecondary, fontSize: 11, ...Typography.default() }}>
+                                        {new Date(entry.timestamp).toLocaleString()}
+                                    </Text>
+                                </View>
+                                <Octicons name="chevron-right" size={14} color={theme.colors.textSecondary} />
+                            </View>
                         </Pressable>
                     ))}
                     {historyHasMore && (
-                        <Pressable disabled={historyLoading} onPress={onLoadMoreHistory} style={{ paddingVertical: 8 }}>
-                            <Text style={{ color: theme.colors.textLink, fontSize: 12, ...Typography.default('semiBold') }}>
-                                {historyLoading ? 'Loading…' : 'Load more commits'}
-                            </Text>
+                        <Pressable
+                            disabled={historyLoading}
+                            onPress={onLoadMoreHistory}
+                            style={(p) => ({
+                                marginTop: 4,
+                                paddingVertical: 10,
+                                paddingHorizontal: 10,
+                                borderRadius: 12,
+                                borderWidth: 1,
+                                borderColor: theme.colors.divider,
+                                backgroundColor: theme.colors.surfaceHigh ?? theme.colors.input.background,
+                                opacity: historyLoading ? 0.6 : p.pressed ? 0.85 : 1,
+                            })}
+                        >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Text style={{ color: theme.colors.textLink, fontSize: 12, ...Typography.default('semiBold') }}>
+                                    {historyLoading ? 'Loading…' : 'Load more commits'}
+                                </Text>
+                                <Octicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
+                            </View>
                         </Pressable>
                     )}
                 </View>

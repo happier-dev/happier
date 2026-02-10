@@ -17,6 +17,7 @@ type FileActionToolbarProps = {
     onDiffMode: (mode: FileDiffMode) => void;
     hasUnstagedDelta: boolean;
     hasStagedDelta: boolean;
+    isUntrackedFile?: boolean;
     gitWriteEnabled: boolean;
     lineSelectionEnabled: boolean;
     selectedLineCount: number;
@@ -38,6 +39,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         onDiffMode,
         hasUnstagedDelta,
         hasStagedDelta,
+        isUntrackedFile,
         gitWriteEnabled,
         lineSelectionEnabled,
         selectedLineCount,
@@ -51,6 +53,16 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
     } = props;
 
     const actionBusy = isApplyingStage || hasConflicts || Boolean(inFlightGitOperation);
+    const canStageFile = hasUnstagedDelta || isUntrackedFile === true;
+
+    const chipStyle = (active: boolean) => ({
+        paddingVertical: 7,
+        paddingHorizontal: 11,
+        borderRadius: 10,
+        backgroundColor: active ? theme.colors.surfaceHigh : theme.colors.surface,
+        borderWidth: 1,
+        borderColor: theme.colors.divider,
+    }) as const;
 
     return (
         <View
@@ -67,18 +79,13 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
         >
             <Pressable
                 onPress={() => onDisplayMode('diff')}
-                style={{
-                    paddingHorizontal: 14,
-                    paddingVertical: 8,
-                    borderRadius: 8,
-                    backgroundColor: displayMode === 'diff' ? theme.colors.textLink : theme.colors.input.background,
-                }}
+                style={chipStyle(displayMode === 'diff')}
             >
                 <Text
                     style={{
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: '600',
-                        color: displayMode === 'diff' ? 'white' : theme.colors.textSecondary,
+                        color: displayMode === 'diff' ? theme.colors.text : theme.colors.textSecondary,
                         ...Typography.default(),
                     }}
                 >
@@ -88,18 +95,13 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
 
             <Pressable
                 onPress={() => onDisplayMode('file')}
-                style={{
-                    paddingHorizontal: 14,
-                    paddingVertical: 8,
-                    borderRadius: 8,
-                    backgroundColor: displayMode === 'file' ? theme.colors.textLink : theme.colors.input.background,
-                }}
+                style={chipStyle(displayMode === 'file')}
             >
                 <Text
                     style={{
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: '600',
-                        color: displayMode === 'file' ? 'white' : theme.colors.textSecondary,
+                        color: displayMode === 'file' ? theme.colors.text : theme.colors.textSecondary,
                         ...Typography.default(),
                     }}
                 >
@@ -110,12 +112,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
             {hasUnstagedDelta && (
                 <Pressable
                     onPress={() => onDiffMode('unstaged')}
-                    style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        borderRadius: 8,
-                        backgroundColor: diffMode === 'unstaged' ? theme.colors.surfaceHigh : theme.colors.input.background,
-                    }}
+                    style={chipStyle(diffMode === 'unstaged')}
                 >
                     <Text style={{ fontSize: 13, color: theme.colors.text, ...Typography.default('semiBold') }}>
                         Unstaged
@@ -126,12 +123,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
             {hasStagedDelta && (
                 <Pressable
                     onPress={() => onDiffMode('staged')}
-                    style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        borderRadius: 8,
-                        backgroundColor: diffMode === 'staged' ? theme.colors.surfaceHigh : theme.colors.input.background,
-                    }}
+                    style={chipStyle(diffMode === 'staged')}
                 >
                     <Text style={{ fontSize: 13, color: theme.colors.text, ...Typography.default('semiBold') }}>
                         Staged
@@ -142,12 +134,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
             {hasStagedDelta && hasUnstagedDelta && (
                 <Pressable
                     onPress={() => onDiffMode('both')}
-                    style={{
-                        paddingHorizontal: 12,
-                        paddingVertical: 8,
-                        borderRadius: 8,
-                        backgroundColor: diffMode === 'both' ? theme.colors.surfaceHigh : theme.colors.input.background,
-                    }}
+                    style={chipStyle(diffMode === 'both')}
                 >
                     <Text style={{ fontSize: 13, color: theme.colors.text, ...Typography.default('semiBold') }}>
                         Combined
@@ -155,14 +142,14 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                 </Pressable>
             )}
 
-            {gitWriteEnabled && hasUnstagedDelta && (
+            {gitWriteEnabled && canStageFile && (
                 <Pressable
                     disabled={actionBusy}
                     onPress={onStageFile}
                     style={{
                         paddingHorizontal: 12,
                         paddingVertical: 8,
-                        borderRadius: 8,
+                        borderRadius: 10,
                         backgroundColor: theme.colors.success,
                         opacity: actionBusy ? 0.6 : 1,
                     }}
@@ -178,7 +165,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     style={{
                         paddingHorizontal: 12,
                         paddingVertical: 8,
-                        borderRadius: 8,
+                        borderRadius: 10,
                         backgroundColor: theme.colors.warning,
                         opacity: actionBusy ? 0.6 : 1,
                     }}
@@ -207,7 +194,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                         style={{
                             paddingHorizontal: 12,
                             paddingVertical: 8,
-                            borderRadius: 8,
+                            borderRadius: 10,
                             backgroundColor: theme.colors.textLink,
                             opacity: actionBusy ? 0.6 : 1,
                         }}
@@ -218,12 +205,7 @@ export function FileActionToolbar(props: FileActionToolbarProps) {
                     </Pressable>
                     <Pressable
                         onPress={onClearSelection}
-                        style={{
-                            paddingHorizontal: 12,
-                            paddingVertical: 8,
-                            borderRadius: 8,
-                            backgroundColor: theme.colors.input.background,
-                        }}
+                        style={chipStyle(false)}
                     >
                         <Text style={{ color: theme.colors.text, fontSize: 13, ...Typography.default('semiBold') }}>
                             Clear selection

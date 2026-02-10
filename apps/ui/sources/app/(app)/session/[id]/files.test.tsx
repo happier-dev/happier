@@ -5,6 +5,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const filesToolbarSpy = vi.fn();
+const routerPushSpy = vi.fn();
+let gitOperationsPanelProps: any = null;
+let changedFilesListProps: any = null;
+let focusEffectHasRun = false;
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -35,11 +39,16 @@ vi.mock('react-native-unistyles', () => ({
 
 vi.mock('@react-navigation/native', () => ({
     useRoute: () => ({ params: { id: 'session-1' } }),
-    useFocusEffect: () => {},
+    useFocusEffect: (cb: any) => {
+        // Run once; the real hook triggers on focus, not on every render.
+        if (focusEffectHasRun) return;
+        focusEffectHasRun = true;
+        cb();
+    },
 }));
 
 vi.mock('expo-router', () => ({
-    useRouter: () => ({ push: vi.fn() }),
+    useRouter: () => ({ push: routerPushSpy }),
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -155,7 +164,7 @@ vi.mock('./files/hooks/useFilesGitOperations', () => ({
 }));
 
 vi.mock('./files/hooks/useGitOperationsVisibility', () => ({
-    shouldShowGitOperationsPanel: () => false,
+    shouldShowGitOperationsPanel: () => true,
 }));
 
 vi.mock('./files/components/FilesToolbar', () => ({
@@ -170,7 +179,10 @@ vi.mock('./files/components/GitBranchSummary', () => ({
 }));
 
 vi.mock('./files/components/GitOperationsPanel', () => ({
-    GitOperationsPanel: () => null,
+    GitOperationsPanel: (props: any) => {
+        gitOperationsPanelProps = props;
+        return React.createElement('GitOperationsPanel', props);
+    },
 }));
 
 vi.mock('./files/components/content/SearchResultsList', () => ({
@@ -178,12 +190,19 @@ vi.mock('./files/components/content/SearchResultsList', () => ({
 }));
 
 vi.mock('./files/components/content/ChangedFilesList', () => ({
-    ChangedFilesList: () => null,
+    ChangedFilesList: (props: any) => {
+        changedFilesListProps = props;
+        return React.createElement('ChangedFilesList', props);
+    },
 }));
 
 describe('FilesScreen', () => {
     beforeEach(() => {
         filesToolbarSpy.mockClear();
+        routerPushSpy.mockClear();
+        gitOperationsPanelProps = null;
+        changedFilesListProps = null;
+        focusEffectHasRun = false;
     });
 
     it('falls back to repository mode when session view is not available', async () => {
@@ -199,5 +218,73 @@ describe('FilesScreen', () => {
         expect(seenModes).toContain('session');
         expect(seenModes.at(-1)).toBe('repository');
         expect(filesToolbarSpy.mock.calls.at(-1)?.[0]?.showSessionViewToggle).toBe(false);
+    });
+
+    it('navigates to commit screen without pre-encoding sha', async () => {
+        const Screen = (await import('./files')).default;
+
+        await act(async () => {
+            renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(gitOperationsPanelProps).toBeTruthy();
+
+        gitOperationsPanelProps.onOpenCommit('\n32a2a2aba05750117ad36d9386b396fdd5416a2e');
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/session/[id]/commit',
+            params: {
+                id: 'session-1',
+                sha: '32a2a2aba05750117ad36d9386b396fdd5416a2e',
+            },
+        });
+    });
+
+    it('sanitizes whitespace-containing commit refs when navigating to the commit screen', async () => {
+        const Screen = (await import('./files')).default;
+
+        await act(async () => {
+            renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(gitOperationsPanelProps).toBeTruthy();
+
+        // Defensive: Some UIs may pass "oneline" strings by accident; only the first token is a valid ref.
+        gitOperationsPanelProps.onOpenCommit('0338a0f chore: stage b.txt');
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/session/[id]/commit',
+            params: {
+                id: 'session-1',
+                sha: '0338a0f',
+            },
+        });
+    });
+
+    it('navigates to file screen without pre-encoding path', async () => {
+        const Screen = (await import('./files')).default;
+
+        await act(async () => {
+            renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(changedFilesListProps).toBeTruthy();
+
+        changedFilesListProps.onFilePress({
+            fileName: 'hello world.txt',
+            fullPath: 'dir/hello world.txt',
+            status: 'modified',
+        });
+
+        expect(routerPushSpy).toHaveBeenCalledWith({
+            pathname: '/session/[id]/file',
+            params: {
+                id: 'session-1',
+                path: 'dir/hello world.txt',
+            },
+        });
     });
 });

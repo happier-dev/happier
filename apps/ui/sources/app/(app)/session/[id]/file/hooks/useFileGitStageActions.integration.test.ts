@@ -307,4 +307,59 @@ describe('useFileGitStageActions integration', () => {
             hook.unmount();
         });
     });
+
+    it('unstages selected added replacement lines without requiring paired deletion selection', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-file-line-unstage-added-'));
+        initRepo(workspace);
+        writeFileSync(join(workspace, 'a.txt'), 'base\nalpha\n');
+        git(workspace, ['add', 'a.txt']);
+        git(workspace, ['commit', '-m', 'base']);
+        writeFileSync(join(workspace, 'a.txt'), 'base\nbeta\n');
+        git(workspace, ['add', 'a.txt']);
+
+        const stagedDiff = git(workspace, ['diff', '--cached', '--', 'a.txt']);
+        const selectedIndex = lineIndexByContent(stagedDiff, '+beta');
+
+        const sessionId = 'session-file-stage-4';
+        storage.getState().applySessions([createSession(sessionId, workspace) as any]);
+        mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
+
+        const snapshotResponse = await sessionGitStatusSnapshot(sessionId, { cwd: workspace });
+        expect(snapshotResponse.success).toBe(true);
+        if (!snapshotResponse.success || !snapshotResponse.snapshot) {
+            throw new Error('expected git snapshot');
+        }
+
+        const refreshAll = vi.fn(async () => {});
+
+        const hook = mountHook({
+            sessionId,
+            sessionPath: workspace,
+            filePath: 'a.txt',
+            gitSnapshot: snapshotResponse.snapshot,
+            gitWriteEnabled: true,
+            diffMode: 'staged',
+            diffContent: stagedDiff,
+            lineSelectionEnabled: true,
+            selectedLineIndexes: new Set([selectedIndex]),
+            refreshAll,
+            setSelectedLineIndexes: vi.fn() as any,
+        });
+
+        await act(async () => {
+            await hook.getCurrent().applySelectedLines();
+        });
+
+        const nextStagedDiff = git(workspace, ['diff', '--cached', '--', 'a.txt']);
+
+        expect(nextStagedDiff).toContain('-alpha');
+        expect(nextStagedDiff).not.toContain('+beta');
+        expect(invalidateFromMutationAndAwait).toHaveBeenCalledTimes(1);
+        expect(refreshAll).toHaveBeenCalledTimes(1);
+        expect(modalAlert).not.toHaveBeenCalled();
+
+        act(() => {
+            hook.unmount();
+        });
+    });
 });

@@ -33,6 +33,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const session = useSession(sessionId);
+    const canManage = !session?.accessLevel || session.accessLevel === 'admin';
 
     const [shares, setShares] = useState<SessionShare[]>([]);
     const [publicShare, setPublicShare] = useState<PublicSessionShare | null>(null);
@@ -45,6 +46,9 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
 
     // Load sharing data
     const loadSharingData = useCallback(async () => {
+        // Non-admin collaborators can view the session, but must not see or manage sharing settings.
+        // Avoiding these calls prevents noisy 403 spam and misleading "Not shared" UI states.
+        if (!canManage) return;
         try {
             const credentials = sync.getCredentials();
 
@@ -76,7 +80,7 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
         } catch (error) {
             console.error('Failed to load sharing data:', error);
         }
-    }, [sessionId]);
+    }, [canManage, sessionId]);
 
     useEffect(() => {
         loadSharingData();
@@ -222,8 +226,33 @@ function SharingManagementContent({ sessionId }: { sessionId: string }) {
     }
 
     const excludedUserIds = shares.map(share => share.sharedWithUser.id);
-    const canManage = !session.accessLevel || session.accessLevel === 'admin';
     const canManagePermissionDelegation = !session.accessLevel || (session.accessLevel === 'admin' && session.canApprovePermissions === true);
+
+    if (!canManage) {
+        return (
+            <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <Ionicons name="lock-closed-outline" size={48} color={theme.colors.textSecondary} />
+                <Text style={{
+                    color: theme.colors.text,
+                    fontSize: 20,
+                    marginTop: 16,
+                    ...Typography.default('semiBold')
+                }}>
+                    {t('errors.permissionDenied')}
+                </Text>
+                <Text style={{
+                    color: theme.colors.textSecondary,
+                    fontSize: 15,
+                    marginTop: 8,
+                    paddingHorizontal: 24,
+                    textAlign: 'center',
+                    ...Typography.default()
+                }}>
+                    {t('session.sharing.manageSharingDenied')}
+                </Text>
+            </View>
+        );
+    }
 
     return (
         <>

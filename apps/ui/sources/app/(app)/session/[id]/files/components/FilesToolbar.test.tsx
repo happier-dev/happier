@@ -20,12 +20,6 @@ vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
-
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));

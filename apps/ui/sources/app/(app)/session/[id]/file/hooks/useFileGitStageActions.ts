@@ -156,7 +156,9 @@ export function useFileGitStageActions(input: {
         const cwd = sessionPath;
         if (!cwd) return;
 
-        const patch = buildPatchFromSelectedDiffLines(diffContent, selectedLineIndexes);
+        const patch = buildPatchFromSelectedDiffLines(diffContent, selectedLineIndexes, {
+            mode: stageSelected ? 'stage' : 'unstage',
+        });
         if (!patch) {
             Modal.alert(t('common.error'), 'Unable to build patch from selected lines.');
             return;

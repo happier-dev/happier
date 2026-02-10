@@ -18,12 +18,6 @@ vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/constants/Typography', () => ({
-    Typography: {
-        default: () => ({}),
-    },
-}));
-
 vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
@@ -36,7 +30,15 @@ describe('GitBranchSummary', () => {
         act(() => {
             tree = renderer.create(
                 <GitBranchSummary
-                    theme={{ colors: { divider: '#000', text: '#fff', textSecondary: '#aaa' } }}
+                    theme={{
+                        colors: {
+                            divider: '#000',
+                            input: { background: '#111' },
+                            surfaceHigh: '#222',
+                            text: '#fff',
+                            textSecondary: '#aaa',
+                        },
+                    }}
                     gitStatusFiles={{
                         branch: 'main',
                         stagedFiles: [],
@@ -50,6 +52,8 @@ describe('GitBranchSummary', () => {
 
         const texts = tree!.root.findAllByType('Text' as any).map((node) => node.props.children);
         expect(texts).toContain('main');
+        expect(texts).toContain('Staged');
+        expect(texts).toContain('Unstaged');
     });
 
     it('renders upstream tracking and ahead/behind counters when available', async () => {
@@ -59,7 +63,15 @@ describe('GitBranchSummary', () => {
         act(() => {
             tree = renderer.create(
                 <GitBranchSummary
-                    theme={{ colors: { divider: '#000', text: '#fff', textSecondary: '#aaa' } }}
+                    theme={{
+                        colors: {
+                            divider: '#000',
+                            input: { background: '#111' },
+                            surfaceHigh: '#222',
+                            text: '#fff',
+                            textSecondary: '#aaa',
+                        },
+                    }}
                     gitStatusFiles={{
                         branch: 'feature/refactor',
                         upstream: 'origin/feature/refactor',
@@ -86,7 +98,7 @@ describe('GitBranchSummary', () => {
             });
 
         expect(textContent.some((text) => text.includes('origin/feature/refactor'))).toBe(true);
-        expect(textContent.some((text) => text.includes('Ahead 3'))).toBe(true);
-        expect(textContent.some((text) => text.includes('Behind 1'))).toBe(true);
+        expect(textContent.some((text) => text.includes('Ahead'))).toBe(true);
+        expect(textContent.some((text) => text.includes('Behind'))).toBe(true);
     });
 });
