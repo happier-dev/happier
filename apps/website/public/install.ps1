@@ -95,9 +95,9 @@ try {
   $signaturePath = Join-Path $tmpDir.FullName "checksums.txt.minisig"
   $pubKeyPath = Join-Path $tmpDir.FullName "minisign.pub"
 
-  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archivePath -Headers $GitHubHeaders
-  Invoke-WebRequest -Uri $checksumsAsset.browser_download_url -OutFile $checksumsPath -Headers $GitHubHeaders
-  Invoke-WebRequest -Uri $signatureAsset.browser_download_url -OutFile $signaturePath -Headers $GitHubHeaders
+  Invoke-WebRequest -Uri $asset.browser_download_url -Headers $GitHubHeaders -OutFile $archivePath
+  Invoke-WebRequest -Uri $checksumsAsset.browser_download_url -Headers $GitHubHeaders -OutFile $checksumsPath
+  Invoke-WebRequest -Uri $signatureAsset.browser_download_url -Headers $GitHubHeaders -OutFile $signaturePath
 
   $assetName = [System.IO.Path]::GetFileName($asset.browser_download_url)
   $expectedSha = $null

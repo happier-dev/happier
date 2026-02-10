@@ -215,7 +215,7 @@ jobs:
         id: ver
         run: |
           set -euo pipefail
-          ui_version="$(node -p "require('./apps/ui/package.json').version")"
+          ui_version="$(node -p 'require(\"./apps/ui/package.json\").version' | tr -d '\n')"
           if [ -z "${ui_version:-}" ]; then
             echo "Unable to resolve apps/ui/package.json version" >&2
             exit 1
@@ -544,7 +544,7 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          ui_version="$(node -p "require('./apps/ui/package.json').version")"
+          ui_version="$(node -p 'require(\"./apps/ui/package.json\").version' | tr -d '\n')"
           if [ -z "${ui_version:-}" ]; then
             echo "Unable to resolve apps/ui/package.json version" >&2
             exit 1

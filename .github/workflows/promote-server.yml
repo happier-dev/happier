@@ -218,7 +218,7 @@ jobs:
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
         run: |
           set -euo pipefail
-          version="$(node -p "require('./apps/server/package.json').version")"
+          version="$(node -p 'require(\"./apps/server/package.json\").version' | tr -d '\n')"
           node scripts/release/build-server-binaries.mjs \
             --channel="${CHANNEL}" \
             --version="${version}"
@@ -229,7 +229,7 @@ jobs:
           ASSETS_BASE_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.environment == 'production' && 'server-stable' || 'server-preview' }}
         run: |
           set -euo pipefail
-          version="$(node -p "require('./apps/server/package.json').version")"
+          version="$(node -p 'require(\"./apps/server/package.json\").version' | tr -d '\n')"
           node scripts/release/publish-manifests.mjs \
             --product=happier-server \
             --channel="${CHANNEL}" \
@@ -245,7 +245,7 @@ jobs:
           CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
         run: |
           set -euo pipefail
-          version="$(node -p "require('./apps/server/package.json').version")"
+          version="$(node -p 'require(\"./apps/server/package.json\").version' | tr -d '\n')"
           test -f "dist/release-assets/server/checksums-happier-server-v${version}.txt"
           test -f "dist/release-assets/server/checksums-happier-server-v${version}.txt.minisig"
           test -f "dist/release-assets/server/manifests/v1/happier-server/${CHANNEL}/latest.json"
@@ -253,7 +253,7 @@ jobs:
       - name: Cryptographic verify server release artifacts
         run: |
           set -euo pipefail
-          version="$(node -p "require('./apps/server/package.json').version")"
+          version="$(node -p 'require(\"./apps/server/package.json\").version' | tr -d '\n')"
           node scripts/release/verify-artifacts.mjs \
             --artifacts-dir="dist/release-assets/server" \
             --checksums="dist/release-assets/server/checksums-happier-server-v${version}.txt" \
@@ -266,7 +266,7 @@ jobs:
           CHANNEL: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
         run: |
           set -euo pipefail
-          version="$(node -p "require('./apps/server/package.json').version")"
+          version="$(node -p 'require(\"./apps/server/package.json\").version' | tr -d '\n')"
           tag="server-preview"
           title="Server Preview"
           prerelease="--prerelease"
@@ -293,7 +293,7 @@ jobs:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
         run: |
           set -euo pipefail
-          version="$(node -p "require('./apps/server/package.json').version")"
+          version="$(node -p 'require(\"./apps/server/package.json\").version' | tr -d '\n')"
           tag="server-v${version}"
           title="Server v${version}"
           if gh release view "${tag}" >/dev/null 2>&1; then

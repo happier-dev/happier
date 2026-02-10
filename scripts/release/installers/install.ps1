@@ -6,6 +6,13 @@ if ($Channel -ne "stable" -and $Channel -ne "preview") {
 }
 
 $Repo = if ($env:HAPPIER_GITHUB_REPO) { $env:HAPPIER_GITHUB_REPO } else { "happier-dev/happier" }
+$Token = if ($env:HAPPIER_GITHUB_TOKEN) { $env:HAPPIER_GITHUB_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { "" }
+$GitHubHeaders = @{
+  "X-GitHub-Api-Version" = "2022-11-28"
+}
+if ($Token) {
+  $GitHubHeaders["Authorization"] = "Bearer $Token"
+}
 $InstallDir = if ($env:HAPPIER_INSTALL_DIR) { $env:HAPPIER_INSTALL_DIR } else { Join-Path $env:USERPROFILE ".happier" }
 $BinDir = if ($env:HAPPIER_BIN_DIR) { $env:HAPPIER_BIN_DIR } else { Join-Path $env:USERPROFILE ".local\bin" }
 $DefaultMinisignPubKey = @"
@@ -67,7 +74,7 @@ function Resolve-MinisignPublicKey {
 }
 
 $tag = if ($Channel -eq "preview") { "cli-preview" } else { "cli-stable" }
-$release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag"
+$release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
 $asset = Get-AssetByPattern -Release $release -Pattern '^happier-v.*-windows-x64\.tar\.gz$'
 $checksumsAsset = Get-AssetByPattern -Release $release -Pattern '^checksums-happier-v.*\.txt$'
 $signatureAsset = Get-AssetByPattern -Release $release -Pattern '^checksums-happier-v.*\.txt\.minisig$'
@@ -88,9 +95,9 @@ try {
   $signaturePath = Join-Path $tmpDir.FullName "checksums.txt.minisig"
   $pubKeyPath = Join-Path $tmpDir.FullName "minisign.pub"
 
-  Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $archivePath
-  Invoke-WebRequest -Uri $checksumsAsset.browser_download_url -OutFile $checksumsPath
-  Invoke-WebRequest -Uri $signatureAsset.browser_download_url -OutFile $signaturePath
+  Invoke-WebRequest -Uri $asset.browser_download_url -Headers $GitHubHeaders -OutFile $archivePath
+  Invoke-WebRequest -Uri $checksumsAsset.browser_download_url -Headers $GitHubHeaders -OutFile $checksumsPath
+  Invoke-WebRequest -Uri $signatureAsset.browser_download_url -Headers $GitHubHeaders -OutFile $signaturePath
 
   $assetName = [System.IO.Path]::GetFileName($asset.browser_download_url)
   $expectedSha = $null

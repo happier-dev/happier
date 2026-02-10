@@ -254,8 +254,8 @@ trap cleanup EXIT
 
 ARCHIVE_PATH="${TMP_DIR}/happier.tar.gz"
 CHECKSUMS_PATH="${TMP_DIR}/checksums.txt"
-curl -fsSL "${ASSET_URL}" -o "${ARCHIVE_PATH}"
-curl -fsSL "${CHECKSUMS_URL}" -o "${CHECKSUMS_PATH}"
+curl -fsSL "${auth_headers[@]}" "${ASSET_URL}" -o "${ARCHIVE_PATH}"
+curl -fsSL "${auth_headers[@]}" "${CHECKSUMS_URL}" -o "${CHECKSUMS_PATH}"
 
 EXPECTED_SHA="$(grep -E "  $(basename "${ASSET_URL}")$" "${CHECKSUMS_PATH}" | awk '{print $1}' | head -n 1)"
 if [[ -z "${EXPECTED_SHA}" ]]; then
@@ -278,7 +278,7 @@ fi
 PUBKEY_PATH="${TMP_DIR}/minisign.pub"
 SIG_PATH="${TMP_DIR}/checksums.txt.minisig"
 write_minisign_public_key "${PUBKEY_PATH}"
-curl -fsSL "${SIG_URL}" -o "${SIG_PATH}"
+curl -fsSL "${auth_headers[@]}" "${SIG_URL}" -o "${SIG_PATH}"
 "${MINISIGN_BIN}" -Vm "${CHECKSUMS_PATH}" -x "${SIG_PATH}" -p "${PUBKEY_PATH}" >/dev/null
 echo "Signature verified."
 

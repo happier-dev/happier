@@ -450,7 +450,7 @@ jobs:
 
           mkdir -p dist/ui-mobile
 
-          app_version="$(node -p "require('./apps/ui/package.json').version")"
+          app_version="$(node -p 'require(\"./apps/ui/package.json\").version' | tr -d '\n')"
           if [ -z "${app_version:-}" ]; then
             echo "Unable to resolve app version from apps/ui/package.json" >&2
             exit 1
