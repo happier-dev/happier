@@ -33,36 +33,53 @@ function formatLocalTime(timestamp?: number) {
     return `${hours}:${mins}:${secs}.${ms}`;
 }
 
-const transports: any[] = [];
+function isBunRuntime() {
+    const g = globalThis as any;
+    return Boolean(g?.Bun) || Boolean((process as any)?.versions?.bun);
+}
 
-transports.push({
-    target: 'pino-pretty',
-    options: {
-        colorize: true,
-        translateTime: 'HH:MM:ss.l',
-        ignore: 'pid,hostname',
-        messageFormat: '{levelLabel} {msg} | [{time}]',
-        errorLikeObjectKeys: ['err', 'error'],
-    },
-});
+export function createLoggingTransportTargets(): any[] {
+    const transports: any[] = [];
 
-if (process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING && consolidatedLogFile) {
-    transports.push({
-        target: 'pino/file',
-        options: {
-            destination: consolidatedLogFile,
-            mkdir: true,
-            messageFormat: '{levelLabel} {msg} | [server time: {time}]',
-        },
-    });
+    // Bun-compiled binaries can't reliably resolve pino transport targets.
+    if (!isBunRuntime()) {
+        transports.push({
+            target: 'pino-pretty',
+            options: {
+                colorize: true,
+                translateTime: 'HH:MM:ss.l',
+                ignore: 'pid,hostname',
+                messageFormat: '{levelLabel} {msg} | [{time}]',
+                errorLikeObjectKeys: ['err', 'error'],
+            },
+        });
+    }
+
+    if (process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING && consolidatedLogFile) {
+        transports.push({
+            target: 'pino/file',
+            options: {
+                destination: consolidatedLogFile,
+                mkdir: true,
+                messageFormat: '{levelLabel} {msg} | [server time: {time}]',
+            },
+        });
+    }
+
+    return transports;
 }
 
 // Main server logger with local time formatting
+const transportTargets = createLoggingTransportTargets();
 export const logger = pino({
     level: 'debug',
-    transport: {
-        targets: transports,
-    },
+    ...(transportTargets.length
+        ? {
+            transport: {
+                targets: transportTargets,
+            },
+        }
+        : {}),
     formatters: {
         log: (object: any) => {
             // Add localTime to every log entry
