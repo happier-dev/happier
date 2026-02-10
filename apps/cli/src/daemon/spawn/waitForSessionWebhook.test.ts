@@ -62,4 +62,38 @@ describe('waitForSessionWebhook', () => {
     expect(pidToSpawnResultResolver.has(77)).toBe(false);
     expect(pidToSpawnWebhookTimeout.has(77)).toBe(false);
   });
+
+  it('allows late webhook within default timeout window', async () => {
+    vi.useFakeTimers();
+    const previous = process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS;
+    delete process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS;
+
+    try {
+      const pidToAwaiter = new Map<number, (session: any) => void>();
+      const pidToSpawnResultResolver = new Map<number, (result: any) => void>();
+      const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
+
+      const promise = waitForSessionWebhook({
+        pid: 88,
+        pidToAwaiter,
+        pidToSpawnResultResolver,
+        pidToSpawnWebhookTimeout,
+        timeoutErrorMessage: 'Session webhook timeout for PID 88',
+      });
+
+      vi.advanceTimersByTime(20_000);
+
+      const resolver = pidToAwaiter.get(88);
+      expect(typeof resolver).toBe('function');
+      resolver?.({ happySessionId: 'session-late' });
+
+      await expect(promise).resolves.toEqual({
+        type: 'success',
+        sessionId: 'session-late',
+      });
+    } finally {
+      if (previous === undefined) delete process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS;
+      else process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS = previous;
+    }
+  });
 });

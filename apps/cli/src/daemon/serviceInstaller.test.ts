@@ -17,23 +17,23 @@ describe('daemon service installer', () => {
         uid: 123,
         userHomeDir,
         happierHomeDir,
-        instanceId: 'official',
+        instanceId: 'cloud',
         nodePath: '/usr/bin/node',
         entryPath: '/opt/happier/dist/index.mjs',
         runCommands: false,
       });
 
-      expect(existsSync(join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.official.service'))).toBe(true);
+      expect(existsSync(join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.cloud.service'))).toBe(true);
 
       await uninstallDaemonService({
         platform: 'linux',
         uid: 123,
         userHomeDir,
-        instanceId: 'official',
+        instanceId: 'cloud',
         runCommands: false,
       });
 
-      expect(existsSync(join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.official.service'))).toBe(false);
+      expect(existsSync(join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.cloud.service'))).toBe(false);
     } finally {
       await rm(userHomeDir, { recursive: true, force: true });
     }
@@ -42,7 +42,7 @@ describe('daemon service installer', () => {
   it('installs and uninstalls a darwin LaunchAgent (no launchctl)', async () => {
     const userHomeDir = await mkdtemp(join(tmpdir(), 'happier-service-installer-home-'));
     const happierHomeDir = join(userHomeDir, '.happier');
-    const plistPath = join(userHomeDir, 'Library', 'LaunchAgents', 'com.happier.cli.daemon.official.plist');
+    const plistPath = join(userHomeDir, 'Library', 'LaunchAgents', 'com.happier.cli.daemon.cloud.plist');
 
     try {
       await installDaemonService({
@@ -50,7 +50,7 @@ describe('daemon service installer', () => {
         uid: 501,
         userHomeDir,
         happierHomeDir,
-        instanceId: 'official',
+        instanceId: 'cloud',
         nodePath: '/usr/bin/node',
         entryPath: '/opt/happier/dist/index.mjs',
         runCommands: false,
@@ -62,7 +62,7 @@ describe('daemon service installer', () => {
         platform: 'darwin',
         uid: 501,
         userHomeDir,
-        instanceId: 'official',
+        instanceId: 'cloud',
         runCommands: false,
       });
 

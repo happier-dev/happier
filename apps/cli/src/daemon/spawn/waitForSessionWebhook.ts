@@ -3,6 +3,9 @@ import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandler
 
 import type { TrackedSession } from '../types';
 
+const DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS = 30_000;
+const SESSION_WEBHOOK_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS';
+
 type WaitForSessionWebhookParams = {
   pid: number;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
@@ -14,10 +17,28 @@ type WaitForSessionWebhookParams = {
   onSuccess?: (session: TrackedSession) => void;
 };
 
+function resolveTimeoutMs(explicitTimeoutMs: number | undefined): number {
+  if (typeof explicitTimeoutMs === 'number' && explicitTimeoutMs > 0) {
+    return explicitTimeoutMs;
+  }
+
+  const rawEnvValue = String(process.env[SESSION_WEBHOOK_TIMEOUT_ENV_KEY] ?? '').trim();
+  if (!rawEnvValue) {
+    return DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS;
+  }
+
+  const parsed = Number.parseInt(rawEnvValue, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS;
+  }
+
+  return parsed;
+}
+
 export function waitForSessionWebhook(
   params: WaitForSessionWebhookParams,
 ): Promise<SpawnSessionResult> {
-  const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : 15_000;
+  const timeoutMs = resolveTimeoutMs(params.timeoutMs);
 
   return new Promise((resolve) => {
     const clearTrackedState = () => {

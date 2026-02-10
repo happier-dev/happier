@@ -10,7 +10,7 @@ import { applyDaemonServiceInstallPlan, applyDaemonServiceUninstallPlan } from '
 describe('daemon service apply', () => {
   it('writes planned install files with declared modes (without running commands)', async () => {
     const userHomeDir = await mkdtemp(join(tmpdir(), 'happier-service-home-'));
-    const unitPath = join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.official.service');
+    const unitPath = join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.cloud.service');
     const unitContent = [
       '[Unit]',
       'Description=Happier daemon',
@@ -42,7 +42,7 @@ describe('daemon service apply', () => {
 
   it('removes only planned uninstall files (without running commands)', async () => {
     const userHomeDir = await mkdtemp(join(tmpdir(), 'happier-service-home-'));
-    const removablePath = join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.official.service');
+    const removablePath = join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.cloud.service');
     const keepPath = join(userHomeDir, '.config', 'systemd', 'user', 'keep.service');
 
     try {
@@ -53,7 +53,7 @@ describe('daemon service apply', () => {
       const uninstallPlan: DaemonServiceUninstallPlan = {
         platform: 'linux',
         filesToRemove: [removablePath, join(userHomeDir, '.config', 'systemd', 'user', 'missing.service')],
-        commands: [{ cmd: 'systemctl', args: ['--user', 'disable', '--now', 'happier-daemon.official.service'] }],
+        commands: [{ cmd: 'systemctl', args: ['--user', 'disable', '--now', 'happier-daemon.cloud.service'] }],
       };
       await applyDaemonServiceUninstallPlan(uninstallPlan, { runCommands: false });
 

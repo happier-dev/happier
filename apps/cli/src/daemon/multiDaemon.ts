@@ -76,14 +76,24 @@ export type DaemonStatusEntry = Readonly<{
 
 export async function listDaemonStatusesForAllKnownServers(): Promise<DaemonStatusEntry[]> {
   const settings = await readSettings();
-  const servers = settings.servers ?? {};
+  const persistedServers = settings.servers ?? {};
+  const servers: Record<string, { name?: string; serverUrl?: string }> = { ...persistedServers };
+  const activeServerId = (configuration.activeServerId ?? '').toString().trim();
+  if (activeServerId && !servers[activeServerId]) {
+    servers[activeServerId] = {
+      name: 'Active Server (current scope)',
+      serverUrl: configuration.serverUrl,
+    };
+  }
   const serverIds = Object.keys(servers);
   const results: DaemonStatusEntry[] = [];
 
   for (const serverId of serverIds) {
     const profile = servers[serverId];
     const name = profile?.name ?? serverId;
-    const serverUrl = profile?.serverUrl ?? '';
+    const serverUrl =
+      (profile?.serverUrl ?? '').toString().trim() ||
+      (serverId === activeServerId ? (configuration.serverUrl ?? '').toString().trim() : '');
     const daemonStatePath = resolveDaemonStatePath(serverId);
     const state = await readDaemonStateFromPath(daemonStatePath);
     const running = state ? isPidAlive(state.pid) : false;

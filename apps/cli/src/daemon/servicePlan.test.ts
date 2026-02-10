@@ -14,7 +14,7 @@ describe('daemon service install plan', () => {
   it('plans a LaunchAgent install (darwin)', () => {
     const plan = planDaemonServiceInstall({
       platform: 'darwin',
-      instanceId: 'official',
+      instanceId: 'cloud',
       uid: 501,
       userHomeDir: '/Users/test',
       happierHomeDir: '/Users/test/.happier',
@@ -26,7 +26,7 @@ describe('daemon service install plan', () => {
     });
 
     expect(plan.files).toHaveLength(1);
-    expect(plan.files[0]?.path).toBe('/Users/test/Library/LaunchAgents/com.happier.cli.daemon.official.plist');
+    expect(plan.files[0]?.path).toBe('/Users/test/Library/LaunchAgents/com.happier.cli.daemon.cloud.plist');
     expect(plan.files[0]?.content).toContain('<string>/opt/homebrew/bin/node</string>');
     expect(plan.files[0]?.content).toContain('<string>/usr/local/lib/node_modules/@happier-dev/cli/dist/index.mjs</string>');
     expect(plan.files[0]?.content).toContain('<string>daemon</string>');
@@ -48,7 +48,7 @@ describe('daemon service install plan', () => {
   it('plans a systemd --user unit install (linux)', () => {
     const plan = planDaemonServiceInstall({
       platform: 'linux',
-      instanceId: 'official',
+      instanceId: 'cloud',
       userHomeDir: '/home/test',
       happierHomeDir: '/home/test/.happier',
       serverUrl: 'https://api.happier.dev',
@@ -59,7 +59,7 @@ describe('daemon service install plan', () => {
     });
 
     expect(plan.files).toHaveLength(1);
-    expect(plan.files[0]?.path).toBe('/home/test/.config/systemd/user/happier-daemon.official.service');
+    expect(plan.files[0]?.path).toBe('/home/test/.config/systemd/user/happier-daemon.cloud.service');
     expect(plan.files[0]?.content).toContain('ExecStart=/usr/bin/node /usr/lib/node_modules/@happier-dev/cli/dist/index.mjs daemon start-sync');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_HOME_DIR=/home/test/.happier');
     expect(plan.files[0]?.content).toContain('Environment=HAPPIER_SERVER_URL=https://api.happier.dev');
@@ -78,7 +78,7 @@ describe('daemon service install plan', () => {
   it('quotes ExecStart paths that contain spaces (linux)', () => {
     const plan = planDaemonServiceInstall({
       platform: 'linux',
-      instanceId: 'official',
+      instanceId: 'cloud',
       userHomeDir: '/home/test',
       happierHomeDir: '/home/test/.happier',
       serverUrl: 'https://api.happier.dev',

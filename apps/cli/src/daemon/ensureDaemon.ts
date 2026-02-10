@@ -33,6 +33,13 @@ export function shouldAutoStartDaemonAfterAuth(params: Readonly<{ env: NodeJS.Pr
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
 }
 
+export function applyDaemonAutostartEnvForInvocation(params: Readonly<{ args: string[]; env: NodeJS.ProcessEnv }>): void {
+  if (!shouldEnsureDaemonForInvocation({ args: params.args })) return;
+  const current = (params.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim();
+  if (current.length > 0) return;
+  params.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '1';
+}
+
 export async function ensureDaemonRunningForSessionCommand(): Promise<void> {
   if (!(await isDaemonRunningCurrentlyInstalledHappyVersion())) {
     logger.debug('Starting Happier background service...');

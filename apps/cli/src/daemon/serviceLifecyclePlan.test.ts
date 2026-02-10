@@ -21,15 +21,15 @@ describe('daemon service lifecycle planning', () => {
   });
 
   it.each([
-    ['stop', 'launchctl bootout gui/501/com.happier.cli.daemon.official'],
-    ['start', 'launchctl bootstrap gui/501 /Users/test/Library/LaunchAgents/com.happier.cli.daemon.official.plist'],
-    ['restart', 'launchctl kickstart -k gui/501/com.happier.cli.daemon.official'],
-    ['status', 'launchctl list com.happier.cli.daemon.official'],
+    ['stop', 'launchctl bootout gui/501/com.happier.cli.daemon.cloud'],
+    ['start', 'launchctl bootstrap gui/501 /Users/test/Library/LaunchAgents/com.happier.cli.daemon.cloud.plist'],
+    ['restart', 'launchctl kickstart -k gui/501/com.happier.cli.daemon.cloud'],
+    ['status', 'launchctl list com.happier.cli.daemon.cloud'],
   ] as const)('plans darwin %s command set', (action, expectedLine) => {
     const plan = planDaemonServiceLifecycle({
       platform: 'darwin',
       action,
-      instanceId: 'official',
+      instanceId: 'cloud',
       userHomeDir: '/Users/test',
       uid: 501,
     });
@@ -41,7 +41,7 @@ describe('daemon service lifecycle planning', () => {
     const plan = planDaemonServiceLifecycle({
       platform: 'darwin',
       action: 'start',
-      instanceId: 'official',
+      instanceId: 'cloud',
       userHomeDir: '/Users/test',
     });
     expect(plan.commands).toEqual([]);

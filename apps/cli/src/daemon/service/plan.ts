@@ -113,7 +113,7 @@ export function planDaemonServiceInstall(params: Readonly<{
     const commands: DaemonServicePlannedCommand[] = [];
     if (typeof uid === 'number' && uid > 0) {
       // Back-compat: if the legacy (non-instance) service is enabled, disable it so it won't auto-load on login.
-      if (instanceId === 'official') {
+      if (instanceId === 'cloud') {
         commands.push({ cmd: 'launchctl', args: ['bootout', `gui/${uid}/${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}`] });
         commands.push({ cmd: 'launchctl', args: ['disable', `gui/${uid}/${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}`] });
       }
@@ -149,7 +149,7 @@ export function planDaemonServiceInstall(params: Readonly<{
   const commands: DaemonServicePlannedCommand[] = [
     { cmd: 'systemctl', args: ['--user', 'daemon-reload'] },
   ];
-  if (instanceId === 'official') {
+  if (instanceId === 'cloud') {
     commands.push({ cmd: 'systemctl', args: ['--user', 'disable', '--now', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME] });
   }
   commands.push({ cmd: 'systemctl', args: ['--user', 'enable', '--now', unitName] });
@@ -178,7 +178,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
     if (typeof uid === 'number' && uid > 0) {
       commands.push({ cmd: 'launchctl', args: ['bootout', `gui/${uid}/${label}`] });
       commands.push({ cmd: 'launchctl', args: ['disable', `gui/${uid}/${label}`] });
-      if (instanceId === 'official') {
+      if (instanceId === 'cloud') {
         commands.push({ cmd: 'launchctl', args: ['bootout', `gui/${uid}/${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}`] });
         commands.push({ cmd: 'launchctl', args: ['disable', `gui/${uid}/${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}`] });
       }
@@ -186,7 +186,7 @@ export function planDaemonServiceUninstall(params: Readonly<{
 
     const filesToRemove = [
       plistPath,
-      ...(instanceId === 'official'
+      ...(instanceId === 'cloud'
         ? [join(params.userHomeDir, 'Library', 'LaunchAgents', `${LEGACY_DAEMON_SERVICE_LAUNCHD_LABEL}.plist`)]
         : []),
     ];
@@ -198,14 +198,14 @@ export function planDaemonServiceUninstall(params: Readonly<{
     platform: 'linux',
     filesToRemove: [
       unitPath,
-      ...(instanceId === 'official'
+      ...(instanceId === 'cloud'
         ? [join(params.userHomeDir, '.config', 'systemd', 'user', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME)]
         : []),
     ],
     commands: [
       { cmd: 'systemctl', args: ['--user', 'disable', '--now', unitName] },
       { cmd: 'systemctl', args: ['--user', 'stop', unitName] },
-      ...(instanceId === 'official'
+      ...(instanceId === 'cloud'
         ? [
             { cmd: 'systemctl', args: ['--user', 'disable', '--now', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME] },
             { cmd: 'systemctl', args: ['--user', 'stop', LEGACY_DAEMON_SERVICE_SYSTEMD_UNIT_NAME] },

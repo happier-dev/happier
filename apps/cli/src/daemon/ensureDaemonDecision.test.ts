@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldAutoStartDaemonAfterAuth, shouldEnsureDaemonForInvocation } from './ensureDaemon';
+import { applyDaemonAutostartEnvForInvocation, shouldAutoStartDaemonAfterAuth, shouldEnsureDaemonForInvocation } from './ensureDaemon';
 
 describe('shouldEnsureDaemonForInvocation', () => {
   it('returns true for agent subcommands that start sessions', () => {
@@ -39,5 +39,25 @@ describe('shouldAutoStartDaemonAfterAuth', () => {
     expect(shouldAutoStartDaemonAfterAuth({ env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '1' }, isDaemonProcess: false })).toBe(true);
     expect(shouldAutoStartDaemonAfterAuth({ env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '0' }, isDaemonProcess: false })).toBe(false);
     expect(shouldAutoStartDaemonAfterAuth({ env: { HAPPIER_SESSION_AUTOSTART_DAEMON: '1' }, isDaemonProcess: true })).toBe(false);
+  });
+});
+
+describe('applyDaemonAutostartEnvForInvocation', () => {
+  it('sets HAPPIER_SESSION_AUTOSTART_DAEMON=1 for session commands when unset', () => {
+    const env: NodeJS.ProcessEnv = {};
+    applyDaemonAutostartEnvForInvocation({ args: ['codex'], env });
+    expect(env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBe('1');
+  });
+
+  it('does not override an explicit HAPPIER_SESSION_AUTOSTART_DAEMON=0', () => {
+    const env: NodeJS.ProcessEnv = { HAPPIER_SESSION_AUTOSTART_DAEMON: '0' };
+    applyDaemonAutostartEnvForInvocation({ args: ['codex'], env });
+    expect(env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBe('0');
+  });
+
+  it('does not set HAPPIER_SESSION_AUTOSTART_DAEMON for non-session commands', () => {
+    const env: NodeJS.ProcessEnv = {};
+    applyDaemonAutostartEnvForInvocation({ args: ['doctor'], env });
+    expect(env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBeUndefined();
   });
 });

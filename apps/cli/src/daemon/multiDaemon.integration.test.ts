@@ -103,11 +103,11 @@ describe('multi-daemon helpers', () => {
       const settings = {
         schemaVersion: 5,
         onboardingCompleted: false,
-        activeServerId: 'official',
+        activeServerId: 'cloud',
         servers: {
-          official: {
-            id: 'official',
-            name: 'Official',
+          cloud: {
+            id: 'cloud',
+            name: 'Happier Cloud',
             serverUrl: 'https://api.happier.dev',
             webappUrl: 'https://app.happier.dev',
             createdAt: 0,
@@ -169,6 +169,86 @@ describe('multi-daemon helpers', () => {
     }
   });
 
+  it('includes env-scoped active server in --all status even when not persisted in settings', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-multi-daemon-active-env-'));
+    const prevHome = process.env.HAPPIER_HOME_DIR;
+    const prevActiveServerId = process.env.HAPPIER_ACTIVE_SERVER_ID;
+    const prevServerUrl = process.env.HAPPIER_SERVER_URL;
+    const prevWebappUrl = process.env.HAPPIER_WEBAPP_URL;
+    let pid: number | null = null;
+    try {
+      process.env.HAPPIER_HOME_DIR = home;
+      process.env.HAPPIER_ACTIVE_SERVER_ID = 'stack_qa-agent-4__id_default';
+      process.env.HAPPIER_SERVER_URL = 'http://127.0.0.1:3999';
+      process.env.HAPPIER_WEBAPP_URL = 'http://happier-qa-agent-4.localhost:8085';
+      reloadConfiguration();
+
+      const settings = {
+        schemaVersion: 5,
+        onboardingCompleted: false,
+        activeServerId: 'cloud',
+        servers: {
+          cloud: {
+            id: 'cloud',
+            name: 'Happier Cloud',
+            serverUrl: 'https://api.happier.dev',
+            webappUrl: 'https://app.happier.dev',
+            createdAt: 0,
+            updatedAt: 0,
+            lastUsedAt: 0,
+          },
+        },
+        machineIdByServerId: {},
+        machineIdConfirmedByServerByServerId: {},
+        lastChangesCursorByServerIdByAccountId: {},
+      };
+      await writeFile(join(home, 'settings.json'), JSON.stringify(settings, null, 2), 'utf-8');
+
+      pid = spawnSleepyProcess().pid;
+      const serverDir = join(home, 'servers', 'stack_qa-agent-4__id_default');
+      mkdirSync(serverDir, { recursive: true });
+      await writeFile(
+        join(serverDir, 'daemon.state.json'),
+        JSON.stringify(
+          {
+            pid,
+            httpPort: 47777,
+            startedAt: Date.now(),
+            startedWithCliVersion: '0.0.0-test',
+          },
+          null,
+          2,
+        ),
+        'utf-8',
+      );
+
+      const results = await listDaemonStatusesForAllKnownServers();
+      const active = results.find((r: { serverId: string }) => r.serverId === 'stack_qa-agent-4__id_default');
+      expect(active).toBeTruthy();
+      expect(active?.serverUrl).toBe('http://127.0.0.1:3999');
+      expect(active?.daemon.running).toBe(true);
+    } finally {
+      if (pid !== null) {
+        try {
+          process.kill(pid, 'SIGKILL');
+        } catch {
+          // already exited
+        }
+        await waitForExit(pid, 2000);
+      }
+      if (prevWebappUrl === undefined) delete process.env.HAPPIER_WEBAPP_URL;
+      else process.env.HAPPIER_WEBAPP_URL = prevWebappUrl;
+      if (prevServerUrl === undefined) delete process.env.HAPPIER_SERVER_URL;
+      else process.env.HAPPIER_SERVER_URL = prevServerUrl;
+      if (prevActiveServerId === undefined) delete process.env.HAPPIER_ACTIVE_SERVER_ID;
+      else process.env.HAPPIER_ACTIVE_SERVER_ID = prevActiveServerId;
+      if (prevHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+      else process.env.HAPPIER_HOME_DIR = prevHome;
+      reloadConfiguration();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('stops all running daemons best-effort via /stop and clears stale state', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-multi-daemon-stop-'));
     const prevHome = process.env.HAPPIER_HOME_DIR;
@@ -179,11 +259,11 @@ describe('multi-daemon helpers', () => {
       const settings = {
         schemaVersion: 5,
         onboardingCompleted: false,
-        activeServerId: 'official',
+        activeServerId: 'cloud',
         servers: {
-          official: {
-            id: 'official',
-            name: 'Official',
+          cloud: {
+            id: 'cloud',
+            name: 'Happier Cloud',
             serverUrl: 'https://api.happier.dev',
             webappUrl: 'https://app.happier.dev',
             createdAt: 0,
@@ -254,11 +334,11 @@ describe('multi-daemon helpers', () => {
       const settings = {
         schemaVersion: 5,
         onboardingCompleted: false,
-        activeServerId: 'official',
+        activeServerId: 'cloud',
         servers: {
-          official: {
-            id: 'official',
-            name: 'Official',
+          cloud: {
+            id: 'cloud',
+            name: 'Happier Cloud',
             serverUrl: 'https://api.happier.dev',
             webappUrl: 'https://app.happier.dev',
             createdAt: 0,

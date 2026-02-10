@@ -14,6 +14,7 @@ export function buildTmuxWindowEnv(
     'LC_CTYPE',
     'TERM',
     'TMPDIR',
+    'TSX_TSCONFIG_PATH',
     'USER',
     'LOGNAME',
   ] as const;
@@ -48,10 +49,10 @@ export function buildTmuxSpawnConfig(params: {
     ...(params.extraArgs ?? []),
   ];
 
-  const { runtime, argv } = buildHappyCliSubprocessInvocation(args);
+  const { runtime, argv, env } = buildHappyCliSubprocessInvocation(args);
   const commandTokens = [runtime, ...argv];
 
-  const tmuxEnv = buildTmuxWindowEnv(process.env, params.extraEnv);
+  const tmuxEnv = buildTmuxWindowEnv(process.env, { ...params.extraEnv, ...(env ?? {}) });
 
   const tmuxCommandEnv: Record<string, string> = { ...(params.tmuxCommandEnv ?? {}) };
   const tmuxTmpDir = tmuxCommandEnv.TMUX_TMPDIR;
