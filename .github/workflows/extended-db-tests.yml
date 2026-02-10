@@ -163,13 +163,13 @@ jobs:
       - name: Migrate (Postgres)
         env:
           DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
-        run: yarn -s workspace @happier-dev/server prisma migrate deploy
+        run: yarn --cwd apps/server -s prisma migrate deploy
 
       - name: Run db contract suite (Postgres)
         env:
           HAPPIER_DB_PROVIDER: postgres
           DATABASE_URL: postgresql://happier:happier@127.0.0.1:${{ job.services.postgres.ports[5432] }}/happier?sslmode=disable
-        run: yarn workspace @happier-dev/server test:db-contract
+        run: yarn --cwd apps/server test:db-contract
 
   db-contract-mysql:
     name: DB Contract (MySQL)
@@ -213,10 +213,10 @@ jobs:
       - name: Migrate (MySQL)
         env:
           DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
-        run: yarn -s workspace @happier-dev/server migrate:mysql:deploy
+        run: yarn --cwd apps/server -s migrate:mysql:deploy
 
       - name: Run db contract suite (MySQL)
         env:
           HAPPIER_DB_PROVIDER: mysql
           DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
-        run: yarn workspace @happier-dev/server test:db-contract
+        run: yarn --cwd apps/server test:db-contract

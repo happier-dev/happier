@@ -125,16 +125,8 @@ function getAppCurrentVersion(appDir) {
 }
 
 function resolveServerRunnerDir(repoRoot) {
-  // Prefer the canonical server runner package.
-  const candidates = [
-    path.join(repoRoot, 'packages', 'server'),
-    // Back-compat for older checkouts (kept as a fallback only).
-    path.join(repoRoot, 'packages', 'relay-server'),
-  ];
-
-  for (const dir of candidates) {
-    if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
-  }
+  const dir = path.join(repoRoot, 'packages', 'relay-server');
+  if (fs.existsSync(path.join(dir, 'package.json'))) return dir;
   return null;
 }
 
@@ -181,9 +173,9 @@ function resolveServerRunnerDir(repoRoot) {
 						      // "Server runner" is the user-facing installable that downloads/verifies the
 						      // correct server binary for the platform.
 						      serverRunnerDir = resolveServerRunnerDir(repoRoot);
-					      if (!serverRunnerDir) {
-						        fail(`Missing server runner package.json (expected packages/server/package.json).`);
-					      }
+			      if (!serverRunnerDir) {
+				        fail(`Missing server runner package.json (expected packages/relay-server/package.json).`);
+			      }
               const runnerRel = path.relative(repoRoot, serverRunnerDir);
 				      const runnerPkg = readJson(path.join(serverRunnerDir, 'package.json'));
 				      const runnerVersion = String(runnerPkg.version ?? '').trim();
@@ -210,9 +202,9 @@ function resolveServerRunnerDir(repoRoot) {
 						      if (!serverRunnerDir) {
 						        serverRunnerDir = resolveServerRunnerDir(repoRoot);
 						      }
-						      if (!serverRunnerDir) {
-						        fail(`Missing server runner package.json (expected packages/server/package.json).`);
-						      }
+							      if (!serverRunnerDir) {
+							        fail(`Missing server runner package.json (expected packages/relay-server/package.json).`);
+							      }
 						      updatePackageJsonVersion(serverRunnerDir, nextVersion);
 				    } else {
 				      updatePackageJsonVersion(dir, nextVersion);
