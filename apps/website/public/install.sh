@@ -8,6 +8,7 @@ BIN_DIR="${HAPPIER_BIN_DIR:-$HOME/.local/bin}"
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
 NONINTERACTIVE="${HAPPIER_NONINTERACTIVE:-0}"
 GITHUB_REPO="${HAPPIER_GITHUB_REPO:-happier-dev/happier}"
+GITHUB_TOKEN="${HAPPIER_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
 DEFAULT_MINISIGN_PUBKEY="$(cat <<'EOF'
 untrusted comment: minisign public key 91AE28177BF6E43C
 RWQ85PZ7FyiukYbL3qv/bKnwgbT68wLVzotapeMFIb8n+c7pBQ7U8W2t
@@ -230,7 +231,12 @@ fi
 
 API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
 echo "Fetching ${TAG} release metadata..."
-RELEASE_JSON="$(curl -fsSL "${API_URL}")"
+auth_headers=()
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  auth_headers+=("-H" "Authorization: Bearer ${GITHUB_TOKEN}")
+  auth_headers+=("-H" "X-GitHub-Api-Version: 2022-11-28")
+fi
+RELEASE_JSON="$(curl -fsSL "${auth_headers[@]}" "${API_URL}")"
 
 ASSET_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${ASSET_REGEX}")"
 CHECKSUMS_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${CHECKSUMS_REGEX}")"
