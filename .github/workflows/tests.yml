@@ -545,7 +545,28 @@ jobs:
           set -euo pipefail
           node scripts/release/sync-installers.mjs --check
 
+      # Bootstrap-friendly: this repo can be green before the first GitHub release exists.
+      # Once cli-stable is published, we enforce that the published installer can install it.
+      - name: Detect cli-stable release tag
+        id: cli_tag
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/cli-stable"
+          code="$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}" || true)"
+          if [ "${code}" = "200" ]; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          echo "Skipping installer smoke: cli-stable release tag not found (HTTP ${code})."
+
       - name: Run CLI installer from isolated temp location
+        if: steps.cli_tag.outputs.tag_exists == 'true'
         run: |
           set -euo pipefail
           export HOME="$(mktemp -d)"
@@ -574,7 +595,26 @@ jobs:
       - name: Verify published installers are synced
         run: node scripts/release/sync-installers.mjs --check
 
+      - name: Detect cli-stable release tag
+        id: cli_tag
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/cli-stable"
+          code="$(curl -sS -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${api}" || true)"
+          if [ "${code}" = "200" ]; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          echo "Skipping installer smoke: cli-stable release tag not found (HTTP ${code})."
+
       - name: Run CLI installer from isolated temp location
+        if: steps.cli_tag.outputs.tag_exists == 'true'
         run: |
           set -euo pipefail
           export HOME="$(mktemp -d)"
@@ -604,8 +644,30 @@ jobs:
         shell: pwsh
         run: node scripts/release/sync-installers.mjs --check
 
+      - name: Detect cli-stable release tag
+        id: cli_tag
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Continue"
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/cli-stable"
+          $headers = @{
+            Authorization = "Bearer $env:GITHUB_TOKEN"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          $exists = "false"
+          try {
+            Invoke-RestMethod -Uri $api -Headers $headers | Out-Null
+            $exists = "true"
+          } catch {
+            Write-Host "Skipping installer smoke: cli-stable release tag not found."
+          }
+          "tag_exists=$exists" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
       - name: Run CLI installer from isolated temp location
         shell: pwsh
+        if: steps.cli_tag.outputs.tag_exists == 'true'
         run: |
           $ErrorActionPreference = "Stop"
           $env:HAPPIER_NONINTERACTIVE = "1"
