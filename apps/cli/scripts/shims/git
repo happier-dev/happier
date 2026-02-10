@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+# Prefer a real git binary over the small /usr/bin/git wrapper on macOS.
+#
+# The /usr/bin/git binary is a thin wrapper that relies on xcrun and may fail
+# in sandboxed environments (e.g. "couldn't create cache file /tmp/xcrun_db-*").
+#
+# This shim is placed early in PATH for the Codex ACP runtime.
+
+set -euo pipefail
+
+candidates=(
+  "/Library/Developer/CommandLineTools/usr/bin/git"
+  "/Applications/Xcode.app/Contents/Developer/usr/bin/git"
+  "/usr/bin/git"
+)
+
+for git_bin in "${candidates[@]}"; do
+  if [[ -x "$git_bin" ]]; then
+    exec "$git_bin" "$@"
+  fi
+done
+
+echo "happier: git shim could not find a usable git binary" >&2
+exit 127
+
