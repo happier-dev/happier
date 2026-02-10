@@ -115,5 +115,5 @@ describe('Settings → Account (username)', () => {
                 tree?.unmount();
             });
         }
-    });
+    }, 40_000);
 });

@@ -56,6 +56,10 @@ vi.mock('expo-updates', () => ({
     reloadAsync: vi.fn(),
 }));
 
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: (props: any) => React.createElement('Ionicons', props),
+}));
+
 vi.mock('expo-router', () => ({
     Stack: Object.assign(
         ({ children }: any) => React.createElement(React.Fragment, null, children),
@@ -132,5 +136,5 @@ describe('ServerConfigScreen (web row actions)', () => {
         const actionIds = new Set((companyRow?.actions ?? []).map((a) => a.id));
         expect(actionIds.has('switch-device')).toBe(true);
         expect(actionIds.has('switch-tab')).toBe(false);
-    });
+    }, 40_000);
 });

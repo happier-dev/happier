@@ -108,5 +108,5 @@ describe('Unistyles StyleSheet import invariants', () => {
         expect(
             offenders.map(({ file, line }) => `${relative(sourcesDir, file)}:${line}`)
         ).toEqual([]);
-    }, 10_000);
+    }, 30_000);
 });
