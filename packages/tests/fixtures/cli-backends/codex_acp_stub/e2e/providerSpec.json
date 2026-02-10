@@ -1,0 +1,56 @@
+{
+  "v": 1,
+  "id": "codex_acp_stub",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_CODEX_ACP_STUB",
+  "protocol": "acp",
+  "traceProvider": "codex",
+  "requiredBinaries": ["node"],
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceRequireTaskCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": false,
+      "permissionSurfaceOutsideWorkspaceYolo": false
+    }
+  },
+  "cli": {
+    "subcommand": "codex",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev",
+      "HAPPIER_EXPERIMENTAL_CODEX_ACP": "1",
+      "HAPPIER_E2E_ACP_TRACE_MARKERS": "1",
+      "HAPPIER_CODEX_ACP_NPX_MODE": "never",
+      "HAPPIER_CODEX_ACP_BIN": "../../packages/tests/fixtures/acp-stub-provider/acp-stub-provider.mjs"
+    }
+  }
+}
+

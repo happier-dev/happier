@@ -1,0 +1,8 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": ["acp_stub_usage_update", "acp_in_flight_steer"],
+    "extended": []
+  }
+}
+

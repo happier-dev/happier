@@ -221,6 +221,12 @@ export function sanitizeDaemonEnvForSpawn(env: NodeJS.ProcessEnv): NodeJS.Proces
   delete sanitized.TMUX;
   delete sanitized.TMUX_PANE;
   delete sanitized.TMUX_TMPDIR;
+  // Daemons should never inherit per-session attach/trace env. If they do, they can consume and
+  // delete attach files intended for the actual session runner process, breaking provider e2e.
+  delete sanitized.HAPPIER_SESSION_ATTACH_FILE;
+  delete sanitized.HAPPY_SESSION_ATTACH_FILE;
+  delete sanitized.HAPPIER_STACK_TOOL_TRACE_FILE;
+  delete sanitized.HAPPY_STACK_TOOL_TRACE_FILE;
   return sanitized;
 }
 
