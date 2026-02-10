@@ -7,6 +7,9 @@ export const View = 'View' as any;
 export const Text = 'Text' as any;
 export const Image = 'Image' as any;
 export const ScrollView = 'ScrollView' as any;
+export const KeyboardAvoidingView = 'KeyboardAvoidingView' as any;
+export const FlatList = 'FlatList' as any;
+export const SectionList = 'SectionList' as any;
 export const Pressable = 'Pressable' as any;
 export const TouchableOpacity = 'TouchableOpacity' as any;
 export const TextInput = 'TextInput' as any;
@@ -19,6 +22,12 @@ export const Dimensions = {
     get: () => ({ width: 800, height: 600, scale: 2, fontScale: 1 }),
 } as const;
 
+export const PixelRatio = {
+    get: () => 2,
+    getFontScale: () => 1,
+    roundToNearestPixel: (value: number) => value,
+} as const;
+
 export const Platform = { OS: 'node', select: (x: any) => x?.default ?? x?.web ?? x?.ios ?? x?.android } as const;
 export const AppState = { addEventListener: () => ({ remove: () => {} }) } as const;
 export const InteractionManager = { runAfterInteractions: (fn: () => void) => fn() } as const;
@@ -29,6 +38,8 @@ export const registerCallableModule = () => {};
 export function useWindowDimensions() {
     return { width: 800, height: 600 };
 }
+
+export const findNodeHandle = () => null;
 
 export function processColor(value: any) {
     return value as any;

@@ -71,6 +71,19 @@ vi.mock('@expo/vector-icons', () => ({
     MaterialIcons: 'MaterialIcons',
 }));
 
+// `@shopify/react-native-skia` requires native bindings; stub it for node/Vitest.
+vi.mock('@shopify/react-native-skia', () => ({
+    Canvas: 'Canvas',
+    Rect: 'Rect',
+    Group: 'Group',
+    Path: 'Path',
+    RoundedRect: 'RoundedRect',
+    DiffRect: 'DiffRect',
+    Skia: {},
+    rect: () => ({}),
+    rrect: () => ({}),
+}));
+
 // `expo-constants` reads React Native `NativeModules` and isn't safe to import in Vitest.
 vi.mock('expo-constants', () => ({
     default: {
@@ -106,6 +119,7 @@ vi.mock('react-native-unistyles', () => {
     const theme = {
         colors: {
             surface: '#fff',
+            surfaceSelected: '#f2f2f2',
             divider: '#ddd',
             text: '#000',
             textSecondary: '#666',
@@ -114,6 +128,8 @@ vi.mock('react-native-unistyles', () => {
             button: { primary: { tint: '#000' } },
             shadow: { color: '#000', opacity: 0.2 },
             switch: { track: { inactive: '#ccc', active: '#4ade80' }, thumb: { active: '#fff' } },
+            input: { background: '#eee' },
+            status: { error: '#ff3b30' },
             box: { error: { background: '#fee', border: '#f99', text: '#900' } },
             permissionButton: {
                 allow: { background: '#0f0' },
