@@ -6,5 +6,6 @@ export async function handleQwenCliCommand(context: CommandContext): Promise<voi
   await runBackendSessionCliCommand({
     context,
     loadRun: async () => (await import('@/backends/qwen/runQwen')).runQwen,
+    agentIdForAccountSettings: 'qwen',
   });
 }

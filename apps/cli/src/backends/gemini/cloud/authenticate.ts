@@ -6,12 +6,9 @@
  */
 
 import { randomBytes } from 'crypto';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { generatePkceCodes } from '@/cloud/pkce';
 import { startLoopbackOauthPkceFlow } from '@/cloud/loopbackOauthPkce';
-
-const execAsync = promisify(exec);
+import { openBrowser } from '@/ui/openBrowser';
 
 export interface GeminiAuthTokens {
     access_token: string;
@@ -118,20 +115,7 @@ export async function authenticateGemini(): Promise<GeminiAuthTokens> {
                 console.log('\n📋 Opening browser for authentication...');
                 console.log('If browser doesn\'t open, visit this URL:');
                 console.log(`\n${authorizationUrl}\n`);
-
-                const platform = process.platform;
-                const openCommand =
-                    platform === 'darwin'
-                        ? 'open'
-                        : platform === 'win32'
-                            ? 'start'
-                            : 'xdg-open';
-
-                try {
-                    await execAsync(`${openCommand} "${authorizationUrl}"`);
-                } catch {
-                    console.log('⚠️  Could not open browser automatically');
-                }
+                await openBrowser(authorizationUrl);
             },
             exchangeCodeForTokens: ({ code, verifier, port }) =>
                 exchangeCodeForTokens(code, verifier, port),

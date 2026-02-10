@@ -33,7 +33,7 @@ export interface GeminiBackendOptions extends AgentFactoryOptions {
   /** API key for Gemini (defaults to GEMINI_API_KEY or GOOGLE_API_KEY env var) */
   apiKey?: string;
   
-  /** OAuth token from Happier cloud (via 'happier connect gemini') - highest priority */
+  /** Vendor token from Happier cloud (via 'happier connect gemini') - highest priority */
   cloudToken?: string;
   
   /** Current user email (from OAuth id_token) - used to match per-account project ID */
@@ -86,11 +86,18 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   // Try reading from local Gemini CLI config (token and model)
   const localConfig = readGeminiLocalConfig();
   
-  let apiKey = options.cloudToken       // 1. Happier cloud token (passed from runGemini)
-    || localConfig.token                // 2. Local config (~/.gemini/)
-    || process.env[GEMINI_API_KEY_ENV]  // 3. GEMINI_API_KEY env var
-    || process.env[GOOGLE_API_KEY_ENV]  // 4. GOOGLE_API_KEY env var
-    || options.apiKey;                  // 5. Explicit apiKey option (fallback)
+  // Important: OAuth access tokens (from oauth_creds.json or gcloud ADC) are NOT Gemini API keys.
+  // We only treat explicit API key sources as GEMINI_API_KEY inputs. OAuth-based auth is handled
+  // via ACP authenticate() using oauth-personal.
+  const explicitApiKey =
+    options.cloudToken ||
+    options.apiKey ||
+    process.env[GEMINI_API_KEY_ENV] ||
+    process.env[GOOGLE_API_KEY_ENV] ||
+    localConfig.token ||
+    null;
+
+  const apiKey = explicitApiKey;
 
   if (!apiKey) {
     logger.warn(`[Gemini] No API key found. Run 'happier connect gemini' to authenticate via Google OAuth, or set ${GEMINI_API_KEY_ENV} environment variable.`);
@@ -117,6 +124,11 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
   // Model is passed via GEMINI_MODEL env var (gemini CLI reads it automatically)
   // We don't use --model flag to avoid potential stdout conflicts with ACP protocol
   const geminiArgs = ['--experimental-acp', '--approval-mode', approvalMode, ...(sandboxEnabled ? ['--sandbox'] : [])];
+
+  // Gemini CLI ACP requires an explicit authenticate() call before session/new, otherwise it can
+  // return "Authentication required" even when local OAuth credentials are present.
+  // If an API key is available, prefer the API key auth method; otherwise default to oauth-personal.
+  const authMethodId = apiKey ? 'gemini-api-key' : 'oauth-personal';
 
   // Get Google Cloud Project from local config (for Workspace accounts)
   // Only use if: no email stored (global), or email matches current user
@@ -156,6 +168,7 @@ export function createGeminiBackend(options: GeminiBackendOptions): GeminiBacken
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
     transportHandler: geminiTransport,
+    authMethodId,
     // Check if prompt instructs the agent to change title (for auto-approval of change_title tool)
     hasChangeTitleInstruction: (prompt: string) => {
       const lower = prompt.toLowerCase();

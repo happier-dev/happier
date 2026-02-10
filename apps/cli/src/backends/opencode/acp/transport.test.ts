@@ -20,6 +20,13 @@ describe('OpenCodeTransport determineToolName', () => {
       expected: 'change_title',
     },
     {
+      label: 'maps change_title task alias to Task when ACP metadata indicates a task tool',
+      toolName: 'change_title',
+      toolCallId: 'tool-2',
+      input: { _acp: { title: 'task' }, prompt: 'Respond with EXACTLY: SUBTASK_OK' },
+      expected: 'Task',
+    },
+    {
       label: 'uses toolCallId pattern mapping (case-insensitive)',
       toolName: 'other',
       toolCallId: 'BASH-123',

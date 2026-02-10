@@ -6,6 +6,7 @@ import type {
   TransportHandler,
 } from '@/agent/transport/TransportHandler';
 import { filterJsonObjectOrArrayLine } from '@/agent/transport/utils/jsonStdoutFilter';
+import type { AgentMessage } from '@/agent/core';
 import {
   findToolNameFromId,
   findToolNameFromInputFields,
@@ -69,7 +70,39 @@ export class KimiTransport implements TransportHandler {
     return filterJsonObjectOrArrayLine(line);
   }
 
-  handleStderr(_text: string, _context: StderrContext): StderrResult {
+  handleStderr(text: string, context: StderrContext): StderrResult {
+    const trimmed = text.trim();
+    if (!trimmed) return { message: null, suppress: true };
+
+    // Rate limits are useful diagnostics and may be retried by the agent.
+    if (trimmed.includes('429') || trimmed.toLowerCase().includes('rate limit') || trimmed.includes('RATE_LIMIT')) {
+      return { message: null, suppress: false };
+    }
+
+    // Authentication errors - surface an actionable message.
+    if (
+      trimmed.includes('401') ||
+      trimmed.toLowerCase().includes('invalid_authentication') ||
+      trimmed.toLowerCase().includes('unauthorized') ||
+      trimmed.toLowerCase().includes('api key')
+    ) {
+      const message: AgentMessage = {
+        type: 'status',
+        status: 'error',
+        detail: 'Authentication error. Run `kimi login` to re-authenticate, then retry.',
+      };
+      return { message };
+    }
+
+    // During investigations, keep stderr available for debugging but avoid turning it into noisy UI errors.
+    if (context.hasActiveInvestigation) {
+      const looksLikeFailure =
+        trimmed.toLowerCase().includes('timeout') ||
+        trimmed.toLowerCase().includes('failed') ||
+        trimmed.toLowerCase().includes('error');
+      if (looksLikeFailure) return { message: null, suppress: false };
+    }
+
     return { message: null };
   }
 

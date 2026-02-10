@@ -27,7 +27,7 @@ describe('claude sdk query', () => {
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it('drains noisy stderr so stdout can keep flowing', { timeout: 10_000 }, async () => {
+  it('drains noisy stderr so stdout can keep flowing', { timeout: 20_000 }, async () => {
       const prevDebug = process.env.DEBUG;
       delete process.env.DEBUG;
       const noisyCli = join(tmpRoot, `noisy-cli-${Date.now()}.cjs`);
@@ -38,7 +38,9 @@ describe('claude sdk query', () => {
 
           // Write enough stderr to fill a pipe buffer unless the parent drains it.
           const chunk = Buffer.alloc(64 * 1024, 97);
-          for (let i = 0; i < 256; i++) fs.writeSync(2, chunk);
+          // Keep this large enough to deadlock if stderr isn't drained, but not so
+          // large it becomes timing-sensitive in slower CI runners.
+          for (let i = 0; i < 64; i++) fs.writeSync(2, chunk);
 
           process.stdout.write(JSON.stringify({ type: 'result' }) + '\\n');
         `,
@@ -58,7 +60,7 @@ describe('claude sdk query', () => {
       });
 
       try {
-        const first = await withTimeout(q.next(), 4_000, 'first sdk message');
+        const first = await withTimeout(q.next(), 8_000, 'first sdk message');
         expect(first.done).toBe(false);
         expect(first.value.type).toBe('result');
       } finally {

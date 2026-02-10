@@ -1,6 +1,7 @@
 import { AGENTS_CORE } from '@happier-dev/agents';
 
 import { checklists } from './cli/checklists';
+import { geminiDaemonSpawnHooks } from '@/backends/gemini/daemon/spawnHooks';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
@@ -10,7 +11,7 @@ export const agent = {
   getCliCapabilityOverride: async () => (await import('@/backends/gemini/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/gemini/cli/detect')).cliDetect,
   getCloudConnectTarget: async () => (await import('@/backends/gemini/cloud/connect')).geminiCloudConnect,
-  getDaemonSpawnHooks: async () => (await import('@/backends/gemini/daemon/spawnHooks')).geminiDaemonSpawnHooks,
+  getDaemonSpawnHooks: async () => geminiDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.gemini.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createGeminiBackend } = await import('@/backends/gemini/acp/backend');
@@ -18,4 +19,3 @@ export const agent = {
   },
   checklists,
 } satisfies AgentCatalogEntry;
-

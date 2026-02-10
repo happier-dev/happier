@@ -8,7 +8,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { execSync } from 'child_process';
 import { logger } from '@/ui/logger';
 import { GEMINI_MODEL_ENV, DEFAULT_GEMINI_MODEL } from '../constants';
 
@@ -49,9 +48,10 @@ export function readGeminiLocalConfig(): GeminiLocalConfig {
         const config = JSON.parse(readFileSync(configPath, 'utf-8'));
         
         // Try different possible token field names
-        // oauth_creds.json has access_token field
+        // Note: oauth_creds.json contains OAuth access_token, which is NOT a Gemini API key.
+        // We intentionally do not treat it as an API key for GEMINI_API_KEY.
         if (!token) {
-          const foundToken = config.access_token || config.token || config.apiKey || config.GEMINI_API_KEY;
+          const foundToken = config.token || config.apiKey || config.GEMINI_API_KEY;
           if (foundToken && typeof foundToken === 'string') {
             token = foundToken;
             logger.debug(`[Gemini] Found token in ${configPath}`);
@@ -82,25 +82,6 @@ export function readGeminiLocalConfig(): GeminiLocalConfig {
       } catch (error) {
         logger.debug(`[Gemini] Failed to read config from ${configPath}:`, error);
       }
-    }
-  }
-
-  // Try gcloud Application Default Credentials
-  // Gemini CLI might use gcloud auth application-default print-access-token
-  if (!token) {
-    try {
-      const gcloudToken = execSync('gcloud auth application-default print-access-token', { 
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 5000
-      }).trim();
-      if (gcloudToken && gcloudToken.length > 0) {
-        token = gcloudToken;
-        logger.debug('[Gemini] Found token via gcloud Application Default Credentials');
-      }
-    } catch (error) {
-      // gcloud not available or not authenticated - this is fine
-      logger.debug('[Gemini] gcloud Application Default Credentials not available');
     }
   }
 
@@ -264,4 +245,3 @@ export function getGeminiModelSource(
     return 'default';
   }
 }
-

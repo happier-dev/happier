@@ -7,5 +7,6 @@ export async function handleOpenCodeCliCommand(context: CommandContext): Promise
     context,
     loadRun: async () => (await import('@/backends/opencode/runOpenCode')).runOpenCode,
     agentIdForDeprecatedAliases: 'opencode',
+    agentIdForAccountSettings: 'opencode',
   });
 }

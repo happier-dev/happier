@@ -21,10 +21,10 @@
     "v": 1,
     "acp": {
       "toolPermissionPromptsByMode": {
-        "default": true,
+        "default": false,
         "safe-yolo": false,
         "read-only": false,
-        "yolo": true,
+        "yolo": false,
         "plan": false
       },
       "outsideWorkspaceWriteAllowedByMode": {

@@ -49,4 +49,17 @@ describe('Kimi ACP backend permissions', () => {
       expect(agentFilePath).toBeNull();
     }
   });
+
+  it('does not attach MCP servers (Kimi ACP does not support MCP servers)', () => {
+    const backend = createKimiBackend({
+      cwd: '/tmp',
+      env: {},
+      permissionMode: 'default',
+      mcpServers: {
+        happier: { command: '/bin/echo', args: ['noop'] },
+      },
+    }) as unknown as { options: { mcpServers?: Record<string, unknown> } };
+
+    expect(backend.options.mcpServers).toBeUndefined();
+  });
 });

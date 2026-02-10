@@ -1,5 +1,6 @@
 import { AGENTS_CORE } from '@happier-dev/agents';
 
+import { claudeDaemonSpawnHooks } from '@/backends/claude/daemon/spawnHooks';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
@@ -9,7 +10,7 @@ export const agent = {
   getCliCapabilityOverride: async () => (await import('@/backends/claude/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/claude/cli/detect')).cliDetect,
   getCloudConnectTarget: async () => (await import('@/backends/claude/cloud/connect')).claudeCloudConnect,
-  getDaemonSpawnHooks: async () => (await import('@/backends/claude/daemon/spawnHooks')).claudeDaemonSpawnHooks,
+  getDaemonSpawnHooks: async () => claudeDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.claude.resume.vendorResume,
   getHeadlessTmuxArgvTransform: async () => (await import('@/terminal/tmux/headlessTmuxArgs')).ensureRemoteStartingModeArgs,
 } satisfies AgentCatalogEntry;

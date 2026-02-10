@@ -6,5 +6,6 @@ export async function handleAuggieCliCommand(context: CommandContext): Promise<v
   await runBackendSessionCliCommand({
     context,
     loadRun: async () => (await import('@/backends/auggie/runAuggie')).runAuggie,
+    agentIdForAccountSettings: 'auggie',
   });
 }

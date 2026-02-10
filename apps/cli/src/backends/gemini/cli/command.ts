@@ -139,5 +139,6 @@ export async function handleGeminiCliCommand(context: CommandContext): Promise<v
   await runBackendSessionCliCommand({
     context,
     loadRun: async () => (await import('@/backends/gemini/runGemini')).runGemini,
+    agentIdForAccountSettings: 'gemini',
   });
 }

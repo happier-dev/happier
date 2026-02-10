@@ -36,6 +36,8 @@ import {
 export const GEMINI_TIMEOUTS = {
   /** Gemini CLI can be slow on first start (downloading models, etc.) */
   init: 120_000,
+  /** Gemini CLI ACP can swallow early stdin during startup; delay initialize to avoid poisoning stdio. */
+  initDelay: 3_000,
   /** Standard tool call timeout */
   toolCall: 120_000,
   /** Investigation tools (codebase_investigator) can run for a long time */
@@ -138,6 +140,13 @@ export class GeminiTransport implements TransportHandler {
    */
   getInitTimeout(): number {
     return GEMINI_TIMEOUTS.init;
+  }
+
+  /**
+   * Gemini CLI ACP: delay initialize to avoid early-stdin poisoning.
+   */
+  getInitDelayMs(): number {
+    return GEMINI_TIMEOUTS.initDelay;
   }
 
   /**

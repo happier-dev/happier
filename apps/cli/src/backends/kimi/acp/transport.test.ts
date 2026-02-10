@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_TOOL_NAME_CONTEXT } from '@/testkit/backends/transport';
+import { asStatusErrorMessage, DEFAULT_TOOL_NAME_CONTEXT } from '@/testkit/backends/transport';
 import { KimiTransport } from './transport';
 
 describe('KimiTransport determineToolName', () => {
@@ -71,5 +71,37 @@ describe('KimiTransport extractToolNameFromId', () => {
   ])('extracts "$expected" from "$toolCallId"', ({ toolCallId, expected }) => {
     const transport = new KimiTransport();
     expect(transport.extractToolNameFromId(toolCallId)).toBe(expected);
+  });
+});
+
+describe('KimiTransport handleStderr', () => {
+  it('suppresses empty stderr lines with explicit suppress flag', () => {
+    const transport = new KimiTransport();
+    expect(transport.handleStderr('   ', { activeToolCalls: new Set(), hasActiveInvestigation: false })).toEqual({
+      message: null,
+      suppress: true,
+    });
+  });
+
+  it('emits actionable auth errors', () => {
+    const transport = new KimiTransport();
+    const result = transport.handleStderr('Error code: 401 - invalid_authentication_error', {
+      activeToolCalls: new Set(),
+      hasActiveInvestigation: false,
+    });
+    expect(asStatusErrorMessage(result.message).detail).toContain('Authentication');
+  });
+
+  it('keeps rate-limit diagnostics in stderr without turning them into UI errors', () => {
+    const transport = new KimiTransport();
+    expect(
+      transport.handleStderr('Error code: 429 - RATE_LIMIT', { activeToolCalls: new Set(), hasActiveInvestigation: false }),
+    ).toEqual({ message: null, suppress: false });
+  });
+
+  it('returns null message for unrelated stderr content', () => {
+    const transport = new KimiTransport();
+    expect(transport.handleStderr('non-actionable warning', { activeToolCalls: new Set(), hasActiveInvestigation: false }))
+      .toEqual({ message: null });
   });
 });

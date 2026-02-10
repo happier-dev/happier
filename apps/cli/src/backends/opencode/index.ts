@@ -1,6 +1,7 @@
 import { AGENTS_CORE } from '@happier-dev/agents';
 
 import { checklists } from './cli/checklists';
+import { opencodeDaemonSpawnHooks } from '@/backends/opencode/daemon/spawnHooks';
 import type { AgentCatalogEntry } from '../types';
 
 export const agent = {
@@ -9,7 +10,7 @@ export const agent = {
   getCliCommandHandler: async () => (await import('@/backends/opencode/cli/command')).handleOpenCodeCliCommand,
   getCliCapabilityOverride: async () => (await import('@/backends/opencode/cli/capability')).cliCapability,
   getCliDetect: async () => (await import('@/backends/opencode/cli/detect')).cliDetect,
-  getDaemonSpawnHooks: async () => (await import('@/backends/opencode/daemon/spawnHooks')).opencodeDaemonSpawnHooks,
+  getDaemonSpawnHooks: async () => opencodeDaemonSpawnHooks,
   vendorResumeSupport: AGENTS_CORE.opencode.resume.vendorResume,
   getAcpBackendFactory: async () => {
     const { createOpenCodeBackend } = await import('@/backends/opencode/acp/backend');
@@ -17,4 +18,3 @@ export const agent = {
   },
   checklists,
 } satisfies AgentCatalogEntry;
-

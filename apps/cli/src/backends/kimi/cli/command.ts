@@ -6,5 +6,6 @@ export async function handleKimiCliCommand(context: CommandContext): Promise<voi
   await runBackendSessionCliCommand({
     context,
     loadRun: async () => (await import('@/backends/kimi/runKimi')).runKimi,
+    agentIdForAccountSettings: 'kimi',
   });
 }

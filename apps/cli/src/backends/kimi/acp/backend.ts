@@ -67,7 +67,8 @@ export function createKimiBackend(options: KimiBackendOptions): AgentBackend {
       NODE_ENV: 'production',
       DEBUG: '',
     },
-    mcpServers: options.mcpServers,
+    // Kimi ACP rejects MCP server startup; avoid attaching servers.
+    mcpServers: undefined,
     permissionHandler: options.permissionHandler,
     transportHandler: kimiTransport,
   };

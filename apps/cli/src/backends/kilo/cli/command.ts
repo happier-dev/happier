@@ -7,5 +7,6 @@ export async function handleKiloCliCommand(context: CommandContext): Promise<voi
   await runBackendSessionCliCommand({
     context,
     loadRun: async () => runKilo,
+    agentIdForAccountSettings: 'kilo',
   });
 }

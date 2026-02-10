@@ -1,11 +1,10 @@
 {
   "v": 1,
   "tiers": {
-    "smoke": ["execute_trace_ok", "execute_error_exit_2"],
+    "smoke": ["execute_trace_ok", "execute_error_exit_2", "acp_probe_capabilities"],
     "extended": [
       "acp_resume_load_session",
       "acp_resume_fresh_session_imports_history",
-      "acp_probe_capabilities",
       "acp_set_model_dynamic",
       "read_known_file",
       "search_known_token",

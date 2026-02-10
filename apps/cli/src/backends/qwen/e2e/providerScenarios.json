@@ -1,9 +1,8 @@
 {
   "v": 1,
   "tiers": {
-    "smoke": [],
+    "smoke": ["acp_probe_capabilities"],
     "extended": [
-      "acp_probe_capabilities",
       "acp_probe_models",
       "abort_turn_then_continue"
     ]
