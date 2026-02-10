@@ -151,6 +151,9 @@ export async function runPermissionModePromptLoop(opts: {
           } catch {
             opts.messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
             opts.session.sendAgentMessage(opts.agentMessageType, { type: 'message', message: 'Resume failed; starting a new session.' });
+            // Some runtimes may be partially initialized after a failed resume attempt; reset
+            // before falling back to a fresh start to avoid "already initialized" errors.
+            await opts.runtime.reset();
             await opts.runtime.startOrLoad({});
           }
         } else {

@@ -174,10 +174,21 @@ describe('runPermissionModePromptLoop', () => {
     const session = createTestSession();
     const queue = createModeQueue();
     const runtime = createRuntime();
+    // Simulate a backend that becomes "initialized" during a resume attempt, then fails.
+    // A subsequent fresh start must reset the runtime before retrying, otherwise it would
+    // error like "ACP backend is already initialized".
+    let initialized = false;
     runtime.startOrLoad = vi.fn(async (opts: { resumeId?: string }) => {
       if (opts.resumeId) {
+        initialized = true;
         throw new Error('resume failed');
       }
+      if (initialized) {
+        throw new Error('ACP backend is already initialized');
+      }
+    });
+    runtime.reset = vi.fn(async () => {
+      initialized = false;
     });
     const messageBuffer = new MessageBuffer();
     const permissionHandler = {
@@ -213,6 +224,7 @@ describe('runPermissionModePromptLoop', () => {
     });
 
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(1, { resumeId: 'resume-id' });
+    expect(runtime.reset).toHaveBeenCalledTimes(1);
     expect(runtime.startOrLoad).toHaveBeenNthCalledWith(2, {});
     expect(session.sendAgentMessage).toHaveBeenCalledWith('qwen', { type: 'message', message: 'Resume failed; starting a new session.' });
     expect(runtime.sendPrompt).toHaveBeenCalledWith('hello');
