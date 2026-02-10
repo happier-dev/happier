@@ -567,6 +567,8 @@ jobs:
 
       - name: Run CLI installer from isolated temp location
         if: steps.cli_tag.outputs.tag_exists == 'true'
+        env:
+          HAPPIER_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           export HOME="$(mktemp -d)"
@@ -615,6 +617,8 @@ jobs:
 
       - name: Run CLI installer from isolated temp location
         if: steps.cli_tag.outputs.tag_exists == 'true'
+        env:
+          HAPPIER_GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           export HOME="$(mktemp -d)"
@@ -668,6 +672,8 @@ jobs:
       - name: Run CLI installer from isolated temp location
         shell: pwsh
         if: steps.cli_tag.outputs.tag_exists == 'true'
+        env:
+          HAPPIER_GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
           $env:HAPPIER_NONINTERACTIVE = "1"

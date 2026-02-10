@@ -59,6 +59,11 @@ on:
         required: true
         default: ui,server,website,docs
         type: string
+      force_deploy:
+        description: "Deploy — Force promote + deploy for enabled targets even if no relevant changes are detected (useful after infra failures)"
+        required: true
+        default: false
+        type: boolean
       ui_expo_action:
         description: "Deploy — UI Expo action (none|ota|native|native_submit) for the selected environment"
         required: true
@@ -577,6 +582,7 @@ jobs:
         env:
           ENVIRONMENT: ${{ inputs.environment }}
           SOURCE_REF: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
+          FORCE_DEPLOY: ${{ inputs.force_deploy }}
           DEPLOY_UI: ${{ contains(format(',{0},', inputs.deploy_targets), ',ui,') }}
           DEPLOY_SERVER: ${{ contains(format(',{0},', inputs.deploy_targets), ',server,') }}
           DEPLOY_WEBSITE: ${{ contains(format(',{0},', inputs.deploy_targets), ',website,') }}
@@ -585,6 +591,7 @@ jobs:
           set -euo pipefail
 
           env_name="${ENVIRONMENT}"
+          force_deploy="${FORCE_DEPLOY}"
 
           source_ref="${SOURCE_REF}"
           source_sha="$(git rev-parse HEAD)"
@@ -608,11 +615,16 @@ jobs:
             local deploy_sha=""
             deploy_sha="$(git rev-parse "origin/${deploy_ref}" 2>/dev/null || true)"
             if [ -z "${deploy_sha:-}" ]; then
-              printf -v "${key}_needed" '%s' "false"
+              local needed=false
+              if [ "${enabled}" = "true" ] && [ "${force_deploy}" = "true" ]; then
+                needed=true
+              fi
+              printf -v "${key}_needed" '%s' "${needed}"
               printf -v "${key}_commits" '%s' "0"
               printf -v "${key}_relevant_changes" '%s' "false"
-              echo "${key}_needed=false" >> "$GITHUB_OUTPUT"
+              echo "${key}_needed=${needed}" >> "$GITHUB_OUTPUT"
               echo "${key}_commits=0" >> "$GITHUB_OUTPUT"
+              echo "${key}_relevant_changes=false" >> "$GITHUB_OUTPUT"
               return 0
             fi
 
@@ -645,7 +657,9 @@ jobs:
             fi
 
             local needed=false
-            if [ "${enabled}" = "true" ] && [ "${commits}" != "0" ] && [ "${changed}" = "true" ]; then
+            if [ "${enabled}" = "true" ] && [ "${force_deploy}" = "true" ]; then
+              needed=true
+            elif [ "${enabled}" = "true" ] && [ "${commits}" != "0" ] && [ "${changed}" = "true" ]; then
               needed=true
             fi
 
@@ -794,6 +808,7 @@ jobs:
     secrets: inherit
     with:
       environment: ${{ inputs.environment }}
+      force_deploy: ${{ inputs.force_deploy }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       bump: none
@@ -814,6 +829,7 @@ jobs:
     secrets: inherit
     with:
       environment: ${{ inputs.environment }}
+      force_deploy: ${{ inputs.force_deploy }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       bump: none
@@ -826,6 +842,7 @@ jobs:
     secrets: inherit
     with:
       environment: ${{ inputs.environment }}
+      force_deploy: ${{ inputs.force_deploy }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       bump: none
@@ -838,6 +855,7 @@ jobs:
     secrets: inherit
     with:
       environment: ${{ inputs.environment }}
+      force_deploy: ${{ inputs.force_deploy }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       run_build: true

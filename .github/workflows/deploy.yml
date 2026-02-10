@@ -4,6 +4,20 @@ on:
   push:
     branches:
       - "deploy/**"
+  workflow_call:
+    inputs:
+      environment:
+        description: "Target — Environment (used for Environment-scoped vars/secrets)"
+        required: true
+        type: string
+      component:
+        description: "Target — Component to deploy (triggers the matching webhook list)"
+        required: true
+        type: string
+      confirm:
+        description: "Confirm — Choose the exact deploy action (mobile-friendly)"
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       environment:
@@ -47,8 +61,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref_name, 'deploy/production/') || startsWith(github.ref_name, 'deploy/preview/')
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (startsWith(github.ref_name, 'deploy/production/') && 'production' || 'preview') }}
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || startsWith(github.ref_name, 'deploy/production/') || startsWith(github.ref_name, 'deploy/preview/')
+    environment: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.environment || (startsWith(github.ref_name, 'deploy/production/') && 'production' || 'preview') }}
     steps:
       - name: Enforce trusted refs for manual dispatch
         run: |
@@ -75,7 +89,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] || [ "$EVENT_NAME" = "workflow_call" ]; then
             env_name="$INPUT_ENV"
             component="$INPUT_COMPONENT"
             expected="deploy ${env_name} ${component}"
@@ -159,13 +173,13 @@ jobs:
           # If we call it directly from CI, we need to include a minimal push payload
           # and headers so it can extract the branch and validate "Branch Not Match".
           BRANCH_NAME="${REF_NAME:-}"
-          if [ -z "${BRANCH_NAME:-}" ] || [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
+          if [ -z "${BRANCH_NAME:-}" ] || [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] || [ "${GITHUB_EVENT_NAME:-}" = "workflow_call" ]; then
             BRANCH_NAME="deploy/${ENVIRONMENT}/${COMPONENT}"
           fi
           REF="refs/heads/${BRANCH_NAME}"
           AFTER_SHA="${SHA}"
-          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
-            echo "Resolving deploy branch SHA for workflow_dispatch..."
+          if [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ] || [ "${GITHUB_EVENT_NAME:-}" = "workflow_call" ]; then
+            echo "Resolving deploy branch SHA for ${GITHUB_EVENT_NAME:-}..."
             AFTER_SHA="$(gh api "repos/${REPOSITORY}/git/ref/heads/${BRANCH_NAME}" --jq '.object.sha')"
           fi
           echo "Dokploy webhook target: ref=${REF} after=${AFTER_SHA}"

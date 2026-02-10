@@ -10,6 +10,11 @@ on:
         options:
           - preview
           - production
+      force_deploy:
+        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        required: true
+        default: false
+        type: boolean
       run_build:
         description: "Checks — Run apps/website build before promoting"
         required: true
@@ -41,6 +46,11 @@ on:
         description: "Target — Environment (deploy branch)"
         required: true
         type: string
+      force_deploy:
+        description: "Deploy — Force deploy webhook trigger even if deploy branch is already up to date"
+        required: false
+        default: false
+        type: boolean
       run_build:
         description: "Checks — Run apps/website build before promoting"
         required: false
@@ -73,6 +83,8 @@ jobs:
   promote:
     runs-on: ubuntu-latest
     environment: release-shared
+    outputs:
+      deploy_dispatch_needed: ${{ steps.dispatch_needed.outputs.needed }}
     steps:
       - name: Resolve source ref
         id: resolve
@@ -231,6 +243,25 @@ jobs:
           src="${{ steps.resolve.outputs.ref }}"
           git push origin "HEAD:refs/heads/$src"
 
+      - name: Determine whether to dispatch deploy (force_deploy)
+        id: dispatch_needed
+        env:
+          FORCE_DEPLOY: ${{ inputs.force_deploy }}
+          DEPLOY_REF: deploy/${{ inputs.environment }}/website
+        run: |
+          set -euo pipefail
+          if [ "${FORCE_DEPLOY}" != "true" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          local_sha="$(git rev-parse HEAD)"
+          remote_sha="$(git ls-remote --heads origin "${DEPLOY_REF}" | awk '{print $1}')"
+          if [ -n "${remote_sha:-}" ] && [ "${remote_sha}" = "${local_sha}" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Promote source ref to deploy branch
         env:
           DEPLOY_REF: deploy/${{ inputs.environment }}/website
@@ -242,3 +273,13 @@ jobs:
           else
             git push origin HEAD:"$DEPLOY_REF"
           fi
+
+  deploy_dispatch:
+    if: needs.promote.outputs.deploy_dispatch_needed == 'true'
+    needs: [promote]
+    uses: ./.github/workflows/deploy.yml
+    secrets: inherit
+    with:
+      environment: ${{ inputs.environment }}
+      component: website
+      confirm: deploy ${{ inputs.environment }} website
