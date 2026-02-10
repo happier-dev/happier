@@ -36,7 +36,7 @@ describe('configuration env url fallback', () => {
     }
   });
 
-  it('keeps the official default webappUrl when HAPPIER_SERVER_URL matches the official default and webapp is unset', async () => {
+  it('keeps the cloud default webappUrl when HAPPIER_SERVER_URL matches the cloud default and webapp is unset', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-'));
     tempDirs.push(homeDir);
     process.env.HAPPIER_HOME_DIR = homeDir;
@@ -133,7 +133,7 @@ describe('configuration env url fallback', () => {
     }
   });
 
-  it('falls back to official when persisted activeServerId is path-unsafe', async () => {
+  it('falls back to cloud when persisted activeServerId is path-unsafe', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-config-unsafe-id-'));
     tempDirs.push(homeDir);
     const settingsFile = join(homeDir, 'settings.json');
@@ -149,8 +149,8 @@ describe('configuration env url fallback', () => {
               serverUrl: 'https://selfhost.example.test/api',
               webappUrl: 'https://selfhost.example.test',
             },
-            official: {
-              id: 'official',
+            cloud: {
+              id: 'cloud',
               serverUrl: 'https://api.happier.dev',
               webappUrl: 'https://app.happier.dev',
             },
@@ -168,8 +168,8 @@ describe('configuration env url fallback', () => {
 
     const configMod = await import('./configuration');
     configMod.reloadConfiguration();
-    expect(configMod.configuration.activeServerId).toBe('official');
-    expect(configMod.configuration.activeServerDir).toBe(join(homeDir, 'servers', 'official'));
+    expect(configMod.configuration.activeServerId).toBe('cloud');
+    expect(configMod.configuration.activeServerDir).toBe(join(homeDir, 'servers', 'cloud'));
   });
 
   it('uses HAPPIER_ACTIVE_SERVER_ID override for active server scope without changing URL selection', async () => {

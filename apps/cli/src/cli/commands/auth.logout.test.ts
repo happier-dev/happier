@@ -28,12 +28,12 @@ describe('happier auth logout', () => {
       delete process.env.HAPPIER_SERVER_URL;
       delete process.env.HAPPIER_WEBAPP_URL;
 
-      mkdirSync(join(home, 'servers', 'official'), { recursive: true });
+      mkdirSync(join(home, 'servers', 'cloud'), { recursive: true });
       mkdirSync(join(home, 'servers', 'company'), { recursive: true });
 
       await writeFile(
-        join(home, 'servers', 'official', 'access.key'),
-        JSON.stringify({ token: 'tok_official', secret: Buffer.from('x').toString('base64') }, null, 2),
+        join(home, 'servers', 'cloud', 'access.key'),
+        JSON.stringify({ token: 'tok_cloud', secret: Buffer.from('x').toString('base64') }, null, 2),
         'utf-8',
       );
       await writeFile(
@@ -45,11 +45,11 @@ describe('happier auth logout', () => {
       const settings = {
         schemaVersion: 5,
         onboardingCompleted: false,
-        activeServerId: 'official',
+        activeServerId: 'cloud',
         servers: {
-          official: {
-            id: 'official',
-            name: 'Official',
+          cloud: {
+            id: 'cloud',
+            name: 'Happier Cloud',
             serverUrl: 'https://api.happier.dev',
             webappUrl: 'https://app.happier.dev',
             createdAt: 0,
@@ -66,22 +66,22 @@ describe('happier auth logout', () => {
             lastUsedAt: 0,
           },
         },
-        machineIdByServerId: { official: 'mid_official', company: 'mid_company' },
-        machineIdConfirmedByServerByServerId: { official: true, company: true },
-        lastChangesCursorByServerIdByAccountId: { official: { a: 1 }, company: { a: 2 } },
+        machineIdByServerId: { cloud: 'mid_cloud', company: 'mid_company' },
+        machineIdConfirmedByServerByServerId: { cloud: true, company: true },
+        lastChangesCursorByServerIdByAccountId: { cloud: { a: 1 }, company: { a: 2 } },
       };
       await writeFile(join(home, 'settings.json'), JSON.stringify(settings, null, 2), 'utf-8');
 
       reloadConfiguration();
       await handleAuthCommand(['logout']);
 
-      expect(existsSync(join(home, 'servers', 'official', 'access.key'))).toBe(false);
+      expect(existsSync(join(home, 'servers', 'cloud', 'access.key'))).toBe(false);
       expect(existsSync(join(home, 'servers', 'company', 'access.key'))).toBe(true);
 
       const next = await readSettings();
-      expect(next.machineIdByServerId?.official).toBeUndefined();
+      expect(next.machineIdByServerId?.cloud).toBeUndefined();
       expect(next.machineIdByServerId?.company).toBe('mid_company');
-      expect(next.lastChangesCursorByServerIdByAccountId?.official).toBeUndefined();
+      expect(next.lastChangesCursorByServerIdByAccountId?.cloud).toBeUndefined();
       expect(next.lastChangesCursorByServerIdByAccountId?.company?.a).toBe(2);
 
       // Company credentials file content is preserved.

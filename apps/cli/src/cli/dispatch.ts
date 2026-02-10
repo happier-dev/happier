@@ -4,7 +4,7 @@ import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFla
 import { commandRegistry } from '@/cli/commandRegistry';
 import { AGENTS } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
-import { shouldEnsureDaemonForInvocation } from '@/daemon/ensureDaemon';
+import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation } from '@/daemon/ensureDaemon';
 import { applyEphemeralServerSelectionFromPrefixArgs } from '@/server/serverSelection';
 
 export async function dispatchCli(params: Readonly<{
@@ -30,9 +30,7 @@ export async function dispatchCli(params: Readonly<{
   // Check if first argument is a subcommand
   const subcommand = args[0];
 
-  if (shouldEnsureDaemonForInvocation({ args })) {
-    process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '1';
-  }
+  applyDaemonAutostartEnvForInvocation({ args, env: process.env });
 
   // Headless tmux launcher (CLI flow)
   if (args.includes('--tmux')) {

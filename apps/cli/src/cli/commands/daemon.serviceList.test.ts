@@ -29,11 +29,11 @@ describe('happier daemon service list', () => {
       const settings = {
         schemaVersion: 5,
         onboardingCompleted: false,
-        activeServerId: 'official',
+        activeServerId: 'cloud',
         servers: {
-          official: {
-            id: 'official',
-            name: 'Official',
+          cloud: {
+            id: 'cloud',
+            name: 'Happier Cloud',
             serverUrl: 'https://api.happier.dev',
             webappUrl: 'https://app.happier.dev',
             createdAt: 0,
@@ -79,4 +79,3 @@ describe('happier daemon service list', () => {
     }
   });
 });
-

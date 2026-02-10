@@ -72,7 +72,7 @@ class Configuration {
     this.serverUrl = resolved.serverUrl
     this.publicServerUrl = (envPublicServerUrl || resolved.serverUrl).replace(/\/+$/, '')
     this.webappUrl = resolved.webappUrl
-    this.activeServerId = sanitizeServerIdForFilesystem(resolved.activeServerId, 'official')
+    this.activeServerId = sanitizeServerIdForFilesystem(resolved.activeServerId, 'cloud')
 
     this.activeServerDir = join(this.serversDir, this.activeServerId)
     this.legacyPrivateKeyFile = join(this.happyHomeDir, 'access.key')
@@ -217,7 +217,7 @@ function resolveServerSelection(params: Readonly<{
   const DEFAULT_SERVER_URL = 'https://api.happier.dev';
   const DEFAULT_WEBAPP_URL = 'https://app.happier.dev';
   const resolveActiveServerId = (fallbackId: string): string =>
-    sanitizeServerIdForFilesystem(params.envActiveServerId ?? fallbackId, 'official');
+    sanitizeServerIdForFilesystem(params.envActiveServerId ?? fallbackId, 'cloud');
 
   // If env vars are set, treat them as an explicit (non-persisted) override for this invocation.
   if (params.envServerUrl) {
@@ -257,7 +257,7 @@ function resolveServerSelection(params: Readonly<{
   }
 
   return {
-    activeServerId: resolveActiveServerId('official'),
+    activeServerId: resolveActiveServerId('cloud'),
     serverUrl: DEFAULT_SERVER_URL,
     webappUrl: DEFAULT_WEBAPP_URL,
   };

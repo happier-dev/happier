@@ -40,6 +40,10 @@ vi.mock('@/daemon/controlClient', async (importOriginal) => {
 
 describe('happier daemon start output', () => {
   it('prints server url, active server id, and account subject', async () => {
+    // Defensive: other test files may enable fake timers and forget to restore them.
+    // This command uses real setTimeout polling when the daemon isn't immediately detected.
+    vi.useRealTimers();
+
     const prevEnv = { ...process.env };
     const tmp = await mkdtemp(join(tmpdir(), 'happier-daemon-start-'));
 
@@ -89,5 +93,5 @@ describe('happier daemon start output', () => {
       process.env = prevEnv;
       await rm(tmp, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });

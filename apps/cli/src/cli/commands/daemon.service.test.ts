@@ -52,7 +52,7 @@ describe('happier daemon service', () => {
       process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = 'linux';
       process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR = tmp;
       process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = join(tmp, '.happier');
-      process.env.HAPPIER_DAEMON_SERVICE_INSTANCE_ID = 'official';
+      process.env.HAPPIER_DAEMON_SERVICE_INSTANCE_ID = 'cloud';
 
       const stdout = await captureStdout(async () => {
         await handleDaemonCliCommand({
@@ -64,7 +64,7 @@ describe('happier daemon service', () => {
 
       const parsed = JSON.parse(stdout.trim()) as { ok: boolean; paths?: { unitPath?: string } };
       expect(parsed.ok).toBe(true);
-      expect(parsed.paths?.unitPath).toBe(join(tmp, '.config', 'systemd', 'user', 'happier-daemon.official.service'));
+      expect(parsed.paths?.unitPath).toBe(join(tmp, '.config', 'systemd', 'user', 'happier-daemon.cloud.service'));
     } finally {
       if (prevPlatform === undefined) delete process.env.HAPPIER_DAEMON_SERVICE_PLATFORM;
       else process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = prevPlatform;
@@ -90,9 +90,9 @@ describe('happier daemon service', () => {
       process.env.HAPPIER_DAEMON_SERVICE_PLATFORM = 'linux';
       process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR = tmp;
       process.env.HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR = join(tmp, '.happier');
-      process.env.HAPPIER_DAEMON_SERVICE_INSTANCE_ID = 'official';
+      process.env.HAPPIER_DAEMON_SERVICE_INSTANCE_ID = 'cloud';
 
-      const unitPath = join(tmp, '.config', 'systemd', 'user', 'happier-daemon.official.service');
+      const unitPath = join(tmp, '.config', 'systemd', 'user', 'happier-daemon.cloud.service');
 
       const stdout = await captureStdout(async () => {
         await handleDaemonCliCommand({
