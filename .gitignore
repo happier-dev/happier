@@ -71,3 +71,4 @@ notes/
 .project/qa/evidence-snapshots/
 .project/qa/locks/
 .project/qa/score-history/
+/output
