@@ -14,6 +14,56 @@ import {
   shouldReturnNullForGetOrCreateSessionError,
 } from './client/offlineErrors';
 
+export class MachineIdConflictError extends Error {
+  readonly machineId: string;
+  constructor(machineId: string) {
+    super(`Machine id conflict: ${machineId} is already registered to a different account on this server`);
+    this.name = 'MachineIdConflictError';
+    this.machineId = machineId;
+  }
+}
+
+export function isMachineIdConflictError(error: unknown): error is MachineIdConflictError {
+  // Avoid relying on `instanceof`: bundlers / test runners may load multiple module instances.
+  if (!error || typeof error !== 'object') return false;
+  const maybe = error as any;
+  return maybe.name === 'MachineIdConflictError' && typeof maybe.machineId === 'string' && maybe.machineId.length > 0;
+}
+
+function redactUrlForLog(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const value = raw.trim();
+  if (!value) return undefined;
+  try {
+    const parsed = new URL(value);
+    parsed.search = '';
+    parsed.hash = '';
+    return parsed.toString();
+  } catch {
+    // Best-effort: strip query/hash to avoid leaking secrets in URLs.
+    return value.split('?')[0].split('#')[0];
+  }
+}
+
+function serializeAxiosErrorForLog(error: unknown): Record<string, unknown> {
+  if (axios.isAxiosError(error)) {
+    return {
+      name: error.name,
+      message: error.message,
+      code: (error as any)?.code,
+      status: error.response?.status,
+      method: typeof error.config?.method === 'string' ? error.config.method.toUpperCase() : undefined,
+      url: redactUrlForLog(error.config?.url),
+    };
+  }
+
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+
+  return { message: String(error) };
+}
+
 export class ApiClient {
 
   static async create(credential: Credentials) {
@@ -71,7 +121,8 @@ export class ApiClient {
       }
       return session;
     } catch (error) {
-      logger.debug('[API] [ERROR] Failed to get or create session:', error);
+      // Never log raw Axios errors: they can contain bearer tokens or vendor keys.
+      logger.debug('[API] [ERROR] Failed to get or create session:', serializeAxiosErrorForLog(error));
 
       if (shouldReturnNullForGetOrCreateSessionError(error, { url: `${configuration.serverUrl}/v1/sessions` })) {
         return null;
@@ -138,6 +189,14 @@ export class ApiClient {
       };
       return machine;
     } catch (error) {
+      if (
+        axios.isAxiosError(error)
+        && error.response?.status === 409
+        && (error.response.data as any)?.error === 'machine_id_conflict'
+      ) {
+        throw new MachineIdConflictError(opts.machineId);
+      }
+
       if (shouldReturnMinimalMachineForGetOrCreateMachineError(error, { url: `${configuration.serverUrl}/v1/machines` })) {
         return createMinimalMachine();
       }
@@ -185,7 +244,8 @@ export class ApiClient {
 
       logger.debug(`[API] Vendor token for ${vendor} registered successfully`);
     } catch (error) {
-      logger.debug(`[API] [ERROR] Failed to register vendor token:`, error);
+      // Never log raw Axios errors: they can contain bearer tokens or vendor keys.
+      logger.debug(`[API] [ERROR] Failed to register vendor token:`, serializeAxiosErrorForLog(error));
       throw new Error(`Failed to register vendor token: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -268,7 +328,8 @@ export class ApiClient {
         logger.debug(`[API] No vendor token found for ${vendor}`);
         return null;
       }
-      logger.debug(`[API] [ERROR] Failed to get vendor token:`, error);
+      // Never log raw Axios errors: they can contain bearer tokens or vendor keys.
+      logger.debug(`[API] [ERROR] Failed to get vendor token:`, serializeAxiosErrorForLog(error));
       return null;
     }
   }

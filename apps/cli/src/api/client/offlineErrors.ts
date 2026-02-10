@@ -1,5 +1,4 @@
 import axios from 'axios';
-import chalk from 'chalk';
 
 import { connectionState, isNetworkError } from '@/api/offline/serverConnectionErrors';
 
@@ -66,20 +65,11 @@ export function shouldReturnMinimalMachineForGetOrCreateMachineError(
     return true;
   }
 
-  // Handle 403/409 - server rejected request due to authorization conflict
-  // This is NOT "server unreachable" - server responded, so don't use connectionState
   if (axios.isAxiosError(error) && error.response?.status) {
     const status = error.response.status;
 
-    if (status === 403 || status === 409) {
-      // Re-auth conflict: machine registered to old account, re-association not allowed
-      console.log(chalk.yellow(`⚠️  Machine registration rejected by the server with status ${status}`));
-      console.log(chalk.yellow(`   → This machine ID is already registered to another account on the server`));
-      console.log(chalk.yellow(`   → This usually happens after re-authenticating with a different account`));
-      console.log(chalk.yellow(`   → Run 'happier doctor clean' to reset local state and generate a new machine ID`));
-      console.log(chalk.yellow(`   → Open a GitHub issue if this problem persists`));
-      return true;
-    }
+    // Never treat a machine-id conflict as an offline/transient condition.
+    if (status === 409) return false;
 
     // Handle 5xx - server error, use offline mode with auto-reconnect
     if (status >= 500) {

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ApiClient } from './api';
 import axios from 'axios';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
+import { logger } from '@/ui/logger';
 
 // Use vi.hoisted to ensure mock functions are available when vi.mock factory runs
 const { mockPost, mockIsAxiosError } = vi.hoisted(() => ({
@@ -82,6 +83,46 @@ describe('Api server error handling', () => {
     });
 
     describe('getOrCreateSession', () => {
+        it('should not log bearer tokens or vendor keys when axios errors occur', async () => {
+            connectionState.reset();
+            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+            const leakedBearer = 'Bearer very-secret';
+            const leakedVendorKey = 'sk-test-123';
+            const leakedUrl = 'https://api.example.com/v1/sessions?token=sekret';
+
+            mockPost.mockRejectedValue({
+                message: 'boom',
+                config: {
+                    url: leakedUrl,
+                    method: 'post',
+                    headers: { Authorization: leakedBearer },
+                    data: { apiKey: leakedVendorKey }
+                },
+                response: { status: 500 }
+            });
+
+            const result = await api.getOrCreateSession({
+                tag: 'test-tag',
+                metadata: testMetadata,
+                state: null
+            });
+
+            expect(result).toBeNull();
+
+            const debugMock = (logger as any).debug as any;
+            const call = debugMock.mock.calls.find((c: any[]) =>
+                typeof c?.[0] === 'string' && c[0].includes('Failed to get or create session')
+            );
+            expect(call).toBeTruthy();
+            const serialized = JSON.stringify(call);
+            expect(serialized).not.toContain(leakedBearer);
+            expect(serialized).not.toContain(leakedVendorKey);
+            expect(serialized).not.toContain('token=sekret');
+
+            consoleSpy.mockRestore();
+        });
+
         it('should return null when Happy server is unreachable (ECONNREFUSED)', async () => {
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -288,6 +329,28 @@ describe('Api server error handling', () => {
             expect(consoleSpy).toHaveBeenCalledWith(
                 expect.stringContaining('server unreachable')
             );
+
+            consoleSpy.mockRestore();
+        });
+
+        it('should throw on 409 machine id conflict (do not enter offline mode)', async () => {
+            connectionState.reset();
+            const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+            mockPost.mockRejectedValue({
+                response: { status: 409, data: { error: 'machine_id_conflict' } },
+                isAxiosError: true,
+            });
+
+            await expect(
+                api.getOrCreateMachine({
+                    machineId: 'test-machine',
+                    metadata: testMachineMetadata,
+                }),
+            ).rejects.toThrow(/machine/i);
+
+            expect(connectionState.isOffline()).toBe(false);
+            expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('server unreachable'));
 
             consoleSpy.mockRestore();
         });

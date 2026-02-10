@@ -152,13 +152,18 @@ export class ApiMachineClient {
             // Update daemon state to running
             // We need to override previous state because the daemon (this process)
             // has restarted with new PID & port
-            this.updateDaemonState((state) => ({
+            void this.updateDaemonState((state) => ({
                 ...state,
                 status: 'running',
                 pid: process.pid,
                 httpPort: this.machine.daemonState?.httpPort,
                 startedAt: Date.now()
-            }));
+            })).catch((error) => {
+                // Best-effort: avoid unhandled rejections on transient socket/ACK failures.
+                logger.warn('[API MACHINE] Failed to update daemon state on connect', {
+                    message: error instanceof Error ? error.message : String(error),
+                });
+            });
 
 
             // Register all handlers

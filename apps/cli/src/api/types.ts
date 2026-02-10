@@ -483,6 +483,7 @@ export type AgentState = {
   controlledByUser?: boolean | null | undefined
   capabilities?: {
     askUserQuestionAnswersInPermission?: boolean | null | undefined
+    inFlightSteer?: boolean | null | undefined
   } | null | undefined
   requests?: {
     [id: string]: {
