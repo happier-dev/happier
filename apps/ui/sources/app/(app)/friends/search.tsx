@@ -21,6 +21,7 @@ export default function SearchFriendsScreen() {
     const { credentials } = useAuth();
     const [searchQuery, setSearchQuery] = useState('');
     const [processingUserId, setProcessingUserId] = useState<string | null>(null);
+    const [profileOverrides, setProfileOverrides] = useState<Record<string, UserProfile>>({});
     
     if (!enabled) return null;
 
@@ -43,6 +44,7 @@ export default function SearchFriendsScreen() {
             const updatedProfile = await sendFriendRequest(credentials, user.id);
 
             if (updatedProfile) {
+                setProfileOverrides((prev) => ({ ...prev, [updatedProfile.id]: updatedProfile }));
                 trackFriendsConnect();
                 await Modal.alert(t('common.success'), t('friends.requestSent'));
             } else {
@@ -73,7 +75,7 @@ export default function SearchFriendsScreen() {
 
     const renderUserItem = ({ item }: { item: UserProfile }) => (
         <UserSearchResult
-            user={item}
+            user={profileOverrides[item.id] ?? item}
             onAddFriend={() => handleAddFriend(item)}
             isProcessing={processingUserId === item.id}
         />
