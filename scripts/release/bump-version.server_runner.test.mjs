@@ -17,14 +17,14 @@ async function readVersion(pkgPath) {
   return String(JSON.parse(raw).version);
 }
 
-test('bump-version bumps server app and relay-server versions in sync', async () => {
+test('bump-version bumps server app and server runner versions in sync', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happier-bump-version-server-'));
 
   const appPkg = await writePkgJson(join(dir, 'apps', 'server'), {
     name: '@happier-dev/server',
     version: '0.1.0',
   });
-  const runnerPkg = await writePkgJson(join(dir, 'packages', 'relay'), {
+  const runnerPkg = await writePkgJson(join(dir, 'packages', 'relay-server'), {
     name: '@happier-dev/relay-server',
     version: '0.1.0',
   });
@@ -41,14 +41,14 @@ test('bump-version bumps server app and relay-server versions in sync', async ()
   assert.equal(await readVersion(runnerPkg), '0.1.1');
 });
 
-test('bump-version rejects server version bumps when app and relay-server versions are out of sync', async () => {
+test('bump-version rejects server version bumps when app and server runner versions are out of sync', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happier-bump-version-server-mismatch-'));
 
   await writePkgJson(join(dir, 'apps', 'server'), {
     name: '@happier-dev/server',
     version: '0.1.0',
   });
-  await writePkgJson(join(dir, 'packages', 'relay'), {
+  await writePkgJson(join(dir, 'packages', 'relay-server'), {
     name: '@happier-dev/relay-server',
     version: '0.2.0',
   });
@@ -60,5 +60,5 @@ test('bump-version rejects server version bumps when app and relay-server versio
   });
 
   assert.notEqual(res.status, 0);
-  assert.match(String(res.stderr), /server app and relay-server versions must match/i);
+  assert.match(String(res.stderr), /server app and server runner versions must match/i);
 });

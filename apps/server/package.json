@@ -1,6 +1,6 @@
 {
   "name": "@happier-dev/server-app",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "repository": "https://github.com/happier-dev/happier.git",
   "author": "Leeroy Brun <leeroy.brun@gmail.com>",
   "license": "MIT",

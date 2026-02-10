@@ -500,8 +500,14 @@ jobs:
               fi
             fi
             if [ "${publish_server}" = "true" ] && [ "${bump_server}" = "none" ]; then
-              dev_version="$(node -p "require('./packages/server/package.json').version" 2>/dev/null || true)"
-              main_version="$(git show origin/main:packages/server/package.json 2>/dev/null | node -e 'const fs=require(\"node:fs\"); const raw=fs.readFileSync(0,\"utf8\"); try { process.stdout.write(String(JSON.parse(raw).version||\"\")) } catch { process.stdout.write(\"\") }' || true)"
+              runner_dev_pkg="./packages/relay-server/package.json"
+              if [ ! -f "${runner_dev_pkg}" ]; then
+                echo "Unable to resolve server runner package.json (expected ${runner_dev_pkg})." >&2
+                exit 1
+              fi
+
+              dev_version="$(node -p "require('${runner_dev_pkg}').version" 2>/dev/null || true)"
+              main_version="$(git show "origin/main:packages/relay-server/package.json" 2>/dev/null | node -e 'const fs=require(\"node:fs\"); const raw=fs.readFileSync(0,\"utf8\"); try { process.stdout.write(String(JSON.parse(raw).version||\"\")) } catch { process.stdout.write(\"\") }' || true)"
               if [ -n "${main_version:-}" ] && [ -n "${dev_version:-}" ] && [ "${dev_version}" = "${main_version}" ]; then
                 echo "Refusing production deploy_targets includes server without a version change (dev and main both at ${dev_version}). Set bump!=none." >&2
                 exit 1
@@ -654,7 +660,7 @@ jobs:
           }
 
           plan_one "deploy_ui" "${ui_ref}" "${DEPLOY_UI}" "apps/ui/*" "packages/agents/*" "packages/protocol/*"
-          plan_one "deploy_server" "${server_ref}" "${DEPLOY_SERVER}" "apps/server/*" "packages/server/*" "packages/agents/*" "packages/protocol/*"
+          plan_one "deploy_server" "${server_ref}" "${DEPLOY_SERVER}" "apps/server/*" "packages/relay-server/*" "packages/agents/*" "packages/protocol/*"
           plan_one "deploy_website" "${website_ref}" "${DEPLOY_WEBSITE}" "apps/website/*" "scripts/release/installers/*" "scripts/release/sync-installers.mjs"
           plan_one "deploy_docs" "${docs_ref}" "${DEPLOY_DOCS}" "apps/docs/*"
 
@@ -767,7 +773,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add apps/ui/package.json apps/ui/app.config.js apps/server/package.json apps/website/package.json apps/cli/package.json apps/stack/package.json packages/server/package.json || true
+          git add apps/ui/package.json apps/ui/app.config.js apps/server/package.json apps/website/package.json apps/cli/package.json apps/stack/package.json packages/relay-server/package.json || true
 
           # Also pick up any tauri version edits if present.
           if [ -d apps/ui/src-tauri ]; then

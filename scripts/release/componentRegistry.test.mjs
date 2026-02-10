@@ -12,7 +12,7 @@ test('classifyChangedPaths flags components by prefixes and explicit files', () 
     'apps/cli/src/index.ts',
     'apps/stack/package.json',
     'apps/server/sources/main.ts',
-    'packages/relay/bin/happier-server.mjs',
+    'packages/relay-server/bin/happier-server.mjs',
   ]);
 
   assert.equal(flags.ui, true);

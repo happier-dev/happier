@@ -123,20 +123,35 @@ ensure_minisign() {
   if [[ "${asset}" == *.tar.gz ]]; then
     tar -xzf "${archive_path}" -C "${extract_dir}"
   else
-    if ! command -v unzip >/dev/null 2>&1; then
-      echo "unzip is required to bootstrap minisign on macOS." >&2
-      return 1
+    # Prefer built-in macOS tooling to avoid requiring unzip.
+    if command -v ditto >/dev/null 2>&1; then
+      if ! ditto -x -k "${archive_path}" "${extract_dir}" >/dev/null 2>&1; then
+        echo "ditto failed to extract minisign archive; falling back to unzip if available." >&2
+      fi
     fi
-    unzip -q "${archive_path}" -d "${extract_dir}"
+    local extracted_bin=""
+    extracted_bin="$(find "${extract_dir}" -type f -name minisign 2>/dev/null | head -n 1 || true)"
+    if [[ -n "${extracted_bin}" ]]; then
+      chmod +x "${extracted_bin}" || true
+    fi
+    if [[ -z "${extracted_bin}" ]] || [[ ! -x "${extracted_bin}" ]]; then
+      if ! command -v unzip >/dev/null 2>&1; then
+        echo "Failed to bootstrap minisign on macOS: ditto failed and unzip is not available." >&2
+        return 1
+      fi
+      unzip -q "${archive_path}" -d "${extract_dir}"
+    fi
   fi
 
   local bin_path
-  bin_path="$(find "${extract_dir}" -type f -name minisign -perm -u+x | head -n 1 || true)"
-  if [[ -z "${bin_path}" ]]; then
+  bin_path="$(find "${extract_dir}" -type f -name minisign 2>/dev/null | head -n 1 || true)"
+  if [[ -n "${bin_path}" ]]; then
+    chmod +x "${bin_path}" || true
+  fi
+  if [[ -z "${bin_path}" ]] || [[ ! -x "${bin_path}" ]]; then
     echo "Failed to locate minisign binary in bootstrap archive." >&2
     return 1
   fi
-  chmod +x "${bin_path}" || true
   MINISIGN_BIN="${bin_path}"
   return 0
 }
@@ -180,7 +195,7 @@ if [[ "${OS}" == "unsupported" || "${ARCH}" == "unsupported" ]]; then
   if [[ "${PRODUCT}" == "cli" ]]; then
     echo "Fallback: npm install -g @happier-dev/cli" >&2
   else
-    echo "Fallback: npx @happier-dev/relay-server -- --help" >&2
+    echo "Fallback: npx --yes --package @happier-dev/relay-server happier-server --help" >&2
   fi
   exit 1
 fi
@@ -284,5 +299,9 @@ echo "  binary: ${INSTALL_DIR}/bin/${EXE_NAME}"
 echo "  shim:   ${BIN_DIR}/${EXE_NAME}"
 echo
 if [[ "${NONINTERACTIVE}" != "1" ]]; then
-  "${INSTALL_DIR}/bin/${EXE_NAME}" --version || true
+  if [[ "${PRODUCT}" == "server" ]]; then
+    "${INSTALL_DIR}/bin/${EXE_NAME}" --help >/dev/null 2>&1 || true
+  else
+    "${INSTALL_DIR}/bin/${EXE_NAME}" --version || true
+  fi
 fi

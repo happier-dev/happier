@@ -63,7 +63,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: promote-server-${{ github.ref }}
@@ -72,6 +72,8 @@ concurrency:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     environment: release-shared
     steps:
       - name: Resolve source ref
@@ -182,7 +184,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apps/server/package.json packages/relay/package.json
+          git add apps/server/package.json packages/relay-server/package.json
           git commit -m "chore(release): bump server to v${{ steps.bump_server.outputs.version }}"
 
       - name: Push source ref (only for branches)

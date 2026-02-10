@@ -124,7 +124,7 @@ jobs:
             echo "npm_tag must be '${expected_tag}' for channel='${INPUT_CHANNEL}' (got '${INPUT_NPM_TAG}')." >&2
             exit 1
           fi
-
+  
       - name: Resolve source ref
         id: resolve_source
         env:
@@ -218,6 +218,17 @@ jobs:
       - name: Verify installer assets are synced
         run: node scripts/release/sync-installers.mjs --check
 
+      - name: Resolve server runner package
+        id: server_runner
+        run: |
+          set -euo pipefail
+          dir="packages/relay-server"
+          if [ ! -f "${dir}/package.json" ]; then
+            echo "No server runner package.json found (expected ${dir}/package.json)." >&2
+            exit 1
+          fi
+          echo "dir=${dir}" >> "$GITHUB_OUTPUT"
+
       - name: Set preview versions (working tree only)
         if: inputs.channel == 'preview'
         run: |
@@ -248,15 +259,18 @@ jobs:
           if (process.env.PUBLISH_STACK === 'true') {
             versions.stack = setPreviewVersion(join('apps', 'stack', 'package.json'));
           }
-          if (process.env.PUBLISH_RELAY_SERVER === 'true') {
-            versions.relayServer = setPreviewVersion(join('packages', 'relay', 'package.json'));
+          if (process.env.PUBLISH_SERVER === 'true') {
+            const runnerDir = String(process.env.SERVER_RUNNER_DIR ?? '').trim();
+            if (!runnerDir) throw new Error('SERVER_RUNNER_DIR is required when PUBLISH_SERVER=true');
+            versions.server = setPreviewVersion(join(runnerDir, 'package.json'));
           }
           console.log(JSON.stringify(versions));
           NODE
         env:
           PUBLISH_CLI: ${{ inputs.publish_cli }}
           PUBLISH_STACK: ${{ inputs.publish_stack }}
-          PUBLISH_RELAY_SERVER: ${{ inputs.publish_relay_server }}
+          PUBLISH_SERVER: ${{ inputs.publish_server }}
+          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
 
       - name: Run cli tests
         if: inputs.publish_cli && inputs.run_tests
@@ -270,9 +284,9 @@ jobs:
           yarn --cwd apps/stack test:unit
           yarn --cwd apps/stack test:integration
 
-      - name: Run relay-server tests
-        if: inputs.publish_relay_server && inputs.run_tests
-        run: yarn --cwd packages/relay test
+      - name: Run server runner tests
+        if: inputs.publish_server && inputs.run_tests
+        run: yarn --cwd "${{ steps.server_runner.outputs.dir }}" test
 
       - name: Release metadata
         id: meta
@@ -280,7 +294,8 @@ jobs:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
-          INPUT_PUBLISH_RELAY_SERVER: ${{ inputs.publish_relay_server }}
+          INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
+          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
@@ -302,10 +317,10 @@ jobs:
           else
             echo "stack_version=SKIP" >> "$GITHUB_OUTPUT"
           fi
-          if [ "${INPUT_PUBLISH_RELAY_SERVER}" = "true" ]; then
-            echo "relay_server_version=$(node -p 'require(\"./packages/relay/package.json\").version')" >> "$GITHUB_OUTPUT"
+          if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
+            echo "server_version=$(node -p "require('./${SERVER_RUNNER_DIR}/package.json').version")" >> "$GITHUB_OUTPUT"
           else
-            echo "relay_server_version=SKIP" >> "$GITHUB_OUTPUT"
+            echo "server_version=SKIP" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build CLI binaries
@@ -427,10 +442,11 @@ jobs:
             exit 1
           }
 
-      - name: npm publish (relay-server)
-        if: inputs.publish_relay_server
+      - name: npm publish (server runner)
+        if: inputs.publish_server
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          SERVER_RUNNER_DIR: ${{ steps.server_runner.outputs.dir }}
         run: |
           set -euo pipefail
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
@@ -438,7 +454,7 @@ jobs:
           else
             echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
           fi
-          cd packages/relay
+          cd "${SERVER_RUNNER_DIR}"
           npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}" || {
             echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
             exit 1
@@ -534,16 +550,16 @@ jobs:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
-          INPUT_PUBLISH_RELAY_SERVER: ${{ inputs.publish_relay_server }}
+          INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
         run: |
           npm_tag="${{ steps.meta.outputs.npm_tag }}"
           cli_version="${{ steps.meta.outputs.cli_version }}"
           stack_version="${{ steps.meta.outputs.stack_version }}"
-          relay_server_version="${{ steps.meta.outputs.relay_server_version }}"
+          server_version="${{ steps.meta.outputs.server_version }}"
           [ -n "${npm_tag}" ] || npm_tag="(unavailable)"
           [ -n "${cli_version}" ] || cli_version="(unavailable)"
           [ -n "${stack_version}" ] || stack_version="(unavailable)"
-          [ -n "${relay_server_version}" ] || relay_server_version="(unavailable)"
+          [ -n "${server_version}" ] || server_version="(unavailable)"
 
           {
             echo "### npm publish"
@@ -554,12 +570,12 @@ jobs:
             if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
               echo "- cli: \`${cli_version}\`"
             fi
-          if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
-            echo "- stack: \`${stack_version}\`"
-          fi
-              if [ "${INPUT_PUBLISH_RELAY_SERVER}" = "true" ]; then
-                echo "- relay-server: \`${relay_server_version}\`"
-              fi
+            if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
+              echo "- stack: \`${stack_version}\`"
+            fi
+            if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
+              echo "- server runner: \`${server_version}\`"
+            fi
             echo ""
             echo "### GitHub Releases (mirror)"
             echo ""

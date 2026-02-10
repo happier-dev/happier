@@ -50,8 +50,16 @@ test('release-npm derives unique preview prerelease versions from base versions'
   assert.doesNotMatch(raw, /function bumpBase\(base, bump\)/);
   assert.match(raw, /function setPreviewVersion\(pkgPath\)/);
   assert.match(raw, /\$\{base\}-preview\.\$\{run\}\.\$\{attempt\}/);
-  assert.match(raw, /publish_relay_server/, 'release-npm should expose publish_relay_server for relay-server publishing');
-  assert.match(raw, /PUBLISH_RELAY_SERVER/, 'release-npm preview versioning should gate relay-server via env');
+  assert.match(raw, /publish_server/, 'release-npm should expose publish_server for server runner publishing');
+  assert.match(raw, /PUBLISH_SERVER/, 'release-npm preview versioning should gate server runner via env');
+
+  // Server runner package is canonicalized under packages/relay-server.
+  assert.doesNotMatch(raw, /packages\/server\//, 'release-npm must not reference removed packages/server');
+  assert.match(raw, /dir="packages\/relay-server"/);
+  assert.match(raw, /SERVER_RUNNER_DIR:\s*\$\{\{ steps\.server_runner\.outputs\.dir \}\}/);
+  assert.match(raw, /versions\.server = setPreviewVersion\(join\(runnerDir,\s*'package\.json'\)\);/);
+  assert.match(raw, /yarn --cwd [^\n]*steps\.server_runner\.outputs\.dir[^\n]* test/);
+  assert.match(raw, /cd "\$\{SERVER_RUNNER_DIR\}"/);
 });
 
 test('stack version bumps use shared bump-version script across release workflows', async () => {
