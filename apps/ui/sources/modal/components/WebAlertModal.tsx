@@ -143,6 +143,8 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                                     styles.button,
                                     pressed && styles.buttonPressed
                                 ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={buttons[0]?.text}
                                 onPress={() => handleButtonPress(0)}
                             >
                                 <Text style={[
@@ -162,6 +164,8 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                                     styles.button,
                                     pressed && styles.buttonPressed
                                 ]}
+                                accessibilityRole="button"
+                                accessibilityLabel={buttons[2]?.text}
                                 onPress={() => handleButtonPress(2)}
                             >
                                 <Text style={[
@@ -182,6 +186,8 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                                 styles.button,
                                 pressed && styles.buttonPressed
                             ]}
+                            accessibilityRole="button"
+                            accessibilityLabel={buttons[1]?.text}
                             onPress={() => handleButtonPress(1)}
                         >
                             <Text style={[
@@ -212,6 +218,8 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                                         styles.button,
                                         pressed && styles.buttonPressed
                                     ]}
+                                    accessibilityRole="button"
+                                    accessibilityLabel={button.text}
                                     onPress={() => handleButtonPress(index)}
                                 >
                                     <Text style={[

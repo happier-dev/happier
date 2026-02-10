@@ -8,6 +8,7 @@ import { authAccountApprove } from '@/auth/flows/accountApprove';
 import { useCheckScannerPermissions } from '@/hooks/ui/useCheckCameraPermissions';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 
 interface UseConnectAccountOptions {
     onSuccess?: () => void;
@@ -29,7 +30,11 @@ export function useConnectAccount(options?: UseConnectAccountOptions) {
         try {
             const tail = url.slice('happier:///account?'.length);
             const publicKey = decodeBase64(tail, 'base64url');
-            const response = encryptBox(decodeBase64(auth.credentials!.secret, 'base64url'), publicKey);
+            const creds = auth.credentials!;
+            const secretKey = isLegacyAuthCredentials(creds)
+                ? decodeBase64(creds.secret, 'base64url')
+                : decodeBase64(creds.encryption.machineKey, 'base64');
+            const response = encryptBox(secretKey, publicKey);
             await authAccountApprove(auth.credentials!.token, publicKey, response);
             
             Modal.alert(t('common.success'), t('modals.deviceLinkedSuccessfully'), [

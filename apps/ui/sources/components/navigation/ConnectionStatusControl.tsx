@@ -15,7 +15,7 @@ import { useRouter } from 'expo-router';
 import { sync } from '@/sync/sync';
 import { switchConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { Typography } from '@/constants/Typography';
-import { OFFICIAL_SERVER_ID } from '@/sync/domains/server/serverIdentity';
+import { CLOUD_SERVER_ID } from '@/sync/domains/server/serverIdentity';
 
 type Variant = 'sidebar' | 'header';
 
@@ -136,7 +136,7 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
         try {
             return getActiveServerId();
         } catch {
-            return OFFICIAL_SERVER_ID;
+            return CLOUD_SERVER_ID;
         }
     }, [open]);
 

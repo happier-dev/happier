@@ -161,6 +161,8 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                             styles.button,
                             pressed && styles.buttonPressed
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={config.cancelText || 'Cancel'}
                         onPress={handleCancel}
                     >
                         <Text style={[
@@ -177,6 +179,8 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
                             styles.button,
                             pressed && styles.buttonPressed
                         ]}
+                        accessibilityRole="button"
+                        accessibilityLabel={config.confirmText || 'OK'}
                         onPress={handleConfirm}
                     >
                         <Text style={[

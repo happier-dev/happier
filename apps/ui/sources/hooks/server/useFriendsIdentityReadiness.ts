@@ -23,7 +23,13 @@ export function useFriendsIdentityReadiness(): FriendsIdentityReadiness {
     const requiredProviderIdFromServer = useFriendsRequiredIdentityProviderId();
 
     const fallbackProviderId = normalizeProviderId(profile.linkedProviders?.[0]?.id ?? authProviderRegistry[0]?.id ?? null);
-    const requiredProviderId = normalizeProviderId(requiredProviderIdFromServer ?? fallbackProviderId);
+    // `requiredProviderIdFromServer` is tri-state:
+    // - `undefined`: still loading features -> fall back to a deterministic provider for copy/UI
+    // - `null`: server explicitly requires no provider
+    // - `string`: server requires that provider
+    const requiredProviderId = normalizeProviderId(
+        requiredProviderIdFromServer === undefined ? fallbackProviderId : requiredProviderIdFromServer,
+    );
 
     const requiredIdentity = requiredProviderId
         ? (profile.linkedProviders ?? []).find((p) => normalizeProviderId(p.id) === requiredProviderId) ?? null

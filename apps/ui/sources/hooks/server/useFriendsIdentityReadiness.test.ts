@@ -7,6 +7,64 @@ import { profileDefaults } from '@/sync/domains/profiles/profile';
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('useFriendsIdentityReadiness', () => {
+    it('returns needsUsername when username mode is enabled and no provider is required by server features', async () => {
+        vi.resetModules();
+        storage.getState().applyProfile({ ...profileDefaults, username: null, linkedProviders: [] });
+
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => ({
+                ok: true,
+                json: async () => ({
+                    features: {
+                        sharing: {
+                            session: { enabled: true },
+                            public: { enabled: true },
+                            contentKeys: { enabled: true },
+                            pendingQueueV2: { enabled: false },
+                        },
+                        voice: { enabled: false, configured: false, provider: null },
+                        social: { friends: { enabled: true, allowUsername: true, requiredIdentityProviderId: null } },
+                        oauth: { providers: { github: { enabled: true, configured: false } } },
+                        auth: {
+                            signup: { methods: [{ id: 'anonymous', enabled: true }] },
+                            login: { requiredProviders: [] },
+                            recovery: { providerReset: { enabled: false, providers: [] } },
+                            ui: { autoRedirect: { enabled: false, providerId: null }, recoveryKeyReminder: { enabled: true } },
+                            providers: {},
+                            misconfig: [],
+                        },
+                    },
+                }),
+            })) as any,
+        );
+
+        const { useFriendsIdentityReadiness } = await import('./useFriendsIdentityReadiness');
+
+        const seen: Array<{ reason: string; requiredProviderId: string | null; gateVariant: string }> = [];
+        function Test() {
+            const readiness = useFriendsIdentityReadiness();
+            React.useEffect(() => {
+                seen.push({
+                    reason: readiness.reason,
+                    requiredProviderId: readiness.requiredProviderId,
+                    gateVariant: readiness.gate.gateVariant,
+                });
+            }, [readiness.reason, readiness.requiredProviderId, readiness.gate.gateVariant]);
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Test));
+            await new Promise((r) => setTimeout(r, 0));
+        });
+
+        expect(seen.map((s) => s.reason)).toContain('loadingFeatures');
+        expect(seen.at(-1)?.reason).toBe('needsUsername');
+        expect(seen.at(-1)?.requiredProviderId).toBe(null);
+        expect(seen.at(-1)?.gateVariant).toBe('username');
+    });
+
     it('returns needsProvider when provider mode is enabled and required provider is missing', async () => {
         vi.resetModules();
         storage.getState().applyProfile({ ...profileDefaults, username: null, linkedProviders: [] });

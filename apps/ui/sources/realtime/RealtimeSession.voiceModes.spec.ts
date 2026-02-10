@@ -24,6 +24,7 @@ vi.mock('@/utils/platform/microphonePermissions', () => ({
 const getCredentials = vi.fn(async () => ({ token: 't', secret: 's' }));
 vi.mock('@/auth/storage/tokenStorage', () => ({
   TokenStorage: { getCredentials },
+  isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
 
 const presentPaywall = vi.fn(async () => ({ success: true, purchased: true }));

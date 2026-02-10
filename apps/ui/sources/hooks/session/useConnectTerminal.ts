@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { router } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { TokenStorage, type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { encryptBox } from '@/encryption/libsodium';
 import { authApprove } from '@/auth/flows/approve';
@@ -69,10 +69,14 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             }
 
             const publicKey = decodeBase64(parsed.publicKeyB64Url, 'base64url');
-            const responseV1 = encryptBox(decodeBase64(activeCredentials.secret, 'base64url'), publicKey);
-            let responseV2Bundle = new Uint8Array(sync.encryption.contentDataKey.length + 1);
+            // V1 response requires the legacy recovery secret. For dataKey credentials we prefer V2.
+            const responseV1 = isLegacyAuthCredentials(activeCredentials)
+                ? encryptBox(decodeBase64(activeCredentials.secret, 'base64url'), publicKey)
+                : new Uint8Array();
+            const contentPrivateKey = sync.encryption.getContentPrivateKey();
+            let responseV2Bundle = new Uint8Array(contentPrivateKey.length + 1);
             responseV2Bundle[0] = 0;
-            responseV2Bundle.set(sync.encryption.contentDataKey, 1);
+            responseV2Bundle.set(contentPrivateKey, 1);
             const responseV2 = encryptBox(responseV2Bundle, publicKey);
             await authApprove(activeCredentials.token, publicKey, responseV1, responseV2);
 

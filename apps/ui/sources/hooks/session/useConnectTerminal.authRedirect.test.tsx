@@ -9,6 +9,12 @@ const setPendingTerminalConnectSpy = vi.fn((_pending: { publicKeyB64Url: string;
 const modalAlertSpy = vi.fn((..._args: unknown[]) => {});
 const modalConfirmSpy = vi.fn(async () => true);
 const upsertActivateAndSwitchServerSpy = vi.fn(async (_params: { serverUrl: string; source: string; scope: string }) => true);
+const authApproveSpy = vi.fn();
+const encryptBoxSpy = vi.fn((_payload: Uint8Array, _publicKey: Uint8Array) => new Uint8Array([4, 5, 6]));
+
+let authCredentials: any = null;
+let contentPrivateKey = new Uint8Array([7, 7, 7]);
+let contentPublicKey = new Uint8Array([9, 9, 9]);
 
 vi.mock('react-native', () => ({
     Platform: { OS: 'ios' },
@@ -28,13 +34,14 @@ vi.mock('expo-camera', () => ({
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
-    useAuth: () => ({ credentials: null, refreshFromActiveServer: vi.fn(async () => {}) }),
+    useAuth: () => ({ credentials: authCredentials, refreshFromActiveServer: vi.fn(async () => {}) }),
 }));
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
-        getCredentials: vi.fn(async () => null),
+        getCredentials: vi.fn(async () => authCredentials),
     },
+    isLegacyAuthCredentials: (creds: { encryption?: { type?: string } } | null) => creds?.encryption?.type === 'legacy',
 }));
 
 vi.mock('@/hooks/ui/useCheckCameraPermissions', () => ({
@@ -68,7 +75,7 @@ vi.mock('@/sync/domains/pending/pendingTerminalConnect', () => ({
 }));
 
 vi.mock('@/auth/flows/approve', () => ({
-    authApprove: vi.fn(),
+    authApprove: authApproveSpy,
 }));
 
 vi.mock('@/encryption/base64', () => ({
@@ -76,11 +83,11 @@ vi.mock('@/encryption/base64', () => ({
 }));
 
 vi.mock('@/encryption/libsodium', () => ({
-    encryptBox: vi.fn(() => new Uint8Array([4, 5, 6])),
+    encryptBox: encryptBoxSpy,
 }));
 
 vi.mock('@/sync/sync', () => ({
-    sync: { encryption: { contentDataKey: new Uint8Array([9, 9, 9]) } },
+    sync: { encryption: { contentDataKey: contentPublicKey, getContentPrivateKey: () => contentPrivateKey } },
 }));
 
 describe('useConnectTerminal unauthenticated flow', () => {
@@ -156,5 +163,41 @@ describe('useConnectTerminal unauthenticated flow', () => {
             }),
         );
         expect(routerReplaceSpy).toHaveBeenCalledWith('/');
+    });
+
+    it('uses the content private key in the v2 response bundle for dataKey credentials', async () => {
+        authApproveSpy.mockClear();
+        encryptBoxSpy.mockClear();
+        modalAlertSpy.mockClear();
+
+        authCredentials = {
+            token: 'token-1',
+            encryption: { type: 'dataKey' },
+        };
+        contentPrivateKey = new Uint8Array([1, 2, 3]);
+        contentPublicKey = new Uint8Array([9, 9, 9]);
+
+        const { useConnectTerminal } = await import('./useConnectTerminal');
+
+        let hookApi: ReturnType<typeof useConnectTerminal> | null = null;
+        function Probe() {
+            hookApi = useConnectTerminal();
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(React.createElement(Probe));
+        });
+
+        let result = false;
+        await act(async () => {
+            result = await hookApi!.processAuthUrl('happier://terminal?key=abc123&server=https%3A%2F%2Fapi.happier.dev');
+        });
+
+        const firstEncryptPayload = encryptBoxSpy.mock.calls[0]?.[0] as Uint8Array | undefined;
+        expect(result).toBe(true);
+        expect(authApproveSpy).toHaveBeenCalled();
+        expect(firstEncryptPayload).toBeDefined();
+        expect(Array.from(firstEncryptPayload ?? [])).toEqual([0, 1, 2, 3]);
     });
 });
