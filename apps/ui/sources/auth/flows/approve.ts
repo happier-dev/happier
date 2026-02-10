@@ -1,4 +1,3 @@
-
 import { encodeBase64 } from "@/encryption/base64";
 import { serverFetch } from '@/sync/http/client';
 
@@ -7,7 +6,14 @@ interface AuthRequestStatus {
     supportsV2: boolean;
 }
 
-export async function authApprove(token: string, publicKey: Uint8Array, answerV1: Uint8Array, answerV2: Uint8Array) {
+export type AuthApproveResult = 'approved' | 'already_authorized' | 'not_found';
+
+export async function authApprove(
+    token: string,
+    publicKey: Uint8Array,
+    answerV1: Uint8Array,
+    answerV2: Uint8Array,
+): Promise<AuthApproveResult> {
     const publicKeyBase64 = encodeBase64(publicKey);
     
     // First, check the auth request status
@@ -23,15 +29,11 @@ export async function authApprove(token: string, publicKey: Uint8Array, answerV1
     
     // Handle different status cases
     if (status === 'not_found') {
-        // Already authorized, no need to approve again
-        console.log('Auth request already authorized or not found');
-        return;
+        return 'not_found';
     }
     
     if (status === 'authorized') {
-        // Already authorized, no need to approve again
-        console.log('Auth request already authorized');
-        return;
+        return 'already_authorized';
     }
     
     // Handle pending status
@@ -51,4 +53,6 @@ export async function authApprove(token: string, publicKey: Uint8Array, answerV1
             throw new Error(`Failed to approve auth request: ${response.status}`);
         }
     }
+
+    return 'approved';
 }

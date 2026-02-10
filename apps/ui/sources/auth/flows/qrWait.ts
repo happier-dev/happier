@@ -31,28 +31,29 @@ export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: num
             }
             const data = await response.json() as {
                 state: string;
-                token: string;
+                tokenEncrypted: string;
                 response: string;
             };
 
             if (data.state === 'authorized') {
-                const token = data.token as string;
+                const tokenEncrypted = decodeBase64(data.tokenEncrypted);
+                const decryptedTokenBytes = decryptBox(tokenEncrypted, keypair.secretKey);
+                if (!decryptedTokenBytes) {
+                    return null;
+                }
+                const token = new TextDecoder().decode(decryptedTokenBytes);
                 const encryptedResponse = decodeBase64(data.response);
                 
                 const decrypted = decryptBox(encryptedResponse, keypair.secretKey);
                 if (decrypted) {
-                    console.log('\n\n✓ Authentication successful\n');
                     return {
                         secret: decrypted,
                         token: token
                     };
-                } else {
-                    console.log('\n\nFailed to decrypt response. Please try again.');
-                    return null;
                 }
+                return null;
             }
         } catch (error) {
-            console.log('\n\nFailed to check authentication status. Please try again.');
             return null;
         }
 

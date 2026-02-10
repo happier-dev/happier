@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { TokenStorage, AuthCredentials } from '@/auth/storage/tokenStorage';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { syncSwitchServer } from '@/sync/sync';
 import { clearPersistence } from '@/sync/domains/state/persistence';
 import { trackLogout } from '@/track';

@@ -47,7 +47,6 @@ export async function authQRStart(keypair: QRAuthKeyPair): Promise<boolean> {
         if (process.env.EXPO_PUBLIC_DEBUG) {
             console.log('[AUTH DEBUG] Failed to send auth request:', error);
         }
-        console.log('Failed to create authentication request, please try again later.');
         return false;
     }
 }
