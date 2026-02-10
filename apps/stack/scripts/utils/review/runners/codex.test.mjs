@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildCodexReviewArgs, extractCodexReviewFromJsonl } from './codex.mjs';
+import {
+  buildCodexReviewArgs,
+  detectCodexUnsupportedModelError,
+  extractCodexReviewFromJsonl,
+  isCodexModelKnownUnsupported,
+  markCodexModelUnsupported,
+} from './codex.mjs';
 
 test('buildCodexReviewArgs uses --base and avoids --cd', () => {
   const args = buildCodexReviewArgs({ baseRef: 'upstream/main', jsonMode: false });
@@ -87,4 +93,23 @@ test('extractCodexReviewFromJsonl finds review_output in multiple event shapes',
 test('extractCodexReviewFromJsonl returns null for invalid/no-match lines', () => {
   const result = extractCodexReviewFromJsonl('not-json\n{"type":"Progress","payload":{"x":1}}\n');
   assert.equal(result, null);
+});
+
+test('detectCodexUnsupportedModelError detects the ChatGPT-account unsupported-model failure', () => {
+  assert.equal(
+    detectCodexUnsupportedModelError({
+      stdout: '',
+      stderr: `ERROR: {"detail":"The 'codex-5.3' model is not supported when using Codex with a ChatGPT account."}`,
+    }),
+    true,
+  );
+  assert.equal(detectCodexUnsupportedModelError({ stdout: 'ok', stderr: '' }), false);
+});
+
+test('markCodexModelUnsupported / isCodexModelKnownUnsupported track unsupported models', () => {
+  const model = `test-model-${process.hrtime.bigint()}`;
+  assert.equal(isCodexModelKnownUnsupported(model), false);
+  markCodexModelUnsupported(model);
+  assert.equal(isCodexModelKnownUnsupported(model), true);
+  assert.equal(isCodexModelKnownUnsupported(` ${model} `), true);
 });

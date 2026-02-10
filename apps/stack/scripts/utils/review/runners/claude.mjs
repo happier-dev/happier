@@ -18,6 +18,17 @@ export function detectClaudeAuthError({ stdout, stderr }) {
   return hasAuthHint || hasRateLimitHint;
 }
 
+const DEFAULT_ALLOWED_TOOLS = [
+  'Bash(git:*)',
+  'Bash(rg:*)',
+  'Bash(cat:*)',
+  'Bash(sed:*)',
+  'Bash(ls:*)',
+  'Bash(wc:*)',
+  'Bash(head:*)',
+  'Bash(tail:*)',
+].join(',');
+
 function parsePositiveInt(raw) {
   const n = Number(String(raw ?? '').trim());
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
@@ -48,7 +59,7 @@ export function buildClaudeReviewArgs({ model, allowedTools } = {}) {
   if (m) args.push('--model', m);
 
   const tools =
-    allowedTools === undefined ? 'Bash(git:*)' : String(allowedTools ?? '').trim();
+    allowedTools === undefined ? DEFAULT_ALLOWED_TOOLS : String(allowedTools ?? '').trim();
   if (tools) args.push('--allowed-tools', tools);
   return args;
 }
@@ -61,7 +72,7 @@ export async function runClaudeReview({
   teeFile,
   teeLabel,
   model,
-  allowedTools = 'Bash(git:*)',
+  allowedTools = DEFAULT_ALLOWED_TOOLS,
 } = {}) {
   const p = String(prompt ?? '').trim();
   if (!p) throw new Error('[review] claude: missing prompt');

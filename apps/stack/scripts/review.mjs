@@ -16,12 +16,23 @@ import { extractCodexReviewFromJsonl, runCodexReview } from './utils/review/runn
 import { detectAugmentAuthError, runAugmentReview } from './utils/review/runners/augment.mjs';
 import { detectClaudeAuthError, runClaudeReview } from './utils/review/runners/claude.mjs';
 import { formatTriageMarkdown, parseCodeRabbitPlainOutput, parseCodexReviewText } from './utils/review/findings.mjs';
+import {
+  buildCodexDeepPrompt,
+  buildCodexNormalPrompt,
+  buildCodexMonorepoDeepPrompt,
+  buildCodexMonorepoNormalPrompt,
+  buildCodexAuditPrompt,
+  buildCodexMonorepoAuditPrompt,
+  buildCodexMonorepoSlicePrompt,
+  buildUncommittedSlicePrompt,
+} from './utils/review/prompts.mjs';
 import { runSlicedJobs } from './utils/review/sliced_runner.mjs';
 import { seedAugmentHomeFromRealHome, seedCodeRabbitHomeFromRealHome, seedCodexHomeFromRealHome } from './utils/review/tool_home_seed.mjs';
 import { shouldUseUncommittedPathSlices } from './utils/review/slice_mode.mjs';
+import { runReviewersSafe } from './utils/review/run_reviewers_safe.mjs';
 import { dirname, join } from 'node:path';
 import { ensureDir } from './utils/fs/ops.mjs';
-import { copyFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { runCapture } from './utils/proc/proc.mjs';
 import { withDetachedWorktree } from './utils/review/detached_worktree.mjs';
@@ -32,6 +43,7 @@ const VALID_COMPONENTS = ['happier-ui', 'happier-cli', 'happier-server'];
 const VALID_REVIEWERS = ['coderabbit', 'codex', 'augment', 'claude'];
 const VALID_DEPTHS = ['deep', 'normal'];
 const VALID_CHANGE_TYPES = ['committed', 'uncommitted', 'all'];
+const VALID_REVIEW_MODES = ['diff', 'audit'];
 const DEFAULT_REVIEW_MAX_FILES = 50;
 
 function parseCsv(raw) {
@@ -61,6 +73,14 @@ function subsetSet(set, allowed) {
     if (allowed.has(v)) out.add(v);
   }
   return out;
+}
+
+function normalizeCodexModelAlias(raw) {
+  const m = String(raw ?? '').trim();
+  // Back-compat: early experiments used "codex-5.3" as a shorthand, but the Codex CLI expects
+  // the actual model ID ("gpt-5.3-codex").
+  if (m === 'codex-5.3') return 'gpt-5.3-codex';
+  return m;
 }
 
 async function applyUncommittedSlice({ srcRepoDir, worktreeDir, checkoutPaths, removePaths }) {
@@ -104,7 +124,7 @@ async function applyUncommittedSlice({ srcRepoDir, worktreeDir, checkoutPaths, r
 function usage() {
   return [
     '[review] usage:',
-    '  hstack tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment,claude] [--type=committed|uncommitted|all] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--codex-model=<id>] [--claude-model=<id>] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
+    '  hstack tools review [ui|cli|server|all] [--reviewers=coderabbit,codex,augment,claude] [--review-mode=diff|audit] [--review-paths=pathA,pathB] [--type=committed|uncommitted|all] [--base-remote=<remote>] [--base-branch=<branch>] [--base-ref=<ref>] [--concurrency=N] [--depth=deep|normal] [--chunks|--no-chunks] [--chunking=auto|head-slice|commit-window] [--chunk-max-files=N] [--review-prompt=<text>] [--review-prompt-file=<path>] [--coderabbit-type=committed|uncommitted|all] [--coderabbit-max-files=N] [--coderabbit-chunks|--no-coderabbit-chunks] [--codex-chunks|--no-codex-chunks] [--codex-model=<id>] [--claude-model=<id>] [--augment-chunks|--no-augment-chunks] [--augment-model=<id>] [--augment-max-turns=N] [--run-label=<label>] [--no-stream] [--json]',
     '',
     'targets:',
     `  ${[...VALID_TARGETS, 'all'].join(' | ')}`,
@@ -182,6 +202,14 @@ function tailLines(text, n) {
   return lines;
 }
 
+function formatInternalError(e) {
+  if (e && typeof e === 'object') {
+    const stack = 'stack' in e ? e.stack : null;
+    if (stack) return String(stack);
+  }
+  return String(e ?? 'unknown error');
+}
+
 function detectCodeRabbitAuthError({ stdout, stderr }) {
   const combined = `${stdout ?? ''}\n${stderr ?? ''}`;
   return combined.includes('Authentication required') && combined.includes("coderabbit auth login");
@@ -212,142 +240,6 @@ function printReviewOperatorGuidance() {
       '',
     ].join('\n')
   );
-}
-
-function codexScopePathForComponent(component) {
-  switch (component) {
-    case 'happier-ui':
-      return 'apps/ui';
-    case 'happier-cli':
-      return 'apps/cli';
-    case 'happier-server-light':
-    case 'happier-server':
-      return 'apps/server';
-    default:
-      return null;
-  }
-}
-
-function buildCodexDeepPrompt({ component, baseRef, changeType }) {
-  const scopePath = codexScopePathForComponent(component);
-  const ct = normalizeChangeType(changeType);
-  const committedCmd = scopePath
-    ? `cd \"$(git rev-parse --show-toplevel)\" && git diff ${baseRef}...HEAD -- ${scopePath}/`
-    : `cd \"$(git rev-parse --show-toplevel)\" && git diff ${baseRef}...HEAD`;
-  const uncommittedCmd = scopePath
-    ? `cd \"$(git rev-parse --show-toplevel)\" && git diff HEAD -- ${scopePath}/`
-    : `cd \"$(git rev-parse --show-toplevel)\" && git diff HEAD`;
-  const cmds = ct === 'committed' ? [committedCmd] : ct === 'uncommitted' ? [uncommittedCmd] : [committedCmd, uncommittedCmd];
-
-  return [
-    'Run a deep, long-form code review.',
-    '',
-    `Change type: ${ct}`,
-    ct === 'uncommitted' ? 'Base for review: (uncommitted-only)' : `Base for review: ${baseRef}`,
-    scopePath ? `Scope: ${scopePath}/` : 'Scope: full repo (no path filter)',
-    '',
-    'Instructions:',
-    ...cmds.map((c) => `- Use: ${c}`),
-    ct !== 'committed' ? '- Include untracked files (if any): git status --porcelain=v1' : null,
-    '- Focus on correctness, edge cases, reliability, performance, and security.',
-    '- Prefer unified/coherent fixes; avoid duplication.',
-    '- Avoid brittle tests that assert on wording/phrasing/config; test real behavior and observable outcomes.',
-    '- Ensure i18n coverage is complete: do not introduce hardcoded user-visible strings; add translation keys across locales as needed.',
-    '- Treat every recommendation as a suggestion: validate it against best practices and this codebase’s existing patterns. Do not propose changes that violate project invariants.',
-    '- Be exhaustive: list all findings you notice, not only the highest-signal ones.',
-    '- Clearly mark any item that is uncertain, has tradeoffs, or needs product/UX decisions as "needs discussion".',
-    '',
-    'Output format:',
-    '- Start with a short overall verdict.',
-    '- Then list findings as bullets with severity (blocker/major/minor/nit) and a concrete fix suggestion.',
-    '',
-    'Machine-readable output (required):',
-    '- After your review, output a JSON array of findings preceded by a line containing exactly: ===FINDINGS_JSON===',
-    '- Each finding should include: severity, file, (optional) lines, title, description, recommendation, needsDiscussion (boolean).',
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
-function buildCodexMonorepoDeepPrompt({ baseRef, changeType }) {
-  const ct = normalizeChangeType(changeType);
-  const committedCmd = `cd \"$(git rev-parse --show-toplevel)\" && git diff ${baseRef}...HEAD`;
-  const uncommittedCmd = `cd \"$(git rev-parse --show-toplevel)\" && git diff HEAD`;
-  const cmds = ct === 'committed' ? [committedCmd] : ct === 'uncommitted' ? [uncommittedCmd] : [committedCmd, uncommittedCmd];
-  return [
-    'Run a deep, long-form code review on the monorepo.',
-    '',
-    `Change type: ${ct}`,
-    ct === 'uncommitted' ? 'Base for review: (uncommitted-only)' : `Base for review: ${baseRef}`,
-    'Scope: full repo',
-    '',
-    'Instructions:',
-    ...cmds.map((c) => `- Use: ${c}`),
-    ct !== 'committed' ? '- Include untracked files (if any): git status --porcelain=v1' : null,
-    '- You may inspect any file in the repo for cross-references (server/cli/ui).',
-    '- Focus on correctness, edge cases, reliability, performance, and security.',
-    '- Prefer unified/coherent fixes; avoid duplication.',
-    '- Avoid brittle tests that assert on wording/phrasing/config; test real behavior and observable outcomes.',
-    '- Ensure i18n coverage is complete: do not introduce hardcoded user-visible strings; add translation keys across locales as needed.',
-    '- Treat every recommendation as a suggestion: validate it against best practices and this codebase’s existing patterns. Do not propose changes that violate project invariants.',
-    '- Be exhaustive: list all findings you notice, not only the highest-signal ones.',
-    '- Clearly mark any item that is uncertain, has tradeoffs, or needs product/UX decisions as "needs discussion".',
-    '',
-    'Output format:',
-    '- Start with a short overall verdict.',
-    '- Then list findings as bullets with severity (blocker/major/minor/nit) and a concrete fix suggestion.',
-    '',
-    'Machine-readable output (required):',
-    '- After your review, output a JSON array of findings preceded by a line containing exactly: ===FINDINGS_JSON===',
-    '- Each finding should include: severity, file, (optional) lines, title, description, recommendation, needsDiscussion (boolean).',
-  ]
-    .filter(Boolean)
-    .join('\n');
-}
-
-function buildCodexMonorepoSlicePrompt({ sliceLabel, baseCommit, baseRef }) {
-  const diffCmd = `cd \"$(git rev-parse --show-toplevel)\" && git diff ${baseCommit}...HEAD`;
-  return [
-    'Run a deep, long-form code review on the monorepo.',
-    '',
-    `Base ref: ${baseRef}`,
-    `Slice: ${sliceLabel}`,
-    '',
-    'Important:',
-    '- The base commit for this slice is synthetic: it represents upstream plus all NON-slice changes.',
-    '- Therefore, the diff below contains ONLY the changes for this slice, but the checked-out code is the full final HEAD.',
-    '',
-    'Instructions:',
-    `- Use: ${diffCmd}`,
-    '- You may inspect any file in the repo for cross-references (server/cli/ui), but keep findings scoped to this slice diff.',
-    '- Focus on correctness, edge cases, reliability, performance, and security.',
-    '- Prefer unified/coherent fixes; avoid duplication.',
-    '- Avoid brittle tests that assert on wording/phrasing/config; test real behavior and observable outcomes.',
-    '- Ensure i18n coverage is complete: do not introduce hardcoded user-visible strings; add translation keys across locales as needed.',
-    '- Treat every recommendation as a suggestion: validate it against best practices and this codebase’s existing patterns. Do not propose changes that violate project invariants.',
-    '- Be exhaustive within this slice: list all findings you notice, not only the highest-signal ones.',
-    '- Clearly mark any item that is uncertain, has tradeoffs, or needs product/UX decisions as "needs discussion".',
-    '',
-    'Output format:',
-    '- Start with a short overall verdict.',
-    '- Then list findings as bullets with severity (blocker/major/minor/nit) and a concrete fix suggestion.',
-    '',
-    'Machine-readable output (required):',
-    '- After your review, output a JSON array of findings preceded by a line containing exactly: ===FINDINGS_JSON===',
-    '- Each finding should include: severity, file, (optional) lines, title, description, recommendation, needsDiscussion (boolean).',
-  ].join('\n');
-}
-
-function buildUncommittedSlicePrompt({ sliceLabel, basePrompt }) {
-  return [
-    `Slice: ${sliceLabel}`,
-    '- The worktree is pre-scoped for this slice only.',
-    '- Files outside this slice may be intentionally absent in this temporary worktree.',
-    '- Do not file "missing file/module" findings unless the missing path is part of this slice diff.',
-    '- Review only the uncommitted changes currently present in this worktree.',
-    '',
-    basePrompt,
-  ].join('\n');
 }
 
 async function gitLines({ cwd, args, env }) {
@@ -439,19 +331,21 @@ async function main() {
     claude: reviewers.includes('claude'),
   });
 
-  const inferred = positionals.length === 0 ? resolveComponentFromCwdOrNull({ rootDir, invokedCwd }) : null;
-  if (inferred) {
+  const inferredFromCwd = resolveComponentFromCwdOrNull({ rootDir, invokedCwd });
+  if (inferredFromCwd && !(process.env.HAPPIER_STACK_REPO_DIR ?? '').toString().trim()) {
     // Make downstream getComponentDir() resolve to the inferred repo dir for this run.
-    process.env.HAPPIER_STACK_REPO_DIR = inferred.repoDir;
+    // This is intentionally independent of target positionals: users often pass `all`/`ui`/`cli`/`server`
+    // but still expect the repo/worktree to be inferred from their current directory.
+    process.env.HAPPIER_STACK_REPO_DIR = inferredFromCwd.repoDir;
   }
 
   const inStackMode = isStackMode(process.env);
-  const inferredTarget = inferred ? targetFromLegacyComponent(inferred.component) : null;
+  const inferredTarget = inferredFromCwd ? targetFromLegacyComponent(inferredFromCwd.component) : null;
   const requestedTargets = normalizeTargets(positionals.length ? positionals : inferredTarget ? [inferredTarget] : ['all']);
   const wantAll = requestedTargets.includes('all');
 
   let targets = wantAll ? DEFAULT_TARGETS : requestedTargets;
-  if (!positionals.length && !inferred && inStackMode) {
+  if (!positionals.length && !inferredFromCwd && inStackMode) {
     const pinned = resolveDefaultStackReviewComponents({ rootDir, components: DEFAULT_TARGETS });
     targets = pinned.length ? pinned : [];
   }
@@ -478,6 +372,8 @@ async function main() {
   const limit = concurrency ? Number(concurrency) : 4;
   const depth = (kv.get('--depth') ?? 'deep').toString().trim().toLowerCase();
   const changeType = normalizeChangeType(kv.get('--type') ?? kv.get('--review-type') ?? 'committed');
+  const reviewMode = (kv.get('--review-mode') ?? 'diff').toString().trim().toLowerCase();
+  const reviewPaths = parseCsv(kv.get('--review-paths') ?? kv.get('--audit-paths') ?? '');
   const coderabbitTypeRaw = (kv.get('--coderabbit-type') ?? '').toString().trim();
   const coderabbitType = coderabbitTypeRaw
     ? (() => {
@@ -491,10 +387,12 @@ async function main() {
     })()
     : changeType;
   const chunkingMode = (kv.get('--chunking') ?? 'auto').toString().trim().toLowerCase();
-  const codexModelFlag = (kv.get('--codex-model') ?? '').toString().trim();
+  const codexModelFlag = normalizeCodexModelAlias((kv.get('--codex-model') ?? '').toString().trim());
   const claudeModelFlag = (kv.get('--claude-model') ?? '').toString().trim();
   const augmentModelFlag = (kv.get('--augment-model') ?? '').toString().trim();
   const augmentMaxTurnsFlag = (kv.get('--augment-max-turns') ?? '').toString().trim();
+  const reviewPromptFlag = (kv.get('--review-prompt') ?? '').toString();
+  const reviewPromptFileFlag = (kv.get('--review-prompt-file') ?? '').toString().trim();
   const chunkMaxFilesRaw = (kv.get('--chunk-max-files') ?? '').toString().trim();
   const coderabbitMaxFilesRaw = (kv.get('--coderabbit-max-files') ?? '').toString().trim();
   const coderabbitMaxFiles = coderabbitMaxFilesRaw ? Number(coderabbitMaxFilesRaw) : DEFAULT_REVIEW_MAX_FILES;
@@ -510,6 +408,9 @@ async function main() {
   if (!VALID_DEPTHS.includes(depth)) {
     throw new Error(`[review] invalid --depth=${depth} (expected: ${VALID_DEPTHS.join(' | ')})`);
   }
+  if (!VALID_REVIEW_MODES.includes(reviewMode)) {
+    throw new Error(`[review] invalid --review-mode=${reviewMode} (expected: ${VALID_REVIEW_MODES.join(' | ')})`);
+  }
   if (!['auto', 'head-slice', 'commit-window'].includes(chunkingMode)) {
     throw new Error('[review] invalid --chunking (expected: auto|head-slice|commit-window)');
   }
@@ -518,6 +419,14 @@ async function main() {
   if (claudeModelFlag) process.env.HAPPIER_STACK_CLAUDE_MODEL = claudeModelFlag;
   if (augmentModelFlag) process.env.HAPPIER_STACK_AUGMENT_MODEL = augmentModelFlag;
   if (augmentMaxTurnsFlag) process.env.HAPPIER_STACK_AUGMENT_MAX_TURNS = augmentMaxTurnsFlag;
+
+  let customReviewPrompt = String(reviewPromptFlag ?? '').trim();
+  if (reviewPromptFileFlag) {
+    const resolved = reviewPromptFileFlag.startsWith('/')
+      ? reviewPromptFileFlag
+      : join(getInvokedCwd(process.env), reviewPromptFileFlag);
+    customReviewPrompt = (await readFile(resolved, 'utf8')).toString().trim();
+  }
 
   // Review artifacts: always create a per-run directory containing raw outputs + a triage checklist.
   const reviewsRootDir = join(rootDir, '.project', 'reviews');
@@ -628,33 +537,36 @@ async function main() {
     limit,
     fn: async (job) => {
       const { component, repoDir, monorepo } = job;
-      const base = await resolveBaseRef({
-        cwd: repoDir,
-        baseRefOverride,
-        baseRemoteOverride,
-        baseBranchOverride,
-        stackRemoteFallback,
-      });
+      let base = { baseRef: '', remote: '', branch: '' };
+      try {
+        base = await resolveBaseRef({
+          cwd: repoDir,
+          baseRefOverride,
+          baseRemoteOverride,
+          baseBranchOverride,
+          stackRemoteFallback,
+        });
 
-      const maxFiles = Number.isFinite(chunkMaxFiles) && chunkMaxFiles > 0 ? chunkMaxFiles : 300;
-      const sliceConcurrency = Math.max(1, Math.floor(limit / Math.max(1, reviewers.length)));
-      const wantChunksCoderabbit =
-        coderabbitType === 'committed' || coderabbitType === 'uncommitted'
-          ? (coderabbitChunksOverride ?? globalChunks)
-          : false;
-      const wantChunksCodex = codexChunksOverride ?? globalChunks;
-      const wantChunksAugment = changeType === 'committed' ? (augmentChunksOverride ?? globalChunks) : false;
-      const effectiveChunking = chunkingMode === 'auto' ? (monorepo ? 'head-slice' : 'commit-window') : chunkingMode;
+        const maxFiles = Number.isFinite(chunkMaxFiles) && chunkMaxFiles > 0 ? chunkMaxFiles : 300;
+        const sliceConcurrency = Math.max(1, Math.floor(limit / Math.max(1, reviewers.length)));
+        const wantChunksCoderabbit =
+          coderabbitType === 'committed' || coderabbitType === 'uncommitted'
+            ? (coderabbitChunksOverride ?? globalChunks)
+            : false;
+        const wantChunksCodex = codexChunksOverride ?? globalChunks;
+        const wantChunksAugment = changeType === 'committed' ? (augmentChunksOverride ?? globalChunks) : false;
+        const effectiveChunking = chunkingMode === 'auto' ? (monorepo ? 'head-slice' : 'commit-window') : chunkingMode;
 
-      if (monorepo && stream) {
-        // eslint-disable-next-line no-console
-        console.log(
-          `[review] monorepo detected at ${repoDir}; running a single unified review (chunking=${effectiveChunking}, concurrency=${sliceConcurrency}).`
-        );
-      }
+        if (monorepo && stream) {
+          // eslint-disable-next-line no-console
+          console.log(
+            `[review] monorepo detected at ${repoDir}; running a single unified review (chunking=${effectiveChunking}, concurrency=${sliceConcurrency}).`
+          );
+        }
 
-      const perReviewer = await Promise.all(
-        reviewers.map(async (reviewer) => {
+        const perReviewer = await runReviewersSafe({
+          reviewers,
+          runReviewer: async (reviewer) => {
           if (reviewer === 'coderabbit') {
             const uncommittedOps = coderabbitType === 'uncommitted' ? await getUncommittedOps({ cwd: repoDir, env: process.env }) : null;
             const fileCount =
@@ -939,6 +851,47 @@ async function main() {
           }
           if (reviewer === 'codex') {
             const jsonMode = json;
+            if (reviewMode === 'audit') {
+              const prompt = monorepo
+                ? buildCodexMonorepoAuditPrompt({
+                    deep: depth === 'deep',
+                    scopePaths: reviewPaths,
+                    customPrompt: customReviewPrompt,
+                  })
+                : buildCodexAuditPrompt({
+                    component,
+                    deep: depth === 'deep',
+                    scopePaths: reviewPaths,
+                    customPrompt: customReviewPrompt,
+                  });
+              const logFile = join(runDir, 'raw', `codex-${sanitizeLabel(component)}.log`);
+              const res = await runCodexReview({
+                repoDir,
+                baseRef: null,
+                env: process.env,
+                jsonMode,
+                model: process.env.HAPPIER_STACK_CODEX_MODEL,
+                prompt,
+                streamLabel: stream && !jsonMode ? `${component}:codex` : undefined,
+                teeFile: logFile,
+                teeLabel: `${component}:codex`,
+              });
+              const extracted = jsonMode ? extractCodexReviewFromJsonl(res.stdout ?? '') : null;
+              return {
+                reviewer,
+                ok: Boolean(res.ok),
+                exitCode: res.exitCode,
+                signal: res.signal,
+                durationMs: res.durationMs,
+                stdout: res.stdout ?? '',
+                stderr: res.stderr ?? '',
+                review_output: extracted,
+                logFile,
+              };
+            }
+            // Prompt mode is required for deep reviews and for `--type=all` (we need to describe both diffs).
+            // For `--type=uncommitted` + normal depth, prefer Codex's built-in `--uncommitted` target.
+            // (Codex review targets do not support passing a custom prompt alongside --uncommitted).
             const usePromptMode = depth === 'deep' || changeType === 'all';
             const uncommittedOps = changeType === 'uncommitted' ? await getUncommittedOps({ cwd: repoDir, env: process.env }) : null;
             const fileCount =
@@ -979,10 +932,14 @@ async function main() {
                         checkoutPaths: sliceCheckout,
                         removePaths: sliceRemove,
                       });
+                      const basePrompt =
+                        depth === 'deep'
+                          ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                          : buildCodexMonorepoNormalPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt });
                       const prompt = usePromptMode
                         ? buildUncommittedSlicePrompt({
                             sliceLabel: slice.label,
-                            basePrompt: buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType }),
+                            basePrompt,
                           })
                         : '';
                       return await runCodexReview({
@@ -1052,24 +1009,26 @@ async function main() {
                   const rr = await withDetachedWorktree(
                     { repoDir, headCommit: baseCommit, label: `codex-${index}-of-${of}`, env: process.env },
                     async (worktreeDir) => {
-                      const { baseSliceCommit } = await createHeadSliceCommits({
-                        cwd: worktreeDir,
-                        env: process.env,
-                        baseRef: baseCommit,
-                        headCommit,
-                        ops,
-                        slicePaths: slice.paths,
-                        label: slice.label.replace(/\/+$/g, ''),
-                      });
-                      const prompt = buildCodexMonorepoSlicePrompt({
-                        sliceLabel: slice.label,
-                        baseCommit: baseSliceCommit,
-                        baseRef: base.baseRef,
-                      });
-                      return await runCodexReview({
-                        repoDir: worktreeDir,
-                        baseRef: null,
-                        env: process.env,
+                        const { baseSliceCommit } = await createHeadSliceCommits({
+                          cwd: worktreeDir,
+                          env: process.env,
+                          baseRef: baseCommit,
+                          headCommit,
+                          ops,
+                          slicePaths: slice.paths,
+                          label: slice.label.replace(/\/+$/g, ''),
+                        });
+                        const prompt = buildCodexMonorepoSlicePrompt({
+                          sliceLabel: slice.label,
+                          baseCommit: baseSliceCommit,
+                          baseRef: base.baseRef,
+                          deep: depth === 'deep',
+                          customPrompt: customReviewPrompt,
+                        });
+                        return await runCodexReview({
+                          repoDir: worktreeDir,
+                          baseRef: null,
+                          env: process.env,
                         jsonMode,
                         model: process.env.HAPPIER_STACK_CODEX_MODEL,
                         prompt,
@@ -1115,18 +1074,22 @@ async function main() {
                 stderr: '',
                 note: `monorepo head-slice: ${sliceResults.length} slices (maxFiles=${maxFiles})`,
                 slices: sliceResults,
-              };
-            }
+                };
+              }
 
-            const prompt = usePromptMode
-              ? monorepo
-                ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType })
-                : buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType })
-              : '';
-            const logFile = join(runDir, 'raw', `codex-${sanitizeLabel(component)}.log`);
-            const res = await runCodexReview({
-              repoDir,
-              baseRef: usePromptMode ? null : changeType === 'uncommitted' ? null : base.baseRef,
+              const prompt = usePromptMode
+                ? monorepo
+                  ? depth === 'deep'
+                    ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                    : buildCodexMonorepoNormalPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                  : depth === 'deep'
+                    ? buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                    : buildCodexNormalPrompt({ component, baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                : '';
+              const logFile = join(runDir, 'raw', `codex-${sanitizeLabel(component)}.log`);
+              const res = await runCodexReview({
+                repoDir,
+                baseRef: usePromptMode ? null : changeType === 'uncommitted' ? null : base.baseRef,
               env: process.env,
               jsonMode,
               model: process.env.HAPPIER_STACK_CODEX_MODEL,
@@ -1150,6 +1113,40 @@ async function main() {
           }
           if (reviewer === 'claude') {
             const jsonMode = false;
+            if (reviewMode === 'audit') {
+              const prompt = monorepo
+                ? buildCodexMonorepoAuditPrompt({
+                    deep: depth === 'deep',
+                    scopePaths: reviewPaths,
+                    customPrompt: customReviewPrompt,
+                  })
+                : buildCodexAuditPrompt({
+                    component,
+                    deep: depth === 'deep',
+                    scopePaths: reviewPaths,
+                    customPrompt: customReviewPrompt,
+                  });
+              const logFile = join(runDir, 'raw', `claude-${sanitizeLabel(component)}.log`);
+              const res = await runClaudeReview({
+                repoDir,
+                env: process.env,
+                prompt,
+                model: process.env.HAPPIER_STACK_CLAUDE_MODEL,
+                streamLabel: stream ? `${component}:claude` : undefined,
+                teeFile: logFile,
+                teeLabel: `${component}:claude`,
+              });
+              return {
+                reviewer,
+                ok: Boolean(res.ok),
+                exitCode: res.exitCode,
+                signal: res.signal,
+                durationMs: res.durationMs,
+                stdout: res.stdout ?? '',
+                stderr: res.stderr ?? '',
+                logFile,
+              };
+            }
             const canChunk = changeType !== 'uncommitted';
             const uncommittedOps = changeType === 'uncommitted' ? await getUncommittedOps({ cwd: repoDir, env: process.env }) : null;
             const fileCount =
@@ -1184,16 +1181,20 @@ async function main() {
                       const allowed = new Set(slice.paths);
                       const sliceCheckout = subsetSet(ops.checkout, allowed);
                       const sliceRemove = subsetSet(ops.remove, allowed);
-                      await applyUncommittedSlice({
-                        srcRepoDir: repoDir,
-                        worktreeDir,
-                        checkoutPaths: sliceCheckout,
-                        removePaths: sliceRemove,
-                      });
-                      const prompt = buildUncommittedSlicePrompt({
-                        sliceLabel: slice.label,
-                        basePrompt: buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType }),
-                      });
+                        await applyUncommittedSlice({
+                          srcRepoDir: repoDir,
+                          worktreeDir,
+                          checkoutPaths: sliceCheckout,
+                          removePaths: sliceRemove,
+                        });
+                        const basePrompt =
+                          depth === 'deep'
+                            ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                            : buildCodexMonorepoNormalPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt });
+                        const prompt = buildUncommittedSlicePrompt({
+                          sliceLabel: slice.label,
+                          basePrompt,
+                        });
                       return await runClaudeReview({
                         repoDir: worktreeDir,
                         env: process.env,
@@ -1257,24 +1258,26 @@ async function main() {
                   const rr = await withDetachedWorktree(
                     { repoDir, headCommit: baseCommit, label: `claude-${index}-of-${of}`, env: process.env },
                     async (worktreeDir) => {
-                      const { baseSliceCommit } = await createHeadSliceCommits({
-                        cwd: worktreeDir,
-                        env: process.env,
-                        baseRef: baseCommit,
-                        headCommit,
-                        ops,
-                        slicePaths: slice.paths,
-                        label: slice.label.replace(/\/+$/g, ''),
-                      });
-                      const prompt = buildCodexMonorepoSlicePrompt({
-                        sliceLabel: slice.label,
-                        baseCommit: baseSliceCommit,
-                        baseRef: base.baseRef,
-                      });
-                      return await runClaudeReview({
-                        repoDir: worktreeDir,
-                        env: process.env,
-                        prompt,
+                        const { baseSliceCommit } = await createHeadSliceCommits({
+                          cwd: worktreeDir,
+                          env: process.env,
+                          baseRef: baseCommit,
+                          headCommit,
+                          ops,
+                          slicePaths: slice.paths,
+                          label: slice.label.replace(/\/+$/g, ''),
+                        });
+                        const prompt = buildCodexMonorepoSlicePrompt({
+                          sliceLabel: slice.label,
+                          baseCommit: baseSliceCommit,
+                          baseRef: base.baseRef,
+                          deep: depth === 'deep',
+                          customPrompt: customReviewPrompt,
+                        });
+                        return await runClaudeReview({
+                          repoDir: worktreeDir,
+                          env: process.env,
+                          prompt,
                         model: process.env.HAPPIER_STACK_CLAUDE_MODEL,
                         streamLabel: stream && !jsonMode ? `monorepo:claude:${index}/${of}` : undefined,
                         teeFile: logFile,
@@ -1316,16 +1319,20 @@ async function main() {
                 stderr: '',
                 note: `monorepo head-slice: ${sliceResults.length} slices (maxFiles=${maxFiles})`,
                 slices: sliceResults,
-              };
-            }
+                };
+              }
 
-            const prompt = monorepo
-              ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType })
-              : buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType });
-            const logFile = join(runDir, 'raw', `claude-${sanitizeLabel(component)}.log`);
-            const res = await runClaudeReview({
-              repoDir,
-              env: process.env,
+              const prompt = monorepo
+                ? depth === 'deep'
+                  ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                  : buildCodexMonorepoNormalPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                : depth === 'deep'
+                  ? buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                  : buildCodexNormalPrompt({ component, baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt });
+              const logFile = join(runDir, 'raw', `claude-${sanitizeLabel(component)}.log`);
+              const res = await runClaudeReview({
+                repoDir,
+                env: process.env,
               prompt,
               model: process.env.HAPPIER_STACK_CLAUDE_MODEL,
               streamLabel: stream && !jsonMode ? `${component}:claude` : undefined,
@@ -1346,6 +1353,44 @@ async function main() {
           if (reviewer === 'augment') {
             // Augment CLI (`auggie`) always requires an instruction in `--print` mode.
             // Unlike Codex, it has no `--uncommitted` target we can rely on, so we always provide a prompt.
+            const jsonMode = false;
+            if (reviewMode === 'audit') {
+              const prompt = monorepo
+                ? buildCodexMonorepoAuditPrompt({
+                    deep: depth === 'deep',
+                    scopePaths: reviewPaths,
+                    customPrompt: customReviewPrompt,
+                  })
+                : buildCodexAuditPrompt({
+                    component,
+                    deep: depth === 'deep',
+                    scopePaths: reviewPaths,
+                    customPrompt: customReviewPrompt,
+                  });
+              const logFile = join(runDir, 'raw', `augment-${sanitizeLabel(component)}.log`);
+              const res = await runAugmentReview({
+                repoDir,
+                env: process.env,
+                prompt,
+                cacheDir: process.env.HAPPIER_STACK_AUGMENT_CACHE_DIR,
+                model: process.env.HAPPIER_STACK_AUGMENT_MODEL,
+                maxTurns: process.env.HAPPIER_STACK_AUGMENT_MAX_TURNS,
+                rulesFiles: coderabbitConfigFiles,
+                streamLabel: stream ? `${component}:augment` : undefined,
+                teeFile: logFile,
+                teeLabel: `${component}:augment`,
+              });
+              return {
+                reviewer,
+                ok: Boolean(res.ok),
+                exitCode: res.exitCode,
+                signal: res.signal,
+                durationMs: res.durationMs,
+                stdout: res.stdout ?? '',
+                stderr: res.stderr ?? '',
+                logFile,
+              };
+            }
             const usePromptMode = true;
             const uncommittedOps = changeType === 'uncommitted' ? await getUncommittedOps({ cwd: repoDir, env: process.env }) : null;
             const fileCount =
@@ -1373,24 +1418,26 @@ async function main() {
                   const rr = await withDetachedWorktree(
                     { repoDir, headCommit: baseCommit, label: `augment-${index}-of-${of}`, env: process.env },
                     async (worktreeDir) => {
-                      const { baseSliceCommit } = await createHeadSliceCommits({
-                        cwd: worktreeDir,
-                        env: process.env,
-                        baseRef: baseCommit,
-                        headCommit,
-                        ops,
-                        slicePaths: slice.paths,
-                        label: slice.label.replace(/\/+$/g, ''),
-                      });
-                      const prompt = buildCodexMonorepoSlicePrompt({
-                        sliceLabel: slice.label,
-                        baseCommit: baseSliceCommit,
-                        baseRef: base.baseRef,
-                      });
-                      return await runAugmentReview({
-                        repoDir: worktreeDir,
-                        prompt,
-                        env: process.env,
+                        const { baseSliceCommit } = await createHeadSliceCommits({
+                          cwd: worktreeDir,
+                          env: process.env,
+                          baseRef: baseCommit,
+                          headCommit,
+                          ops,
+                          slicePaths: slice.paths,
+                          label: slice.label.replace(/\/+$/g, ''),
+                        });
+                        const prompt = buildCodexMonorepoSlicePrompt({
+                          sliceLabel: slice.label,
+                          baseCommit: baseSliceCommit,
+                          baseRef: base.baseRef,
+                          deep: depth === 'deep',
+                          customPrompt: customReviewPrompt,
+                        });
+                        return await runAugmentReview({
+                          repoDir: worktreeDir,
+                          prompt,
+                          env: process.env,
                         cacheDir,
                         model,
                         maxTurns: Number.isFinite(maxTurns) ? String(maxTurns) : undefined,
@@ -1434,16 +1481,20 @@ async function main() {
                 stderr: '',
                 note: `monorepo head-slice: ${sliceResults.length} slices (maxFiles=${maxFiles})`,
                 slices: sliceResults,
-              };
-            }
+                };
+              }
 
-            const prompt = monorepo
-              ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType })
-              : buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType });
-            const logFile = join(runDir, 'raw', `augment-${sanitizeLabel(component)}.log`);
-            const res = await runAugmentReview({
-              repoDir,
-              prompt,
+              const prompt = monorepo
+                ? depth === 'deep'
+                  ? buildCodexMonorepoDeepPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                  : buildCodexMonorepoNormalPrompt({ baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                : depth === 'deep'
+                  ? buildCodexDeepPrompt({ component, baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt })
+                  : buildCodexNormalPrompt({ component, baseRef: base.baseRef, changeType, customPrompt: customReviewPrompt });
+              const logFile = join(runDir, 'raw', `augment-${sanitizeLabel(component)}.log`);
+              const res = await runAugmentReview({
+                repoDir,
+                prompt,
               env: process.env,
               cacheDir,
               model,
@@ -1464,10 +1515,32 @@ async function main() {
             };
           }
           return { reviewer, ok: false, exitCode: null, signal: null, durationMs: 0, stdout: '', stderr: 'unknown reviewer\n' };
-        })
-      );
+          },
+          onError: (reviewer, error) => ({
+            reviewer,
+            ok: false,
+            exitCode: null,
+            signal: null,
+            durationMs: 0,
+            stdout: '',
+            stderr: `[review] internal error while running reviewer '${reviewer}':\n${formatInternalError(error)}\n`,
+          }),
+        });
 
-      return { component, repoDir, base, results: perReviewer };
+        return { component, repoDir, base, results: perReviewer };
+      } catch (error) {
+        const stderr = `[review] internal error while preparing/running job '${component}':\n${formatInternalError(error)}\n`;
+        const results = reviewers.map((reviewer) => ({
+          reviewer,
+          ok: false,
+          exitCode: null,
+          signal: null,
+          durationMs: 0,
+          stdout: '',
+          stderr,
+        }));
+        return { component, repoDir, base, results };
+      }
     },
   });
 

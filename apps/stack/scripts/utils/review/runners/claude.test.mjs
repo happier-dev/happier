@@ -16,7 +16,7 @@ test('buildClaudeReviewArgs includes non-interactive flags', () => {
     '--permission-mode',
     'bypassPermissions',
     '--allowed-tools',
-    'Bash(git:*)',
+    'Bash(git:*),Bash(rg:*),Bash(cat:*),Bash(sed:*),Bash(ls:*),Bash(wc:*),Bash(head:*),Bash(tail:*)',
   ]);
 });
 

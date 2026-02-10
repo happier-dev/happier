@@ -5,6 +5,19 @@ export function detectAugmentAuthError({ stdout, stderr }) {
   return combined.includes('Authentication failed') && combined.includes("Run 'auggie login'");
 }
 
+function parsePositiveInt(raw) {
+  const n = Number(String(raw ?? '').trim());
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
+
+function resolveAugmentKeepaliveMs(env) {
+  const specific = parsePositiveInt(env?.HAPPIER_STACK_REVIEW_AUGMENT_KEEPALIVE_MS);
+  if (specific !== null) return specific;
+  const global = parsePositiveInt(env?.HAPPIER_STACK_REVIEW_KEEPALIVE_MS);
+  if (global !== null) return global;
+  return 30_000;
+}
+
 export function buildAugmentReviewArgs({
   prompt,
   workspaceRoot,
@@ -65,7 +78,14 @@ export async function runAugmentReview({
     retryTimeoutSec,
     maxTurns,
   });
-  const res = await runCaptureResult('auggie', args, { cwd: repoDir, env: env ?? {}, streamLabel, teeFile, teeLabel });
+  const heartbeatMs = resolveAugmentKeepaliveMs(env ?? {});
+  const res = await runCaptureResult('auggie', args, {
+    cwd: repoDir,
+    env: env ?? {},
+    streamLabel,
+    teeFile,
+    teeLabel,
+    heartbeatMs,
+  });
   return { ...res, stdout: res.out, stderr: res.err };
 }
-

@@ -1,5 +1,7 @@
 import { runCaptureResult } from '../../proc/proc.mjs';
 
+const unsupportedModels = new Set();
+
 function parsePositiveInt(raw) {
   const n = Number(String(raw ?? '').trim());
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
@@ -11,6 +13,22 @@ function resolveCodexKeepaliveMs(env) {
   const global = parsePositiveInt(env?.HAPPIER_STACK_REVIEW_KEEPALIVE_MS);
   if (global !== null) return global;
   return 30_000;
+}
+
+export function detectCodexUnsupportedModelError({ stdout, stderr }) {
+  const combined = `${stdout ?? ''}\n${stderr ?? ''}`;
+  return combined.includes('model is not supported when using Codex with a ChatGPT account');
+}
+
+export function markCodexModelUnsupported(model) {
+  const m = String(model ?? '').trim();
+  if (m) unsupportedModels.add(m);
+}
+
+export function isCodexModelKnownUnsupported(model) {
+  const m = String(model ?? '').trim();
+  if (!m) return false;
+  return unsupportedModels.has(m);
 }
 
 export function extractCodexReviewFromJsonl(jsonlText) {
@@ -73,8 +91,39 @@ export async function runCodexReview({ repoDir, baseRef, env, jsonMode, streamLa
     (merged.HAPPIER_STACK_CODEX_HOME_DIR ?? merged.CODEX_HOME ?? '').toString().trim();
   if (codexHome) merged.CODEX_HOME = codexHome;
 
-  const args = buildCodexReviewArgs({ baseRef, jsonMode, prompt, model });
+  const effectiveModel = isCodexModelKnownUnsupported(model) ? '' : model;
+  const args = buildCodexReviewArgs({ baseRef, jsonMode, prompt, model: effectiveModel });
   const heartbeatMs = resolveCodexKeepaliveMs(merged);
-  const res = await runCaptureResult('codex', args, { cwd: repoDir, env: merged, streamLabel, teeFile, teeLabel, heartbeatMs });
-  return { ...res, stdout: res.out, stderr: res.err };
+  const res = await runCaptureResult('codex', args, {
+    cwd: repoDir,
+    env: merged,
+    streamLabel,
+    teeFile,
+    teeLabel,
+    heartbeatMs,
+  });
+
+  const out = { ...res, stdout: res.out, stderr: res.err };
+  if (out.ok) return out;
+
+  const m = String(model ?? '').trim();
+  if (m && detectCodexUnsupportedModelError({ stdout: out.stdout, stderr: out.stderr })) {
+    markCodexModelUnsupported(m);
+    // eslint-disable-next-line no-console
+    console.warn(`[review] codex model '${m}' not supported; retrying without --model`);
+    // In some environments, Codex running under a ChatGPT account rejects certain model IDs.
+    // If that happens, fall back to the user's configured default model by omitting --model.
+    const retryArgs = buildCodexReviewArgs({ baseRef, jsonMode, prompt, model: '' });
+    const retry = await runCaptureResult('codex', retryArgs, {
+      cwd: repoDir,
+      env: merged,
+      streamLabel,
+      teeFile,
+      teeLabel,
+      heartbeatMs,
+    });
+    return { ...retry, stdout: retry.out, stderr: retry.err };
+  }
+
+  return out;
 }
