@@ -14,7 +14,11 @@ async function loadWorkflow(name) {
 test('release workflow only promotes/bumps on production and routes source_ref by environment', async () => {
   const raw = await loadWorkflow('release.yml');
 
-  assert.match(raw, /promote_main:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
+  // promote_main must not be skipped when bump_versions_dev is skipped (GitHub skips dependent jobs by default).
+  assert.match(
+    raw,
+    /promote_main:[\s\S]*?if:\s*always\(\)\s*&&[\s\S]*?inputs\.dry_run != true && inputs\.environment == 'production'[\s\S]*?\(needs\.checks\.result == 'success' \|\| needs\.checks\.result == 'skipped'\)[\s\S]*?\(needs\.bump_versions_dev\.result == 'success' \|\| needs\.bump_versions_dev\.result == 'skipped'\)/,
+  );
   assert.match(raw, /bump_versions_dev:[\s\S]*?if:\s*inputs\.dry_run != true && needs\.checks\.outputs\.should_bump == 'true'/);
   assert.match(raw, /if \[ "\$env_name" = "preview" \]; then[\s\S]*?if \[ "\$confirm" != "release preview from dev" \]; then/);
   assert.doesNotMatch(raw, /\[ "\$confirm" != "release preview from dev" \] && \[ "\$confirm" != "release dev to main" \]/);
@@ -23,6 +27,18 @@ test('release workflow only promotes/bumps on production and routes source_ref b
   assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'dev' \}\}/);
   assert.match(raw, /deploy_ui:[\s\S]*?bump:\s*none/);
   assert.match(raw, /sync_dev:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
+});
+
+test('release workflows do not embed invalid JS escaping in node -p/-e snippets', async () => {
+  const release = await loadWorkflow('release.yml');
+  const releaseNpm = await loadWorkflow('release-npm.yml');
+  const promoteServer = await loadWorkflow('promote-server.yml');
+
+  // These sequences produce broken JavaScript (backslashes are passed literally to Node).
+  for (const raw of [release, releaseNpm, promoteServer]) {
+    assert.doesNotMatch(raw, /require\(\\"/, 'do not use require(\\") style escaping in workflows');
+    assert.doesNotMatch(raw, /require\(\\"node:fs\\"/, 'do not escape quotes inside node -e single-quoted strings');
+  }
 });
 
 test('release-npm resolves source ref from channel and checks out resolved source', async () => {
