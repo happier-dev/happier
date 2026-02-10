@@ -60,8 +60,13 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
     isWriteLikeToolName?: (toolName: string) => boolean;
     onAbortRequested?: (() => void | Promise<void>) | null;
     toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
+    triggerAbortCallbackOnAbortDecision?: boolean;
   }) {
-    super(params.session, { onAbortRequested: params.onAbortRequested, toolTrace: params.toolTrace ?? null });
+    super(params.session, {
+      onAbortRequested: params.onAbortRequested,
+      toolTrace: params.toolTrace ?? null,
+      triggerAbortCallbackOnAbortDecision: params.triggerAbortCallbackOnAbortDecision,
+    });
     this.logPrefix = params.logPrefix;
     this.isWriteLikeToolName = params.isWriteLikeToolName ?? isDefaultWriteLikeToolName;
   }

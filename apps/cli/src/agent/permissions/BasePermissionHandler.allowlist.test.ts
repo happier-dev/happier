@@ -85,6 +85,27 @@ describe('BasePermissionHandler allowlist', () => {
     );
   });
 
+  it('can suppress onAbortRequested callback for abort decisions', async () => {
+    const session = new FakeSession();
+    let aborted = false;
+    const handler = new TestPermissionHandler(session as any, {
+      onAbortRequested: () => {
+        aborted = true;
+      },
+      triggerAbortCallbackOnAbortDecision: false,
+    });
+
+    const promise = handler.request('perm-1', 'read', { filepath: '/tmp/x' });
+
+    const rpc = session.rpcHandlerManager.handlers.get('permission');
+    expect(rpc).toBeDefined();
+    await rpc!({ id: 'perm-1', approved: false, decision: 'abort' });
+
+    const result = await promise;
+    expect(result.decision).toBe('abort');
+    expect(aborted).toBe(false);
+  });
+
   it('clears the allowlist when the session reference is updated', async () => {
     const session1 = new FakeSession();
     const handler = new TestPermissionHandler(session1 as any);

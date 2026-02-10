@@ -61,6 +61,7 @@ export abstract class BasePermissionHandler {
     private allowedToolIdentifiers = new Set<string>();
     private readonly onAbortRequested: (() => void | Promise<void>) | null;
     private readonly toolTrace: { protocol: ToolTraceProtocol; provider: string } | null;
+    private readonly triggerAbortCallbackOnAbortDecision: boolean;
 
     /**
      * Returns the log prefix for this handler.
@@ -72,10 +73,12 @@ export abstract class BasePermissionHandler {
         opts?: {
             onAbortRequested?: (() => void | Promise<void>) | null;
             toolTrace?: { protocol: ToolTraceProtocol; provider: string } | null;
+            triggerAbortCallbackOnAbortDecision?: boolean;
         }
     ) {
         this.session = session;
         this.onAbortRequested = typeof opts?.onAbortRequested === 'function' ? opts.onAbortRequested : null;
+        this.triggerAbortCallbackOnAbortDecision = opts?.triggerAbortCallbackOnAbortDecision ?? true;
         this.toolTrace =
             opts?.toolTrace && typeof opts.toolTrace === 'object'
                 ? {
@@ -194,7 +197,7 @@ export abstract class BasePermissionHandler {
                     });
                 }
 
-                if (result.decision === 'abort') {
+                if (result.decision === 'abort' && this.triggerAbortCallbackOnAbortDecision) {
                     try {
                         const cb = this.onAbortRequested;
                         if (cb) {
