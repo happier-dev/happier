@@ -15,16 +15,15 @@ test('release workflow only promotes/bumps on production and routes source_ref b
   const raw = await loadWorkflow('release.yml');
 
   assert.match(raw, /promote_main:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
-  assert.match(raw, /bump_versions:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
+  assert.match(raw, /bump_versions_dev:[\s\S]*?if:\s*inputs\.dry_run != true && needs\.checks\.outputs\.should_bump == 'true'/);
   assert.match(raw, /if \[ "\$env_name" = "preview" \]; then[\s\S]*?if \[ "\$confirm" != "release preview from dev" \]; then/);
   assert.doesNotMatch(raw, /\[ "\$confirm" != "release preview from dev" \] && \[ "\$confirm" != "release dev to main" \]/);
 
   assert.match(raw, /source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'dev' \}\}/);
   assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'dev' \}\}/);
-  assert.match(raw, /publish_npm:[\s\S]*?version_bump_cli:\s*\$\{\{\s*inputs\.environment == 'preview' && inputs\.version_bump_cli \|\| 'none'\s*\}\}/);
-  assert.match(raw, /publish_npm:[\s\S]*?version_bump_stack:\s*\$\{\{\s*inputs\.environment == 'preview' && inputs\.version_bump_stack \|\| 'none'\s*\}\}/);
-  assert.match(raw, /deploy_ui:[\s\S]*?bump:\s*\$\{\{\s*inputs\.environment == 'preview' && inputs\.version_bump_app \|\| 'none'\s*\}\}/);
-  assert.match(raw, /deploy_ui:[\s\S]*?if:[\s\S]*?inputs\.environment == 'preview' && inputs\.version_bump_app != 'none'/);
+  assert.match(raw, /publish_npm:[\s\S]*?version_bump_cli:\s*none/);
+  assert.match(raw, /publish_npm:[\s\S]*?version_bump_stack:\s*none/);
+  assert.match(raw, /deploy_ui:[\s\S]*?bump:\s*none/);
   assert.match(raw, /sync_dev:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
 });
 
@@ -59,8 +58,8 @@ test('stack version bumps use shared bump-version script across release workflow
   const orchestrator = await loadWorkflow('release.yml');
   const releaseNpm = await loadWorkflow('release-npm.yml');
 
-  assert.match(orchestrator, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ inputs\.version_bump_stack \}\}"/);
-  assert.doesNotMatch(orchestrator, /BUMP="\$\{\{ inputs\.version_bump_stack \}\}" node - <<'NODE'/);
+  assert.match(orchestrator, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ needs\.checks\.outputs\.bump_stack \}\}"/);
+  assert.doesNotMatch(orchestrator, /BUMP="\$\{\{ needs\.checks\.outputs\.bump_stack \}\}" node - <<'NODE'/);
 
   assert.match(releaseNpm, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ inputs\.version_bump_stack \}\}"/);
   assert.doesNotMatch(releaseNpm, /npm version "\$\{\{ inputs\.version_bump_stack \}\}" --no-git-tag-version/);

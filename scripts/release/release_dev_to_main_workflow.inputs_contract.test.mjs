@@ -24,7 +24,7 @@ test('release workflow uses compact grouped inputs', async () => {
   const { parsed } = await loadWorkflow();
   const inputs = parsed?.on?.workflow_dispatch?.inputs ?? {};
 
-  for (const key of ['custom_checks', 'deploy_targets', 'desktop_mode', 'version_bump_app', 'version_bump_cli', 'version_bump_stack']) {
+  for (const key of ['custom_checks', 'deploy_targets', 'desktop_mode', 'publish_targets', 'bump_app_override', 'bump_cli_override', 'bump_stack_override']) {
     assert.ok(inputs[key], `expected grouped input ${key}`);
   }
 
@@ -71,8 +71,8 @@ test('release workflow derives promote mode from confirm and uses grouped toggle
 
   assert.match(raw, /desktop_build:\s*\$\{\{ inputs\.desktop_mode != 'none' \}\}/);
   assert.match(raw, /desktop_publish_release:\s*\$\{\{ inputs\.desktop_mode == 'build_and_publish' \}\}/);
-  assert.match(raw, /inputs\.version_bump_cli/);
-  assert.match(raw, /inputs\.version_bump_stack/);
+  assert.match(raw, /inputs\.bump_cli_override/);
+  assert.match(raw, /inputs\.bump_stack_override/);
   assert.doesNotMatch(raw, /inputs\.cli_bump/);
   assert.doesNotMatch(raw, /inputs\.stack_bump/);
 });
