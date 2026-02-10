@@ -36,7 +36,10 @@ export function requestReview() {
             // Check if store review is available
             const isAvailable = await StoreReview.isAvailableAsync();
             if (!isAvailable) {
-                console.log('Store review is not available on this platform');
+                if (process.env.EXPO_PUBLIC_DEBUG) {
+                    // eslint-disable-next-line no-console
+                    console.log('Store review is not available on this platform');
+                }
                 return;
             }
 

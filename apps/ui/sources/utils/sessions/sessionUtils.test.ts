@@ -104,3 +104,25 @@ describe('getSessionStatus', () => {
         expect(status.state).toBe('permission_required');
     });
 });
+
+describe('shouldShowAbortButtonForSessionState', () => {
+    it('returns false for waiting (idle online) sessions', async () => {
+        const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        expect(shouldShowAbortButtonForSessionState('waiting')).toBe(false);
+    });
+
+    it('returns true for thinking sessions', async () => {
+        const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        expect(shouldShowAbortButtonForSessionState('thinking')).toBe(true);
+    });
+
+    it('returns true for permission_required sessions', async () => {
+        const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        expect(shouldShowAbortButtonForSessionState('permission_required')).toBe(true);
+    });
+
+    it('returns false for disconnected sessions', async () => {
+        const { shouldShowAbortButtonForSessionState } = await import('./sessionUtils');
+        expect(shouldShowAbortButtonForSessionState('disconnected')).toBe(false);
+    });
+});

@@ -3,7 +3,7 @@
  */
 
 // Minimum required CLI version for full compatibility
-export const MINIMUM_CLI_VERSION = '0.10.0';
+export const MINIMUM_CLI_VERSION = '0.1.0';
 // Minimum required CLI version to safely consume server-side pending queue V2.
 // Keep separate from MINIMUM_CLI_VERSION so it can be bumped independently.
 export const MINIMUM_CLI_PENDING_QUEUE_V2_VERSION = MINIMUM_CLI_VERSION;

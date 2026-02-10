@@ -37,8 +37,9 @@ describe('versionUtils', () => {
         });
 
         it('should use default minimum version', () => {
-            expect(isVersionSupported('0.10.0')).toBe(true);
-            expect(isVersionSupported('0.9.0')).toBe(false);
+            // Default minimum version should allow the current dev CLI baseline (0.1.0).
+            expect(isVersionSupported('0.1.0')).toBe(true);
+            expect(isVersionSupported('0.0.9')).toBe(false);
         });
 
         it('returns false for invalid version input', () => {

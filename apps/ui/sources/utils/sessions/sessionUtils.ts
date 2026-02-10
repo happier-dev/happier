@@ -16,6 +16,12 @@ export interface SessionStatus {
 
 export const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = 15_000;
 
+export function shouldShowAbortButtonForSessionState(state: SessionState): boolean {
+    // Abort should only be available when there's an in-flight operation or a permission gate.
+    // Idle online sessions are represented as `waiting` today.
+    return state === 'thinking' || state === 'permission_required';
+}
+
 /**
  * Get the current state of a session based on presence and thinking status.
  * Uses centralized session state from storage.ts
