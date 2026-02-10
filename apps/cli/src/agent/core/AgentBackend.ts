@@ -137,6 +137,16 @@ export interface AgentBackend {
    * @param prompt - The user's prompt text
    */
   sendPrompt(sessionId: SessionId, prompt: string): Promise<void>;
+
+  /**
+   * Send additional user input into an already in-flight turn, when supported.
+   *
+   * This is the "steer" capability: it should not start a new turn and should not
+   * abort the currently running turn.
+   *
+   * When unsupported, callers should fall back to queueing the message for the next turn.
+   */
+  sendSteerPrompt?(sessionId: SessionId, prompt: string): Promise<void>;
   
   /**
    * Cancel the current operation in a session.

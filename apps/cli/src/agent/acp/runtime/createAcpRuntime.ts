@@ -11,6 +11,7 @@ import {
   forwardAcpPermissionRequest,
   forwardAcpTerminalOutput,
 } from '@/agent/acp/bridge/acpCommonHandlers';
+import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
 import { normalizeAvailableCommands, publishSlashCommandsToMetadata } from '@/agent/acp/commands/publishSlashCommands';
 import { importAcpReplayHistoryV1 } from '@/agent/acp/history/importAcpReplayHistory';
 import { importAcpReplaySidechainV1 } from '@/agent/acp/history/importAcpReplaySidechain';
@@ -20,6 +21,14 @@ import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 
 export type AcpRuntime = Readonly<{
   getSessionId: () => string | null;
+  /**
+   * Whether this runtime supports "steering" additional user input into an already running turn.
+   */
+  supportsInFlightSteer: () => boolean;
+  /**
+   * Whether a turn is currently in-flight for this runtime (between beginTurn and flushTurn).
+   */
+  isTurnInFlight: () => boolean;
   beginTurn: () => void;
   cancel: () => Promise<void>;
   reset: () => Promise<void>;
@@ -39,6 +48,12 @@ export type AcpRuntime = Readonly<{
    * No-op when unsupported or when the session has not been started/loaded.
    */
   setSessionConfigOption: (configId: string, value: string | number | boolean | null) => Promise<void>;
+  /**
+   * Send additional user text into the currently running turn when supported.
+   *
+   * This should NOT start a new turn and should NOT abort the current turn.
+   */
+  steerPrompt: (prompt: string) => Promise<void>;
   sendPrompt: (prompt: string) => Promise<void>;
   flushTurn: () => void;
 }>;
@@ -56,6 +71,10 @@ export type AcpRuntimeBackend = AgentBackend & {
    * Optional ACP session config option change.
    */
   setSessionConfigOption?: (sessionId: string, configId: string, value: string | number | boolean | null) => Promise<unknown>;
+  /**
+   * Optional: send additional user input into an already running turn.
+   */
+  sendSteerPrompt?: (sessionId: string, prompt: string) => Promise<void>;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -92,6 +111,41 @@ export function createAcpRuntime(params: {
    */
   onSessionIdChange?: (sessionId: string | null) => void;
   /**
+   * Optional in-flight steer support.
+   *
+   * This is a provider/runtime capability flag, not a UI/queue policy.
+   */
+  inFlightSteer?: {
+    enabled?: boolean;
+  };
+  /**
+   * Optional pending-queue integration used to materialize server-backed pending messages
+   * while a steer-capable turn is in-flight.
+   */
+  pendingQueue?: {
+    waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
+    popPendingMessage: () => Promise<boolean>;
+    maxPopPerWake?: number;
+    /**
+     * Whether the runtime should pop server-pending messages while a turn is in-flight.
+     *
+     * This is intentionally opt-in because popping pending messages during a running turn
+     * effectively "auto-delivers" them (often via in-flight steer) which can defeat
+     * user-facing "queue for review" / "queue in Pending" semantics.
+     *
+     * The baseline message loop already pops pending messages while idle; this only affects
+     * the extra in-flight pump used to avoid stranding pending messages while sendPrompt() is running.
+     */
+    drainDuringTurn?: boolean;
+    /**
+     * Fallback polling interval used while a steer-capable turn is in-flight.
+     *
+     * Some pending-queue updates may not publish metadata wake signals, so polling avoids
+     * stranding newly enqueued messages mid-turn.
+     */
+    pollIntervalMs?: number;
+  };
+  /**
    * Optional lifecycle hooks for per-provider turn processing.
    *
    * These hooks are intentionally generic (no provider branching inside the core runtime).
@@ -124,6 +178,84 @@ export function createAcpRuntime(params: {
   let taskStartedSent = false;
   let turnAborted = false;
   let loadingSession = false;
+  let turnInFlight = false;
+  const inFlightSteerEnabled = params.inFlightSteer?.enabled === true;
+  const acpTraceMarkersEnabled = (() => {
+    const raw = (
+      process.env.HAPPIER_E2E_ACP_TRACE_MARKERS ??
+      process.env.HAPPY_E2E_ACP_TRACE_MARKERS ??
+      ''
+    )
+      .toString()
+      .trim()
+      .toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
+  })();
+  let pendingPumpController: AbortController | null = null;
+
+  const stopPendingPump = () => {
+    if (!pendingPumpController) return;
+    try {
+      pendingPumpController.abort('acp-runtime:stop-pending-pump');
+    } catch {
+      // ignore
+    }
+    pendingPumpController = null;
+  };
+
+  const startPendingPumpIfNeeded = () => {
+    if (!inFlightSteerEnabled) return;
+    if (!params.pendingQueue) return;
+    if (params.pendingQueue.drainDuringTurn !== true) return;
+    if (pendingPumpController) return;
+
+    const controller = new AbortController();
+    pendingPumpController = controller;
+    const maxPopPerWake = Math.max(1, params.pendingQueue.maxPopPerWake ?? 25);
+    const pollIntervalMs = Math.max(5, params.pendingQueue.pollIntervalMs ?? 2_000);
+
+    const waitForPollWake = async (): Promise<boolean> =>
+      await new Promise<boolean>((resolve) => {
+        if (controller.signal.aborted) return resolve(false);
+        const timer = setTimeout(() => resolve(true), pollIntervalMs);
+        timer.unref?.();
+        controller.signal.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(timer);
+            resolve(false);
+          },
+          { once: true },
+        );
+      });
+
+    void (async () => {
+      const drainPendingOnce = async (): Promise<void> => {
+        // Best-effort: materialize a bounded number of pending messages per wake to avoid tight loops.
+        for (let i = 0; i < maxPopPerWake; i += 1) {
+          if (controller.signal.aborted) break;
+          const did = await params.pendingQueue!.popPendingMessage().catch(() => false);
+          if (!did) break;
+        }
+      };
+
+      // Drain immediately once to avoid stranding already-enqueued pending messages while we wait
+      // for a "metadata update" wake signal.
+      await drainPendingOnce();
+
+      while (!controller.signal.aborted) {
+        // Pending queue updates do not always publish a metadata wake signal (version skew / transport races).
+        // Poll as a fallback so newly enqueued messages can still be drained mid-turn for in-flight steer.
+        await Promise.race([
+          params.pendingQueue!.waitForMetadataUpdate(controller.signal).catch(() => false),
+          waitForPollWake(),
+        ]);
+        if (controller.signal.aborted) break;
+
+        await drainPendingOnce();
+      }
+    })();
+  };
 
   const toolCallCacheMaxEntries = Math.max(1, params.toolCallCache?.maxEntries ?? 1_000);
   const toolCallCacheTtlMs = Math.max(1, params.toolCallCache?.ttlMs ?? 10 * 60_000);
@@ -211,8 +343,21 @@ export function createAcpRuntime(params: {
 
       switch (msg.type) {
         case 'model-output': {
+          const deltaRaw = msg.textDelta ?? '';
+          if (acpTraceMarkersEnabled && sessionId && deltaRaw.includes('ACP_STUB_')) {
+            // Trace only deterministic stub markers (never arbitrary assistant text) so provider harness
+            // can coordinate mid-turn steer without requiring tool-calls or vendor credentials.
+            recordToolTraceEvent({
+              direction: 'inbound',
+              sessionId,
+              protocol: 'acp',
+              provider: params.provider,
+              kind: 'trace-marker',
+              payload: { text: deltaRaw },
+            });
+          }
           handleAcpModelOutputDelta({
-            delta: msg.textDelta ?? '',
+            delta: deltaRaw,
             messageBuffer: params.messageBuffer,
             getIsResponseInProgress: () => isResponseInProgress,
             setIsResponseInProgress: (value) => { isResponseInProgress = value; },
@@ -232,6 +377,19 @@ export function createAcpRuntime(params: {
               setTaskStartedSent: (value) => { taskStartedSent = value; },
               makeId: () => randomUUID(),
             });
+
+            if (acpTraceMarkersEnabled && sessionId) {
+              // Provider-agnostic trace marker used by the e2e harness to enqueue an in-flight steer
+              // step while the turn is running (without relying on vendor-specific assistant output).
+              recordToolTraceEvent({
+                direction: 'inbound',
+                sessionId,
+                protocol: 'acp',
+                provider: params.provider,
+                kind: 'trace-marker',
+                payload: { event: 'acp_status_running' },
+              });
+            }
           }
 
           if (msg.status === 'error') {
@@ -295,6 +453,13 @@ export function createAcpRuntime(params: {
             const metadataSessionId = typeof metadataSessionIdRaw === 'string' ? metadataSessionIdRaw : null;
             const outputValue = record?.output;
             const outputText = typeof outputValue === 'string' ? outputValue : null;
+            const contentText = typeof (record as any)?.content === 'string' ? String((record as any).content) : null;
+            const fallbackSidechainText = (() => {
+              const raw = (contentText ?? outputText ?? '').trim();
+              if (!raw) return '';
+              // Strip embedded task metadata blocks so the sidechain preview is mostly the assistant output.
+              return raw.replace(/<task_metadata>[\s\S]*?<\/task_metadata>/gi, '').trim();
+            })();
             const embeddedSessionId = outputText
               ? (() => {
                   const match = outputText.match(/<task_metadata>[\s\S]*?session_id:\s*([^\s<]+)[\s\S]*?<\/task_metadata>/i);
@@ -315,23 +480,40 @@ export function createAcpRuntime(params: {
 
               void (async () => {
                 let replayBackend: AcpRuntimeBackend | null = null;
+                let replayImported = false;
                 try {
                   replayBackend = await createReplayBackend();
-                  if (!replayBackend.loadSessionWithReplayCapture) return;
-                  const loaded = await replayBackend.loadSessionWithReplayCapture(remoteSessionId);
-                  const replay = loaded.replay;
-                  if (!Array.isArray(replay) || replay.length === 0) return;
-
-                  await importAcpReplaySidechainV1({
-                    session: params.session,
-                    provider: params.provider,
-                    remoteSessionId,
-                    sidechainId: callId,
-                    replay: replay as unknown[],
-                  });
+                  const canReplay = Boolean(replayBackend.loadSessionWithReplayCapture);
+                  if (canReplay) {
+                    const loaded = await replayBackend.loadSessionWithReplayCapture!(remoteSessionId);
+                    const replay = loaded.replay;
+                    if (Array.isArray(replay) && replay.length > 0) {
+                      await importAcpReplaySidechainV1({
+                        session: params.session,
+                        provider: params.provider,
+                        remoteSessionId,
+                        sidechainId: callId,
+                        replay: replay as unknown[],
+                      });
+                      replayImported = true;
+                      return;
+                    }
+                  }
                 } catch (e) {
                   logger.debug(`[${params.provider}] Failed to import Task sidechain replay (non-fatal)`, e);
                 } finally {
+                  // Fallback: if we can't replay-import, at least persist the Task output as a sidechain message.
+                  if (!replayImported && fallbackSidechainText) {
+                    try {
+                      await params.session.sendAgentMessageCommitted(
+                        params.provider,
+                        { type: 'message', message: fallbackSidechainText, sidechainId: callId },
+                        { localId: randomUUID(), meta: { importedFrom: 'acp-sidechain', remoteSessionId, sidechainId: callId } },
+                      );
+                    } catch (e) {
+                      logger.debug(`[${params.provider}] Failed to persist Task sidechain fallback message (non-fatal)`, e);
+                    }
+                  }
                   toolNameByCallId.delete(callId);
                   if (replayBackend) {
                     try {
@@ -370,6 +552,22 @@ export function createAcpRuntime(params: {
             session: params.session,
             agent: params.provider,
             getCallId: () => randomUUID(),
+          });
+          break;
+        }
+
+        case 'token-count': {
+          // Forward per-turn token usage when available (ACP PromptResponse.usage or agent-provided usage_update).
+          // This is converted into a `token_count` session message so the server can emit `usage` ephemerals.
+          const record = msg as Record<string, unknown>;
+          const tokens = record.tokens;
+          if (tokens === undefined) {
+            break;
+          }
+          params.session.sendAgentMessage(params.provider, {
+            type: 'token_count',
+            tokens,
+            id: randomUUID(),
           });
           break;
         }
@@ -596,9 +794,14 @@ export function createAcpRuntime(params: {
 
   return {
     getSessionId: () => sessionId,
+    supportsInFlightSteer: () => inFlightSteerEnabled,
+    isTurnInFlight: () => turnInFlight,
 
     beginTurn(): void {
+      turnInFlight = true;
       turnAborted = false;
+      resetTurnState();
+      startPendingPumpIfNeeded();
       try {
         params.hooks?.onBeginTurn?.();
       } catch (e) {
@@ -609,15 +812,23 @@ export function createAcpRuntime(params: {
     async cancel(): Promise<void> {
       if (!sessionId) return;
       const b = await ensureBackend();
-      await b.cancel(sessionId);
-      clearToolCallCache();
+      try {
+        await b.cancel(sessionId);
+      } finally {
+        // Cancel should behave like a turn boundary: don't keep steering/pending state alive.
+        turnInFlight = false;
+        stopPendingPump();
+        clearToolCallCache();
+      }
     },
 
     async reset(): Promise<void> {
       sessionId = null;
+      turnInFlight = false;
       resetTurnState();
       loadingSession = false;
       clearToolCallCache();
+      stopPendingPump();
       publishSessionId();
 
       if (backend) {
@@ -757,6 +968,34 @@ export function createAcpRuntime(params: {
       await b.setSessionConfigOption(sessionId, normalizedConfigId, normalizedValue);
     },
 
+    async steerPrompt(prompt: string): Promise<void> {
+      if (!inFlightSteerEnabled) {
+        throw new Error(`${params.provider} runtime does not support in-flight steer`);
+      }
+      if (!sessionId) {
+        throw new Error(`${params.provider} ACP session was not started`);
+      }
+      const b = await ensureBackend();
+      if (!b.sendSteerPrompt) {
+        throw new Error(`${params.provider} ACP backend does not support in-flight steer`);
+      }
+      await b.sendSteerPrompt(sessionId, prompt);
+
+      // Provider-agnostic trace marker so the provider harness can assert that the second message
+      // was routed through in-flight steer (STIR-style) instead of interrupting the turn.
+      if (acpTraceMarkersEnabled) {
+        recordToolTraceEvent({
+          direction: 'outbound',
+          sessionId,
+          protocol: 'acp',
+          provider: params.provider,
+          kind: 'trace-marker',
+          payload: { event: 'acp_in_flight_steer' },
+        });
+      }
+      publishSessionId();
+    },
+
     async sendPrompt(prompt: string): Promise<void> {
       if (!sessionId) {
         throw new Error(`${params.provider} ACP session was not started`);
@@ -771,6 +1010,8 @@ export function createAcpRuntime(params: {
     },
 
     flushTurn(): void {
+      turnInFlight = false;
+      stopPendingPump();
       if (!turnAborted) {
         try {
           params.hooks?.onBeforeFlushTurn?.({

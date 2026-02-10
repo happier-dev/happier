@@ -23,8 +23,52 @@ export function extractToolInput(update: SessionUpdate): unknown {
 }
 
 export function extractToolOutput(update: SessionUpdate): unknown {
-  if (update.rawOutput !== undefined) return update.rawOutput;
-  if (update.output !== undefined) return update.output;
+  const isTerminalStatus =
+    update.status === 'completed' || update.status === 'failed' || update.status === 'cancelled';
+
+  if (update.rawOutput !== undefined) {
+    const isEmptyRawOutput = typeof update.rawOutput === 'string' && update.rawOutput.trim() === '';
+
+    // Some ACP providers set rawOutput to an empty string while still embedding meaningful output in `content`.
+    if (!(isEmptyRawOutput && update.content !== undefined)) {
+      // Some providers embed terminal output in rawInput/input for terminal statuses. Prefer that over an empty string.
+      if (!(isEmptyRawOutput && isTerminalStatus && update.content === undefined)) {
+        return update.rawOutput;
+      }
+    }
+  }
+  if (update.output !== undefined) {
+    const isEmptyOutput = typeof update.output === 'string' && update.output.trim() === '';
+
+    // Some ACP providers set output to an empty string while still embedding meaningful output in `content`.
+    if (!(isEmptyOutput && update.content !== undefined)) {
+      // Some providers embed terminal output in rawInput/input for terminal statuses. Prefer that over an empty string.
+      if (!(isEmptyOutput && isTerminalStatus && update.content === undefined)) {
+        return update.output;
+      }
+    }
+  }
+
+  // Some providers emit a terminal tool_call_update with empty output, but place the formatted output payload in
+  // rawInput/input (and omit `content`). Prefer the embedded payload so the UI can render something meaningful.
+  if (isTerminalStatus && update.content === undefined) {
+    const hasEmptyExplicitOutput =
+      (typeof update.rawOutput === 'string' && update.rawOutput.trim() === '') ||
+      (typeof update.output === 'string' && update.output.trim() === '');
+
+    const hasNoExplicitOutput =
+      update.rawOutput === undefined &&
+      update.output === undefined &&
+      update.result === undefined &&
+      update.liveContent === undefined &&
+      update.live_content === undefined;
+
+    if (hasEmptyExplicitOutput || hasNoExplicitOutput) {
+      if (Array.isArray(update.rawInput) && update.rawInput.length > 0) return update.rawInput;
+      if (Array.isArray(update.input) && update.input.length > 0) return update.input;
+    }
+  }
+
   if (update.result !== undefined) return update.result;
   if (update.liveContent !== undefined) return update.liveContent;
   if (update.live_content !== undefined) return update.live_content;

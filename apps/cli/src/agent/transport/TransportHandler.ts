@@ -78,6 +78,18 @@ export interface TransportHandler {
   getInitTimeout(): number;
 
   /**
+   * Optional delay before sending the first ACP request (initialize).
+   *
+   * Some ACP agents (notably Gemini CLI) have a startup window where stdin is
+   * routed to a non-ACP input path; any bytes written during that window can
+   * poison the ACP stdio channel and cause initialize to hang indefinitely.
+   *
+   * Returning a small delay here allows the agent to finish its startup/stdio
+   * setup before the client sends ACP JSON-RPC messages.
+   */
+  getInitDelayMs?(): number;
+
+  /**
    * Filter a line from stdout before ACP parsing.
    *
    * Some agents output debug info to stdout that breaks JSON-RPC parsing.

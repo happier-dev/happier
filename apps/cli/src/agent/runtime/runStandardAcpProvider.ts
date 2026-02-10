@@ -21,6 +21,7 @@ import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRu
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import type { InFlightSteerController } from '@/agent/runtime/permission/bindPermissionModeQueue';
 import type { Credentials } from '@/persistence';
 import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
@@ -30,6 +31,9 @@ type RuntimeForLoop = {
   beginTurn: () => void;
   startOrLoad: (opts: { resumeId?: string }) => Promise<unknown>;
   sendPrompt: (message: string) => Promise<void>;
+  supportsInFlightSteer?: () => boolean;
+  isTurnInFlight?: () => boolean;
+  steerPrompt?: (message: string) => Promise<void>;
   flushTurn: () => void;
   reset: () => Promise<void>;
   getSessionId: () => string | null;
@@ -179,9 +183,25 @@ export async function runStandardAcpProvider(
   });
   permissionHandler.setPermissionMode(initialPermissionMode);
 
+  // Used by the message-queue binding to optionally steer additional user input into an in-flight turn.
+  // This is late-bound because the queue binding is initialized before the runtime is created.
+  let runtimeForInFlightSteer: RuntimeForLoop | null = null;
+  const inFlightSteerController: InFlightSteerController = {
+    supportsInFlightSteer: () => runtimeForInFlightSteer?.supportsInFlightSteer?.() === true,
+    isTurnInFlight: () => runtimeForInFlightSteer?.isTurnInFlight?.() === true,
+    steerText: async (text: string) => {
+      const runtime = runtimeForInFlightSteer;
+      if (!runtime?.steerPrompt) {
+        throw new Error('in-flight steer is not available');
+      }
+      await runtime.steerPrompt(text);
+    },
+  };
+
   const permissionModeState = createPermissionModeQueueStateFn({
     session,
     initialPermissionMode,
+    inFlightSteer: inFlightSteerController,
   });
   const { messageQueue } = permissionModeState;
 
@@ -221,6 +241,7 @@ export async function runStandardAcpProvider(
       thinking = value;
     },
   });
+  runtimeForInFlightSteer = runtime;
 
   const handleAbort = async () => {
     logger.debug(`${config.uiLogPrefix} Abort requested`);

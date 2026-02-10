@@ -64,6 +64,14 @@ export function nodeToWebStreams(
                 let wrote = false;
                 let settled = false;
 
+                const isBenignWriteError = (error: unknown): boolean => {
+                    const e = error as any;
+                    const code = typeof e?.code === 'string' ? e.code : '';
+                    const message = typeof e?.message === 'string' ? e.message : '';
+                    // Normal shutdown / race conditions can surface as EPIPE or destroyed stream writes.
+                    return code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED' || /stream was destroyed/i.test(message);
+                };
+
                 const onDrain = () => {
                     drained = true;
                     if (!wrote) return;
@@ -80,10 +88,14 @@ export function nodeToWebStreams(
                 const ok = stdin.write(chunk, (err) => {
                     wrote = true;
                     if (err) {
-                        logger.debug(`[nodeToWebStreams] Error writing to stdin:`, err);
                         if (!settled) {
                             settled = true;
                             stdin.off('drain', onDrain);
+                            if (isBenignWriteError(err)) {
+                                resolve();
+                                return;
+                            }
+                            logger.debug(`[nodeToWebStreams] Error writing to stdin:`, err);
                             reject(err);
                         }
                         return;

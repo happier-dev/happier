@@ -24,6 +24,7 @@ type CatalogAcpProviderRuntimeParams<TBackendOptions extends object> = {
     session: ApiSessionClient;
   }) => PermissionMode | null | undefined;
   onSessionIdChange?: (nextSessionId: string | null) => void;
+  inFlightSteer?: Parameters<typeof createAcpRuntime>[0]['inFlightSteer'];
   hooks?: Parameters<typeof createAcpRuntime>[0]['hooks'];
 };
 
@@ -39,6 +40,11 @@ export function createCatalogProviderAcpRuntime<TBackendOptions extends object =
     permissionHandler: params.permissionHandler,
     onThinkingChange: params.onThinkingChange,
     hooks: params.hooks,
+    inFlightSteer: params.inFlightSteer,
+    pendingQueue: {
+      waitForMetadataUpdate: (signal) => params.session.waitForMetadataUpdate(signal),
+      popPendingMessage: () => params.session.popPendingMessage(),
+    },
     ensureBackend: async () => {
       const permissionModeRaw = params.resolvePermissionMode
         ? params.resolvePermissionMode({

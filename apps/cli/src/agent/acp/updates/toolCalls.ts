@@ -35,6 +35,76 @@ export function formatDurationMinutes(startTime: number | undefined): string {
   return (duration / 1000 / 60).toFixed(2);
 }
 
+function extractTextFromContentBlocks(value: unknown): string | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+
+  const parts: string[] = [];
+  for (const item of value) {
+    if (typeof item === 'string') {
+      parts.push(item);
+      continue;
+    }
+    const record = asRecord(item);
+    if (!record) return null;
+
+    if (typeof record.text === 'string') {
+      parts.push(record.text);
+      continue;
+    }
+
+    const nested = asRecord(record.content);
+    if (nested && typeof nested.text === 'string') {
+      parts.push(nested.text);
+      continue;
+    }
+
+    return null;
+  }
+
+  return parts.length > 0 ? parts.join('') : null;
+}
+
+function inferToolKindFromUpdate(update: SessionUpdate): string | null {
+  // Some ACP providers omit kind and embed a formatted command result payload in rawInput/input.
+  // Heuristic: the well-known wrapper includes Command/Exit Code lines.
+  const rawInput = extractToolInput(update);
+  const text = extractTextFromContentBlocks(rawInput);
+  if (!text) return null;
+
+  const hasCommand = /^Command:\s*\S+/m.test(text);
+  const hasExitCode = /\bExit Code:\s*\d+/m.test(text);
+  if (hasCommand && hasExitCode) return 'execute';
+
+  return null;
+}
+
+function buildToolNameInferenceInput(rawInputRecord: Record<string, unknown> | null, update: SessionUpdate): Record<string, unknown> {
+  const title = typeof update.title === 'string' ? update.title.trim() : '';
+  if (!title) return rawInputRecord ?? {};
+
+  if (!rawInputRecord) {
+    return { title, description: title, _acp: { title } };
+  }
+
+  const next: Record<string, unknown> = { ...rawInputRecord };
+  const currentTitle = typeof next.title === 'string' ? next.title.trim() : '';
+  if (!currentTitle) {
+    next.title = title;
+  }
+  const currentDescription = typeof next.description === 'string' ? next.description.trim() : '';
+  if (!currentDescription) {
+    next.description = title;
+  }
+
+  const acp = asRecord(next._acp) ?? {};
+  const acpTitle = typeof acp.title === 'string' ? acp.title.trim() : '';
+  if (!acpTitle) {
+    next._acp = { ...acp, title };
+  }
+
+  return next;
+}
+
 function emitTerminalOutputFromMeta(update: SessionUpdate, ctx: HandlerContext): void {
   const meta = extractMeta(update);
   if (!meta) return;
@@ -76,7 +146,10 @@ function emitToolCallRefresh(
 
   const rawInput = extractToolInput(update);
   const rawInputRecord = asRecord(rawInput);
-  if (rawInputRecord) ctx.toolCallIdToInputMap.set(toolCallId, rawInputRecord);
+  const toolNameInferenceInput = buildToolNameInferenceInput(rawInputRecord, update);
+  if (Object.keys(toolNameInferenceInput).length > 0) {
+    ctx.toolCallIdToInputMap.set(toolCallId, toolNameInferenceInput);
+  }
 
   const baseName =
     ctx.toolCallIdToNameMap.get(toolCallId) ??
@@ -84,7 +157,7 @@ function emitToolCallRefresh(
     toolKindStr ??
     'unknown';
   const realToolName =
-    ctx.transport.determineToolName?.(baseName, toolCallId, rawInputRecord ?? {}, {
+    ctx.transport.determineToolName?.(baseName, toolCallId, toolNameInferenceInput, {
       recentPromptHadChangeTitle: false,
       toolCallCountSincePrompt: ctx.toolCallCountSincePrompt,
     }) ?? baseName;
@@ -121,13 +194,17 @@ export function startToolCall(
 
   const rawInput = extractToolInput(update);
   const rawInputRecord = asRecord(rawInput);
-  if (rawInputRecord) ctx.toolCallIdToInputMap.set(toolCallId, rawInputRecord);
+  const toolNameInferenceInput = buildToolNameInferenceInput(rawInputRecord, update);
+  if (Object.keys(toolNameInferenceInput).length > 0) {
+    ctx.toolCallIdToInputMap.set(toolCallId, toolNameInferenceInput);
+  }
 
   // Determine a stable tool name (never use `update.title`, which is human-readable and can vary per call).
+  const seededName = ctx.toolCallIdToNameMap.get(toolCallId);
   const extractedName = ctx.transport.extractToolNameFromId?.(toolCallId);
-  const baseName = extractedName ?? toolKindStr ?? 'unknown';
+  const baseName = seededName ?? extractedName ?? toolKindStr ?? 'unknown';
   const toolName =
-    ctx.transport.determineToolName?.(baseName, toolCallId, rawInputRecord ?? {}, {
+    ctx.transport.determineToolName?.(baseName, toolCallId, toolNameInferenceInput, {
       recentPromptHadChangeTitle: false,
       toolCallCountSincePrompt: ctx.toolCallCountSincePrompt,
     }) ?? baseName;
@@ -391,20 +468,22 @@ export function handleToolCallUpdate(
     return { handled: false };
   }
 
+  const inferredToolKind = inferToolKindFromUpdate(update);
   const toolKind =
     typeof update.kind === 'string'
       ? update.kind
-      : (ctx.transport.extractToolNameFromId?.(toolCallId) ?? 'unknown');
+      : (ctx.transport.extractToolNameFromId?.(toolCallId) ?? inferredToolKind ?? 'unknown');
   let toolCallCountSincePrompt = ctx.toolCallCountSincePrompt;
 
   // Some ACP providers stream terminal output via tool_call_update.meta.
   emitTerminalOutputFromMeta(update, ctx);
 
   const isTerminalStatus = status === 'completed' || status === 'failed' || status === 'cancelled';
-  // Some ACP providers (notably Gemini CLI) can emit a terminal tool_call_update without ever sending an
-  // in_progress/pending update first. Seed a synthetic tool-call so the UI has enough context to render
-  // the tool input/locations, and so tool-result can attach a non-"unknown" kind.
-  if (isTerminalStatus && !ctx.toolCallIdToNameMap.has(toolCallId)) {
+  // Some ACP providers can emit a terminal tool_call_update without ever sending an in_progress/pending
+  // update first (notably: Gemini), or after a permission gate without any intermediate updates (Qwen).
+  // If we didn't track this tool call as active, seed a synthetic tool-call so downstream normalization
+  // can map tool-result to a canonical tool family.
+  if (isTerminalStatus && !ctx.activeToolCalls.has(toolCallId)) {
     startToolCall(toolCallId, toolKind, { ...update, status: 'pending' }, ctx, 'tool_call_update');
   }
 

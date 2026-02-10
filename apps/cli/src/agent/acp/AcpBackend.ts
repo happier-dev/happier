@@ -62,6 +62,7 @@ import {
 } from './sessionUpdateHandlers';
 import { nodeToWebStreams } from './nodeToWebStreams';
 import { buildAcpSpawnSpec } from './acpSpawn';
+import { killProcessTree } from './killProcessTree';
 import {
   pickPermissionOutcome,
   type PermissionOptionLike,
@@ -604,6 +605,15 @@ export class AcpBackend implements AgentBackend {
         const result = this.transport.handleStderr(text, context);
         if (result.message) {
           this.emit(result.message);
+          // If the transport surfaces a fatal error via a status message, fail any pending
+          // `waitForResponseComplete()` caller so we don't degrade into a generic timeout.
+          if (result.message.type === 'status' && result.message.status === 'error' && this.waitingForResponse) {
+            const detail =
+              typeof result.message.detail === 'string' && result.message.detail.trim()
+                ? result.message.detail
+                : 'ACP transport reported an error';
+            this.failPendingResponseWait(new Error(detail));
+          }
         }
       }
     });
@@ -611,13 +621,16 @@ export class AcpBackend implements AgentBackend {
     this.process.on('error', (err) => {
       // Log to file only, not console
       logger.debug(`[AcpBackend] Process error:`, err);
+      this.failPendingResponseWait(err instanceof Error ? err : new Error(String(err)));
       this.emit({ type: 'status', status: 'error', detail: err.message });
     });
 
     this.process.on('exit', (code, signal) => {
       if (!this.disposed && code !== 0 && code !== null) {
         logger.debug(`[AcpBackend] Process exited with code ${code}, signal ${signal}`);
-        this.emit({ type: 'status', status: 'stopped', detail: `Exit code: ${code}` });
+        const detail = `Exit code: ${code}`;
+        this.failPendingResponseWait(new Error(detail));
+        this.emit({ type: 'status', status: 'error', detail });
       }
     });
 
@@ -749,6 +762,19 @@ export class AcpBackend implements AgentBackend {
           logger.debug(`[AcpBackend] Detected tool name: ${toolName} from toolCallId: ${toolCallId}`);
         }
 
+        // Seed tool-call identity for later tool_call_update events.
+        // Some providers emit a permission prompt before (or instead of) an initial tool_call update.
+        // When the subsequent tool_call_update omits kind/title, we still want stable tool names and
+        // the correct renderer in the UI.
+        if (!this.toolCallIdToNameMap.has(toolCallId)) {
+          this.toolCallIdToNameMap.set(toolCallId, toolName);
+        }
+        if (input && typeof input === 'object' && !Array.isArray(input) && Object.keys(input).length > 0) {
+          if (!this.toolCallIdToInputMap.has(toolCallId)) {
+            this.toolCallIdToInputMap.set(toolCallId, input);
+          }
+        }
+
         // Increment tool call counter for context tracking
         this.toolCallCountSincePrompt++;
 
@@ -800,6 +826,9 @@ export class AcpBackend implements AgentBackend {
               || result.decision === 'approved_execpolicy_amendment';
 
             await this.respondToPermission(permissionId, isApproved);
+            if (!isApproved) {
+              this.clearTrackedToolCall(toolCallId, `permission decision=${result.decision}`);
+            }
             const outcome = pickPermissionOutcome(options as PermissionOptionLike[], result.decision);
             if (outcome.outcome === 'selected') {
               this.lastSelectedPermissionOptionIdByToolCallId.set(toolCallId, outcome.optionId);
@@ -810,6 +839,7 @@ export class AcpBackend implements AgentBackend {
           } catch (error) {
             // Log to file only, not console
             logger.debug('[AcpBackend] Error in permission handler:', error);
+            this.clearTrackedToolCall(toolCallId, 'permission handler error');
             // Fallback to deny on error
             return { outcome: { outcome: 'cancelled' } };
           }
@@ -847,6 +877,17 @@ export class AcpBackend implements AgentBackend {
       clientName: 'happier-cli',
       clientVersion: packageJson.version,
     });
+
+    // Some ACP agents (notably Gemini CLI) can swallow early stdin before their ACP
+    // stdio bridge is ready. Waiting briefly avoids poisoning the channel.
+    const initDelay = (() => {
+      const raw = this.transport.getInitDelayMs?.();
+      return typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 0;
+    })();
+    if (initDelay > 0) {
+      logger.debug(`[AcpBackend] Waiting ${initDelay}ms before initialize (${this.transport.agentName})...`);
+      await delay(initDelay);
+    }
 
     const initTimeout = this.transport.getInitTimeout();
     logger.debug(`[AcpBackend] Initializing connection (timeout: ${initTimeout}ms)...`);
@@ -935,27 +976,22 @@ export class AcpBackend implements AgentBackend {
     }
 
     return { initTimeout };
-    } catch (error) {
-      logger.debug('[AcpBackend] Initialization failed; cleaning up process/connection', error);
-      const proc = this.process;
-      this.process = null;
-      this.connection = null;
-      this.acpSessionId = null;
-      if (proc) {
-        try {
-          // On Windows, signals are not reliably supported; `kill()` uses TerminateProcess.
-          if (process.platform === 'win32') {
-            proc.kill();
-          } else {
-            proc.kill('SIGTERM');
-          }
-        } catch {
-          // best-effort cleanup
-        }
+  } catch (error) {
+    logger.debug('[AcpBackend] Initialization failed; cleaning up process/connection', error);
+    const proc = this.process;
+    this.process = null;
+    this.connection = null;
+    this.acpSessionId = null;
+    if (proc) {
+      try {
+        await killProcessTree(proc, { graceMs: 250 });
+      } catch {
+        // best-effort cleanup
       }
-      throw error;
     }
+    throw error;
   }
+}
 
   async startSession(initialPrompt?: string): Promise<StartSessionResult> {
     if (this.disposed) {
@@ -1167,16 +1203,53 @@ export class AcpBackend implements AgentBackend {
 
   private handleSessionUpdate(params: SessionNotification): void {
     const raw = asRecord(params) ?? {};
-    const updateCandidate = raw.update ?? (Array.isArray(raw.updates) ? raw.updates[0] : undefined);
-    const update = (asRecord(updateCandidate) ?? {}) as SessionUpdate;
-    const hasUpdate = Object.keys(update).length > 0;
+    const updateCandidates: unknown[] = [];
 
-    if (!hasUpdate) {
+    const maxUpdatesPerNotification = (() => {
+      const rawMax =
+        process.env.HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION ??
+        process.env.HAPPY_ACP_MAX_UPDATES_PER_NOTIFICATION ??
+        '';
+      const parsed = Number.parseInt(String(rawMax).trim(), 10);
+      if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, 10_000);
+      return 1000;
+    })();
+
+    const pushUpdateCandidate = (value: unknown): boolean => {
+      if (updateCandidates.length >= maxUpdatesPerNotification) return false;
+      updateCandidates.push(value);
+      return true;
+    };
+
+    if (raw.update !== undefined) {
+      const updateField = raw.update;
+      if (Array.isArray(updateField)) {
+        for (const item of updateField) {
+          if (!pushUpdateCandidate(item)) {
+            logger.warn(
+              `[AcpBackend] Received ${updateField.length} updates in a single notification; truncating to ${maxUpdatesPerNotification}`
+            );
+            break;
+          }
+        }
+      } else {
+        pushUpdateCandidate(updateField);
+      }
+    } else if (Array.isArray(raw.updates)) {
+      for (const item of raw.updates) {
+        if (!pushUpdateCandidate(item)) {
+          logger.warn(
+            `[AcpBackend] Received ${raw.updates.length} updates in a single notification; truncating to ${maxUpdatesPerNotification}`
+          );
+          break;
+        }
+      }
+    }
+
+    if (updateCandidates.length === 0) {
       logger.debug('[AcpBackend] Received session update without update field:', params);
       return;
     }
-
-    const sessionUpdateType = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
 
     const isGeminiAcpDebugEnabled = (() => {
       const flag = process.env.HAPPIER_STACK_GEMINI_ACP_DEBUG;
@@ -1200,6 +1273,10 @@ export class AcpBackend implements AgentBackend {
         const obj = value as Record<string, unknown>;
         const out: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(obj)) {
+          if (/(token|secret|authorization|cookie|api[_-]?key|password)/i.test(k)) {
+            out[k] = '[redacted]';
+            continue;
+          }
           out[k] = sanitizeForLogs(v, depth + 1);
         }
         return out;
@@ -1207,153 +1284,263 @@ export class AcpBackend implements AgentBackend {
       return value;
     };
 
-    if (this.replayCapture) {
-      try {
-        this.replayCapture.handleUpdate(update as SessionUpdate);
-      } catch (error) {
-        logger.debug('[AcpBackend] Replay capture failed (non-fatal)', { error });
+    const handleOneUpdate = (update: SessionUpdate): void => {
+      const sessionUpdateType = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
+
+      if (this.replayCapture) {
+        try {
+          this.replayCapture.handleUpdate(update as SessionUpdate);
+        } catch (error) {
+          logger.debug('[AcpBackend] Replay capture failed (non-fatal)', { error });
+        }
+
+        // Suppress transcript-affecting updates during loadSession replay.
+        const suppress = sessionUpdateType === 'user_message_chunk'
+          || sessionUpdateType === 'agent_message_chunk'
+          || sessionUpdateType === 'agent_thought_chunk'
+          || sessionUpdateType === 'tool_call'
+          || sessionUpdateType === 'tool_call_update'
+          || sessionUpdateType === 'plan';
+        if (suppress) {
+          return;
+        }
       }
 
-      // Suppress transcript-affecting updates during loadSession replay.
-      const suppress = sessionUpdateType === 'user_message_chunk'
-        || sessionUpdateType === 'agent_message_chunk'
-        || sessionUpdateType === 'agent_thought_chunk'
-        || sessionUpdateType === 'tool_call'
-        || sessionUpdateType === 'tool_call_update'
-        || sessionUpdateType === 'plan';
-      if (suppress) {
+      // Log session updates for debugging (but not every chunk to avoid log spam)
+      if (sessionUpdateType !== 'agent_message_chunk') {
+        logger.debug(`[AcpBackend] Received session update: ${sessionUpdateType}`, JSON.stringify({
+          sessionUpdate: sessionUpdateType,
+          toolCallId: update.toolCallId,
+          status: update.status,
+          kind: update.kind,
+          hasContent: !!update.content,
+          hasLocations: !!update.locations,
+        }, null, 2));
+      }
+
+      // Gemini ACP deep debug: dump raw terminal tool updates to verify where tool outputs live.
+      if (
+        isGeminiAcpDebugEnabled &&
+        this.transport.agentName === 'gemini' &&
+        (sessionUpdateType === 'tool_call_update' || sessionUpdateType === 'tool_call') &&
+        (update.status === 'completed' || update.status === 'failed' || update.status === 'cancelled')
+      ) {
+        const keys = Object.keys(update);
+        logger.debug('[AcpBackend] [GeminiACP] Terminal tool update keys:', keys);
+        logger.debug('[AcpBackend] [GeminiACP] Terminal tool update payload:', JSON.stringify(sanitizeForLogs(update), null, 2));
+      }
+
+      const ctx = this.createHandlerContext();
+
+      // Dispatch to appropriate handler based on update type
+      if (sessionUpdateType === 'agent_message_chunk') {
+        handleAgentMessageChunk(update, ctx);
         return;
       }
-    }
 
-    // Log session updates for debugging (but not every chunk to avoid log spam)
-    if (sessionUpdateType !== 'agent_message_chunk') {
-      logger.debug(`[AcpBackend] Received session update: ${sessionUpdateType}`, JSON.stringify({
-        sessionUpdate: sessionUpdateType,
-        toolCallId: update.toolCallId,
-        status: update.status,
-        kind: update.kind,
-        hasContent: !!update.content,
-        hasLocations: !!update.locations,
-      }, null, 2));
-    }
-
-    // Gemini ACP deep debug: dump raw terminal tool updates to verify where tool outputs live.
-    if (
-      isGeminiAcpDebugEnabled &&
-      this.transport.agentName === 'gemini' &&
-      (sessionUpdateType === 'tool_call_update' || sessionUpdateType === 'tool_call') &&
-      (update.status === 'completed' || update.status === 'failed' || update.status === 'cancelled')
-    ) {
-      const keys = Object.keys(update);
-      logger.debug('[AcpBackend] [GeminiACP] Terminal tool update keys:', keys);
-      logger.debug('[AcpBackend] [GeminiACP] Terminal tool update payload:', JSON.stringify(sanitizeForLogs(update), null, 2));
-    }
-
-    const ctx = this.createHandlerContext();
-
-    // Dispatch to appropriate handler based on update type
-    if (sessionUpdateType === 'agent_message_chunk') {
-      handleAgentMessageChunk(update, ctx);
-      return;
-    }
-
-    if (sessionUpdateType === 'user_message_chunk') {
-      handleUserMessageChunk(update, ctx);
-      return;
-    }
-
-    if (sessionUpdateType === 'tool_call_update') {
-      const result = handleToolCallUpdate(update, ctx);
-      if (result.toolCallCountSincePrompt !== undefined) {
-        this.toolCallCountSincePrompt = result.toolCallCountSincePrompt;
+      if (sessionUpdateType === 'user_message_chunk') {
+        handleUserMessageChunk(update, ctx);
+        return;
       }
-      return;
-    }
 
-    if (sessionUpdateType === 'agent_thought_chunk') {
-      handleAgentThoughtChunk(update, ctx);
-      return;
-    }
-
-    if (sessionUpdateType === 'tool_call') {
-      handleToolCall(update, ctx);
-      return;
-    }
-
-    if (sessionUpdateType === 'available_commands_update') {
-      handleAvailableCommandsUpdate(update, ctx);
-      return;
-    }
-
-    if (sessionUpdateType === 'current_mode_update') {
-      const modeId = typeof update.currentModeId === 'string' ? update.currentModeId : null;
-      if (modeId && this.sessionModeState) {
-        this.sessionModeState = {
-          ...this.sessionModeState,
-          currentModeId: modeId,
-        };
+      if (sessionUpdateType === 'tool_call_update') {
+        const result = handleToolCallUpdate(update, ctx);
+        if (result.toolCallCountSincePrompt !== undefined) {
+          this.toolCallCountSincePrompt = result.toolCallCountSincePrompt;
+        }
+        return;
       }
-      handleCurrentModeUpdate(update, ctx);
-      return;
-    }
 
-    if (sessionUpdateType === 'current_model_update') {
-      const modelId =
-        typeof (update as any).currentModelId === 'string'
-          ? (update as any).currentModelId
-          : (typeof (update as any).currentModel === 'string' ? (update as any).currentModel : null);
-      if (modelId && this.sessionModelState) {
-        this.sessionModelState = {
-          ...this.sessionModelState,
-          currentModelId: modelId,
-        };
+      if (sessionUpdateType === 'agent_thought_chunk') {
+        handleAgentThoughtChunk(update, ctx);
+        return;
       }
-      this.emit({ type: 'event', name: 'current_model_update', payload: { currentModelId: modelId ?? '' } });
-      return;
-    }
 
-    if (sessionUpdateType === 'config_option_update') {
-      const configOptionsCandidate = (update as any).configOptions;
-      const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
-      if (configOptionsRaw) {
-        const next = normalizeSessionConfigOptions(configOptionsRaw);
-        this.sessionConfigOptionsState = next;
+      if (sessionUpdateType === 'tool_call') {
+        handleToolCall(update, ctx);
+        return;
       }
-      this.emit({
-        type: 'event',
-        name: 'config_options_update',
-        payload: { configOptions: this.sessionConfigOptionsState ?? [] },
-      });
-      return;
-    }
 
-    if (sessionUpdateType === 'plan') {
+      if (sessionUpdateType === 'available_commands_update') {
+        handleAvailableCommandsUpdate(update, ctx);
+        return;
+      }
+
+      if (sessionUpdateType === 'current_mode_update') {
+        const modeId = typeof update.currentModeId === 'string' ? update.currentModeId : null;
+        if (modeId && this.sessionModeState) {
+          this.sessionModeState = {
+            ...this.sessionModeState,
+            currentModeId: modeId,
+          };
+        }
+        handleCurrentModeUpdate(update, ctx);
+        return;
+      }
+
+      if (sessionUpdateType === 'current_model_update') {
+        const modelId =
+          typeof (update as any).currentModelId === 'string'
+            ? (update as any).currentModelId
+            : (typeof (update as any).currentModel === 'string' ? (update as any).currentModel : null);
+        if (modelId && this.sessionModelState) {
+          this.sessionModelState = {
+            ...this.sessionModelState,
+            currentModelId: modelId,
+          };
+        }
+        this.emit({ type: 'event', name: 'current_model_update', payload: { currentModelId: modelId ?? '' } });
+        return;
+      }
+
+      if (sessionUpdateType === 'config_option_update') {
+        const configOptionsCandidate = (update as any).configOptions;
+        const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
+        if (configOptionsRaw) {
+          const next = normalizeSessionConfigOptions(configOptionsRaw);
+          this.sessionConfigOptionsState = next;
+        }
+        this.emit({
+          type: 'event',
+          name: 'config_options_update',
+          payload: { configOptions: this.sessionConfigOptionsState ?? [] },
+        });
+        return;
+      }
+
+      if (sessionUpdateType === 'plan') {
+        handlePlanUpdate(update, ctx);
+        return;
+      }
+
+      if (sessionUpdateType === 'usage_update') {
+        const usedRaw = (update as any).used;
+        const sizeRaw = (update as any).size;
+        const asNum = (value: unknown): number | null =>
+          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+        const used = asNum(usedRaw);
+        const size = asNum(sizeRaw);
+        if (used != null || size != null) {
+          const tokens: Record<string, number> = { total: used ?? 0 };
+          if (used != null) tokens.used = used;
+          if (size != null) tokens.size = size;
+          this.emit({
+            type: 'token-count',
+            key: 'acp-usage-update',
+            tokens,
+            source: 'acp-usage-update',
+          });
+        }
+        // Some ACP providers report per-turn usage via usage_update with OpenAI-like fields.
+        // Accept these best-effort and convert them into token-count telemetry.
+        if (used == null && size == null) {
+          const input = asNum((update as any).input_tokens) ?? asNum((update as any).prompt_tokens);
+          const output = asNum((update as any).output_tokens) ?? asNum((update as any).completion_tokens);
+          const cacheRead =
+            asNum((update as any).cache_read_input_tokens) ?? asNum((update as any).cache_read_tokens);
+          const cacheCreation =
+            asNum((update as any).cache_creation_input_tokens) ?? asNum((update as any).cache_creation_tokens);
+
+          const anyPresent = input != null || output != null || cacheRead != null || cacheCreation != null;
+          if (anyPresent) {
+            const total = (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0);
+            const tokens: Record<string, number> = { total };
+            if (input != null) tokens.input = input;
+            if (output != null) tokens.output = output;
+            if (cacheRead != null) tokens.cache_read = cacheRead;
+            if (cacheCreation != null) tokens.cache_creation = cacheCreation;
+            this.emit({
+              type: 'token-count',
+              key: 'acp-usage-update',
+              tokens,
+              source: 'acp-usage-update',
+            });
+          }
+        }
+        return;
+      }
+
+      // Best-effort: some ACP providers attach usage to non-usage session updates (e.g. task_complete).
+      const usageCandidate = (update as any).usage;
+      if (usageCandidate && typeof usageCandidate === 'object' && !Array.isArray(usageCandidate)) {
+        const record = usageCandidate as Record<string, unknown>;
+        const asNum = (value: unknown): number | null =>
+          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+
+        const input =
+          asNum(record.input_tokens) ??
+          asNum(record.inputTokens) ??
+          asNum(record.prompt_tokens) ??
+          asNum(record.promptTokens);
+        const output =
+          asNum(record.output_tokens) ??
+          asNum(record.outputTokens) ??
+          asNum(record.completion_tokens) ??
+          asNum(record.completionTokens);
+        const thought = asNum(record.thought_tokens) ?? asNum(record.thoughtTokens);
+        const cacheRead =
+          asNum(record.cached_read_tokens) ??
+          asNum(record.cachedReadTokens) ??
+          asNum(record.cache_read_tokens) ??
+          asNum(record.cacheReadTokens);
+        const cacheWrite =
+          asNum(record.cached_write_tokens) ??
+          asNum(record.cachedWriteTokens) ??
+          asNum(record.cache_creation_tokens) ??
+          asNum(record.cacheCreationTokens);
+        const totalFromResponse =
+          asNum(record.total_tokens) ??
+          asNum(record.totalTokens);
+        const total =
+          totalFromResponse ??
+          (input ?? 0) + (output ?? 0) + (cacheRead ?? 0) + (cacheWrite ?? 0) + (thought ?? 0);
+
+        const anyPresent =
+          totalFromResponse != null ||
+          input != null ||
+          output != null ||
+          cacheRead != null ||
+          cacheWrite != null ||
+          thought != null;
+
+        if (anyPresent) {
+          const tokens: Record<string, number> = { total };
+          if (input != null) tokens.input = input;
+          if (output != null) tokens.output = output;
+          if (cacheRead != null) tokens.cache_read = cacheRead;
+          if (cacheWrite != null) tokens.cache_creation = cacheWrite;
+          if (thought != null) tokens.thought = thought;
+          this.emit({
+            type: 'token-count',
+            key: 'acp-session-update-usage',
+            tokens,
+            source: 'acp-session-update-usage',
+          });
+        }
+      }
+
+      // Handle legacy and auxiliary update types
+      handleLegacyMessageChunk(update, ctx);
       handlePlanUpdate(update, ctx);
-      return;
-    }
+      handleThinkingUpdate(update, ctx);
 
-    // Handle legacy and auxiliary update types
-    handleLegacyMessageChunk(update, ctx);
-    handlePlanUpdate(update, ctx);
-    handleThinkingUpdate(update, ctx);
-
-    // Log unhandled session update types for debugging
-    // Cast to string to avoid TypeScript errors (SDK types don't include all Gemini-specific update types)
-    const updateTypeStr = sessionUpdateType as string;
-    const handledTypes = [
-      'agent_message_chunk',
-      'user_message_chunk',
-      'tool_call_update',
-      'agent_thought_chunk',
-      'tool_call',
-      'available_commands_update',
-      'current_mode_update',
-      'current_model_update',
-      'config_option_update',
-      'plan',
-    ];
-    if (updateTypeStr &&
+      // Log unhandled session update types for debugging
+      // Cast to string to avoid TypeScript errors (SDK types don't include all Gemini-specific update types)
+      const updateTypeStr = sessionUpdateType as string;
+      const handledTypes = [
+        'agent_message_chunk',
+        'user_message_chunk',
+        'tool_call_update',
+        'agent_thought_chunk',
+        'tool_call',
+        'available_commands_update',
+        'current_mode_update',
+        'current_model_update',
+        'config_option_update',
+        'plan',
+        'usage_update',
+      ];
+      if (updateTypeStr &&
         !handledTypes.includes(updateTypeStr) &&
         !update.messageChunk &&
         !update.plan &&
@@ -1361,7 +1548,24 @@ export class AcpBackend implements AgentBackend {
         !update.availableCommands &&
         !update.currentModeId &&
         !update.entries) {
-      logger.debug(`[AcpBackend] Unhandled session update type: ${updateTypeStr}`, JSON.stringify(update, null, 2));
+        logger.debug(
+          `[AcpBackend] Unhandled session update type: ${updateTypeStr}`,
+          JSON.stringify(
+            {
+              // Avoid logging payloads: content/tool outputs can contain secrets.
+              keys: Object.keys(update as unknown as Record<string, unknown>).slice(0, 50),
+            },
+            null,
+            2
+          )
+        );
+      }
+    };
+
+    for (const candidate of updateCandidates) {
+      const update = (asRecord(candidate) ?? {}) as SessionUpdate;
+      if (Object.keys(update).length === 0) continue;
+      handleOneUpdate(update);
     }
   }
 
@@ -1488,7 +1692,25 @@ export class AcpBackend implements AgentBackend {
 
   // Promise resolver for waitForIdle - set when waiting for response to complete
   private idleResolver: (() => void) | null = null;
+  private idleRejecter: ((error: Error) => void) | null = null;
   private waitingForResponse = false;
+  private responseCompletionError: Error | null = null;
+
+  private failPendingResponseWait(error: Error): void {
+    // Multiple sources can surface the same underlying failure (stderr parsing, transport errors, process exit).
+    // Preserve the first error to keep `waitForResponseComplete()` deterministic and avoid churn.
+    if (this.responseCompletionError) {
+      logger.debug('[AcpBackend] Additional response completion error observed (ignored)', error);
+      return;
+    }
+    this.responseCompletionError = error;
+    this.waitingForResponse = false;
+    if (this.idleRejecter) {
+      this.idleRejecter(error);
+    }
+    this.idleResolver = null;
+    this.idleRejecter = null;
+  }
 
   async sendPrompt(sessionId: SessionId, prompt: string): Promise<void> {
     // Check if prompt contains change_title instruction (via optional callback)
@@ -1511,11 +1733,12 @@ export class AcpBackend implements AgentBackend {
 
     this.emit({ type: 'status', status: 'running' });
     this.waitingForResponse = true;
+    this.responseCompletionError = null;
 
     try {
-      logger.debug(`[AcpBackend] Sending prompt (length: ${prompt.length}): ${prompt.substring(0, 100)}...`);
-      logger.debug(`[AcpBackend] Full prompt: ${prompt}`);
-      
+      // Never log prompt contents (can include secrets).
+      logger.debug(`[AcpBackend] Sending prompt (length: ${prompt.length})`);
+
       const contentBlock: ContentBlock = {
         type: 'text',
         text: prompt,
@@ -1526,16 +1749,57 @@ export class AcpBackend implements AgentBackend {
         prompt: [contentBlock],
       };
 
-      logger.debug(`[AcpBackend] Prompt request:`, JSON.stringify(promptRequest, null, 2));
-      await this.connection.prompt(promptRequest);
+      const promptResponse: any = await this.connection.prompt(promptRequest);
       logger.debug('[AcpBackend] Prompt request sent to ACP connection');
+
+      // Best-effort: emit token usage when the ACP agent reports it in the PromptResponse.
+      // ACP standardizes per-turn usage under `usage` (RFC: session-usage).
+      const usage = promptResponse?.usage;
+      if (usage && typeof usage === 'object' && !Array.isArray(usage)) {
+        const record = usage as Record<string, unknown>;
+        const asNum = (value: unknown): number | null =>
+          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+
+        const input = asNum(record.input_tokens);
+        const output = asNum(record.output_tokens);
+        const thought = asNum(record.thought_tokens);
+        const cacheRead = asNum(record.cached_read_tokens);
+        const cacheWrite = asNum(record.cached_write_tokens);
+        const totalFromResponse = asNum(record.total_tokens);
+        const total =
+          totalFromResponse ??
+          (input ?? 0) +
+            (output ?? 0) +
+            (cacheRead ?? 0) +
+            (cacheWrite ?? 0) +
+            (thought ?? 0);
+
+        const tokens: Record<string, number> = { total };
+        if (input != null) tokens.input = input;
+        if (output != null) tokens.output = output;
+        if (cacheRead != null) tokens.cache_read = cacheRead;
+        if (cacheWrite != null) tokens.cache_creation = cacheWrite;
+        if (thought != null) tokens.thought = thought;
+
+        const modelId = typeof promptResponse?.modelId === 'string'
+          ? String(promptResponse.modelId)
+          : (typeof promptResponse?.model === 'string' ? String(promptResponse.model) : undefined);
+
+        this.emit({
+          type: 'token-count',
+          key: 'acp-prompt-usage',
+          tokens,
+          ...(modelId ? { modelId } : null),
+          source: 'acp-prompt-usage',
+        });
+      }
       
       // Don't emit 'idle' here - it will be emitted after all message chunks are received
       // The idle timeout in handleSessionUpdate will emit 'idle' after the last chunk
 
     } catch (error) {
       logger.debug('[AcpBackend] Error sending prompt:', error);
-      this.waitingForResponse = false;
+      this.failPendingResponseWait(error instanceof Error ? error : new Error(String(error)));
       
       // Extract error details for better error handling
       let errorDetail: string;
@@ -1563,6 +1827,37 @@ export class AcpBackend implements AgentBackend {
       });
       throw error;
     }
+  }
+
+  async sendSteerPrompt(sessionId: SessionId, prompt: string): Promise<void> {
+    if (this.disposed) {
+      throw new Error('Backend has been disposed');
+    }
+    if (!this.connection || !this.acpSessionId) {
+      throw new Error('Session not started');
+    }
+
+    const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!normalizedSessionId) {
+      throw new Error('Session ID is required');
+    }
+    if (normalizedSessionId !== this.acpSessionId) {
+      throw new Error('Session ID does not match the active ACP session');
+    }
+
+    const contentBlock: ContentBlock = {
+      type: 'text',
+      text: prompt,
+    };
+
+    const promptRequest: PromptRequest = {
+      sessionId: this.acpSessionId,
+      prompt: [contentBlock],
+    };
+
+    // Intentionally do not toggle `waitingForResponse` or tool-call counters here.
+    // This method is used for in-flight steering while a primary prompt is already running.
+    await this.connection.prompt(promptRequest);
   }
 
   async setSessionMode(sessionId: SessionId, modeId: string): Promise<void> {
@@ -1638,7 +1933,33 @@ export class AcpBackend implements AgentBackend {
    * Wait for the response to complete (idle status after all chunks received)
    * Call this after sendPrompt to wait for Gemini to finish responding
    */
+  private clearTrackedToolCall(toolCallId: string, reason: string): void {
+    const wasActive = this.activeToolCalls.delete(toolCallId);
+    this.toolCallStartTimes.delete(toolCallId);
+    this.toolCallIdToNameMap.delete(toolCallId);
+    this.toolCallIdToInputMap.delete(toolCallId);
+
+    const timeout = this.toolCallTimeouts.get(toolCallId);
+    if (timeout) {
+      clearTimeout(timeout);
+      this.toolCallTimeouts.delete(toolCallId);
+    }
+
+    if (wasActive || timeout) {
+      logger.debug(
+        `[AcpBackend] Cleared tracked tool call ${toolCallId} after ${reason}. Active tool calls: ${this.activeToolCalls.size}`,
+      );
+    }
+
+    if (this.activeToolCalls.size === 0) {
+      this.emitIdleStatus();
+    }
+  }
+
   async waitForResponseComplete(timeoutMs: number = 120000): Promise<void> {
+    if (this.responseCompletionError) {
+      throw this.responseCompletionError;
+    }
     if (!this.waitingForResponse) {
       return; // Already completed or no prompt sent
     }
@@ -1646,6 +1967,7 @@ export class AcpBackend implements AgentBackend {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.idleResolver = null;
+        this.idleRejecter = null;
         this.waitingForResponse = false;
         reject(new Error('Timeout waiting for response to complete'));
       }, timeoutMs);
@@ -1653,8 +1975,16 @@ export class AcpBackend implements AgentBackend {
       this.idleResolver = () => {
         clearTimeout(timeout);
         this.idleResolver = null;
+        this.idleRejecter = null;
         this.waitingForResponse = false;
         resolve();
+      };
+      this.idleRejecter = (error: Error) => {
+        clearTimeout(timeout);
+        this.idleResolver = null;
+        this.idleRejecter = null;
+        this.waitingForResponse = false;
+        reject(error);
       };
     });
   }
@@ -1727,28 +2057,15 @@ export class AcpBackend implements AgentBackend {
       }
     }
 
-    // Kill the process
+    // Kill the whole process tree (some ACP CLIs spawn child processes).
     if (this.process) {
-      // Try SIGTERM first, then SIGKILL after timeout
-      this.process.kill('SIGTERM');
-      
-      // Give process 1 second to terminate gracefully
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => {
-          if (this.process) {
-            logger.debug('[AcpBackend] Force killing process');
-            this.process.kill('SIGKILL');
-          }
-          resolve();
-        }, 1000);
-        
-        this.process?.once('exit', () => {
-          clearTimeout(timeout);
-          resolve();
-        });
-      });
-      
-      this.process = null;
+      try {
+        await killProcessTree(this.process, { graceMs: 1000 });
+      } catch (error) {
+        logger.debug('[AcpBackend] Failed to kill process tree (non-fatal):', error);
+      } finally {
+        this.process = null;
+      }
     }
 
     // Clear timeouts
