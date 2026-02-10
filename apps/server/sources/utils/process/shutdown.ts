@@ -55,27 +55,43 @@ async function runShutdownHandlers(trigger: string): Promise<void> {
             handlersSnapshot.set(name, [...handlers]);
         }
 
-        // Execute all shutdown handlers concurrently
-        const allHandlers: Promise<void>[] = [];
-        let totalHandlers = 0;
-
+        // Execute shutdown handlers in phases:
+        // 1) keepAlive:* handlers (wait for in-flight ops to complete)
+        // 2) everything else (tear down dependencies like DB, sockets, etc.)
+        //
+        // Running these concurrently can disconnect shared resources while keepAlive tasks are mid-flight.
+        const keepAliveHandlers: Array<{ name: string; handlers: Array<() => Promise<void>> }> = [];
+        const otherHandlers: Array<{ name: string; handlers: Array<() => Promise<void>> }> = [];
         for (const [name, handlers] of handlersSnapshot) {
-            totalHandlers += handlers.length;
-            log(`Starting ${handlers.length} shutdown handlers for: ${name}`);
-
-            handlers.forEach((handler, index) => {
-                const handlerPromise = handler().then(
-                    () => {},
-                    (error) => log(`Error in shutdown handler ${name}[${index}]:`, error),
-                );
-                allHandlers.push(handlerPromise);
-            });
+            const bucket = name.startsWith("keepAlive:") ? keepAliveHandlers : otherHandlers;
+            bucket.push({ name, handlers });
         }
 
+        const runPhase = async (phase: Array<{ name: string; handlers: Array<() => Promise<void>> }>) => {
+            const allHandlers: Promise<void>[] = [];
+            let totalHandlers = 0;
+            for (const { name, handlers } of phase) {
+                totalHandlers += handlers.length;
+                log(`Starting ${handlers.length} shutdown handlers for: ${name}`);
+                handlers.forEach((handler, index) => {
+                    const handlerPromise = handler().then(
+                        () => {},
+                        (error) => log(`Error in shutdown handler ${name}[${index}]:`, error),
+                    );
+                    allHandlers.push(handlerPromise);
+                });
+            }
+            if (totalHandlers > 0) {
+                log(`Waiting for ${totalHandlers} shutdown handlers to complete...`);
+                await Promise.all(allHandlers);
+            }
+        };
+
+        const totalHandlers = Array.from(handlersSnapshot.values()).reduce((acc, h) => acc + h.length, 0);
         if (totalHandlers > 0) {
-            log(`Waiting for ${totalHandlers} shutdown handlers to complete...`);
             const startTime = Date.now();
-            await Promise.all(allHandlers);
+            await runPhase(keepAliveHandlers);
+            await runPhase(otherHandlers);
             const duration = Date.now() - startTime;
             log(`All ${totalHandlers} shutdown handlers completed in ${duration}ms`);
         }

@@ -51,4 +51,42 @@ describe("shutdown", () => {
 
         expect(handler).toHaveBeenCalledTimes(1);
     });
+
+    it("runs keepAlive handlers before non-keepAlive shutdown handlers (ordering)", async () => {
+        const { initiateShutdown, keepAlive, onShutdown } = await loadShutdownModule();
+
+        const order: string[] = [];
+
+        // Register a normal shutdown handler first (so insertion order would normally run it first).
+        onShutdown("db", async () => {
+            order.push("db:start");
+        });
+
+        let resolveWork: () => void = () => {
+            throw new Error("Expected keepAlive work resolver to be set");
+        };
+        const work = new Promise<void>((resolve) => {
+            resolveWork = () => resolve();
+        });
+
+        // Start a keepAlive operation that won't complete until we release it.
+        // We do not await it yet; shutdown should first wait for keepAlive ops to finish.
+        void keepAlive("op", async () => {
+            order.push("keepAlive:work:start");
+            await work;
+            order.push("keepAlive:work:done");
+        });
+
+        await Promise.resolve(); // allow keepAlive to register its onShutdown handler
+
+        // Trigger shutdown. The keepAlive shutdown handler should run before "db".
+        const shutdown = initiateShutdown("test");
+        // Unblock the keepAlive operation.
+        resolveWork();
+        await shutdown;
+
+        expect(order[0]).toBe("keepAlive:work:start");
+        // Ensure keepAlive operation finishes before db handler runs.
+        expect(order).toEqual(["keepAlive:work:start", "keepAlive:work:done", "db:start"]);
+    });
 });
