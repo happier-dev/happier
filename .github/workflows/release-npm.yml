@@ -315,17 +315,20 @@ jobs:
             echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
           fi
           if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
-            echo "cli_version=$(node -p \"require('./apps/cli/package.json').version\")" >> "$GITHUB_OUTPUT"
+            cli_version="$(node -p "require('./apps/cli/package.json').version")"
+            echo "cli_version=${cli_version}" >> "$GITHUB_OUTPUT"
           else
             echo "cli_version=SKIP" >> "$GITHUB_OUTPUT"
           fi
           if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
-            echo "stack_version=$(node -p \"require('./apps/stack/package.json').version\")" >> "$GITHUB_OUTPUT"
+            stack_version="$(node -p "require('./apps/stack/package.json').version")"
+            echo "stack_version=${stack_version}" >> "$GITHUB_OUTPUT"
           else
             echo "stack_version=SKIP" >> "$GITHUB_OUTPUT"
           fi
           if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
-            echo "server_version=$(node -p "require('./${SERVER_RUNNER_DIR}/package.json').version")" >> "$GITHUB_OUTPUT"
+            server_version="$(node -p "require('./${SERVER_RUNNER_DIR}/package.json').version")"
+            echo "server_version=${server_version}" >> "$GITHUB_OUTPUT"
           else
             echo "server_version=SKIP" >> "$GITHUB_OUTPUT"
           fi
