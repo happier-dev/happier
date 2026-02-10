@@ -10,6 +10,8 @@ const sourceRoot = join(repoRoot, 'scripts', 'release', 'installers');
 const websiteRoot = join(repoRoot, 'apps', 'website', 'public');
 const installerFiles = [
   'install.sh',
+  'install-server',
+  'install-server.sh',
   'self-host.sh',
   'install.ps1',
   'happier-release.pub',

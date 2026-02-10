@@ -16,7 +16,7 @@ export const components = Object.freeze({
   },
   server: {
     id: 'server',
-    changedPrefixes: ['apps/server/'],
+    changedPrefixes: ['apps/server/', 'packages/relay/'],
   },
   stack: {
     id: 'stack',

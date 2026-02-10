@@ -151,7 +151,7 @@ on:
           - reset main from dev
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: release-unified
@@ -215,6 +215,7 @@ jobs:
       should_bump: ${{ steps.bump_plan.outputs.should_bump }}
       publish_cli: ${{ steps.bump_plan.outputs.publish_cli }}
       publish_stack: ${{ steps.bump_plan.outputs.publish_stack }}
+      publish_server: ${{ steps.bump_plan.outputs.publish_server }}
     steps:
       - name: Validate inputs
         run: |
@@ -434,6 +435,7 @@ jobs:
 
           publish_cli="false"
           publish_stack="false"
+          publish_server="false"
           pt="$(normalize_csv "${DEPLOY_TARGETS}")"
           if [ -n "${pt:-}" ]; then
             IFS=',' read -r -a parts <<< "${pt}"
@@ -441,6 +443,7 @@ jobs:
               [ -z "${p:-}" ] && continue
               if [ "$p" = "cli" ]; then publish_cli="true"; fi
               if [ "$p" = "stack" ]; then publish_stack="true"; fi
+              if [ "$p" = "server" ]; then publish_server="true"; fi
             done
           fi
 
@@ -496,6 +499,14 @@ jobs:
                 exit 1
               fi
             fi
+            if [ "${publish_server}" = "true" ] && [ "${bump_server}" = "none" ]; then
+              dev_version="$(node -p "require('./packages/server/package.json').version" 2>/dev/null || true)"
+              main_version="$(git show origin/main:packages/server/package.json 2>/dev/null | node -e 'const fs=require(\"node:fs\"); const raw=fs.readFileSync(0,\"utf8\"); try { process.stdout.write(String(JSON.parse(raw).version||\"\")) } catch { process.stdout.write(\"\") }' || true)"
+              if [ -n "${main_version:-}" ] && [ -n "${dev_version:-}" ] && [ "${dev_version}" = "${main_version}" ]; then
+                echo "Refusing production deploy_targets includes server without a version change (dev and main both at ${dev_version}). Set bump!=none." >&2
+                exit 1
+              fi
+            fi
           fi
 
           should_bump="false"
@@ -508,6 +519,7 @@ jobs:
 
           echo "publish_cli=${publish_cli}" >> "$GITHUB_OUTPUT"
           echo "publish_stack=${publish_stack}" >> "$GITHUB_OUTPUT"
+          echo "publish_server=${publish_server}" >> "$GITHUB_OUTPUT"
           echo "bump_app=${bump_app}" >> "$GITHUB_OUTPUT"
           echo "bump_cli=${bump_cli}" >> "$GITHUB_OUTPUT"
           echo "bump_stack=${bump_stack}" >> "$GITHUB_OUTPUT"
@@ -520,6 +532,7 @@ jobs:
             echo "### Effective bump plan"
             echo "- publish_cli: \`${publish_cli}\`"
             echo "- publish_stack: \`${publish_stack}\`"
+            echo "- publish_server: \`${publish_server}\`"
             echo "- bump preset: \`${bump_preset}\`"
             echo "- bump_app: \`${bump_app}\`"
             echo "- bump_cli: \`${bump_cli}\`"
@@ -641,7 +654,7 @@ jobs:
           }
 
           plan_one "deploy_ui" "${ui_ref}" "${DEPLOY_UI}" "apps/ui/*" "packages/agents/*" "packages/protocol/*"
-          plan_one "deploy_server" "${server_ref}" "${DEPLOY_SERVER}" "apps/server/*" "packages/agents/*" "packages/protocol/*"
+          plan_one "deploy_server" "${server_ref}" "${DEPLOY_SERVER}" "apps/server/*" "packages/server/*" "packages/agents/*" "packages/protocol/*"
           plan_one "deploy_website" "${website_ref}" "${DEPLOY_WEBSITE}" "apps/website/*" "scripts/release/installers/*" "scripts/release/sync-installers.mjs"
           plan_one "deploy_docs" "${docs_ref}" "${DEPLOY_DOCS}" "apps/docs/*"
 
@@ -754,7 +767,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add apps/ui/package.json apps/ui/app.config.js apps/server/package.json apps/website/package.json apps/cli/package.json apps/stack/package.json || true
+          git add apps/ui/package.json apps/ui/app.config.js apps/server/package.json apps/website/package.json apps/cli/package.json apps/stack/package.json packages/server/package.json || true
 
           # Also pick up any tauri version edits if present.
           if [ -d apps/ui/src-tauri ]; then
@@ -822,7 +835,7 @@ jobs:
       run_build: true
 
   publish_npm:
-    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && (needs.checks.outputs.publish_cli == 'true' || needs.checks.outputs.publish_stack == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && (needs.checks.result == 'success' || needs.checks.result == 'skipped') && inputs.dry_run != true && (needs.checks.outputs.publish_cli == 'true' || needs.checks.outputs.publish_stack == 'true' || needs.checks.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main]
     permissions:
       contents: write
@@ -832,6 +845,7 @@ jobs:
     with:
       publish_cli: ${{ needs.checks.outputs.publish_cli == 'true' }}
       publish_stack: ${{ needs.checks.outputs.publish_stack == 'true' }}
+      publish_server: ${{ needs.checks.outputs.publish_server == 'true' }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}

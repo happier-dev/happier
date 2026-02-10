@@ -14,6 +14,7 @@ EOF
 )"
 MINISIGN_PUBKEY="${HAPPIER_MINISIGN_PUBKEY:-${DEFAULT_MINISIGN_PUBKEY}}"
 MINISIGN_PUBKEY_URL="${HAPPIER_MINISIGN_PUBKEY_URL:-https://happier.dev/happier-release.pub}"
+MINISIGN_BIN="minisign"
 
 if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
   echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
@@ -98,34 +99,37 @@ sha256_file() {
 
 ensure_minisign() {
   if command -v minisign >/dev/null 2>&1; then
+    MINISIGN_BIN="minisign"
     return 0
   fi
 
-  if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y && apt-get install -y minisign && return 0
+  # Self-contained fallback: download a known minisign release asset into TMP_DIR.
+  local minisign_version="0.12"
+  local asset="minisign-${minisign_version}-linux.tar.gz"
+  local expected_sha="9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73"
+  local url_base="https://github.com/jedisct1/minisign/releases/download/${minisign_version}"
+
+  local archive_path="${TMP_DIR}/${asset}"
+  curl -fsSL "${url_base}/${asset}" -o "${archive_path}"
+  local actual_sha
+  actual_sha="$(sha256_file "${archive_path}")"
+  if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+    echo "minisign bootstrap checksum mismatch (expected ${expected_sha}, got ${actual_sha})." >&2
+    return 1
   fi
 
-  if command -v dnf >/dev/null 2>&1; then
-    dnf install -y minisign && return 0
+  local extract_dir="${TMP_DIR}/minisign-extract"
+  mkdir -p "${extract_dir}"
+  tar -xzf "${archive_path}" -C "${extract_dir}"
+  local bin_path
+  bin_path="$(find "${extract_dir}" -type f -name minisign -perm -u+x | head -n 1 || true)"
+  if [[ -z "${bin_path}" ]]; then
+    echo "Failed to locate minisign binary in bootstrap archive." >&2
+    return 1
   fi
-
-  if command -v yum >/dev/null 2>&1; then
-    yum install -y minisign && return 0
-  fi
-
-  if command -v pacman >/dev/null 2>&1; then
-    pacman -Sy --noconfirm minisign && return 0
-  fi
-
-  if command -v apk >/dev/null 2>&1; then
-    apk add --no-cache minisign && return 0
-  fi
-
-  if command -v zypper >/dev/null 2>&1; then
-    zypper --non-interactive install minisign && return 0
-  fi
-
-  return 1
+  chmod +x "${bin_path}" || true
+  MINISIGN_BIN="${bin_path}"
+  return 0
 }
 
 write_minisign_public_key() {
@@ -193,7 +197,7 @@ PUBKEY_PATH="${TMP_DIR}/minisign.pub"
 SIG_PATH="${TMP_DIR}/checksums.txt.minisig"
 write_minisign_public_key "${PUBKEY_PATH}"
 curl -fsSL "${SIG_URL}" -o "${SIG_PATH}"
-minisign -Vm "${CHECKSUMS_PATH}" -x "${SIG_PATH}" -p "${PUBKEY_PATH}" >/dev/null
+"${MINISIGN_BIN}" -Vm "${CHECKSUMS_PATH}" -x "${SIG_PATH}" -p "${PUBKEY_PATH}" >/dev/null
 echo "Signature verified."
 
 EXTRACT_DIR="${TMP_DIR}/extract"

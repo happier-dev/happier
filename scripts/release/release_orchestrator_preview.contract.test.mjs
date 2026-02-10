@@ -50,6 +50,8 @@ test('release-npm derives unique preview prerelease versions from base versions'
   assert.doesNotMatch(raw, /function bumpBase\(base, bump\)/);
   assert.match(raw, /function setPreviewVersion\(pkgPath\)/);
   assert.match(raw, /\$\{base\}-preview\.\$\{run\}\.\$\{attempt\}/);
+  assert.match(raw, /publish_relay_server/, 'release-npm should expose publish_relay_server for relay-server publishing');
+  assert.match(raw, /PUBLISH_RELAY_SERVER/, 'release-npm preview versioning should gate relay-server via env');
 });
 
 test('stack version bumps use shared bump-version script across release workflows', async () => {

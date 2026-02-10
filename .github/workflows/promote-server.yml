@@ -182,7 +182,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add apps/server/package.json
+          git add apps/server/package.json packages/relay/package.json
           git commit -m "chore(release): bump server to v${{ steps.bump_server.outputs.version }}"
 
       - name: Push source ref (only for branches)

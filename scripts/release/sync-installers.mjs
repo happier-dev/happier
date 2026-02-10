@@ -7,6 +7,8 @@ import { parseArgs, resolveRepoRoot } from './lib/binary_release.mjs';
 
 export const INSTALLER_FILENAMES = [
   'install.sh',
+  'install-server',
+  'install-server.sh',
   'self-host.sh',
   'install.ps1',
   'happier-release.pub',

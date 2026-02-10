@@ -2,6 +2,7 @@
 set -euo pipefail
 
 CHANNEL="${HAPPIER_CHANNEL:-stable}"
+PRODUCT="${HAPPIER_PRODUCT:-cli}"
 INSTALL_DIR="${HAPPIER_INSTALL_DIR:-$HOME/.happier}"
 BIN_DIR="${HAPPIER_BIN_DIR:-$HOME/.local/bin}"
 NO_PATH_UPDATE="${HAPPIER_NO_PATH_UPDATE:-0}"
@@ -14,9 +15,15 @@ EOF
 )"
 MINISIGN_PUBKEY="${HAPPIER_MINISIGN_PUBKEY:-${DEFAULT_MINISIGN_PUBKEY}}"
 MINISIGN_PUBKEY_URL="${HAPPIER_MINISIGN_PUBKEY_URL:-https://happier.dev/happier-release.pub}"
+MINISIGN_BIN="minisign"
 
 if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
   echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
+  exit 1
+fi
+
+if [[ "${PRODUCT}" != "cli" && "${PRODUCT}" != "server" ]]; then
+  echo "Invalid HAPPIER_PRODUCT='${PRODUCT}'. Expected cli or server." >&2
   exit 1
 fi
 
@@ -78,52 +85,60 @@ sha256_file() {
   exit 1
 }
 
-run_privileged() {
-  if [[ "$(id -u)" -eq 0 ]]; then
-    "$@"
-    return
-  fi
-  if command -v sudo >/dev/null 2>&1; then
-    sudo "$@"
-    return
-  fi
-  return 1
-}
-
 ensure_minisign() {
   if command -v minisign >/dev/null 2>&1; then
+    MINISIGN_BIN="minisign"
     return 0
   fi
 
-  if command -v brew >/dev/null 2>&1; then
-    brew install minisign && return 0
+  # Self-contained fallback: download a known minisign release asset into TMP_DIR.
+  # We pin checksums to avoid relying on OS package managers.
+  local minisign_version="0.12"
+  local os="$(detect_os)"
+  local asset=""
+  local expected_sha=""
+  local url_base="https://github.com/jedisct1/minisign/releases/download/${minisign_version}"
+
+  if [[ "${os}" == "linux" ]]; then
+    asset="minisign-${minisign_version}-linux.tar.gz"
+    expected_sha="9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73"
+  elif [[ "${os}" == "darwin" ]]; then
+    asset="minisign-${minisign_version}-macos.zip"
+    expected_sha="89000b19535765f9cffc65a65d64a820f433ef6db8020667f7570e06bf6aac63"
+  else
+    return 1
   fi
 
-  if command -v apt-get >/dev/null 2>&1; then
-    run_privileged apt-get update -y && run_privileged apt-get install -y minisign && return 0
+  local archive_path="${TMP_DIR}/${asset}"
+  curl -fsSL "${url_base}/${asset}" -o "${archive_path}"
+  local actual_sha
+  actual_sha="$(sha256_file "${archive_path}")"
+  if [[ "${actual_sha}" != "${expected_sha}" ]]; then
+    echo "minisign bootstrap checksum mismatch (expected ${expected_sha}, got ${actual_sha})." >&2
+    return 1
   fi
 
-  if command -v dnf >/dev/null 2>&1; then
-    run_privileged dnf install -y minisign && return 0
+  local extract_dir="${TMP_DIR}/minisign-extract"
+  mkdir -p "${extract_dir}"
+  if [[ "${asset}" == *.tar.gz ]]; then
+    tar -xzf "${archive_path}" -C "${extract_dir}"
+  else
+    if ! command -v unzip >/dev/null 2>&1; then
+      echo "unzip is required to bootstrap minisign on macOS." >&2
+      return 1
+    fi
+    unzip -q "${archive_path}" -d "${extract_dir}"
   fi
 
-  if command -v yum >/dev/null 2>&1; then
-    run_privileged yum install -y minisign && return 0
+  local bin_path
+  bin_path="$(find "${extract_dir}" -type f -name minisign -perm -u+x | head -n 1 || true)"
+  if [[ -z "${bin_path}" ]]; then
+    echo "Failed to locate minisign binary in bootstrap archive." >&2
+    return 1
   fi
-
-  if command -v pacman >/dev/null 2>&1; then
-    run_privileged pacman -Sy --noconfirm minisign && return 0
-  fi
-
-  if command -v apk >/dev/null 2>&1; then
-    run_privileged apk add --no-cache minisign && return 0
-  fi
-
-  if command -v zypper >/dev/null 2>&1; then
-    run_privileged zypper --non-interactive install minisign && return 0
-  fi
-
-  return 1
+  chmod +x "${bin_path}" || true
+  MINISIGN_BIN="${bin_path}"
+  return 0
 }
 
 write_minisign_public_key() {
@@ -162,22 +177,45 @@ OS="$(detect_os)"
 ARCH="$(detect_arch)"
 if [[ "${OS}" == "unsupported" || "${ARCH}" == "unsupported" ]]; then
   echo "Unsupported platform: $(uname -s)/$(uname -m)" >&2
-  echo "Fallback: npm install -g @happier-dev/cli" >&2
+  if [[ "${PRODUCT}" == "cli" ]]; then
+    echo "Fallback: npm install -g @happier-dev/cli" >&2
+  else
+    echo "Fallback: npx @happier-dev/relay-server -- --help" >&2
+  fi
   exit 1
 fi
 
 TAG="cli-stable"
+ASSET_REGEX="^happier-v.*-${OS}-${ARCH}\\.tar\\.gz$"
+CHECKSUMS_REGEX="^checksums-happier-v.*\\.txt$"
+SIG_REGEX="^checksums-happier-v.*\\.txt\\.minisig$"
+EXE_NAME="happier"
+INSTALL_NAME="Happier CLI"
+
+if [[ "${PRODUCT}" == "server" ]]; then
+  if [[ "${OS}" != "linux" ]]; then
+    echo "Happier server runtime binaries are currently published for Linux only." >&2
+    exit 1
+  fi
+  TAG="server-stable"
+  ASSET_REGEX="^happier-server-v.*-${OS}-${ARCH}\\.tar\\.gz$"
+  CHECKSUMS_REGEX="^checksums-happier-server-v.*\\.txt$"
+  SIG_REGEX="^checksums-happier-server-v.*\\.txt\\.minisig$"
+  EXE_NAME="happier-server"
+  INSTALL_NAME="Happier Server"
+fi
+
 if [[ "${CHANNEL}" == "preview" ]]; then
-  TAG="cli-preview"
+  if [[ "${PRODUCT}" == "server" ]]; then
+    TAG="server-preview"
+  else
+    TAG="cli-preview"
+  fi
 fi
 
 API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
 echo "Fetching ${TAG} release metadata..."
 RELEASE_JSON="$(curl -fsSL "${API_URL}")"
-
-ASSET_REGEX="^happier-v.*-${OS}-${ARCH}\\.tar\\.gz$"
-CHECKSUMS_REGEX="^checksums-happier-v.*\\.txt$"
-SIG_REGEX="^checksums-happier-v.*\\.txt\\.minisig$"
 
 ASSET_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${ASSET_REGEX}")"
 CHECKSUMS_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${CHECKSUMS_REGEX}")"
@@ -220,31 +258,31 @@ PUBKEY_PATH="${TMP_DIR}/minisign.pub"
 SIG_PATH="${TMP_DIR}/checksums.txt.minisig"
 write_minisign_public_key "${PUBKEY_PATH}"
 curl -fsSL "${SIG_URL}" -o "${SIG_PATH}"
-minisign -Vm "${CHECKSUMS_PATH}" -x "${SIG_PATH}" -p "${PUBKEY_PATH}" >/dev/null
+"${MINISIGN_BIN}" -Vm "${CHECKSUMS_PATH}" -x "${SIG_PATH}" -p "${PUBKEY_PATH}" >/dev/null
 echo "Signature verified."
 
 EXTRACT_DIR="${TMP_DIR}/extract"
 mkdir -p "${EXTRACT_DIR}"
 tar -xzf "${ARCHIVE_PATH}" -C "${EXTRACT_DIR}"
 
-BINARY_PATH="$(find "${EXTRACT_DIR}" -type f -name happier -perm -u+x | head -n 1 || true)"
+BINARY_PATH="$(find "${EXTRACT_DIR}" -type f -name "${EXE_NAME}" -perm -u+x | head -n 1 || true)"
 if [[ -z "${BINARY_PATH}" ]]; then
-  echo "Failed to find extracted happier binary." >&2
+  echo "Failed to find extracted ${EXE_NAME} binary." >&2
   exit 1
 fi
 
 mkdir -p "${INSTALL_DIR}/bin" "${BIN_DIR}"
-cp "${BINARY_PATH}" "${INSTALL_DIR}/bin/happier"
-chmod +x "${INSTALL_DIR}/bin/happier"
-ln -sf "${INSTALL_DIR}/bin/happier" "${BIN_DIR}/happier"
+cp "${BINARY_PATH}" "${INSTALL_DIR}/bin/${EXE_NAME}"
+chmod +x "${INSTALL_DIR}/bin/${EXE_NAME}"
+ln -sf "${INSTALL_DIR}/bin/${EXE_NAME}" "${BIN_DIR}/${EXE_NAME}"
 
 append_path_hint
 
 echo
-echo "Happier CLI installed:"
-echo "  binary: ${INSTALL_DIR}/bin/happier"
-echo "  shim:   ${BIN_DIR}/happier"
+echo "${INSTALL_NAME} installed:"
+echo "  binary: ${INSTALL_DIR}/bin/${EXE_NAME}"
+echo "  shim:   ${BIN_DIR}/${EXE_NAME}"
 echo
 if [[ "${NONINTERACTIVE}" != "1" ]]; then
-  "${INSTALL_DIR}/bin/happier" --version || true
+  "${INSTALL_DIR}/bin/${EXE_NAME}" --version || true
 fi

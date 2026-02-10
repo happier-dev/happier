@@ -1,4 +1,4 @@
-name: RELEASE — npm publish (cli/stack)
+name: RELEASE — npm publish (cli/stack/server)
 
 on:
   workflow_dispatch:
@@ -38,6 +38,11 @@ on:
         required: true
         default: false
         type: boolean
+      publish_server:
+        description: "Publish (Server) — Publish server runner (@happier-dev/server) to npm"
+        required: true
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       channel:
@@ -69,6 +74,11 @@ on:
         required: false
         default: false
         type: boolean
+      publish_server:
+        description: "Publish (Server) — Publish server runner (@happier-dev/server) to npm"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -91,6 +101,7 @@ jobs:
       npm_tag: ${{ steps.meta.outputs.npm_tag }}
       cli_version: ${{ steps.meta.outputs.cli_version }}
       stack_version: ${{ steps.meta.outputs.stack_version }}
+      server_version: ${{ steps.meta.outputs.server_version }}
     steps:
       - name: Validate inputs
         env:
@@ -98,10 +109,11 @@ jobs:
           INPUT_NPM_TAG: ${{ inputs.npm_tag }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
+          INPUT_PUBLISH_SERVER: ${{ inputs.publish_server }}
         run: |
           set -euo pipefail
-          if [ "${INPUT_PUBLISH_CLI}" != "true" ] && [ "${INPUT_PUBLISH_STACK}" != "true" ]; then
-            echo "At least one of publish_cli or publish_stack must be true." >&2
+          if [ "${INPUT_PUBLISH_CLI}" != "true" ] && [ "${INPUT_PUBLISH_STACK}" != "true" ] && [ "${INPUT_PUBLISH_SERVER}" != "true" ]; then
+            echo "At least one of publish_cli, publish_stack, or publish_server must be true." >&2
             exit 1
           fi
           expected_tag="latest"
@@ -236,11 +248,15 @@ jobs:
           if (process.env.PUBLISH_STACK === 'true') {
             versions.stack = setPreviewVersion(join('apps', 'stack', 'package.json'));
           }
+          if (process.env.PUBLISH_RELAY_SERVER === 'true') {
+            versions.relayServer = setPreviewVersion(join('packages', 'relay', 'package.json'));
+          }
           console.log(JSON.stringify(versions));
           NODE
         env:
           PUBLISH_CLI: ${{ inputs.publish_cli }}
           PUBLISH_STACK: ${{ inputs.publish_stack }}
+          PUBLISH_RELAY_SERVER: ${{ inputs.publish_relay_server }}
 
       - name: Run cli tests
         if: inputs.publish_cli && inputs.run_tests
@@ -254,12 +270,17 @@ jobs:
           yarn --cwd apps/stack test:unit
           yarn --cwd apps/stack test:integration
 
+      - name: Run relay-server tests
+        if: inputs.publish_relay_server && inputs.run_tests
+        run: yarn --cwd packages/relay test
+
       - name: Release metadata
         id: meta
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
+          INPUT_PUBLISH_RELAY_SERVER: ${{ inputs.publish_relay_server }}
         run: |
           set -euo pipefail
           sha="$(git rev-parse HEAD)"
@@ -280,6 +301,11 @@ jobs:
             echo "stack_version=$(node -p 'require(\"./apps/stack/package.json\").version')" >> "$GITHUB_OUTPUT"
           else
             echo "stack_version=SKIP" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "${INPUT_PUBLISH_RELAY_SERVER}" = "true" ]; then
+            echo "relay_server_version=$(node -p 'require(\"./packages/relay/package.json\").version')" >> "$GITHUB_OUTPUT"
+          else
+            echo "relay_server_version=SKIP" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build CLI binaries
@@ -401,6 +427,23 @@ jobs:
             exit 1
           }
 
+      - name: npm publish (relay-server)
+        if: inputs.publish_relay_server
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "Using NPM_TOKEN authentication."
+          else
+            echo "NPM_TOKEN not set; relying on npm trusted publishing (OIDC)."
+          fi
+          cd packages/relay
+          npm publish --provenance --access public --tag "${{ steps.meta.outputs.npm_tag }}" || {
+            echo "npm publish failed. Configure npm trusted publishing for this workflow or provide NPM_TOKEN." >&2
+            exit 1
+          }
+
       - name: npm pack (stack)
         if: inputs.publish_stack
         run: |
@@ -491,13 +534,16 @@ jobs:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
+          INPUT_PUBLISH_RELAY_SERVER: ${{ inputs.publish_relay_server }}
         run: |
           npm_tag="${{ steps.meta.outputs.npm_tag }}"
           cli_version="${{ steps.meta.outputs.cli_version }}"
           stack_version="${{ steps.meta.outputs.stack_version }}"
+          relay_server_version="${{ steps.meta.outputs.relay_server_version }}"
           [ -n "${npm_tag}" ] || npm_tag="(unavailable)"
           [ -n "${cli_version}" ] || cli_version="(unavailable)"
           [ -n "${stack_version}" ] || stack_version="(unavailable)"
+          [ -n "${relay_server_version}" ] || relay_server_version="(unavailable)"
 
           {
             echo "### npm publish"
@@ -508,9 +554,12 @@ jobs:
             if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then
               echo "- cli: \`${cli_version}\`"
             fi
-            if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
-              echo "- stack: \`${stack_version}\`"
-            fi
+          if [ "${INPUT_PUBLISH_STACK}" = "true" ]; then
+            echo "- stack: \`${stack_version}\`"
+          fi
+              if [ "${INPUT_PUBLISH_RELAY_SERVER}" = "true" ]; then
+                echo "- relay-server: \`${relay_server_version}\`"
+              fi
             echo ""
             echo "### GitHub Releases (mirror)"
             echo ""

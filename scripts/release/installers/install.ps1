@@ -24,25 +24,32 @@ function Get-AssetByPattern {
 }
 
 function Ensure-Minisign {
+  param (
+    [Parameter(Mandatory = $true)] [string] $TempRoot
+  )
   if (Get-Command minisign -ErrorAction SilentlyContinue) {
-    return
+    return "minisign"
   }
 
-  if (Get-Command choco -ErrorAction SilentlyContinue) {
-    choco install minisign -y --no-progress | Out-Host
-    if (Get-Command minisign -ErrorAction SilentlyContinue) {
-      return
-    }
+  # Self-contained fallback: download a known minisign release asset.
+  $minisignVersion = "0.12"
+  $asset = "minisign-$minisignVersion-win64.zip"
+  $expectedSha = "37b600344e20c19314b2e82813db2bfdcc408b77b876f7727889dbd46d539479"
+  $zipPath = Join-Path $TempRoot $asset
+  Invoke-WebRequest -Uri "https://github.com/jedisct1/minisign/releases/download/$minisignVersion/$asset" -OutFile $zipPath
+  $actualSha = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($actualSha -ne $expectedSha) {
+    throw "minisign bootstrap checksum mismatch (expected $expectedSha, got $actualSha)."
   }
 
-  if (Get-Command winget -ErrorAction SilentlyContinue) {
-    winget install --exact --id jedisct1.minisign --silent --accept-package-agreements --accept-source-agreements | Out-Host
-    if (Get-Command minisign -ErrorAction SilentlyContinue) {
-      return
-    }
+  $extractDir = Join-Path $TempRoot "minisign-extract"
+  New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+  Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+  $exe = Get-ChildItem -Path $extractDir -Filter "minisign.exe" -Recurse | Select-Object -First 1
+  if (-not $exe) {
+    throw "Failed to locate minisign.exe in bootstrap archive."
   }
-
-  throw "minisign is required for installer signature verification. Install minisign and rerun."
+  return $exe.FullName
 }
 
 function Resolve-MinisignPublicKey {
@@ -102,9 +109,9 @@ try {
   }
   Write-Host "Checksum verified."
 
-  Ensure-Minisign
+  $minisign = Ensure-Minisign -TempRoot $tmpDir.FullName
   Resolve-MinisignPublicKey -TargetPath $pubKeyPath
-  & minisign -Vm $checksumsPath -x $signaturePath -p $pubKeyPath *> $null
+  & $minisign -Vm $checksumsPath -x $signaturePath -p $pubKeyPath *> $null
   if ($LASTEXITCODE -ne 0) {
     throw "Signature verification failed."
   }

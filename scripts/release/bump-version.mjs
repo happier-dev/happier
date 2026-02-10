@@ -124,19 +124,19 @@ function getAppCurrentVersion(appDir) {
   return null;
 }
 
-function main() {
+  function main() {
   const args = parseArgs(process.argv.slice(2));
   const component = String(args.get('--component') ?? '').trim();
   const bump = String(args.get('--bump') ?? '').trim();
 
-  const repoRoot = process.cwd();
-  const componentDirByName = {
-    app: path.join(repoRoot, 'apps', 'ui'),
-    cli: path.join(repoRoot, 'apps', 'cli'),
-    server: path.join(repoRoot, 'apps', 'server'),
-    website: path.join(repoRoot, 'apps', 'website'),
-    stack: path.join(repoRoot, 'apps', 'stack'),
-  };
+    const repoRoot = process.cwd();
+    const componentDirByName = {
+      app: path.join(repoRoot, 'apps', 'ui'),
+      cli: path.join(repoRoot, 'apps', 'cli'),
+      server: path.join(repoRoot, 'apps', 'server'),
+      website: path.join(repoRoot, 'apps', 'website'),
+      stack: path.join(repoRoot, 'apps', 'stack'),
+    };
 
   if (!component || !(component in componentDirByName)) {
     fail(`--component must be one of: ${Object.keys(componentDirByName).join(', ')}`);
@@ -145,32 +145,51 @@ function main() {
     fail(`--bump must be one of: none, patch, minor, major`);
   }
 
-  const dir = componentDirByName[component];
-  if (!fs.existsSync(dir)) fail(`Missing component directory: ${dir}`);
+    const dir = componentDirByName[component];
+    if (!fs.existsSync(dir)) fail(`Missing component directory: ${dir}`);
 
-  if (bump === 'none') {
-    process.stdout.write(`SKIP\n`);
-    return;
-  }
+    if (bump === 'none') {
+      process.stdout.write(`SKIP\n`);
+      return;
+    }
 
-  let currentVersion = null;
-  if (component === 'app') {
-    currentVersion = getAppCurrentVersion(dir);
-  } else {
-    const pkg = readJson(path.join(dir, 'package.json'));
-    currentVersion = String(pkg.version ?? '').trim() || null;
-  }
-  if (!currentVersion) fail(`Unable to determine current version for ${component}`);
+    let currentVersion = null;
+    if (component === 'app') {
+      currentVersion = getAppCurrentVersion(dir);
+      if (!currentVersion) fail(`Unable to determine current version for ${component}`);
+    } else if (component === 'server') {
+      const appPkgPath = path.join(dir, 'package.json');
+      const relayDir = path.join(repoRoot, 'packages', 'relay');
+      const relayPkgPath = path.join(relayDir, 'package.json');
+      if (!fs.existsSync(relayDir)) fail(`Missing relay-server directory: ${relayDir}`);
 
-  const nextVersion = bumpSemver(currentVersion, bump);
+      const appPkg = readJson(appPkgPath);
+      const relayPkg = readJson(relayPkgPath);
+      const appVersion = String(appPkg.version ?? '').trim();
+      const relayVersion = String(relayPkg.version ?? '').trim();
+      if (!appVersion || !relayVersion) fail(`Unable to determine current version for ${component}`);
+      if (appVersion !== relayVersion) {
+        fail(`Server app and relay-server versions must match (apps/server=${appVersion}, packages/relay=${relayVersion}).`);
+      }
+      currentVersion = appVersion;
+    } else {
+      const pkg = readJson(path.join(dir, 'package.json'));
+      currentVersion = String(pkg.version ?? '').trim() || null;
+      if (!currentVersion) fail(`Unable to determine current version for ${component}`);
+    }
 
-  if (component === 'app') {
-    updatePackageJsonVersion(dir, nextVersion);
-    updateExpoAppConfigVersion(dir, nextVersion);
-    updateTauriVersions(dir, nextVersion);
-  } else {
-    updatePackageJsonVersion(dir, nextVersion);
-  }
+    const nextVersion = bumpSemver(currentVersion, bump);
+
+    if (component === 'app') {
+      updatePackageJsonVersion(dir, nextVersion);
+      updateExpoAppConfigVersion(dir, nextVersion);
+      updateTauriVersions(dir, nextVersion);
+    } else if (component === 'server') {
+      updatePackageJsonVersion(path.join(repoRoot, 'apps', 'server'), nextVersion);
+      updatePackageJsonVersion(path.join(repoRoot, 'packages', 'relay'), nextVersion);
+    } else {
+      updatePackageJsonVersion(dir, nextVersion);
+    }
 
   process.stdout.write(`${nextVersion}\n`);
 }
