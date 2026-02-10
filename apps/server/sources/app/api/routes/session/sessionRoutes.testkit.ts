@@ -31,6 +31,11 @@ export const checkSessionAccess = vi.fn(async () => ({ level: "owner" }));
 export const sessionFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
 export const sessionFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
 export const sessionMessageFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
+export const sessionShareFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
+
+export const txSessionCreate = vi.fn<(...args: any[]) => Promise<any>>(async () => {
+    throw new Error("txSessionCreate not configured for test");
+});
 
 export const catchupFetchesInc = vi.fn();
 export const catchupReturnedInc = vi.fn();
@@ -66,7 +71,7 @@ vi.mock("@/storage/db", () => ({
             findMany: sessionFindMany,
             findFirst: sessionFindFirst,
         },
-        sessionShare: { findMany: vi.fn(async () => []) },
+        sessionShare: { findMany: sessionShareFindMany },
         sessionMessage: {
             findMany: sessionMessageFindMany,
         },
@@ -77,7 +82,10 @@ vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () => true) }));
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
 vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi.fn() }));
-vi.mock("@/storage/inTx", () => ({ inTx: vi.fn(async (fn: any) => await fn({})), afterTx: vi.fn() }));
+vi.mock("@/storage/inTx", () => ({
+    inTx: vi.fn(async (fn: any) => await fn({ session: { create: txSessionCreate } })),
+    afterTx: vi.fn(),
+}));
 
 export function resetSessionRouteMocks(): void {
     vi.clearAllMocks();
@@ -86,6 +94,10 @@ export function resetSessionRouteMocks(): void {
     sessionFindMany.mockResolvedValue([]);
     sessionFindFirst.mockResolvedValue(null);
     sessionMessageFindMany.mockResolvedValue([]);
+    sessionShareFindMany.mockResolvedValue([]);
+    txSessionCreate.mockImplementation(async () => {
+        throw new Error("txSessionCreate not configured for test");
+    });
 }
 
 export async function registerSessionRoutesAndGetHandler(method: RouteMethod, path: string) {

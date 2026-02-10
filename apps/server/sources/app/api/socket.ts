@@ -18,6 +18,7 @@ import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { getRedisClient } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
 import { getSocketAdapterFromEnv, isRedisStreamsEnabled } from "@/config/backends";
+import { db } from "@/storage/db";
 
 export function startSocket(app: Fastify) {
     const socketAdapter = getSocketAdapterFromEnv(process.env, "memory");
@@ -87,6 +88,16 @@ export function startSocket(app: Fastify) {
                 error: eligibility.error,
                 ...(eligibility.error === 'provider-required' ? { provider: eligibility.provider } : {}),
             }));
+        }
+
+        if (clientType === 'machine-scoped') {
+            const machine = await db.machine.findFirst({
+                where: { accountId: verified.userId, id: machineId },
+                select: { id: true },
+            });
+            if (!machine) {
+                return next(rejectSocket({ statusCode: 403, error: 'invalid-machine' }));
+            }
         }
 
         (socket.data as any).userId = verified.userId;

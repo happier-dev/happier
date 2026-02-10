@@ -39,13 +39,13 @@ export async function friendRemove(ctx: Context, uid: string): Promise<UserProfi
             return buildUserProfile(targetUser as any, RelationshipStatus.rejected, identities);
         }
 
-        // If they are friends, change it to pending and requested
+        // If they are friends, removing should fully clear the relationship.
         if (currentUserRelationship === RelationshipStatus.friend) {
-            await relationshipSet(tx, targetUser.id, currentUser.id, RelationshipStatus.requested);
-            await relationshipSet(tx, currentUser.id, targetUser.id, RelationshipStatus.pending);
+            await relationshipSet(tx, currentUser.id, targetUser.id, RelationshipStatus.none);
+            await relationshipSet(tx, targetUser.id, currentUser.id, RelationshipStatus.none);
             await markAccountChanged(tx, { accountId: currentUser.id, kind: 'friends', entityId: 'self' });
             await markAccountChanged(tx, { accountId: targetUser.id, kind: 'friends', entityId: 'self' });
-            return buildUserProfile(targetUser as any, RelationshipStatus.requested, identities);
+            return buildUserProfile(targetUser as any, RelationshipStatus.none, identities);
         }
 
         // If status is pending, set it to none

@@ -1,5 +1,5 @@
 import Fastify from "fastify";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { io as ioClient } from "socket.io-client";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -126,6 +126,11 @@ describe("startSocket (auth policy enforcement)", () => {
         env.set("AUTH_REQUIRED_LOGIN_PROVIDERS", undefined);
     });
 
+    afterEach(async () => {
+        await db.machine.deleteMany();
+        await db.account.deleteMany();
+    });
+
     it("disconnects a user-scoped socket when GitHub is required but the account has no GitHub identity", async () => {
         env.set("AUTH_REQUIRED_LOGIN_PROVIDERS", "github");
 
@@ -164,6 +169,64 @@ describe("startSocket (auth policy enforcement)", () => {
         expect(payload.data).toEqual({
             error: "provider-required",
             provider: "github",
+            statusCode: 403,
+        });
+    }, 30_000);
+
+    it("disconnects a machine-scoped socket when the machine belongs to another account", async () => {
+        const owningAccount = await db.account.create({
+            data: { publicKey: `pk-owning-${Date.now()}` },
+            select: { id: true },
+        });
+        const otherAccount = await db.account.create({
+            data: { publicKey: `pk-other-${Date.now()}` },
+            select: { id: true },
+        });
+
+        await db.machine.create({
+            data: {
+                id: "m-test",
+                accountId: owningAccount.id,
+                metadata: "metadata",
+                metadataVersion: 1,
+                daemonState: null,
+                daemonStateVersion: 0,
+                active: false,
+            },
+            select: { id: true },
+        });
+
+        const token = await auth.createToken(otherAccount.id);
+
+        const app = Fastify({ logger: false }) as unknown as AppFastify;
+        startSocket(app);
+        await app.listen({ port: 0, host: "127.0.0.1" });
+        const address = app.server.address();
+        const port = typeof address === "object" && address ? address.port : null;
+        if (!port) {
+            await app.close();
+            throw new Error("Failed to bind socket server");
+        }
+
+        const socket = ioClient(`http://127.0.0.1:${port}`, {
+            path: "/v1/updates",
+            transports: ["websocket"],
+            reconnection: false,
+            auth: { token, clientType: "machine-scoped", machineId: "m-test" },
+        });
+
+        let payload: ProviderRequiredErrorPayload;
+        try {
+            payload = await waitForConnectionFailure(socket);
+        } finally {
+            socket.close();
+            await app.close();
+        }
+
+        expect(payload.message).toBe("invalid-machine");
+        expect(payload.data).toEqual({
+            error: "invalid-machine",
+            provider: undefined,
             statusCode: 403,
         });
     }, 30_000);

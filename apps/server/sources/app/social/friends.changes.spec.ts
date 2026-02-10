@@ -102,4 +102,25 @@ describe("friends marking (AccountChange integration)", () => {
         expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "u1", kind: "friends", entityId: "self" }));
         expect(markAccountChanged).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "u2", kind: "friends", entityId: "self" }));
     });
+
+    it("friendRemove: friend->none clears relationship for both users and marks friends for both", async () => {
+        setAccountLookup({
+            u1: { id: "u1" },
+            u2: createSocialAccount("u2"),
+        });
+        relationshipGet.mockImplementation(async (_tx: any, from: string, _to: string) => {
+            if (from === "u1") return "friend";
+            if (from === "u2") return "friend";
+            return "none";
+        });
+
+        const { friendRemove } = await import("./friendRemove");
+        const res = await friendRemove({ uid: "u1" } as any, "u2");
+
+        expect(res).toEqual({ id: "u2", status: "none" });
+        expect(relationshipSet).toHaveBeenCalledWith(expect.anything(), "u1", "u2", "none");
+        expect(relationshipSet).toHaveBeenCalledWith(expect.anything(), "u2", "u1", "none");
+        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "u1", kind: "friends", entityId: "self" }));
+        expect(markAccountChanged).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ accountId: "u2", kind: "friends", entityId: "self" }));
+    });
 });

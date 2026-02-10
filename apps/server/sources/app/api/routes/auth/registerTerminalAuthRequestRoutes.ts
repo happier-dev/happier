@@ -294,7 +294,7 @@ export function registerTerminalAuthRequestRoutes(
         if (!authRequest.response) {
             await db.terminalAuthRequest.update({
                 where: { id: authRequest.id },
-                data: { response: request.body.response, responseAccountId: request.userId }
+                data: { response: request.body.response, responseAccountId: request.userId },
             });
         }
         return reply.send({ success: true });

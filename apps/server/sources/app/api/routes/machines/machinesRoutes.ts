@@ -7,6 +7,42 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { buildNewMachineUpdate, buildUpdateMachineUpdate } from "@/app/events/eventRouter";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { timingSafeEqual } from "node:crypto";
+
+function bytesEqual(a: Uint8Array | null, b: Uint8Array | null) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
+}
+
+function serializeMachineRow(row: {
+    id: string;
+    metadata: string;
+    metadataVersion: number;
+    daemonState: string | null;
+    daemonStateVersion: number;
+    dataEncryptionKey: Uint8Array | null;
+    seq: number;
+    active: boolean;
+    lastActiveAt: Date;
+    createdAt: Date;
+    updatedAt: Date;
+}) {
+    return {
+        id: row.id,
+        metadata: row.metadata,
+        metadataVersion: row.metadataVersion,
+        daemonState: row.daemonState,
+        daemonStateVersion: row.daemonStateVersion,
+        dataEncryptionKey: row.dataEncryptionKey ? Buffer.from(row.dataEncryptionKey).toString('base64') : null,
+        seq: row.seq,
+        active: row.active,
+        activeAt: row.lastActiveAt.getTime(),  // Return as activeAt for API consistency
+        createdAt: row.createdAt.getTime(),
+        updatedAt: row.updatedAt.getTime(),
+    };
+}
 
 export function machinesRoutes(app: Fastify) {
     app.post('/v1/machines', {
@@ -32,20 +68,81 @@ export function machinesRoutes(app: Fastify) {
         });
 
         if (machine) {
-            // Machine exists - just return it
-            log({ module: 'machines', machineId: id, userId }, 'Found existing machine');
+            const nextDataEncryptionKey =
+                dataEncryptionKey === null
+                    ? null
+                    : typeof dataEncryptionKey === 'string'
+                        ? new Uint8Array(Buffer.from(dataEncryptionKey, 'base64'))
+                        : undefined;
+
+            const wantsMetadataUpdate = metadata !== machine.metadata;
+            const wantsDaemonStateUpdate = typeof daemonState === 'string' && daemonState !== (machine.daemonState ?? null);
+            const wantsDataEncryptionKeyUpdate =
+                nextDataEncryptionKey !== undefined
+                && !bytesEqual(machine.dataEncryptionKey ?? null, nextDataEncryptionKey);
+
+            if (!wantsMetadataUpdate && !wantsDaemonStateUpdate && !wantsDataEncryptionKeyUpdate) {
+                // Machine exists and payload matches - just return it.
+                // Note: This checks the pre-tx row (which may be slightly stale under concurrency),
+                // but the response is still safe and consistent for the authenticated account.
+                log({ module: 'machines', machineId: id, userId }, 'Found existing machine');
+                return reply.send({
+                    machine: {
+                        ...serializeMachineRow(machine),
+                    }
+                });
+            }
+
+            log({ module: 'machines', machineId: id, userId }, 'Updating existing machine');
+
+            const updated = await inTx(async (tx) => {
+                const current = await tx.machine.findFirst({
+                    where: {
+                        accountId: userId,
+                        id,
+                    },
+                });
+                if (!current) return null;
+
+                const currentWantsMetadataUpdate = metadata !== current.metadata;
+                const currentWantsDaemonStateUpdate =
+                    typeof daemonState === 'string' && daemonState !== (current.daemonState ?? null);
+                const currentWantsDataEncryptionKeyUpdate =
+                    nextDataEncryptionKey !== undefined
+                    && !bytesEqual(current.dataEncryptionKey ?? null, nextDataEncryptionKey);
+
+                if (!currentWantsMetadataUpdate && !currentWantsDaemonStateUpdate && !currentWantsDataEncryptionKeyUpdate) {
+                    return current;
+                }
+
+                const updatedMachine = await tx.machine.update({
+                    where: { accountId_id: { accountId: userId, id } },
+                    data: {
+                        ...(currentWantsMetadataUpdate
+                            ? { metadata, metadataVersion: { increment: 1 } }
+                            : {}),
+                        ...(currentWantsDaemonStateUpdate
+                            ? { daemonState, daemonStateVersion: { increment: 1 } }
+                            : {}),
+                        ...(currentWantsDataEncryptionKeyUpdate
+                            ? { dataEncryptionKey: nextDataEncryptionKey }
+                            : {}),
+                    },
+                });
+
+                await markAccountChanged(tx, { accountId: userId, kind: 'machine', entityId: updatedMachine.id });
+
+                return updatedMachine;
+            });
+
+            if (!updated) {
+                // Machine disappeared between the initial lookup and the transaction.
+                return reply.code(404).send({ error: "machine_not_found" });
+            }
+
             return reply.send({
                 machine: {
-                    id: machine.id,
-                    metadata: machine.metadata,
-                    metadataVersion: machine.metadataVersion,
-                    daemonState: machine.daemonState,
-                    daemonStateVersion: machine.daemonStateVersion,
-                    dataEncryptionKey: machine.dataEncryptionKey ? Buffer.from(machine.dataEncryptionKey).toString('base64') : null,
-                    active: machine.active,
-                    activeAt: machine.lastActiveAt.getTime(),  // Return as activeAt for API consistency
-                    createdAt: machine.createdAt.getTime(),
-                    updatedAt: machine.updatedAt.getTime()
+                    ...serializeMachineRow(updated),
                 }
             });
         } else {
@@ -97,42 +194,28 @@ export function machinesRoutes(app: Fastify) {
                 // Concurrency safety: multiple clients may race to create the same machine (e.g. daemon + session spawns).
                 // If we lost the race, fetch the winner row and return it instead of surfacing a 500.
                 if (isPrismaErrorCode(e, 'P2002')) {
-                    const existing = await db.machine.findFirst({
-                        where: { accountId: userId, id }
-                    });
-                    if (existing) {
+                    const existingSameAccount = await db.machine.findFirst({ where: { accountId: userId, id } });
+                    if (existingSameAccount) {
                         log({ module: 'machines', machineId: id, userId }, 'Machine created concurrently; returning existing machine');
                         return reply.send({
                             machine: {
-                                id: existing.id,
-                                metadata: existing.metadata,
-                                metadataVersion: existing.metadataVersion,
-                                daemonState: existing.daemonState,
-                                daemonStateVersion: existing.daemonStateVersion,
-                                dataEncryptionKey: existing.dataEncryptionKey ? Buffer.from(existing.dataEncryptionKey).toString('base64') : null,
-                                active: existing.active,
-                                activeAt: existing.lastActiveAt.getTime(),
-                                createdAt: existing.createdAt.getTime(),
-                                updatedAt: existing.updatedAt.getTime()
-                            }
+                                ...serializeMachineRow(existingSameAccount),
+                            },
                         });
                     }
+
+                    // Unique violation but no row for this account: id is owned elsewhere.
+                    log({ module: 'machines', machineId: id, userId }, 'Machine id conflict: machine id belongs to another account');
+                    return reply
+                        .code(409)
+                        .send({ error: 'machine_id_conflict', message: 'This machine id is already registered to another account' });
                 }
                 throw e;
             }
 
             return reply.send({
                 machine: {
-                    id: newMachine.id,
-                    metadata: newMachine.metadata,
-                    metadataVersion: newMachine.metadataVersion,
-                    daemonState: newMachine.daemonState,
-                    daemonStateVersion: newMachine.daemonStateVersion,
-                    dataEncryptionKey: newMachine.dataEncryptionKey ? Buffer.from(newMachine.dataEncryptionKey).toString('base64') : null,
-                    active: newMachine.active,
-                    activeAt: newMachine.lastActiveAt.getTime(),  // Return as activeAt for API consistency
-                    createdAt: newMachine.createdAt.getTime(),
-                    updatedAt: newMachine.updatedAt.getTime()
+                    ...serializeMachineRow(newMachine),
                 }
             });
         }
@@ -150,19 +233,7 @@ export function machinesRoutes(app: Fastify) {
             orderBy: { lastActiveAt: 'desc' }
         });
 
-        return machines.map(m => ({
-            id: m.id,
-            metadata: m.metadata,
-            metadataVersion: m.metadataVersion,
-            daemonState: m.daemonState,
-            daemonStateVersion: m.daemonStateVersion,
-            dataEncryptionKey: m.dataEncryptionKey ? Buffer.from(m.dataEncryptionKey).toString('base64') : null,
-            seq: m.seq,
-            active: m.active,
-            activeAt: m.lastActiveAt.getTime(),
-            createdAt: m.createdAt.getTime(),
-            updatedAt: m.updatedAt.getTime()
-        }));
+        return machines.map(serializeMachineRow);
     });
 
     // GET /v1/machines/:id - Get single machine by ID
@@ -190,17 +261,7 @@ export function machinesRoutes(app: Fastify) {
 
         return {
             machine: {
-                id: machine.id,
-                metadata: machine.metadata,
-                metadataVersion: machine.metadataVersion,
-                daemonState: machine.daemonState,
-                daemonStateVersion: machine.daemonStateVersion,
-                dataEncryptionKey: machine.dataEncryptionKey ? Buffer.from(machine.dataEncryptionKey).toString('base64') : null,
-                seq: machine.seq,
-                active: machine.active,
-                activeAt: machine.lastActiveAt.getTime(),
-                createdAt: machine.createdAt.getTime(),
-                updatedAt: machine.updatedAt.getTime()
+                ...serializeMachineRow(machine),
             }
         };
     });
