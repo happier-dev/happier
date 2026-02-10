@@ -64,7 +64,7 @@ on:
       expo_platform:
         description: "Deploy (Expo) — Native build platform"
         required: true
-        default: ios
+        default: all
         type: choice
         options:
           - ios

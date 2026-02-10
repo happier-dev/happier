@@ -83,7 +83,7 @@ on:
       ui_expo_platform:
         description: "Deploy — UI Expo native platform"
         required: true
-        default: ios
+        default: all
         type: choice
         options:
           - ios
