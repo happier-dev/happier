@@ -15,6 +15,35 @@ function asStringArray(value: unknown): string[] | null {
     return out;
 }
 
+function extractTextFromContentBlocks(value: unknown): string | null {
+    if (!Array.isArray(value) || value.length === 0) return null;
+
+    const parts: string[] = [];
+    for (const item of value) {
+        if (typeof item === 'string') {
+            parts.push(item);
+            continue;
+        }
+        const record = asRecord(item);
+        if (!record) return null;
+
+        if (typeof record.text === 'string') {
+            parts.push(record.text);
+            continue;
+        }
+
+        const nested = asRecord(record.content);
+        if (nested && typeof nested.text === 'string') {
+            parts.push(nested.text);
+            continue;
+        }
+
+        return null;
+    }
+
+    return parts.length > 0 ? parts.join('') : null;
+}
+
 function stripShellWrapper(argv: string[]): string | null {
     if (argv.length >= 3 && argv[1] === '-lc') {
         const shell = argv[0];
@@ -74,6 +103,11 @@ export function normalizeBashInput(rawInput: unknown): { command?: string; timeo
 export function normalizeBashResult(rawOutput: unknown): UnknownRecord {
     if (rawOutput == null) return {};
 
+    const outputFromBlocks = extractTextFromContentBlocks(rawOutput);
+    if (outputFromBlocks != null) {
+        return { stdout: outputFromBlocks };
+    }
+
     if (typeof rawOutput === 'string') {
         const extracted = extractTaggedReturnCodeOutput(rawOutput);
         if (extracted) return { ...extracted };
@@ -88,11 +122,17 @@ export function normalizeBashResult(rawOutput: unknown): UnknownRecord {
     const out: UnknownRecord = { ...record };
 
     if (typeof out.stdout !== 'string') {
+        const outputBlocks = extractTextFromContentBlocks(out.output);
+        const contentBlocks = extractTextFromContentBlocks(out.content);
         const metadata = asRecord(out.metadata);
         const candidate =
             typeof out.output === 'string'
                 ? out.output
-                : typeof metadata?.output === 'string'
+                : outputBlocks != null
+                    ? outputBlocks
+                    : contentBlocks != null
+                        ? contentBlocks
+                    : typeof metadata?.output === 'string'
                     ? metadata.output
                     : typeof out.formatted_output === 'string'
                 ? out.formatted_output

@@ -30,4 +30,18 @@ describe('normalizeBashResult (Kilo ACP shapes)', () => {
     expect(normalized.exit_code).toBe(23);
     expect(normalized.stdout).toBe('hello\nworld');
   });
+
+  it('extracts stdout from ACP content block arrays', () => {
+    const normalized = normalizeBashResult([
+      {
+        type: 'content',
+        content: {
+          type: 'text',
+          text: 'leeroy\n',
+        },
+      },
+    ]);
+
+    expect(normalized.stdout).toBe('leeroy\n');
+  });
 });
