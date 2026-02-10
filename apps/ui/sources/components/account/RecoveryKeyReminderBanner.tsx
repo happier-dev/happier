@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useAuth } from '@/auth/context/AuthContext';
-import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { TokenStorage, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { getServerFeatures } from '@/sync/api/capabilities/apiFeatures';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -36,9 +36,11 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
     }, []);
 
     if (!auth.isAuthenticated) return null;
-    if (!auth.credentials?.secret) return null;
+    if (!auth.credentials || !isLegacyAuthCredentials(auth.credentials)) return null;
     if (dismissed !== false) return null;
     if (enabled !== true) return null;
+
+    const secret = auth.credentials.secret;
 
     return (
         <ItemGroup>
@@ -49,7 +51,7 @@ export const RecoveryKeyReminderBanner = React.memo(() => {
                 onPress={() => {
                     Modal.show({
                         component: SecretKeyBackupModal,
-                        props: { secret: auth.credentials!.secret },
+                        props: { secret },
                     });
                 }}
                 showChevron={false}

@@ -25,7 +25,9 @@ export async function getCommandSuggestions(sessionId: string, query: string): P
             })
         }));
     } catch (error) {
-        console.error('Error fetching command suggestions:', error);
+        if (process.env.EXPO_PUBLIC_DEBUG) {
+            console.error('Error fetching command suggestions:', error);
+        }
         // Return empty array on error
         return [];
     }
@@ -54,7 +56,9 @@ export async function getFileMentionSuggestions(sessionId: string, query: string
             })
         }));
     } catch (error) {
-        console.error('Error fetching file suggestions:', error);
+        if (process.env.EXPO_PUBLIC_DEBUG) {
+            console.error('Error fetching file suggestions:', error);
+        }
         // Return empty array on error
         return [];
     }
@@ -65,38 +69,20 @@ export async function getSuggestions(sessionId: string, query: string): Promise<
     text: string;
     component: React.ComponentType;
 }[]> {
-    console.log('💡 getSuggestions called with query:', JSON.stringify(query));
-    
     if (!query || query.length === 0) {
-        console.log('💡 getSuggestions: Empty query, returning empty array');
         return [];
     }
     
     // Check if it's a command (starts with /)
     if (query.startsWith('/')) {
-        console.log('💡 getSuggestions: Command detected');
-        const result = await getCommandSuggestions(sessionId, query);
-        console.log('💡 getSuggestions: Command suggestions:', JSON.stringify(result.map(r => ({
-            key: r.key,
-            text: r.text,
-            component: '[Function]'
-        })), null, 2));
-        return result;
+        return await getCommandSuggestions(sessionId, query);
     }
     
     // Check if it's a file mention (starts with @)
     if (query.startsWith('@')) {
-        console.log('💡 getSuggestions: File mention detected');
-        const result = await getFileMentionSuggestions(sessionId, query);
-        console.log('💡 getSuggestions: File suggestions:', JSON.stringify(result.map(r => ({
-            key: r.key,
-            text: r.text,
-            component: '[Function]'
-        })), null, 2));
-        return result;
+        return await getFileMentionSuggestions(sessionId, query);
     }
     
     // No suggestions for other queries
-    console.log('💡 getSuggestions: No matching prefix, returning empty array');
     return [];
 }

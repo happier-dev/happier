@@ -28,6 +28,7 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
         setPendingExternalConnect,
         clearPendingExternalConnect,
     },
+    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
 
 vi.mock('@/hooks/server/useOAuthProviderConfigured', () => ({

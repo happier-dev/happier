@@ -80,6 +80,9 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
         getRecoveryKeyReminderDismissed,
         setRecoveryKeyReminderDismissed,
     },
+    // RecoveryKeyReminderBanner gates on legacy credentials; include this export to
+    // keep the mock aligned with the real module surface.
+    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
 
 vi.mock('@/components/ui/lists/ItemGroup', () => ({

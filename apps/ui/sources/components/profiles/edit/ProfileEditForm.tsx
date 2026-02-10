@@ -569,7 +569,7 @@ export function ProfileEditForm({
             {profile.isBuiltIn && profileDocs?.setupGuideUrl && (
                 <ItemGroup title={t('profiles.setupInstructions.title')} footer={profileDocs.description}>
                     <Item
-                        title={t('profiles.setupInstructions.viewOfficialGuide')}
+                        title={t('profiles.setupInstructions.viewCloudGuide')}
                         icon={<Ionicons name="book-outline" size={29} color={theme.colors.button.secondary.tint} />}
                         onPress={() => void openSetupGuide()}
                     />

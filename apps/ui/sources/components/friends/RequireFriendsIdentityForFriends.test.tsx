@@ -71,6 +71,7 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         setPendingExternalConnect: async () => {},
     },
+    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
 
 vi.mock('@/sync/api/account/apiUsername', () => ({
