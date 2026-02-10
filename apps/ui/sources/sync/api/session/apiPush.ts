@@ -1,4 +1,4 @@
-import { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
 import { serverFetch } from '@/sync/http/client';
@@ -11,14 +11,20 @@ export async function registerPushToken(
     const API_ENDPOINT = (opts.apiEndpoint ?? '').trim().replace(/\/+$/, '');
     const path = API_ENDPOINT ? `${API_ENDPOINT}/v1/push-tokens` : '/v1/push-tokens';
     await backoff(async () => {
-        const response = await serverFetch(path, {
+        // When the caller provides an explicit API endpoint, we intentionally allow cross-origin
+        // requests with explicit credentials (multi-server flows).
+        const doFetch = API_ENDPOINT
+            ? fetch
+            : (p: string, init: RequestInit) => serverFetch(p, init, { includeAuth: false });
+
+        const response = await doFetch(path, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${credentials.token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({ token }),
-        }, { includeAuth: false });
+        });
 
         if (!response.ok) {
             if (response.status >= 400 && response.status < 500 && response.status !== 408 && response.status !== 429) {

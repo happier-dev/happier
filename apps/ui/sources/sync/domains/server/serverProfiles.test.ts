@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MMKV } from 'react-native-mmkv';
-import { scopedStorageId } from '@/utils/system/storageScope';
 
 function randomScope(): string {
     return `test_${Date.now()}_${Math.random().toString(16).slice(2)}`;
@@ -26,6 +24,7 @@ async function importFresh() {
 describe('serverProfiles', () => {
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
     const previousServerContext = process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
+    const previousServerUrl = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
 
     afterEach(() => {
         vi.unstubAllGlobals();
@@ -33,25 +32,8 @@ describe('serverProfiles', () => {
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
         if (previousServerContext === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
         else process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = previousServerContext;
-    });
-
-    it('migrates legacy custom-server-url into a saved server profile and activates it', async () => {
-        const scope = randomScope();
-        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
-
-        // Legacy server-config storage (native scope uses env)
-        const legacy = new MMKV({ id: scopedStorageId('server-config', scope) });
-        legacy.set('custom-server-url', 'https://legacy.example.test/');
-
-        const profiles = await importFresh();
-
-        const active = profiles.getActiveServerUrl();
-        expect(active).toBe('https://legacy.example.test');
-
-        const all = profiles.listServerProfiles();
-        expect(all.some((p) => p.id === 'official')).toBe(true);
-        expect(all.some((p) => p.serverUrl === 'https://legacy.example.test')).toBe(true);
-        expect(legacy.getString('custom-server-url')).toBeUndefined();
+        if (previousServerUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+        else process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = previousServerUrl;
     });
 
     it('prefers sessionStorage activeServerId on web over the device default', async () => {
@@ -66,7 +48,7 @@ describe('serverProfiles', () => {
             name: 'Device',
         });
         profiles.setActiveServerId(created.id, { scope: 'device' });
-        profiles.setActiveServerId('official', { scope: 'tab' });
+        profiles.setActiveServerId('cloud', { scope: 'tab' });
 
         expect(profiles.getActiveServerUrl()).toBe('https://api.happier.dev');
     });
@@ -77,7 +59,7 @@ describe('serverProfiles', () => {
 
         const profiles = await importFresh();
 
-        expect(() => profiles.removeServerProfile('official')).toThrow(/happier cloud/i);
+        expect(() => profiles.removeServerProfile('cloud')).toThrow(/happier cloud/i);
     });
 
     it('derives deterministic filesystem-safe ids from server URLs', async () => {
@@ -121,8 +103,22 @@ describe('serverProfiles', () => {
         profiles.setActiveServerId(created.id, { scope: 'device' });
 
         const all = profiles.listServerProfiles();
-        expect(all.some((p) => p.id === 'official')).toBe(false);
+        expect(all.some((p) => p.id === 'cloud')).toBe(false);
         expect(profiles.getActiveServerUrl()).toBe('https://stack.example.test');
+    });
+
+    it('allows manually adding the Happier Cloud server in stack context', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+
+        const profiles = await importFresh();
+        const cloud = profiles.upsertServerProfile({ serverUrl: 'https://api.happier.dev', name: 'Whatever' });
+
+        // Stack context should not auto-seed Cloud, but if the user explicitly adds it, we keep it and normalize to cloud id.
+        expect(cloud.id).toBe('cloud');
+        expect(cloud.name).toBe('Happier Cloud');
+        expect(profiles.listServerProfiles().some((p) => p.id === 'cloud')).toBe(true);
     });
 
     it('updates managed stack profile in-place when stableKey is reused', async () => {
@@ -148,5 +144,84 @@ describe('serverProfiles', () => {
         expect(second.id).toBe(first.id);
         expect(second.serverUrl).toBe('http://127.0.0.1:4010');
         expect(profiles.listServerProfiles().filter((p) => p.stableKey === 'dev-stack')).toHaveLength(1);
+    });
+
+    it('dedupes localhost and 127.0.0.1 loopback URLs into one profile', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        const first = profiles.upsertServerProfile({ serverUrl: 'http://localhost:3012', name: 'local-a' });
+        const second = profiles.upsertServerProfile({ serverUrl: 'http://127.0.0.1:3012', name: 'local-b' });
+
+        expect(second.id).toBe(first.id);
+        expect(second.name).toBe('local-a');
+        expect(second.serverUrl).toBe('http://localhost:3012');
+        expect(profiles.listServerProfiles().filter((p) => p.id === first.id)).toHaveLength(1);
+    });
+
+    it('reset-to-default targets the stack env server in stack context (no cloud profile)', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:3013';
+
+        const profiles = await importFresh();
+        const other = profiles.upsertServerProfile({ serverUrl: 'http://localhost:3012', name: 'other' });
+        profiles.setActiveServerId(other.id, { scope: 'device' });
+
+        const resetId = profiles.getResetToDefaultServerId();
+        expect(resetId).not.toBe('cloud');
+
+        profiles.setActiveServerId(resetId, { scope: 'device' });
+        expect(profiles.getActiveServerUrl()).toBe('http://localhost:3013');
+    });
+
+    it('reset-to-default targets the cloud profile outside stack context', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = '';
+
+        const profiles = await importFresh();
+        expect(profiles.getResetToDefaultServerId()).toBe('cloud');
+    });
+
+    it('seeds the stack env server profile on load in stack context (and does not include Happier Cloud)', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:3013';
+
+        const profiles = await importFresh();
+        const all = profiles.listServerProfiles();
+        expect(all.some((p) => p.id === 'cloud')).toBe(false);
+        expect(all.some((p) => p.serverUrl === 'http://localhost:3013')).toBe(true);
+        expect(profiles.getActiveServerUrl()).toBe('http://localhost:3013');
+    });
+
+    it('detects the Happier Cloud server id via isCloudServerProfileId', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+
+        const profiles = await importFresh();
+        expect(profiles.isCloudServerProfileId('cloud')).toBe(true);
+        expect(profiles.isCloudServerProfileId(' cloud ')).toBe(true);
+        expect(profiles.isCloudServerProfileId('legacy')).toBe(false);
+        expect(profiles.isCloudServerProfileId('not-cloud')).toBe(false);
+        expect(profiles.isCloudServerProfileId('')).toBe(false);
+    });
+
+    it('does not throw when setting active server id to an unknown value (ignores request)', async () => {
+        const scope = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = scope;
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:3013';
+
+        const profiles = await importFresh();
+        const other = profiles.upsertServerProfile({ serverUrl: 'http://localhost:3012', name: 'other' });
+        profiles.setActiveServerId(other.id, { scope: 'device' });
+
+        expect(() => profiles.setActiveServerId('missing', { scope: 'device' })).not.toThrow();
+        expect(profiles.getActiveServerUrl()).toBe('http://localhost:3012');
     });
 });

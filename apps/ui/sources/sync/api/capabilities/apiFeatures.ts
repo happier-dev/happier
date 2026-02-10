@@ -1,8 +1,10 @@
 import { serverFetch } from '@/sync/http/client';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 import { FeaturesResponseSchema, type FeaturesResponse as ServerFeatures } from '@happier-dev/protocol';
 
-let cached: { value: ServerFeatures | null; at: number } | null = null;
+type CacheEntry = { value: ServerFeatures | null; at: number };
+const cachedByServerId = new Map<string, CacheEntry>();
 
 function parseServerFeatures(raw: unknown): ServerFeatures | null {
     const parsed = FeaturesResponseSchema.safeParse(raw);
@@ -12,10 +14,13 @@ function parseServerFeatures(raw: unknown): ServerFeatures | null {
 export async function getServerFeatures(params?: { timeoutMs?: number; force?: boolean }): Promise<ServerFeatures | null> {
     const force = params?.force ?? false;
     const timeoutMs = params?.timeoutMs ?? 800;
+    const snapshot = getActiveServerSnapshot();
+    const cacheKey = snapshot.serverId;
 
-    if (!force && cached) {
+    if (!force) {
+        const cached = cachedByServerId.get(cacheKey) ?? null;
         // Cache for 10 minutes.
-        if (Date.now() - cached.at < 10 * 60 * 1000) {
+        if (cached && Date.now() - cached.at < 10 * 60 * 1000) {
             return cached.value;
         }
     }
@@ -30,16 +35,16 @@ export async function getServerFeatures(params?: { timeoutMs?: number; force?: b
         }, { includeAuth: false });
 
         if (!response.ok) {
-            cached = { value: null, at: Date.now() };
+            cachedByServerId.set(cacheKey, { value: null, at: Date.now() });
             return null;
         }
 
         const json = await response.json();
         const parsed = parseServerFeatures(json);
-        cached = { value: parsed, at: Date.now() };
+        cachedByServerId.set(cacheKey, { value: parsed, at: Date.now() });
         return parsed;
     } catch {
-        cached = { value: null, at: Date.now() };
+        cachedByServerId.set(cacheKey, { value: null, at: Date.now() });
         return null;
     } finally {
         clearTimeout(timer);
@@ -47,6 +52,8 @@ export async function getServerFeatures(params?: { timeoutMs?: number; force?: b
 }
 
 export function getCachedServerFeatures(): ServerFeatures | null {
+    const snapshot = getActiveServerSnapshot();
+    const cached = cachedByServerId.get(snapshot.serverId) ?? null;
     return cached?.value ?? null;
 }
 

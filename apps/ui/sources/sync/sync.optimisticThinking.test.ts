@@ -117,6 +117,101 @@ describe('sync.sendMessage optimistic thinking', () => {
         expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
     });
 
+    it('clears optimistic thinking when a turn is aborted even if session.thinking is already false', async () => {
+        const sessionId = 's_turn_aborted';
+        storage.getState().applySessions([createSession({ sessionId })]);
+        storage.getState().markSessionOptimisticThinking(sessionId);
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).not.toBeNull();
+
+        const { sync } = await import('./sync');
+        await (sync as any).applySessionThinkingFromTaskLifecycle(sessionId, {
+            type: 'turn_aborted',
+            id: 'task-abort-1',
+            createdAt: Date.now(),
+        });
+
+        expect(storage.getState().sessions[sessionId].thinking).toBe(false);
+        expect(storage.getState().sessions[sessionId].optimisticThinkingAt ?? null).toBeNull();
+    });
+
+    it('marks running approved tools as canceled when a turn is aborted', async () => {
+        const sessionId = 's_turn_aborted_tools';
+        const now = Date.now();
+
+        storage.getState().applySessions([{
+            ...createSession({ sessionId }),
+            agentState: {
+                completedRequests: {
+                    'tool-1': {
+                        tool: 'Bash',
+                        arguments: { command: 'sleep 5' },
+                        createdAt: now - 5_000,
+                        completedAt: now - 4_000,
+                        status: 'approved',
+                    },
+                },
+            },
+        } as any]);
+
+        storage.getState().applyMessagesLoaded(sessionId);
+        storage.getState().applyMessages(sessionId, [{
+            id: 'm-tool-call',
+            localId: null,
+            createdAt: now - 3_000,
+            role: 'agent',
+            isSidechain: false,
+            content: [{
+                type: 'tool-call',
+                id: 'tool-1',
+                name: 'Bash',
+                input: { command: 'sleep 5' },
+                description: null,
+                uuid: 'tool-uuid-1',
+                parentUUID: null,
+            }],
+        } as any]);
+
+        const beforeAbort = storage.getState().sessionMessages[sessionId].messages.find(
+            (message) => message.kind === 'tool-call' && message.tool.permission?.id === 'tool-1'
+        );
+        if (!beforeAbort || beforeAbort.kind !== 'tool-call') {
+            throw new Error('Expected tool-call message before abort');
+        }
+        expect(beforeAbort.tool.state).toBe('running');
+
+        const { sync } = await import('./sync');
+        await (sync as any).applySessionThinkingFromTaskLifecycle(sessionId, {
+            type: 'turn_aborted',
+            id: 'tool-1',
+            createdAt: Date.now(),
+        });
+
+        const afterAbort = storage.getState().sessionMessages[sessionId].messages.find(
+            (message) => message.kind === 'tool-call' && message.tool.permission?.id === 'tool-1'
+        );
+        if (!afterAbort || afterAbort.kind !== 'tool-call') {
+            throw new Error('Expected tool-call message after abort');
+        }
+        expect(afterAbort.tool.state).toBe('error');
+        expect(afterAbort.tool.permission?.status).toBe('canceled');
+        expect(afterAbort.tool.result).toEqual({ error: 'Request interrupted' });
+        expect(afterAbort.tool.completedAt).not.toBeNull();
+    });
+
+    it('does not force thinking=true from fetched task_started lifecycle events', async () => {
+        const sessionId = 's_task_started_fetch';
+        storage.getState().applySessions([createSession({ sessionId })]);
+
+        const { sync } = await import('./sync');
+        await (sync as any).applySessionThinkingFromTaskLifecycle(sessionId, {
+            type: 'task_started',
+            id: 'task-start-1',
+            createdAt: Date.now(),
+        });
+
+        expect(storage.getState().sessions[sessionId].thinking).toBe(false);
+    });
+
     it('publishes session metadata after send when apply timing is next_prompt and local permission selection is newer', async () => {
         const sessionId = 's_perm_next_prompt';
         storage.getState().applySessions([

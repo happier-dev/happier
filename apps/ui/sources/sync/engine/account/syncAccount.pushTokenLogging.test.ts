@@ -38,6 +38,7 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: {
         getCredentialsForServerUrl: mocks.getCredentialsForServerUrl,
     },
+    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
 
 const secretPushToken = 'ExponentPushToken[secret-token]';

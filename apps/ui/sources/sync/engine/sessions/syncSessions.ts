@@ -9,6 +9,7 @@ import { ApiSessionMessagesResponseSchema } from '@/sync/api/types/apiTypes';
 import { storage } from '@/sync/domains/state/storage';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { nowServerMs } from '@/sync/runtime/time';
+import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
 export { handleNewMessageSocketUpdate } from './sessionSocketUpdate';
 export { fetchAndApplySessions } from './sessionSnapshot';
 export type { SessionListEncryption } from './sessionSnapshot';
@@ -129,9 +130,11 @@ type SessionMessagesEncryption = {
 export async function fetchAndApplyMessages(params: {
     sessionId: string;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
+    isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
     sessionReceivedMessages: Map<string, Set<string>>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     markMessagesLoaded: (sessionId: string) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
     log: { log: (message: string) => void };
@@ -145,6 +148,10 @@ export async function fetchAndApplyMessages(params: {
     // Throwing an error triggers backoff retry in InvalidateSync
     const encryption = getSessionEncryption(sessionId);
     if (!encryption) {
+        if (params.isSessionKnown?.(sessionId) === false) {
+            log.log(`💬 fetchMessages: Session ${sessionId} is not known on this server; skipping message fetch`);
+            return;
+        }
         log.log(`💬 fetchMessages: Session encryption not ready for ${sessionId}, will retry`);
         throw new Error(`Session encryption not ready for ${sessionId}`);
     }
@@ -185,6 +192,10 @@ export async function fetchAndApplyMessages(params: {
         const decrypted = decryptedMessages[i];
         if (decrypted) {
             eixstingMessages.add(decrypted.id);
+            const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);
+            if (lifecycleEvent) {
+                params.onTaskLifecycleEvent?.(lifecycleEvent);
+            }
             // Normalize the decrypted message
             const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
             if (normalized) {
@@ -204,9 +215,11 @@ export async function fetchAndApplyOlderMessages(params: {
     beforeSeq: number;
     limit: number;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
+    isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
     sessionReceivedMessages: Map<string, Set<string>>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
     log: { log: (message: string) => void };
 }): Promise<{ applied: number; page: ApiSessionMessagesResponse }> {
@@ -215,6 +228,17 @@ export async function fetchAndApplyOlderMessages(params: {
     // Get encryption - may not be ready yet if session was just created
     const encryption = getSessionEncryption(sessionId);
     if (!encryption) {
+        if (params.isSessionKnown?.(sessionId) === false) {
+            log.log(`💬 fetchOlderMessages: Session ${sessionId} is not known on this server; skipping page fetch`);
+            return {
+                applied: 0,
+                page: {
+                    messages: [],
+                    hasMore: false,
+                    nextBeforeSeq: null,
+                },
+            };
+        }
         throw new Error(`Session encryption not ready for ${sessionId}`);
     }
 
@@ -248,6 +272,9 @@ export async function fetchAndApplyOlderMessages(params: {
         const decrypted = decryptedMessages[i];
         if (decrypted) {
             eixstingMessages.add(decrypted.id);
+            // Older pages can include historical lifecycle markers (task_complete/turn_aborted) that
+            // should not clobber current in-flight UI state. Lifecycle handling is reserved for
+            // newer/socket flows.
             const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
             if (normalized) {
                 normalizedMessages.push(normalized);
@@ -265,9 +292,11 @@ export async function fetchAndApplyNewerMessages(params: {
     afterSeq: number;
     limit: number;
     getSessionEncryption: (sessionId: string) => SessionMessagesEncryption | null;
+    isSessionKnown?: (sessionId: string) => boolean;
     request: (path: string) => Promise<Response>;
     sessionReceivedMessages: Map<string, Set<string>>;
     applyMessages: (sessionId: string, messages: NormalizedMessage[]) => void;
+    onTaskLifecycleEvent?: (event: TaskLifecycleEvent) => void;
     onMessagesPage?: (page: ApiSessionMessagesResponse) => void;
     log: { log: (message: string) => void };
 }): Promise<{ applied: number; page: ApiSessionMessagesResponse }> {
@@ -275,6 +304,16 @@ export async function fetchAndApplyNewerMessages(params: {
 
     const encryption = getSessionEncryption(sessionId);
     if (!encryption) {
+        if (params.isSessionKnown?.(sessionId) === false) {
+            log.log(`💬 fetchNewerMessages: Session ${sessionId} is not known on this server; skipping page fetch`);
+            return {
+                applied: 0,
+                page: {
+                    messages: [],
+                    nextAfterSeq: null,
+                },
+            };
+        }
         throw new Error(`Session encryption not ready for ${sessionId}`);
     }
 
@@ -309,6 +348,10 @@ export async function fetchAndApplyNewerMessages(params: {
         const decrypted = decryptedMessages[i];
         if (decrypted) {
             existingMessages.add(decrypted.id);
+            const lifecycleEvent = getTaskLifecycleEventFromRawContent(decrypted.content, decrypted.createdAt);
+            if (lifecycleEvent) {
+                params.onTaskLifecycleEvent?.(lifecycleEvent);
+            }
             const normalized = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
             if (normalized) {
                 normalizedMessages.push(normalized);

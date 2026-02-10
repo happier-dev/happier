@@ -2,23 +2,22 @@ import type { NormalizedMessage } from '@/sync/typesRaw';
 import { normalizeRawMessage } from '@/sync/typesRaw';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { getTaskLifecycleEventFromRawContent, type TaskLifecycleEvent } from './taskLifecycle';
 
 type SessionMessageEncryption = {
     decryptMessage: (message: any) => Promise<any>;
 };
 
-function inferTaskLifecycleFromMessageContent(content: unknown): { isTaskComplete: boolean; isTaskStarted: boolean } {
-    const rawContent = content as { content?: { type?: string; data?: { type?: string } } } | null;
-    const contentType = rawContent?.content?.type;
-    const dataType = rawContent?.content?.data?.type;
+function inferTaskLifecycleFromMessageContent(content: unknown, createdAt: number): {
+    isTaskComplete: boolean;
+    isTaskStarted: boolean;
+    lifecycleEvent: TaskLifecycleEvent | null;
+} {
+    const lifecycleEvent = getTaskLifecycleEventFromRawContent(content, createdAt);
+    const isTaskComplete = lifecycleEvent?.type === 'task_complete' || lifecycleEvent?.type === 'turn_aborted';
+    const isTaskStarted = lifecycleEvent?.type === 'task_started';
 
-    const isTaskComplete =
-        (contentType === 'acp' || contentType === 'codex') &&
-        (dataType === 'task_complete' || dataType === 'turn_aborted');
-
-    const isTaskStarted = (contentType === 'acp' || contentType === 'codex') && dataType === 'task_started';
-
-    return { isTaskComplete, isTaskStarted };
+    return { isTaskComplete, isTaskStarted, lifecycleEvent };
 }
 
 export async function handleNewMessageSocketUpdate(params: {
@@ -34,6 +33,7 @@ export async function handleNewMessageSocketUpdate(params: {
     getSessionMaterializedMaxSeq: (sessionId: string) => number;
     markSessionMaterializedMaxSeq: (sessionId: string, seq: number) => void;
     invalidateMessagesForSession: (sessionId: string) => void;
+    onTaskLifecycleEvent?: (sessionId: string, event: TaskLifecycleEvent) => void;
 }): Promise<void> {
     const {
         updateData,
@@ -76,7 +76,10 @@ export async function handleNewMessageSocketUpdate(params: {
         if (decrypted) {
             lastMessage = normalizeRawMessage(decrypted.id, decrypted.localId, decrypted.createdAt, decrypted.content);
 
-            const { isTaskComplete, isTaskStarted } = inferTaskLifecycleFromMessageContent(decrypted.content);
+            const { isTaskComplete, isTaskStarted, lifecycleEvent } = inferTaskLifecycleFromMessageContent(decrypted.content, decrypted.createdAt);
+            if (lifecycleEvent) {
+                params.onTaskLifecycleEvent?.(sessionId, lifecycleEvent);
+            }
 
             const session = getSession(sessionId);
             if (session) {

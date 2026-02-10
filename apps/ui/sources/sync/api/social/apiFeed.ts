@@ -1,4 +1,4 @@
-import { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
 import { FeedResponse, FeedResponseSchema, FeedItem } from '@/sync/domains/social/feedTypes';

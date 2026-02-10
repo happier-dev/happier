@@ -1,4 +1,4 @@
-import { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { serverFetch } from '@/sync/http/client';
 
 export type VoiceTokenResponse =

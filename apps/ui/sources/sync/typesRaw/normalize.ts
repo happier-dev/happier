@@ -561,6 +561,11 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
             }
             if (raw.content.data.type === 'permission-request') {
                 // Map permission-request to tool-call for UI to show permission dialog
+                const rawOptions = raw.content.data.options ?? {};
+                const input =
+                    rawOptions && typeof rawOptions === 'object' && !Array.isArray(rawOptions)
+                        ? { ...(rawOptions as Record<string, unknown>), title: (rawOptions as any).title ?? raw.content.data.description }
+                        : rawOptions;
                 return {
                     id,
                     localId,
@@ -572,7 +577,7 @@ export function normalizeRawMessage(id: string, localId: string | null, createdA
                         type: 'tool-call',
                         id: raw.content.data.permissionId,
                         name: raw.content.data.toolName,
-                        input: raw.content.data.options ?? {},
+                        input,
                         description: raw.content.data.description,
                         uuid: id,
                         parentUUID: null

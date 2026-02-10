@@ -6,6 +6,8 @@ import { apiSocket } from '../api/session/apiSocket';
 import { sync } from '../sync';
 import { isRpcMethodNotAvailableError } from '../runtime/rpcErrors';
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
+import { storage } from '../domains/state/storage';
+import { nowServerMs } from '../runtime/time';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type {
@@ -320,6 +322,22 @@ export async function sessionDeny(
 ): Promise<void> {
     const request: SessionPermissionRequest = { id, approved: false, mode, allowedTools, decision, reason };
     await apiSocket.sessionRPC(sessionId, 'permission', request);
+
+    // Best-effort local UX recovery: deny/abort decisions should immediately return
+    // the session to non-thinking state even if lifecycle events arrive out of order.
+    const session = storage.getState().sessions[sessionId];
+    storage.getState().clearSessionOptimisticThinking(sessionId);
+    if (!session || session.thinking !== true) {
+        return;
+    }
+
+    storage.getState().applySessions([
+        {
+            ...session,
+            thinking: false,
+            updatedAt: nowServerMs(),
+        },
+    ]);
 }
 
 /**

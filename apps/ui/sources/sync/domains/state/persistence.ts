@@ -16,6 +16,7 @@ const NEW_SESSION_DRAFT_KEY = 'new-session-draft-v1';
 const SESSION_MATERIALIZED_MAX_SEQ_KEY = 'session-materialized-max-seq-v1';
 const LAST_CHANGES_CURSOR_BY_ACCOUNT_ID_KEY = 'last-changes-cursor-by-account-id-v1';
 const CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX = 'changes-cursor-by-account-id-v1:';
+const CHANGES_CURSOR_BY_SERVER_SCOPE_AND_ACCOUNT_ID_PREFIX = 'changes-cursor-by-server-scope-and-account-id-v1:';
 const SESSION_MODEL_MODE_UPDATED_ATS_KEY = 'session-model-mode-updated-ats-v1';
 
 export type NewSessionSessionType = 'simple' | 'worktree';
@@ -509,13 +510,38 @@ export function saveSessionMaterializedMaxSeqById(data: Record<string, number>) 
     mmkv.set(SESSION_MATERIALIZED_MAX_SEQ_KEY, JSON.stringify(data));
 }
 
-export function loadChangesCursor(): string | null {
+function normalizeChangesCursorScope(scopeRaw?: string | null): string | null {
+    const scope = String(scopeRaw ?? '').trim();
+    if (!scope) return null;
+    return scope.toLowerCase();
+}
+
+function scopedChangesCursorKey(accountId: string, scope: string): string {
+    return `${CHANGES_CURSOR_BY_SERVER_SCOPE_AND_ACCOUNT_ID_PREFIX}${scope}:${accountId}`;
+}
+
+function unscopedChangesCursorKey(accountId: string): string {
+    return `${CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX}${accountId}`;
+}
+
+export function loadChangesCursor(scopeRaw?: string | null): string | null {
     const accountId = loadProfile().id;
     if (!accountId) return null;
 
-    const direct = mmkv.getString(`${CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX}${accountId}`);
-    if (typeof direct === 'string' && direct.length > 0) {
-        return direct;
+    const scope = normalizeChangesCursorScope(scopeRaw);
+    if (scope) {
+        const scoped = mmkv.getString(scopedChangesCursorKey(accountId, scope));
+        if (typeof scoped === 'string' && scoped.length > 0) {
+            return scoped;
+        }
+        // Scope-aware callers intentionally do not fall back to the legacy unscoped key,
+        // which could carry a cursor from a different server.
+        return null;
+    }
+
+    const unscoped = mmkv.getString(unscopedChangesCursorKey(accountId));
+    if (typeof unscoped === 'string' && unscoped.length > 0) {
+        return unscoped;
     }
 
     // Legacy fallback: salvage from the old per-account numeric map.
@@ -527,30 +553,36 @@ export function loadChangesCursor(): string | null {
     return null;
 }
 
-export function saveChangesCursor(cursor: string): void {
+export function saveChangesCursor(cursor: string, scopeRaw?: string | null): void {
     const accountId = loadProfile().id;
     if (!accountId) return;
 
+    const scope = normalizeChangesCursorScope(scopeRaw);
+    const key = scope ? scopedChangesCursorKey(accountId, scope) : unscopedChangesCursorKey(accountId);
     const trimmed = typeof cursor === 'string' ? cursor.trim() : '';
     if (!trimmed) {
-        mmkv.delete(`${CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX}${accountId}`);
-        const legacy = loadLastChangesCursorByAccountId();
-        if (Object.prototype.hasOwnProperty.call(legacy, accountId)) {
-            delete legacy[accountId];
-            saveLastChangesCursorByAccountId(legacy);
+        mmkv.delete(key);
+        if (!scope) {
+            const legacy = loadLastChangesCursorByAccountId();
+            if (Object.prototype.hasOwnProperty.call(legacy, accountId)) {
+                delete legacy[accountId];
+                saveLastChangesCursorByAccountId(legacy);
+            }
         }
         return;
     }
 
     // Store cursor as-is to support future BigInt/string cursors.
-    mmkv.set(`${CHANGES_CURSOR_BY_ACCOUNT_ID_PREFIX}${accountId}`, trimmed);
+    mmkv.set(key, trimmed);
 
     // Best-effort: keep legacy numeric map in sync for older code paths.
-    const asNumber = Number(trimmed);
-    if (Number.isFinite(asNumber) && asNumber >= 0) {
-        const legacy = loadLastChangesCursorByAccountId();
-        legacy[accountId] = Math.floor(asNumber);
-        saveLastChangesCursorByAccountId(legacy);
+    if (!scope) {
+        const asNumber = Number(trimmed);
+        if (Number.isFinite(asNumber) && asNumber >= 0) {
+            const legacy = loadLastChangesCursorByAccountId();
+            legacy[accountId] = Math.floor(asNumber);
+            saveLastChangesCursorByAccountId(legacy);
+        }
     }
 }
 

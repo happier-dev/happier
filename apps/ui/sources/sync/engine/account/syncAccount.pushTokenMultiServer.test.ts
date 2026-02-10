@@ -50,20 +50,20 @@ describe('registerPushTokenIfAvailable (multi-server)', () => {
 
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 
-        setActiveServerId('official', { scope: 'device' });
-        await TokenStorage.setCredentials({ token: 't_official', secret: 's' });
+        setActiveServerId('cloud', { scope: 'device' });
+        await TokenStorage.setCredentials({ token: 't_cloud', secret: 's' });
 
         setActiveServerId(company.id, { scope: 'device' });
         await TokenStorage.setCredentials({ token: 't_company', secret: 's' });
 
-        setActiveServerId('official', { scope: 'device' });
+        setActiveServerId('cloud', { scope: 'device' });
 
         const messages: string[] = [];
         const log = { log: (message: string) => messages.push(message) };
 
         const { registerPushTokenIfAvailable } = await import('./syncAccount');
         await registerPushTokenIfAvailable({
-            credentials: { token: 't_official', secret: 's' } as any,
+            credentials: { token: 't_cloud', secret: 's' } as any,
             log,
         });
 

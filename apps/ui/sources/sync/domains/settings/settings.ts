@@ -276,13 +276,6 @@ const SettingsSchemaBase = z.object({
     // Per-backend enablement map used across picker/settings/profile surfaces.
     // Unknown keys are allowed to avoid schema churn when adding backends.
     backendEnabledById: z.record(z.string(), z.boolean()).default(DEFAULT_BACKEND_ENABLED_BY_ID).describe('Per-backend enable/disable toggles'),
-    // Codex backend mode:
-    // - mcp: plain Codex MCP mode
-    // - mcp_resume: Codex MCP + resume extension install
-    // - acp: Codex ACP mode (codex-acp)
-    codexBackendMode: z.enum(['mcp', 'mcp_resume', 'acp']).describe('Codex backend mode'),
-    codexMcpResumeInstallSpec: z.string().describe('Codex MCP resume installer spec (npm/git/file); empty uses daemon default'),
-    codexAcpInstallSpec: z.string().describe('Codex ACP installer spec (npm/git/file); empty uses daemon default'),
     // Per-experiment toggles (gated by `experiments` master switch in UI/usage)
     expUsageReporting: z.boolean().describe('Experimental: enable usage reporting UI'),
     // Deprecated: kept parse-compatible for one migration window.
@@ -368,13 +361,14 @@ const SettingsSchemaBase = z.object({
         machineId: z.string(),
         path: z.string()
     })).describe('Last 10 machine-path combinations, ordered by most recent first'),
-    lastUsedAgent: z.string().nullable().describe('Last selected agent type for new sessions'),
-    lastUsedPermissionMode: z.string().nullable().describe('Last selected permission mode for new sessions'),
-    lastUsedModelMode: z.string().nullable().describe('Last selected model mode for new sessions'),
-    sessionMessageSendMode: z.enum(['agent_queue', 'interrupt', 'server_pending']).describe('How the app submits messages while an agent is running'),
-    // Profile management settings
-    profiles: z.array(AIBackendProfileSchema).describe('User-defined profiles for AI backend and environment variables'),
-    lastUsedProfile: z.string().nullable().describe('Last selected profile for new sessions'),
+	    lastUsedAgent: z.string().nullable().describe('Last selected agent type for new sessions'),
+	    lastUsedPermissionMode: z.string().nullable().describe('Last selected permission mode for new sessions'),
+	    lastUsedModelMode: z.string().nullable().describe('Last selected model mode for new sessions'),
+	    sessionMessageSendMode: z.enum(['agent_queue', 'interrupt', 'server_pending']).describe('How the app submits messages while an agent is running'),
+	    sessionBusySteerSendPolicy: z.enum(['steer_immediately', 'server_pending']).describe('When an agent is busy and supports in-flight steer, whether messages steer immediately or are queued via the pending queue'),
+	    // Profile management settings
+	    profiles: z.array(AIBackendProfileSchema).describe('User-defined profiles for AI backend and environment variables'),
+	    lastUsedProfile: z.string().nullable().describe('Last selected profile for new sessions'),
     secrets: z.array(SavedSecretSchema).default([]).describe('Saved secrets (encrypted settings). Values are never re-displayed in UI.'),
     secretBindingsByProfileId: z.record(z.string(), z.record(z.string(), z.string())).default({}).describe('Default saved secret ID per profile and env var name'),
     // Favorite directories for quick path selection
@@ -415,8 +409,8 @@ export const SettingsSchema = SettingsSchemaBase.extend(PROVIDER_SETTINGS_SHAPE)
 
 const SettingsSchemaPartial = SettingsSchema.partial();
 
-export type KnownSettings = z.infer<typeof SettingsSchemaBase>;
-export type Settings = z.infer<typeof SettingsSchemaBase> & Record<string, unknown>;
+export type KnownSettings = z.infer<typeof SettingsSchema>;
+export type Settings = z.infer<typeof SettingsSchema> & Record<string, unknown>;
 
 //
 // Defaults
@@ -433,9 +427,6 @@ export const settingsDefaults: Settings = {
     analyticsOptOut: false,
     experiments: false,
     backendEnabledById: DEFAULT_BACKEND_ENABLED_BY_ID,
-    codexBackendMode: 'mcp',
-    codexMcpResumeInstallSpec: '',
-    codexAcpInstallSpec: '',
     expUsageReporting: false,
     expFileViewer: false,
     expGitOperations: false,
@@ -511,12 +502,13 @@ export const settingsDefaults: Settings = {
 	    voiceMediatorVerbosity: 'short',
 	    preferredLanguage: null,
 	    recentMachinePaths: [],
-    lastUsedAgent: null,
-    lastUsedPermissionMode: null,
-    lastUsedModelMode: null,
-    sessionMessageSendMode: 'agent_queue',
-    // Profile management defaults
-    profiles: [],
+	    lastUsedAgent: null,
+	    lastUsedPermissionMode: null,
+	    lastUsedModelMode: null,
+	    sessionMessageSendMode: 'agent_queue',
+	    sessionBusySteerSendPolicy: 'steer_immediately',
+	    // Profile management defaults
+	    profiles: [],
     lastUsedProfile: null,
     secrets: [],
     secretBindingsByProfileId: {},
@@ -656,10 +648,19 @@ export function settingsParse(settings: unknown): Settings {
         const parsed = z.record(z.string(), SessionTmuxMachineOverrideSchema).safeParse((input as any).terminalTmuxByMachineId);
         if (parsed.success) result.sessionTmuxByMachineId = parsed.data;
     }
-    if (!('sessionMessageSendMode' in input) && 'messageSendMode' in input) {
-        const parsed = z.enum(['agent_queue', 'interrupt', 'server_pending'] as const).safeParse((input as any).messageSendMode);
-        if (parsed.success) result.sessionMessageSendMode = parsed.data;
-    }
+	    if (!('sessionMessageSendMode' in input) && 'messageSendMode' in input) {
+	        const parsed = z.enum(['agent_queue', 'interrupt', 'server_pending'] as const).safeParse((input as any).messageSendMode);
+	        if (parsed.success) result.sessionMessageSendMode = parsed.data;
+	    }
+
+	    // Migration: rename legacy busy-steer policy value.
+	    // Older dev builds used `queue_for_review` to mean "use the server pending queue".
+	    if ('sessionBusySteerSendPolicy' in input) {
+	        const raw = (input as any).sessionBusySteerSendPolicy;
+	        if (raw === 'queue_for_review') {
+	            result.sessionBusySteerSendPolicy = 'server_pending';
+	        }
+	    }
 
     // Migration: introduce per-agent default permission modes for new sessions.
     //

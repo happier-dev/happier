@@ -4,7 +4,7 @@ import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import * as persistence from '@/sync/domains/state/persistence';
 import { storage } from '@/sync/domains/state/storage';
-import { handleUpdateContainer } from './socket';
+import { flushActivityUpdates, handleUpdateContainer } from './socket';
 
 const initialStorageState = storage.getState();
 
@@ -110,5 +110,24 @@ describe('socket update handling cursor isolation', () => {
         expect(updatedSession?.pendingCount).toBe(3);
         expect(updatedSession?.pendingVersion).toBe(42);
         expect(saveChangesCursorSpy).not.toHaveBeenCalled();
+    });
+
+    it('ignores stale activity thinking=true updates after lifecycle clear', () => {
+        const sessionId = 's_stale_activity';
+        storage.getState().applySessions([{
+            ...buildSession(sessionId),
+            thinking: false,
+            thinkingAt: 200,
+            updatedAt: 200,
+        }]);
+
+        const updates = new Map<string, any>([
+            [sessionId, { type: 'activity', id: sessionId, active: true, activeAt: 150, thinking: true }],
+        ]);
+        const applySessions = vi.fn();
+
+        flushActivityUpdates({ updates, applySessions });
+
+        expect(applySessions).not.toHaveBeenCalled();
     });
 });

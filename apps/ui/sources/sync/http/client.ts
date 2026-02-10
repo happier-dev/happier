@@ -50,23 +50,38 @@ export async function serverFetch(
         ? normalizedPath
         : `${snapshot.serverUrl}${normalizedPath}`;
 
+    const absoluteRequestUrl = tryParseUrl(requestUrl);
+    const activeServerUrl = tryParseUrl(snapshot.serverUrl);
+    const isCrossOrigin =
+        !!absoluteRequestUrl
+        && !!activeServerUrl
+        && absoluteRequestUrl.origin !== activeServerUrl.origin;
+
     const headers = new Headers(init?.headers ?? {});
+    let usedToken: string | null = null;
     if (options.includeAuth !== false) {
-        const absoluteRequestUrl = tryParseUrl(requestUrl);
-        const activeServerUrl = tryParseUrl(snapshot.serverUrl);
-        if (
-            absoluteRequestUrl &&
-            activeServerUrl &&
-            absoluteRequestUrl.origin !== activeServerUrl.origin
-        ) {
+        if (isCrossOrigin) {
             throw new Error(
-                `Refused authenticated request to ${absoluteRequestUrl.origin}; active server is ${activeServerUrl.origin}`,
+                `Refused authenticated request to ${absoluteRequestUrl!.origin}; active server is ${activeServerUrl!.origin}`,
             );
         }
         const credentials = await TokenStorage.getCredentials();
         if (credentials?.token) {
+            usedToken = credentials.token;
             headers.set('Authorization', `Bearer ${credentials.token}`);
         }
+    }
+    // Also capture an explicit Authorization header, even when includeAuth=false (many ops pass
+    // credentials explicitly to avoid repeated TokenStorage reads).
+    const explicitAuthHeader = headers.get('Authorization') ?? '';
+    if (!usedToken && explicitAuthHeader.startsWith('Bearer ')) {
+        usedToken = explicitAuthHeader.slice(7).trim() || null;
+    }
+    if (isCrossOrigin && explicitAuthHeader.trim().length > 0) {
+        // Prevent accidental token leakage when passing absolute URLs.
+        throw new Error(
+            `Refused authenticated request to ${absoluteRequestUrl!.origin}; active server is ${activeServerUrl!.origin}`,
+        );
     }
 
     const requestController = new AbortController();
@@ -87,22 +102,67 @@ export async function serverFetch(
         }
     }
 
-    let response: Response;
+    const method = String(init?.method ?? 'GET').toUpperCase();
+    const isActiveOrigin =
+        !isCrossOrigin
+        && !!absoluteRequestUrl
+        && !!activeServerUrl;
+
+    let response: Response | null = null;
     try {
-        response = await fetch(requestUrl, {
-            ...init,
-            headers,
-            signal: requestController.signal,
-        });
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            response = await fetch(requestUrl, {
+                ...init,
+                headers,
+                signal: requestController.signal,
+            });
+
+            const current = getActiveServerSnapshot();
+            if (current.generation !== snapshot.generation || current.serverId !== snapshot.serverId) {
+                throw new StaleServerGenerationError();
+            }
+
+            if (!usedToken || response.status !== 401 || !isActiveOrigin) {
+                break;
+            }
+
+            // If the active token is rejected, clear it to prevent the UI from getting stuck in a persistent 401 loop.
+            // The follow-up request (if any) will re-read credentials and may pick up a refreshed token, or allow the
+            // UI to present a clean sign-in state for that server scope.
+            try {
+                await TokenStorage.invalidateCredentialsTokenForServerUrl(snapshot.serverUrl, usedToken);
+            } catch {
+                // ignore
+            }
+
+            // Only retry idempotent requests to avoid surprising duplication.
+            if (attempt !== 0 || (method !== 'GET' && method !== 'HEAD')) {
+                break;
+            }
+
+            // Re-read credentials and retry once if we found a different token.
+            try {
+                const fresh = await TokenStorage.getCredentials();
+                const freshToken = fresh?.token ?? null;
+                if (freshToken && freshToken !== usedToken) {
+                    usedToken = freshToken;
+                    headers.set('Authorization', `Bearer ${freshToken}`);
+                    continue;
+                }
+            } catch {
+                // ignore
+            }
+
+            break;
+        }
     } finally {
         removeUpstreamListener();
         inFlightControllers.delete(requestController);
     }
 
-    const current = getActiveServerSnapshot();
-    if (current.generation !== snapshot.generation || current.serverId !== snapshot.serverId) {
-        throw new StaleServerGenerationError();
+    if (!response) {
+        // Defensive: loop always runs at least once, but keep return type strict.
+        throw new Error('serverFetch did not attempt the request');
     }
-
     return response;
 }

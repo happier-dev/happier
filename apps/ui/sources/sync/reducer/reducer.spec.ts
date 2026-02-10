@@ -1143,7 +1143,9 @@ describe('reducer', () => {
             expect(result2.messages).toHaveLength(1);
             if (result2.messages[0].kind === 'tool-call') {
                 expect(result2.messages[0].tool.permission?.status).toBe('approved');
-                expect(result2.messages[0].tool.state).toBe('running');
+                expect(result2.messages[0].tool.state).toBe('completed');
+                expect(result2.messages[0].tool.startedAt).toBeNull();
+                expect(result2.messages[0].tool.completedAt).toBe(2000);
             }
             
             // Step 3: Tool call arrives
@@ -1267,6 +1269,277 @@ describe('reducer', () => {
                 expect(canceledMsg.tool.permission?.reason).toBe('User canceled');
                 expect(canceledMsg.tool.result).toEqual({ error: 'User canceled' });
             }
+        });
+
+        it('marks orphaned running approved tools as canceled when the agent emits "No response requested."', () => {
+            const state = createReducer();
+
+            const pendingState: AgentState = {
+                requests: {
+                    'tool-1': {
+                        tool: 'Bash',
+                        arguments: { command: 'sleep 90' },
+                        createdAt: 1000,
+                    },
+                },
+            };
+            reducer(state, [], pendingState);
+
+            const approvedState: AgentState = {
+                completedRequests: {
+                    'tool-1': {
+                        tool: 'Bash',
+                        arguments: { command: 'sleep 90' },
+                        createdAt: 1000,
+                        completedAt: 1500,
+                        status: 'approved',
+                    },
+                },
+            };
+            reducer(state, [], approvedState);
+
+            const toolCall: NormalizedMessage = {
+                id: 'tool-msg-1',
+                localId: null,
+                createdAt: 1600,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-1',
+                    name: 'Bash',
+                    input: { command: 'sleep 90' },
+                    description: null,
+                    uuid: 'tool-uuid-1',
+                    parentUUID: null,
+                }],
+            };
+            reducer(state, [toolCall], approvedState);
+
+            const syntheticNoResponse: NormalizedMessage = {
+                id: 'assistant-no-response',
+                localId: null,
+                createdAt: 1700,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'text',
+                    text: 'No response requested.',
+                    uuid: 'text-uuid-no-response-1',
+                    parentUUID: null,
+                }],
+            };
+            reducer(state, [syntheticNoResponse], approvedState);
+
+            const messageId = state.toolIdToMessageId.get('tool-1');
+            const toolMessage = messageId ? state.messages.get(messageId) : null;
+            expect(toolMessage?.tool?.state).toBe('error');
+            expect(toolMessage?.tool?.permission?.status).toBe('canceled');
+            expect(toolMessage?.tool?.completedAt).toBe(1700);
+            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
+        });
+
+        it('marks orphaned running approved tools as canceled even when partial output already streamed', () => {
+            const state = createReducer();
+
+            const pendingState: AgentState = {
+                requests: {
+                    'tool-2': {
+                        tool: 'Bash',
+                        arguments: { command: 'sleep 90' },
+                        createdAt: 1000,
+                    },
+                },
+            };
+            reducer(state, [], pendingState);
+
+            const approvedState: AgentState = {
+                completedRequests: {
+                    'tool-2': {
+                        tool: 'Bash',
+                        arguments: { command: 'sleep 90' },
+                        createdAt: 1000,
+                        completedAt: 1500,
+                        status: 'approved',
+                    },
+                },
+            };
+            reducer(state, [], approvedState);
+
+            const toolCall: NormalizedMessage = {
+                id: 'tool-msg-2',
+                localId: null,
+                createdAt: 1600,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-2',
+                    name: 'Bash',
+                    input: { command: 'sleep 90' },
+                    description: null,
+                    uuid: 'tool-uuid-2',
+                    parentUUID: null,
+                }],
+            };
+            reducer(state, [toolCall], approvedState);
+
+            const streamChunk: NormalizedMessage = {
+                id: 'tool-stream-2',
+                localId: null,
+                createdAt: 1650,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-result',
+                    tool_use_id: 'tool-2',
+                    content: { _stream: true, stdoutChunk: 'partial\\n' },
+                    is_error: false,
+                    uuid: 'stream-uuid-2',
+                    parentUUID: null,
+                }],
+            };
+            reducer(state, [streamChunk], approvedState);
+
+            const syntheticNoResponse: NormalizedMessage = {
+                id: 'assistant-no-response-2',
+                localId: null,
+                createdAt: 1700,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'text',
+                    text: 'No response requested.',
+                    uuid: 'text-uuid-no-response-2',
+                    parentUUID: null,
+                }],
+            };
+            reducer(state, [syntheticNoResponse], approvedState);
+
+            const messageId = state.toolIdToMessageId.get('tool-2');
+            const toolMessage = messageId ? state.messages.get(messageId) : null;
+            expect(toolMessage?.tool?.state).toBe('error');
+            expect(toolMessage?.tool?.permission?.status).toBe('canceled');
+            expect(toolMessage?.tool?.completedAt).toBe(1700);
+            expect(toolMessage?.tool?.result).toEqual({ stdout: 'partial\\n' });
+        });
+
+        it('marks orphaned running approved tools as canceled when a task lifecycle abort event arrives', () => {
+            const state = createReducer();
+
+            const approvedState: AgentState = {
+                completedRequests: {
+                    'tool-lifecycle-1': {
+                        tool: 'Bash',
+                        arguments: { command: 'sleep 90' },
+                        createdAt: 1000,
+                        completedAt: 1500,
+                        status: 'approved',
+                    },
+                },
+            };
+            reducer(state, [], approvedState);
+
+            const toolCall: NormalizedMessage = {
+                id: 'tool-msg-lifecycle-1',
+                localId: null,
+                createdAt: 1600,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-lifecycle-1',
+                    name: 'Bash',
+                    input: { command: 'sleep 90' },
+                    description: null,
+                    uuid: 'tool-lifecycle-uuid-1',
+                    parentUUID: null,
+                }],
+            };
+            reducer(state, [toolCall], approvedState);
+
+            const lifecycleAbortEvent: NormalizedMessage = {
+                id: 'event-lifecycle-abort-1',
+                localId: null,
+                createdAt: 1700,
+                role: 'event',
+                isSidechain: false,
+                content: {
+                    type: 'task-lifecycle',
+                    event: 'turn_aborted',
+                    id: 'tool-lifecycle-1',
+                },
+            };
+            const result = reducer(state, [lifecycleAbortEvent], approvedState);
+
+            expect(result.messages).toHaveLength(1);
+            expect(result.messages[0]?.kind).toBe('tool-call');
+
+            const messageId = state.toolIdToMessageId.get('tool-lifecycle-1');
+            const toolMessage = messageId ? state.messages.get(messageId) : null;
+            expect(toolMessage?.tool?.state).toBe('error');
+            expect(toolMessage?.tool?.permission?.status).toBe('canceled');
+            expect(toolMessage?.tool?.completedAt).toBe(1700);
+            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
+        });
+
+        it('marks orphaned running approved tools as canceled when a task lifecycle complete event arrives', () => {
+            const state = createReducer();
+
+            const approvedState: AgentState = {
+                completedRequests: {
+                    'tool-lifecycle-2': {
+                        tool: 'Bash',
+                        arguments: { command: 'sleep 90' },
+                        createdAt: 1000,
+                        completedAt: 1500,
+                        status: 'approved',
+                    },
+                },
+            };
+            reducer(state, [], approvedState);
+
+            const toolCall: NormalizedMessage = {
+                id: 'tool-msg-lifecycle-2',
+                localId: null,
+                createdAt: 1600,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-lifecycle-2',
+                    name: 'Bash',
+                    input: { command: 'sleep 90' },
+                    description: null,
+                    uuid: 'tool-lifecycle-uuid-2',
+                    parentUUID: null,
+                }],
+            };
+            reducer(state, [toolCall], approvedState);
+
+            const lifecycleCompleteEvent: NormalizedMessage = {
+                id: 'event-lifecycle-complete-2',
+                localId: null,
+                createdAt: 1700,
+                role: 'event',
+                isSidechain: false,
+                content: {
+                    type: 'task-lifecycle',
+                    event: 'task_complete',
+                    id: 'tool-lifecycle-2',
+                },
+            };
+            const result = reducer(state, [lifecycleCompleteEvent], approvedState);
+
+            expect(result.messages).toHaveLength(1);
+            expect(result.messages[0]?.kind).toBe('tool-call');
+
+            const messageId = state.toolIdToMessageId.get('tool-lifecycle-2');
+            const toolMessage = messageId ? state.messages.get(messageId) : null;
+            expect(toolMessage?.tool?.state).toBe('error');
+            expect(toolMessage?.tool?.permission?.status).toBe('canceled');
+            expect(toolMessage?.tool?.completedAt).toBe(1700);
+            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
         });
 
         it('should handle tool result arriving before tool call (race condition)', () => {
@@ -2348,8 +2621,9 @@ describe('reducer', () => {
             
             msg = state.messages.get(permMsgId!);
             expect(msg?.tool?.permission?.status).toBe('approved');
-            expect(msg?.tool?.state).toBe('running'); // Should stay running
-            expect(msg?.tool?.completedAt).toBeNull(); // Not completed yet
+            expect(msg?.tool?.state).toBe('completed');
+            expect(msg?.tool?.startedAt).toBeNull();
+            expect(msg?.tool?.completedAt).toBe(2000);
             
             // Now simulate a different scenario: transition from pending to denied
             const state2 = createReducer();

@@ -142,6 +142,9 @@ export async function fetchAndApplyMachines(params: {
             const decryptedKey = await encryption.decryptEncryptionKey(machine.dataEncryptionKey);
             if (!decryptedKey) {
                 console.error(`Failed to decrypt data encryption key for machine ${machine.id}`);
+                // Keep the machine in sync; fall back to legacy machine encryption for metadata/daemonState.
+                // This prevents a single bad key from making the machine list appear empty.
+                machineKeysMap.set(machine.id, null);
                 continue;
             }
             machineKeysMap.set(machine.id, decryptedKey);

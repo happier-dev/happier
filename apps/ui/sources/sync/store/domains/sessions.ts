@@ -1,11 +1,9 @@
 import type { GitStatus, GitWorkingSnapshot, Machine, Session } from '../../domains/state/storageTypes';
-import { createReducer, reducer } from '../../reducer/reducer';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import { nowServerMs } from '../../runtime/time';
 import { loadSessionDrafts, loadSessionLastViewed, loadSessionModelModeUpdatedAts, loadSessionModelModes, loadSessionPermissionModeUpdatedAts, loadSessionPermissionModes, saveSessionDrafts, saveSessionLastViewed, saveSessionModelModeUpdatedAts, saveSessionModelModes, saveSessionPermissionModeUpdatedAts, saveSessionPermissionModes } from '../../domains/state/persistence';
 import { projectManager } from '../../runtime/orchestration/projectManager';
-import { getCurrentRealtimeSessionId, getVoiceSession } from '@/realtime/RealtimeSession';
 import { isModelMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
@@ -14,7 +12,9 @@ import { buildSessionListViewDataWithServerScope } from '../buildSessionListView
 import { setActiveServerSessionListCache } from '../sessionListCache';
 
 import type { StoreGet, StoreSet } from './_shared';
+import { applyAgentStateUpdateToSessionMessages } from './messages';
 import type { SessionMessages } from './messages';
+import { persistSessionPermissionData } from './sessionPermissionPersistence';
 
 type SessionModelMode = NonNullable<Session['modelMode']>;
 type GitOperationLogEntry = import('../../runtime/orchestration/projectManager').GitProjectOperationLogEntry;
@@ -75,43 +75,9 @@ export type SessionsDomain = {
 type SessionsDomainDependencies = {
     machines: Record<string, Machine>;
     sessionMessages: Record<string, SessionMessages>;
-    settings: { groupInactiveSessionsByProject: boolean };
+    // Keep resilient: older settings payloads (or partial boot states) may not yet include this key.
+    settings: { groupInactiveSessionsByProject?: boolean };
 };
-
-function extractSessionPermissionData(sessions: Record<string, Session>): {
-    modes: Record<string, PermissionMode>;
-    updatedAts: Record<string, number>;
-} {
-    const modes: Record<string, PermissionMode> = {};
-    const updatedAts: Record<string, number> = {};
-
-    Object.entries(sessions).forEach(([id, sess]) => {
-        if (sess.permissionMode && sess.permissionMode !== 'default') {
-            modes[id] = sess.permissionMode;
-        }
-        if (typeof sess.permissionModeUpdatedAt === 'number') {
-            updatedAts[id] = sess.permissionModeUpdatedAt;
-        }
-    });
-
-    return { modes, updatedAts };
-}
-
-export function persistSessionPermissionData(sessions: Record<string, Session>): {
-    modes: Record<string, PermissionMode>;
-    updatedAts: Record<string, number>;
-} | null {
-    const { modes, updatedAts } = extractSessionPermissionData(sessions);
-
-    try {
-        saveSessionPermissionModes(modes);
-        saveSessionPermissionModeUpdatedAts(updatedAts);
-        return { modes, updatedAts };
-    } catch (e) {
-        console.error('Failed to persist session permission data:', e);
-        return null;
-    }
-}
 
 // UI-only "optimistic processing" marker.
 // Cleared via timers so components don't need to poll time.
@@ -319,53 +285,24 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const existingSessionMessages = updatedSessionMessages[session.id];
                 if (existingSessionMessages && newSession.agentState &&
                     (!oldSession || newSession.agentStateVersion > (oldSession.agentStateVersion || 0))) {
-
-                    // Check for NEW permission requests before processing
-                    const currentRealtimeSessionId = getCurrentRealtimeSessionId();
-                    const voiceSession = getVoiceSession();
-
-                    if (currentRealtimeSessionId === session.id && voiceSession) {
-                        const oldRequests = oldSession?.agentState?.requests || {};
-                        const newRequests = newSession.agentState?.requests || {};
-
-                        // Find NEW permission requests only
-                        for (const [requestId, request] of Object.entries(newRequests)) {
-                            if (!oldRequests[requestId]) {
-                                // This is a NEW permission request
-                                const toolName = request.tool;
-                                voiceSession.sendTextMessage(
-                                    `Claude is requesting permission to use the ${toolName} tool`
-                                );
-                            }
-                        }
-                    }
-
-                    // Process new AgentState through reducer
-                    const reducerResult = reducer(existingSessionMessages.reducerState, [], newSession.agentState);
-                    const processedMessages = reducerResult.messages;
-
-                    // Always update the session messages, even if no new messages were created
-                    // This ensures the reducer state is updated with the new AgentState
-                    const mergedMessagesMap = { ...existingSessionMessages.messagesMap };
-                    processedMessages.forEach(message => {
-                        mergedMessagesMap[message.id] = message;
+                    const updated = applyAgentStateUpdateToSessionMessages({
+                        existing: existingSessionMessages,
+                        agentState: newSession.agentState,
                     });
-
-                    const messagesArray = Object.values(mergedMessagesMap)
-                        .sort((a, b) => b.createdAt - a.createdAt);
-
                     updatedSessionMessages[session.id] = {
-                        messages: messagesArray,
-                        messagesMap: mergedMessagesMap,
-                        reducerState: existingSessionMessages.reducerState, // The reducer modifies state in-place, so this has the updates
-                        isLoaded: existingSessionMessages.isLoaded
+                        ...updated.sessionMessages,
+                        isLoaded: existingSessionMessages.isLoaded,
                     };
-
-                    // IMPORTANT: Copy latestUsage from reducerState to Session for immediate availability
-                    if (existingSessionMessages.reducerState.latestUsage) {
+                    if (updated.sessionLatestUsage !== undefined) {
                         mergedSessions[session.id] = {
                             ...mergedSessions[session.id],
-                            latestUsage: { ...existingSessionMessages.reducerState.latestUsage }
+                            latestUsage: updated.sessionLatestUsage,
+                        };
+                    }
+                    if (updated.sessionTodos !== undefined) {
+                        mergedSessions[session.id] = {
+                            ...mergedSessions[session.id],
+                            todos: updated.sessionTodos,
                         };
                     }
                 }
@@ -375,7 +312,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const sessionListViewData = buildSessionListViewDataWithServerScope({
                 sessions: mergedSessions,
                 machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
             });
 
             // Update project manager with current sessions and machines
@@ -456,7 +393,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const sessionListViewData = buildSessionListViewDataWithServerScope({
                 sessions: updatedSessions,
                 machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
             });
 
             return {
@@ -483,7 +420,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const sessionListViewData = buildSessionListViewDataWithServerScope({
                 sessions: nextSessions,
                 machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
             });
 
             const existingTimeout = optimisticThinkingTimeoutBySessionId.get(sessionId);
@@ -507,7 +444,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     const nextSessionListViewData = buildSessionListViewDataWithServerScope({
                         sessions: next,
                         machines: s.machines,
-                        groupInactiveSessionsByProject: s.settings.groupInactiveSessionsByProject,
+                        groupInactiveSessionsByProject: s.settings.groupInactiveSessionsByProject === true,
                     });
                     return {
                         ...s,
@@ -553,7 +490,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const nextSessionListViewData = buildSessionListViewDataWithServerScope({
                 sessions: nextSessions,
                 machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
             });
 
             return {
@@ -756,7 +693,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             const sessionListViewData = buildSessionListViewDataWithServerScope({
                 sessions: remainingSessions,
                 machines: state.machines,
-                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
+                groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject === true,
             });
             
             return {

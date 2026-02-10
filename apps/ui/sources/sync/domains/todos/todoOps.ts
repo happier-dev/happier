@@ -1,4 +1,4 @@
-import { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { sync } from '@/sync/sync';
 import { storage } from '@/sync/domains/state/storage';
 import {

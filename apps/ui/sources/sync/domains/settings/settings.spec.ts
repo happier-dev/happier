@@ -188,6 +188,14 @@ describe('settings', () => {
             expect((parsed as any).multiServerActiveProfileId).toBe('dev-work');
         });
 
+        it('migrates legacy sessionBusySteerSendPolicy=queue_for_review to server_pending', () => {
+            const parsed = settingsParse({
+                schemaVersion: 2,
+                sessionBusySteerSendPolicy: 'queue_for_review',
+            } as any);
+            expect((parsed as any).sessionBusySteerSendPolicy).toBe('server_pending');
+        });
+
         it('migrates legacy lastUsedPermissionMode into per-agent defaults when missing', () => {
             const parsed = settingsParse({
                 lastUsedAgent: 'claude',

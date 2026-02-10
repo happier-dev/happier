@@ -54,6 +54,7 @@ describe('concurrent session cache socket routing', () => {
             TokenStorage: {
                 getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
             },
+            isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
         vi.doMock('@/sync/domains/server/serverProfiles', () => ({
             listServerProfiles: () => listServerProfilesSpy(),
@@ -163,6 +164,7 @@ describe('concurrent session cache socket routing', () => {
             TokenStorage: {
                 getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
             },
+            isLegacyAuthCredentials: (credentials: any) => Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
         }));
         vi.doMock('@/sync/domains/server/serverProfiles', () => ({
             listServerProfiles: () => listServerProfilesSpy(),
@@ -293,6 +295,94 @@ describe('concurrent session cache socket routing', () => {
         expect(serverBSessionIds).not.toContain('session-c');
         expect(serverCSessionIds).toContain('session-c');
         expect(serverCSessionIds).not.toContain('session-b');
+
+        stopConcurrentSessionCacheSync();
+    });
+
+    it('does not subscribe to socket.onAny (ephemerals can be high-frequency and should not trigger snapshot refresh loops)', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_MULTI_SERVER_CONCURRENT = '1';
+
+        const fakeSocket = {
+            on: vi.fn(),
+            onAny: vi.fn(),
+            disconnect: vi.fn(),
+        };
+        ioSpy.mockReturnValue(fakeSocket);
+        getCredentialsForServerUrlSpy.mockImplementation(async (serverUrl: string) => {
+            if (serverUrl === 'https://stack-b.example.test') {
+                return { token: 'token-b', secret: 'secret-b' };
+            }
+            return null;
+        });
+        listServerProfilesSpy.mockReturnValue([
+            { id: 'server-a', serverUrl: 'https://stack-a.example.test', name: 'Server A' },
+            { id: 'server-b', serverUrl: 'https://stack-b.example.test', name: 'Server B' },
+        ]);
+        getActiveServerSnapshotSpy.mockReturnValue({
+            serverId: 'server-a',
+            serverUrl: 'https://stack-a.example.test',
+            kind: 'stack',
+            generation: 1,
+        });
+
+        vi.doMock('socket.io-client', () => ({
+            io: (...args: unknown[]) => ioSpy(...args),
+        }));
+        vi.doMock('@/auth/storage/tokenStorage', () => ({
+            TokenStorage: {
+                getCredentialsForServerUrl: (...args: unknown[]) => getCredentialsForServerUrlSpy(...args),
+            },
+            isLegacyAuthCredentials: (credentials: any) =>
+                Boolean(credentials && typeof credentials === 'object' && typeof credentials.secret === 'string'),
+        }));
+        vi.doMock('@/sync/domains/server/serverProfiles', () => ({
+            listServerProfiles: () => listServerProfilesSpy(),
+        }));
+        vi.doMock('@/sync/domains/server/serverRuntime', () => ({
+            getActiveServerSnapshot: () => getActiveServerSnapshotSpy(),
+            subscribeActiveServer: () => () => {},
+        }));
+        vi.doMock('@/sync/encryption/encryption', () => ({
+            Encryption: {
+                create: async () => ({}) as unknown,
+            },
+        }));
+        vi.doMock('@/encryption/base64', () => ({
+            decodeBase64: () => new Uint8Array(32),
+        }));
+        vi.doMock('@/sync/engine/sessions/sessionSnapshot', () => ({
+            fetchAndApplySessions: async ({ applySessions }: { applySessions: (sessions: unknown[]) => void }) => {
+                applySessions([]);
+            },
+        }));
+        vi.doMock('@/sync/engine/machines/syncMachines', () => ({
+            fetchAndApplyMachines: async ({ applyMachines }: { applyMachines: (machines: unknown[]) => void }) => {
+                applyMachines([]);
+            },
+        }));
+
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+        storage.setState((state) => ({
+            ...state,
+            settings: {
+                ...state.settings,
+                ...settingsDefaults,
+                multiServerEnabled: true,
+                multiServerSelectedServerIds: ['server-a', 'server-b'],
+                multiServerPresentation: 'grouped',
+            },
+        }));
+
+        const { startConcurrentSessionCacheSync, stopConcurrentSessionCacheSync } = await import('./concurrentSessionCache');
+
+        startConcurrentSessionCacheSync();
+        await vi.runOnlyPendingTimersAsync();
+        await vi.runOnlyPendingTimersAsync();
+
+        expect(fakeSocket.onAny).not.toHaveBeenCalled();
+        expect(fakeSocket.on).toHaveBeenCalledWith('connect', expect.any(Function));
+        expect(fakeSocket.on).toHaveBeenCalledWith('update', expect.any(Function));
 
         stopConcurrentSessionCacheSync();
     });

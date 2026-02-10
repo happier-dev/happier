@@ -7,6 +7,7 @@ export function getGitUserFacingError(input: {
     fallback: string;
 }): string {
     const rawError = input.error?.toLowerCase() ?? '';
+    const rawFallback = input.fallback.toLowerCase();
     switch (input.errorCode) {
         case GIT_OPERATION_ERROR_CODES.NOT_GIT_REPO:
             return 'The selected path is not a Git repository.';
@@ -24,6 +25,9 @@ export function getGitUserFacingError(input: {
             }
             return 'The Git request is invalid.';
         case GIT_OPERATION_ERROR_CODES.PATCH_APPLY_FAILED:
+            if (looksLikeLockContention(rawError, rawFallback)) {
+                return 'Another Git operation is in progress (index lock). Wait for it to finish and try again.';
+            }
             return 'Diff changed, refresh and reselect your lines.';
         case GIT_OPERATION_ERROR_CODES.COMMIT_REQUIRED:
             return 'Commit staged changes before continuing.';
@@ -51,6 +55,9 @@ export function getGitUserFacingError(input: {
         case GIT_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND:
             return 'The selected remote was not found in this repository.';
         case GIT_OPERATION_ERROR_CODES.COMMAND_FAILED:
+            if (looksLikeLockContention(rawError, rawFallback)) {
+                return 'Another Git operation is in progress (index lock). Wait for it to finish and try again.';
+            }
             if (rawError.includes('would be overwritten by merge')) {
                 return 'Pull would overwrite local changes. Commit, stash, or discard local changes first.';
             }
@@ -74,4 +81,13 @@ function looksLikeRawGitOutput(value: string | undefined): boolean {
     if (trimmed.includes('\n')) return true;
 
     return /(^|\s)(fatal:|error:|remote:|hint:|usage:|pathspec|did not match any files|cannot lock ref)/i.test(trimmed);
+}
+
+function looksLikeLockContention(error: string, fallback: string): boolean {
+    const combined = `${error}\n${fallback}`;
+    return (
+        combined.includes('index.lock') ||
+        combined.includes('another git process seems to be running') ||
+        (combined.includes('unable to create') && combined.includes('file exists'))
+    );
 }

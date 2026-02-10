@@ -1,5 +1,6 @@
 import type { TracedMessage } from '../reducerTracer';
 import type { ReducerState } from '../reducer';
+import { cancelRunningApprovedTools } from '../helpers/cancelRunningApprovedTools';
 
 export function runModeSwitchEventsPhase(params: Readonly<{
     state: ReducerState;
@@ -15,6 +16,24 @@ export function runModeSwitchEventsPhase(params: Readonly<{
 
     for (let msg of nonSidechainMessages) {
         if (msg.role === 'event') {
+            if (state.messageIds.has(msg.id)) {
+                continue;
+            }
+            state.messageIds.set(msg.id, msg.id);
+
+            if (msg.content.type === 'task-lifecycle') {
+                if (msg.content.event === 'turn_aborted' || msg.content.event === 'task_complete') {
+                    cancelRunningApprovedTools({
+                        state,
+                        changed,
+                        completedAt: msg.createdAt,
+                        reason: 'Request interrupted',
+                        preferredToolId: msg.content.id ?? null,
+                    });
+                }
+                continue;
+            }
+
             let mid = allocateId();
             state.messages.set(mid, {
                 id: mid,
@@ -30,4 +49,3 @@ export function runModeSwitchEventsPhase(params: Readonly<{
         }
     }
 }
-

@@ -23,11 +23,14 @@ async function importFreshServerConfig() {
 
 describe('getServerUrl', () => {
     const previousEnv = process.env.EXPO_PUBLIC_HAPPY_SERVER_URL;
+    const previousContext = process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
     const previousScope = process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
 
     afterEach(() => {
         vi.unstubAllGlobals();
         process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = previousEnv;
+        if (previousContext === undefined) delete process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT;
+        else process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = previousContext;
         if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
     });
@@ -101,9 +104,32 @@ describe('getServerUrl', () => {
 
         const created = profiles.upsertServerProfile({ serverUrl: 'https://device.example.test', name: 'Device' });
         profiles.setActiveServerId(created.id, { scope: 'device' });
-        profiles.setActiveServerId('official', { scope: 'tab' });
+        profiles.setActiveServerId('cloud', { scope: 'tab' });
 
         const { getServerUrl } = await importFreshServerConfig();
         expect(getServerUrl()).toBe('https://api.happier.dev');
+    });
+
+    it('resetting a custom server returns to the stack default server (no cloud profile in stack context)', async () => {
+        process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = randomScope();
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT = 'stack';
+        process.env.EXPO_PUBLIC_HAPPY_SERVER_URL = 'http://localhost:3013/';
+
+        const { getServerUrl, isUsingCustomServer, setServerUrl } = await importFreshServerConfig();
+
+        expect(getServerUrl()).toBe('http://localhost:3013');
+        expect(isUsingCustomServer()).toBe(false);
+
+        setServerUrl('https://custom.example.test/');
+        expect(getServerUrl()).toBe('https://custom.example.test');
+        expect(isUsingCustomServer()).toBe(true);
+
+        // This must not attempt to select the cloud server id in stack context unless explicitly saved.
+        setServerUrl(null);
+        expect(getServerUrl()).toBe('http://localhost:3013');
+        expect(isUsingCustomServer()).toBe(false);
+
+        const profiles = await import('./serverProfiles');
+        expect(profiles.listServerProfiles().some((p) => p.id === 'cloud')).toBe(false);
     });
 });

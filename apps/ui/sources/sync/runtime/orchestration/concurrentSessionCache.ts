@@ -1,7 +1,7 @@
 import { io, Socket } from 'socket.io-client';
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
-import { decodeBase64 } from '@/encryption/base64';
+import { TokenStorage, type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { fetchAndApplyMachines } from '@/sync/engine/machines/syncMachines';
 import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
 import { getEffectiveServerSelection } from '@/sync/domains/server/multiServer';
@@ -44,6 +44,20 @@ const REFRESH_DEBOUNCE_MS = 600;
 const REFRESH_INTERVAL_MS = 30000;
 
 const managedServers = new Map<string, ManagedConcurrentServer>();
+
+function areAuthCredentialsEquivalent(a: AuthCredentials, b: AuthCredentials): boolean {
+    if (a.token !== b.token) return false;
+    const aLegacy = isLegacyAuthCredentials(a);
+    const bLegacy = isLegacyAuthCredentials(b);
+    if (aLegacy && bLegacy) return a.secret === b.secret;
+    if (!aLegacy && !bLegacy) {
+        return (
+            a.encryption.publicKey === b.encryption.publicKey
+            && a.encryption.machineKey === b.encryption.machineKey
+        );
+    }
+    return false;
+}
 let started = false;
 let storageUnsubscribe: (() => void) | null = null;
 let activeServerUnsubscribe: (() => void) | null = null;
@@ -93,11 +107,7 @@ export function resolveConcurrentTargets(params: Readonly<{
 
 async function getOrCreateEncryption(entry: ManagedConcurrentServer): Promise<Encryption> {
     if (entry.encryption) return entry.encryption;
-    const secret = decodeBase64(entry.credentials.secret, 'base64url');
-    if (secret.length !== 32) {
-        throw new Error(`Invalid secret key length: ${secret.length}, expected 32`);
-    }
-    entry.encryption = await Encryption.create(secret);
+    entry.encryption = await createEncryptionFromAuthCredentials(entry.credentials);
     return entry.encryption;
 }
 
@@ -237,7 +247,9 @@ function createManagedServer(target: ConcurrentTarget, credentials: AuthCredenti
     socket.on('connect', () => {
         queueRefresh(entry);
     });
-    socket.onAny(() => {
+    // User-scoped sockets can emit high-frequency `ephemeral` events (machine activity, etc).
+    // Refreshing full snapshots on every event causes tight refresh loops and excessive polling.
+    socket.on('update', () => {
         queueRefresh(entry);
     });
 
@@ -290,8 +302,7 @@ async function reconcileConcurrentServers(): Promise<void> {
         if (
             existing
             && existing.serverUrl === target.serverUrl
-            && existing.credentials.token === credentials.token
-            && existing.credentials.secret === credentials.secret
+            && areAuthCredentialsEquivalent(existing.credentials, credentials)
         ) {
             existing.serverName = target.serverName;
             continue;

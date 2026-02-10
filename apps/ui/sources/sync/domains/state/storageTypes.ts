@@ -177,6 +177,7 @@ export const AgentStateSchema = z.object({
      */
     capabilities: z.object({
         askUserQuestionAnswersInPermission: z.boolean().optional(),
+        inFlightSteer: z.boolean().optional(),
     }).nullish(),
 }).passthrough();
 

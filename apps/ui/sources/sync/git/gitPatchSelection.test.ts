@@ -54,6 +54,15 @@ describe('buildPatchFromSelectedDiffLines', () => {
         expect(patch).not.toContain('\n-old-line\n');
     });
 
+    it('drops unselected deletions for unstage mode when only additions are selected', () => {
+        const patch = buildPatchFromSelectedDiffLines(sampleDiff, new Set([7]), {
+            mode: 'unstage',
+        });
+        expect(patch).toContain('+new-line');
+        expect(patch).not.toContain(' old-line');
+        expect(patch).not.toContain('\n-old-line\n');
+    });
+
     it('preserves no-newline markers for selected changes', () => {
         const noNewlineDiff = [
             'diff --git a/src/no-newline.txt b/src/no-newline.txt',

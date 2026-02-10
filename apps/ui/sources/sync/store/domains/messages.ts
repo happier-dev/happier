@@ -7,7 +7,7 @@ import type { Message } from '../../domains/messages/messageTypes';
 import type { NormalizedMessage } from '../../typesRaw';
 import type { Session } from '../../domains/state/storageTypes';
 
-import { persistSessionPermissionData } from './sessions';
+import { persistSessionPermissionData } from './sessionPermissionPersistence';
 import type { SessionPending } from './pending';
 import type { StoreGet, StoreSet } from './_shared';
 
@@ -47,6 +47,42 @@ export function inferLatestUserPermissionModeFromMessages(messages: ReadonlyArra
         return { mode: parsed as PermissionMode, updatedAt: at };
     }
     return null;
+}
+
+export function applyAgentStateUpdateToSessionMessages(params: Readonly<{
+    existing: SessionMessages;
+    agentState: Session['agentState'] | null;
+}>): {
+    sessionMessages: SessionMessages;
+    sessionLatestUsage?: Session['latestUsage'];
+    sessionTodos?: Session['todos'];
+} {
+    const existing = params.existing;
+    const reducerResult = reducer(existing.reducerState, [], params.agentState);
+    const processedMessages = reducerResult.messages;
+
+    const mergedMessagesMap = { ...existing.messagesMap };
+    for (const message of processedMessages) {
+        mergedMessagesMap[message.id] = message;
+    }
+
+    const messagesArray = Object.values(mergedMessagesMap)
+        .sort((a, b) => b.createdAt - a.createdAt);
+
+    const latestUsage = existing.reducerState.latestUsage
+        ? { ...existing.reducerState.latestUsage }
+        : undefined;
+
+    return {
+        sessionMessages: {
+            ...existing,
+            messages: messagesArray,
+            messagesMap: mergedMessagesMap,
+            reducerState: existing.reducerState,
+        },
+        sessionLatestUsage: latestUsage,
+        sessionTodos: reducerResult.todos,
+    };
 }
 
 export function createMessagesDomain<S extends MessagesDomain & MessagesDomainDependencies>({

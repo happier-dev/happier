@@ -1,6 +1,11 @@
 import type { Settings } from '@/sync/domains/settings/settings';
 import { getBuiltInProfile } from '@/sync/domains/profiles/profileUtils';
 
+type EnvVarRequirementLike = Readonly<{
+    name: string;
+    kind?: string | null;
+}>;
+
 function normalizeEnvVarName(input: string): string | null {
     const trimmed = input.trim();
     if (!trimmed) return null;
@@ -13,11 +18,11 @@ function getAllowedSecretEnvVarNamesByProfileId(settings: Settings): Record<stri
     const out: Record<string, Set<string>> = {};
 
     for (const p of settings.profiles) {
-        const names = new Set(
+        const names: Set<string> = new Set<string>(
             (p.envVarRequirements ?? [])
-                .filter((r) => (r.kind ?? 'secret') === 'secret')
-                .map((r) => normalizeEnvVarName(r.name))
-                .filter((n): n is string => typeof n === 'string' && n.length > 0),
+                .filter((r: EnvVarRequirementLike) => (r.kind ?? 'secret') === 'secret')
+                .map((r: EnvVarRequirementLike) => normalizeEnvVarName(String(r.name ?? '')))
+                .filter((n: string | null): n is string => typeof n === 'string' && n.length > 0),
         );
         out[p.id] = names;
     }
@@ -29,11 +34,11 @@ function getAllowedSecretEnvVarNamesByProfileId(settings: Settings): Record<stri
         if (seen.has(profileId)) continue;
         const builtIn = getBuiltInProfile(profileId);
         if (!builtIn) continue;
-        const names = new Set(
+        const names: Set<string> = new Set<string>(
             (builtIn.envVarRequirements ?? [])
-                .filter((r) => (r.kind ?? 'secret') === 'secret')
-                .map((r) => normalizeEnvVarName(r.name))
-                .filter((n): n is string => typeof n === 'string' && n.length > 0),
+                .filter((r: EnvVarRequirementLike) => (r.kind ?? 'secret') === 'secret')
+                .map((r: EnvVarRequirementLike) => normalizeEnvVarName(String(r.name ?? '')))
+                .filter((n: string | null): n is string => typeof n === 'string' && n.length > 0),
         );
         out[profileId] = names;
     }
@@ -54,7 +59,7 @@ export function pruneSecretBindings(settings: Settings): Settings {
     const bindings = settings.secretBindingsByProfileId ?? {};
     if (Object.keys(bindings).length === 0) return settings;
 
-    const secretIds = new Set((settings.secrets ?? []).map((s) => s.id));
+    const secretIds = new Set((settings.secrets ?? []).map((s: { id: string }) => s.id));
     const allowedByProfileId = getAllowedSecretEnvVarNamesByProfileId(settings);
 
     let changed = false;
@@ -100,4 +105,3 @@ export function pruneSecretBindings(settings: Settings): Settings {
         secretBindingsByProfileId: next,
     };
 }
-

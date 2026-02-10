@@ -1,17 +1,43 @@
 import { getActiveServerUrl } from './serverProfiles';
+import { getResetToDefaultServerId } from './serverProfiles';
 import { setActiveServer, upsertAndActivateServer } from './serverRuntime';
-import { OFFICIAL_SERVER_ID, OFFICIAL_SERVER_URL } from './serverIdentity';
+import { CLOUD_SERVER_URL } from './serverIdentity';
 
-const DEFAULT_SERVER_URL = OFFICIAL_SERVER_URL;
+function isWebRuntime(): boolean {
+    return typeof window !== 'undefined' && typeof document !== 'undefined';
+}
+
+function isStackContext(): boolean {
+    const raw = String(process.env.EXPO_PUBLIC_HAPPY_SERVER_CONTEXT ?? '').trim().toLowerCase();
+    return raw === 'stack';
+}
+
+function normalizeUrl(raw: string): string {
+    return String(raw ?? '').trim().replace(/\/+$/, '');
+}
+
+function getDefaultServerUrl(): string {
+    if (isStackContext()) {
+        const envUrl = normalizeUrl(String(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? ''));
+        if (envUrl) return envUrl;
+
+        if (isWebRuntime()) {
+            const origin = normalizeUrl(String(window.location?.origin ?? ''));
+            if (origin && origin !== 'null') return origin;
+        }
+    }
+
+    return CLOUD_SERVER_URL;
+}
 
 export function getServerUrl(): string {
     return getActiveServerUrl();
 }
 
 export function setServerUrl(url: string | null): void {
-    const normalized = String(url ?? '').trim().replace(/\/+$/, '');
+    const normalized = normalizeUrl(String(url ?? ''));
     if (!normalized) {
-        setActiveServer({ serverId: OFFICIAL_SERVER_ID, scope: 'device' });
+        setActiveServer({ serverId: getResetToDefaultServerId(), scope: 'device' });
         return;
     }
 
@@ -19,7 +45,7 @@ export function setServerUrl(url: string | null): void {
 }
 
 export function isUsingCustomServer(): boolean {
-    return getServerUrl() !== DEFAULT_SERVER_URL;
+    return getServerUrl() !== getDefaultServerUrl();
 }
 
 export function getServerInfo(): { hostname: string; port?: number; isCustom: boolean } {

@@ -76,6 +76,26 @@ describe('getGitUserFacingError', () => {
         expect(message).toBe('Git command failed. Refresh repository status and try again.');
     });
 
+    it('surfaces a specific hint when git index.lock contention is detected', () => {
+        const message = getGitUserFacingError({
+            errorCode: GIT_OPERATION_ERROR_CODES.COMMAND_FAILED,
+            error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+            fallback: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+        });
+
+        expect(message).toContain('Another Git operation is in progress');
+    });
+
+    it('surfaces lock contention when patch apply fails because index.lock exists', () => {
+        const message = getGitUserFacingError({
+            errorCode: GIT_OPERATION_ERROR_CODES.PATCH_APPLY_FAILED,
+            error: "fatal: Unable to create '/repo/.git/index.lock': File exists.",
+            fallback: 'Diff changed, refresh and reselect your lines.',
+        });
+
+        expect(message).toContain('Another Git operation is in progress');
+    });
+
     it('surfaces a specific hint when pull/merge would overwrite local changes', () => {
         const message = getGitUserFacingError({
             errorCode: GIT_OPERATION_ERROR_CODES.COMMAND_FAILED,

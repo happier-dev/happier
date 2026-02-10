@@ -44,6 +44,22 @@ describe('getPendingQueueWakeResumeOptions', () => {
         expect(getPendingQueueWakeResumeOptions({ sessionId: 's1', session, resumeCapabilityOptions: {} })).toBeNull();
     });
 
+    it('returns null when the caller cannot wake the target machine', () => {
+        const session: any = {
+            thinking: false,
+            agentState: null,
+            presence: 'offline',
+            metadata: { machineId: 'm1', path: '/tmp', flavor: 'claude', claudeSessionId: 'c1' },
+        };
+
+        expect(getPendingQueueWakeResumeOptions({
+            sessionId: 's1',
+            session,
+            resumeCapabilityOptions: {},
+            canWakeMachineId: () => false,
+        } as any)).toBeNull();
+    });
+
     it('does not block wake for offline sessions with stale thinking state', () => {
         const session: any = {
             thinking: true,

@@ -21,6 +21,8 @@ type EmittedHunkLine = {
     carriesChange: boolean;
 };
 
+type PatchSelectionMode = 'stage' | 'unstage';
+
 function parseHunkHeader(line: string): {
     oldStart: number;
     newStart: number;
@@ -35,7 +37,11 @@ function parseHunkHeader(line: string): {
     };
 }
 
-function emitHunk(lines: ParsedHunkLine[], selectedLineIndexes: Set<number>): EmittedHunkLine[] | null {
+function emitHunk(
+    lines: ParsedHunkLine[],
+    selectedLineIndexes: Set<number>,
+    mode: PatchSelectionMode
+): EmittedHunkLine[] | null {
     const emitted: EmittedHunkLine[] = [];
     let hasSelectedChange = false;
 
@@ -59,6 +65,14 @@ function emitHunk(lines: ParsedHunkLine[], selectedLineIndexes: Set<number>): Em
                         newRef: line.newRef,
                         carriesChange: true,
                     });
+                } else if (mode === 'unstage') {
+                    // Reverse-apply unstage patches must keep unselected staged additions as context.
+                    emitted.push({
+                        text: ` ${line.text.slice(1)}`,
+                        oldRef: line.oldRef,
+                        newRef: line.newRef,
+                        carriesChange: false,
+                    });
                 }
                 break;
             }
@@ -71,7 +85,7 @@ function emitHunk(lines: ParsedHunkLine[], selectedLineIndexes: Set<number>): Em
                         newRef: line.newRef,
                         carriesChange: true,
                     });
-                } else {
+                } else if (mode === 'stage') {
                     // Keep removed lines as context when not selected so patch positions stay stable.
                     emitted.push({
                         text: ` ${line.text.slice(1)}`,
@@ -139,8 +153,10 @@ function computeHunkHeaderLines(emitted: EmittedHunkLine[]): {
 
 export function buildPatchFromSelectedDiffLines(
     unifiedDiff: string,
-    selectedLineIndexes: Set<number>
+    selectedLineIndexes: Set<number>,
+    options: { mode?: PatchSelectionMode } = {}
 ): string | null {
+    const mode = options.mode ?? 'stage';
     if (!unifiedDiff || selectedLineIndexes.size === 0) {
         return null;
     }
@@ -257,7 +273,7 @@ export function buildPatchFromSelectedDiffLines(
 
     const renderedHunks: string[] = [];
     for (const parsedHunk of hunks) {
-        const emitted = emitHunk(parsedHunk.lines, selectedLineIndexes);
+        const emitted = emitHunk(parsedHunk.lines, selectedLineIndexes, mode);
         if (!emitted) continue;
         const rendered = computeHunkHeaderLines(emitted);
         if (!rendered) continue;

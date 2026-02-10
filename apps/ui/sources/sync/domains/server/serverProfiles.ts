@@ -1,9 +1,9 @@
 import { MMKV } from 'react-native-mmkv';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import {
-    OFFICIAL_SERVER_DISPLAY_NAME as OFFICIAL_SERVER_DISPLAY_NAME_VALUE,
-    OFFICIAL_SERVER_ID,
-    OFFICIAL_SERVER_URL,
+    CLOUD_SERVER_DISPLAY_NAME,
+    CLOUD_SERVER_ID,
+    CLOUD_SERVER_URL,
 } from './serverIdentity';
 
 export type ServerProfileKind = 'cloud' | 'stack' | 'custom';
@@ -35,8 +35,8 @@ type PersistedServerState = {
     servers?: Record<string, ServerProfile>;
 };
 
-const OFFICIAL_ID = OFFICIAL_SERVER_ID;
-const OFFICIAL_DISPLAY_NAME = OFFICIAL_SERVER_DISPLAY_NAME_VALUE;
+const CLOUD_ID = CLOUD_SERVER_ID;
+const CLOUD_DISPLAY_NAME = CLOUD_SERVER_DISPLAY_NAME;
 const SESSION_STORAGE_ACTIVE_ID_KEY = 'activeServerId';
 
 let activeServerGeneration = 0;
@@ -57,6 +57,59 @@ function shouldSeedCloudProfile(): boolean {
 
 function normalizeUrl(raw: string): string {
     return String(raw ?? '').trim().replace(/\/+$/, '');
+}
+
+function normalizeServerId(raw: unknown): string | null {
+    const id = String(raw ?? '').trim();
+    if (!id) return null;
+    return id;
+}
+
+function ensureStackEnvProfile(servers: Record<string, ServerProfile>): Record<string, ServerProfile> {
+    if (!isStackContext()) return servers;
+    const envUrl = normalizeUrl(String(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? ''));
+    if (!envUrl) return servers;
+
+    const existingEquivalent = findProfileByEquivalentUrl(servers, envUrl);
+    const id = existingEquivalent?.id ?? deriveServerIdFromUrl(envUrl);
+    const now = nowMs();
+    const createdAt = existingEquivalent?.createdAt ?? now;
+    const profile: ServerProfile = {
+        id,
+        name: existingEquivalent?.name ?? id,
+        serverUrl: existingEquivalent?.serverUrl ?? envUrl,
+        createdAt,
+        updatedAt: now,
+        lastUsedAt: existingEquivalent?.lastUsedAt ?? 0,
+        kind: 'stack',
+        managed: true,
+        stableKey: existingEquivalent?.stableKey,
+        source: 'stack-env',
+    };
+    return { ...servers, [id]: profile };
+}
+
+function normalizeLoopbackHost(rawHost: string): string {
+    const host = String(rawHost ?? '').trim().toLowerCase();
+    if (host === '127.0.0.1' || host === '::1' || host === '[::1]') {
+        return 'localhost';
+    }
+    return host;
+}
+
+function comparableUrlKey(rawUrl: string): string {
+    const normalized = normalizeUrl(rawUrl);
+    try {
+        const parsed = new URL(normalized);
+        const protocol = parsed.protocol.toLowerCase();
+        const host = normalizeLoopbackHost(parsed.hostname);
+        const port = parsed.port ? `:${parsed.port}` : '';
+        const path = parsed.pathname.replace(/\/+$/, '');
+        const search = parsed.search;
+        return `${protocol}//${host}${port}${path}${search}`;
+    } catch {
+        return normalized.toLowerCase();
+    }
 }
 
 function sanitizeStableKey(raw: string): string {
@@ -90,16 +143,11 @@ function storageId(): string {
 const storage = new MMKV({ id: storageId() });
 const STATE_KEY = 'server-state-v1';
 
-function legacyServerConfigStorage(): MMKV {
-    const scope = isWebRuntime() ? null : readStorageScopeFromEnv();
-    return new MMKV({ id: scopedStorageId('server-config', scope) });
-}
-
 function getCloudProfileDefaults(): ServerProfile {
     return {
-        id: OFFICIAL_ID,
-        name: OFFICIAL_DISPLAY_NAME,
-        serverUrl: OFFICIAL_SERVER_URL,
+        id: CLOUD_ID,
+        name: CLOUD_DISPLAY_NAME,
+        serverUrl: CLOUD_SERVER_URL,
         createdAt: 0,
         updatedAt: 0,
         lastUsedAt: 0,
@@ -111,30 +159,41 @@ function getCloudProfileDefaults(): ServerProfile {
 
 function ensureCloudProfile(servers: Record<string, ServerProfile>): Record<string, ServerProfile> {
     if (!shouldSeedCloudProfile()) return servers;
-    if (servers[OFFICIAL_ID]) {
-        const existing = servers[OFFICIAL_ID]!;
+    if (servers[CLOUD_ID]) {
+        const existing = servers[CLOUD_ID]!;
         return {
             ...servers,
-            [OFFICIAL_ID]: {
+            [CLOUD_ID]: {
                 ...existing,
                 kind: existing.kind ?? 'cloud',
                 managed: existing.managed ?? true,
-                name: existing.name || OFFICIAL_DISPLAY_NAME,
+                name: existing.name || CLOUD_DISPLAY_NAME,
             },
         };
     }
-    return { [OFFICIAL_ID]: getCloudProfileDefaults(), ...servers };
+    return { [CLOUD_ID]: getCloudProfileDefaults(), ...servers };
+}
+
+function applyCloudProfilePolicy(servers: Record<string, ServerProfile>): Record<string, ServerProfile> {
+    if (shouldSeedCloudProfile()) return ensureCloudProfile(servers);
+    // Stack context: do not auto-seed the cloud profile, but also do not delete it if the user already saved it.
+    return servers;
+}
+
+function applyRuntimeSeedPolicy(servers: Record<string, ServerProfile>): Record<string, ServerProfile> {
+    const withStackEnv = ensureStackEnvProfile(servers);
+    return applyCloudProfilePolicy(withStackEnv);
 }
 
 function resolvePrimaryActiveServerId(servers: Record<string, ServerProfile>, desiredId: string | null): string {
     if (desiredId && desiredId in servers) return desiredId;
-    if (OFFICIAL_ID in servers) return OFFICIAL_ID;
+    if (CLOUD_ID in servers) return CLOUD_ID;
     const first = Object.keys(servers)[0];
-    return first ?? OFFICIAL_ID;
+    return first ?? CLOUD_ID;
 }
 
 function defaultProfileKind(profile: Pick<ServerProfile, 'id' | 'stableKey'>): ServerProfileKind {
-    if (profile.id === OFFICIAL_ID) return 'cloud';
+    if (profile.id === CLOUD_ID) return 'cloud';
     if (profile.stableKey) return 'stack';
     return 'custom';
 }
@@ -177,7 +236,7 @@ function parseProfile(id: string, value: unknown): ServerProfile | null {
 function readPersistedState(): Required<PersistedServerState> {
     const raw = storage.getString(STATE_KEY);
     if (!raw) {
-        const seeded = ensureCloudProfile({});
+        const seeded = applyRuntimeSeedPolicy({});
         return {
             activeServerIdIsExplicit: false,
             activeServerId: resolvePrimaryActiveServerId(seeded, null),
@@ -195,8 +254,8 @@ function readPersistedState(): Required<PersistedServerState> {
             servers[profile.id] = profile;
         }
 
-        const nextServers = ensureCloudProfile(servers);
-        const desiredActive = typeof parsed.activeServerId === 'string' ? parsed.activeServerId.trim() : null;
+        const nextServers = applyRuntimeSeedPolicy(servers);
+        const desiredActive = normalizeServerId(parsed.activeServerId);
         const activeServerId = resolvePrimaryActiveServerId(nextServers, desiredActive);
         const activeServerIdIsExplicit = parsed.activeServerIdIsExplicit === true;
 
@@ -206,7 +265,7 @@ function readPersistedState(): Required<PersistedServerState> {
             servers: nextServers,
         };
     } catch {
-        const seeded = ensureCloudProfile({});
+        const seeded = applyRuntimeSeedPolicy({});
         return {
             activeServerIdIsExplicit: false,
             activeServerId: resolvePrimaryActiveServerId(seeded, null),
@@ -219,53 +278,12 @@ function writePersistedState(state: Required<PersistedServerState>): void {
     storage.set(STATE_KEY, JSON.stringify(state));
 }
 
-function migrateLegacyCustomServerUrlIfPresent(): void {
-    const legacy = legacyServerConfigStorage();
-    const legacyUrlRaw = legacy.getString('custom-server-url');
-    const legacyUrl = normalizeUrl(legacyUrlRaw ?? '');
-    if (!legacyUrl) return;
-
-    const state = readPersistedState();
-    const id = deriveServerIdFromUrl(legacyUrl);
-    const existing = state.servers[id];
-    const now = nowMs();
-    const createdAt = existing?.createdAt ?? now;
-    const nextProfile: ServerProfile = {
-        id,
-        name: existing?.name ?? id,
-        serverUrl: legacyUrl,
-        createdAt,
-        updatedAt: now,
-        lastUsedAt: now,
-        kind: existing?.kind ?? 'custom',
-        managed: existing?.managed ?? false,
-        source: existing?.source ?? 'manual',
-    };
-
-    const nextServers = ensureCloudProfile({ ...state.servers, [id]: nextProfile });
-    writePersistedState({
-        ...state,
-        activeServerIdIsExplicit: true,
-        activeServerId: resolvePrimaryActiveServerId(nextServers, id),
-        servers: nextServers,
-    });
-
-    legacy.delete('custom-server-url');
-}
-
-let migrated = false;
-function ensureMigrated(): void {
-    if (migrated) return;
-    migrated = true;
-    migrateLegacyCustomServerUrlIfPresent();
-}
-
 function readTabActiveServerId(): string | null {
     if (!isWebRuntime()) return null;
     try {
         const value = (globalThis as any).sessionStorage?.getItem?.(SESSION_STORAGE_ACTIVE_ID_KEY);
         const normalized = typeof value === 'string' ? value.trim() : '';
-        return normalized || null;
+        return normalizeServerId(normalized);
     } catch {
         return null;
     }
@@ -311,7 +329,7 @@ function buildActiveSnapshotFromState(state: Required<PersistedServerState>): Ac
     }
 
     const envUrl = normalizeUrl(String(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? ''));
-    const fallbackUrl = envUrl || getWebSameOriginServerUrl() || OFFICIAL_SERVER_URL;
+    const fallbackUrl = envUrl || getWebSameOriginServerUrl() || CLOUD_SERVER_URL;
     return {
         serverId: selectedId,
         serverUrl: fallbackUrl,
@@ -341,16 +359,28 @@ function findProfileByStableKey(servers: Record<string, ServerProfile>, stableKe
     return null;
 }
 
+function findProfileByEquivalentUrl(servers: Record<string, ServerProfile>, serverUrl: string): ServerProfile | null {
+    const targetKey = comparableUrlKey(serverUrl);
+    for (const profile of Object.values(servers)) {
+        if (comparableUrlKey(profile.serverUrl) === targetKey) {
+            return profile;
+        }
+    }
+    return null;
+}
+
 export function listServerProfiles(): ServerProfile[] {
-    ensureMigrated();
     return Object.values(readPersistedState().servers);
 }
 
 export function getServerProfileById(idRaw: string): ServerProfile | null {
-    ensureMigrated();
-    const id = String(idRaw ?? '').trim();
+    const id = normalizeServerId(idRaw);
     if (!id) return null;
     return readPersistedState().servers[id] ?? null;
+}
+
+export function isCloudServerProfileId(idRaw: string): boolean {
+    return normalizeServerId(idRaw) === CLOUD_ID;
 }
 
 export function upsertServerProfile(
@@ -363,33 +393,42 @@ export function upsertServerProfile(
         source?: ServerProfileSource;
     }>,
 ): ServerProfile {
-    ensureMigrated();
     const url = normalizeUrl(params.serverUrl);
     if (!url) throw new Error('serverUrl is required');
 
     const state = readPersistedState();
     const normalizedStableKey = params.stableKey ? sanitizeStableKey(params.stableKey) : '';
+    const isCloudUrl = !normalizedStableKey && comparableUrlKey(url) === comparableUrlKey(CLOUD_SERVER_URL);
     const existingStable = normalizedStableKey ? findProfileByStableKey(state.servers, normalizedStableKey) : null;
-    const id = existingStable?.id ?? (normalizedStableKey ? `stack_${normalizedStableKey}` : deriveServerIdFromUrl(url));
+    const existingEquivalent = normalizedStableKey ? null : findProfileByEquivalentUrl(state.servers, url);
+    const id = existingStable?.id
+        ?? existingEquivalent?.id
+        ?? (normalizedStableKey ? `stack_${normalizedStableKey}` : isCloudUrl ? CLOUD_ID : deriveServerIdFromUrl(url));
     const existing = state.servers[id];
 
     const now = nowMs();
     const createdAt = existing?.createdAt ?? now;
     const kind: ServerProfileKind = params.kind
         ?? existing?.kind
-        ?? (normalizedStableKey ? 'stack' : id === OFFICIAL_ID ? 'cloud' : 'custom');
-    const managed = params.managed ?? existing?.managed ?? (kind === 'stack');
+        ?? (normalizedStableKey ? 'stack' : id === CLOUD_ID ? 'cloud' : 'custom');
+    const managed = params.managed ?? existing?.managed ?? (kind === 'stack' || id === CLOUD_ID);
     const source = params.source ?? existing?.source ?? 'manual';
+    const resolvedName = String(
+        existingEquivalent?.name
+        ?? params.name
+        ?? existing?.name
+        ?? (id === CLOUD_ID ? CLOUD_DISPLAY_NAME : id),
+    ).trim() || id;
 
     const profile: ServerProfile = {
         id,
-        name: String(params.name ?? existing?.name ?? id).trim() || id,
-        serverUrl: url,
+        name: id === CLOUD_ID ? CLOUD_DISPLAY_NAME : resolvedName,
+        serverUrl: id === CLOUD_ID ? CLOUD_SERVER_URL : (existingEquivalent?.serverUrl ?? url),
         createdAt,
         updatedAt: now,
         lastUsedAt: existing?.lastUsedAt ?? 0,
-        kind,
-        managed,
+        kind: id === CLOUD_ID ? 'cloud' : kind,
+        managed: id === CLOUD_ID ? true : managed,
         stableKey: normalizedStableKey || existing?.stableKey,
         source,
     };
@@ -407,12 +446,20 @@ export function setActiveServerId(
     idRaw: string,
     opts: Readonly<{ scope: 'tab' | 'device' }> = { scope: 'device' },
 ): void {
-    ensureMigrated();
-    const id = String(idRaw ?? '').trim();
+    const id = normalizeServerId(idRaw);
     if (!id) throw new Error('server id is required');
 
     const state = readPersistedState();
-    if (!(id in state.servers)) throw new Error(`Unknown server id: ${id}`);
+    if (!(id in state.servers)) {
+        // Unknown ids can happen if a tab persisted a stale server id or if settings were corrupted.
+        // We treat this as a no-op rather than crashing the UI.
+        if (opts.scope === 'tab') {
+            const previousSnapshot = getActiveServerSnapshot();
+            writeTabActiveServerId(null);
+            emitActiveServerChanged(previousSnapshot);
+        }
+        return;
+    }
 
     const previousSnapshot = getActiveServerSnapshot();
 
@@ -436,8 +483,23 @@ export function setActiveServerId(
     emitActiveServerChanged(previousSnapshot);
 }
 
+export function getResetToDefaultServerId(): string {
+    // In normal (non-stack) environments, resetting means returning to the Happier Cloud profile.
+    if (shouldSeedCloudProfile()) return CLOUD_ID;
+
+    // In stack context, "default" is the stack server URL from env (not the Cloud endpoint).
+    const envUrl = normalizeUrl(String(process.env.EXPO_PUBLIC_HAPPY_SERVER_URL ?? ''));
+    if (envUrl) {
+        const profile = upsertServerProfile({ serverUrl: envUrl, kind: 'stack', managed: true, source: 'stack-env' });
+        return profile.id;
+    }
+
+    // As a last resort, fall back to the first known profile if one exists.
+    const state = readPersistedState();
+    return Object.keys(state.servers)[0] ?? CLOUD_ID;
+}
+
 export function getActiveServerId(): string {
-    ensureMigrated();
     const state = readPersistedState();
     const tab = readTabActiveServerId();
     if (tab && tab in state.servers) return tab;
@@ -445,7 +507,6 @@ export function getActiveServerId(): string {
 }
 
 export function getActiveServerUrl(): string {
-    ensureMigrated();
     const state = readPersistedState();
 
     const tab = readTabActiveServerId();
@@ -463,15 +524,14 @@ export function getActiveServerUrl(): string {
     const sameOrigin = getWebSameOriginServerUrl();
     if (sameOrigin) return sameOrigin;
 
-    if (state.servers[OFFICIAL_ID]?.serverUrl) {
-        return state.servers[OFFICIAL_ID]!.serverUrl;
+    if (state.servers[CLOUD_ID]?.serverUrl) {
+        return state.servers[CLOUD_ID]!.serverUrl;
     }
 
-    return OFFICIAL_SERVER_URL;
+    return CLOUD_SERVER_URL;
 }
 
 export function getActiveServerSnapshot(): ActiveServerSnapshot {
-    ensureMigrated();
     const state = readPersistedState();
     return buildActiveSnapshotFromState(state);
 }
@@ -484,10 +544,9 @@ export function subscribeActiveServer(listener: (snapshot: ActiveServerSnapshot)
 }
 
 export function removeServerProfile(idRaw: string): void {
-    ensureMigrated();
-    const id = String(idRaw ?? '').trim();
+    const id = normalizeServerId(idRaw);
     if (!id) throw new Error('server id is required');
-    if (id === OFFICIAL_ID) throw new Error('Cannot remove the Happier Cloud server profile');
+    if (id === CLOUD_ID) throw new Error('Cannot remove the Happier Cloud server profile');
 
     const state = readPersistedState();
     if (!(id in state.servers)) throw new Error(`Server profile not found: ${id}`);
@@ -512,12 +571,11 @@ export function removeServerProfile(idRaw: string): void {
 }
 
 export function renameServerProfile(idRaw: string, nameRaw: string): void {
-    ensureMigrated();
-    const id = String(idRaw ?? '').trim();
+    const id = normalizeServerId(idRaw);
     const name = String(nameRaw ?? '').trim();
     if (!id) throw new Error('server id is required');
     if (!name) throw new Error('server name is required');
-    if (id === OFFICIAL_ID) throw new Error('Cannot rename the Happier Cloud server profile');
+    if (id === CLOUD_ID) throw new Error('Cannot rename the Happier Cloud server profile');
 
     const state = readPersistedState();
     const existing = state.servers[id];

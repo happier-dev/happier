@@ -56,6 +56,7 @@ export async function handleSocketUpdate(params: {
     invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
     invalidateTodos: () => void;
+    onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     log: { log: (message: string) => void };
 }): Promise<void> {
     const {
@@ -78,6 +79,7 @@ export async function handleSocketUpdate(params: {
         invalidateFriendRequests,
         invalidateFeed,
         invalidateTodos,
+        onTaskLifecycleEvent,
         log,
     } = params;
 
@@ -104,6 +106,7 @@ export async function handleSocketUpdate(params: {
         invalidateFriendRequests,
         invalidateFeed,
         invalidateTodos,
+        onTaskLifecycleEvent,
         log,
     });
 }
@@ -128,6 +131,7 @@ export async function handleUpdateContainer(params: {
     invalidateFriendRequests: () => void;
     invalidateFeed: () => void;
     invalidateTodos: () => void;
+    onTaskLifecycleEvent?: (sessionId: string, event: import('@/sync/engine/sessions/taskLifecycle').TaskLifecycleEvent) => void;
     log: { log: (message: string) => void };
 }): Promise<void> {
     const {
@@ -150,6 +154,7 @@ export async function handleUpdateContainer(params: {
         invalidateFriendRequests,
         invalidateFeed,
         invalidateTodos,
+        onTaskLifecycleEvent,
         log,
     } = params;
 
@@ -167,6 +172,7 @@ export async function handleUpdateContainer(params: {
             getSessionMaterializedMaxSeq,
             markSessionMaterializedMaxSeq,
             invalidateMessagesForSession,
+            onTaskLifecycleEvent,
         });
     } else if (updateData.body.t === 'new-session') {
         log.log('🆕 New session update received');
@@ -389,6 +395,12 @@ export function flushActivityUpdates(params: { updates: Map<string, ApiEphemeral
     for (const [sessionId, update] of updates) {
         const session = storage.getState().sessions[sessionId];
         if (session) {
+            // Ignore stale activity updates that predate a newer durable/lifecycle update
+            // (for example a recent turn_aborted/task_complete clear). Otherwise old
+            // "thinking=true" ephemerals can resurrect a completed session into a stuck state.
+            if (update.activeAt < session.updatedAt) {
+                continue;
+            }
             sessions.push({
                 ...session,
                 active: update.active,

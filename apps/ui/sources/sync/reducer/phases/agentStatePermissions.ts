@@ -189,8 +189,33 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
 
                         // Update tool state based on permission status
                         if (completed.status === 'approved') {
-                            if (message.tool.state !== 'completed' && message.tool.state !== 'error' && message.tool.state !== 'running') {
+                            const isTerminalState = message.tool.state === 'completed' || message.tool.state === 'error';
+                            if (isTerminalState) {
+                                // Keep terminal tool states intact when late AgentState permission updates arrive.
+                            }
+                            // Permission can be approved before the tool-call event arrives.
+                            // Keep that placeholder as completed until execution actually starts,
+                            // otherwise the UI can show an endless running timer after aborts.
+                            else if (!message.tool.startedAt) {
+                                const completedAt = completed.completedAt || Date.now();
+                                if (message.tool.state !== 'completed') {
+                                    message.tool.state = 'completed';
+                                    hasChanged = true;
+                                }
+                                if (message.tool.completedAt !== completedAt) {
+                                    message.tool.completedAt = completedAt;
+                                    hasChanged = true;
+                                }
+                                if (!message.tool.result) {
+                                    message.tool.result = 'Approved';
+                                    hasChanged = true;
+                                }
+                            } else if (message.tool.state !== 'running') {
                                 message.tool.state = 'running';
+                                message.tool.completedAt = null;
+                                if (message.tool.result === 'Approved') {
+                                    message.tool.result = undefined;
+                                }
                                 hasChanged = true;
                             }
                         } else {
@@ -299,4 +324,3 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
         }
     }
 }
-

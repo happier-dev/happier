@@ -2,6 +2,7 @@ import type { TracedMessage } from '../reducerTracer';
 import type { UsageData } from '../../typesRaw';
 import type { ReducerState } from '../reducer';
 import { normalizeThinkingChunk, unwrapThinkingText, wrapThinkingText } from '../helpers/thinkingText';
+import { cancelRunningApprovedTools } from '../helpers/cancelRunningApprovedTools';
 
 export function runUserAndTextPhase(params: Readonly<{
     state: ReducerState;
@@ -80,6 +81,14 @@ export function runUserAndTextPhase(params: Readonly<{
             // Process text and thinking content (tool calls handled in Phase 2)
             for (let c of msg.content) {
                 if (c.type === 'text') {
+                    if (c.text.trim() === 'No response requested.') {
+                        cancelRunningApprovedTools({
+                            state,
+                            changed,
+                            completedAt: msg.createdAt,
+                            reason: 'Request interrupted',
+                        });
+                    }
                     let mid = allocateId();
                     state.messages.set(mid, {
                         id: mid,
@@ -142,4 +151,3 @@ export function runUserAndTextPhase(params: Readonly<{
 
     return { lastMainThinkingMessageId, lastMainThinkingCreatedAt };
 }
-

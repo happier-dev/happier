@@ -26,7 +26,17 @@ export class Encryption {
         return new Encryption(anonID, masterSecret, contentKeyPair);
     }
 
-    private readonly legacyEncryption: SecretBoxEncryption;
+    static async createFromContentKeyPair(params: { publicKey: Uint8Array; machineKey: Uint8Array }) {
+        // Best-effort: we don't have the original secret seed in dataKey mode.
+        // Using machineKey as the legacy secret keeps legacy fallback deterministic while
+        // ensuring content-key based encryption/decryption works.
+        const fallbackKey = params.machineKey;
+        const anonID = encodeHex((await deriveKey(fallbackKey, 'Happy Coder', ['analytics', 'id']))).slice(0, 16).toLowerCase();
+        const contentKeyPair: sodium.KeyPair = { publicKey: params.publicKey, privateKey: params.machineKey };
+        return new Encryption(anonID, fallbackKey, contentKeyPair, true);
+    }
+
+    private readonly fallbackEncryption: Encryptor & Decryptor;
     private readonly contentKeyPair: sodium.KeyPair;
     readonly anonID: string;
     readonly contentDataKey: Uint8Array;
@@ -36,12 +46,23 @@ export class Encryption {
     private machineEncryptions = new Map<string, MachineEncryption>();
     private cache: EncryptionCache;
 
-    private constructor(anonID: string, masterSecret: Uint8Array, contentKeyPair: sodium.KeyPair) {
+    private constructor(
+        anonID: string,
+        masterSecret: Uint8Array,
+        contentKeyPair: sodium.KeyPair,
+        useDataKeyFallback = false
+    ) {
         this.anonID = anonID;
         this.contentKeyPair = contentKeyPair;
-        this.legacyEncryption = new SecretBoxEncryption(masterSecret);
+        this.fallbackEncryption = useDataKeyFallback
+            ? new AES256Encryption(masterSecret)
+            : new SecretBoxEncryption(masterSecret);
         this.cache = new EncryptionCache();
         this.contentDataKey = contentKeyPair.publicKey;
+    }
+
+    getContentPrivateKey(): Uint8Array {
+        return this.contentKeyPair.privateKey;
     }
 
     //
@@ -50,7 +71,7 @@ export class Encryption {
 
     async openEncryption(dataEncryptionKey: Uint8Array | null): Promise<Encryptor & Decryptor> {
         if (!dataEncryptionKey) {
-            return this.legacyEncryption;
+            return this.fallbackEncryption;
         }
         return new AES256Encryption(dataEncryptionKey);
     }
@@ -141,14 +162,14 @@ export class Encryption {
     //
 
     async encryptRaw(data: any): Promise<string> {
-        const encrypted = await this.legacyEncryption.encrypt([data]);
+        const encrypted = await this.fallbackEncryption.encrypt([data]);
         return encodeBase64(encrypted[0], 'base64');
     }
 
     async decryptRaw(encrypted: string): Promise<any | null> {
         try {
             const encryptedData = decodeBase64(encrypted, 'base64');
-            const decrypted = await this.legacyEncryption.decrypt([encryptedData]);
+            const decrypted = await this.fallbackEncryption.decrypt([encryptedData]);
             return decrypted[0] || null;
         } catch (error) {
             return null;

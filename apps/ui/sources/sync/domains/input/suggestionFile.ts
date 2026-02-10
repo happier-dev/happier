@@ -4,7 +4,7 @@
  */
 
 import Fuse from 'fuse.js';
-import { sessionRipgrep } from '../../ops';
+import { sessionListDirectory, sessionRipgrep } from '../../ops';
 import { AsyncLock } from '@/utils/system/lock';
 
 export interface FileItem {
@@ -24,6 +24,25 @@ interface SessionCache {
     fuse: Fuse<FileItem> | null;
     lastRefresh: number;
     refreshLock: AsyncLock;
+}
+
+type SessionRipgrepLikeResponse = {
+    success?: boolean;
+    stdout?: string;
+};
+
+type SessionListDirectoryLikeResponse = {
+    success?: boolean;
+    entries?: Array<{
+        name?: string;
+        type?: 'file' | 'directory' | 'other';
+    }>;
+};
+
+const FILE_INDEX_FALLBACK_LIMIT = 5000;
+
+function shouldSkipFallbackPath(name: string): boolean {
+    return name.startsWith('.') || name === 'node_modules';
 }
 
 class FileSearchCache {
@@ -67,6 +86,128 @@ class FileSearchCache {
         cache.fuse = new Fuse(cache.files, fuseOptions);
     }
 
+    private buildFileItemsFromPaths(filePaths: string[]): FileItem[] {
+        const files: FileItem[] = [];
+
+        filePaths.forEach((path: string) => {
+            const parts = path.split('/');
+            const fileName = parts[parts.length - 1] || path;
+            const filePath = parts.slice(0, -1).join('/') || '';
+
+            files.push({
+                fileName,
+                filePath: filePath ? filePath + '/' : '',
+                fullPath: path,
+                fileType: 'file' as const
+            });
+        });
+
+        const directories = new Set<string>();
+        filePaths.forEach((path: string) => {
+            const parts = path.split('/');
+            for (let i = 1; i <= parts.length - 1; i++) {
+                const dirPath = parts.slice(0, i).join('/');
+                if (dirPath) {
+                    directories.add(dirPath);
+                }
+            }
+        });
+
+        directories.forEach((dirPath) => {
+            const parts = dirPath.split('/');
+            const dirName = (parts[parts.length - 1] || dirPath) + '/';
+            const parentPath = parts.slice(0, -1).join('/');
+
+            files.push({
+                fileName: dirName,
+                filePath: parentPath ? parentPath + '/' : '',
+                fullPath: dirPath + '/',
+                fileType: 'folder'
+            });
+        });
+
+        return files;
+    }
+
+    private async buildFileItemsFromRipgrep(sessionId: string): Promise<FileItem[] | null> {
+        const response = await sessionRipgrep(
+            sessionId,
+            ['--files', '--follow'],
+            undefined
+        ) as SessionRipgrepLikeResponse | null;
+
+        if (!response || response.success !== true || typeof response.stdout !== 'string') {
+            return null;
+        }
+
+        const filePaths: string[] = response.stdout
+            .split('\n')
+            .filter((path: string) => path.trim().length > 0);
+
+        return this.buildFileItemsFromPaths(filePaths);
+    }
+
+    private async buildFileItemsFromDirectoryFallback(sessionId: string): Promise<FileItem[] | null> {
+        const files: FileItem[] = [];
+        const queue: string[] = [''];
+        const visited = new Set<string>(['']);
+
+        while (queue.length > 0 && files.length < FILE_INDEX_FALLBACK_LIMIT) {
+            const directoryPath = queue.shift()!;
+            const response = await sessionListDirectory(sessionId, directoryPath) as SessionListDirectoryLikeResponse | null;
+            if (!response || response.success !== true || !Array.isArray(response.entries)) {
+                continue;
+            }
+
+            for (const entry of response.entries) {
+                if (!entry || typeof entry.name !== 'string' || !entry.name) {
+                    continue;
+                }
+                if (shouldSkipFallbackPath(entry.name)) {
+                    continue;
+                }
+
+                const prefix = directoryPath ? `${directoryPath}/` : '';
+                const filePath = directoryPath ? `${directoryPath}/` : '';
+
+                if (entry.type === 'directory') {
+                    const nestedDirectory = `${prefix}${entry.name}`;
+                    files.push({
+                        fileName: `${entry.name}/`,
+                        filePath,
+                        fullPath: `${nestedDirectory}/`,
+                        fileType: 'folder',
+                    });
+
+                    if (!visited.has(nestedDirectory) && files.length < FILE_INDEX_FALLBACK_LIMIT) {
+                        visited.add(nestedDirectory);
+                        queue.push(nestedDirectory);
+                    }
+                    continue;
+                }
+
+                if (entry.type === 'file') {
+                    files.push({
+                        fileName: entry.name,
+                        filePath,
+                        fullPath: `${prefix}${entry.name}`,
+                        fileType: 'file',
+                    });
+                }
+
+                if (files.length >= FILE_INDEX_FALLBACK_LIMIT) {
+                    break;
+                }
+            }
+        }
+
+        if (files.length === 0) {
+            return null;
+        }
+
+        return files;
+    }
+
     private async ensureCacheValid(sessionId: string): Promise<void> {
         const cache = this.getOrCreateSessionCache(sessionId);
         // Cache is now invalidated explicitly by git snapshot updates.
@@ -83,64 +224,13 @@ class FileSearchCache {
                 return;
             }
 
-            // Use ripgrep to get all files in the project
-            const response = await sessionRipgrep(
-                sessionId,
-                ['--files', '--follow'],
-                undefined
-            );
-
-            if (!response.success || !response.stdout) {
+            const filesFromRipgrep = await this.buildFileItemsFromRipgrep(sessionId);
+            const files = filesFromRipgrep ?? await this.buildFileItemsFromDirectoryFallback(sessionId);
+            if (!files || files.length === 0) {
                 return;
             }
 
-            // Parse the output into file items
-            const filePaths: string[] = response.stdout
-                .split('\n')
-                .filter((path: string) => path.trim().length > 0);
-
-            // Clear existing files
-            cache.files = [];
-
-            // Add all files
-            filePaths.forEach((path: string) => {
-                const parts = path.split('/');
-                const fileName = parts[parts.length - 1] || path;
-                const filePath = parts.slice(0, -1).join('/') || '';
-
-                cache.files.push({
-                    fileName,
-                    filePath: filePath ? filePath + '/' : '',
-                    fullPath: path,
-                    fileType: 'file' as const
-                });
-            });
-
-            // Add unique directories with trailing slash
-            const directories = new Set<string>();
-            filePaths.forEach((path: string) => {
-                const parts = path.split('/');
-                for (let i = 1; i <= parts.length - 1; i++) {
-                    const dirPath = parts.slice(0, i).join('/');
-                    if (dirPath) {
-                        directories.add(dirPath);
-                    }
-                }
-            });
-
-            directories.forEach(dirPath => {
-                const parts = dirPath.split('/');
-                const dirName = parts[parts.length - 1] + '/';  // Add trailing slash to directory name
-                const parentPath = parts.slice(0, -1).join('/');
-
-                cache.files.push({
-                    fileName: dirName,
-                    filePath: parentPath ? parentPath + '/' : '',
-                    fullPath: dirPath + '/',  // Add trailing slash to full path
-                    fileType: 'folder'
-                });
-            });
-
+            cache.files = files;
             cache.lastRefresh = Date.now();
             this.initializeFuse(cache);
         });

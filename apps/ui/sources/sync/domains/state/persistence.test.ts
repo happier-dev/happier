@@ -136,6 +136,26 @@ describe('persistence', () => {
             saveChangesCursor('');
             expect(loadChangesCursor()).toBeNull();
         });
+
+        it('isolates cursor values by server scope when provided', () => {
+            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
+
+            (saveChangesCursor as any)('11', 'server-a');
+            expect((loadChangesCursor as any)('server-a')).toBe('11');
+            expect((loadChangesCursor as any)('server-b')).toBeNull();
+
+            (saveChangesCursor as any)('21', 'server-b');
+            expect((loadChangesCursor as any)('server-a')).toBe('11');
+            expect((loadChangesCursor as any)('server-b')).toBe('21');
+        });
+
+        it('does not read unscoped cursor when explicit server scope is requested', () => {
+            store.set('profile', JSON.stringify({ id: 'a1', timestamp: 0, firstName: null, lastName: null, avatar: null }));
+
+            saveChangesCursor('77');
+            expect((loadChangesCursor as any)('server-a')).toBeNull();
+            expect(loadChangesCursor()).toBe('77');
+        });
     });
 
     describe('pending settings', () => {

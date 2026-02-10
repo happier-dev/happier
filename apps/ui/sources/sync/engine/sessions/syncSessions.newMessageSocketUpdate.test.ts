@@ -202,4 +202,34 @@ describe('handleNewMessageSocketUpdate', () => {
         expect(fetchSessions).not.toHaveBeenCalled();
         expect(applyMessages).not.toHaveBeenCalled();
     });
+
+    it('emits lifecycle callback for turn_aborted socket messages', async () => {
+        const onTaskLifecycleEvent = vi.fn();
+        const { params } = buildHarness({
+            getSessionEncryption: () => ({
+                decryptMessage: async () => ({
+                    id: 'm2',
+                    localId: null,
+                    createdAt: 1_000,
+                    content: {
+                        role: 'agent',
+                        content: {
+                            type: 'acp',
+                            provider: 'kimi',
+                            data: { type: 'turn_aborted', id: 'task_1' },
+                        },
+                    },
+                }),
+            }),
+            onTaskLifecycleEvent,
+        });
+
+        await handleNewMessageSocketUpdate(params);
+
+        expect(onTaskLifecycleEvent).toHaveBeenCalledWith('s1', {
+            type: 'turn_aborted',
+            id: 'task_1',
+            createdAt: 1_000,
+        });
+    });
 });

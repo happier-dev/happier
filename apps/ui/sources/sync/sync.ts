@@ -1,6 +1,7 @@
 import Constants from 'expo-constants';
 import { apiSocket } from '@/sync/api/session/apiSocket';
-import { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { type AuthCredentials, isLegacyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { Encryption } from '@/sync/encryption/encryption';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { storage } from './domains/state/storage';
@@ -15,6 +16,7 @@ import { resolveSentFrom } from './domains/messages/sentFrom';
 import { NormalizedMessage, normalizeRawMessage, RawRecord } from './typesRaw';
 import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
 import { Profile, profileDefaults } from './domains/profiles/profile';
+import { getCurrentRealtimeSessionId, getVoiceSession } from '@/realtime/RealtimeSession';
 import {
     loadPendingSettings,
     savePendingSettings,
@@ -136,6 +138,8 @@ class Sync {
     public encryptionCache = new EncryptionCache();
     private sessionsSync: InvalidateSync;
     private messagesSync = new Map<string, InvalidateSync>();
+    private activeServerSessionIds = new Set<string>();
+    private hasFetchedSessionsSnapshotForActiveServer = false;
     private sessionReceivedMessages = new Map<string, Set<string>>();
     private sessionMessagesBeforeSeq = new Map<string, number>();
     private sessionMessagesHasMoreOlder = new Map<string, boolean>();
@@ -165,7 +169,7 @@ class Sync {
     private sessionMaterializedMaxSeqById: Record<string, number> = loadSessionMaterializedMaxSeqById();
     private sessionMaterializedMaxSeqFlushTimer: ReturnType<typeof setTimeout> | null = null;
     private sessionMaterializedMaxSeqDirty = false;
-    private changesCursor: string | null = loadChangesCursor();
+    private changesCursor: string | null = loadChangesCursor(String(getActiveServerSnapshot().serverId ?? '').trim() || null);
     private changesCursorFlushTimer: ReturnType<typeof setTimeout> | null = null;
     private changesCursorDirty = false;
     private changesSyncInFlight: Promise<void> | null = null;
@@ -271,6 +275,11 @@ class Sync {
         this.messageTransport = createDefaultMessageTransport();
     }
 
+    private getChangesCursorScope(): string | null {
+        const scope = String(getActiveServerSnapshot().serverId ?? '').trim();
+        return scope || null;
+    }
+
     private schedulePendingSettingsFlush = () => {
         scheduleDebouncedPendingSettingsFlush({
             getTimer: () => this.pendingSettingsFlushTimer,
@@ -302,10 +311,14 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = parseToken(credentials.token);
+        this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
+        this.changesCursorDirty = false;
         // Derive a stable per-account key for field-level secret settings.
         // This is separate from the outer settings blob encryption.
         try {
-            const secretKey = decodeBase64(credentials.secret, 'base64url');
+            const secretKey = isLegacyAuthCredentials(credentials)
+                ? decodeBase64(credentials.secret, 'base64url')
+                : decodeBase64(credentials.encryption.machineKey, 'base64');
             if (secretKey.length === 32) {
                 this.settingsSecretsKey = await deriveSettingsSecretsKey(secretKey);
             }
@@ -331,8 +344,12 @@ class Sync {
         this.encryption = encryption;
         this.anonID = encryption.anonID;
         this.serverID = parseToken(credentials.token);
+        this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
+        this.changesCursorDirty = false;
         try {
-            const secretKey = decodeBase64(credentials.secret, 'base64url');
+            const secretKey = isLegacyAuthCredentials(credentials)
+                ? decodeBase64(credentials.secret, 'base64url')
+                : decodeBase64(credentials.encryption.machineKey, 'base64');
             if (secretKey.length === 32) {
                 this.settingsSecretsKey = await deriveSettingsSecretsKey(secretKey);
             }
@@ -360,6 +377,8 @@ class Sync {
         this.sessionMessagesHasMoreOlder.clear();
         this.sessionMessagesLoadingOlder.clear();
         this.sessionMessagesPaginationSupported.clear();
+        this.activeServerSessionIds.clear();
+        this.hasFetchedSessionsSnapshotForActiveServer = false;
         this.sessionDataKeys.clear();
         this.machineDataKeys.clear();
         this.artifactDataKeys.clear();
@@ -367,6 +386,12 @@ class Sync {
         this.readStateV1RepairInFlight.clear();
 
         this.lastSocketDisconnectedAtMs = null;
+        if (this.changesCursorFlushTimer) {
+            clearTimeout(this.changesCursorFlushTimer);
+            this.changesCursorFlushTimer = null;
+        }
+        this.changesCursorDirty = false;
+        this.changesCursor = null;
 
         storage.setState((state) => ({
             ...state,
@@ -404,11 +429,7 @@ class Sync {
     };
 
     public async switchServer(credentials: AuthCredentials): Promise<void> {
-        const secretKey = decodeBase64(credentials.secret, 'base64url');
-        if (secretKey.length !== 32) {
-            throw new Error(`Invalid secret key length: ${secretKey.length}, expected 32`);
-        }
-        const encryption = await Encryption.create(secretKey);
+        const encryption = await createEncryptionFromAuthCredentials(credentials);
 
         this.resetServerScopedRuntimeState();
         apiSocket.initialize({ endpoint: getActiveServerSnapshot().serverUrl, token: credentials.token }, encryption);
@@ -804,8 +825,9 @@ class Sync {
 
     async submitMessage(sessionId: string, text: string, displayText?: string): Promise<void> {
         const configuredMode = storage.getState().settings.sessionMessageSendMode;
+        const busySteerSendPolicy = storage.getState().settings.sessionBusySteerSendPolicy;
         const session = storage.getState().sessions[sessionId] ?? null;
-        const mode = chooseSubmitMode({ configuredMode, session });
+        const mode = chooseSubmitMode({ configuredMode, busySteerSendPolicy, session });
 
         if (mode === 'interrupt') {
             try { await this.abortSession(sessionId); } catch { }
@@ -1078,30 +1100,43 @@ class Sync {
         const missingIds = userIds.filter(id => !(id in state.users));
         
         if (missingIds.length === 0) return;
-        
-        log.log(`👤 Fetching ${missingIds.length} missing users...`);
-        
-        // Fetch missing users in parallel
+
+        const isNotFoundError = (error: unknown): boolean => {
+            const e = error as any;
+            const status =
+                e?.status ??
+                e?.response?.status ??
+                e?.data?.status ??
+                e?.cause?.status ??
+                null;
+            return status === 404;
+        };
+
+        // Fetch missing users in parallel. Only cache null for explicit "not found" responses.
+        // Do not cache null for transient errors; otherwise we permanently treat that user as absent.
         const results = await Promise.all(
             missingIds.map(async (id) => {
                 try {
                     const profile = await getUserProfile(this.credentials!, id);
-                    return { id, profile };  // profile is null if 404
+                    return { id, profile, cache: true };
                 } catch (error) {
-                    console.error(`Failed to fetch user ${id}:`, error);
-                    return { id, profile: null };  // Treat errors as 404
+                    if (isNotFoundError(error)) {
+                        return { id, profile: null as UserProfile | null, cache: true };
+                    }
+                    return { id, profile: undefined as unknown as UserProfile | null, cache: false };
                 }
-            })
+            }),
         );
-        
-        // Convert to Record<string, UserProfile | null>
+
         const usersMap: Record<string, UserProfile | null> = {};
-        results.forEach(({ id, profile }) => {
-            usersMap[id] = profile;
-        });
-        
-        storage.getState().applyUsers(usersMap);
-        log.log(`👤 Applied ${results.length} users to cache (${results.filter(r => r.profile).length} found, ${results.filter(r => !r.profile).length} not found)`);
+        for (const r of results) {
+            if (!r.cache) continue;
+            usersMap[r.id] = r.profile;
+        }
+
+        if (Object.keys(usersMap).length > 0) {
+            storage.getState().applyUsers(usersMap);
+        }
     }
 
     //
@@ -1114,10 +1149,26 @@ class Sync {
             credentials: this.credentials,
             encryption: this.encryption,
             sessionDataKeys: this.sessionDataKeys,
-            applySessions: (sessions) => this.applySessions(sessions),
+            applySessions: (sessions) => {
+                this.activeServerSessionIds = new Set(sessions.map((session) => session.id));
+                this.hasFetchedSessionsSnapshotForActiveServer = true;
+                this.applySessions(sessions);
+            },
             repairInvalidReadStateV1: (params) => this.repairInvalidReadStateV1(params),
             log,
         });
+    }
+
+    private isSessionKnownOnActiveServer = (sessionId: string): boolean => {
+        if (this.activeServerSessionIds.has(sessionId)) {
+            return true;
+        }
+
+        if (!this.hasFetchedSessionsSnapshotForActiveServer) {
+            return Boolean(storage.getState().sessions[sessionId]);
+        }
+
+        return false;
     }
 
     /**
@@ -1413,7 +1464,69 @@ class Sync {
         });
     }
 
+    private applySessionThinkingFromTaskLifecycle = (
+        sessionId: string,
+        event: import('./engine/sessions/taskLifecycle').TaskLifecycleEvent,
+    ) => {
+        // Message catch-up pages can contain historical task_started markers.
+        // We only use lifecycle catch-up to clear stale thinking state.
+        if (event.type === 'task_started') {
+            return;
+        }
+
+        if (event.type === 'turn_aborted' || event.type === 'task_complete') {
+            const createdAt = event.createdAt || nowServerMs();
+            storage.getState().applyMessages(sessionId, [{
+                // Deterministic id to keep lifecycle event application stable if the same event is observed twice.
+                id: `task-lifecycle-${sessionId}-${event.type}-${event.id}-${createdAt}`,
+                localId: null,
+                createdAt,
+                role: 'event',
+                content: {
+                    type: 'task-lifecycle',
+                    event: event.type,
+                    id: event.id,
+                },
+                isSidechain: false,
+            }]);
+        }
+
+        const session = storage.getState().sessions[sessionId];
+        if (!session) {
+            return;
+        }
+
+        const nextThinking = false;
+        if (!nextThinking) {
+            // Even when session.thinking is already false, a delayed lifecycle event
+            // should clear any optimistic thinking marker left from the send path.
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+        }
+
+        if (session.thinking === nextThinking) {
+            return;
+        }
+
+        this.applySessions([
+            {
+                ...session,
+                thinking: nextThinking,
+                updatedAt: nowServerMs(),
+            },
+        ]);
+    }
+
     private fetchMessages = async (sessionId: string) => {
+        if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnActiveServer(sessionId)) {
+            // Do not fetch messages for sessions that are not known to the current active server snapshot.
+            // This avoids cross-server message fetches (wrong token/encryption) while keeping the UI state
+            // non-destructive during server-switch races.
+            if (storage.getState().sessionMessages[sessionId]?.isLoaded !== true) {
+                storage.getState().applyMessagesLoaded(sessionId);
+            }
+            return;
+        }
+
         const session = storage.getState().sessions[sessionId] ?? null;
         const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
         // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
@@ -1432,9 +1545,11 @@ class Sync {
                     afterSeq: cursor,
                     limit: SESSION_MESSAGES_PAGE_SIZE,
                     getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                    isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
                     request: (path) => apiSocket.request(path),
                     sessionReceivedMessages: this.sessionReceivedMessages,
                     applyMessages: (sid, messages) => this.applyMessages(sid, messages),
+                    onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
                     onMessagesPage: (page) => {
                         this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
                     },
@@ -1457,9 +1572,11 @@ class Sync {
         await fetchAndApplyMessages({
             sessionId,
             getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+            isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
             request: (path) => apiSocket.request(path),
             sessionReceivedMessages: this.sessionReceivedMessages,
             applyMessages: (sid, messages) => this.applyMessages(sid, messages),
+            onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
             markMessagesLoaded: (sid) => storage.getState().applyMessagesLoaded(sid),
             onMessagesPage: (page) => {
                 this.updateSessionMessagesPaginationFromPage(sessionId, page, { allowHasMoreInference: true });
@@ -1505,6 +1622,7 @@ class Sync {
                 beforeSeq,
                 limit: SESSION_MESSAGES_PAGE_SIZE,
                 getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                isSessionKnown: (id) => this.isSessionKnownOnActiveServer(id),
                 request: (path) => apiSocket.request(path),
                 sessionReceivedMessages: this.sessionReceivedMessages,
                 applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
@@ -1597,7 +1715,7 @@ class Sync {
             if (!this.changesCursorDirty) return;
             this.changesCursorDirty = false;
             if (this.changesCursor) {
-                saveChangesCursor(this.changesCursor);
+                saveChangesCursor(this.changesCursor, this.getChangesCursorScope());
             }
         }, 750);
     }
@@ -1610,7 +1728,7 @@ class Sync {
         if (!this.changesCursorDirty) return;
         this.changesCursorDirty = false;
         if (this.changesCursor) {
-            saveChangesCursor(this.changesCursor);
+            saveChangesCursor(this.changesCursor, this.getChangesCursorScope());
         }
     }
 
@@ -1749,6 +1867,7 @@ class Sync {
             invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
             invalidateFeed: () => this.feedSync.invalidate(),
             invalidateTodos: () => this.todosSync.invalidate(),
+            onTaskLifecycleEvent: (sessionId, event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
             log,
         });
     }
@@ -1847,6 +1966,44 @@ class Sync {
         presence?: "online" | number;
     })[]) => {
         const active = storage.getState().getActiveSessions();
+
+        const currentRealtimeSessionId = getCurrentRealtimeSessionId();
+        const voiceSession = getVoiceSession();
+        if (voiceSession && currentRealtimeSessionId) {
+            for (const nextSession of sessions) {
+                if (!nextSession?.id || nextSession.id !== currentRealtimeSessionId) continue;
+                if (storage.getState().sessionMessages[nextSession.id]?.isLoaded !== true) continue;
+                if (!nextSession.agentState) continue;
+
+                const prevSession = storage.getState().sessions[nextSession.id] ?? null;
+                const prevVersion = prevSession?.agentStateVersion ?? 0;
+                if (nextSession.agentStateVersion <= prevVersion) continue;
+
+                const oldRequests = prevSession?.agentState?.requests ?? {};
+                const newRequests = nextSession.agentState?.requests ?? {};
+                const agentId = resolveAgentIdFromFlavor(nextSession.metadata?.flavor);
+                const agentLabel = agentId ?? 'Agent';
+
+                for (const [requestId, request] of Object.entries(newRequests)) {
+                    if ((oldRequests as any)[requestId]) continue;
+                    const toolName = (request as any)?.tool;
+                    if (typeof toolName !== 'string' || !toolName.trim()) continue;
+                    voiceSession.sendTextMessage(
+                        `${agentLabel} is requesting permission to use the ${toolName} tool`,
+                    );
+                }
+            }
+        }
+
+        // When multi-server mode is enabled, we use `activeServerSessionIds` as a conservative
+        // guard to avoid cross-server message fetches after the initial session snapshot. Ensure
+        // that any newly-applied sessions (via socket updates, create flows, etc.) are treated as
+        // "known" on the active server too, otherwise message fetches can be incorrectly skipped.
+        for (const session of sessions) {
+            if (session?.id) {
+                this.activeServerSessionIds.add(session.id);
+            }
+        }
         storage.getState().applySessions(sessions);
         const newActive = storage.getState().getActiveSessions();
         this.applySessionDiff(active, newActive);
@@ -1975,11 +2132,7 @@ export async function syncSwitchServer(credentials: AuthCredentials | null): Pro
 async function syncInit(credentials: AuthCredentials, restore: boolean) {
 
     // Initialize sync engine
-    const secretKey = decodeBase64(credentials.secret, 'base64url');
-    if (secretKey.length !== 32) {
-        throw new Error(`Invalid secret key length: ${secretKey.length}, expected 32`);
-    }
-    const encryption = await Encryption.create(secretKey);
+    const encryption = await createEncryptionFromAuthCredentials(credentials);
 
     // Initialize tracking
     initializeTracking(encryption.anonID);

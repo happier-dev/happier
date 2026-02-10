@@ -16,6 +16,7 @@ const serverRuntimeMock = vi.hoisted(() => ({
 
 vi.mock('@/auth/storage/tokenStorage', () => ({
     TokenStorage: tokenStorageMock,
+    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     getActiveServerSnapshot: () => serverRuntimeMock.getActiveServerSnapshot(),

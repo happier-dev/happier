@@ -3,7 +3,17 @@ import { getActiveServerSnapshot, upsertAndActivateServer } from './serverRuntim
 import type { ServerProfileSource } from './serverProfiles';
 
 export function normalizeServerUrl(raw: string): string {
-    return String(raw ?? '').trim().replace(/\/+$/, '');
+    const value = String(raw ?? '').trim();
+    if (!value) return '';
+    try {
+        const parsed = new URL(value);
+        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+        parsed.search = '';
+        parsed.hash = '';
+        return parsed.toString().replace(/\/+$/, '');
+    } catch {
+        return '';
+    }
 }
 
 export function defaultServerNameFromUrl(rawUrl: string): string {
