@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { parseArgs, resolveRepoRoot } from './lib/binary_release.mjs';
@@ -31,6 +31,18 @@ function buffersEqual(left, right) {
   return left.equals(right);
 }
 
+async function fileExists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+}
+
 export async function syncInstallers({
   sourceDir,
   targetDir,
@@ -40,6 +52,7 @@ export async function syncInstallers({
   const checked = [];
   await mkdir(targetDir, { recursive: true });
 
+  const desiredTargetMode = 0o644;
   for (const name of INSTALLER_FILENAMES) {
     const sourcePath = join(sourceDir, name);
     const targetPath = join(targetDir, name);
@@ -50,14 +63,24 @@ export async function syncInstallers({
     const targetContents = await readFileOrNull(targetPath);
     checked.push(name);
 
-    if (buffersEqual(sourceContents, targetContents)) {
+    const contentInSync = buffersEqual(sourceContents, targetContents);
+    if (!contentInSync) {
+      changed.push(name);
+      if (!checkOnly) {
+        await writeFile(targetPath, sourceContents);
+      }
       continue;
     }
-    changed.push(name);
-    if (!checkOnly) {
-      await writeFile(targetPath, sourceContents);
+
+    // Even when the file contents match, normalize the published copy's mode so
+    // "executable bit" drift doesn't create noisy diffs in the repo.
+    if (!checkOnly && (await fileExists(targetPath))) {
+      await chmod(targetPath, desiredTargetMode);
     }
   }
+
+  // Note: chmod doesn't report whether it changed anything; "changed" is content drift only.
+  // We intentionally keep this simple: mode normalization is best-effort hygiene.
 
   if (checkOnly && changed.length > 0) {
     throw new Error(`[release] installer artifacts are out of sync: ${changed.join(', ')}`);
