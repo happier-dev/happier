@@ -25,10 +25,26 @@ export function decryptBox(encryptedBundle: Uint8Array, recipientSecretKey: Uint
     const nonce = encryptedBundle.slice(sodium.crypto_box_PUBLICKEYBYTES, sodium.crypto_box_PUBLICKEYBYTES + sodium.crypto_box_NONCEBYTES);
     const encrypted = encryptedBundle.slice(sodium.crypto_box_PUBLICKEYBYTES + sodium.crypto_box_NONCEBYTES);
 
+    const decryptWithSecret = (secretKey: Uint8Array): Uint8Array | null => {
+        try {
+            return sodium.crypto_box_open_easy(encrypted, nonce, ephemeralPublicKey, secretKey);
+        } catch {
+            return null;
+        }
+    };
+
+    const direct = decryptWithSecret(recipientSecretKey);
+    if (direct) {
+        return direct;
+    }
+
+    // Compatibility path for credentials where machineKey is a seed and public key is
+    // derived from a hashed seed (CLI derivation).
     try {
-        const decrypted = sodium.crypto_box_open_easy(encrypted, nonce, ephemeralPublicKey, recipientSecretKey);
-        return decrypted;
-    } catch (error) {
+        const hashedSeed = sodium.crypto_hash(recipientSecretKey);
+        const compatSecretKey = hashedSeed.slice(0, sodium.crypto_box_SECRETKEYBYTES);
+        return decryptWithSecret(compatSecretKey);
+    } catch {
         return null;
     }
 }
