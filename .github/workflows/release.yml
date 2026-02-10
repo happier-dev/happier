@@ -287,7 +287,6 @@ jobs:
           token: ${{ steps.app_token.outputs.token }}
 
       - name: Setup Node
-        if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && (contains(format(',{0},', inputs.custom_checks), ',build_website,') || contains(format(',{0},', inputs.custom_checks), ',build_docs,') || contains(format(',{0},', inputs.custom_checks), ',cli_smoke_linux,'))) }}
         uses: actions/setup-node@v4
         with:
           node-version: 22.x

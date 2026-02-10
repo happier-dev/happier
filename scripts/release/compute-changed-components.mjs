@@ -76,8 +76,7 @@ function main() {
   }
 }
 
-try {
-  main();
-} catch (err) {
-  fail(err?.stack || String(err));
-}
+// Support both sync and async main() implementations.
+Promise.resolve()
+  .then(() => main())
+  .catch((err) => fail(err?.stack || String(err)));
