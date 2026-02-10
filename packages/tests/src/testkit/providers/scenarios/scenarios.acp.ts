@@ -1,11 +1,11 @@
-import type { ProviderScenario } from './types';
+import type { ProviderScenario } from '../types';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { fetchAllMessages, fetchSessionV2 } from '../sessions';
-import { decryptLegacyBase64 } from '../messageCrypto';
-import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from './outsideWorkspacePath';
+import { fetchAllMessages, fetchSessionV2 } from '../../sessions';
+import { decryptLegacyBase64 } from '../../messageCrypto';
+import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harness/outsideWorkspacePath';
 
 function k(providerId: string, kind: 'tool-call' | 'tool-result' | 'permission-request', toolName: string): string {
   return `acp/${providerId}/${kind}/${toolName}`;

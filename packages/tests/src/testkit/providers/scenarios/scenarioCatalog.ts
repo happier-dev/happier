@@ -3,25 +3,25 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import type { AcpPermissionMode, ProviderScenario, ProviderUnderTest } from './types';
-import { hasStringSubstring, waitForAcpSidechainMessages } from './assertions';
-import { shapeOf, stableStringifyShape } from './shape';
-import { fetchMessagesSince, fetchSessionV2, patchSessionMetadataWithRetry } from '../sessions';
-import { decryptLegacyBase64, encryptLegacyBase64 } from '../messageCrypto';
-import { sleep } from '../timing';
-import { enqueuePendingQueueV2 } from '../pendingQueueV2';
+import type { AcpPermissionMode, ProviderScenario, ProviderUnderTest } from '../types';
+import { hasStringSubstring, waitForAcpSidechainMessages } from '../assertions';
+import { shapeOf, stableStringifyShape } from '../shape';
+import { fetchMessagesSince, fetchSessionV2, patchSessionMetadataWithRetry } from '../../sessions';
+import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
+import { sleep } from '../../timing';
+import { enqueuePendingQueueV2 } from '../../pendingQueueV2';
 import {
   resolveAcpOutsideWorkspaceWriteAllowed,
   resolveAcpOutsideWorkspaceRequireTaskComplete,
   resolveAcpOutsideWorkspaceWriteMustComplete,
   resolveAcpToolPermissionPromptExpectation,
   yoloFlagForPermissionMode,
-} from './acpPermissionPrompts';
+} from '../permissions/acpPermissionPrompts';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { createUserScopedSocketCollector } from '../socketClient';
-import { withCapabilityProbeRetry } from './capabilityRetry';
-import { enrichCapabilityProbeError } from './capabilityProbeFailure';
-import { withTimeoutMs } from '../timing/withTimeout';
+import { createUserScopedSocketCollector } from '../../socketClient';
+import { withCapabilityProbeRetry } from '../harness/capabilityRetry';
+import { enrichCapabilityProbeError } from '../harness/capabilityProbeFailure';
+import { withTimeoutMs } from '../../timing/withTimeout';
 import {
   makeAcpEditResultIncludesDiffScenario,
   makeAcpGlobListFilesScenario,
@@ -41,7 +41,7 @@ import {
   makeAcpSearchLsEquivalenceScenario,
   makeAcpWriteInWorkspaceScenario,
 } from './scenarios.acp';
-import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from './outsideWorkspacePath';
+import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harness/outsideWorkspacePath';
 
 type ScenarioFactory = (provider: ProviderUnderTest) => ProviderScenario;
 

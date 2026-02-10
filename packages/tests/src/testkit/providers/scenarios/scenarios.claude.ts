@@ -2,12 +2,12 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ProviderScenario } from './types';
-import { hasStringSubstring } from './assertions';
-import { fetchSessionV2 } from '../sessions';
-import { decryptLegacyBase64 } from '../messageCrypto';
-import { sleep } from '../timing';
-import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from './outsideWorkspacePath';
+import type { ProviderScenario } from '../types';
+import { hasStringSubstring } from '../assertions';
+import { fetchSessionV2 } from '../../sessions';
+import { decryptLegacyBase64 } from '../../messageCrypto';
+import { sleep } from '../../timing';
+import { cleanupOutsideWorkspacePath, makeOutsideWorkspacePath } from '../harness/outsideWorkspacePath';
 
 const agentSdkRemoteMetaBase = {
   claudeRemoteAgentSdkEnabled: true,

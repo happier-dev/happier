@@ -1,4 +1,4 @@
-import { sleep } from '../timing';
+import { sleep } from '../../timing';
 
 const RETRIABLE_ERROR_PATTERNS = [
   'operation has timed out',

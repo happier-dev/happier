@@ -1,8 +1,8 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ProviderScenario } from './types';
-import { shapeOf, stableStringifyShape } from './shape';
-import { hasStringSubstring, waitForAcpSidechainMessages } from './assertions';
+import type { ProviderScenario } from '../types';
+import { shapeOf, stableStringifyShape } from '../shape';
+import { hasStringSubstring, waitForAcpSidechainMessages } from '../assertions';
 import {
   makeAcpPermissionOutsideWorkspaceScenario,
   makeAcpPermissionDenyOutsideWorkspaceReadScenario,

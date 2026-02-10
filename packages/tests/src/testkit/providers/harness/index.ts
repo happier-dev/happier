@@ -3,43 +3,43 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 
-import { createRunDirs } from '../runDir';
-import { startServerLight, type StartedServer } from '../process/serverLight';
-import { createTestAuth } from '../auth';
-import { createSessionWithCiphertexts, fetchAllMessages, fetchMessagesSince, fetchSessionV2 } from '../sessions';
-import { envFlag } from '../env';
-import { writeTestManifestForServer } from '../manifestForServer';
-import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
-import { repoRootDir } from '../paths';
-import { decryptLegacyBase64, encryptLegacyBase64 } from '../messageCrypto';
-import { writeCliSessionAttachFile } from '../cliAttachFile';
-import { startTestDaemon, stopDaemonFromHomeDir, type StartedDaemon } from '../daemon/daemon';
-import { sleep } from '../timing';
-import { createUserScopedSocketCollector, type CapturedEvent } from '../socketClient';
-import { parsePositiveInt } from '../numbers';
-import { which, yarnCommand } from '../process/commands';
-import { ensureCliDistBuilt, ensureCliSharedDepsBuilt } from '../process/cliDist';
-import { fetchJson } from '../http';
-import { enqueuePendingQueueV2, listPendingQueueV2 } from '../pendingQueueV2';
-import { seedCliAuthForServer } from '../cliAuth';
+import { createRunDirs } from '../../runDir';
+import { startServerLight, type StartedServer } from '../../process/serverLight';
+import { createTestAuth } from '../../auth';
+import { createSessionWithCiphertexts, fetchAllMessages, fetchMessagesSince, fetchSessionV2 } from '../../sessions';
+import { envFlag } from '../../env';
+import { writeTestManifestForServer } from '../../manifestForServer';
+import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from '../../process/spawnProcess';
+import { repoRootDir } from '../../paths';
+import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
+import { writeCliSessionAttachFile } from '../../cliAttachFile';
+import { startTestDaemon, stopDaemonFromHomeDir, type StartedDaemon } from '../../daemon/daemon';
+import { sleep } from '../../timing';
+import { createUserScopedSocketCollector, type CapturedEvent } from '../../socketClient';
+import { parsePositiveInt } from '../../numbers';
+import { which, yarnCommand } from '../../process/commands';
+import { ensureCliDistBuilt, ensureCliSharedDepsBuilt } from '../../process/cliDist';
+import { fetchJson } from '../../http';
+import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../pendingQueueV2';
+import { seedCliAuthForServer } from '../../cliAuth';
 
-import type { ProviderContractMatrixResult, ProviderFixtureExamples, ProviderFixtures, ProviderScenario, ProviderUnderTest } from './types';
+import type { ProviderContractMatrixResult, ProviderFixtureExamples, ProviderFixtures, ProviderScenario, ProviderUnderTest } from '../types';
 import {
   diffProviderBaseline,
   loadProviderBaseline,
   providerBaselinePath,
   selectBaselineFixtureKeysFromScenario,
   writeProviderBaseline,
-} from './baselines';
-import { validateNormalizedToolFixturesV2 } from './validateToolSchemas';
-import { checkMaxTraceEvents, filterImportedTraceEvents, scenarioSatisfiedByTrace } from './traceSatisfaction';
-import { scenarioSatisfiedByMessages } from './messageSatisfaction';
-import { loadProvidersFromCliSpecs } from './providerSpecs';
-import { waitForAcpSidechainMessages } from './assertions';
-import { scenarioCatalog } from './scenarioCatalog';
+} from '../baselines';
+import { validateNormalizedToolFixturesV2 } from '../toolSchemas/validateToolSchemas';
+import { checkMaxTraceEvents, filterImportedTraceEvents, scenarioSatisfiedByTrace } from '../satisfaction/traceSatisfaction';
+import { scenarioSatisfiedByMessages } from '../satisfaction/messageSatisfaction';
+import { loadProvidersFromCliSpecs } from '../specs/providerSpecs';
+import { waitForAcpSidechainMessages } from '../assertions';
+import { scenarioCatalog } from '../scenarios/scenarioCatalog';
 import { resolveProviderAuthOverlay } from './providerAuthOverlay';
 import { applyHomeIsolationEnv } from './harnessEnv';
-import { resolveAcpToolPermissionPromptExpectation } from './acpPermissionPrompts';
+import { resolveAcpToolPermissionPromptExpectation } from '../permissions/acpPermissionPrompts';
 import {
   extractFatalAgentErrorMessage,
   isSkippableProviderUnavailabilityError,

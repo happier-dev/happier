@@ -1,5 +1,5 @@
-import type { ProviderScenario } from './types';
-import { hasStringSubstring } from './assertions';
+import type { ProviderScenario } from '../types';
+import { hasStringSubstring } from '../assertions';
 import {
   makeAcpPermissionOutsideWorkspaceScenario,
   makeAcpReadInWorkspaceScenario,

@@ -2,8 +2,8 @@ import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { envFlag } from '../env';
-import { parsePositiveInt } from '../numbers';
+import { envFlag } from '../../env';
+import { parsePositiveInt } from '../../numbers';
 
 import type { ProviderScenario } from './types';
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 
-import { applyHomeIsolationEnv } from '../../src/testkit/providers/harnessEnv';
+import { applyHomeIsolationEnv } from '../../src/testkit/providers/harness/harnessEnv';
 
 describe('providers harness', () => {
   it('isolates HOME/XDG_CONFIG_HOME to cliHome', () => {
@@ -13,4 +13,3 @@ describe('providers harness', () => {
     expect(env.USERPROFILE).toBe(cliHome);
   });
 });
-

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyHomeIsolationEnv } from '../../src/testkit/providers/harnessEnv';
+import { applyHomeIsolationEnv } from '../../src/testkit/providers/harness/harnessEnv';
 
 describe('applyHomeIsolationEnv', () => {
   it('sets HOME/XDG/USERPROFILE in env mode', () => {
