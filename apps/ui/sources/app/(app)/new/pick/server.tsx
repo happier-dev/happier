@@ -107,16 +107,13 @@ export default React.memo(function ServerPickerScreen() {
         </Pressable>
     ), [router, theme.colors.header.tint]);
 
-    const headerTitle = React.useCallback(() => t('server.switchToServer'), []);
-
     const screenOptions = React.useMemo(() => ({
         headerShown: true,
         title: t('server.switchToServer'),
-        headerTitle,
         headerBackTitle: t('common.back'),
         presentation: Platform.OS === 'ios' ? ('containedModal' as const) : undefined,
         headerLeft,
-    }), [headerLeft, headerTitle]);
+    }), [headerLeft]);
 
     return (
         <>
