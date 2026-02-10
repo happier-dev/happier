@@ -2,6 +2,7 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import { ApiClient } from '@/api/api';
+import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import { logger } from '@/ui/logger';
 import { loop } from '@/backends/claude/loop';
 import { AgentState, Metadata, Session as ApiSession } from '@/api/types';
@@ -33,7 +34,8 @@ import { resolveStartupPermissionModeFromSession } from '@/agent/runtime/permiss
 import { createBaseSessionForAttach } from '@/agent/runtime/createBaseSessionForAttach';
 import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 import { hashClaudeEnhancedModeForQueue } from '@/backends/claude/remote/modeHash';
-import { applyClaudeRemoteMetaState, DEFAULT_CLAUDE_REMOTE_META_STATE } from '@/backends/claude/remote/claudeRemoteMetaState';
+import { applyClaudeRemoteMetaState } from '@/backends/claude/remote/claudeRemoteMetaState';
+import { resolveInitialClaudeRemoteMetaState } from '@/backends/claude/remote/resolveInitialClaudeRemoteMetaState';
 import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
 import { adoptModelOverrideFromMetadata } from './utils/adoptModelOverrideFromMetadata';
 import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
@@ -55,6 +57,8 @@ export interface StartOptions {
     jsRuntime?: JsRuntime
     /** Internal terminal runtime flags passed by the spawner (daemon/tmux wrapper). */
     terminalRuntime?: TerminalRuntimeFlags | null
+    /** Seed defaults for Claude remote-mode settings forwarded via message meta. */
+    claudeRemoteMetaDefaults?: Record<string, unknown> | null
     /**
      * Optional timestamp for permissionMode (ms). Used to order explicit UI selections across devices.
      * When omitted, the runner falls back to local time when publishing a mode.
@@ -157,11 +161,13 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     }
     logger.debug(`Using machineId: ${machineId}`);
 
-    // Create machine if it doesn't exist
-    await api.getOrCreateMachine({
+    const ensured = await ensureMachineRegistered({
+        api,
         machineId,
-        metadata: initialMachineMetadata
+        metadata: initialMachineMetadata,
+        caller: 'runClaude',
     });
+    machineId = ensured.machineId;
 
     const terminal = buildTerminalMetadataFromRuntimeFlags(options.terminalRuntime ?? null);
     // Resolve initial permission mode for sessions that start in terminal local mode.
@@ -430,7 +436,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
     let currentAllowedTools: string[] | undefined = undefined; // Track current allowed tools
     let currentDisallowedTools: string[] | undefined = undefined; // Track current disallowed tools
-    let currentClaudeRemoteMetaState = DEFAULT_CLAUDE_REMOTE_META_STATE;
+    let currentClaudeRemoteMetaState = resolveInitialClaudeRemoteMetaState({ metaDefaults: options.claudeRemoteMetaDefaults });
     session.onUserMessage((message) => {
         const adoptedModel = adoptModelOverrideFromMetadata({
             currentModelId: currentModel,

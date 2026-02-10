@@ -1,5 +1,6 @@
 import { ApiClient } from '@/api/api';
 import type { MachineMetadata } from '@/api/types';
+import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { Credentials } from '@/persistence';
 import { readSettings } from '@/persistence';
 
@@ -21,6 +22,11 @@ export async function initializeBackendApiContext(opts: {
     console.error(opts.missingMachineIdMessage ?? DEFAULT_MISSING_MACHINE_ID_MESSAGE);
     process.exit(1);
   }
-  await api.getOrCreateMachine({ machineId, metadata: opts.machineMetadata });
-  return { api, machineId };
+  const { machineId: registeredMachineId } = await ensureMachineRegistered({
+    api,
+    machineId,
+    metadata: opts.machineMetadata,
+    caller: 'initializeBackendApiContext',
+  });
+  return { api, machineId: registeredMachineId };
 }

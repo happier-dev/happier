@@ -3,6 +3,7 @@ import os from 'os';
 import { randomBytes } from 'node:crypto';
 
 import { ApiClient } from '@/api/api';
+import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { TrackedSession } from './types';
 import { MachineMetadata, DaemonState } from '@/api/types';
@@ -109,7 +110,9 @@ export async function startDaemon(): Promise<void> {
 
     // Ensure auth and machine registration BEFORE we take the daemon lock.
     // This prevents stuck lock files when auth is interrupted or cannot proceed.
-    const { credentials, machineId } = await authAndSetupMachineIfNeeded();
+    const auth = await authAndSetupMachineIfNeeded();
+    const credentials = auth.credentials;
+    let machineId = auth.machineId;
     logger.debug('[DAEMON RUN] Auth and machine setup complete');
 
     // Acquire exclusive lock (proves daemon is running)
@@ -520,19 +523,20 @@ export async function startDaemon(): Promise<void> {
 		            env: process.env,
 		          });
 
-		          if (windowsConsoleMode === 'visible') {
-		            const { runtime, argv } = buildHappyCliSubprocessInvocation(args);
-		            const filePath = runtime === 'node' ? process.execPath : runtime;
+			          if (windowsConsoleMode === 'visible') {
+			            const { runtime, argv, env } = buildHappyCliSubprocessInvocation(args);
+			            const filePath = runtime === 'node' ? process.execPath : runtime;
 
-		            const started = await startHappySessionInVisibleWindowsConsole({
-		              filePath,
-		              args: argv,
-		              workingDirectory: directory,
-		              env: {
-		                ...process.env,
-		                ...extraEnvForChildWithMessage,
-		              },
-		            });
+			            const started = await startHappySessionInVisibleWindowsConsole({
+			              filePath,
+			              args: argv,
+			              workingDirectory: directory,
+			              env: {
+			                ...process.env,
+			                ...extraEnvForChildWithMessage,
+			                ...(env ?? {}),
+			              },
+			            });
 
 		            if (!started.ok) {
 		              logger.debug('[DAEMON RUN] Failed to spawn visible Windows console session', { error: started.errorMessage });
@@ -798,11 +802,15 @@ export async function startDaemon(): Promise<void> {
     // Get or create machine
     const preferredHostForRegistration = await getPreferredHostName();
     const metadataForRegistration: MachineMetadata = { ...initialMachineMetadata, host: preferredHostForRegistration };
-    const machine = await api.getOrCreateMachine({
+    const ensured = await ensureMachineRegistered({
+      api,
       machineId,
       metadata: metadataForRegistration,
-      daemonState: initialDaemonState
+      daemonState: initialDaemonState,
+      caller: 'startDaemon',
     });
+    machineId = ensured.machineId;
+    const machine = ensured.machine;
     logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
 
     // Create realtime machine session
