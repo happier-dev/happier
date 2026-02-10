@@ -53,7 +53,7 @@ export default function TerminalConnectScreen() {
         if (authRedirectTriggeredRef.current) return;
 
         authRedirectTriggeredRef.current = true;
-        const desiredServerUrl = (serverUrlFromHash ?? '').trim();
+        const desiredServerUrl = normalizeServerUrl(serverUrlFromHash ?? '');
         setPendingTerminalConnect({
             publicKeyB64Url: publicKey,
             serverUrl: desiredServerUrl || getActiveServerUrl(),

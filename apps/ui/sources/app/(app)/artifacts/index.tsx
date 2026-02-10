@@ -126,11 +126,17 @@ export default function ArtifactsScreen() {
     const router = useRouter();
     const artifacts = useArtifacts();
     const [isLoading, setIsLoading] = React.useState(false);
+    const debug = React.useCallback((...args: unknown[]) => {
+        if (process.env.EXPO_PUBLIC_DEBUG) {
+            // eslint-disable-next-line no-console
+            console.log(...args);
+        }
+    }, []);
     
     // Fetch artifacts on mount
     React.useEffect(() => {
-        console.log('📱 ArtifactsScreen: Component mounted, fetching artifacts');
-        console.log(`📱 ArtifactsScreen: Current artifacts count: ${artifacts.length}`);
+        debug('[ArtifactsScreen] mount: fetching artifacts');
+        debug(`[ArtifactsScreen] current artifacts count: ${artifacts.length}`);
         let cancelled = false;
         
         (async () => {
@@ -138,37 +144,40 @@ export default function ArtifactsScreen() {
                 // Check if credentials are available
                 const credentials = sync.getCredentials();
                 if (!credentials) {
-                    console.log('📱 ArtifactsScreen: No credentials available, skipping fetch');
+                    debug('[ArtifactsScreen] no credentials available; skipping fetch');
                     return;
                 }
                 
                 setIsLoading(true);
-                console.log('📱 ArtifactsScreen: Calling sync.fetchArtifactsList()');
+                debug('[ArtifactsScreen] calling sync.fetchArtifactsList()');
                 await sync.fetchArtifactsList();
-                console.log('📱 ArtifactsScreen: fetchArtifactsList completed');
+                debug('[ArtifactsScreen] fetchArtifactsList completed');
             } catch (error) {
-                console.error('📱 ArtifactsScreen: Failed to fetch artifacts:', error);
+                if (process.env.EXPO_PUBLIC_DEBUG) {
+                    // eslint-disable-next-line no-console
+                    console.error('[ArtifactsScreen] failed to fetch artifacts:', error);
+                }
             } finally {
                 if (!cancelled) {
                     setIsLoading(false);
-                    console.log('📱 ArtifactsScreen: Loading complete');
+                    debug('[ArtifactsScreen] loading complete');
                 }
             }
         })();
         
         return () => {
             cancelled = true;
-            console.log('📱 ArtifactsScreen: Component unmounted');
+            debug('[ArtifactsScreen] unmount');
         };
-    }, []);
+    }, [debug]);
     
     // Log when artifacts change
     React.useEffect(() => {
-        console.log(`📱 ArtifactsScreen: Artifacts array updated, count: ${artifacts.length}`);
+        debug(`[ArtifactsScreen] artifacts updated: count=${artifacts.length}`);
         if (artifacts.length > 0) {
-            console.log('📱 ArtifactsScreen: First artifact:', artifacts[0]);
+            debug('[ArtifactsScreen] first artifact:', artifacts[0]);
         }
-    }, [artifacts]);
+    }, [artifacts, debug]);
 
     const renderItem = React.useCallback(({ item, index }: { item: DecryptedArtifact; index: number }) => {
         const isFirst = index === 0;

@@ -41,6 +41,7 @@ vi.mock('@/auth/storage/tokenStorage', () => ({
         setPendingExternalAuth,
         clearPendingExternalAuth,
     },
+    isLegacyAuthCredentials: (credentials: unknown) => Boolean(credentials),
 }));
 
 vi.mock('@/platform/cryptoRandom', () => ({
