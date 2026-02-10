@@ -251,9 +251,37 @@ export const Item = React.memo<ItemProps>((props) => {
                         // If subtitle is a ReactNode (not string), render as-is.
                         // This enables richer subtitle layouts (e.g. inline glyphs).
                         if (typeof subtitle !== 'string') {
+                            const wrapPrimitive = (value: string | number) => {
+                                const asText = String(value);
+                                const effectiveLines = subtitleLines !== undefined
+                                    ? (subtitleLines <= 0 ? undefined : subtitleLines)
+                                    : (asText.indexOf('\n') !== -1 ? undefined : 1);
+
+                                return (
+                                    <Text
+                                        style={[styles.subtitle, subtitleStyle]}
+                                        numberOfLines={effectiveLines}
+                                    >
+                                        {asText}
+                                    </Text>
+                                );
+                            };
+
+                            const normalizeNode = (node: any): any => {
+                                if (node == null || typeof node === 'boolean') return null;
+                                if (typeof node === 'string' || typeof node === 'number') return wrapPrimitive(node);
+                                if (Array.isArray(node)) return node.map(normalizeNode);
+                                if (React.isValidElement(node) && node.type === React.Fragment) {
+                                    return <>{React.Children.map((node as any).props?.children, normalizeNode)}</>;
+                                }
+                                return node;
+                            };
+
+                            const normalized = normalizeNode(subtitle);
+
                             return (
                                 <View style={{ marginTop: Platform.select({ ios: 2, default: 0 }) }}>
-                                    {subtitle}
+                                    {normalized}
                                 </View>
                             );
                         }

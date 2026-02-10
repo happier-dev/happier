@@ -46,6 +46,15 @@ export function ActionListSection(props: {
 
     if (actions.length === 0) return null;
 
+    const renderActionIcon = React.useCallback((icon: React.ReactNode) => {
+        // On web, raw strings/numbers cannot be direct children of <View>.
+        // Wrap primitives in <Text> to avoid "Unexpected text node" runtime errors.
+        if (typeof icon === 'string' || typeof icon === 'number') {
+            return <Text>{icon}</Text>;
+        }
+        return icon;
+    }, []);
+
     return (
         <View style={styles.section}>
             {props.title ? (
@@ -59,7 +68,7 @@ export function ActionListSection(props: {
                     key={action.id}
                     disabled={action.disabled}
                     onPress={action.onPress}
-                    left={action.icon ? <View>{action.icon}</View> : null}
+                    left={action.icon ? <View>{renderActionIcon(action.icon)}</View> : null}
                     title={action.label}
                     titleStyle={styles.label}
                     variant="slim"
