@@ -35,7 +35,7 @@ function coerceProfile(value: any): ServerProfile | null {
   const updatedAt = Number.isFinite(value.updatedAt) ? Number(value.updatedAt) : 0;
   const lastUsedAt = Number.isFinite(value.lastUsedAt) ? Number(value.lastUsedAt) : 0;
   if (!id || !serverUrl || !webappUrl) return null;
-  const displayName = id === 'official'
+  const displayName = id === 'cloud'
     ? 'Happier Cloud'
     : name;
   if (!displayName) return null;
@@ -83,9 +83,9 @@ export async function getServerProfile(identifierRaw: string): Promise<ServerPro
 
 export async function getActiveServerProfile(): Promise<ServerProfile> {
   const settings: any = await readSettings();
-  const activeId = sanitizeServerIdForFilesystem(settings?.activeServerId ?? 'official', 'official');
+  const activeId = sanitizeServerIdForFilesystem(settings?.activeServerId ?? 'cloud', 'cloud');
   const servers = settings?.servers && typeof settings.servers === 'object' ? settings.servers : {};
-  const active = coerceProfile((servers as any)[activeId]) ?? coerceProfile((servers as any).official);
+  const active = coerceProfile((servers as any)[activeId]) ?? coerceProfile((servers as any).cloud);
   if (!active) {
     throw new Error(`Active server profile not found: ${activeId}`);
   }
@@ -125,8 +125,8 @@ export async function addServerProfile(opts: Readonly<{
 }>): Promise<ServerProfile> {
   const name = String(opts.name ?? '').trim();
   let id = deriveServerIdFromName(name);
-  if (id.toLowerCase() === 'official') {
-    throw new Error('Cannot create a profile with reserved name "official"');
+  if (id.toLowerCase() === 'cloud') {
+    throw new Error('Cannot create a profile with reserved name "cloud"');
   }
   if (!id) {
     throw new Error('Failed to derive a safe server profile id');
@@ -184,18 +184,18 @@ export async function removeServerProfile(
   const force = opts.force === true;
 
   const before = await readSettings();
-  const activeServerId = sanitizeServerIdForFilesystem((before as any)?.activeServerId ?? 'official', 'official');
+  const activeServerId = sanitizeServerIdForFilesystem((before as any)?.activeServerId ?? 'cloud', 'cloud');
   const servers = (before as any)?.servers && typeof (before as any).servers === 'object' ? (before as any).servers : {};
   const resolvedId = findProfileIdByIdOrName(servers, identifier);
   if (!resolvedId) {
     throw new Error(`Server profile not found: ${identifier}`);
   }
-  if (resolvedId === 'official') {
+  if (resolvedId === 'cloud') {
     throw new Error('Cannot remove the Happier Cloud server profile');
   }
 
   if (resolvedId === activeServerId && !force) {
-    throw new Error(`Cannot remove the active server profile (${resolvedId}). Use --force to switch back to official and remove it.`);
+    throw new Error(`Cannot remove the active server profile (${resolvedId}). Use --force to switch back to cloud and remove it.`);
   }
 
   await updateSettings((current: any) => {
@@ -206,14 +206,14 @@ export async function removeServerProfile(
     }
 
     const { [resolvedId]: _removed, ...rest } = servers as any;
-    const nextActive = resolvedId === current?.activeServerId ? 'official' : current?.activeServerId;
+    const nextActive = resolvedId === current?.activeServerId ? 'cloud' : current?.activeServerId;
     if (nextActive === resolvedId) {
       throw new Error(`Refusing to keep ${resolvedId} as active after removal`);
     }
     if (nextActive && !(nextActive in rest)) {
       // Safety: if active server disappears (corrupt settings), fall back.
-      (rest as any).official = (rest as any).official ?? (servers as any).official;
-      return { ...current, activeServerId: 'official', servers: rest };
+      (rest as any).cloud = (rest as any).cloud ?? (servers as any).cloud;
+      return { ...current, activeServerId: 'cloud', servers: rest };
     }
     return { ...current, activeServerId: nextActive, servers: rest };
   });

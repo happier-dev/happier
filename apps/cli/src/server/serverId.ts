@@ -8,10 +8,10 @@ export function isServerIdFilesystemSafe(raw: string): boolean {
   return SERVER_ID_SAFE_RE.test(value);
 }
 
-export function sanitizeServerIdForFilesystem(raw: string, fallback = 'official'): string {
+export function sanitizeServerIdForFilesystem(raw: string, fallback = 'cloud'): string {
   const value = String(raw ?? '').trim();
   if (isServerIdFilesystemSafe(value)) return value;
-  return String(fallback ?? '').trim() || 'official';
+  return String(fallback ?? '').trim() || 'cloud';
 }
 
 export function deriveServerIdFromName(raw: string): string {

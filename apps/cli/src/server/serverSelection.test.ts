@@ -40,7 +40,7 @@ describe('server selection flags', () => {
 
       const settingsRaw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
       expect(settingsRaw.schemaVersion).toBe(5);
-      expect(settingsRaw.activeServerId).not.toBe('official');
+      expect(settingsRaw.activeServerId).not.toBe('cloud');
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
       delete process.env.HAPPIER_HOME_DIR;
@@ -63,7 +63,7 @@ describe('server selection flags', () => {
       expect(config.configuration.serverUrl).toBe('https://stack.example.test');
       expect(config.configuration.webappUrl).toBe('https://stack.example.test');
       expect(process.env.HAPPIER_WEBAPP_URL).toBe('https://stack.example.test');
-      expect((await getActiveServerProfile()).id).toBe('official');
+      expect((await getActiveServerProfile()).id).toBe('cloud');
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
       delete process.env.HAPPIER_HOME_DIR;
@@ -117,7 +117,7 @@ describe('server selection flags', () => {
       expect(config.configuration.webappUrl).toBe('https://app.company.example.test');
 
       const settingsRaw = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8'));
-      expect(settingsRaw.activeServerId).toBe('official');
+      expect(settingsRaw.activeServerId).toBe('cloud');
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
       delete process.env.HAPPIER_HOME_DIR;
@@ -149,7 +149,7 @@ describe('server selection flags', () => {
       expect(config.configuration.webappUrl).toBe('https://app.company.example.test');
       expect(process.env.HAPPIER_SERVER_URL).toBe('https://company.example.test');
       expect(process.env.HAPPIER_WEBAPP_URL).toBe('https://app.company.example.test');
-      expect((await getActiveServerProfile()).id).toBe('official');
+      expect((await getActiveServerProfile()).id).toBe('cloud');
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
       delete process.env.HAPPIER_HOME_DIR;

@@ -72,11 +72,11 @@ describe('server profile persistence', () => {
         {
           schemaVersion: 5,
           onboardingCompleted: true,
-          activeServerId: 'official',
+          activeServerId: 'cloud',
           servers: {
-            official: {
-              id: 'official',
-              name: 'official',
+            cloud: {
+              id: 'cloud',
+              name: 'cloud',
               serverUrl: 'https://api.happier.dev',
               webappUrl: 'https://app.happier.dev',
               createdAt: 1,
@@ -98,7 +98,7 @@ describe('server profile persistence', () => {
 
     await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(2), token: 't' });
 
-    const expected = join(homeDir, 'servers', 'official', 'access.key');
+    const expected = join(homeDir, 'servers', 'cloud', 'access.key');
     expect(existsSync(expected)).toBe(true);
   });
 });

@@ -55,7 +55,7 @@ describe('changes cursor persistence', () => {
             expect(await readLastChangesCursor('acc-1')).toBe(12);
 
             const raw = JSON.parse(readFileSync(configuration.settingsFile, 'utf8'));
-            expect(raw.lastChangesCursorByServerIdByAccountId).toEqual({ official: { 'acc-1': 12 } });
+            expect(raw.lastChangesCursorByServerIdByAccountId).toEqual({ cloud: { 'acc-1': 12 } });
 
             // Writing 0 removes the entry to keep settings small.
             await writeLastChangesCursor('acc-1', 0);
@@ -80,11 +80,11 @@ describe('changes cursor persistence', () => {
             const seed = {
                 schemaVersion: 5,
                 onboardingCompleted: true,
-                activeServerId: 'official',
+                activeServerId: 'cloud',
                 servers: {
-                    official: {
-                        id: 'official',
-                        name: 'official',
+                    cloud: {
+                        id: 'cloud',
+                        name: 'cloud',
                         serverUrl: 'https://api.happier.dev',
                         webappUrl: 'https://app.happier.dev',
                         createdAt: 0,
@@ -95,7 +95,7 @@ describe('changes cursor persistence', () => {
                 machineIdByServerId: {},
                 machineIdConfirmedByServerByServerId: {},
                 lastChangesCursorByServerIdByAccountId: {
-                    official: { 'acc-1': 5 },
+                    cloud: { 'acc-1': 5 },
                     [envServerId]: { 'acc-1': 9 },
                 },
             };
@@ -107,7 +107,7 @@ describe('changes cursor persistence', () => {
 
             await writeLastChangesCursor('acc-1', 12);
             const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-            expect(raw.lastChangesCursorByServerIdByAccountId.official['acc-1']).toBe(5);
+            expect(raw.lastChangesCursorByServerIdByAccountId.cloud['acc-1']).toBe(5);
             expect(raw.lastChangesCursorByServerIdByAccountId[envServerId]['acc-1']).toBe(12);
         } finally {
             rmSync(homeDir, { recursive: true, force: true });

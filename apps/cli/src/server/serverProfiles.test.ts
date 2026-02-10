@@ -49,7 +49,7 @@ describe('server profiles', () => {
     } = await import('./serverProfiles');
 
     const before = await getActiveServerProfile();
-    expect(before.id).toBe('official');
+    expect(before.id).toBe('cloud');
     expect(before.name).toBe('Happier Cloud');
 
     const created = await addServerProfile({
@@ -63,14 +63,14 @@ describe('server profiles', () => {
     const active = await getActiveServerProfile();
     expect(active.id).toBe('selfhost');
 
-    await useServerProfile('official');
-    expect((await getActiveServerProfile()).id).toBe('official');
+    await useServerProfile('cloud');
+    expect((await getActiveServerProfile()).id).toBe('cloud');
 
     await useServerProfile('SelfHost');
     expect((await getActiveServerProfile()).id).toBe('selfhost');
 
     const list = await listServerProfiles();
-    expect(list.map((s: { id: string }) => s.id).sort()).toEqual(['official', 'selfhost']);
+    expect(list.map((s: { id: string }) => s.id).sort()).toEqual(['cloud', 'selfhost']);
   });
 
   it('refuses to remove the active server profile unless forced', async () => {
@@ -95,7 +95,7 @@ describe('server profiles', () => {
 
     const out = await removeServerProfile('selfhost', { force: true });
     expect(out.removed.id).toBe('selfhost');
-    expect(out.active.id).toBe('official');
+    expect(out.active.id).toBe('cloud');
   });
 
   it('can resolve a server profile by name without changing the active server', async () => {
@@ -119,7 +119,7 @@ describe('server profiles', () => {
     expect((await getActiveServerProfile()).id).toBe('selfhost');
   });
 
-  it('refuses to create a server profile with reserved name "official"', async () => {
+  it('refuses to create a server profile with reserved name "cloud"', async () => {
     const homeDir = createTempHomeDir('happier-cli-servers-reserved-');
     process.env.HAPPIER_HOME_DIR = homeDir;
     delete process.env.HAPPIER_SERVER_URL;
@@ -130,7 +130,7 @@ describe('server profiles', () => {
 
     await expect(
       addServerProfile({
-        name: 'official',
+        name: 'cloud',
         serverUrl: 'https://stack.example.test',
         webappUrl: 'https://app.example.test',
       }),

@@ -73,25 +73,33 @@ describe('probeServerVersion', () => {
   });
 
   it('returns network failure details for unreachable endpoints', async () => {
-    const unreachablePort = await new Promise<number>((resolve, reject) => {
-      const ephemeralServer = http.createServer();
-      ephemeralServer.listen(0, () => {
-        const address = ephemeralServer.address();
-        if (!address || typeof address === 'string') {
-          reject(new Error('expected TCP address'));
-          return;
-        }
-        ephemeralServer.close((error) => (error ? reject(error) : resolve(address.port)));
+    // Ensure this test stays well below Vitest's default 5s timeout. The production helper's
+    // default timeout is also 5s, which can race with Vitest when a connect attempt hangs.
+    const prevTimeout = process.env.HAPPIER_SERVER_TEST_TIMEOUT_MS;
+    process.env.HAPPIER_SERVER_TEST_TIMEOUT_MS = '250';
+    try {
+      const unreachablePort = await new Promise<number>((resolve, reject) => {
+        const ephemeralServer = http.createServer();
+        ephemeralServer.listen(0, () => {
+          const address = ephemeralServer.address();
+          if (!address || typeof address === 'string') {
+            reject(new Error('expected TCP address'));
+            return;
+          }
+          ephemeralServer.close((error) => (error ? reject(error) : resolve(address.port)));
+        });
       });
-    });
 
-    const { probeServerVersion } = await import('./serverTest');
-    const out = await probeServerVersion(`http://127.0.0.1:${unreachablePort}`);
-    expect(out.ok).toBe(false);
-    if (out.ok) throw new Error('expected unreachable endpoint to fail');
-    expect(out.url).toBe(`http://127.0.0.1:${unreachablePort}/v1/version`);
-    expect(out.status).toBeNull();
-    expect(out.error.length).toBeGreaterThan(0);
-    expect(out.error.startsWith('http_')).toBe(false);
+      const { probeServerVersion } = await import('./serverTest');
+      const out = await probeServerVersion(`http://127.0.0.1:${unreachablePort}`);
+      expect(out.ok).toBe(false);
+      if (out.ok) throw new Error('expected unreachable endpoint to fail');
+      expect(out.url).toBe(`http://127.0.0.1:${unreachablePort}/v1/version`);
+      expect(out.status).toBeNull();
+      expect(out.error.length).toBeGreaterThan(0);
+      expect(out.error.startsWith('http_')).toBe(false);
+    } finally {
+      process.env.HAPPIER_SERVER_TEST_TIMEOUT_MS = prevTimeout;
+    }
   });
 });

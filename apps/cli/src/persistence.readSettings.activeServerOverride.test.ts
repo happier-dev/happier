@@ -45,11 +45,11 @@ describe('readSettings (active server override)', () => {
           {
             schemaVersion: 5,
             onboardingCompleted: true,
-            activeServerId: 'official',
+            activeServerId: 'cloud',
             servers: {
-              official: {
-                id: 'official',
-                name: 'official',
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
                 serverUrl: 'https://api.happier.dev',
                 webappUrl: 'https://app.happier.dev',
                 createdAt: 0,
@@ -93,11 +93,11 @@ describe('readSettings (active server override)', () => {
           {
             schemaVersion: 5,
             onboardingCompleted: true,
-            activeServerId: 'official',
+            activeServerId: 'cloud',
             servers: {
-              official: {
-                id: 'official',
-                name: 'official',
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
                 serverUrl: 'https://api.happier.dev',
                 webappUrl: 'https://app.happier.dev',
                 createdAt: 0,
@@ -106,11 +106,11 @@ describe('readSettings (active server override)', () => {
               },
             },
             machineIdByServerId: {
-              official: 'machine-official',
+              cloud: 'machine-cloud',
               [envServerId]: 'machine-env',
             },
             machineIdConfirmedByServerByServerId: {
-              official: true,
+              cloud: true,
               [envServerId]: true,
             },
             lastChangesCursorByServerIdByAccountId: {},
@@ -126,9 +126,9 @@ describe('readSettings (active server override)', () => {
       await clearMachineId();
 
       const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
-      expect(raw.machineIdByServerId.official).toBe('machine-official');
+      expect(raw.machineIdByServerId.cloud).toBe('machine-cloud');
       expect(raw.machineIdByServerId[envServerId]).toBeUndefined();
-      expect(raw.machineIdConfirmedByServerByServerId.official).toBe(true);
+      expect(raw.machineIdConfirmedByServerByServerId.cloud).toBe(true);
       expect(raw.machineIdConfirmedByServerByServerId[envServerId]).toBeUndefined();
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
@@ -149,11 +149,11 @@ describe('readSettings (active server override)', () => {
           {
             schemaVersion: 5,
             onboardingCompleted: true,
-            activeServerId: 'official',
+            activeServerId: 'cloud',
             servers: {
-              official: {
-                id: 'official',
-                name: 'official',
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
                 serverUrl: 'https://api.happier.dev',
                 webappUrl: 'https://app.happier.dev',
                 createdAt: 0,
@@ -162,7 +162,7 @@ describe('readSettings (active server override)', () => {
               },
             },
             machineIdByServerId: {
-              official: 'machine-official',
+              cloud: 'machine-cloud',
               stack_main__id_default: 'machine-stack',
             },
             machineIdConfirmedByServerByServerId: {},
