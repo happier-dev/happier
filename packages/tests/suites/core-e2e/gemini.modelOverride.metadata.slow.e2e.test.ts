@@ -116,7 +116,14 @@ class FakeAgent {
   connection;
   constructor(connection) { this.connection = connection; }
   async initialize(_params) {
-    return { protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: { loadSession: false } };
+    // Happier CLI's ACP client may request auth via a specific methodId. Real Gemini CLI
+    // advertises auth methods during initialize, so mirror that here to avoid failing
+    // the ACP handshake in e2e (and to keep the fake agent protocol-accurate).
+    return {
+      protocolVersion: acp.PROTOCOL_VERSION,
+      agentCapabilities: { loadSession: false },
+      authMethods: [{ id: "oauth-personal" }, { id: "gemini-api-key" }],
+    };
   }
   async newSession(_params) {
     return { sessionId: randomUUID() };
