@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { scenarioCatalog } from '../../src/testkit/providers/scenarioCatalog';
+import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 import type { ProviderUnderTest } from '../../src/testkit/providers/types';
 
 function opencodeProvider(): ProviderUnderTest {
@@ -15,9 +15,14 @@ function opencodeProvider(): ProviderUnderTest {
 }
 
 describe('scenarioCatalog: opencode task_subagent_reply', () => {
-  it('requires Task call evidence but not Task result fixtures', () => {
+  it('accepts provider-specific task aliases for call/result fixtures', () => {
     const scenario = scenarioCatalog.task_subagent_reply(opencodeProvider());
-    expect(scenario.requiredFixtureKeys).toEqual(['acp/opencode/tool-call/Task']);
+    expect(scenario.requiredAnyFixtureKeys).toEqual([
+      ['acp/opencode/tool-call/Task', 'acp/opencode/tool-call/change_title'],
+      ['acp/opencode/tool-result/Task', 'acp/opencode/tool-result/change_title'],
+    ]);
+    expect(scenario.requiredFixtureKeys).toBeUndefined();
     expect(scenario.requiredTraceSubstrings).toBeUndefined();
+    expect(scenario.postSatisfy?.waitForAcpSidechainFromToolName).toBe('Task');
   });
 });

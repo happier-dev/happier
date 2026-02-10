@@ -167,12 +167,12 @@ HAPPIER_E2E_PROVIDERS=1 HAPPIER_E2E_PROVIDER_OPENCODE=1 yarn workspace @happier-
 
 The entrypoint is `suites/providers/provider.matrix.test.ts`, backed by:
 
-- `src/testkit/providers/harness.ts`
-- `src/testkit/providers/scenarioCatalog.ts`
-- `src/testkit/providers/scenarios.acp.ts`
-- `src/testkit/providers/scenarios.claude.ts`
-- `src/testkit/providers/scenarios.codex.ts`
-- `src/testkit/providers/scenarios.opencode.ts`
+- `src/testkit/providers/harness/index.ts`
+- `src/testkit/providers/scenarios/scenarioCatalog.ts`
+- `src/testkit/providers/scenarios/scenarios.acp.ts`
+- `src/testkit/providers/scenarios/scenarios.claude.ts`
+- `src/testkit/providers/scenarios/scenarios.codex.ts`
+- `src/testkit/providers/scenarios/scenarios.opencode.ts`
 
 ### Environment flags
 
@@ -220,7 +220,7 @@ Two quick examples (current at time of writing):
 
 ### How the provider harness works (step-by-step)
 
-Implementation: `src/testkit/providers/harness.ts`
+Implementation: `src/testkit/providers/harness/index.ts`
 
 1) Start server-light (selected DB provider + migrations + readiness)
 2) Create a real auth token via `/v1/auth`
@@ -242,7 +242,7 @@ Implementation: `src/testkit/providers/harness.ts`
 Provider drift detection uses two layers:
 
 1) **Schema validation**
-   - Implemented in `src/testkit/providers/validateToolSchemas.ts`
+   - Implemented in `src/testkit/providers/toolSchemas/validateToolSchemas.ts`
    - Uses `@happier-dev/protocol/tools/v2` for canonical tool schemas
    - Only enforces `_happier` + per-tool schemas for protocols that actually emit canonical V2 tool envelopes today (`acp`, `codex`)
    - Claude currently records raw `tool_use`/`tool_result` blocks; we validate a minimal raw envelope for those without requiring `_happier`.
@@ -298,7 +298,7 @@ Providers are CLI-backend-owned. The test harness discovers providers by reading
    - `apps/cli/src/backends/<providerId>/e2e/providerScenarios.json`
 2) In the tests package, add a scenario module:
    - `packages/tests/src/testkit/providers/scenarios.<providerId>.ts`
-   - Register IDs in `src/testkit/providers/scenarioCatalog.ts` so each id maps to a scenario factory.
+   - Register IDs in `src/testkit/providers/scenarios/scenarioCatalog.ts` so each id maps to a scenario factory.
 3) Keep scenarios small and explicit (single tool call, deterministic commands/paths).
 
 Practical tips:

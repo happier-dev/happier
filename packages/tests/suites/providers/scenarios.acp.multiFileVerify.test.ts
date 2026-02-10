@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { makeAcpMultiFileEditScenario } from '../../src/testkit/providers/scenarios.acp';
+import { makeAcpMultiFileEditScenario } from '../../src/testkit/providers/scenarios/scenarios.acp';
 
 describe('providers: ACP multi-file verify', () => {
   it('accepts second file path evidence from tool-result metadata filepath', async () => {

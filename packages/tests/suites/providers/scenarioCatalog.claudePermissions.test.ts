@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { scenarioCatalog } from '../../src/testkit/providers/scenarioCatalog';
+import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 import type { ProviderUnderTest } from '../../src/testkit/providers/types';
 
 function claudeProviderStub(): ProviderUnderTest {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveProviderRunPreset } from '../../src/testkit/providers/presets';
+import { resolveProviderRunPreset } from '../../src/testkit/providers/presets/presets';
 
 describe('providers: run presets', () => {
   it('returns null for unknown preset or tier', () => {

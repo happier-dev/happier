@@ -1,4 +1,22 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(SCRIPT_DIR, '../../..');
+
+function resolveServerAppWorkspaceName() {
+  try {
+    const pkgPath = resolve(REPO_ROOT, 'apps', 'server', 'package.json');
+    const raw = readFileSync(pkgPath, 'utf8');
+    const json = JSON.parse(raw);
+    const name = typeof json?.name === 'string' ? json.name.trim() : '';
+    return name || '@happier-dev/server';
+  } catch {
+    return '@happier-dev/server';
+  }
+}
 
 export function sanitizeDockerEnv(env) {
   const out = { ...(env ?? {}) };
@@ -102,20 +120,20 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl }) {
       ? {
           kind: 'migrate',
           command: 'yarn',
-          args: ['-s', 'workspace', '@happier-dev/server', 'migrate:mysql:deploy'],
+          args: ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:mysql:deploy'],
           env: { DATABASE_URL: String(databaseUrl) },
         }
       : {
           kind: 'migrate',
           command: 'yarn',
-          args: ['-s', 'workspace', '@happier-dev/server', 'prisma', 'migrate', 'deploy'],
+          args: ['-s', 'workspace', resolveServerAppWorkspaceName(), 'prisma', 'migrate', 'deploy'],
           env: { DATABASE_URL: String(databaseUrl) },
         };
 
   const contractStep = {
     kind: 'contract',
     command: 'yarn',
-    args: ['workspace', '@happier-dev/server', 'test:db-contract'],
+    args: ['workspace', resolveServerAppWorkspaceName(), 'test:db-contract'],
     env: {
       HAPPIER_DB_PROVIDER: db,
       DATABASE_URL: String(databaseUrl),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveProviderAuthOverlay } from '../../src/testkit/providers/providerAuthOverlay';
+import { resolveProviderAuthOverlay } from '../../src/testkit/providers/harness/providerAuthOverlay';
 
 describe('providers: auth overlay selection', () => {
   it('selects env overlay when any requiredAnyOf bucket is satisfied', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/providerSpecs';
+import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/specs/providerSpecs';
 
 describe('providers: cli provider scenario registry', () => {
   it('loads provider scenario registry from apps/cli backends when present', async () => {

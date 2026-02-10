@@ -4,7 +4,7 @@ import {
   summarizeProviderTokenLedgerByProviderAndModel,
   summarizeProviderTokenLedgerTotals,
   type ProviderTokenLedgerEntryV1,
-} from '../../src/testkit/providers/tokenLedger';
+} from '../../src/testkit/providers/harness/tokenLedger';
 
 describe('provider token ledger summary', () => {
   const sampleEntries: ProviderTokenLedgerEntryV1[] = [

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { abortContinuationFollowupSubstrings, scenarioCatalog } from '../../src/testkit/providers/scenarioCatalog';
+import { abortContinuationFollowupSubstrings, scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 import type { ProviderUnderTest } from '../../src/testkit/providers/types';
 
 function providerStub(id: ProviderUnderTest['id'], protocol: ProviderUnderTest['protocol'], subcommand: string): ProviderUnderTest {

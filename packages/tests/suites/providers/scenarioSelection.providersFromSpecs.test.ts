@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/providerSpecs';
-import { resolveProviderAuthOverlay } from '../../src/testkit/providers/providerAuthOverlay';
+import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/specs/providerSpecs';
+import { resolveProviderAuthOverlay } from '../../src/testkit/providers/harness/providerAuthOverlay';
 import { resolveScenariosForProvider } from '../../src/testkit/providers/harness';
 import type { ProviderUnderTest } from '../../src/testkit/providers/types';
 

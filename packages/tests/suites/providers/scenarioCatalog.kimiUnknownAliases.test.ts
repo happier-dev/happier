@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 
-import { scenarioCatalog } from '../../src/testkit/providers/scenarioCatalog';
+import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 
 describe('providers: kimi scenario fixture aliasing', () => {
   const kimiProvider = {
@@ -29,13 +29,17 @@ describe('providers: kimi scenario fixture aliasing', () => {
     expect(flat).toContain('acp/kimi/tool-result/unknown');
   });
 
-  it('uses a workspace-relative read path for read_known_file prompts', () => {
+  it('uses read-first prompt with execute fallback for read_known_file', () => {
     const scenario = scenarioCatalog.read_known_file(kimiProvider);
     const workspaceDir = '/tmp/happier-kimi-read';
     const prompt = scenario.prompt?.({ workspaceDir }) ?? '';
+    const filePath = join(workspaceDir, 'e2e-read.txt');
     expect(prompt).toContain('- Use the read tool to read: e2e-read.txt');
-    expect(prompt).not.toContain(join(workspaceDir, 'e2e-read.txt'));
-    expect(prompt).not.toContain('cat "');
+    expect(prompt).toContain(`cat "${filePath}"`);
+    expect(prompt).toContain('If the read tool fails');
+    const flat = (scenario.requiredAnyFixtureKeys ?? []).flat();
+    expect(flat).toContain('acp/kimi/tool-call/execute');
+    expect(flat).toContain('acp/kimi/tool-result/execute');
   });
 
   it('uses absolute path + execute fallback for read_missing_file_in_workspace prompts', () => {

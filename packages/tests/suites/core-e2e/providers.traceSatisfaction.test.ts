@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { checkMaxTraceEvents, hasTraceForKey, scenarioSatisfiedByTrace } from '../../src/testkit/providers/traceSatisfaction';
+import { checkMaxTraceEvents, hasTraceForKey, scenarioSatisfiedByTrace } from '../../src/testkit/providers/satisfaction/traceSatisfaction';
 
 describe('providers: trace satisfaction correlation', () => {
   it('requires tool-result to correlate to the expected tool via callId', () => {

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 
 import { describe, expect, it } from 'vitest';
 
-import { enrichCapabilityProbeError } from '../../src/testkit/providers/capabilityProbeFailure';
+import { enrichCapabilityProbeError } from '../../src/testkit/providers/harness/capabilityProbeFailure';
 
 describe('providers: capability probe failure enrichment', () => {
   it('maps timeout errors to provider fatal error when logs include auth verification', async () => {

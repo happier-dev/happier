@@ -9,6 +9,7 @@ export default defineConfig({
       'src/testkit/process/extendedDbDocker.plan.spec.ts',
       'src/testkit/env.spec.ts',
       'src/testkit/daemon/daemon.statePath.spec.ts',
+      'src/testkit/providers/satisfaction/messageSatisfaction.spec.ts',
     ],
     exclude: ['suites/core-e2e/**/*.slow.e2e.test.ts'],
     testTimeout: 180_000,

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   makeAcpResumeFreshSessionImportsHistoryScenario,
   makeAcpResumeLoadSessionScenario,
-} from '../../src/testkit/providers/scenarios.acp';
+} from '../../src/testkit/providers/scenarios/scenarios.acp';
 
 describe('providers: ACP scenario builders (resume)', () => {
   it('resume scenarios accept execute fixture aliases (Bash/Terminal/execute)', () => {
@@ -33,6 +33,25 @@ describe('providers: ACP scenario builders (resume)', () => {
       expect(flat.some((key) => key.endsWith('/tool-result/Terminal'))).toBe(true);
       expect(flat.some((key) => key.endsWith('/tool-result/execute'))).toBe(true);
     }
+  });
+
+  it('resume-load scenario does not rely on trace sentinel text and writes workspace markers', () => {
+    const load = makeAcpResumeLoadSessionScenario({
+      providerId: 'opencode',
+      metadataKey: 'opencodeSessionId',
+      phase1TraceSentinel: 'PHASE1',
+      phase2TraceSentinel: 'PHASE2',
+    });
+
+    const prompt1 = load.prompt?.({ workspaceDir: '/tmp/workspace' }) ?? '';
+    const prompt2 = load.resume?.prompt?.({ workspaceDir: '/tmp/workspace' }) ?? '';
+
+    expect(load.requiredTraceSubstrings).toBeUndefined();
+    expect(load.resume?.requiredTraceSubstrings).toBeUndefined();
+    expect(prompt1).toContain('.happier-resume-phase1.txt');
+    expect(prompt1).toContain('PHASE1');
+    expect(prompt2).toContain('.happier-resume-phase2.txt');
+    expect(prompt2).toContain('PHASE2');
   });
 
   it('kimi resume scenarios also accept unknown-shell ACP fixture aliases', () => {

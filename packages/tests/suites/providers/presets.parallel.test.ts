@@ -4,7 +4,7 @@ import {
   filterProviderIdsForScenarioSelection,
   parseMaxParallel,
   resolveProviderPresetIds,
-} from '../../src/testkit/providers/presets';
+} from '../../src/testkit/providers/presets/presets';
 
 describe('providers: parallel preset helpers', () => {
   it('resolves all providers for all preset', () => {

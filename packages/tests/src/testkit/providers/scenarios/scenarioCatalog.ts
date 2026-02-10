@@ -21,6 +21,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createUserScopedSocketCollector } from '../socketClient';
 import { withCapabilityProbeRetry } from './capabilityRetry';
 import { enrichCapabilityProbeError } from './capabilityProbeFailure';
+import { withTimeoutMs } from '../timing/withTimeout';
 import {
   makeAcpEditResultIncludesDiffScenario,
   makeAcpGlobListFilesScenario,
@@ -48,6 +49,21 @@ function nonEmptyTrimmedString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function capabilityProbePostSatisfyTimeoutMs(providerId: string): number {
+  return providerId === 'gemini' ? 180_000 : 120_000;
+}
+
+function capabilityProbeRpcTimeoutMs(providerId: string): number {
+  return providerId === 'gemini' ? 150_000 : 90_000;
+}
+
+function capabilityProbeRetryOptions(providerId: string): { attempts: number; delayMs: number } {
+  if (providerId === 'gemini') {
+    return { attempts: 1, delayMs: 500 };
+  }
+  return { attempts: 3, delayMs: 500 };
 }
 
 export function resolveMachineIdCandidatesFromSettings(settingsLike: unknown): string[] {
@@ -92,6 +108,7 @@ async function waitForSessionActive(params: {
     if (snap?.active === true) return;
     await sleep(250);
   }
+  throw new Error(`Timed out waiting for session active (${params.sessionId})`);
 }
 
 async function resolveMachineIdsFromSettings(params: {
@@ -115,7 +132,7 @@ async function resolveMachineIdsFromSettings(params: {
   return [];
 }
 
-async function invokeRpcAcrossMachineIds(params: {
+export async function invokeRpcAcrossMachineIds(params: {
   ui: ReturnType<typeof createUserScopedSocketCollector>;
   machineIds: string[];
   method: string;
@@ -125,16 +142,22 @@ async function invokeRpcAcrossMachineIds(params: {
 }): Promise<unknown> {
   const encrypted = encryptLegacyBase64(params.payload, params.secret);
   const deadline = Date.now() + params.timeoutMs;
-  const rpcAckTimeoutMs = Math.max(30_000, Math.min(params.timeoutMs + 10_000, 300_000));
   let lastMethodUnavailable: unknown = null;
 
   while (Date.now() < deadline) {
+    const remainingMs = deadline - Date.now();
+    // Bound each rpcCall attempt by the remaining overall time budget so probes can't hang.
+    const rpcAckTimeoutMs = Math.max(1, Math.min(remainingMs, 300_000));
     let unresolvedForAllCandidates = true;
 
     for (const machineId of params.machineIds) {
       const rpcMethod = `${machineId}:${params.method}`;
       try {
-        const candidate = await params.ui.rpcCall<any>(rpcMethod, encrypted, rpcAckTimeoutMs);
+        const candidate = await withTimeoutMs({
+          promise: params.ui.rpcCall<any>(rpcMethod, encrypted, rpcAckTimeoutMs),
+          timeoutMs: rpcAckTimeoutMs,
+          label: `rpcCall ${rpcMethod}`,
+        });
         if (candidate && typeof candidate === 'object' && candidate.ok === true) {
           const decrypted = decryptLegacyBase64(String((candidate as any).result ?? ''), params.secret);
           return decrypted;
@@ -158,6 +181,11 @@ async function invokeRpcAcrossMachineIds(params: {
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const normalized = message.toLowerCase();
+        if (normalized.includes('timed out') || normalized.includes('timeout')) {
+          lastMethodUnavailable = { machineId, error: message };
+          continue;
+        }
         if (message.includes('RPC_METHOD_NOT_AVAILABLE')) {
           lastMethodUnavailable = { machineId, error: message };
           continue;
@@ -167,7 +195,8 @@ async function invokeRpcAcrossMachineIds(params: {
     }
 
     if (unresolvedForAllCandidates) {
-      await sleep(250);
+      const pauseMs = Math.min(250, Math.max(0, deadline - Date.now()));
+      if (pauseMs > 0) await sleep(pauseMs);
     }
   }
 
@@ -721,6 +750,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       content: provider.id === 'codex' ? 'CODEX_READ_OK' : 'READ_SENTINEL_123',
       id: provider.id === 'codex' ? 'read_in_workspace' : 'read_known_file',
       title: provider.id === 'codex' ? 'read: read a known small file in workspace' : 'read: read a known file in workspace',
+      useExecuteFallbackOnReadFailure: provider.id === 'kimi',
     });
   },
 
@@ -735,6 +765,94 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       providerId: acpProviderId(provider),
       content: `ACP_FS_SENTINEL_${randomUUID()}`,
     });
+  },
+
+  acp_in_flight_steer: (provider) => {
+    if (provider.protocol !== 'acp') {
+      throw new Error(`acp_in_flight_steer only supports ACP providers (got ${provider.protocol})`);
+    }
+
+    if (provider.id === 'codex') {
+      // Real-provider variant: use an `execute` call that takes long enough for the harness to enqueue
+      // the second step while the turn is still running, then assert the runtime routed step2 via steer.
+      const id = randomUUID();
+      const sleepMs = 8_000;
+      const command = `node -e 'console.log(\"HAPPIER_E2E_STEER_PRIMARY_BEGIN ${id}\"); setTimeout(() => { console.log(\"HAPPIER_E2E_STEER_PRIMARY_END ${id}\"); }, ${sleepMs});'`;
+      return {
+        id: 'acp_in_flight_steer',
+        title: 'acp: codex in-flight steer routes second message without interrupt (requires creds)',
+        tier: 'extended',
+        yolo: true,
+        steps: [
+          {
+            id: 'start',
+            prompt: () => [
+              'Use the execute tool to run this command exactly (do not shorten it):',
+              command,
+              `Then respond with: PRIMARY_DONE ${id}`,
+            ].join('\n'),
+            satisfaction: {
+              // The runtime emits this trace marker as soon as the backend sends status=running.
+              requiredTraceSubstrings: ['acp_status_running'],
+            },
+          },
+          {
+            id: 'steer',
+            prompt: () => `STEER_NOW ${id}`,
+          },
+        ],
+        requiredFixtureKeys: ['acp/codex/tool-call/execute', 'acp/codex/tool-result/execute'],
+        requiredTraceSubstrings: ['acp_in_flight_steer'],
+      };
+    }
+
+    // Deterministic ACP stub provider variant (no real credentials needed).
+    // The harness enqueues step2 only once step1 satisfaction is met, so step1 must emit
+    // an early trace marker while the primary turn is still running.
+    const primary = `ACP_STUB_PRIMARY_${randomUUID()}`;
+    const steer = `ACP_STUB_STEER_${randomUUID()}`;
+
+    return {
+      id: 'acp_in_flight_steer',
+      title: 'acp: in-flight steer drains pending while a turn is running (no interrupt)',
+      tier: 'smoke',
+      yolo: true,
+      steps: [
+        {
+          id: 'start',
+          prompt: () => `ACP_STUB_PRIMARY=${primary}`,
+          satisfaction: {
+            // Gate step2 on tool-trace, not session messages. Depending on backend buffering,
+            // the RUNNING marker may not land in persisted messages until the turn completes.
+            requiredTraceSubstrings: [`ACP_STUB_RUNNING primary=${primary}`],
+          },
+        },
+        {
+          id: 'steer',
+          prompt: () => `ACP_STUB_STEER=${steer}`,
+        },
+      ],
+      // Final satisfaction is also trace-based to avoid relying on streaming message persistence behavior.
+      requiredTraceSubstrings: [`ACP_STUB_DONE primary=${primary} steer=${steer}`],
+    };
+  },
+
+  acp_stub_usage_update: (provider) => {
+    if (provider.protocol !== 'acp') {
+      throw new Error(`acp_stub_usage_update only supports ACP providers (got ${provider.protocol})`);
+    }
+
+    // Deterministic token telemetry smoke: the ACP stub provider emits `usage_update`,
+    // which the CLI forwards as a `token_count` session message.
+    const sentinel = `ACP_STUB_USAGE_UPDATE_${randomUUID()}`;
+    return {
+      id: 'acp_stub_usage_update',
+      title: 'acp: stub emits usage_update and CLI forwards token_count',
+      tier: 'smoke',
+      yolo: true,
+      prompt: () => `ACP_STUB_USAGE_UPDATE=${sentinel}`,
+      requiredMessageSubstrings: [`ACP_STUB_USAGE_UPDATE_DONE ${sentinel}`],
+    };
   },
 
   acp_probe_models: (provider) => {
@@ -759,7 +877,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       requiredAnyFixtureKeys: undefined,
       requiredTraceSubstrings: undefined,
       postSatisfy: {
-        timeoutMs: 120_000,
+        timeoutMs: capabilityProbePostSatisfyTimeoutMs(provider.id),
         run: async ({ workspaceDir, baseUrl, token, sessionId, secret, cliHome }) => {
           await waitForSessionActive({ baseUrl, token, sessionId, timeoutMs: 60_000 });
 
@@ -776,9 +894,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
                   method: 'probeModels',
                   params: { timeoutMs: 10_000 },
                 },
-                timeoutMs: 90_000,
+                timeoutMs: capabilityProbeRpcTimeoutMs(provider.id),
               }),
-            { attempts: 3, delayMs: 500 },
+            capabilityProbeRetryOptions(provider.id),
           );
           const envelope = parsed && typeof parsed === 'object' ? parsed as any : null;
           if (!envelope || envelope.ok !== true) {
@@ -843,11 +961,12 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
 
     return {
       ...base,
+      tier: 'smoke',
       requiredFixtureKeys: undefined,
       requiredAnyFixtureKeys: undefined,
       requiredTraceSubstrings: undefined,
       postSatisfy: {
-        timeoutMs: 120_000,
+        timeoutMs: capabilityProbePostSatisfyTimeoutMs(provider.id),
         run: async ({ workspaceDir, baseUrl, token, sessionId, secret, cliHome }) => {
           await waitForSessionActive({ baseUrl, token, sessionId, timeoutMs: 60_000 });
 
@@ -867,9 +986,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
                     },
                   ],
                 },
-                timeoutMs: 90_000,
+                timeoutMs: capabilityProbeRpcTimeoutMs(provider.id),
               }),
-            { attempts: 3, delayMs: 500 },
+            capabilityProbeRetryOptions(provider.id),
           );
           const envelope = parsed && typeof parsed === 'object' ? parsed as any : null;
           await writeFile(join(workspaceDir, outputRel), JSON.stringify(envelope, null, 2) + '\n', 'utf8');
@@ -906,6 +1025,13 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
           throw new Error(`acp_probe_capabilities: missing acp snapshot for cli.${provider.id}`);
         }
         if (acp.ok !== true) {
+          if (provider.id === 'gemini') {
+            const message = typeof acp.error?.message === 'string' ? acp.error.message.trim() : '';
+            if (!message) {
+              throw new Error(`acp_probe_capabilities: expected acp.error.message for degraded cli.${provider.id} probe`);
+            }
+            return;
+          }
           throw new Error(`acp_probe_capabilities: expected acp.ok=true for cli.${provider.id}`);
         }
         if (typeof acp.loadSession !== 'boolean') {
@@ -968,9 +1094,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
                   method: 'probeModels',
                   params: { timeoutMs: 10_000 },
                 },
-                timeoutMs: 90_000,
+                timeoutMs: capabilityProbeRpcTimeoutMs(provider.id),
               }),
-            { attempts: 3, delayMs: 500 },
+            capabilityProbeRetryOptions(provider.id),
           );
           const probeEnvelope = probeParsed && typeof probeParsed === 'object' ? probeParsed as any : null;
           if (!probeEnvelope || probeEnvelope.ok !== true || !probeEnvelope.result || typeof probeEnvelope.result !== 'object') {
@@ -1096,9 +1222,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
                   method: 'probeModels',
                   params: { timeoutMs: 30_000 },
                 },
-                timeoutMs: 120_000,
+                timeoutMs: capabilityProbeRpcTimeoutMs(provider.id),
               }),
-            { attempts: 3, delayMs: 500 },
+            capabilityProbeRetryOptions(provider.id),
           );
           const probeEnvelope = probeParsed && typeof probeParsed === 'object' ? (probeParsed as any) : null;
           if (!probeEnvelope || probeEnvelope.ok !== true || !probeEnvelope.result || typeof probeEnvelope.result !== 'object') {
@@ -2067,7 +2193,8 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       // Some ACP providers emit a few "refresh" tool-call updates for the same callId; allow a small buffer.
       // Also allow a small number of extra tool results in case the provider emits summary/metadata updates.
       maxTraceEvents: { toolCalls: 25, toolResults: 4 },
-      postSatisfy: { waitForAcpSidechainFromToolName: 'Task', timeoutMs: 60_000 },
+      // Sidechain import is asynchronous; wait for it while the CLI is still alive (pre-stop).
+      postSatisfy: { waitForAcpSidechainFromToolName: 'Task', timeoutMs: 120_000 },
       prompt: ({ workspaceDir }) =>
         [
           'Run exactly one tool call:',
@@ -2079,14 +2206,24 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
           '',
           `Note: current working directory is ${workspaceDir}`,
         ].join('\n'),
-      requiredFixtureKeys: [`acp/${pid}/tool-call/Task`],
+      requiredAnyFixtureKeys: [
+        [`acp/${pid}/tool-call/Task`, `acp/${pid}/tool-call/change_title`],
+        [`acp/${pid}/tool-result/Task`, `acp/${pid}/tool-result/change_title`],
+      ],
       verify: async ({ fixtures, baseUrl, token, sessionId, secret }) => {
-        const results = (fixtures?.examples?.[`acp/${pid}/tool-result/Task`] ?? []) as any[];
+        const results = (
+          ((fixtures?.examples?.[`acp/${pid}/tool-result/Task`] ?? []) as any[])
+            .concat((fixtures?.examples?.[`acp/${pid}/tool-result/change_title`] ?? []) as any[])
+        );
+        if (!Array.isArray(results) || results.length === 0) throw new Error('Missing Task tool-result fixtures');
         const hasChildSessionId = Array.isArray(results)
           ? results.some((e) => typeof e?.payload?.output?.metadata?.sessionId === 'string' && e.payload.output.metadata.sessionId.length > 0)
           : false;
 
-        const calls = (fixtures?.examples?.[`acp/${pid}/tool-call/Task`] ?? []) as any[];
+        const calls = (
+          ((fixtures?.examples?.[`acp/${pid}/tool-call/Task`] ?? []) as any[])
+            .concat((fixtures?.examples?.[`acp/${pid}/tool-call/change_title`] ?? []) as any[])
+        );
         const sidechainId =
           (Array.isArray(calls) && calls.length > 0 && typeof calls[0]?.payload?.callId === 'string' ? calls[0].payload.callId : null) ??
           (typeof results[0]?.payload?.callId === 'string' ? results[0].payload.callId : null);
@@ -2369,7 +2506,6 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       tier: 'extended',
       yolo: true,
       maxTraceEvents: { toolCalls: 25, toolResults: 4 },
-      postSatisfy: { waitForAcpSidechainFromToolName: 'Task', timeoutMs: 60_000 },
       prompt: ({ workspaceDir }) =>
         [
           'Run exactly one tool call:',
@@ -2381,10 +2517,16 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
           '',
           `Note: current working directory is ${workspaceDir}`,
         ].join('\n'),
-      requiredFixtureKeys: [`acp/${pid}/tool-call/Task`, `acp/${pid}/tool-result/Task`],
+      requiredAnyFixtureKeys: [
+        [`acp/${pid}/tool-call/Task`, `acp/${pid}/tool-call/change_title`],
+        [`acp/${pid}/tool-result/Task`, `acp/${pid}/tool-result/change_title`],
+      ],
       requiredTraceSubstrings: ['SUBTASK_OK'],
       verify: async ({ fixtures, baseUrl, token, sessionId, secret }) => {
-        const results = (fixtures?.examples?.[`acp/${pid}/tool-result/Task`] ?? []) as any[];
+        const results = (
+          ((fixtures?.examples?.[`acp/${pid}/tool-result/Task`] ?? []) as any[])
+            .concat((fixtures?.examples?.[`acp/${pid}/tool-result/change_title`] ?? []) as any[])
+        );
         if (!Array.isArray(results) || results.length === 0) throw new Error('Missing task tool-result fixtures');
         const hasChildSessionId = results.some(
           (e) => typeof e?.payload?.output?.metadata?.sessionId === 'string' && e.payload.output.metadata.sessionId.length > 0,

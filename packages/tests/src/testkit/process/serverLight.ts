@@ -7,6 +7,7 @@ import { repoRootDir } from '../paths';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from './spawnProcess';
 import { waitForOkHealth } from '../http';
 import { yarnCommand } from './commands';
+import { resolveServerAppWorkspaceName } from './serverWorkspaceName';
 
 function pickPortCandidate(): number {
   // Avoid privileged / common ports.
@@ -71,20 +72,20 @@ export function resolveTestDbProvider(env: NodeJS.ProcessEnv): TestDbProvider {
 
 export function resolveStartCommandArgs(provider: TestDbProvider): string[] {
   const script = provider === 'postgres' || provider === 'mysql' ? 'start' : 'start:light';
-  return ['-s', 'workspace', '@happier-dev/server', script];
+  return ['-s', 'workspace', resolveServerAppWorkspaceName(), script];
 }
 
 export function resolveMigrateCommandArgs(provider: TestDbProvider): string[] {
   if (provider === 'sqlite') {
-    return ['-s', 'workspace', '@happier-dev/server', 'migrate:sqlite:deploy'];
+    return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:sqlite:deploy'];
   }
   if (provider === 'pglite') {
-    return ['-s', 'workspace', '@happier-dev/server', 'migrate:light:deploy'];
+    return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:light:deploy'];
   }
   if (provider === 'mysql') {
-    return ['-s', 'workspace', '@happier-dev/server', 'migrate:mysql:deploy'];
+    return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:mysql:deploy'];
   }
-  return ['-s', 'workspace', '@happier-dev/server', 'prisma', 'migrate', 'deploy'];
+  return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'prisma', 'migrate', 'deploy'];
 }
 
 export function shouldSkipServerGenerateProviders(env: NodeJS.ProcessEnv): boolean {
@@ -151,7 +152,7 @@ export async function startServerLight(params: {
   if (!shouldSkipServerGenerateProviders(baseEnv)) {
     await runLoggedCommand({
       command: yarnCommand(),
-      args: ['-s', 'workspace', '@happier-dev/server', 'generate:providers'],
+      args: ['-s', 'workspace', resolveServerAppWorkspaceName(), 'generate:providers'],
       cwd: repoRootDir(),
       env: {
         ...baseEnv,

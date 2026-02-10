@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/providerSpecs';
-import { scenarioCatalog } from '../../src/testkit/providers/scenarioCatalog';
+import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/specs/providerSpecs';
+import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 
 describe('providers: scenario registries reference real scenarios', () => {
   it('resolves all scenario ids referenced by provider registries', async () => {

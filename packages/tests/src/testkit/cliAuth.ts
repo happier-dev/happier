@@ -4,6 +4,9 @@ import { join } from 'node:path';
 
 import { encodeBase64 } from './messageCrypto';
 
+const CLI_HOME_DIR_MODE = 0o700;
+const CLI_HOME_FILE_MODE = 0o600;
+
 function deriveServerIdFromUrl(url: string): string {
   // Mirror apps/cli/src/configuration.ts deriveServerIdFromUrl for env-overridden servers.
   // Deterministic, filesystem-safe id for ad-hoc server URLs.
@@ -29,9 +32,9 @@ export async function seedCliAuthForServer(params: {
   // Write both legacy (~/.happier/access.key) and per-server (~/.happier/servers/<id>/access.key) credentials.
   // The CLI prefers the per-server file when HAPPIER_SERVER_URL is set (env override selection).
   const perServerDir = join(params.cliHome, 'servers', serverId);
-  await mkdir(perServerDir, { recursive: true });
-  await writeFile(join(params.cliHome, 'access.key'), credentials, 'utf8');
-  await writeFile(join(perServerDir, 'access.key'), credentials, 'utf8');
+  await mkdir(perServerDir, { recursive: true, mode: CLI_HOME_DIR_MODE });
+  await writeFile(join(params.cliHome, 'access.key'), credentials, { encoding: 'utf8', mode: CLI_HOME_FILE_MODE });
+  await writeFile(join(perServerDir, 'access.key'), credentials, { encoding: 'utf8', mode: CLI_HOME_FILE_MODE });
 
   // Seed settings.json with an active server profile + machine id to keep daemon startup non-interactive.
   // This avoids races where the detached daemon reads settings before the foreground CLI finishes creating them.
@@ -56,8 +59,10 @@ export async function seedCliAuthForServer(params: {
     machineIdConfirmedByServerByServerId: {},
     lastChangesCursorByServerIdByAccountId: {},
   };
-  await writeFile(join(params.cliHome, 'settings.json'), JSON.stringify(seededSettings, null, 2) + '\n', 'utf8');
+  await writeFile(join(params.cliHome, 'settings.json'), JSON.stringify(seededSettings, null, 2) + '\n', {
+    encoding: 'utf8',
+    mode: CLI_HOME_FILE_MODE,
+  });
 
   return { serverId, machineId };
 }
-

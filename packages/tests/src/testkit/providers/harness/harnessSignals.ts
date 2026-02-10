@@ -119,6 +119,12 @@ export async function readFatalProviderErrorFromCliLogs(params: { cliHome: strin
     const fatal = fatalCliLogSubstrings.find((needle) => lower.includes(needle));
     if (!fatal) continue;
 
+    // Some providers log non-fatal "No API key found" warnings when they support alternate
+    // auth methods (for example OAuth). Avoid treating those warnings as hard failures.
+    if (fatal === 'api key' && lower.includes('no api key found')) {
+      continue;
+    }
+
     if (fatal === 'out of credits') return 'Out of credits';
     if (fatal === 'failed to connect mcp servers' || fatal === 'client failed to connect') {
       return 'Failed to connect MCP servers';

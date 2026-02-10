@@ -9,7 +9,7 @@ import {
   makeAcpPermissionExecuteWritesWorkspaceFileScenario,
   makeAcpPermissionOutsideWorkspaceScenario,
   makeAcpPermissionPatchApplyScenario,
-} from '../../src/testkit/providers/scenarios.acp';
+} from '../../src/testkit/providers/scenarios/scenarios.acp';
 
 describe('providers: ACP scenario builders (permissions)', () => {
   it('can disable permission-request fixture requirements for providers that auto-approve edits', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/providerSpecs';
+import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/specs/providerSpecs';
 
 function expectModeMapKeys(map: unknown): void {
   expect(map).toBeTruthy();
@@ -71,8 +71,8 @@ describe('providers: providerSpec permissions passthrough', () => {
     expect(kimi?.permissions?.acp?.expectToolPermissionPrompts).toBe(false);
     expect(kimi?.permissions?.acp?.permissionSurfaceOutsideWorkspaceYolo).toBe(true);
     expectModeMapKeys(kimi?.permissions?.acp?.toolPermissionPromptsByMode);
-    expect(kimi?.permissions?.acp?.toolPermissionPromptsByMode?.default).toBe(true);
-    expect(kimi?.permissions?.acp?.toolPermissionPromptsByMode?.yolo).toBe(true);
+    expect(kimi?.permissions?.acp?.toolPermissionPromptsByMode?.default).toBe(false);
+    expect(kimi?.permissions?.acp?.toolPermissionPromptsByMode?.yolo).toBe(false);
     expectModeMapKeys(kimi?.permissions?.acp?.outsideWorkspaceWriteAllowedByMode);
     expect(kimi?.permissions?.acp?.outsideWorkspaceWriteAllowedByMode?.default).toBe(false);
     expect(kimi?.permissions?.acp?.outsideWorkspaceWriteAllowedByMode?.['safe-yolo']).toBe(false);

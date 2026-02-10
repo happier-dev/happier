@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/providerSpecs';
+import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/specs/providerSpecs';
 
 describe('providers: codex ACP spawn fallback', () => {
   it('enables explicit npx fallback for codex ACP provider runs', async () => {
@@ -8,6 +8,8 @@ describe('providers: codex ACP spawn fallback', () => {
     const codex = providers.find((provider) => provider.id === 'codex');
 
     expect(codex).toBeTruthy();
-    expect(codex?.cli?.env?.HAPPIER_CODEX_ACP_ALLOW_NPX).toBe('1');
+    // Codex ACP uses the npx fallback when the optional `codex-acp` capability is not installed.
+    // We keep this enabled by default for E2E provider runs to avoid local machine setup friction.
+    expect(codex?.cli?.env?.HAPPIER_CODEX_ACP_NPX_MODE).toBe('auto');
   });
 });

@@ -1,3 +1,7 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -6,6 +10,7 @@ import {
   parseFailureReportJson,
   filterProviderIdsByScenarioRegistry,
   buildProviderChildEnv,
+  mergeTokenLedgersFromPaths,
 } from '../../scripts/run-providers-parallel.mjs';
 
 describe('providers parallel run script args', () => {
@@ -158,6 +163,7 @@ describe('providers parallel child env defaults', () => {
       baseEnv: {},
       reportPath: '/tmp/failure-report.json',
       scenarioIds: null,
+      tokenLedgerPath: null,
     });
 
     expect(env.HAPPIER_E2E_PROVIDER_ALLOW_CLI_PREBUILD_REBUILD).toBe('0');
@@ -171,9 +177,96 @@ describe('providers parallel child env defaults', () => {
       baseEnv: {},
       reportPath: '/tmp/failure-report.json',
       scenarioIds: ['read_known_file', 'search_known_token'],
+      tokenLedgerPath: null,
     });
 
     expect(env.HAPPIER_E2E_PROVIDER_SCENARIOS).toBe('read_known_file,search_known_token');
     expect(env.HAPPY_E2E_PROVIDER_SCENARIOS).toBe('read_known_file,search_known_token');
+  });
+
+  it('forwards token ledger path into child env when provided', () => {
+    const env = buildProviderChildEnv({
+      baseEnv: {},
+      reportPath: '/tmp/failure-report.json',
+      scenarioIds: null,
+      tokenLedgerPath: '/tmp/provider-token-ledger.qwen.json',
+    });
+
+    expect(env.HAPPIER_E2E_PROVIDER_TOKEN_LEDGER_PATH).toBe('/tmp/provider-token-ledger.qwen.json');
+    expect(env.HAPPY_E2E_PROVIDER_TOKEN_LEDGER_PATH).toBe('/tmp/provider-token-ledger.qwen.json');
+  });
+});
+
+describe('providers parallel token ledger merge', () => {
+  it('merges entries and summarizes totals', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-token-ledger-'));
+    const aPath = join(dir, 'a.json');
+    const bPath = join(dir, 'b.json');
+
+    await writeFile(
+      aPath,
+      JSON.stringify(
+        {
+          v: 1,
+          runId: 'r1',
+          generatedAt: 1,
+          entries: [
+            { providerId: 'qwen', modelId: 'qwen-small', tokens: { total: 10, input: 6, output: 4 } },
+            { providerId: 'qwen', modelId: 'qwen-small', tokens: { total: 2 } },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+    await writeFile(
+      bPath,
+      JSON.stringify(
+        {
+          v: 1,
+          runId: 'r2',
+          generatedAt: 2,
+          entries: [{ providerId: 'kilo', modelId: null, tokens: { total: 5 } }],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    const merged = await mergeTokenLedgersFromPaths({ paths: [aPath, bPath] });
+    expect(merged.entries).toHaveLength(3);
+    expect(merged.totals).toEqual({ entries: 3, tokens: { total: 17, input: 6, output: 4 } });
+    expect(merged.summary).toEqual([
+      { providerId: 'kilo', modelId: null, entries: 1, tokens: { total: 5 } },
+      { providerId: 'qwen', modelId: 'qwen-small', entries: 2, tokens: { total: 12, input: 6, output: 4 } },
+    ]);
+    expect(merged.summaryByProvider).toEqual([
+      { providerId: 'kilo', entries: 1, tokens: { total: 5 } },
+      { providerId: 'qwen', entries: 2, tokens: { total: 12, input: 6, output: 4 } },
+    ]);
+  });
+
+  it('throws when a token ledger file has an unsupported schema version', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-token-ledger-version-'));
+    const badPath = join(dir, 'bad.json');
+
+    await writeFile(
+      badPath,
+      JSON.stringify(
+        {
+          v: 2,
+          runId: 'r3',
+          generatedAt: 3,
+          entries: [{ providerId: 'qwen', modelId: 'qwen-small', tokens: { total: 1 } }],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+
+    await expect(mergeTokenLedgersFromPaths({ paths: [badPath] })).rejects.toThrow(/unsupported token ledger version/i);
   });
 });

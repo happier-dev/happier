@@ -9,6 +9,7 @@ export default defineConfig({
       'src/testkit/process/extendedDbDocker.plan.spec.ts',
       'src/testkit/env.spec.ts',
       'src/testkit/daemon/daemon.statePath.spec.ts',
+      'src/testkit/providers/satisfaction/messageSatisfaction.spec.ts',
     ],
     testTimeout: 180_000,
     hookTimeout: 180_000,

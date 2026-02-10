@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isRetriableCapabilityErrorMessage, withCapabilityProbeRetry } from '../../src/testkit/providers/capabilityRetry';
+import { isRetriableCapabilityErrorMessage, withCapabilityProbeRetry } from '../../src/testkit/providers/harness/capabilityRetry';
 
 describe('providers: capability probe retry policy', () => {
   it('treats known transport timeout messages as retriable', () => {

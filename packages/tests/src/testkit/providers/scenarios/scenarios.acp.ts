@@ -30,6 +30,7 @@ export function makeAcpReadInWorkspaceScenario(params: {
   filename?: string;
   content: string;
   useAbsolutePath?: boolean;
+  useExecuteFallbackOnReadFailure?: boolean;
 }): ProviderScenario {
   const filename = params.filename ?? 'e2e-read.txt';
   const filePathRel = filename;
@@ -45,10 +46,25 @@ export function makeAcpReadInWorkspaceScenario(params: {
       [
         'Run exactly one tool call:',
         `- Use the read tool to read: ${params.useAbsolutePath ? join(workspaceDir, filePathRel) : filePathRel}`,
+        ...(params.useExecuteFallbackOnReadFailure
+          ? [
+              '- If the read tool fails, use the execute tool to run:',
+              `  cat "${join(workspaceDir, filePathRel)}"`,
+            ]
+          : []),
         '- Then reply DONE.',
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
-    requiredFixtureKeys: [k(params.providerId, 'tool-call', 'Read'), k(params.providerId, 'tool-result', 'Read')],
+    ...(params.useExecuteFallbackOnReadFailure
+      ? {
+          requiredAnyFixtureKeys: [
+            [k(params.providerId, 'tool-call', 'Read'), ...executeToolCallFixtureKeys(params.providerId)],
+            [k(params.providerId, 'tool-result', 'Read'), ...executeToolResultFixtureKeys(params.providerId)],
+          ],
+        }
+      : {
+          requiredFixtureKeys: [k(params.providerId, 'tool-call', 'Read'), k(params.providerId, 'tool-result', 'Read')],
+        }),
     requiredTraceSubstrings: [params.content],
   };
 }
@@ -493,15 +509,19 @@ export function makeAcpMultiFileEditIncludesDiffScenario(params: {
       id: `edit_${ordinal}_${f.filename}`,
       prompt: ({ workspaceDir }) =>
         [
-          `Use a file-editing tool (Edit or Patch; not Write, not execute) to update ONE file: ${f.filename}`,
+          `First, use the Read tool to read the file: ${f.filename}`,
+          `Use the Patch tool (or Edit if Patch is unavailable) to update ONE file: ${f.filename}`,
           `- Replace the content "${f.before}" with "${f.after}"`,
           '',
           'This is an automated test. Do not use execute to edit files.',
+          'Do not edit any other file in this step.',
           'Then reply DONE.',
           `Note: current working directory is ${workspaceDir}`,
         ].join('\n'),
       satisfaction: {
         requiredAnyFixtureKeys: [
+          [k(params.providerId, 'tool-call', 'Read')],
+          [k(params.providerId, 'tool-result', 'Read')],
           [k(params.providerId, 'tool-call', 'Patch'), k(params.providerId, 'tool-call', 'Edit')],
           [k(params.providerId, 'tool-result', 'Patch'), k(params.providerId, 'tool-result', 'Edit')],
         ],
@@ -530,6 +550,8 @@ export function makeAcpMultiFileEditIncludesDiffScenario(params: {
       ].join('\n'),
     steps,
     requiredAnyFixtureKeys: [
+      [k(params.providerId, 'tool-call', 'Read')],
+      [k(params.providerId, 'tool-result', 'Read')],
       [k(params.providerId, 'tool-call', 'Patch'), k(params.providerId, 'tool-call', 'Edit')],
       [k(params.providerId, 'tool-result', 'Patch'), k(params.providerId, 'tool-result', 'Edit')],
     ],
@@ -1246,6 +1268,8 @@ export function makeAcpResumeLoadSessionScenario(params: {
   phase1TraceSentinel: string;
   phase2TraceSentinel: string;
 }): ProviderScenario {
+  const phase1MarkerFile = '.happier-resume-phase1.txt';
+  const phase2MarkerFile = '.happier-resume-phase2.txt';
   return {
     id: params.id ?? 'acp_resume_load_session',
     title: params.title ?? 'resume: second attach uses --resume from session metadata',
@@ -1255,7 +1279,7 @@ export function makeAcpResumeLoadSessionScenario(params: {
     assertPendingDrain: false,
     prompt: ({ workspaceDir }) =>
       [
-        `Use the execute tool to run: echo ${params.phase1TraceSentinel}`,
+        `Use the execute tool to run: printf '%s\\n' '${params.phase1TraceSentinel}' > ${phase1MarkerFile} && cat ${phase1MarkerFile}`,
         'Then reply DONE.',
         `Note: current working directory is ${workspaceDir}`,
       ].join('\n'),
@@ -1263,15 +1287,15 @@ export function makeAcpResumeLoadSessionScenario(params: {
       metadataKey: params.metadataKey,
       prompt: ({ workspaceDir }) =>
         [
-          `Use the execute tool to run: echo ${params.phase2TraceSentinel}`,
+          `Use the execute tool to run: printf '%s\\n' '${params.phase2TraceSentinel}' > ${phase2MarkerFile} && cat ${phase2MarkerFile}`,
           'Then reply DONE.',
           `Note: current working directory is ${workspaceDir}`,
         ].join('\n'),
-      requiredTraceSubstrings: [params.phase2TraceSentinel],
+      requiredTraceSubstrings: undefined,
     },
     requiredAnyFixtureKeys: [executeToolCallFixtureKeys(params.providerId), executeToolResultFixtureKeys(params.providerId)],
-    requiredTraceSubstrings: [params.phase1TraceSentinel],
-    verify: async ({ baseUrl, token, sessionId, secret, resumeId }) => {
+    requiredTraceSubstrings: undefined,
+    verify: async ({ workspaceDir, baseUrl, token, sessionId, secret, resumeId }) => {
       if (!resumeId) throw new Error('Expected resumeId to be available for resume scenario');
       const snap = await fetchSessionV2(baseUrl, token, sessionId);
       const metadata = decryptLegacyBase64(snap.metadata, secret) as any;
@@ -1281,6 +1305,14 @@ export function makeAcpResumeLoadSessionScenario(params: {
       }
       if (value.trim() !== resumeId) {
         throw new Error(`Expected ${params.metadataKey} to remain stable after resume (loadSession should not create a new session)`);
+      }
+      const phase1Content = await readFile(join(workspaceDir, phase1MarkerFile), 'utf8').catch(() => '');
+      if (!phase1Content.includes(params.phase1TraceSentinel)) {
+        throw new Error(`Expected phase 1 marker file to contain ${params.phase1TraceSentinel}`);
+      }
+      const phase2Content = await readFile(join(workspaceDir, phase2MarkerFile), 'utf8').catch(() => '');
+      if (!phase2Content.includes(params.phase2TraceSentinel)) {
+        throw new Error(`Expected phase 2 marker file to contain ${params.phase2TraceSentinel}`);
       }
     },
   };

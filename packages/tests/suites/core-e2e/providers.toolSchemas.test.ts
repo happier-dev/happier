@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { validateNormalizedToolFixturesV2 } from '../../src/testkit/providers/validateToolSchemas';
+import { validateNormalizedToolFixturesV2 } from '../../src/testkit/providers/toolSchemas/validateToolSchemas';
 
 describe('providers: normalized tool schema validation (V2)', () => {
   it('accepts known canonical tools and validates per-tool input/output schemas', () => {

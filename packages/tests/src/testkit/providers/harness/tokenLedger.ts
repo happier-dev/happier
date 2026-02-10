@@ -8,7 +8,11 @@ export type ProviderTokenLedgerEntryV1 = {
   timestamp: number;
   tokens: Record<string, number>;
   modelId: string | null;
-  source: 'socket-ephemeral-usage';
+  source:
+    | 'socket-ephemeral-usage'
+    | 'socket-update-token-count'
+    | 'session-message-token-count'
+    | 'missing-usage';
 };
 
 export type ProviderTokenLedgerV1 = {
@@ -80,4 +84,3 @@ export function summarizeProviderTokenLedgerTotals(entries: ProviderTokenLedgerE
   }
   return { entries: count, tokens: totals };
 }
-

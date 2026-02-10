@@ -11,6 +11,8 @@ describe('providers: contract matrix (harness)', () => {
     // Codex extended runs include many ACP scenarios and can legitimately exceed 40 minutes on
     // loaded developer machines; keep this higher to avoid false timeout failures.
     { id: 'codex', envVar: 'HAPPIER_E2E_PROVIDER_CODEX', timeoutMs: 4_800_000 },
+    // Deterministic ACP stub for exercising in-flight steer without real credentials.
+    { id: 'codex_acp_stub', envVar: 'HAPPIER_E2E_PROVIDER_CODEX_ACP_STUB', timeoutMs: 900_000 },
     { id: 'kilo', envVar: 'HAPPIER_E2E_PROVIDER_KILO', timeoutMs: 2_400_000 },
     { id: 'gemini', envVar: 'HAPPIER_E2E_PROVIDER_GEMINI', timeoutMs: 2_400_000 },
     { id: 'qwen', envVar: 'HAPPIER_E2E_PROVIDER_QWEN', timeoutMs: 1_200_000 },

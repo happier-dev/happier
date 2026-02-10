@@ -1,5 +1,7 @@
 import type { ProviderTraceEvent } from './types';
 
+import { payloadContainsSubstring } from './payloadContainsSubstring';
+
 type ToolTraceEventV1 = ProviderTraceEvent;
 type UnknownRecord = Record<string, unknown>;
 
@@ -85,6 +87,18 @@ function resolveToolNameForResultEvent(event: ToolTraceEventV1, index: Map<strin
   return index.get(callIndexKey(event, callId)) ?? null;
 }
 
+export function isImportedTraceEvent(event: ToolTraceEventV1): boolean {
+  if (typeof event.localId === 'string' && event.localId.startsWith('acp-import:')) return true;
+  const payload = asRecord(event.payload);
+  const payloadId = readStringField(payload, ['id', 'eventId']);
+  if (payloadId && payloadId.startsWith('import-')) return true;
+  return false;
+}
+
+export function filterImportedTraceEvents(events: ToolTraceEventV1[]): ToolTraceEventV1[] {
+  return events.filter((event) => !isImportedTraceEvent(event));
+}
+
 export function hasTraceForKey(events: ToolTraceEventV1[], key: string): boolean {
   const p = keyParts(key);
   if (!p) return false;
@@ -111,43 +125,6 @@ export function hasTraceForKey(events: ToolTraceEventV1[], key: string): boolean
 
     // Correlate results to tool names via callId/tool_use_id mapping rather than assuming the presence of a tool-call is enough.
     return events.some((e) => resultKinds.has(e.kind) && resolveToolNameForResultEvent(e, callIdIndex) === toolName);
-  }
-
-  return false;
-}
-
-function payloadContainsSubstring(payload: unknown, needle: string): boolean {
-  const seen = new WeakSet<object>();
-  const stack: unknown[] = [payload];
-  let visited = 0;
-  const maxNodes = 2_000;
-  const maxStringLength = 20_000;
-
-  while (stack.length > 0) {
-    if (visited++ > maxNodes) return false;
-    const value = stack.pop();
-    if (typeof value === 'string') {
-      if (value.length <= maxStringLength && value.includes(needle)) return true;
-      continue;
-    }
-    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
-      if (String(value).includes(needle)) return true;
-      continue;
-    }
-    if (!value || typeof value !== 'object') continue;
-
-    if (seen.has(value)) continue;
-    seen.add(value);
-
-    if (Array.isArray(value)) {
-      for (const item of value) stack.push(item);
-      continue;
-    }
-
-    for (const [k, v] of Object.entries(value)) {
-      if (k.includes(needle)) return true;
-      stack.push(v);
-    }
   }
 
   return false;

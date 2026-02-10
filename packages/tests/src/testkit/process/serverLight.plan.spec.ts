@@ -5,6 +5,7 @@ import {
   resolveStartCommandArgs,
   type TestDbProvider,
 } from "./serverLight";
+import { resolveServerAppWorkspaceName } from "./serverWorkspaceName";
 
 describe("startServerLight planning helpers", () => {
   it("defaults to pglite when HAPPIER_E2E_DB_PROVIDER is unset", () => {
@@ -30,7 +31,7 @@ describe("startServerLight planning helpers", () => {
     ["postgres", "start"],
     ["mysql", "start"],
   ])("uses the expected start command for %s", (provider, expectedScript) => {
-    expect(resolveStartCommandArgs(provider)).toEqual(["-s", "workspace", "@happier-dev/server", expectedScript]);
+    expect(resolveStartCommandArgs(provider)).toEqual(["-s", "workspace", resolveServerAppWorkspaceName(), expectedScript]);
   });
 
   it.each<[TestDbProvider, string]>([
@@ -43,4 +44,3 @@ describe("startServerLight planning helpers", () => {
     expect(args).toContain(expected);
   });
 });
-

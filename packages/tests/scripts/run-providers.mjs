@@ -1,13 +1,29 @@
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-import { resolveProviderRunPreset } from '../src/testkit/providers/presets.mjs';
+import { resolveProviderRunPreset } from '../src/testkit/providers/presets/presets.mjs';
 import { terminateProcessTreeByPid } from './processTree.mjs';
 
 const KNOWN_FLAGS = new Set(['--update-baselines', '--strict-keys', '--flake-retry', '--no-flake-retry']);
 
 function yarnCommand() {
   return process.platform === 'win32' ? 'yarn.cmd' : 'yarn';
+}
+
+export function resolveProvidersRunTimeoutFallbackMs({ presetId, tier }) {
+  // Provider suites can take a long time, especially when running multiple providers sequentially.
+  // Keep the default high enough that we don't kill healthy runs; users/CI can still override with
+  // HAPPIER_E2E_PROVIDER_RUN_TIMEOUT_MS / HAPPY_E2E_PROVIDER_RUN_TIMEOUT_MS.
+  const normalizedTier = tier === 'extended' ? 'extended' : 'smoke';
+  const isAll = presetId === 'all';
+
+  if (normalizedTier === 'extended') {
+    // "all:extended" can be multiple hours on developer machines.
+    return isAll ? 8 * 60 * 60 * 1000 : 4 * 60 * 60 * 1000;
+  }
+
+  // smoke
+  return isAll ? 2 * 60 * 60 * 1000 : 60 * 60 * 1000;
 }
 
 export function parseArgs(argv) {
@@ -100,9 +116,10 @@ export async function main(argv = process.argv) {
     ...(parsed.flakeRetry ? { HAPPIER_E2E_PROVIDER_FLAKE_RETRY: '1' } : null),
   };
 
+  const fallbackTimeoutMs = resolveProvidersRunTimeoutFallbackMs({ presetId: parsed.presetId, tier: parsed.tier });
   const timeoutMs = resolveProvidersRunTimeoutMs(
     process.env.HAPPIER_E2E_PROVIDER_RUN_TIMEOUT_MS ?? process.env.HAPPY_E2E_PROVIDER_RUN_TIMEOUT_MS,
-    1_800_000,
+    fallbackTimeoutMs,
   );
   const activeChildren = new Set();
   let shuttingDown = false;

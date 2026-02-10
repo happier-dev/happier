@@ -2,8 +2,8 @@ import { dirname } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { makeAcpPermissionOutsideWorkspaceScenario } from '../../src/testkit/providers/scenarios.acp';
-import { scenarioCatalog } from '../../src/testkit/providers/scenarioCatalog';
+import { makeAcpPermissionOutsideWorkspaceScenario } from '../../src/testkit/providers/scenarios/scenarios.acp';
+import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 import type { ProviderUnderTest } from '../../src/testkit/providers/types';
 
 function claudeProviderStub(): ProviderUnderTest {

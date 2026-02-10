@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { scenarioCatalog } from '../../src/testkit/providers/scenarioCatalog';
+import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 
 describe('providers: resume scenario permission auto-approve policy', () => {
   const kimiProvider = {

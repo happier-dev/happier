@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   makeAcpPermissionOutsideWorkspaceScenario,
   makeAcpResumeLoadSessionScenario,
-} from '../../src/testkit/providers/scenarios.acp';
+} from '../../src/testkit/providers/scenarios/scenarios.acp';
 
 describe('providers: ACP scenario builders (smoke)', () => {
   it('builds representative permission and resume scenarios', () => {

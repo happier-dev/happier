@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveMachineIdCandidatesFromSettings } from '../../src/testkit/providers/scenarioCatalog';
+import { resolveMachineIdCandidatesFromSettings } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 
 describe('scenarioCatalog machine id candidate resolution', () => {
   it('prioritizes direct machineId, then active server mapping, then remaining mappings', () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { scenarioCatalog } from '../../src/testkit/providers/scenarioCatalog';
+import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 import type { ProviderUnderTest } from '../../src/testkit/providers/types';
 
 function acpProvider(id: string): ProviderUnderTest {

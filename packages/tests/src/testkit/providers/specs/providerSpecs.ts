@@ -20,6 +20,13 @@ type ProviderSpecRecord = {
   spec: CliProviderSpecV1;
 };
 
+function providerSpecSearchDirs(): string[] {
+  return [
+    join(repoRootDir(), 'apps', 'cli', 'src', 'backends'),
+    join(repoRootDir(), 'packages', 'tests', 'fixtures', 'cli-backends'),
+  ];
+}
+
 async function readJsonFile(path: string, parseErrorLabel: string): Promise<unknown> {
   const raw = await readFile(path, 'utf8');
   try {
@@ -76,18 +83,36 @@ async function loadProviderSpecRecords(backendsDir: string): Promise<ProviderSpe
 }
 
 export async function loadCliProviderSpecs(): Promise<CliProviderSpecV1[]> {
-  const backendsDir = join(repoRootDir(), 'apps', 'cli', 'src', 'backends');
-  const records = await loadProviderSpecRecords(backendsDir);
-  return records.map((record) => record.spec);
+  const records: ProviderSpecRecord[] = [];
+  for (const dir of providerSpecSearchDirs()) {
+    records.push(...(await loadProviderSpecRecords(dir)));
+  }
+
+  const seen = new Set<string>();
+  const specs: CliProviderSpecV1[] = [];
+  for (const record of records) {
+    if (seen.has(record.spec.id)) continue;
+    seen.add(record.spec.id);
+    specs.push(record.spec);
+  }
+  return specs;
 }
 
 export async function loadProvidersFromCliSpecs(): Promise<ProviderUnderTest[]> {
-  const backendsDir = join(repoRootDir(), 'apps', 'cli', 'src', 'backends');
-  const records = await loadProviderSpecRecords(backendsDir);
+  const records: Array<ProviderSpecRecord & { baseDir: string }> = [];
+  for (const dir of providerSpecSearchDirs()) {
+    for (const record of await loadProviderSpecRecords(dir)) {
+      records.push({ ...record, baseDir: dir });
+    }
+  }
 
   const providers: ProviderUnderTest[] = [];
+  const seen = new Set<string>();
   for (const record of records) {
-    const scenariosPath = join(backendsDir, record.entryName, 'e2e', 'providerScenarios.json');
+    if (seen.has(record.spec.id)) continue;
+    seen.add(record.spec.id);
+
+    const scenariosPath = join(record.baseDir, record.entryName, 'e2e', 'providerScenarios.json');
     if (!existsSync(scenariosPath)) {
       throw new Error(`Missing providerScenarios.json (${record.entryName}): ${scenariosPath}`);
     }

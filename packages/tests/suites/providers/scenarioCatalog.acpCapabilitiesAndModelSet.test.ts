@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
-import { scenarioCatalog } from '../../src/testkit/providers/scenarioCatalog';
+import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
 import type { ProviderUnderTest } from '../../src/testkit/providers/types';
 
 function acpProvider(id: string): ProviderUnderTest {
@@ -24,6 +27,43 @@ describe('scenarioCatalog: ACP capability/model-set scenarios', () => {
     expect(scenario.requiredFixtureKeys).toBeUndefined();
     expect(scenario.requiredAnyFixtureKeys).toBeUndefined();
     expect(typeof scenario.postSatisfy?.run).toBe('function');
+  });
+
+  it('uses a longer capabilities probe timeout for gemini ACP', () => {
+    const build = (scenarioCatalog as Record<string, any>).acp_probe_capabilities;
+    expect(typeof build).toBe('function');
+
+    const geminiScenario = build(acpProvider('gemini'));
+    const qwenScenario = build(acpProvider('qwen'));
+
+    expect(geminiScenario.postSatisfy?.timeoutMs).toBeGreaterThan(qwenScenario.postSatisfy?.timeoutMs ?? 0);
+  });
+
+  it('allows degraded ACP capability probe for gemini when CLI detect times out', async () => {
+    const build = (scenarioCatalog as Record<string, any>).acp_probe_capabilities;
+    expect(typeof build).toBe('function');
+    const scenario = build(acpProvider('gemini'));
+
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'happier-acp-cap-gemini-'));
+    const payload = {
+      protocolVersion: 1,
+      results: {
+        'cli.gemini': {
+          ok: true,
+          data: {
+            available: true,
+            acp: {
+              ok: false,
+              checkedAt: Date.now(),
+              error: { message: 'ACP initialize timeout after 30000ms' },
+            },
+          },
+        },
+      },
+    };
+    await writeFile(join(workspaceDir, 'e2e-probe-capabilities.json'), JSON.stringify(payload), 'utf8');
+
+    await expect(scenario.verify({ workspaceDir })).resolves.toBeUndefined();
   });
 
   it('defines acp_set_model_dynamic for dynamic ACP providers', () => {

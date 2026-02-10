@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/providerSpecs';
+import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/specs/providerSpecs';
 
 describe('providers: ACP permission prompt matrix in provider specs', () => {
   it('defines toolPermissionPromptsByMode for each ACP provider', async () => {

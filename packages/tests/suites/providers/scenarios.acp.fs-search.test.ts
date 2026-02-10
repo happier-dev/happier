@@ -11,7 +11,7 @@ import {
   makeAcpPatchIncludesDiffScenario,
   makeAcpReadMissingFileScenario,
   makeAcpSearchLsEquivalenceScenario,
-} from '../../src/testkit/providers/scenarios.acp';
+} from '../../src/testkit/providers/scenarios/scenarios.acp';
 
 describe('providers: ACP scenario builders (fs/search)', () => {
   it('builds a multi-file edit scenario that requires two file paths to be present in tool-call fixtures', () => {
@@ -192,6 +192,10 @@ describe('providers: ACP scenario builders (fs/search)', () => {
       expect(scenario.id).toBe('multi_file_edit_in_workspace_includes_diff');
       expect(Array.isArray(scenario.steps)).toBe(true);
       expect(scenario.steps).toHaveLength(2);
+      const firstPrompt = scenario.steps?.[0]?.prompt({ workspaceDir }) ?? '';
+      expect(firstPrompt).toContain('Patch tool');
+      expect(firstPrompt).toContain('First, use the Read tool');
+      expect(firstPrompt).toContain('Do not use execute');
 
       await scenario.setup?.({ workspaceDir });
       await writeFile(join(workspaceDir, 'a.txt'), 'A_AFTER\n', 'utf8');

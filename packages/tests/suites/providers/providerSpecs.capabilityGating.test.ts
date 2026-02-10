@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/providerSpecs';
+import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/specs/providerSpecs';
 
 describe('providers: scenario capability gating', () => {
   it('does not require ACP model probe for kilo', async () => {
@@ -58,11 +58,21 @@ describe('providers: scenario capability gating', () => {
     const gemini = providers.find((provider) => provider.id === 'gemini');
     expect(gemini).toBeTruthy();
 
+    const smoke = gemini!.scenarioRegistry.tiers.smoke;
     const extended = gemini!.scenarioRegistry.tiers.extended;
-    expect(extended).toContain('acp_probe_capabilities');
+    expect(smoke).toContain('acp_probe_capabilities');
     expect(extended).toContain('acp_probe_models');
     expect(extended).toContain('acp_set_model_inventory');
     expect(extended).not.toContain('acp_resume_load_session');
     expect(extended).not.toContain('acp_resume_fresh_session_imports_history');
+  });
+
+  it('does not hardcode gemini ACP probe timeout in provider spec env', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const gemini = providers.find((provider) => provider.id === 'gemini');
+    expect(gemini).toBeTruthy();
+
+    const timeoutRaw = gemini!.cli?.env?.HAPPIER_ACP_PROBE_TIMEOUT_GEMINI_MS;
+    expect(timeoutRaw).toBeUndefined();
   });
 });

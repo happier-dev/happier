@@ -26,5 +26,6 @@ describe('applyHomeIsolationEnv', () => {
     expect(env.HOME).toBe('/Users/example');
     expect(env.XDG_CONFIG_HOME).toBe('/Users/example/.config');
     expect(env.USERPROFILE).toBeUndefined();
+    expect(env.HAPPIER_SESSION_AUTOSTART_DAEMON).toBe('0');
   });
 });

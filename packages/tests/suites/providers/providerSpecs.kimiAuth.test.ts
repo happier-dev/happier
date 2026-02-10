@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { loadCliProviderSpecs } from '../../src/testkit/providers/providerSpecs';
+import { loadCliProviderSpecs } from '../../src/testkit/providers/specs/providerSpecs';
 
 describe('providers: kimi auth policy', () => {
   it('requires KIMI_API_KEY for env auth overlay', async () => {

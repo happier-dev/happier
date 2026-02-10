@@ -6,14 +6,14 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { createRunDirs } from '../runDir';
 import { startServerLight, type StartedServer } from '../process/serverLight';
 import { createTestAuth } from '../auth';
-import { createSessionWithCiphertexts, fetchMessagesSince, fetchSessionV2 } from '../sessions';
+import { createSessionWithCiphertexts, fetchAllMessages, fetchMessagesSince, fetchSessionV2 } from '../sessions';
 import { envFlag } from '../env';
 import { writeTestManifestForServer } from '../manifestForServer';
 import { runLoggedCommand, spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
 import { repoRootDir } from '../paths';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../messageCrypto';
 import { writeCliSessionAttachFile } from '../cliAttachFile';
-import { stopDaemonFromHomeDir } from '../daemon/daemon';
+import { startTestDaemon, stopDaemonFromHomeDir, type StartedDaemon } from '../daemon/daemon';
 import { sleep } from '../timing';
 import { createUserScopedSocketCollector, type CapturedEvent } from '../socketClient';
 import { parsePositiveInt } from '../numbers';
@@ -32,7 +32,8 @@ import {
   writeProviderBaseline,
 } from './baselines';
 import { validateNormalizedToolFixturesV2 } from './validateToolSchemas';
-import { checkMaxTraceEvents, scenarioSatisfiedByTrace } from './traceSatisfaction';
+import { checkMaxTraceEvents, filterImportedTraceEvents, scenarioSatisfiedByTrace } from './traceSatisfaction';
+import { scenarioSatisfiedByMessages } from './messageSatisfaction';
 import { loadProvidersFromCliSpecs } from './providerSpecs';
 import { waitForAcpSidechainMessages } from './assertions';
 import { scenarioCatalog } from './scenarioCatalog';
@@ -95,7 +96,11 @@ export type ProviderTokenTelemetryEntryV1 = {
   timestamp: number;
   tokens: Record<string, number>;
   modelId: string | null;
-  source: 'socket-ephemeral-usage';
+  source:
+    | 'socket-ephemeral-usage'
+    | 'socket-update-token-count'
+    | 'session-message-token-count'
+    | 'missing-usage';
 };
 
 type ProviderTokenTelemetryReportV1 = {
@@ -106,6 +111,7 @@ type ProviderTokenTelemetryReportV1 = {
 };
 
 const run = createRunDirs({ runLabel: 'providers' });
+const shouldLogProviderProgress = envFlag('HAPPIER_E2E_PROVIDER_LOG_PROGRESS', false);
 
 function formatProviderSkipWarning(params: { providerId: string; reason: string }): string {
   const cleaned = params.reason.replace(/\s+/g, ' ').trim();
@@ -173,14 +179,18 @@ function normalizeTokenNumberMap(raw: unknown): Record<string, number> {
   return out;
 }
 
-export function extractProviderTokenTelemetryEntries(params: {
+export async function extractProviderTokenTelemetryEntries(params: {
   providerId: string;
   scenarioId: string;
   phase: 'single' | 'phase1' | 'phase2';
   sessionId: string;
   modelId: string | null;
   events: CapturedEvent[];
-}): ProviderTokenTelemetryEntryV1[] {
+  secret?: Uint8Array;
+  baseUrl?: string;
+  token?: string;
+  allowSessionMessageTokenCountFallback?: boolean;
+}): Promise<ProviderTokenTelemetryEntryV1[]> {
   const out: ProviderTokenTelemetryEntryV1[] = [];
   for (const event of params.events) {
     if (event.kind !== 'ephemeral') continue;
@@ -191,6 +201,7 @@ export function extractProviderTokenTelemetryEntries(params: {
     const key = keyRaw.length > 0 ? keyRaw : 'unknown';
     const timestamp = typeof payload.timestamp === 'number' && Number.isFinite(payload.timestamp) ? payload.timestamp : event.at;
     const tokens = normalizeTokenNumberMap(payload.tokens);
+    if (Object.keys(tokens).length === 0) continue;
 
     out.push({
       v: 1,
@@ -205,7 +216,217 @@ export function extractProviderTokenTelemetryEntries(params: {
       source: 'socket-ephemeral-usage',
     });
   }
-  return out;
+  if (out.length > 0) return out;
+
+  if (!params.secret) return out;
+
+  const tokenCountEntries: ProviderTokenTelemetryEntryV1[] = [];
+  for (const event of params.events) {
+    if (event.kind !== 'update') continue;
+    const body = event.payload?.body;
+    if (!body || typeof body !== 'object') continue;
+    const typedBody = body as { t?: unknown; message?: unknown };
+    if (typedBody.t !== 'new-message') continue;
+    const message = typedBody.message;
+    if (!message || typeof message !== 'object') continue;
+    const content = (message as { content?: unknown }).content;
+    if (!content || typeof content !== 'object') continue;
+    const encrypted = (content as { c?: unknown }).c;
+    if (typeof encrypted !== 'string' || encrypted.trim().length === 0) continue;
+
+    const decrypted = decryptLegacyBase64(encrypted, params.secret);
+    if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) continue;
+    const envelope = decrypted as Record<string, unknown>;
+    let record: Record<string, unknown> | null = null;
+    if (envelope.type === 'token_count') {
+      record = envelope;
+    } else {
+      const content = envelope.content;
+      if (content && typeof content === 'object' && !Array.isArray(content)) {
+        const contentRecord = content as Record<string, unknown>;
+        if (contentRecord.type === 'acp') {
+          const data = contentRecord.data;
+          if (data && typeof data === 'object' && !Array.isArray(data)) {
+            const dataRecord = data as Record<string, unknown>;
+            if (dataRecord.type === 'token_count') {
+              record = dataRecord;
+            }
+          }
+        }
+      }
+    }
+    if (!record) continue;
+
+    const keyRaw = typeof record.key === 'string' ? record.key.trim() : '';
+    const key = keyRaw.length > 0 ? keyRaw : 'unknown';
+
+    const modelRaw = typeof record.model === 'string'
+      ? record.model.trim()
+      : typeof record.modelId === 'string'
+        ? record.modelId.trim()
+        : '';
+    const modelId = modelRaw.length > 0 ? modelRaw : params.modelId;
+
+    const nestedTokens = normalizeTokenNumberMap(record.tokens);
+    const topLevelTokens = normalizeTokenNumberMap({
+      input: record.input_tokens ?? record.input ?? record.prompt_tokens,
+      output: record.output_tokens ?? record.output ?? record.completion_tokens,
+      cache_creation: record.cache_creation_input_tokens ?? record.cache_creation,
+      cache_read: record.cache_read_input_tokens ?? record.cache_read,
+      thought: record.thought_tokens ?? record.thought,
+      total: record.total_tokens ?? record.total,
+    });
+
+    const tokens = Object.keys(nestedTokens).length > 0 ? nestedTokens : topLevelTokens;
+    if (Object.keys(tokens).length === 0) continue;
+
+    if (tokens.total == null) {
+      const total =
+        (tokens.input ?? 0) +
+        (tokens.output ?? 0) +
+        (tokens.cache_creation ?? 0) +
+        (tokens.cache_read ?? 0) +
+        (tokens.thought ?? 0);
+      tokens.total = total;
+    }
+
+    tokenCountEntries.push({
+      v: 1,
+      providerId: params.providerId,
+      scenarioId: params.scenarioId,
+      phase: params.phase,
+      sessionId: params.sessionId,
+      key,
+      timestamp: event.at,
+      tokens,
+      modelId,
+      source: 'socket-update-token-count',
+    });
+  }
+
+  if (tokenCountEntries.length > 0) return tokenCountEntries;
+
+  const baseUrl = typeof params.baseUrl === 'string' ? params.baseUrl.trim() : '';
+  const token = typeof params.token === 'string' ? params.token.trim() : '';
+  const allowFallback = params.allowSessionMessageTokenCountFallback === true;
+  if (!allowFallback || !baseUrl || !token) return tokenCountEntries;
+
+  // Some providers commit ACP token_count as a normal session message but do not always
+  // broadcast it to all user-scoped sockets. As a fallback, scan committed session messages.
+  try {
+    // Intentionally fetch all messages: provider scenarios are short, and this is only used
+    // when the socket path yields no token telemetry.
+    const rows = (await fetchAllMessages(baseUrl, token, params.sessionId)) as Array<{
+      id: string;
+      createdAt: number;
+      content: { t: 'encrypted'; c: string };
+    }>;
+
+    const fromMessages: ProviderTokenTelemetryEntryV1[] = [];
+    for (const row of rows) {
+      const encrypted = row?.content?.c;
+      if (typeof encrypted !== 'string' || encrypted.trim().length === 0) continue;
+      const decrypted = decryptLegacyBase64(encrypted, params.secret);
+      if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) continue;
+
+      const envelope = decrypted as Record<string, unknown>;
+      let record: Record<string, unknown> | null = null;
+      if (envelope.type === 'token_count') {
+        record = envelope;
+      } else {
+        const content = envelope.content;
+        if (content && typeof content === 'object' && !Array.isArray(content)) {
+          const contentRecord = content as Record<string, unknown>;
+          if (contentRecord.type === 'acp') {
+            const data = contentRecord.data;
+            if (data && typeof data === 'object' && !Array.isArray(data)) {
+              const dataRecord = data as Record<string, unknown>;
+              if (dataRecord.type === 'token_count') {
+                record = dataRecord;
+              }
+            }
+          }
+        }
+      }
+      if (!record) continue;
+
+      const nestedTokens = normalizeTokenNumberMap(record.tokens);
+      const topLevelTokens = normalizeTokenNumberMap({
+        input: record.input_tokens ?? record.input ?? record.prompt_tokens,
+        output: record.output_tokens ?? record.output ?? record.completion_tokens,
+        cache_creation: record.cache_creation_input_tokens ?? record.cache_creation,
+        cache_read: record.cache_read_input_tokens ?? record.cache_read,
+        thought: record.thought_tokens ?? record.thought,
+        total: record.total_tokens ?? record.total,
+      });
+
+      const tokens = Object.keys(nestedTokens).length > 0 ? nestedTokens : topLevelTokens;
+      if (Object.keys(tokens).length === 0) continue;
+      if (tokens.total == null) {
+        const total =
+          (tokens.input ?? 0) +
+          (tokens.output ?? 0) +
+          (tokens.cache_creation ?? 0) +
+          (tokens.cache_read ?? 0) +
+          (tokens.thought ?? 0);
+        tokens.total = total;
+      }
+
+      const keyRaw = typeof record.key === 'string' ? record.key.trim() : '';
+      const key = keyRaw.length > 0 ? keyRaw : typeof row.id === 'string' ? row.id : 'unknown';
+
+      const modelRaw = typeof record.model === 'string'
+        ? record.model.trim()
+        : typeof record.modelId === 'string'
+          ? record.modelId.trim()
+          : '';
+      const modelId = modelRaw.length > 0 ? modelRaw : params.modelId;
+
+      const createdAt = typeof row.createdAt === 'number' && Number.isFinite(row.createdAt) ? row.createdAt : Date.now();
+
+      fromMessages.push({
+        v: 1,
+        providerId: params.providerId,
+        scenarioId: params.scenarioId,
+        phase: params.phase,
+        sessionId: params.sessionId,
+        key,
+        timestamp: createdAt,
+        tokens,
+        modelId,
+        source: 'session-message-token-count',
+      });
+    }
+
+    return fromMessages;
+  } catch {
+    return tokenCountEntries;
+  }
+}
+
+export function ensureProviderTokenTelemetryEntries(params: {
+  providerId: string;
+  scenarioId: string;
+  phase: 'single' | 'phase1' | 'phase2';
+  sessionId: string;
+  modelId: string | null;
+  extracted: ProviderTokenTelemetryEntryV1[];
+}): ProviderTokenTelemetryEntryV1[] {
+  if (Array.isArray(params.extracted) && params.extracted.length > 0) return params.extracted;
+  return [
+    {
+      v: 1,
+      providerId: params.providerId,
+      scenarioId: params.scenarioId,
+      phase: params.phase,
+      sessionId: params.sessionId,
+      key: 'missing-usage',
+      timestamp: Date.now(),
+      tokens: {},
+      modelId: params.modelId,
+      source: 'missing-usage',
+    },
+  ];
 }
 
 async function appendProviderTokenTelemetryEntries(entries: ProviderTokenTelemetryEntryV1[]): Promise<void> {
@@ -629,8 +850,10 @@ function resolveScenarioById(params: { provider: ProviderUnderTest; id: string; 
   if (!scenario || typeof scenario !== 'object') throw new Error(`Scenario factory returned invalid scenario: ${params.id}`);
   if (scenario.id !== params.id) throw new Error(`Scenario factory returned mismatched id: expected ${params.id}, got ${scenario.id}`);
   if (params.expectedTier) {
-    const tier = (scenario.tier ?? 'extended') as 'smoke' | 'extended';
-    if (tier !== params.expectedTier) {
+    // If the scenario explicitly declares a tier, enforce it. Otherwise allow tierless scenarios
+    // (shared utilities like ACP capability probes) to be referenced from either tier.
+    const tier = scenario.tier as 'smoke' | 'extended' | undefined;
+    if (tier && tier !== params.expectedTier) {
       throw new Error(`Scenario tier mismatch (${params.id}): expected ${params.expectedTier}, got ${tier}`);
     }
   }
@@ -883,6 +1106,13 @@ async function runOneScenario(params: {
         },
       );
 
+      let daemon: StartedDaemon | null = null;
+      if (provider.protocol === 'acp' && scenario.postSatisfy?.run) {
+        const daemonDir = resolve(join(testDir, 'daemon'));
+        await mkdir(daemonDir, { recursive: true });
+        daemon = await startTestDaemon({ testDir: daemonDir, happyHomeDir: cliHome, env: cliEnv });
+      }
+
       const proc: SpawnedProcess = spawnLoggedProcess({
         command: yarnCommand(),
         args: [
@@ -905,7 +1135,7 @@ async function runOneScenario(params: {
       stderrPath: params.stderrPath,
     });
 
-    let uiSocket: Awaited<ReturnType<typeof waitForPermissionRpcReady>>['socket'] | null = null;
+      let uiSocket: Awaited<ReturnType<typeof waitForPermissionRpcReady>>['socket'] | null = null;
     try {
       // Wait for the provider client to be connected before posting the first prompt.
       // Even in YOLO scenarios, we may need to resolve *session-level* permission prompts
@@ -1075,6 +1305,7 @@ async function runOneScenario(params: {
       let lastRelevantTraceCount = -1;
       let blockedPermissionSinceAt: number | null = null;
       let blockedPermissionSnapshot = '';
+      const decodedMessagesSeen: unknown[] = [];
 
       let traceRaw = '';
       let traceEvents: ToolTraceEventV1[] = [];
@@ -1082,6 +1313,7 @@ async function runOneScenario(params: {
         requiredFixtureKeys: scenario.requiredFixtureKeys ?? [],
         requiredAnyFixtureKeys: scenario.requiredAnyFixtureKeys,
         requiredTraceSubstrings: params.traceSubstringsOverride ?? scenario.requiredTraceSubstrings,
+        requiredMessageSubstrings: scenario.requiredMessageSubstrings,
       };
       const inactivityTimeoutMs = resolveProviderInactivityTimeoutMs(
         process.env.HAPPIER_E2E_PROVIDER_NO_ACTIVITY_TIMEOUT_MS ?? process.env.HAPPY_E2E_PROVIDER_NO_ACTIVITY_TIMEOUT_MS,
@@ -1120,6 +1352,12 @@ async function runOneScenario(params: {
                 return [];
               }
             });
+            if (decodedMessages.length > 0) {
+              decodedMessagesSeen.push(...decodedMessages);
+              if (decodedMessagesSeen.length > 2_000) {
+                decodedMessagesSeen.splice(0, decodedMessagesSeen.length - 2_000);
+              }
+            }
             const fatal = extractFatalAgentErrorMessage(decodedMessages);
             if (fatal) {
               throw new Error(`Fatal provider assistant error (${provider.id}.${scenario.id}): ${fatal}`);
@@ -1134,7 +1372,7 @@ async function runOneScenario(params: {
           traceRaw = await readFileText(params.traceFile).catch(() => '');
           traceEvents = readJsonlEvents(traceRaw);
 
-          const relevant = traceEvents.filter(
+          const relevant = filterImportedTraceEvents(traceEvents).filter(
             (e) =>
               e?.v === 1 &&
               e.protocol === provider.protocol &&
@@ -1166,14 +1404,20 @@ async function runOneScenario(params: {
             if (!satisfaction) {
               throw new Error(`Scenario ${provider.id}.${scenario.id} step ${step?.id ?? String(stepIndex)} is missing satisfaction criteria`);
             }
-            if (scenarioSatisfiedByTrace(relevant as any, satisfaction)) {
+            if (
+              scenarioSatisfiedByTrace(relevant as any, satisfaction) &&
+              scenarioSatisfiedByMessages({ decodedMessages: decodedMessagesSeen, socketEvents: uiSocket?.getEvents() ?? [] }, satisfaction)
+            ) {
               stepIndex++;
               const nextStep = steps[stepIndex]!;
               await enqueuePrompt(nextStep.prompt({ workspaceDir }), resolveMeta(nextStep.messageMeta));
             }
           }
 
-          if (scenarioSatisfiedByTrace(relevant as any, satisfactionScenario)) {
+          if (
+            scenarioSatisfiedByTrace(relevant as any, satisfactionScenario) &&
+            scenarioSatisfiedByMessages({ decodedMessages: decodedMessagesSeen, socketEvents: uiSocket?.getEvents() ?? [] }, satisfactionScenario)
+          ) {
             if (scenario.postSatisfy) {
               await runPostSatisfyWithPermissionPump(async () => {
                 if (scenario.postSatisfy?.run) {
@@ -1231,11 +1475,13 @@ async function runOneScenario(params: {
         const requiredFixtureKeys = satisfactionScenario.requiredFixtureKeys ?? [];
         const requiredAnyFixtureKeys = satisfactionScenario.requiredAnyFixtureKeys ?? [];
         const requiredTraceSubstrings = satisfactionScenario.requiredTraceSubstrings ?? [];
+        const requiredMessageSubstrings = satisfactionScenario.requiredMessageSubstrings ?? [];
         throw new Error(
           `Timed out waiting for scenario satisfaction after ${maxWaitMs}ms (${provider.id}.${scenario.id}): ` +
           `requiredFixtureKeys=${requiredFixtureKeys.join(',') || '(none)'} ` +
           `requiredAnyFixtureKeys=${requiredAnyFixtureKeys.map((bucket) => `[${bucket.join('|')}]`).join(',') || '(none)'} ` +
-          `requiredTraceSubstrings=${requiredTraceSubstrings.join(',') || '(none)'}`,
+          `requiredTraceSubstrings=${requiredTraceSubstrings.join(',') || '(none)'} ` +
+          `requiredMessageSubstrings=${requiredMessageSubstrings.join(',') || '(none)'}`,
         );
       }
 
@@ -1271,13 +1517,25 @@ async function runOneScenario(params: {
         }
 
         const socketEvents = uiSocket?.getEvents() ?? [];
-        const tokenTelemetryEntries = extractProviderTokenTelemetryEntries({
+        const extractedTokenTelemetryEntries = await extractProviderTokenTelemetryEntries({
           providerId: String(provider.id),
           scenarioId: scenario.id,
           phase: params.phase,
           sessionId: params.sessionId,
           modelId,
           events: socketEvents,
+          secret,
+          baseUrl: server.baseUrl,
+          token: auth.token,
+          allowSessionMessageTokenCountFallback: provider.protocol === 'acp',
+        });
+        const tokenTelemetryEntries = ensureProviderTokenTelemetryEntries({
+          providerId: String(provider.id),
+          scenarioId: scenario.id,
+          phase: params.phase,
+          sessionId: params.sessionId,
+          modelId,
+          extracted: extractedTokenTelemetryEntries,
         });
 
         return { traceRaw: finalRaw, traceEvents: finalEvents, tokenTelemetryEntries };
@@ -1287,6 +1545,7 @@ async function runOneScenario(params: {
         } catch {
           // ignore
         }
+        await daemon?.stop().catch(() => {});
         await proc.stop();
         await stopDaemonFromHomeDir(cliHome).catch(() => {});
       }
@@ -1414,10 +1673,10 @@ async function runOneScenario(params: {
 
   // Optional: cap the amount of provider activity for deterministic scenarios.
   if (scenario.maxTraceEvents) {
-    const relevant = traceEvents.filter(
-      (e) =>
-        e?.v === 1 &&
-        e.protocol === provider.protocol &&
+      const relevant = filterImportedTraceEvents(traceEvents).filter(
+        (e) =>
+          e?.v === 1 &&
+          e.protocol === provider.protocol &&
         (typeof e.provider === 'string' ? e.provider === provider.traceProvider : false),
     );
     const cap = checkMaxTraceEvents(relevant as any, scenario.maxTraceEvents);
@@ -1600,6 +1859,7 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
     const filter = parseScenarioFilter();
 
     for (const provider of runnableProviders) {
+      const providerStartedAt = Date.now();
       let scenarios: ProviderScenario[];
 
       if (filter.ids) {
@@ -1618,10 +1878,25 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
       if (scenarios.length === 0) continue;
 
       let providerSkipped = false;
+      if (shouldLogProviderProgress) {
+        // eslint-disable-next-line no-console
+        console.log(`[providers] start ${provider.id} scenarios=${scenarios.length}`);
+      }
       for (const scenario of scenarios) {
         const testDir = run.testDir(`${provider.id}.${scenario.id}`);
         try {
+          const scenarioStartedAt = Date.now();
+          if (shouldLogProviderProgress) {
+            // eslint-disable-next-line no-console
+            console.log(`[providers] start ${provider.id}.${scenario.id}`);
+          }
           await runProviderWithRetry({ provider, scenario, server, testDir });
+          if (shouldLogProviderProgress) {
+            // eslint-disable-next-line no-console
+            console.log(
+              `[providers] done ${provider.id}.${scenario.id} elapsed=${Math.round((Date.now() - scenarioStartedAt) / 1000)}s`,
+            );
+          }
         } catch (e: any) {
           const reason = String(e?.message ?? e);
           if (isSkippableProviderUnavailabilityError(reason)) {
@@ -1639,6 +1914,12 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
           });
           throw e;
         }
+      }
+      if (shouldLogProviderProgress) {
+        // eslint-disable-next-line no-console
+        console.log(
+          `[providers] done ${provider.id} elapsed=${Math.round((Date.now() - providerStartedAt) / 1000)}s`,
+        );
       }
       if (providerSkipped) continue;
     }

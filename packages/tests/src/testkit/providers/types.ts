@@ -121,6 +121,13 @@ export type ProviderScenario = {
       requiredFixtureKeys?: string[];
       requiredAnyFixtureKeys?: string[][];
       requiredTraceSubstrings?: string[];
+      /**
+       * Substrings that must appear somewhere in the decrypted session messages (user/assistant payloads).
+       *
+       * This is intentionally separate from tool-trace matching: some scenarios (like ACP in-flight steer)
+       * need to gate on assistant text chunks before any tool calls occur.
+       */
+      requiredMessageSubstrings?: string[];
     };
   }>;
   // Optional grouping for selective runs.
@@ -151,6 +158,13 @@ export type ProviderScenario = {
   requiredAnyFixtureKeys?: string[][];
   // Substrings that must appear somewhere in the raw trace payloads (quick smoke invariants).
   requiredTraceSubstrings?: string[];
+  /**
+   * Substrings that must appear somewhere in the decrypted session messages (user/assistant payloads).
+   *
+   * This is used sparingly for scenarios where tool trace may be empty or delayed, but server messages
+   * provide a reliable observable.
+   */
+  requiredMessageSubstrings?: string[];
   // Optional override for pending queue drain assertions.
   // Defaults to true (subject to global env flag), but scenarios can disable it
   // when the behavior under test intentionally leaves async side-effects pending.
