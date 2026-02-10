@@ -21,8 +21,6 @@ test('release workflow only promotes/bumps on production and routes source_ref b
 
   assert.match(raw, /source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'dev' \}\}/);
   assert.match(raw, /publish_npm:[\s\S]*?source_ref:\s*\$\{\{ inputs\.environment == 'production' && 'main' \|\| 'dev' \}\}/);
-  assert.match(raw, /publish_npm:[\s\S]*?version_bump_cli:\s*none/);
-  assert.match(raw, /publish_npm:[\s\S]*?version_bump_stack:\s*none/);
   assert.match(raw, /deploy_ui:[\s\S]*?bump:\s*none/);
   assert.match(raw, /sync_dev:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
 });
@@ -44,14 +42,14 @@ test('release-npm is compatible with npm trusted publishing (OIDC)', async () =>
   assert.doesNotMatch(raw, /NPM_TOKEN is required for npm publish\./);
 });
 
-test('release-npm can derive preview versions from requested bump level', async () => {
+test('release-npm derives unique preview prerelease versions from base versions', async () => {
   const raw = await loadWorkflow('release-npm.yml');
 
-  assert.match(raw, /function bumpBase\(base, bump\)/);
-  assert.match(raw, /versions\.cli = setPreviewVersion\(join\('apps', 'cli', 'package\.json'\), process\.env\.CLI_PREVIEW_BUMP\);/);
-  assert.match(raw, /versions\.stack = setPreviewVersion\(join\('apps', 'stack', 'package\.json'\), process\.env\.STACK_PREVIEW_BUMP\);/);
-  assert.match(raw, /CLI_PREVIEW_BUMP:\s*\$\{\{\s*inputs\.version_bump_cli\s*\}\}/);
-  assert.match(raw, /STACK_PREVIEW_BUMP:\s*\$\{\{\s*inputs\.version_bump_stack\s*\}\}/);
+  assert.doesNotMatch(raw, /version_bump_cli/);
+  assert.doesNotMatch(raw, /version_bump_stack/);
+  assert.doesNotMatch(raw, /function bumpBase\(base, bump\)/);
+  assert.match(raw, /function setPreviewVersion\(pkgPath\)/);
+  assert.match(raw, /\$\{base\}-preview\.\$\{run\}\.\$\{attempt\}/);
 });
 
 test('stack version bumps use shared bump-version script across release workflows', async () => {

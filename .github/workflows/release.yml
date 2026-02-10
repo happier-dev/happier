@@ -351,37 +351,14 @@ jobs:
           dev_sha="$(git rev-parse HEAD)"
           main_sha="$(git rev-parse origin/main)"
 
-          commit_count="$(git rev-list --count "$main_sha..$dev_sha" 2>/dev/null || echo 0)"
-          git diff --name-only "$main_sha..$dev_sha" > /tmp/changed_paths.txt || true
+          node scripts/release/compute-changed-components.mjs \
+            --base "$main_sha" \
+            --head "$dev_sha" \
+            --out "$GITHUB_OUTPUT"
 
-          changed_ui=false
-          changed_cli=false
-          changed_server=false
-          changed_website=false
-          changed_docs=false
-          changed_shared=false
-          changed_stack=false
-
-          while IFS= read -r p; do
-            case "$p" in
-              apps/ui/*) changed_ui=true ;;
-              apps/cli/*) changed_cli=true ;;
-              apps/server/*) changed_server=true ;;
-              apps/stack/*) changed_stack=true ;;
-              apps/website/*|scripts/release/installers/*|scripts/release/sync-installers.mjs) changed_website=true ;;
-              apps/docs/*) changed_docs=true ;;
-              packages/agents/*|packages/protocol/*) changed_shared=true ;;
-              *) ;;
-            esac
-          done < /tmp/changed_paths.txt
-
-          echo "changed_ui=$changed_ui" >> "$GITHUB_OUTPUT"
-          echo "changed_cli=$changed_cli" >> "$GITHUB_OUTPUT"
-          echo "changed_server=$changed_server" >> "$GITHUB_OUTPUT"
-          echo "changed_stack=$changed_stack" >> "$GITHUB_OUTPUT"
-          echo "changed_website=$changed_website" >> "$GITHUB_OUTPUT"
-          echo "changed_docs=$changed_docs" >> "$GITHUB_OUTPUT"
-          echo "changed_shared=$changed_shared" >> "$GITHUB_OUTPUT"
+      - name: Release plan summary
+        run: |
+          set -euo pipefail
 
           {
             echo "## Release plan (dev → main)"
@@ -399,16 +376,16 @@ jobs:
             echo "- ui_expo_action: \`${{ inputs.ui_expo_action }}\` (platform=\`${{ inputs.ui_expo_platform }}\`, profile=\`${{ inputs.ui_expo_profile }}\`)"
             echo "- desktop_mode: \`${{ inputs.desktop_mode }}\`"
             echo ""
-            echo "- commits to release (main..dev): \`$commit_count\`"
+            echo "- commits to release (main..dev): \`${{ steps.plan.outputs.commit_count }}\`"
             echo ""
             echo "### Changed components (main..dev)"
-            echo "- ui: \`$changed_ui\`"
-            echo "- cli: \`$changed_cli\`"
-            echo "- server: \`$changed_server\`"
-            echo "- stack: \`$changed_stack\`"
-            echo "- website: \`$changed_website\`"
-            echo "- docs: \`$changed_docs\`"
-            echo "- shared (agents/protocol): \`$changed_shared\`"
+            echo "- ui: \`${{ steps.plan.outputs.changed_ui }}\`"
+            echo "- cli: \`${{ steps.plan.outputs.changed_cli }}\`"
+            echo "- server: \`${{ steps.plan.outputs.changed_server }}\`"
+            echo "- stack: \`${{ steps.plan.outputs.changed_stack }}\`"
+            echo "- website: \`${{ steps.plan.outputs.changed_website }}\`"
+            echo "- docs: \`${{ steps.plan.outputs.changed_docs }}\`"
+            echo "- shared (agents/protocol): \`${{ steps.plan.outputs.changed_shared }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Resolve publish + bump plan
@@ -855,8 +832,6 @@ jobs:
       publish_stack: ${{ needs.checks.outputs.publish_stack == 'true' }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
-      version_bump_cli: none
-      version_bump_stack: none
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
       run_tests: false
 

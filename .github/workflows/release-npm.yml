@@ -25,15 +25,6 @@ on:
         required: true
         default: true
         type: boolean
-      version_bump_cli:
-        description: "Version bump (CLI) — Preview only. Production: must be none (versions are bumped on dev and promoted)."
-        required: true
-        type: choice
-        options:
-          - none
-          - patch
-          - minor
-          - major
       npm_tag:
         description: "Publish (CLI) — npm dist-tag (production: latest, preview: next)"
         required: true
@@ -47,16 +38,6 @@ on:
         required: true
         default: false
         type: boolean
-      version_bump_stack:
-        description: "Version bump (Stack) — Preview only. Production: must be none (versions are bumped on dev and promoted)."
-        required: true
-        type: choice
-        default: none
-        options:
-          - none
-          - patch
-          - minor
-          - major
   workflow_call:
     inputs:
       channel:
@@ -78,10 +59,6 @@ on:
         required: false
         default: true
         type: boolean
-      version_bump_cli:
-        description: "Version bump (CLI) — Preview only. Production: must be none (versions are bumped on dev and promoted)."
-        required: true
-        type: string
       npm_tag:
         description: "Publish (CLI) — npm dist-tag (production: latest, preview: next)"
         required: false
@@ -92,11 +69,6 @@ on:
         required: false
         default: false
         type: boolean
-      version_bump_stack:
-        description: "Version bump (Stack) — Preview only. Production: must be none (versions are bumped on dev and promoted)."
-        required: false
-        default: none
-        type: string
 
 permissions:
   contents: write
@@ -126,19 +98,11 @@ jobs:
           INPUT_NPM_TAG: ${{ inputs.npm_tag }}
           INPUT_PUBLISH_CLI: ${{ inputs.publish_cli }}
           INPUT_PUBLISH_STACK: ${{ inputs.publish_stack }}
-          INPUT_VERSION_BUMP_CLI: ${{ inputs.version_bump_cli }}
-          INPUT_VERSION_BUMP_STACK: ${{ inputs.version_bump_stack }}
         run: |
           set -euo pipefail
           if [ "${INPUT_PUBLISH_CLI}" != "true" ] && [ "${INPUT_PUBLISH_STACK}" != "true" ]; then
             echo "At least one of publish_cli or publish_stack must be true." >&2
             exit 1
-          fi
-          if [ "${INPUT_CHANNEL}" = "production" ]; then
-            if [ "${INPUT_VERSION_BUMP_CLI}" != "none" ] || [ "${INPUT_VERSION_BUMP_STACK}" != "none" ]; then
-              echo "For production releases, version bumps must be performed on dev via the release orchestrator. Set version_bump_cli=none and version_bump_stack=none." >&2
-              exit 1
-            fi
           fi
           expected_tag="latest"
           if [ "${INPUT_CHANNEL}" = "preview" ]; then
@@ -254,31 +218,9 @@ jobs:
             if (!m) throw new Error(`Invalid version: ${version}`);
             return `${m[1]}.${m[2]}.${m[3]}`;
           }
-          function bumpBase(base, bump) {
-            if (!bump || bump === 'none') return base;
-            const m = String(base).match(/^(\d+)\.(\d+)\.(\d+)$/);
-            if (!m) throw new Error(`Invalid base version: ${base}`);
-            let major = Number(m[1]);
-            let minor = Number(m[2]);
-            let patch = Number(m[3]);
-            if (bump === 'major') {
-              major += 1;
-              minor = 0;
-              patch = 0;
-            } else if (bump === 'minor') {
-              minor += 1;
-              patch = 0;
-            } else if (bump === 'patch') {
-              patch += 1;
-            } else {
-              throw new Error(`Unknown bump: ${bump}`);
-            }
-            return `${major}.${minor}.${patch}`;
-          }
-          function setPreviewVersion(pkgPath, bump) {
+          function setPreviewVersion(pkgPath) {
             const raw = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-            const normalized = normalizeBase(raw.version);
-            const base = bumpBase(normalized, bump);
+            const base = normalizeBase(raw.version);
             const runNumberRaw = Number(process.env.GITHUB_RUN_NUMBER ?? '0');
             const run = Number.isFinite(runNumberRaw) ? Math.max(0, Math.floor(runNumberRaw)) : 0;
             const runAttemptRaw = Number(process.env.GITHUB_RUN_ATTEMPT ?? '1');
@@ -289,18 +231,16 @@ jobs:
           }
           const versions = {};
           if (process.env.PUBLISH_CLI === 'true') {
-            versions.cli = setPreviewVersion(join('apps', 'cli', 'package.json'), process.env.CLI_PREVIEW_BUMP);
+            versions.cli = setPreviewVersion(join('apps', 'cli', 'package.json'));
           }
           if (process.env.PUBLISH_STACK === 'true') {
-            versions.stack = setPreviewVersion(join('apps', 'stack', 'package.json'), process.env.STACK_PREVIEW_BUMP);
+            versions.stack = setPreviewVersion(join('apps', 'stack', 'package.json'));
           }
           console.log(JSON.stringify(versions));
           NODE
         env:
           PUBLISH_CLI: ${{ inputs.publish_cli }}
           PUBLISH_STACK: ${{ inputs.publish_stack }}
-          CLI_PREVIEW_BUMP: ${{ inputs.version_bump_cli }}
-          STACK_PREVIEW_BUMP: ${{ inputs.version_bump_stack }}
 
       - name: Run cli tests
         if: inputs.publish_cli && inputs.run_tests

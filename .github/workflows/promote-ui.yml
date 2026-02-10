@@ -124,7 +124,7 @@ on:
       expo_platform:
         description: "Deploy (Expo) — Native build platform"
         required: false
-        default: ios
+        default: all
         type: string
       desktop_build:
         description: "Deploy (Desktop) — Build Tauri desktop bundles (macOS/Windows/Linux)"
