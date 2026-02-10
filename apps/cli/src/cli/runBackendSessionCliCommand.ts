@@ -5,6 +5,9 @@ import type { AgentId } from '@happier-dev/agents';
 import type { Credentials } from '@/persistence';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import type { CommandContext } from '@/cli/commandRegistry';
+import { fetchAccountSettingsSnapshot } from '@/settings/accountSettingsClient';
+import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
+import { applyProviderSpawnExtrasToProcessEnv } from '@/settings/providerSettings';
 import {
   applyDeprecatedSessionStartAliasesForAgent,
   parseSessionStartArgs,
@@ -23,6 +26,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   context: CommandContext;
   loadRun: () => Promise<(opts: CommonBackendRunOptions & Extra) => Promise<void>>;
   agentIdForDeprecatedAliases?: AgentId;
+  agentIdForAccountSettings?: AgentId;
   resolveExtraOptions?: (args: string[]) => Extra;
 }): Promise<void> {
   try {
@@ -41,6 +45,18 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
 
     const run = await params.loadRun();
     const { credentials } = await authAndSetupMachineIfNeeded();
+
+    if (params.agentIdForAccountSettings) {
+      const snapshot = await fetchAccountSettingsSnapshot({ credentials });
+      assertBackendEnabledByAccountSettings({
+        agentId: params.agentIdForAccountSettings,
+        settings: snapshot.settings,
+      });
+      applyProviderSpawnExtrasToProcessEnv({
+        agentId: params.agentIdForAccountSettings,
+        settings: snapshot.settings,
+      });
+    }
 
     await run({
       credentials,

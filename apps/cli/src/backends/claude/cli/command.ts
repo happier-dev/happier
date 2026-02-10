@@ -9,6 +9,9 @@ import { claudeCliPath } from '@/backends/claude/claudeLocal';
 import { readSettings } from '@/persistence';
 import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
+import { fetchAccountSettingsSnapshot } from '@/settings/accountSettingsClient';
+import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
+import { resolveProviderOutgoingMessageMetaExtras } from '@/settings/providerSettings';
 import packageJson from '../../../../package.json';
 
 import type { CommandContext } from '@/cli/commandRegistry';
@@ -226,6 +229,13 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
   const { credentials } = await authAndSetupMachineIfNeeded();
 
   try {
+    const snapshot = await fetchAccountSettingsSnapshot({ credentials });
+    assertBackendEnabledByAccountSettings({ agentId: 'claude', settings: snapshot.settings });
+    options.claudeRemoteMetaDefaults = resolveProviderOutgoingMessageMetaExtras({
+      agentId: 'claude',
+      settings: snapshot.settings,
+      session: null,
+    });
     options.terminalRuntime = context.terminalRuntime;
     await runClaude(credentials, options);
   } catch (error) {
