@@ -11,13 +11,18 @@ export interface AuthCredentials {
 export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: number) => void, shouldCancel?: () => boolean): Promise<AuthCredentials | null> {
     let dots = 0;
 
+    type Requested = { state: 'requested' };
+    type AuthorizedV1 = { state: 'authorized'; token: string; response: string };
+    type AuthorizedV2 = { state: 'authorized'; tokenEncrypted: string; response: string };
+    type AuthPollResponse = Requested | AuthorizedV1 | AuthorizedV2;
+
     while (true) {
         if (shouldCancel && shouldCancel()) {
             return null;
         }
 
         try {
-            const response = await serverFetch('/v1/auth/account/request', {
+            let response = await serverFetch('/v2/auth/account/request', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -26,22 +31,38 @@ export async function authQRWait(keypair: QRAuthKeyPair, onProgress?: (dots: num
                     publicKey: encodeBase64(keypair.publicKey),
                 }),
             }, { includeAuth: false });
+            if (response.status === 404) {
+                response = await serverFetch('/v1/auth/account/request', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        publicKey: encodeBase64(keypair.publicKey),
+                    }),
+                }, { includeAuth: false });
+            }
             if (!response.ok) {
                 throw new Error(`Failed to poll auth request: ${response.status}`);
             }
-            const data = await response.json() as {
-                state: string;
-                tokenEncrypted: string;
-                response: string;
-            };
+            const data = await response.json() as AuthPollResponse;
 
             if (data.state === 'authorized') {
-                const tokenEncrypted = decodeBase64(data.tokenEncrypted);
-                const decryptedTokenBytes = decryptBox(tokenEncrypted, keypair.secretKey);
-                if (!decryptedTokenBytes) {
+                const token =
+                    'tokenEncrypted' in data
+                        ? (() => {
+                            const tokenEncrypted = decodeBase64(data.tokenEncrypted);
+                            const decryptedTokenBytes = decryptBox(tokenEncrypted, keypair.secretKey);
+                            if (!decryptedTokenBytes) {
+                                return null;
+                            }
+                            return new TextDecoder().decode(decryptedTokenBytes);
+                        })()
+                        : data.token;
+                if (!token) {
                     return null;
                 }
-                const token = new TextDecoder().decode(decryptedTokenBytes);
+
                 const encryptedResponse = decodeBase64(data.response);
                 
                 const decrypted = decryptBox(encryptedResponse, keypair.secretKey);
