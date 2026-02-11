@@ -37,6 +37,7 @@ import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
 import { createOnChildExited } from './sessions/onChildExited';
 import { waitForVisibleConsoleSessionWebhook } from './sessions/visibleConsoleSpawnWaiter';
 import { createStopSession } from './sessions/stopSession';
+import { resolveSpawnWebhookResult } from './sessions/resolveSpawnWebhookResult';
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
 import { projectPath } from '@/projectPath';
 import { selectPreferredTmuxSessionName, TmuxUtilities, isTmuxAvailable } from '@/integrations/tmux';
@@ -436,6 +437,7 @@ export async function startDaemon(): Promise<void> {
             if (!tmuxResult.pid) {
               throw new Error('Tmux window created but no PID returned');
             }
+            const tmuxPid = tmuxResult.pid;
 
             // Resolve the actual tmux session name used (important when sessionName was empty/undefined)
             const tmuxSession = tmuxResult.sessionName ?? (resolvedTmuxSessionName || 'happy');
@@ -443,7 +445,7 @@ export async function startDaemon(): Promise<void> {
 	            // Create a tracked session for tmux windows - now we have the real PID!
 	            const trackedSession: TrackedSession = {
 	              startedBy: 'daemon',
-	              pid: tmuxResult.pid, // Real PID from tmux -P flag
+	              pid: tmuxPid, // Real PID from tmux -P flag
 	              tmuxSessionId: tmuxResult.sessionId,
 	              vendorResumeId: effectiveResume || undefined,
 	              directoryCreated,
@@ -453,31 +455,38 @@ export async function startDaemon(): Promise<void> {
 	            };
 
 	            // Add to tracking map so webhook can find it later
-	            pidToTrackedSession.set(tmuxResult.pid, trackedSession);
+	            pidToTrackedSession.set(tmuxPid, trackedSession);
 	            if (spawnResourceCleanupOnExit) {
-	              spawnResourceCleanupByPid.set(tmuxResult.pid, spawnResourceCleanupOnExit);
+	              spawnResourceCleanupByPid.set(tmuxPid, spawnResourceCleanupOnExit);
 	              spawnResourceCleanupArmed = true;
 	            }
 	            if (sessionAttachCleanup) {
-	              sessionAttachCleanupByPid.set(tmuxResult.pid, sessionAttachCleanup);
+	              sessionAttachCleanupByPid.set(tmuxPid, sessionAttachCleanup);
 	              sessionAttachCleanup = null;
 	            }
 
             // Wait for webhook to populate session with happySessionId (exact same as regular flow)
-            logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${tmuxResult.pid} (tmux)`);
+            logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${tmuxPid} (tmux)`);
             return waitForSessionWebhook({
-              pid: tmuxResult.pid,
+              pid: tmuxPid,
               pidToAwaiter,
               pidToSpawnResultResolver,
               pidToSpawnWebhookTimeout,
-              timeoutErrorMessage: `Session webhook timeout for PID ${tmuxResult.pid} (tmux)`,
+              timeoutErrorMessage: `Session webhook timeout for PID ${tmuxPid} (tmux)`,
               onTimeout: () => {
-                logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${tmuxResult.pid} (tmux)`);
+                logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${tmuxPid} (tmux)`);
               },
               onSuccess: (completedSession) => {
                 logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook (tmux)`);
               },
-            });
+            }).then((result) =>
+              resolveSpawnWebhookResult({
+                pid: tmuxPid,
+                result,
+                pidToTrackedSession,
+                warn: (message) => logger.warn(message),
+              }),
+            );
 	          } else {
 	            tmuxFallbackReason = tmuxResult.error ?? 'tmux spawn failed';
 	            logger.debug(`[DAEMON RUN] Failed to spawn in tmux: ${tmuxResult.error}, falling back to regular spawning`);
@@ -596,17 +605,23 @@ export async function startDaemon(): Promise<void> {
 			              pidToSpawnWebhookTimeout,
 			              onChildExited,
 			            }).then((result) => {
-			              if (result.type === 'success') {
+			              const resolved = resolveSpawnWebhookResult({
+			                pid,
+			                result,
+			                pidToTrackedSession,
+			                warn: (message) => logger.warn(message),
+			              });
+			              if (resolved.type === 'success') {
 			                logger.debug(
-			                  `[DAEMON RUN] Session ${result.sessionId} fully spawned with webhook (visible console)`,
+			                  `[DAEMON RUN] Session ${resolved.sessionId} fully spawned with webhook (visible console)`,
 			                );
 			              } else if (
-			                result.type === 'error' &&
-			                result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
+			                resolved.type === 'error' &&
+			                resolved.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT
 			              ) {
 			                logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${pid} (visible console)`);
 			              }
-			              return result;
+			              return resolved;
 			            });
 			          }
 
@@ -724,7 +739,14 @@ export async function startDaemon(): Promise<void> {
             onSuccess: (completedSession) => {
               logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
             },
-          });
+          }).then((result) =>
+            resolveSpawnWebhookResult({
+              pid: happyProcess.pid!,
+              result,
+              pidToTrackedSession,
+              warn: (message) => logger.warn(message),
+            }),
+          );
         }
 
         // This should never be reached, but TypeScript requires a return statement
