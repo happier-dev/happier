@@ -19,6 +19,10 @@ import { sync } from '@/sync/sync';
 import { PopoverBoundaryProvider } from '@/components/ui/popover';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useInboxFriendsEnabled } from '@/hooks/server/useInboxFriendsEnabled';
+import { config } from '@/config';
+import { isStackContext } from '@/sync/domains/server/serverContext';
+import { isUsingCustomServer } from '@/sync/domains/server/serverConfig';
+import { resolveVisibleAppEnvironmentBadge } from '@/sync/runtime/appVariant';
 
 const stylesheet = StyleSheet.create((theme, runtime) => ({
     container: {
@@ -65,6 +69,25 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         fontSize: 17,
         fontWeight: '600',
         color: theme.colors.header.tint,
+        ...Typography.default('semiBold'),
+    },
+    titleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    envBadge: {
+        paddingHorizontal: 5,
+        paddingVertical: 1,
+        borderRadius: 999,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.divider,
+        backgroundColor: theme.colors.surface,
+    },
+    envBadgeText: {
+        fontSize: 9,
+        lineHeight: 12,
+        color: theme.colors.textSecondary,
         ...Typography.default('semiBold'),
     },
     statusContainer: {
@@ -190,6 +213,7 @@ export const SidebarView = React.memo(() => {
     const inboxHasContent = useInboxHasContent();
     const experimentsEnabled = useSetting('experiments');
     const expZen = useSetting('expZen');
+    const showEnvironmentBadge = useSetting('showEnvironmentBadge');
     const inboxFriendsEnabled = useInboxFriendsEnabled();
 
     // Compute connection status once per render (theme-reactive, no stale memoization)
@@ -242,6 +266,14 @@ export const SidebarView = React.memo(() => {
     // With Zen enabled: 4 icons (148px total), threshold 408px > max 360px → always left-justify
     // Without Zen: 3 icons (108px total), threshold 328px → left-justify below ~340px
     const shouldLeftJustify = showZen || sidebarWidth < 340;
+    const environmentBadge = resolveVisibleAppEnvironmentBadge({
+        showEnvironmentBadge,
+        appVariant: config.variant,
+        envAppEnv: process.env.APP_ENV,
+        envExpoPublicAppEnv: process.env.EXPO_PUBLIC_APP_ENV,
+        isStackContext: isStackContext(),
+        isUsingCustomServer: isUsingCustomServer(),
+    });
 
     const handleNewSession = React.useCallback(() => {
         router.push('/new');
@@ -250,7 +282,14 @@ export const SidebarView = React.memo(() => {
     // Title content used in both centered and left-justified modes (DRY)
     const titleContent = (
         <>
-            <Text style={styles.titleText}>{t('sidebar.sessionsTitle')}</Text>
+            <View style={styles.titleRow}>
+                <Text style={styles.titleText}>{t('sidebar.sessionsTitle')}</Text>
+                {environmentBadge ? (
+                    <View style={styles.envBadge}>
+                        <Text style={styles.envBadgeText}>{environmentBadge}</Text>
+                    </View>
+                ) : null}
+            </View>
             {connectionStatus.text ? (
                 <View style={Platform.OS === 'web' ? ({ pointerEvents: 'auto' } as any) : undefined}>
                     <ConnectionStatusControl

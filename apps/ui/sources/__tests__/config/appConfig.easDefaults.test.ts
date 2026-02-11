@@ -51,8 +51,18 @@ describe('app.config.js', () => {
 
         expect(exp.extra?.eas?.projectId).toBe(DEFAULT_EAS_PROJECT_ID);
         expect(exp.updates?.url).toBe(DEFAULT_UPDATES_URL);
+        expect(exp.extra?.app?.variant).toBe('development');
         expect(exp.owner).toBe('happier-dev');
         expect(exp.slug).toBe('happier');
+    });
+
+    it('exposes variant under extra.app when APP_ENV is set', () => {
+        const exp = withCleanEnv(() => {
+            process.env.APP_ENV = 'preview';
+            return getPublicConfig();
+        });
+
+        expect(exp.extra?.app?.variant).toBe('preview');
     });
 
     it('uses EXPO_PUBLIC_EAS_PROJECT_ID with highest precedence for updates linkage', () => {

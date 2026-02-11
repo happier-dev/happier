@@ -12,7 +12,7 @@ import * as Clipboard from 'expo-clipboard';
 import { Modal } from '@/modal';
 import { requireOptionalNativeModule } from 'expo-modules-core';
 import { config } from '@/config';
-import { resolveExpoReleaseChannel } from './expoConstantsReleaseChannel';
+import { resolveExpoReleaseChannel } from '@/sync/runtime/appVariant';
 
 interface JsonViewerProps {
     title: string;

@@ -21,6 +21,7 @@ export default React.memo(function FeaturesSettingsScreen() {
     const [markdownCopyV2, setMarkdownCopyV2] = useLocalSettingMutable('markdownCopyV2');
     const [hideInactiveSessions, setHideInactiveSessions] = useSettingMutable('hideInactiveSessions');
     const [groupInactiveSessionsByProject, setGroupInactiveSessionsByProject] = useSettingMutable('groupInactiveSessionsByProject');
+    const [showEnvironmentBadge, setShowEnvironmentBadge] = useSettingMutable('showEnvironmentBadge');
     const [useEnhancedSessionWizard, setUseEnhancedSessionWizard] = useSettingMutable('useEnhancedSessionWizard');
     const [useMachinePickerSearch, setUseMachinePickerSearch] = useSettingMutable('useMachinePickerSearch');
     const [usePathPickerSearch, setUsePathPickerSearch] = useSettingMutable('usePathPickerSearch');
@@ -63,6 +64,13 @@ export default React.memo(function FeaturesSettingsScreen() {
                     subtitle={t('settingsFeatures.groupInactiveSessionsByProjectSubtitle')}
                     icon={<Ionicons name="folder-outline" size={29} color="#007AFF" />}
                     rightElement={<Switch value={groupInactiveSessionsByProject} onValueChange={setGroupInactiveSessionsByProject} />}
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsFeatures.environmentBadge')}
+                    subtitle={t('settingsFeatures.environmentBadgeSubtitle')}
+                    icon={<Ionicons name="pricetag-outline" size={29} color="#5856D6" />}
+                    rightElement={<Switch value={showEnvironmentBadge} onValueChange={setShowEnvironmentBadge} />}
                     showChevron={false}
                 />
                 <Item

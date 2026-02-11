@@ -26,11 +26,12 @@ const bundleIdsByVariant = {
     preview: "dev.happier.app.preview",
     production: DEFAULTS.iosBundleId
 };
+const appVariant = namesByVariant[variant] ? variant : 'development';
 
 // If APP_ENV is unknown, fall back to development-safe defaults to avoid generating
 // an invalid Expo config with undefined name/bundle id.
-const name = nameOverride || namesByVariant[variant] || namesByVariant.development;
-const bundleId = bundleIdOverride || bundleIdsByVariant[variant] || bundleIdsByVariant.development;
+const name = nameOverride || namesByVariant[appVariant] || namesByVariant.development;
+const bundleId = bundleIdOverride || bundleIdsByVariant[appVariant] || bundleIdsByVariant.development;
 const owner = ownerOverride || DEFAULTS.owner;
 const slug = slugOverride || DEFAULTS.slug;
 
@@ -46,7 +47,7 @@ const easProjectId =
     ).trim() || DEFAULTS.easProjectId;
 
 const updatesUrl = (process.env.EXPO_UPDATES_URL || '').trim() || `https://u.expo.dev/${easProjectId}`;
-const updatesChannel = (process.env.EXPO_UPDATES_CHANNEL || '').trim() || (variant === 'production' ? DEFAULTS.updatesChannel : variant);
+const updatesChannel = (process.env.EXPO_UPDATES_CHANNEL || '').trim() || (appVariant === 'production' ? DEFAULTS.updatesChannel : appVariant);
 const updatesConfig = {
     url: updatesUrl,
     requestHeaders: {
@@ -92,7 +93,7 @@ export default {
                 NSLocalNetworkUsageDescription: "Allow $(PRODUCT_NAME) to find and connect to local devices on your network.",
                 NSBonjourServices: ["_http._tcp", "_https._tcp"]
             },
-            associatedDomains: variant === 'production' ? iosAssociatedDomains : []
+            associatedDomains: appVariant === 'production' ? iosAssociatedDomains : []
         },
         android: {
             adaptiveIcon: {
@@ -112,7 +113,7 @@ export default {
             edgeToEdgeEnabled: true,
             package: bundleId,
             googleServicesFile: "./google-services.json",
-            intentFilters: variant === 'production' ? [
+            intentFilters: appVariant === 'production' ? [
                 {
                     "action": "VIEW",
                     "autoVerify": true,
@@ -215,6 +216,7 @@ export default {
             },
             eas: { projectId: easProjectId },
             app: {
+                variant: appVariant,
                 postHogKey: process.env.EXPO_PUBLIC_POSTHOG_API_KEY,
                 revenueCatAppleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_APPLE,
                 revenueCatGoogleKey: process.env.EXPO_PUBLIC_REVENUE_CAT_GOOGLE,

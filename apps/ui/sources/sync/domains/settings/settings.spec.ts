@@ -159,6 +159,18 @@ describe('settings', () => {
             expect((parsed as any).multiServerActiveProfileId).toBeNull();
         });
 
+        it('defaults environment badge visibility to enabled', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).showEnvironmentBadge).toBe(true);
+        });
+
+        it('parses environment badge visibility when explicitly disabled', () => {
+            const parsed = settingsParse({
+                showEnvironmentBadge: false,
+            } as any);
+            expect((parsed as any).showEnvironmentBadge).toBe(false);
+        });
+
         it('parses multi-server settings values when provided', () => {
             const parsed = settingsParse({
                 multiServerEnabled: true,
