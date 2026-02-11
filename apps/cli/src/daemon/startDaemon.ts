@@ -798,72 +798,76 @@ export async function startDaemon(): Promise<void> {
 
     // Create API client
     const api = await ApiClient.create(credentials);
-
-    // Get or create machine
-    const preferredHostForRegistration = await getPreferredHostName();
-    const metadataForRegistration: MachineMetadata = { ...initialMachineMetadata, host: preferredHostForRegistration };
-    const ensured = await ensureMachineRegistered({
-      api,
-      machineId,
-      metadata: metadataForRegistration,
-      daemonState: initialDaemonState,
-      caller: 'startDaemon',
-    });
-    machineId = ensured.machineId;
-    const machine = ensured.machine;
-    logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
-
-    // Create realtime machine session
-    const apiMachine = api.machineSyncClient(machine);
-    apiMachineForSessions = apiMachine;
-
-    // Set RPC handlers
-    apiMachine.setRPCHandlers({
-      spawnSession,
-      stopSession,
-      requestShutdown: () => requestShutdown('happier-app')
-    });
-
-    // Connect to server
+    let apiMachine: ApiMachineClient | null = null;
     const preferredHost = await getPreferredHostName();
-    let didRefreshMachineMetadata = false;
-    apiMachine.connect({
-      onConnect: async () => {
-        if (didRefreshMachineMetadata) return;
 
-        // Keep machine metadata fresh without clobbering user-provided fields (e.g. displayName) that may exist.
-        await apiMachine.updateMachineMetadata((metadata) => {
-          const base = (metadata ?? (machine.metadata as any) ?? {}) as any;
-          const next: MachineMetadata = {
-            ...base,
-            host: preferredHost,
-            platform: os.platform(),
-            happyCliVersion: packageJson.version,
-            homeDir: os.homedir(),
-            happyHomeDir: configuration.happyHomeDir,
-            happyLibDir: projectPath(),
-          } as MachineMetadata;
+    try {
+      // Get or create machine
+      const metadataForRegistration: MachineMetadata = { ...initialMachineMetadata, host: preferredHost };
+      const ensured = await ensureMachineRegistered({
+        api,
+        machineId,
+        metadata: metadataForRegistration,
+        daemonState: initialDaemonState,
+        caller: 'startDaemon',
+      });
+      machineId = ensured.machineId;
+      const machine = ensured.machine;
+      logger.debug(`[DAEMON RUN] Machine registered: ${machine.id}`);
 
-          // If nothing changes, skip emitting an update entirely.
-          const current = base as Partial<MachineMetadata>;
-          const isSame =
-            current.host === next.host &&
-            current.platform === next.platform &&
-            current.happyCliVersion === next.happyCliVersion &&
-            current.homeDir === next.homeDir &&
-            current.happyHomeDir === next.happyHomeDir &&
-            current.happyLibDir === next.happyLibDir;
+      // Create realtime machine session
+      const connectedApiMachine = api.machineSyncClient(machine);
+      apiMachine = connectedApiMachine;
+      apiMachineForSessions = connectedApiMachine;
 
-          if (isSame) {
-            return base as MachineMetadata;
-          }
+      // Set RPC handlers
+      connectedApiMachine.setRPCHandlers({
+        spawnSession,
+        stopSession,
+        requestShutdown: () => requestShutdown('happier-app')
+      });
 
-          return next;
-        });
+      let didRefreshMachineMetadata = false;
+      connectedApiMachine.connect({
+        onConnect: async () => {
+          if (didRefreshMachineMetadata) return;
 
-        didRefreshMachineMetadata = true;
-      },
-    });
+          // Keep machine metadata fresh without clobbering user-provided fields (e.g. displayName) that may exist.
+          await connectedApiMachine.updateMachineMetadata((metadata) => {
+            const base = (metadata ?? (machine.metadata as any) ?? {}) as any;
+            const next: MachineMetadata = {
+              ...base,
+              host: preferredHost,
+              platform: os.platform(),
+              happyCliVersion: packageJson.version,
+              homeDir: os.homedir(),
+              happyHomeDir: configuration.happyHomeDir,
+              happyLibDir: projectPath(),
+            } as MachineMetadata;
+
+            // If nothing changes, skip emitting an update entirely.
+            const current = base as Partial<MachineMetadata>;
+            const isSame =
+              current.host === next.host &&
+              current.platform === next.platform &&
+              current.happyCliVersion === next.happyCliVersion &&
+              current.homeDir === next.homeDir &&
+              current.happyHomeDir === next.happyHomeDir &&
+              current.happyLibDir === next.happyLibDir;
+
+            if (isSame) {
+              return base as MachineMetadata;
+            }
+
+            return next;
+          });
+
+          didRefreshMachineMetadata = true;
+        },
+      });
+    } catch (error) {
+      logger.warn('[DAEMON RUN] Machine registration unavailable at startup; continuing without machine sync until next restart', error);
+    }
 
     // Every 60 seconds:
     // 1. Prune stale sessions
@@ -899,18 +903,20 @@ export async function startDaemon(): Promise<void> {
         logger.debug('[DAEMON RUN] Health check interval cleared');
       }
 
-      // Update daemon state before shutting down
-      await apiMachine.updateDaemonState((state: DaemonState | null) => ({
-        ...state,
-        status: 'shutting-down',
-        shutdownRequestedAt: Date.now(),
-        shutdownSource: source
-      }));
+      if (apiMachine) {
+        // Update daemon state before shutting down
+        await apiMachine.updateDaemonState((state: DaemonState | null) => ({
+          ...state,
+          status: 'shutting-down',
+          shutdownRequestedAt: Date.now(),
+          shutdownSource: source
+        }));
 
-      // Give time for metadata update to send
-      await new Promise(resolve => setTimeout(resolve, 100));
+        // Give time for metadata update to send
+        await new Promise(resolve => setTimeout(resolve, 100));
 
-      apiMachine.shutdown();
+        apiMachine.shutdown();
+      }
       await stopControlServer();
 	      await cleanupDaemonState();
 	      await stopCaffeinate();
