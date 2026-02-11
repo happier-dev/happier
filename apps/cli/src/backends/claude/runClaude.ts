@@ -161,13 +161,15 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     }
     logger.debug(`Using machineId: ${machineId}`);
 
-    const ensured = await ensureMachineRegistered({
-        api,
-        machineId,
-        metadata: initialMachineMetadata,
-        caller: 'runClaude',
-    });
-    machineId = ensured.machineId;
+    if (options.startedBy !== 'daemon') {
+        const ensured = await ensureMachineRegistered({
+            api,
+            machineId,
+            metadata: initialMachineMetadata,
+            caller: 'runClaude',
+        });
+        machineId = ensured.machineId;
+    }
 
     const terminal = buildTerminalMetadataFromRuntimeFlags(options.terminalRuntime ?? null);
     // Resolve initial permission mode for sessions that start in terminal local mode.

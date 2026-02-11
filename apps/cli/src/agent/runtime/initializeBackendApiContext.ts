@@ -11,6 +11,7 @@ export async function initializeBackendApiContext(opts: {
   credentials: Credentials;
   machineMetadata: MachineMetadata;
   missingMachineIdMessage?: string;
+  skipMachineRegistration?: boolean;
 }): Promise<{
   api: ApiClient;
   machineId: string;
@@ -21,6 +22,9 @@ export async function initializeBackendApiContext(opts: {
   if (!machineId) {
     console.error(opts.missingMachineIdMessage ?? DEFAULT_MISSING_MACHINE_ID_MESSAGE);
     process.exit(1);
+  }
+  if (opts.skipMachineRegistration) {
+    return { api, machineId };
   }
   const { machineId: registeredMachineId } = await ensureMachineRegistered({
     api,
