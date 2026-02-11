@@ -1,0 +1,105 @@
+name: Issue Triage
+
+on:
+  issue_comment:
+    types: [created]
+  issues:
+    types: [labeled]
+
+jobs:
+  triage:
+    if: >-
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/triage')) ||
+      (github.event_name == 'issues' && github.event.label.name == 'ai-triage')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Validate actor permissions
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const actor = context.actor;
+            const { owner, repo } = context.repo;
+            const result = await github.rest.repos.getCollaboratorPermissionLevel({ owner, repo, username: actor });
+            const allowed = new Set(['admin', 'maintain', 'write']);
+            if (!allowed.has(result.data.permission)) {
+              core.setFailed(`Actor '${actor}' does not have triage permission.`);
+            }
+
+      - name: Checkout maintainer tools
+        uses: actions/checkout@v4
+        with:
+          repository: happier-dev/maintainers-tools
+          path: maintainer-tools
+          token: ${{ secrets.MAINTAINER_TOOLS_CHECKOUT_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: maintainer-tools/yarn.lock
+
+      - name: Build maintainer CLI
+        run: |
+          yarn --cwd maintainer-tools install --frozen-lockfile
+          yarn --cwd maintainer-tools workspace @happier-dev/maintainer-shared-types build
+          yarn --cwd maintainer-tools workspace @happier-dev/maintainer-cli build
+
+      - name: Fetch issue context
+        env:
+          MAINTAINER_SERVICE_BASE_URL: ${{ vars.MAINTAINER_SERVICE_BASE_URL }}
+          MAINTAINER_SERVICE_TOKEN: ${{ secrets.MAINTAINER_SERVICE_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          ISSUE_REF="${{ github.repository }}#${ISSUE_NUMBER}"
+          node maintainer-tools/packages/maintainer-cli/dist/index.js issue context "$ISSUE_REF" --json > issue-context.json
+
+      - name: Post triage context comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const contextPayload = JSON.parse(fs.readFileSync('issue-context.json', 'utf8'));
+            const report = contextPayload.report;
+            const issue = contextPayload.issue;
+            const steps = report?.form?.reproductionSteps?.map((s, i) => `${i + 1}. ${s}`).join('\n') ?? 'Not provided';
+            const body = [
+              '### 🤖 Automated Triage Context',
+              '',
+              `- Issue: ${issue.owner}/${issue.repo}#${issue.number}`,
+              `- Diagnostics ID: ${contextPayload.diagnosticId ?? 'none'}`,
+              `- Diagnostics available: ${report ? 'yes' : 'no'}`,
+              report ? `- Severity: ${report.form.severity}` : null,
+              report ? `- Frequency: ${report.form.frequency}` : null,
+              report ? `- Deployment: ${report.form.environment.deploymentType}` : null,
+              '',
+              report ? '#### Summary' : null,
+              report ? report.form.summary : null,
+              '',
+              report ? '#### Reproduction steps' : null,
+              report ? steps : null,
+              '',
+              report ? 'Diagnostics artifacts are stored privately and available through maintainer tooling/MCP.' : 'No diagnostics artifact bundle linked to this issue yet.',
+            ].filter(Boolean).join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body,
+            });
+
+      - name: Assign coding agent
+        if: ${{ vars.TRIAGE_BOT_ID != '' }}
+        env:
+          MAINTAINER_SERVICE_BASE_URL: ${{ vars.MAINTAINER_SERVICE_BASE_URL }}
+          MAINTAINER_SERVICE_TOKEN: ${{ secrets.MAINTAINER_SERVICE_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          TRIAGE_BOT_ID: ${{ vars.TRIAGE_BOT_ID }}
+        run: |
+          ISSUE_REF="${{ github.repository }}#${ISSUE_NUMBER}"
+          node maintainer-tools/packages/maintainer-cli/dist/index.js issue triage assign "$ISSUE_REF" --bot-id "$TRIAGE_BOT_ID"

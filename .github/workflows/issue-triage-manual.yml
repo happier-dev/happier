@@ -1,0 +1,68 @@
+name: Issue Triage Manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue number in this repository
+        required: true
+        type: string
+      assign_agent:
+        description: Assign coding agent after posting triage context
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  triage-manual:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      - name: Checkout maintainer tools
+        uses: actions/checkout@v4
+        with:
+          repository: happier-dev/maintainers-tools
+          path: maintainer-tools
+          token: ${{ secrets.MAINTAINER_TOOLS_CHECKOUT_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: maintainer-tools/yarn.lock
+
+      - name: Build maintainer CLI
+        run: |
+          yarn --cwd maintainer-tools install --frozen-lockfile
+          yarn --cwd maintainer-tools workspace @happier-dev/maintainer-shared-types build
+          yarn --cwd maintainer-tools workspace @happier-dev/maintainer-cli build
+
+      - name: Prepare triage bundle
+        env:
+          MAINTAINER_SERVICE_BASE_URL: ${{ vars.MAINTAINER_SERVICE_BASE_URL }}
+          MAINTAINER_SERVICE_TOKEN: ${{ secrets.MAINTAINER_SERVICE_TOKEN }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          ISSUE_REF="${{ github.repository }}#${ISSUE_NUMBER}"
+          node maintainer-tools/packages/maintainer-cli/dist/index.js issue triage prepare "$ISSUE_REF" --out triage-bundle
+
+      - name: Upload triage bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: triage-bundle-${{ inputs.issue_number }}
+          path: triage-bundle
+
+      - name: Optionally assign coding agent
+        if: ${{ inputs.assign_agent && vars.TRIAGE_BOT_ID != '' }}
+        env:
+          MAINTAINER_SERVICE_BASE_URL: ${{ vars.MAINTAINER_SERVICE_BASE_URL }}
+          MAINTAINER_SERVICE_TOKEN: ${{ secrets.MAINTAINER_SERVICE_TOKEN }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          TRIAGE_BOT_ID: ${{ vars.TRIAGE_BOT_ID }}
+        run: |
+          ISSUE_REF="${{ github.repository }}#${ISSUE_NUMBER}"
+          node maintainer-tools/packages/maintainer-cli/dist/index.js issue triage assign "$ISSUE_REF" --bot-id "$TRIAGE_BOT_ID"
