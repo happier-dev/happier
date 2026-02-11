@@ -1,0 +1,32 @@
+---
+title: Server feature flags
+description: Control which user-facing capabilities are enabled for a given server.
+---
+
+Happier supports server-advertised feature flags so each environment can expose only the features it wants.
+
+Common examples:
+
+- disable social/friends features,
+- disable voice features,
+- disable bug report upload features.
+
+Clients (mobile/web/desktop) adapt to advertised flags so disabled features do not appear as active workflows.
+
+## Why this matters
+
+- Cleaner UX for enterprise/self-hosted deployments.
+- Better policy control without client forks.
+- Fewer user surprises when a server intentionally restricts capabilities.
+
+## Typical workflow
+
+1. Configure feature flags on your server.
+2. Restart/redeploy server if required by your deployment setup.
+3. Reopen Happier clients so they refresh capabilities from the server.
+
+## Related pages
+
+- [Friends](/docs/features/friends)
+- [Voice](/docs/features/voice)
+- [Bug reports](/docs/features/bug-reports)

@@ -63,7 +63,13 @@ After weeks of refining, fixing, and extending the foundation, we decided to sha
   Share a live session with teammates or friends (private or public links).
 
 - **Broad provider support**  
-  Works with **Claude Code, Codex, Gemini, OpenCode**, and more (configurable).
+  Works with **Claude Code, Codex, Gemini, OpenCode, Kilo, Kimi, Qwen, Augment** (and more over time).
+
+- **Multi-server support**  
+  Use personal/work/self-hosted servers side-by-side, switch quickly, and keep auth scoped per server.
+
+- **Git-aware file browser + operations**  
+  Review changed files and diffs in-session, with optional experimental Git write actions (stage/unstage/commit/pull/push/revert).
 
 - **Persistent sessions**  
   Resume sessions even after restarts; archive them and return later as if they never ended.
@@ -71,14 +77,23 @@ After weeks of refining, fixing, and extending the foundation, we decided to sha
 - **Seamless switching**  
   Move between terminal, web UI, and mobile while keeping full context.
 
-- **Subscriptions or API keys**  
-  Use existing provider subscriptions where supported, or configure API keys directly.
+- **Steering + pending queue controls**  
+  Steer compatible sessions while they are running, or queue/edit/reorder messages before processing.
 
-- **Infinite history**  
-  Scroll back through older messages in long-running sessions.
+- **Mode/model/permission controls**  
+  Pick model and mode per session (provider-capability dependent), and choose explicit permission behavior.
 
-- **Pending message queue**  
-  Edit, reorder, or remove queued messages before the agent processes them.
+- **Server feature toggles**  
+  Server owners can disable selected capabilities (for example social/voice/bug reports) so users only see what is enabled in their environment.
+
+- **Voice options (cloud, BYO, local)**  
+  Use Happier Voice, your own ElevenLabs account, or local OpenAI-compatible STT/TTS (including device STT/TTS where available).
+
+- **Smart notification routing**  
+  Notification taps open the correct session and server context automatically.
+
+- **In-app bug reports**  
+  Submit bug reports from settings, optionally attach diagnostics, and let teams disable report upload flows when required.
 
 - **tmux support**  
   Resume remote-started sessions locally (Claude).
@@ -146,6 +161,12 @@ happier codex
 # Use: happier opencode
 
 happier opencode
+
+# More providers:
+happier gemini
+happier kilo
+happier kimi
+happier qwen
 
 ```
 

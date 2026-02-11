@@ -1,0 +1,30 @@
+---
+title: Augment (Auggie)
+description: Configure Augment via Happier's Auggie backend integration.
+---
+
+Happier integrates Augment using the **Auggie** backend/runtime.
+
+## Requirements
+
+- Auggie CLI installed locally.
+- Binary available on `PATH` (or set `HAPPIER_AUGGIE_PATH`).
+
+## Start Augment/Auggie with Happier
+
+```bash
+happier auggie
+```
+
+## Notes
+
+- Capability exposure (resume/modes/permissions/model behavior) depends on the installed runtime.
+- Session tools are normalized into canonical Happier timeline tools.
+
+## Troubleshooting
+
+If Auggie is not detected:
+
+1. Verify `auggie --version` works.
+2. Restart Happier.
+3. Set `HAPPIER_AUGGIE_PATH` if needed.

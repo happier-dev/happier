@@ -1,0 +1,47 @@
+---
+title: Steering while busy
+description: Send context updates into an in-flight turn when the backend supports steering.
+---
+
+Happier supports **in-flight steering** for compatible runtimes.
+
+Steering means you can send a new user message **without interrupting the current turn**. The message is injected as extra context while the agent is still working.
+
+## When steering applies
+
+Steering is used only when all conditions are true:
+
+- the current backend/runtime advertises steering support,
+- the session is online and agent-ready,
+- a turn is currently in flight,
+- your send policy is set to steer while busy.
+
+If these conditions are not met, Happier falls back to normal pending-queue behavior.
+
+## Busy-session send policy
+
+In the app, open:
+
+1. **Settings**
+2. **Session**
+3. **Message sending**
+4. **When the agent is busy (steer-capable)**
+
+You can choose:
+
+- **Steer immediately**: send immediately and steer the active turn.
+- **Server pending**: store message in pending queue first.
+
+## Interaction with pending queue
+
+Steering and pending queue are complementary:
+
+- Use steering for quick context corrections while the turn is running.
+- Use pending queue when you want ordered, editable messages before execution.
+
+If steer fails for any reason, Happier uses queue fallback so messages are not lost.
+
+## Related pages
+
+- [Pending queue](/docs/features/pending-queue)
+- [Permissions](/docs/features/permissions)

@@ -4,6 +4,11 @@
     "index",
     "claude",
     "codex",
-    "kilo"
+    "gemini",
+    "opencode",
+    "augment",
+    "kilo",
+    "kimi",
+    "qwen"
   ]
 }

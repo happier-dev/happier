@@ -1,0 +1,54 @@
+---
+title: Tool timeline & normalization
+description: How Happier renders tools consistently across providers, with configurable detail levels.
+---
+
+Happier normalizes provider-native tools into a canonical timeline surface (for example `Bash`, `Edit`, `Read`, `Diff`).
+
+This keeps session timelines consistent across Claude/Codex/Gemini/OpenCode/Kilo/Kimi/Qwen/Augment backends.
+
+## What normalization gives you
+
+- A consistent tool vocabulary across providers.
+- Stable per-tool rendering in session timeline cards.
+- Better compatibility for legacy sessions and mixed backend histories.
+- Cleaner diffs and summaries (including per-turn diff aggregation where available).
+- Visibility into subagent activity when a provider emits subagent events.
+
+## Tool detail controls
+
+In the app, open:
+
+1. **Settings**
+2. **Session**
+3. **Tool timeline/detail settings**
+
+Detail levels:
+
+- **Title**: tool name only
+- **Summary**: compact safe summary
+- **Full**: full inline details
+
+You can configure defaults and per-tool overrides.
+
+## Debug/raw visibility
+
+For advanced debugging, you can view raw normalized payloads in full tool views. This is helpful when investigating provider drift or tool parsing edge cases.
+
+## Turn summaries and subagents
+
+Depending on provider/runtime payload quality, Happier can surface:
+
+- per-file diffs for the current turn,
+- a turn-end summary of changes,
+- nested subagent actions in the same timeline.
+
+These displays are capability-driven and may vary by provider.
+
+## Related pages
+
+- [Git & file browser](/docs/features/git)
+- [Permissions](/docs/features/permissions)
+- [Steering while busy](/docs/features/steering)
+
+For internal implementation details, see `/docs/tool-normalization.md` in the repository.

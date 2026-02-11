@@ -1,0 +1,30 @@
+---
+title: Qwen
+description: Configure Qwen in Happier via ACP-backed local runtime integration.
+---
+
+Happier supports Qwen as a local CLI-backed provider.
+
+## Requirements
+
+- Qwen CLI installed locally.
+- Binary available on `PATH` (or set `HAPPIER_QWEN_PATH`).
+
+## Start Qwen with Happier
+
+```bash
+happier qwen
+```
+
+## Notes
+
+- Resume/model/mode/permission behavior is capability-driven.
+- Tool calls are normalized to canonical Happier tool renderers.
+
+## Troubleshooting
+
+If Qwen is not detected:
+
+1. Verify `qwen --version` works.
+2. Restart Happier.
+3. Set `HAPPIER_QWEN_PATH` if needed.

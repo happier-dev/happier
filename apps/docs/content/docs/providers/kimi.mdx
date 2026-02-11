@@ -1,0 +1,30 @@
+---
+title: Kimi
+description: Configure Kimi in Happier via ACP-backed local runtime integration.
+---
+
+Happier supports Kimi as a local CLI-backed provider.
+
+## Requirements
+
+- Kimi CLI installed locally.
+- Binary available on `PATH` (or set `HAPPIER_KIMI_PATH`).
+
+## Start Kimi with Happier
+
+```bash
+happier kimi
+```
+
+## Notes
+
+- Resume/model/mode/permission behavior is capability-driven.
+- Tool calls are normalized to canonical Happier tool renderers.
+
+## Troubleshooting
+
+If Kimi is not detected:
+
+1. Verify `kimi --version` works.
+2. Restart Happier.
+3. Set `HAPPIER_KIMI_PATH` if needed.

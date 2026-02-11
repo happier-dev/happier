@@ -1,0 +1,33 @@
+---
+title: Updates
+description: Update channels and update behavior for app, desktop, and CLI components.
+---
+
+Happier ships different components with different update paths.
+
+## Mobile app
+
+- Mobile app updates are delivered through normal app distribution channels.
+- Expo OTA can deliver JS/runtime updates where configured.
+
+## Desktop app (Tauri)
+
+- Desktop update checks and banners are supported.
+- Stable/preview feeds are managed by release channel and signing configuration.
+
+## CLI / stack tooling
+
+Common commands:
+
+```bash
+happier self-update
+hstack self-host rollback --to <version>
+```
+
+Use rollback for controlled recovery when validating new releases in self-hosted environments.
+
+## Release channels
+
+Behavior can differ between preview and production lanes (for example update feeds and promotion timing).
+
+For artifact-level release details, see [Release artifacts](/docs/development/release-artifacts).

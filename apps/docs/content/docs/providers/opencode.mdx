@@ -1,0 +1,30 @@
+---
+title: OpenCode
+description: Configure OpenCode in Happier (ACP), including resume and permissions behavior.
+---
+
+Happier runs OpenCode through the local OpenCode CLI using ACP-backed integration.
+
+## Requirements
+
+- OpenCode CLI installed on your machine.
+- Binary available on `PATH` (or set `HAPPIER_OPENCODE_PATH`).
+
+## Start OpenCode with Happier
+
+```bash
+happier opencode
+```
+
+## Notes
+
+- Session capabilities (resume/model/mode/permissions) are capability-driven.
+- Tool events are normalized into Happier's canonical tool timeline.
+
+## Troubleshooting
+
+If OpenCode is not detected:
+
+1. Verify `opencode --version` works.
+2. Restart Happier.
+3. Set `HAPPIER_OPENCODE_PATH` if your binary is not in PATH.

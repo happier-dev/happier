@@ -3,6 +3,7 @@
   "pages": [
     "index",
     "custom-mobile-build",
-    "notifications"
+    "notifications",
+    "updates"
   ]
 }

@@ -228,7 +228,7 @@ function initFeatureTabs() {
     },
     providers: {
       title: 'Choose the providers you love',
-      desc: 'Claude Code, Codex, Gemini, OpenCode — plus more over time. Switch without losing your session context.',
+      desc: 'Claude Code, Codex, Gemini, OpenCode, Kilo, Kimi, Qwen, Augment — switch without losing session context.',
       image: '/images/screens/providers.svg',
       alt: 'Providers overview screenshot',
     },

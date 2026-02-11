@@ -1,0 +1,62 @@
+---
+title: Feature matrix
+description: User-facing feature coverage across clients and runtimes.
+---
+
+This page summarizes the main user-facing capabilities currently surfaced in Happier.
+
+Status legend:
+
+- **Stable**: intended for regular use
+- **Experimental**: available, still being hardened
+- **Capability-driven**: depends on backend/provider support
+
+## Core capabilities
+
+| Capability | Status | Where it works | Notes |
+| --- | --- | --- | --- |
+| Multi-server profiles + switching | Stable | App, Web, CLI | Accounts and runtime state are scoped per server. |
+| Session sharing + collaboration | Stable | App, Web | Share sessions with friends/teammates and manage access. |
+| Persistent sessions + resume | Stable | App, Web, CLI | Resume long-running sessions across devices. |
+| Pending queue | Stable | App, Web, CLI runtime | Queue, reorder, edit, remove, and send-now workflows. |
+| In-flight steering while busy | Capability-driven | App, Web, CLI runtime | When supported by backend/runtime, messages can steer an active turn instead of waiting in queue. |
+| Git/file browser (read) | Stable | App, Web | Inspect changed files and diffs from the session UI. |
+| Git write operations | Experimental | App, Web | Stage/unstage/commit/pull/push/revert behind feature toggle. |
+| Tool timeline normalization | Stable | App, Web, CLI runtime | Provider tools are normalized to canonical UI tool types. |
+| Subagent timeline visibility | Capability-driven | App, Web | When providers expose subagents, Happier shows their activity in-session. |
+| Tool detail controls (title/summary/full) | Stable | App, Web | Configure default/per-tool timeline detail levels. |
+| Turn-level change summaries | Capability-driven | App, Web | Per-turn summary and diff rendering quality depends on provider/runtime payloads. |
+| Permission modes | Capability-driven | App, Web, CLI | Effective behavior varies by provider/backend capabilities. |
+| Model/mode selection | Capability-driven | App, Web, CLI | Availability and apply timing are provider-specific. |
+| Server feature flags | Stable | App, Web, Server | Server can disable features (for example social/voice/bug reports) and clients adapt UI accordingly. |
+| Notification routing to session/server | Stable | App, Web | Notification taps route to correct session; multi-server routes to matching server first. |
+| In-app bug reports + diagnostics | Stable | App | Submit issue reports with optional diagnostics; server can disable upload/report UI. |
+| Voice: Happier Voice | Capability-driven | App, Web | Requires server voice config and feature enablement. |
+| Voice: BYO ElevenLabs | Stable | App, Web | Uses your own ElevenLabs account/API key on device. |
+| Voice: Local OpenAI-compatible STT/TTS | Experimental | App, Web | Supports direct mode and mediator mode. |
+| Voice: device STT/TTS toggles | Experimental | Mobile app | Uses on-device speech where available. |
+
+## Provider availability
+
+| Provider | Current docs page |
+| --- | --- |
+| Claude | [/docs/providers/claude](/docs/providers/claude) |
+| Codex | [/docs/providers/codex](/docs/providers/codex) |
+| Gemini | [/docs/providers/gemini](/docs/providers/gemini) |
+| OpenCode | [/docs/providers/opencode](/docs/providers/opencode) |
+| Augment (Auggie) | [/docs/providers/augment](/docs/providers/augment) |
+| Kilo | [/docs/providers/kilo](/docs/providers/kilo) |
+| Kimi | [/docs/providers/kimi](/docs/providers/kimi) |
+| Qwen | [/docs/providers/qwen](/docs/providers/qwen) |
+
+## Related guides
+
+- [Permissions](/docs/features/permissions)
+- [Pending queue](/docs/features/pending-queue)
+- [Steering while busy](/docs/features/steering)
+- [Tool timeline & normalization](/docs/features/tool-timeline)
+- [Server feature flags](/docs/features/feature-flags)
+- [Bug reports](/docs/features/bug-reports)
+- [Git & file browser](/docs/features/git)
+- [Notifications](/docs/advanced/notifications)
+- [Update channels and update behavior](/docs/advanced/updates)

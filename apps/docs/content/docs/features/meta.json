@@ -2,11 +2,17 @@
   "title": "Features",
   "pages": [
     "index",
+    "feature-matrix",
     "git",
     "multi-server",
     "friends",
+    "feature-flags",
     "permissions",
     "pending-queue",
+    "steering",
+    "tool-timeline",
+    "notifications-routing",
+    "bug-reports",
     "voice",
     "voice-local"
   ]

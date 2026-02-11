@@ -1,0 +1,38 @@
+---
+title: Notification routing
+description: How Happier opens the correct session (and server) from notifications.
+---
+
+Happier notifications are session-aware and multi-server-aware.
+
+When you open a notification:
+
+- Happier routes to the targeted session,
+- and if needed switches to the matching server profile first.
+
+This avoids landing on the wrong server/session when you use multiple servers.
+
+## Typical notifications
+
+- turn completion / "it's ready"
+- permission actions
+- share/collaboration events
+
+## Prerequisites
+
+- App has registered push token(s) to your selected server.
+- CLI/daemon and app are using the same server profile.
+- For multi-server setups, each server profile is configured correctly.
+
+## Troubleshooting
+
+If notification taps open the wrong context:
+
+1. Verify active server profile in app.
+2. Re-run `happier auth login` on the correct server profile in CLI.
+3. Confirm push token registration for that server profile.
+
+## Related pages
+
+- [Multi-server](/docs/features/multi-server)
+- [Notifications](/docs/advanced/notifications)

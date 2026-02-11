@@ -1,0 +1,31 @@
+---
+title: Gemini
+description: Configure Gemini in Happier, including model selection and ACP-backed behavior.
+---
+
+Happier integrates Gemini through the local Gemini CLI/runtime and ACP-compatible messaging.
+
+## Requirements
+
+- Gemini CLI installed on your machine.
+- CLI available on `PATH` (or set `HAPPIER_GEMINI_PATH` if needed).
+
+## Start Gemini with Happier
+
+```bash
+happier gemini
+```
+
+## Model selection
+
+Model selection is capability-driven and can be set from:
+
+- CLI start options
+- App session input settings (when exposed for the current runtime)
+
+For cross-provider model behavior details, see [Permissions](/docs/features/permissions).
+
+## Troubleshooting
+
+- If Gemini is not detected, verify CLI installation and restart Happier.
+- If needed, point to binary explicitly with `HAPPIER_GEMINI_PATH`.
