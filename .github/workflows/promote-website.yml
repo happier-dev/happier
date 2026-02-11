@@ -84,7 +84,6 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-      members: read
     uses: ./.github/workflows/release-actor-guard.yml
 
   promote:
