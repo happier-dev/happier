@@ -246,10 +246,31 @@ export function createAcpRuntime(params: {
       while (!controller.signal.aborted) {
         // Pending queue updates do not always publish a metadata wake signal (version skew / transport races).
         // Poll as a fallback so newly enqueued messages can still be drained mid-turn for in-flight steer.
-        await Promise.race([
-          params.pendingQueue!.waitForMetadataUpdate(controller.signal).catch(() => false),
-          waitForPollWake(),
+        //
+        // IMPORTANT: avoid leaking `metadata-updated` listeners by canceling the losing wait when polling wins.
+        const iteration = new AbortController();
+        const abortIteration = (reason: string) => {
+          try {
+            iteration.abort(reason);
+          } catch {
+            // ignore
+          }
+        };
+        const onGlobalAbort = () => abortIteration('acp-runtime:pending-pump:global-abort');
+        controller.signal.addEventListener('abort', onGlobalAbort, { once: true });
+
+        const winner = await Promise.race([
+          params.pendingQueue!
+            .waitForMetadataUpdate(iteration.signal)
+            .then(() => 'metadata')
+            .catch(() => 'metadata'),
+          waitForPollWake().then(() => 'poll'),
         ]);
+        controller.signal.removeEventListener('abort', onGlobalAbort);
+        if (winner === 'poll') {
+          // Cancel the still-pending metadata wait so it can remove its listeners.
+          abortIteration('acp-runtime:pending-pump:poll-wake');
+        }
         if (controller.signal.aborted) break;
 
         await drainPendingOnce();
@@ -975,14 +996,12 @@ export function createAcpRuntime(params: {
       if (!sessionId) {
         throw new Error(`${params.provider} ACP session was not started`);
       }
-      const b = await ensureBackend();
-      if (!b.sendSteerPrompt) {
-        throw new Error(`${params.provider} ACP backend does not support in-flight steer`);
-      }
-      await b.sendSteerPrompt(sessionId, prompt);
 
       // Provider-agnostic trace marker so the provider harness can assert that the second message
       // was routed through in-flight steer (STIR-style) instead of interrupting the turn.
+      //
+      // This is emitted before awaiting the backend RPC so harness-level assertions reflect routing
+      // (which is what we control) even when a vendor blocks/queues steer prompts internally.
       if (acpTraceMarkersEnabled) {
         recordToolTraceEvent({
           direction: 'outbound',
@@ -992,6 +1011,13 @@ export function createAcpRuntime(params: {
           kind: 'trace-marker',
           payload: { event: 'acp_in_flight_steer' },
         });
+      }
+
+      const b = await ensureBackend();
+      if (b.sendSteerPrompt) {
+        await b.sendSteerPrompt(sessionId, prompt);
+      } else {
+        throw new Error(`${params.provider} ACP backend does not support in-flight steer`);
       }
       publishSessionId();
     },
