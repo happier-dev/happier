@@ -800,6 +800,12 @@ export async function startDaemon(): Promise<void> {
     const api = await ApiClient.create(credentials);
     let apiMachine: ApiMachineClient | null = null;
     const preferredHost = await getPreferredHostName();
+    const machineRegistrationTimeoutRaw = process.env.HAPPIER_DAEMON_MACHINE_REGISTRATION_TIMEOUT_MS;
+    const machineRegistrationTimeoutParsed = Number.parseInt(machineRegistrationTimeoutRaw ?? '', 10);
+    const machineRegistrationTimeoutMs =
+      Number.isFinite(machineRegistrationTimeoutParsed) && machineRegistrationTimeoutParsed > 0
+        ? machineRegistrationTimeoutParsed
+        : 10_000;
 
     try {
       // Get or create machine
@@ -809,6 +815,7 @@ export async function startDaemon(): Promise<void> {
         machineId,
         metadata: metadataForRegistration,
         daemonState: initialDaemonState,
+        timeoutMs: machineRegistrationTimeoutMs,
         caller: 'startDaemon',
       });
       machineId = ensured.machineId;

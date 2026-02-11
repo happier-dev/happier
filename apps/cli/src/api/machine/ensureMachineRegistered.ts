@@ -47,6 +47,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
   machineId: string;
   metadata: MachineMetadata;
   daemonState?: DaemonState;
+  timeoutMs?: number;
   caller?: string;
 }>): Promise<{
   machine: Machine;
@@ -58,6 +59,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
       machineId: opts.machineId,
       metadata: opts.metadata,
       daemonState: opts.daemonState,
+      timeoutMs: opts.timeoutMs,
     });
     return { machine, machineId: opts.machineId, didRotateMachineId: false };
   } catch (error) {
@@ -77,6 +79,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
       machineId: rotated,
       metadata: opts.metadata,
       daemonState: opts.daemonState,
+      timeoutMs: opts.timeoutMs,
     });
 
     logger.info(`[MACHINE] [RECOVERED] Machine id rotated${caller}: ${opts.machineId} -> ${rotated}`);

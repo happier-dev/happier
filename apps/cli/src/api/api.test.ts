@@ -296,6 +296,29 @@ describe('Api server error handling', () => {
     });
 
     describe('getOrCreateMachine', () => {
+        it('uses provided timeout override for machine registration request', async () => {
+            mockPost.mockResolvedValue({
+                data: {
+                    machine: {
+                        id: 'test-machine',
+                        metadata: testMachineMetadata,
+                        metadataVersion: 1,
+                        daemonState: null,
+                        daemonStateVersion: 0,
+                    },
+                },
+            });
+
+            await api.getOrCreateMachine({
+                machineId: 'test-machine',
+                metadata: testMachineMetadata,
+                timeoutMs: 5_000,
+            } as any);
+
+            const config = mockPost.mock.calls[0]?.[2];
+            expect(config?.timeout).toBe(5_000);
+        });
+
         it('should return minimal machine object when server is unreachable (ECONNREFUSED)', async () => {
             connectionState.reset();
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});

@@ -140,6 +140,7 @@ export class ApiClient {
     machineId: string,
     metadata: MachineMetadata,
     daemonState?: DaemonState,
+    timeoutMs?: number,
   }): Promise<Machine> {
     const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveMachineEncryptionContext(this.credential);
 
@@ -156,6 +157,10 @@ export class ApiClient {
 
     // Create machine
     try {
+      const timeoutMs =
+        typeof opts.timeoutMs === 'number' && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
+          ? Math.floor(opts.timeoutMs)
+          : 60_000;
       const response = await axios.post(
         `${configuration.serverUrl}/v1/machines`,
         {
@@ -169,7 +174,7 @@ export class ApiClient {
             'Authorization': `Bearer ${this.credential.token}`,
             'Content-Type': 'application/json'
           },
-          timeout: 60000 // 1 minute timeout for very bad network connections
+          timeout: timeoutMs
         }
       );
 
