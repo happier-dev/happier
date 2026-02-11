@@ -80,7 +80,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release_actor_guard:
+    name: Release actor guard
+    permissions:
+      contents: read
+      members: read
+    uses: ./.github/workflows/release-actor-guard.yml
+
   promote:
+    needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
     steps:

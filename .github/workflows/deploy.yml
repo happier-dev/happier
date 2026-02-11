@@ -59,7 +59,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release_actor_guard:
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || startsWith(github.ref_name, 'deploy/production/') || startsWith(github.ref_name, 'deploy/preview/')) && !(github.event_name == 'push' && contains(github.actor, '[bot]'))
+    name: Release actor guard
+    permissions:
+      contents: read
+      members: read
+    uses: ./.github/workflows/release-actor-guard.yml
+
   deploy:
+    needs: [release_actor_guard]
     runs-on: ubuntu-latest
     # Deploy branches are promoted from release workflows. Those pushes may be authored by bots,
     # and we prefer deploying via explicit workflow_call (to avoid relying on push-trigger semantics).

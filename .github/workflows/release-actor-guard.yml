@@ -1,0 +1,51 @@
+name: GUARD — Release Actor Authorization
+
+on:
+  workflow_call:
+    inputs:
+      team_slug:
+        description: Team slug allowed to run release/deploy/provider workflows
+        required: false
+        type: string
+        default: release-admins
+      org:
+        description: GitHub organization that owns the team
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  members: read
+
+jobs:
+  authorize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify triggering actor is in release admin team
+        env:
+          INPUT_ORG: ${{ inputs.org }}
+          INPUT_TEAM_SLUG: ${{ inputs.team_slug }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          actor="${GITHUB_TRIGGERING_ACTOR:-${GITHUB_ACTOR:-}}"
+          if [ -z "${actor}" ]; then
+            echo "Unable to resolve triggering actor." >&2
+            exit 1
+          fi
+
+          team_slug="${INPUT_TEAM_SLUG:-release-admins}"
+          org="${INPUT_ORG:-$REPO_OWNER}"
+          if [ -z "${org}" ]; then
+            echo "Unable to resolve organization owner." >&2
+            exit 1
+          fi
+
+          echo "Authorizing actor '${actor}' against team '${org}/${team_slug}'."
+
+          gh api --silent \
+            --header "Accept: application/vnd.github+json" \
+            "orgs/${org}/teams/${team_slug}/memberships/${actor}" >/dev/null

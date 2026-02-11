@@ -50,9 +50,17 @@ env:
   UI_REPO: ${{ github.repository }}
 
 jobs:
+  release_actor_guard:
+    name: Release actor guard
+    permissions:
+      contents: read
+      members: read
+    uses: ./.github/workflows/release-actor-guard.yml
+
   resolve_source:
     name: Resolve source ref to SHA
     runs-on: ubuntu-latest
+    needs: [release_actor_guard]
     outputs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
     steps:

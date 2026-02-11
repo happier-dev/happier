@@ -163,8 +163,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release_actor_guard:
+    name: Release actor guard
+    permissions:
+      contents: read
+      members: read
+    uses: ./.github/workflows/release-actor-guard.yml
+
   gate:
     name: CI Gate (dev)
+    needs: [release_actor_guard]
     if: inputs.checks_profile != 'none'
     uses: ./.github/workflows/tests.yml
     with:
@@ -190,6 +198,7 @@ jobs:
 
   providers_gate:
     name: Providers Gate (dev)
+    needs: [release_actor_guard]
     if: inputs.checks_profile != 'none' && inputs.run_providers == true
     uses: ./.github/workflows/providers-contracts.yml
     secrets: inherit

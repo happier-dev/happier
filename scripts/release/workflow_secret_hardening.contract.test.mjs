@@ -90,3 +90,60 @@ test('manual secret-bearing workflows enforce trusted refs', async () => {
     );
   }
 });
+
+test('secret-bearing workflows require release-admin actor guard before privileged jobs', async () => {
+  const { raw: guardRaw, parsed: guardParsed } = await loadWorkflow('release-actor-guard.yml');
+
+  assert.ok(guardParsed?.on?.workflow_call, 'release-actor-guard must be reusable via workflow_call');
+  assert.match(
+    guardRaw,
+    /orgs\/\$\{org\}\/teams\/\$\{team_slug\}\/memberships\/\$\{actor\}/,
+    'release-actor-guard should verify actor membership in the configured team'
+  );
+  assert.match(
+    guardRaw,
+    /GITHUB_TRIGGERING_ACTOR/,
+    'release-actor-guard should prefer triggering actor for reruns'
+  );
+
+  const guardJob = 'release_actor_guard';
+  const expectedWiring = [
+    ['release.yml', 'gate'],
+    ['release.yml', 'providers_gate'],
+    ['release-npm.yml', 'release'],
+    ['promote-ui.yml', 'promote'],
+    ['promote-server.yml', 'promote'],
+    ['promote-website.yml', 'promote'],
+    ['promote-docs.yml', 'promote'],
+    ['promote-branch.yml', 'promote'],
+    ['build-tauri.yml', 'resolve_source'],
+    ['publish-github-release.yml', 'publish'],
+    ['providers-contracts.yml', 'trusted_ref_guard'],
+    ['deploy.yml', 'deploy'],
+    ['tests.yml', 'providers'],
+  ];
+
+  const needsInclude = (needs, name) => {
+    if (Array.isArray(needs)) return needs.includes(name);
+    if (typeof needs === 'string') return needs === name;
+    return false;
+  };
+
+  for (const [file, jobName] of expectedWiring) {
+    const { parsed } = await loadWorkflow(file);
+    const guard = parsed?.jobs?.[guardJob];
+    assert.ok(guard, `${file} should define '${guardJob}'`);
+    assert.equal(
+      guard?.uses,
+      './.github/workflows/release-actor-guard.yml',
+      `${file} should reuse release-actor-guard workflow`
+    );
+
+    const job = parsed?.jobs?.[jobName];
+    assert.ok(job, `${file} should define job '${jobName}'`);
+    assert.ok(
+      needsInclude(job?.needs, guardJob),
+      `${file} job '${jobName}' should require '${guardJob}'`
+    );
+  }
+});

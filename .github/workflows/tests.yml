@@ -1082,7 +1082,16 @@ jobs:
           name: core-e2e-artifacts-${{ matrix.db }}
           path: .project/logs/e2e
 
+  release_actor_guard:
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_providers }}
+    name: Release actor guard
+    permissions:
+      contents: read
+      members: read
+    uses: ./.github/workflows/release-actor-guard.yml
+
   providers:
+    needs: [release_actor_guard]
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_providers }}
     name: Providers (contract matrix)
     runs-on: ubuntu-latest

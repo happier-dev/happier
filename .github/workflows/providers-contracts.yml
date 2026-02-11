@@ -78,7 +78,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  release_actor_guard:
+    name: Release actor guard
+    permissions:
+      contents: read
+      members: read
+    uses: ./.github/workflows/release-actor-guard.yml
+
   trusted_ref_guard:
+    needs: [release_actor_guard]
     runs-on: ubuntu-latest
     steps:
       - name: Enforce trusted refs for manual dispatch
