@@ -1799,6 +1799,27 @@ export class AcpBackend implements AgentBackend {
 
     } catch (error) {
       logger.debug('[AcpBackend] Error sending prompt:', error);
+
+      // Gemini can emit a late internal error after tool output is already complete/idle.
+      // Treat this specific case as non-fatal to avoid false-negative turn failures.
+      const errorRecord = error && typeof error === 'object' ? (error as Record<string, unknown>) : null;
+      const errorCode = typeof errorRecord?.code === 'number' ? errorRecord.code : null;
+      const errorData = errorRecord?.data;
+      const errorDetails =
+        errorData && typeof errorData === 'object' && typeof (errorData as Record<string, unknown>).details === 'string'
+          ? (errorData as Record<string, unknown>).details as string
+          : '';
+      const isGeminiLateEmptyResponse =
+        this.transport.agentName === 'gemini' &&
+        errorCode === -32603 &&
+        errorDetails.includes('Model stream ended with empty response text') &&
+        !this.waitingForResponse &&
+        this.activeToolCalls.size === 0;
+      if (isGeminiLateEmptyResponse) {
+        logger.debug('[AcpBackend] Ignoring late Gemini empty-stream error after response completion');
+        return;
+      }
+
       this.failPendingResponseWait(error instanceof Error ? error : new Error(String(error)));
       
       // Extract error details for better error handling

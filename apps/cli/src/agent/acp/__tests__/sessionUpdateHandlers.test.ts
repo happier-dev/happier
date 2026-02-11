@@ -213,4 +213,32 @@ describe('sessionUpdateHandlers tool call tracking', () => {
     expect(toolResult).toBeTruthy();
     expect(toolResult.toolName).toBe('execute');
   });
+
+  it('backfills tool-call args from cached input when tool_call_update lacks rawInput/content (permission flow)', () => {
+    const ctx = createCtx();
+
+    // Simulate permission request seeding real tool input before any tool_call/tool_call_update payload includes it.
+    ctx.toolCallIdToNameMap.set('call_perm_args_1', 'execute');
+    ctx.toolCallIdToInputMap.set('call_perm_args_1', {
+      command: ['/bin/zsh', '-lc', 'echo hi'],
+    });
+
+    const pendingUpdate: SessionUpdate = {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'call_perm_args_1',
+      status: 'pending',
+      kind: 'execute',
+      title: 'Run echo hi',
+      meta: {},
+      // Intentionally no content/rawInput/input.
+    };
+
+    handleToolCallUpdate(pendingUpdate, ctx);
+
+    const toolCall = ctx.emitted.find((m) => m.type === 'tool-call' && m.callId === 'call_perm_args_1');
+    expect(toolCall).toBeTruthy();
+    expect(toolCall.args).toMatchObject({
+      command: ['/bin/zsh', '-lc', 'echo hi'],
+    });
+  });
 });

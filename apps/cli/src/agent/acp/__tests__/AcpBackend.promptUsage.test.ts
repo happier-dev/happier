@@ -41,5 +41,33 @@ describe('AcpBackend sendPrompt usage telemetry', () => {
       thought: 4,
     });
   });
-});
 
+  it('ignores late gemini empty-stream errors after response already completed', async () => {
+    const backend = new AcpBackend({
+      agentName: 'gemini',
+      cwd: process.cwd(),
+      command: 'noop',
+    });
+
+    const emitted: any[] = [];
+    backend.onMessage((msg) => emitted.push(msg));
+
+    (backend as any).acpSessionId = 'sess_1';
+    (backend as any).connection = {
+      prompt: async () => {
+        // Simulate idle already emitted via session updates before prompt() settles.
+        (backend as any).waitingForResponse = false;
+        throw {
+          code: -32603,
+          message: 'Internal error',
+          data: { details: 'Model stream ended with empty response text.' },
+        };
+      },
+    };
+
+    await expect(backend.sendPrompt('sess_1', 'hello')).resolves.toBeUndefined();
+
+    const errorStatuses = emitted.filter((m) => m?.type === 'status' && m?.status === 'error');
+    expect(errorStatuses).toHaveLength(0);
+  });
+});
