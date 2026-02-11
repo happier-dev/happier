@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: ""
+      guard_environment:
+        description: Environment that stores RELEASE_BOT_APP_ID/RELEASE_BOT_PRIVATE_KEY
+        required: false
+        type: string
+        default: release-shared
 
 permissions:
   contents: read
@@ -20,14 +25,14 @@ permissions:
 jobs:
   authorize:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.guard_environment }}
     steps:
-      - name: Verify triggering actor is in release admin team
+      - name: Resolve guard inputs
+        id: params
         env:
           INPUT_ORG: ${{ inputs.org }}
           INPUT_TEAM_SLUG: ${{ inputs.team_slug }}
           REPO_OWNER: ${{ github.repository_owner }}
-          GITHUB_TOKEN: ${{ github.token }}
-          RELEASE_ADMIN_ACTORS: ${{ vars.RELEASE_ADMIN_ACTORS }}
         run: |
           set -euo pipefail
 
@@ -44,30 +49,67 @@ jobs:
             exit 1
           fi
 
+          echo "actor=${actor}" >> "$GITHUB_OUTPUT"
+          echo "org=${org}" >> "$GITHUB_OUTPUT"
+          echo "team_slug=${team_slug}" >> "$GITHUB_OUTPUT"
+
           echo "Authorizing actor '${actor}' against team '${org}/${team_slug}'."
 
-          if gh api --silent \
-            --header "Accept: application/vnd.github+json" \
-            "orgs/${org}/teams/${team_slug}/memberships/${actor}" >/dev/null 2>&1; then
-            echo "Actor '${actor}' is a member of '${org}/${team_slug}'."
-            exit 0
+      - name: Create GitHub App token for guard checks
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ steps.params.outputs.org }}
+
+      - name: Verify triggering actor is in release admin team
+        env:
+          ACTOR: ${{ steps.params.outputs.actor }}
+          ORG: ${{ steps.params.outputs.org }}
+          TEAM_SLUG: ${{ steps.params.outputs.team_slug }}
+          APP_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${APP_TOKEN:-}" ]; then
+            echo "Missing GitHub App token for release actor guard." >&2
+            exit 1
           fi
 
-          fallback="${RELEASE_ADMIN_ACTORS:-leeroybrun}"
-          normalized="$(printf '%s' "${fallback}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')"
-          actor_lc="$(printf '%s' "${actor}" | tr '[:upper:]' '[:lower:]')"
+          endpoint="https://api.github.com/orgs/${ORG}/teams/${TEAM_SLUG}/memberships/${ACTOR}"
+          resp_file="$(mktemp)"
+          status="$(curl -sS \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${APP_TOKEN}" \
+            "$endpoint" \
+            -o "$resp_file" \
+            -w "%{http_code}")"
 
-          if [ -n "${normalized}" ]; then
-            IFS=',' read -r -a candidates <<< "${normalized}"
-            for candidate in "${candidates[@]}"; do
-              [ -z "${candidate:-}" ] && continue
-              if [ "${candidate}" = "${actor_lc}" ]; then
-                echo "::warning::Team API check was unavailable; actor '${actor}' authorized via RELEASE_ADMIN_ACTORS fallback."
-                exit 0
-              fi
-            done
-          fi
+          case "$status" in
+            200)
+              echo "Actor '${ACTOR}' is a member of '${ORG}/${TEAM_SLUG}'."
+              ;;
+            404)
+              echo "Actor '${ACTOR}' is not a member of '${ORG}/${TEAM_SLUG}' (or team is not visible to the app)." >&2
+              cat "$resp_file" >&2 || true
+              rm -f "$resp_file"
+              exit 1
+              ;;
+            401|403)
+              echo "Release actor guard app token is not authorized to read team memberships for '${ORG}/${TEAM_SLUG}'." >&2
+              cat "$resp_file" >&2 || true
+              rm -f "$resp_file"
+              exit 1
+              ;;
+            *)
+              echo "Unexpected response from team membership check (HTTP ${status})." >&2
+              cat "$resp_file" >&2 || true
+              rm -f "$resp_file"
+              exit 1
+              ;;
+          esac
 
-          echo "Actor '${actor}' is not authorized for release workflows." >&2
-          echo "Set repository variable RELEASE_ADMIN_ACTORS (comma-separated logins) or restore team API accessibility." >&2
-          exit 1
+          rm -f "$resp_file"
