@@ -5,6 +5,7 @@ import type { MachineMetadata } from '@/api/types';
 const createApiClient = vi.fn();
 const ensureMachineRegisteredMock = vi.fn();
 const readSettingsMock = vi.fn();
+const readDaemonStateMock = vi.fn();
 
 vi.mock('@/api/api', () => ({
   ApiClient: {
@@ -18,6 +19,7 @@ vi.mock('@/api/machine/ensureMachineRegistered', () => ({
 
 vi.mock('@/persistence', () => ({
   readSettings: readSettingsMock,
+  readDaemonState: readDaemonStateMock,
 }));
 
 describe('initializeBackendApiContext', () => {
@@ -38,6 +40,7 @@ describe('initializeBackendApiContext', () => {
     createApiClient.mockReset();
     ensureMachineRegisteredMock.mockReset();
     readSettingsMock.mockReset();
+    readDaemonStateMock.mockReset();
   });
 
   it('skips machine registration when explicitly requested', async () => {
@@ -60,6 +63,7 @@ describe('initializeBackendApiContext', () => {
   it('registers machine by default and returns rotated id when provided', async () => {
     createApiClient.mockResolvedValue({ api: true });
     readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
+    readDaemonStateMock.mockResolvedValue(null);
     ensureMachineRegisteredMock.mockResolvedValue({ machineId: 'machine-rotated' });
 
     const { initializeBackendApiContext } = await import('./initializeBackendApiContext');
@@ -71,5 +75,26 @@ describe('initializeBackendApiContext', () => {
 
     expect(ensureMachineRegisteredMock).toHaveBeenCalledTimes(1);
     expect(result.machineId).toBe('machine-rotated');
+  });
+
+  it('skips machine registration when daemon is already running', async () => {
+    const processKillSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
+    createApiClient.mockResolvedValue({ api: true });
+    readSettingsMock.mockResolvedValue({ machineId: 'machine-original' });
+    readDaemonStateMock.mockResolvedValue({ pid: 12345 });
+
+    try {
+      const { initializeBackendApiContext } = await import('./initializeBackendApiContext');
+      const result = await initializeBackendApiContext({
+        credentials,
+        machineMetadata,
+      });
+
+      expect(processKillSpy).toHaveBeenCalledWith(12345, 0);
+      expect(ensureMachineRegisteredMock).not.toHaveBeenCalled();
+      expect(result.machineId).toBe('machine-original');
+    } finally {
+      processKillSpy.mockRestore();
+    }
   });
 });
