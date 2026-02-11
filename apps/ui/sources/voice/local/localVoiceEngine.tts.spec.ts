@@ -4,6 +4,7 @@ import {
     createdAudioPlayers,
     daemonMediatorStart,
     deleteAsync,
+    expoSpeechSpeak,
     getStorage,
     registerLocalVoiceEngineHarnessHooks,
     sendMessage,
@@ -56,6 +57,65 @@ describe('local voice engine TTS behavior', () => {
 
         expect(globalThis.fetch).toHaveBeenCalledTimes(2);
         expect((globalThis.fetch as any).mock.calls[1]?.[0]).toContain('/v1/audio/speech');
+    });
+
+    it('auto-speaks via device TTS when enabled (no endpoint required)', async () => {
+        const storage = await getStorage();
+        storage.__setState({
+            settings: {
+                ...storage.getState().settings,
+                voiceLocalAutoSpeakReplies: true,
+                voiceLocalUseDeviceTts: true,
+                voiceLocalTtsBaseUrl: null,
+            },
+        });
+
+        let onDone: null | (() => void) = null;
+        expoSpeechSpeak.mockImplementationOnce((_text: string, opts: any) => {
+            onDone = typeof opts?.onDone === 'function' ? opts.onDone : null;
+        });
+
+        (globalThis.fetch as any).mockResolvedValueOnce({
+            ok: true,
+            json: async () => ({ text: 'hello world' }),
+        });
+
+        sendMessage.mockImplementationOnce(() => {
+            storage.__setState({
+                sessionMessages: {
+                    s1: {
+                        messages: [{ id: 'm1', kind: 'agent-text', text: 'Hi there', createdAt: Date.now() + 60_000 }],
+                    },
+                },
+            });
+            storage.__notify();
+        });
+
+        const { toggleLocalVoiceTurn, getLocalVoiceState } = await import('./localVoiceEngine');
+        await toggleLocalVoiceTurn('s1');
+
+        let resolved = false;
+        const stopPromise = toggleLocalVoiceTurn('s1');
+        stopPromise.then(() => {
+            resolved = true;
+        });
+
+        // Wait for speech to start.
+        for (let i = 0; i < 200 && getLocalVoiceState().status !== 'speaking'; i++) {
+            await Promise.resolve();
+        }
+        expect(getLocalVoiceState().status).toBe('speaking');
+        expect(expoSpeechSpeak).toHaveBeenCalled();
+
+        // Should not resolve until onDone fires.
+        for (let i = 0; i < 10; i++) await Promise.resolve();
+        expect(resolved).toBe(false);
+
+        onDone?.();
+        await stopPromise;
+
+        // Only STT fetch; no /v1/audio/speech call.
+        expect(globalThis.fetch).toHaveBeenCalledTimes(1);
     });
 
     it('waits for TTS playback to finish before returning to idle', async () => {

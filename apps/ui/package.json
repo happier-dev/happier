@@ -125,6 +125,8 @@
     "expo-secure-store": "~15.0.7",
     "expo-sensors": "~15.0.7",
     "expo-sharing": "~14.0.7",
+    "expo-speech": "~14.0.8",
+    "expo-speech-recognition": "^3.1.0",
     "expo-splash-screen": "~31.0.10",
     "expo-status-bar": "~3.0.8",
     "expo-store-review": "~9.0.7",

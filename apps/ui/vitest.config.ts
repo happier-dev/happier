@@ -63,6 +63,10 @@ export default defineConfig({
             { find: 'expo-notifications', replacement: resolve('./sources/dev/expoNotificationsStub.ts') },
             // `expo-audio` is native and throws in node/Vitest.
             { find: 'expo-audio', replacement: resolve('./sources/dev/expoAudioStub.ts') },
+            // `expo-speech` and `expo-speech-recognition` are not reliably node-safe (and are hard to mock
+            // via dynamic import paths). Route them to lightweight test stubs.
+            { find: 'expo-speech', replacement: resolve('./sources/dev/expoSpeechStub.ts') },
+            { find: 'expo-speech-recognition', replacement: resolve('./sources/dev/expoSpeechRecognitionStub.ts') },
             // `expo-clipboard` expects native modules in node/Vitest.
             { find: 'expo-clipboard', replacement: resolve('./sources/dev/expoClipboardStub.ts') },
             // `react-native-device-info` is native and pulls in RN internals.

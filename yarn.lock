@@ -4607,7 +4607,7 @@
     postcss "^8.4.41"
     tailwindcss "4.1.18"
 
-"@tauri-apps/api@2.8.0", "@tauri-apps/api@^2.8.0", "@tauri-apps/api@~2.8.0":
+"@tauri-apps/api@^2.8.0", "@tauri-apps/api@~2.8.0":
   version "2.8.0"
   resolved "https://registry.yarnpkg.com/@tauri-apps/api/-/api-2.8.0.tgz#0348a2b3ba5982ec67a7d569f329b4a55d7d5f1e"
   integrity sha512-ga7zdhbS2GXOMTIZRT0mYjKJtR9fivsXzsyq5U3vjDL0s6DTMwYRm0UHNjzTY5dh4+LSC68Sm/7WEiimbQNYlw==
@@ -8709,6 +8709,16 @@ expo-sharing@~14.0.7:
   version "14.0.8"
   resolved "https://registry.yarnpkg.com/expo-sharing/-/expo-sharing-14.0.8.tgz#cfd5fcf77ab5f64cf3d192a40a925abb316d3545"
   integrity sha512-A1pPr2iBrxypFDCWVAESk532HK+db7MFXbvO2sCV9ienaFXAk7lIBm6bkqgE6vzRd9O3RGdEGzYx80cYlc089Q==
+
+expo-speech-recognition@^3.1.0:
+  version "3.1.0"
+  resolved "https://registry.yarnpkg.com/expo-speech-recognition/-/expo-speech-recognition-3.1.0.tgz#7fa7a69e26bbff34b919ee67cc92017002538c51"
+  integrity sha512-DgCvY42hbhGDxDKJD0WjgjZboPOXY58JNNQ+zaBQmB+3M2PR2tS8ZTP/yIwslbe30Cnw8yf5JBxrqkZFiLmewQ==
+
+expo-speech@~14.0.8:
+  version "14.0.8"
+  resolved "https://registry.yarnpkg.com/expo-speech/-/expo-speech-14.0.8.tgz#fa7861ab55244fb64916a4939f93d33f03cf28b5"
+  integrity sha512-UjBFCFv58nutlLw92L7kUS0ZjbOOfaTdiEv/HbjvMrT6BfldoOLLBZbaEcEhDdZK36NY/kass0Kzxk+co6vxSQ==
 
 expo-splash-screen@~31.0.10:
   version "31.0.13"

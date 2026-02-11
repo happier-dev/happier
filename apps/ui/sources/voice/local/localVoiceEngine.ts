@@ -7,6 +7,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { buildOpenAiTranscriptionRequest } from './openaiCompat';
 import { fetchOpenAiCompatSpeechAudio } from './fetchOpenAiCompatSpeechAudio';
+import { speakDeviceText } from './speakDeviceText';
 import { DaemonMediatorClient } from '@/voice/mediator/daemonMediatorClient';
 import { OpenAiCompatMediatorClient } from '@/voice/mediator/openaiCompatMediatorClient';
 import type { VoiceMediatorClient } from '@/voice/mediator/types';
@@ -42,6 +43,17 @@ const mediatorBySessionId = new Map<string, MediatorHandle>();
 const mediatorPendingContextBySessionId = new Map<string, string[]>();
 let openaiCompatMediatorClient: OpenAiCompatMediatorClient | null = null;
 let daemonMediatorClient: DaemonMediatorClient | null = null;
+
+type DeviceSttHandle = {
+  sessionId: string;
+  transcript: string;
+  isFinal: boolean;
+  module: any;
+  resolveEnd: () => void;
+  endPromise: Promise<void>;
+  subscriptions: { remove(): void }[];
+};
+let deviceStt: DeviceSttHandle | null = null;
 
 function setState(patch: Partial<LocalVoiceState>) {
   useLocalVoiceStore.setState((s) => ({ ...s, ...patch }));
@@ -79,6 +91,131 @@ async function startRecording(sessionId: string) {
     setState({ status: 'idle', sessionId: null, error: 'recording_start_failed' });
     throw e;
   }
+}
+
+async function startDeviceSpeechRecognition(sessionId: string) {
+  const perm = await requestMicrophonePermission();
+  if (!perm.granted) {
+    showMicrophonePermissionDeniedAlert(perm.canAskAgain);
+    return;
+  }
+
+  const { ExpoSpeechRecognitionModule } = await import('expo-speech-recognition');
+
+  if (typeof ExpoSpeechRecognitionModule?.isRecognitionAvailable === 'function' && !ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
+    setState({ status: 'idle', sessionId: null, error: 'device_stt_unavailable' });
+    return;
+  }
+
+  try {
+    const res = await ExpoSpeechRecognitionModule.requestPermissionsAsync?.();
+    if (res && res.granted === false) {
+      setState({ status: 'idle', sessionId: null, error: 'device_stt_permission_denied' });
+      return;
+    }
+  } catch {
+    // Permission request best-effort; start() may still work on web.
+  }
+
+  // Cleanup any previous listeners (single recognizer instance semantics).
+  try {
+    deviceStt?.subscriptions.forEach((s) => s.remove());
+  } catch {
+    // ignore
+  }
+
+  let resolveEnd: null | (() => void) = null;
+  const endPromise = new Promise<void>((resolve) => {
+    resolveEnd = resolve;
+  });
+
+  const handle: DeviceSttHandle = {
+    sessionId,
+    transcript: '',
+    isFinal: false,
+    module: ExpoSpeechRecognitionModule,
+    resolveEnd: () => resolveEnd?.(),
+    endPromise,
+    subscriptions: [],
+  };
+  deviceStt = handle;
+
+  handle.subscriptions.push(
+    ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
+      const results = Array.isArray(event?.results) ? event.results : [];
+      const transcript = typeof results?.[0]?.transcript === 'string' ? results[0].transcript.trim() : '';
+      if (!transcript) return;
+      handle.transcript = transcript;
+      if (event?.isFinal) handle.isFinal = true;
+    }),
+  );
+  handle.subscriptions.push(
+    ExpoSpeechRecognitionModule.addListener('end', () => {
+      handle.resolveEnd();
+    }),
+  );
+  handle.subscriptions.push(
+    ExpoSpeechRecognitionModule.addListener('error', () => {
+      handle.resolveEnd();
+    }),
+  );
+
+  const settings: any = storage.getState().settings;
+  const lang = typeof settings.voiceAssistantLanguage === 'string' && settings.voiceAssistantLanguage.trim()
+    ? settings.voiceAssistantLanguage.trim()
+    : undefined;
+
+  try {
+    ExpoSpeechRecognitionModule.start({
+      ...(lang ? { lang } : {}),
+      interimResults: true,
+      maxAlternatives: 1,
+      continuous: true,
+    } as any);
+  } catch (e) {
+    deviceStt = null;
+    setState({ status: 'idle', sessionId: null, error: 'device_stt_start_failed' });
+    throw e;
+  }
+
+  setState({ status: 'recording', sessionId, error: null });
+}
+
+async function stopDeviceSpeechRecognitionAndSend(sessionId: string) {
+  if (!deviceStt || deviceStt.sessionId !== sessionId) {
+    setState({ status: 'idle', sessionId: null });
+    return;
+  }
+
+  setState({ status: 'transcribing', error: null });
+
+  try {
+    deviceStt.module?.stop?.();
+  } catch {
+    // ignore
+  }
+
+  await Promise.race([
+    deviceStt.endPromise,
+    new Promise<void>((resolve) => setTimeout(resolve, 5_000)),
+  ]);
+
+  const text = deviceStt.transcript.trim();
+  const subs = deviceStt.subscriptions;
+  deviceStt = null;
+  try {
+    subs.forEach((s) => s.remove());
+  } catch {
+    // ignore
+  }
+
+  if (!text) {
+    setState({ status: 'idle', sessionId: null });
+    return;
+  }
+
+  const settings = storage.getState().settings as any;
+  await sendVoiceTextTurn(sessionId, settings, text);
 }
 
 async function stopAndSend(sessionId: string) {
@@ -154,19 +291,24 @@ async function stopAndSend(sessionId: string) {
     return;
   }
 
+  await sendVoiceTextTurn(sessionId, settings, text);
+}
+
+async function sendVoiceTextTurn(sessionId: string, settings: any, userText: string) {
   const conversationMode = (settings.voiceLocalConversationMode ?? 'direct_session') as 'direct_session' | 'mediator';
   if (conversationMode === 'mediator') {
     setState({ status: 'sending' });
     try {
-      const assistantText = await sendMediatorTurn(sessionId, text);
+      const assistantText = await sendMediatorTurn(sessionId, userText);
 
       const autoSpeak = settings.voiceLocalAutoSpeakReplies !== false;
       if (!autoSpeak) {
         return;
       }
 
+      const useDeviceTts = settings.voiceLocalUseDeviceTts === true;
       const ttsBaseUrl = (settings.voiceLocalTtsBaseUrl ?? '').trim();
-      if (!ttsBaseUrl) {
+      if (!useDeviceTts && !ttsBaseUrl) {
         return;
       }
 
@@ -176,15 +318,19 @@ async function stopAndSend(sessionId: string) {
       const ttsFormat = (settings.voiceLocalTtsFormat ?? 'mp3') as 'mp3' | 'wav';
 
       if (assistantText) {
-        setState({ status: 'speaking' });
-        await speakText({
-          baseUrl: ttsBaseUrl,
-          apiKey: ttsApiKey,
-          model: ttsModel,
-          voice: ttsVoice,
-          format: ttsFormat,
-          input: assistantText,
-        }).catch(() => {});
+        if (useDeviceTts) {
+          await speakDeviceText(assistantText, () => setState({ status: 'speaking' })).catch(() => {});
+        } else {
+          setState({ status: 'speaking' });
+          await speakText({
+            baseUrl: ttsBaseUrl,
+            apiKey: ttsApiKey,
+            model: ttsModel,
+            voice: ttsVoice,
+            format: ttsFormat,
+            input: assistantText,
+          }).catch(() => {});
+        }
       }
       return;
     } catch (error) {
@@ -202,14 +348,12 @@ async function stopAndSend(sessionId: string) {
 
   setState({ status: 'sending' });
   try {
-    await sync.sendMessage(sessionId, text);
+    await sync.sendMessage(sessionId, userText);
   } catch (error) {
     setState({ status: 'idle', sessionId: null, error: 'send_failed' });
     throw error;
   }
 
-  // v1: if auto-speak is disabled, we're done after sending.
-  // Speaking/waiting for assistant replies is handled when enabled.
   const autoSpeak = settings.voiceLocalAutoSpeakReplies !== false;
   if (!autoSpeak) {
     setState({ status: 'idle', sessionId: null });
@@ -218,6 +362,13 @@ async function stopAndSend(sessionId: string) {
 
   const assistantText = await waitForNextAssistantTextMessage(sessionId, baselineIds, baselineCount, 60_000);
   if (!assistantText) {
+    setState({ status: 'idle', sessionId: null });
+    return;
+  }
+
+  const useDeviceTts = settings.voiceLocalUseDeviceTts === true;
+  if (useDeviceTts) {
+    await speakDeviceText(assistantText, () => setState({ status: 'speaking' })).catch(() => {});
     setState({ status: 'idle', sessionId: null });
     return;
   }
@@ -384,7 +535,9 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
 
   const current = getLocalVoiceState();
   if (current.status === 'idle') {
-    inFlight = startRecording(sessionId).finally(() => {
+    const settings = storage.getState().settings as any;
+    const useDeviceStt = settings.voiceLocalUseDeviceStt === true;
+    inFlight = (useDeviceStt ? startDeviceSpeechRecognition(sessionId) : startRecording(sessionId)).finally(() => {
       inFlight = null;
     });
     await inFlight;
@@ -395,7 +548,9 @@ export async function toggleLocalVoiceTurn(sessionId: string): Promise<void> {
     if (current.sessionId !== sessionId) {
       return;
     }
-    inFlight = stopAndSend(sessionId).finally(() => {
+    const settings = storage.getState().settings as any;
+    const useDeviceStt = settings.voiceLocalUseDeviceStt === true;
+    inFlight = (useDeviceStt ? stopDeviceSpeechRecognitionAndSend(sessionId) : stopAndSend(sessionId)).finally(() => {
       inFlight = null;
     });
     await inFlight;

@@ -69,11 +69,14 @@ In **Settings → Voice → Local OSS Voice**, configure:
 - **STT Base URL** (typically ends with `/v1`)
 - **TTS Base URL** (typically ends with `/v1`)
 - Optional API keys, model/voice fields, and format (`mp3`/`wav`)
+- Optional experimental toggles:
+  - **Device STT**: use on-device speech recognition (no STT HTTP endpoint required).
+  - **Device TTS**: use on-device speech synthesis (no TTS HTTP endpoint required).
 
 Minimum configuration notes:
 
-- To use the mic and send spoken input, you must configure **STT Base URL**.
-- To hear spoken replies, configure **TTS Base URL** and enable auto-speak.
+- To use the mic and send spoken input, you must configure **STT Base URL** (unless **Device STT** is enabled).
+- To hear spoken replies, configure **TTS Base URL** and enable auto-speak (unless **Device TTS** is enabled).
 - Mediator mode is optional. If you don't enable it, Local OSS Voice uses direct-to-session mode.
 
 ### Mediator mode (local voice)

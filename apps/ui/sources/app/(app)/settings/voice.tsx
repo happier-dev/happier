@@ -21,6 +21,7 @@ import { VOICE_PROVIDER_IDS } from '@/voice/voiceProviders';
 import { fetchOpenAiCompatSpeechAudio } from '@/voice/local/fetchOpenAiCompatSpeechAudio';
 import { formatVoiceTestFailureMessage } from '@/voice/local/formatVoiceTestFailureMessage';
 import { playAudioBytes } from '@/voice/local/playAudioBytes';
+import { speakDeviceText } from '@/voice/local/speakDeviceText';
 
 import { ByoElevenLabsSection } from './voice/ByoElevenLabsSection';
 import { LocalOssVoiceSection, type VoiceSettingsOpenMenu } from './voice/LocalOssVoiceSection';
@@ -43,9 +44,11 @@ export default function VoiceSettingsScreen() {
     const [voiceSharePermissionRequests, setVoiceSharePermissionRequests] = useSettingMutable('voiceSharePermissionRequests');
     const [voiceShareFilePaths, setVoiceShareFilePaths] = useSettingMutable('voiceShareFilePaths');
     const [voiceLocalSttBaseUrl, setVoiceLocalSttBaseUrl] = useSettingMutable('voiceLocalSttBaseUrl');
+    const [voiceLocalUseDeviceStt, setVoiceLocalUseDeviceStt] = useSettingMutable('voiceLocalUseDeviceStt');
     const [voiceLocalSttApiKey, setVoiceLocalSttApiKey] = useSettingMutable('voiceLocalSttApiKey');
     const [voiceLocalSttModel, setVoiceLocalSttModel] = useSettingMutable('voiceLocalSttModel');
     const [voiceLocalTtsBaseUrl, setVoiceLocalTtsBaseUrl] = useSettingMutable('voiceLocalTtsBaseUrl');
+    const [voiceLocalUseDeviceTts, setVoiceLocalUseDeviceTts] = useSettingMutable('voiceLocalUseDeviceTts');
     const [voiceLocalTtsApiKey, setVoiceLocalTtsApiKey] = useSettingMutable('voiceLocalTtsApiKey');
     const [voiceLocalTtsModel, setVoiceLocalTtsModel] = useSettingMutable('voiceLocalTtsModel');
     const [voiceLocalTtsVoice, setVoiceLocalTtsVoice] = useSettingMutable('voiceLocalTtsVoice');
@@ -362,6 +365,20 @@ export default function VoiceSettingsScreen() {
     const testLocalTts = async () => {
         if (isTestingLocalTts) return;
 
+        // When device TTS is enabled, Test TTS should exercise the device speech backend and not
+        // require any configured OpenAI-compatible HTTP endpoint.
+        if (voiceLocalUseDeviceTts === true) {
+            setIsTestingLocalTts(true);
+            try {
+                speakDeviceText(t('settingsVoice.local.testTtsSample'));
+            } catch (err) {
+                Modal.alert(t('common.error'), formatVoiceTestFailureMessage(t('settingsVoice.local.testTtsFailed'), err));
+            } finally {
+                setIsTestingLocalTts(false);
+            }
+            return;
+        }
+
         const baseUrl = (voiceLocalTtsBaseUrl ?? '').trim();
         if (!baseUrl) {
             Modal.alert(t('common.error'), t('settingsVoice.local.testTtsMissingBaseUrl'));
@@ -451,9 +468,11 @@ export default function VoiceSettingsScreen() {
                 voiceLocalChatTemperature={voiceLocalChatTemperature}
                 voiceLocalChatMaxTokens={voiceLocalChatMaxTokens}
                 voiceLocalSttBaseUrl={voiceLocalSttBaseUrl}
+                voiceLocalUseDeviceStt={!!voiceLocalUseDeviceStt}
                 hasVoiceLocalSttApiKey={hasVoiceLocalSttApiKey}
                 voiceLocalSttModel={voiceLocalSttModel}
                 voiceLocalTtsBaseUrl={voiceLocalTtsBaseUrl}
+                voiceLocalUseDeviceTts={!!voiceLocalUseDeviceTts}
                 hasVoiceLocalTtsApiKey={hasVoiceLocalTtsApiKey}
                 voiceLocalTtsModel={voiceLocalTtsModel}
                 voiceLocalTtsVoice={voiceLocalTtsVoice}
@@ -516,6 +535,8 @@ export default function VoiceSettingsScreen() {
                 onSetLocalUrl={(kind) => {
                     void setLocalUrl(kind);
                 }}
+                onSetVoiceLocalUseDeviceStt={(value) => setVoiceLocalUseDeviceStt(value as any)}
+                onSetVoiceLocalUseDeviceTts={(value) => setVoiceLocalUseDeviceTts(value as any)}
                 onSetLocalApiKey={(kind) => {
                     void setLocalApiKey(kind);
                 }}
