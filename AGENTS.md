@@ -17,15 +17,20 @@ Test-Driven Development is NON-NEGOTIABLE for behavior-changing implementation w
 
 ### Scope: What Requires TDD (and what does not)
 - **Requires TDD**: Any change that adds/changes executable behavior (production source code, CLIs, validators, state machines, config-loading/merging logic).
-- **Does not require new tests**: Content-only edits to Markdown/YAML/templates (e.g., docs, templates, default config values) *when no executable behavior changes*.
+- **Does not require new tests**: Content-only edits to Markdown/YAML/templates (e.g., docs, templates, example config files not consumed by runtime, UI copy/wording) *when no executable behavior changes*.
 - **No bundling**: Do not hide behavior changes inside a “content-only” change. If you touched production code, you must follow TDD.
 
 ### Behavior-Change Decision Matrix (Mandatory)
 Apply this matrix before writing tests:
 
+0) **Test inventory (required before writing tests)**:
+- Search for existing tests covering the touched behavior (by symbol/module name, route/command, config key, component name, error code).
+- Prefer updating the most relevant existing test first.
+- If the suite already covers the behavior, do **not** add a new test “for TDD compliance” — improve/repair the existing test(s) or refactor to remove duplication.
+- If you find overlapping/duplicate tests, consolidate instead of stacking more tests on top.
+
 1) **Behavior changed or added**:
 - Follow strict RED-GREEN-REFACTOR.
-- Prefer updating the most relevant existing test first.
 - Add a new test only when no existing test can express the new behavior clearly.
 
 2) **No behavior change (structural/internal only)**:
@@ -37,7 +42,19 @@ Apply this matrix before writing tests:
 - Do not add tests.
 - Run targeted checks/lint/type/test commands as appropriate.
 
-If uncertain whether behavior changed, treat it as behavior-changing and do RED first.
+4) **Content-only changes** (docs, UI copy/wording, formatting, example config files not consumed by runtime, CSS/styling, non-executable templates):
+- Do not add tests.
+- If existing tests fail because they pin copy/formatting, loosen the assertions to check stable behavior instead of exact text.
+
+If uncertain whether a change affects **runtime behavior**, treat it as behavior-changing and do RED first. If the change is clearly content-only and not consumed by runtime logic, do **not** force TDD.
+
+### Examples (Common Cases)
+- Docs/README edits, wording tweaks, i18n string updates, formatting changes: **no new tests**.
+- CSS/styling/layout-only UI adjustments: **no new tests** (unless they change an actual interaction or accessibility contract).
+- Updating example config files or templates not used at runtime: **no new tests**.
+- Changing runtime config schema/loading/merging/validation, or behavior gated by config: **TDD required** (test behavior under config inputs; avoid pinning defaults).
+- Error handling changes: test error **type/code/shape/status**; do not pin full message wording unless the message is a published contract.
+- UI behavior changes (navigation, state transitions, permissions, enabled/disabled logic): test the behavior; avoid assertions that fail on copy tweaks.
 
 ### The RED-GREEN-REFACTOR Cycle
 - **RED**: Write a failing test first and confirm it fails for the right reason
@@ -56,7 +73,8 @@ If implementation exists before the test:
 - Fail first; do not skip the RED step
 - Minimal green code; avoid speculative features
 - Refactor with a full test run before proceeding
-- Coverage targets from config: overall >= 90%, changed/new >= 100%
+- Coverage targets from config: overall >= 90%, changed/new >= 100% (for behavior-changing code paths). Never add low-value/brittle tests solely to increase coverage.
+- If coverage targets are declared, enforce them in runner config/CI thresholds. Do not “enforce” coverage by adding brittle assertions.
 - Update tests only to reflect agreed spec/format changes, never just to "make green"
 - Prefer modifying or replacing existing tests over adding overlapping tests
 - Keep output clean—no console noise
@@ -67,6 +85,9 @@ If implementation exists before the test:
 - Assert on observable outcomes (return values, state changes, HTTP responses), not internal call sequences.
 - Tests should be deterministic and isolated (no shared global state, no ordering reliance).
 - Avoid brittle “content policing” tests (e.g., pinning default config values or exact Markdown wording/format/length).
+- Avoid asserting exact user-facing copy (UI strings, error message wording) unless copy itself is the product requirement; prefer stable identifiers, error codes/types, shapes, statuses, and key substrings when necessary.
+- Avoid snapshot tests that primarily lock down copy/formatting; snapshots are acceptable only when they prove a meaningful, stable structure and won’t churn on routine copy edits.
+- When testing configuration, assert behavior *given a config input*; do not pin example files or default values unless the default itself is a deliberate compatibility contract.
 - Avoid near-duplicate tests that assert the same behavior through different fixtures unless each fixture represents a distinct risk.
 - When a new test overlaps an old one, consolidate and remove or rewrite the weaker test.
 
@@ -85,6 +106,7 @@ yarn test
 ### Test Lane Contract (Required)
 - Treat `test` and `test:unit` (where defined; do not create `test:unit` unless intentionally splitting lanes) as fast lanes only; avoid heavy process/network/database orchestration in unit tests.
 - Put orchestration-heavy or real-environment suites in `*.integration.test.*` / `*.integration.spec.*` (or `*.real.integration.test.*`) so they run under integration lanes.
+- Use canonical lane suffixes exactly. Do not use near-miss names (for example `_integration.test.*`) that accidentally run in unit lanes.
 - Keep e2e/provider/stress suites in their existing dedicated lanes under `packages/tests/suites`.
 - When adding or moving integration tests, update the package test scripts/config so:
   - unit excludes integration patterns
@@ -120,14 +142,15 @@ For full prerequisites/env matrix and examples, follow:
 
 ### Guardrails
 - No `.skip` / `.todo` / `.only` (or equivalents) committed
+- No hidden skips via conditional aliases (`const maybeIt = gate ? it : it.skip`) unless the test is an explicit opt-in external probe with a documented gate reason.
 - Do not leave debugging logs in tests
 - Evidence must be generated by trusted runners, not manually fabricated
 - No duplicate test intent: each test must own a distinct behavior/risk
 
-## NO MOCKS Philosophy (All Roles)
+## No Internal Mocks Philosophy (All Roles)
 
 ### Core Principle
-Test real behavior, not mocked behavior. Mocking internal code means testing nothing.
+Test real internal behavior, not mocked internal behavior. Mocking internal code usually tests wiring, not behavior.
 
 ### What This Means
 - **Real databases**: Use real database with test isolation strategies (SQLite, template DBs, containerized)
@@ -136,21 +159,28 @@ Test real behavior, not mocked behavior. Mocking internal code means testing not
 - **Real files**: Use tmp_path or temporary directories
 - **Real services**: Use actual service implementations
 
-### Why NO MOCKS
-- Mocked tests prove nothing—they only prove the mock works
+### Why No Internal Mocks
+- Internal mocks reduce confidence and hide integration defects
 - Real behavior tests catch actual bugs
 - Integration issues are caught early
 - Confidence in production behavior
 
-### Only Mock at System Boundaries
-External APIs you don't control (third-party services, payment gateways, email providers) may be mocked at the boundary. Everything internal must be real.
+### Boundary Mock Matrix (Required)
+- **Allowed (system boundaries)**: third-party APIs, payment/email providers, platform/native SDK surfaces, OS/process/time/random/env adapters.
+- **Not allowed (internal behavior)**: domain logic, reducers/selectors, normalization/parsing logic, permission/state machines, app orchestration helpers, store logic.
+- **If a boundary mock is used**: document why the boundary is required and assert outcomes/state (not only call counts/spies).
 
 ## Quality Principles (All Roles)
 
 ### Type Safety
-- No untyped escape hatches
-- Justify any type suppressions (language-specific ignore directives, dynamic-typing escape hatches)
+- No untyped escape hatches in production or tests
+- `@ts-ignore` is forbidden
+- `@ts-expect-error` is allowed only with a short rationale and only for the exact line that is expected to fail
+- Broad `as any` casts are forbidden except in boundary fixtures/harnesses with a one-line justification
+- Prefer `satisfies`, explicit interfaces, and typed fixtures over casting
 - Type safety settings come from project configuration
+- Do not weaken tsconfig/type rules to make tests or builds pass
+- When TypeScript code changes, run the relevant package `typecheck` lane before handoff
 
 ### Code Hygiene
 - No TODO/FIXME placeholders in production code
@@ -170,6 +200,12 @@ External APIs you don't control (third-party services, payment gateways, email p
 - Avoid compatibility shims for renames/moves by default. When restructuring, update all imports directly so the final structure is canonical.
 - Split crowded folders by domain (for example: `runtime/`, `session/`, `spawn/`, `permission/`) instead of accumulating many cross-cutting files at one level.
 - Keep files single-purpose. If a file starts owning multiple responsibilities, extract cohesive modules with explicit names.
+
+### File Size and Complexity Guard (Required)
+- Applies to all implementation code and tests, not tests only.
+- If a file grows past ~400 lines or mixes responsibilities, split by domain/responsibility unless there is a clear reason not to.
+- When touching oversized files, prefer net reduction in responsibility surface (extract helpers/modules) instead of adding more mixed logic.
+- If a large file must remain large, document why and keep additions tightly scoped.
 
 ### Error Handling
 - Async flows expose clear `loading` / `error` / `empty` states
@@ -378,10 +414,12 @@ yarn test
 
 ### Common Testing Anti-Patterns (Avoid)
 - Testing mock/spies/call counts as "proof" instead of asserting outcomes.
+- Mocking internal modules/classes/functions instead of testing the real internal behavior.
 - Adding test-only methods/flags to production code to make tests easier.
 - Mocking/stubbing without understanding what real side effects the test depends on.
 - Boundary mocks that don't match the real schema/shape (partial mocks that silently diverge).
 - Adding new tests for behavior that is already sufficiently covered instead of improving existing tests.
+- Asserting exact full user-facing copy for behavior tests when codes/keys/shapes would validate behavior more robustly.
 
 ### Gate Checks (Before You Proceed)
 **Before adding any production method to "help tests":**
@@ -398,7 +436,7 @@ yarn test
 - Implement before writing tests
 - "I'll add tests later" - NO!
 - Skip test verification (RED phase must fail)
-- Use excessive mocking (test real behavior)
+- Mock internal behavior to make tests easier
 - Add duplicate tests when an existing test can be updated to cover the behavior
 - Leave skipped/focused/disabled tests in committed code
 - Commit with failing tests
@@ -476,3 +514,21 @@ In multi-LLM sessions it is normal to see unrelated diffs from other in-flight w
 - delete or revert “unwanted modifications” on your own initiative
 
 If you believe a change is truly accidental, escalate and ask before taking any destructive action.
+
+CRITICAL: Do not add “content policing” tests
+Never add tests (or assertions inside otherwise-good tests) whose primary purpose is to lock down wording/copy, whitespace, Markdown formatting, or docs/example config files. If a content-only change breaks an existing test, fix the test to assert stable behavior instead of exact strings.
+
+CRITICAL: Always do a test inventory before adding tests
+Before writing any new test, search for existing coverage and update/consolidate it. Do not stack new tests on top of overlapping tests just to satisfy the TDD rule.
+
+CRITICAL: Extend/update/refine existing tests before creating new tests
+ONLY add tests that add distinct behavior/risk coverage.
+
+CRITICAL: Mock only system boundaries, never internal behavior
+Boundary mocks are allowed for external/platform interfaces. Internal domain logic, parsers, reducers, store logic, and orchestration helpers must be tested with real implementations.
+
+CRITICAL: Keep TypeScript strict everywhere
+`@ts-ignore` is forbidden. `@ts-expect-error` and `as any` require narrow scope and explicit rationale.
+
+CRITICAL: Enforce file size and responsibility boundaries
+If a file is large or multi-purpose, split it by domain/responsibility instead of expanding a monolith.
