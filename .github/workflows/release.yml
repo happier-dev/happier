@@ -208,8 +208,8 @@ jobs:
       flake_retry: true
 
   checks:
-    needs: [gate, providers_gate]
-    if: ${{ always() && (needs.gate.result == 'success' || needs.gate.result == 'skipped') && (needs.providers_gate.result == 'success' || needs.providers_gate.result == 'skipped') }}
+    needs: [release_actor_guard, gate, providers_gate]
+    if: ${{ always() && needs.release_actor_guard.result == 'success' && (needs.gate.result == 'success' || needs.gate.result == 'skipped') && (needs.providers_gate.result == 'success' || needs.providers_gate.result == 'skipped') }}
     runs-on: ubuntu-latest
     environment: release-shared
     outputs:

@@ -27,6 +27,7 @@ jobs:
           INPUT_TEAM_SLUG: ${{ inputs.team_slug }}
           REPO_OWNER: ${{ github.repository_owner }}
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_ADMIN_ACTORS: ${{ vars.RELEASE_ADMIN_ACTORS }}
         run: |
           set -euo pipefail
 
@@ -45,6 +46,28 @@ jobs:
 
           echo "Authorizing actor '${actor}' against team '${org}/${team_slug}'."
 
-          gh api --silent \
+          if gh api --silent \
             --header "Accept: application/vnd.github+json" \
-            "orgs/${org}/teams/${team_slug}/memberships/${actor}" >/dev/null
+            "orgs/${org}/teams/${team_slug}/memberships/${actor}" >/dev/null 2>&1; then
+            echo "Actor '${actor}' is a member of '${org}/${team_slug}'."
+            exit 0
+          fi
+
+          fallback="${RELEASE_ADMIN_ACTORS:-leeroybrun}"
+          normalized="$(printf '%s' "${fallback}" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\r\n')"
+          actor_lc="$(printf '%s' "${actor}" | tr '[:upper:]' '[:lower:]')"
+
+          if [ -n "${normalized}" ]; then
+            IFS=',' read -r -a candidates <<< "${normalized}"
+            for candidate in "${candidates[@]}"; do
+              [ -z "${candidate:-}" ] && continue
+              if [ "${candidate}" = "${actor_lc}" ]; then
+                echo "::warning::Team API check was unavailable; actor '${actor}' authorized via RELEASE_ADMIN_ACTORS fallback."
+                exit 0
+              fi
+            done
+          fi
+
+          echo "Actor '${actor}' is not authorized for release workflows." >&2
+          echo "Set repository variable RELEASE_ADMIN_ACTORS (comma-separated logins) or restore team API accessibility." >&2
+          exit 1
