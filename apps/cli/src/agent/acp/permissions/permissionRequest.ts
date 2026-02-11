@@ -15,6 +15,7 @@ export type PermissionRequestLike = {
   input?: unknown;
   arguments?: unknown;
   content?: unknown;
+  options?: unknown;
 };
 
 const ALLOWED_TITLE_TOOL_INFERENCES = new Set([
@@ -61,6 +62,45 @@ function inferenceRisk(toolLower: string): number | null {
   return typeof v === 'number' ? v : null;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function extractCommandHintFromLabel(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const label = value.trim().replace(/\s+/g, ' ');
+  if (!label) return null;
+
+  const codeBlockMatch = label.match(/`([^`]+)`/);
+  if (codeBlockMatch && typeof codeBlockMatch[1] === 'string' && codeBlockMatch[1].trim().length > 0) {
+    return codeBlockMatch[1].trim();
+  }
+
+  const stripped = label.replace(/^(?:always\s+allow|allow|run|execute)\s+/i, '').trim();
+  if (stripped && stripped !== label) return stripped;
+
+  if (/^(?:bash|zsh|sh)\b/i.test(label)) return label;
+  return null;
+}
+
+function extractCommandHintFromOptions(options: unknown): string | null {
+  if (!Array.isArray(options)) return null;
+
+  let fallbackCandidate: string | null = null;
+  for (const option of options) {
+    const record = asRecord(option);
+    if (!record) continue;
+    const kind = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
+    const candidate = extractCommandHintFromLabel(record.name) ?? extractCommandHintFromLabel(record.title);
+    if (!candidate) continue;
+    if (kind.includes('allow')) return candidate;
+    if (!fallbackCandidate) fallbackCandidate = candidate;
+  }
+
+  return fallbackCandidate;
+}
+
 export function extractPermissionInput(params: PermissionRequestLike): Record<string, unknown> {
   const toolCall = params.toolCall ?? undefined;
   const input =
@@ -69,9 +109,38 @@ export function extractPermissionInput(params: PermissionRequestLike): Record<st
     ?? params.input
     ?? params.arguments
     ?? params.content;
-  if (input && typeof input === 'object' && !Array.isArray(input)) {
-    return input as Record<string, unknown>;
+
+  // Some ACP agents (notably Gemini) can send raw argv arrays or stringified commands instead of objects.
+  // Normalize these to a stable object shape so UI renderers can extract a command consistently.
+  if (Array.isArray(input)) {
+    const argv: string[] = [];
+    for (const item of input) {
+      if (typeof item !== 'string') {
+        argv.length = 0;
+        break;
+      }
+      argv.push(item);
+    }
+    if (argv.length > 0) return { command: argv };
   }
+  if (typeof input === 'string') {
+    const command = input.trim();
+    if (command.length > 0) return { command };
+  }
+
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    const inputRecord = input as Record<string, unknown>;
+    if (Object.keys(inputRecord).length > 0) {
+      return inputRecord;
+    }
+  }
+
+  // Some ACP providers (notably Gemini) send command hints only in permission option labels.
+  const optionCommandHint = extractCommandHintFromOptions(params.options);
+  if (optionCommandHint) {
+    return { command: optionCommandHint };
+  }
+
   return {};
 }
 

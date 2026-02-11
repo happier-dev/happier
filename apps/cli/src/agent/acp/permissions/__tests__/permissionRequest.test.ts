@@ -13,6 +13,26 @@ describe('extractPermissionInputWithFallback', () => {
     ).toEqual({ filePath: '/tmp/a' });
   });
 
+  it('wraps raw argv arrays as a command record', () => {
+    expect(
+      extractPermissionInputWithFallback(
+        { toolCall: { rawInput: ['bash', '-lc', 'echo hi'] } },
+        'call_argv',
+        new Map(),
+      ),
+    ).toEqual({ command: ['bash', '-lc', 'echo hi'] });
+  });
+
+  it('wraps raw string inputs as a command record', () => {
+    expect(
+      extractPermissionInputWithFallback(
+        { toolCall: { rawInput: "bash -lc 'echo hi'" } },
+        'call_str',
+        new Map(),
+      ),
+    ).toEqual({ command: "bash -lc 'echo hi'" });
+  });
+
   it('uses toolCallId fallback when params input is empty', () => {
     expect(
       extractPermissionInputWithFallback(
@@ -25,6 +45,83 @@ describe('extractPermissionInputWithFallback', () => {
 
   it('returns empty object when nothing is available', () => {
     expect(extractPermissionInputWithFallback({}, 'call_3', new Map())).toEqual({});
+  });
+
+  it('extracts command hints from permission option labels when input payload is empty', () => {
+    expect(
+      extractPermissionInputWithFallback(
+        {
+          toolCall: { kind: 'execute' },
+          options: [
+            { optionId: 'proceed_always', kind: 'allow_always', name: 'Always Allow bash, redirection (>)' },
+            { optionId: 'proceed_once', kind: 'allow_once', name: 'Allow' },
+            { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
+          ],
+        } as any,
+        'call_4',
+        new Map(),
+      ),
+    ).toEqual({ command: 'bash, redirection (>)' });
+  });
+
+  it('falls back to option label command hints when provider sends an empty input object', () => {
+    expect(
+      extractPermissionInputWithFallback(
+        {
+          toolCall: {
+            kind: 'execute',
+            input: {},
+          },
+          options: [
+            { optionId: 'proceed_always', kind: 'allow_always', name: 'Always Allow bash' },
+            { optionId: 'proceed_once', kind: 'allow_once', name: 'Allow' },
+            { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
+          ],
+        } as any,
+        'call_5',
+        new Map(),
+      ),
+    ).toEqual({ command: 'bash' });
+  });
+
+  it('falls back to option label command hints when provider sends an empty input string', () => {
+    expect(
+      extractPermissionInputWithFallback(
+        {
+          toolCall: {
+            kind: 'execute',
+            rawInput: '',
+          },
+          options: [
+            { optionId: 'proceed_always', kind: 'allow_always', name: 'Always Allow bash' },
+            { optionId: 'proceed_once', kind: 'allow_once', name: 'Allow' },
+            { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
+          ],
+        } as any,
+        'call_6',
+        new Map(),
+      ),
+    ).toEqual({ command: 'bash' });
+  });
+
+  it('falls back to option label command hints when provider sends an empty argv array', () => {
+    expect(
+      extractPermissionInputWithFallback(
+        {
+          toolCall: {
+            kind: 'execute',
+            rawInput: [],
+          },
+          options: [
+            { optionId: 'proceed_always', kind: 'allow_always', name: 'Always Allow bash' },
+            { optionId: 'proceed_once', kind: 'allow_once', name: 'Allow' },
+            { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
+          ],
+        } as any,
+        'call_7',
+        new Map(),
+      ),
+    ).toEqual({ command: 'bash' });
   });
 });
 
