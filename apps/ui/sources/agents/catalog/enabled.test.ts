@@ -4,7 +4,7 @@ import { getEnabledAgentIds, isAgentEnabled } from './enabled';
 
 describe('agents/enabled', () => {
     it('enables all agents by default when no explicit backend map is provided', () => {
-        const allAgents = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo'] as const;
+        const allAgents = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'pi'] as const;
         for (const agentId of allAgents) {
             expect(isAgentEnabled({ agentId, backendEnabledById: {} })).toBe(true);
             expect(isAgentEnabled({ agentId, backendEnabledById: null })).toBe(true);
@@ -30,11 +30,11 @@ describe('agents/enabled', () => {
     });
 
     it('returns enabled agent ids in display order', () => {
-        expect(getEnabledAgentIds({ backendEnabledById: {} })).toEqual(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo']);
-        expect(getEnabledAgentIds({ backendEnabledById: { gemini: false, auggie: false } })).toEqual(['claude', 'codex', 'opencode', 'qwen', 'kimi', 'kilo']);
+        expect(getEnabledAgentIds({ backendEnabledById: {} })).toEqual(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'pi']);
+        expect(getEnabledAgentIds({ backendEnabledById: { gemini: false, auggie: false } })).toEqual(['claude', 'codex', 'opencode', 'qwen', 'kimi', 'kilo', 'pi']);
     });
 
     it('ignores unknown backend ids in the toggle map', () => {
-        expect(getEnabledAgentIds({ backendEnabledById: { unknownAgent: false } })).toEqual(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo']);
+        expect(getEnabledAgentIds({ backendEnabledById: { unknownAgent: false } })).toEqual(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'pi']);
     });
 });
