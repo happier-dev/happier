@@ -12,6 +12,7 @@ type DaemonReportDeps = {
     nowFn?: () => number;
     retryTimeoutMs?: number;
     retryIntervalMs?: number;
+    reportAttemptTimeoutMs?: number;
 };
 
 function isTransientDaemonReportError(error: string): boolean {
@@ -93,6 +94,13 @@ export async function reportSessionToDaemonIfRunning(opts: {
             min: 50,
             max: 10_000,
         });
+    const reportAttemptTimeoutMs =
+        deps.reportAttemptTimeoutMs ??
+        resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS, 2_500, {
+            min: 100,
+            max: 30_000,
+        });
+    const boundedAttemptTimeoutMs = Math.min(reportAttemptTimeoutMs, Math.max(100, retryTimeoutMs));
 
     const startedAt = nowFn();
     let attempt = 0;
@@ -100,7 +108,7 @@ export async function reportSessionToDaemonIfRunning(opts: {
         attempt += 1;
         try {
             logger.debug(`[START] Reporting session ${opts.sessionId} to daemon (attempt ${attempt})`);
-            const result = await notifyFn(opts.sessionId, opts.metadata);
+            const result = await notifyFn(opts.sessionId, opts.metadata, { timeoutMs: boundedAttemptTimeoutMs });
             if (!result?.error) {
                 logger.debug(`[START] Reported session ${opts.sessionId} to daemon`);
                 return;

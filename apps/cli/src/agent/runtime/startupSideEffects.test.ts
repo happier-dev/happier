@@ -57,4 +57,20 @@ describe('startup side effects: daemon session reporting retry', () => {
 
     expect(calls).toBeGreaterThan(1);
   });
+
+  it('uses a bounded HTTP timeout per daemon-report attempt', async () => {
+    const observedTimeouts: Array<number | undefined> = [];
+
+    await reportSessionToDaemonIfRunning(
+      { sessionId: 'session-3', metadata: metadataStub },
+      {
+        notifyDaemonSessionStartedFn: async (_sessionId, _metadata, options) => {
+          observedTimeouts.push(options?.timeoutMs);
+          return {};
+        },
+      },
+    );
+
+    expect(observedTimeouts).toEqual([2_500]);
+  });
 });

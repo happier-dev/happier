@@ -11,7 +11,27 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { configuration } from '@/configuration';
 
-async function daemonPost(path: string, body?: any): Promise<{ error?: string } | any> {
+export type DaemonControlRequestOptions = {
+  timeoutMs?: number;
+};
+
+function resolvePositiveIntValue(
+  raw: string | number | undefined,
+  fallback: number,
+  bounds: { min: number; max: number },
+): number {
+  if (raw === undefined) return fallback;
+  const parsed =
+    typeof raw === 'number'
+      ? raw
+      : raw.trim().length > 0
+        ? Number.parseInt(raw, 10)
+        : Number.NaN;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(parsed)));
+}
+
+async function daemonPost(path: string, body?: any, options: DaemonControlRequestOptions = {}): Promise<{ error?: string } | any> {
   const state = await readDaemonState();
   if (!state?.httpPort) {
     const errorMessage = 'No daemon running, no state file found';
@@ -32,7 +52,10 @@ async function daemonPost(path: string, body?: any): Promise<{ error?: string } 
   }
 
   try {
-    const timeout = process.env.HAPPIER_DAEMON_HTTP_TIMEOUT ? parseInt(process.env.HAPPIER_DAEMON_HTTP_TIMEOUT) : 10_000;
+    const timeout =
+      options.timeoutMs !== undefined
+        ? resolvePositiveIntValue(options.timeoutMs, 10_000, { min: 100, max: 120_000 })
+        : resolvePositiveIntValue(process.env.HAPPIER_DAEMON_HTTP_TIMEOUT, 10_000, { min: 100, max: 120_000 });
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (state.controlToken) {
       headers['x-happier-daemon-token'] = state.controlToken;
@@ -65,12 +88,13 @@ async function daemonPost(path: string, body?: any): Promise<{ error?: string } 
 
 export async function notifyDaemonSessionStarted(
   sessionId: string,
-  metadata: Metadata
+  metadata: Metadata,
+  options: DaemonControlRequestOptions = {},
 ): Promise<{ error?: string } | any> {
   return await daemonPost('/session-started', {
     sessionId,
     metadata
-  });
+  }, options);
 }
 
 export async function listDaemonSessions(): Promise<any[]> {
