@@ -17,7 +17,7 @@ import { isRpcMethodNotAvailableError } from '@/sync/runtime/rpcErrors';
 
 export type LocalVoiceStatus = 'idle' | 'recording' | 'transcribing' | 'sending' | 'speaking' | 'error';
 
-type LocalVoiceState = {
+export type LocalVoiceState = {
   status: LocalVoiceStatus;
   sessionId: string | null;
   error: string | null;
