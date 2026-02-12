@@ -2,29 +2,29 @@ import * as React from 'react';
 import { View, ScrollView, ActivityIndicator, Platform, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/ui/text/StyledText';
-import { GitDiffDisplay } from '@/components/git/diff/GitDiffDisplay';
+import { ScmDiffDisplay } from '@/components/sessions/files/file/ScmDiffDisplay';
 import { Typography } from '@/constants/Typography';
-import { sessionGitCommitRevert, sessionGitDiffCommit } from '@/sync/ops';
+import { sessionScmCommitBackout, sessionScmDiffCommit } from '@/sync/ops';
 import {
     storage,
     useSession,
     useSessions,
-    useSessionProjectGitInFlightOperation,
-    useSessionProjectGitSnapshot,
+    useSessionProjectScmInFlightOperation,
+    useSessionProjectScmSnapshot,
     useSetting,
 } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
-import { gitStatusSync } from '@/sync/git/gitStatusSync';
-import { canRevertFromSnapshot } from '@/sync/git/operations/safety';
-import { evaluateGitOperationPreflight } from '@/sync/git/operations/policy';
-import { getGitUserFacingError } from '@/sync/git/operations/userFacingErrors';
-import { resolveGitWriteEnabled } from '@/sync/git/operations/featureFlags';
-import { buildRevertConfirmBody } from '@/sync/git/operations/revertFeedback';
-import { withSessionProjectGitOperationLock } from '@/sync/git/operations/withOperationLock';
-import { reportSessionGitOperation, trackBlockedGitOperation } from '@/sync/git/operations/reporting';
+import { scmStatusSync } from '@/scm/scmStatusSync';
+import { canRevertFromSnapshot } from '@/scm/operations/safety';
+import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
+import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
+import { resolveScmWriteEnabled } from '@/scm/operations/featureFlags';
+import { buildRevertConfirmBody } from '@/scm/operations/revertFeedback';
+import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
+import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
 
 function decodeSha(value: string): string {
@@ -46,14 +46,14 @@ export default function CommitScreen() {
     const sha = shaRaw.split(/\s+/)[0] ?? '';
 
     const experiments = useSetting('experiments');
-    const expGitOperations = useSetting('expGitOperations');
-    const gitWriteEnabled = resolveGitWriteEnabled({
+    const expScmOperations = useSetting('expScmOperations');
+    const scmWriteEnabled = resolveScmWriteEnabled({
         experiments,
-        expGitOperations,
+        expScmOperations,
     });
-    const gitSnapshot = useSessionProjectGitSnapshot(sessionId);
-    const inFlightGitOperation = useSessionProjectGitInFlightOperation(sessionId);
-    const canRevert = canRevertFromSnapshot(gitSnapshot);
+    const scmSnapshot = useSessionProjectScmSnapshot(sessionId);
+    const inFlightScmOperation = useSessionProjectScmInFlightOperation(sessionId);
+    const canRevert = canRevertFromSnapshot(scmSnapshot);
 
     const [isLoading, setIsLoading] = React.useState(true);
     const [isReverting, setIsReverting] = React.useState(false);
@@ -93,8 +93,7 @@ export default function CommitScreen() {
         setIsLoading(true);
         setError(null);
         try {
-            const response = await sessionGitDiffCommit(sessionId, {
-                cwd: sessionPath,
+            const response = await sessionScmDiffCommit(sessionId, {
                 commit: sha,
             });
 
@@ -118,14 +117,14 @@ export default function CommitScreen() {
     }, [loadCommit]);
 
     const revertCommit = React.useCallback(async () => {
-        const preflight = evaluateGitOperationPreflight({
+        const preflight = evaluateScmOperationPreflight({
             intent: 'revert',
-            gitWriteEnabled,
+            scmWriteEnabled,
             sessionPath,
-            snapshot: gitSnapshot,
+            snapshot: scmSnapshot,
         });
         if (!preflight.allowed) {
-            trackBlockedGitOperation({
+            trackBlockedScmOperation({
                 operation: 'revert',
                 reason: 'preflight',
                 message: preflight.message,
@@ -142,32 +141,31 @@ export default function CommitScreen() {
             'Revert commit',
             buildRevertConfirmBody({
                 commit: sha,
-                branch: gitSnapshot?.branch.head ?? null,
-                detached: gitSnapshot?.branch.detached ?? false,
+                branch: scmSnapshot?.branch.head ?? null,
+                detached: scmSnapshot?.branch.detached ?? false,
                 detachedLabel: t('files.detachedHead'),
             }),
             { confirmText: 'Revert', cancelText: 'Cancel' }
         );
         if (!confirmed) return;
-        const lockResult = await withSessionProjectGitOperationLock({
+        const lockResult = await withSessionProjectScmOperationLock({
             state: storage.getState(),
             sessionId,
             operation: 'revert',
             run: async () => {
                 setIsReverting(true);
                 try {
-                    const response = await sessionGitCommitRevert(sessionId, {
-                        cwd,
+                    const response = await sessionScmCommitBackout(sessionId, {
                         commit: sha,
                     });
 
                     if (!response.success) {
-                        const errorMessage = getGitUserFacingError({
+                        const errorMessage = getScmUserFacingError({
                             errorCode: response.errorCode,
                             error: response.error,
                             fallback: response.error || 'Failed to revert commit',
                         });
-                        reportSessionGitOperation({
+                        reportSessionScmOperation({
                             state: storage.getState(),
                             sessionId,
                             operation: 'revert',
@@ -181,7 +179,7 @@ export default function CommitScreen() {
                         return;
                     }
 
-                    reportSessionGitOperation({
+                    reportSessionScmOperation({
                         state: storage.getState(),
                         sessionId,
                         operation: 'revert',
@@ -190,11 +188,11 @@ export default function CommitScreen() {
                         surface: 'commit',
                         tracking,
                     });
-                    await gitStatusSync.invalidateFromMutationAndAwait(sessionId);
+                    await scmStatusSync.invalidateFromMutationAndAwait(sessionId);
                     Modal.alert('Success', 'Commit reverted successfully');
                 } catch (err) {
                     const errorMessage = (err as any)?.message || 'Failed to revert commit';
-                    reportSessionGitOperation({
+                    reportSessionScmOperation({
                         state: storage.getState(),
                         sessionId,
                         operation: 'revert',
@@ -210,7 +208,7 @@ export default function CommitScreen() {
             },
         });
         if (!lockResult.started) {
-            trackBlockedGitOperation({
+            trackBlockedScmOperation({
                 operation: 'revert',
                 reason: 'lock',
                 message: lockResult.message,
@@ -219,7 +217,7 @@ export default function CommitScreen() {
             });
             Modal.alert('Error', lockResult.message);
         }
-    }, [gitSnapshot, gitWriteEnabled, sessionId, sessionPath, sha]);
+    }, [scmSnapshot, scmWriteEnabled, sessionId, sessionPath, sha]);
 
     if (isLoading) {
         return (
@@ -278,16 +276,16 @@ export default function CommitScreen() {
                     Commit
                 </Text>
                 <Text style={{ color: theme.colors.text, fontSize: 14, ...Typography.mono() }}>{sha}</Text>
-                {inFlightGitOperation && (
+                {inFlightScmOperation && (
                     <Text style={{ marginTop: 6, color: theme.colors.textSecondary, fontSize: 12, ...Typography.default() }}>
-                        Running: {inFlightGitOperation.operation}
+                        Running: {inFlightScmOperation.operation}
                     </Text>
                 )}
 
-                {gitWriteEnabled && (
+                {scmWriteEnabled && (
                     <>
                         <Pressable
-                            disabled={isReverting || !canRevert || Boolean(inFlightGitOperation)}
+                            disabled={isReverting || !canRevert || Boolean(inFlightScmOperation)}
                             onPress={revertCommit}
                             style={{
                                 marginTop: 10,
@@ -296,7 +294,7 @@ export default function CommitScreen() {
                                 paddingVertical: 7,
                                 borderRadius: 8,
                                 backgroundColor: theme.colors.warning,
-                                opacity: isReverting || !canRevert || Boolean(inFlightGitOperation) ? 0.6 : 1,
+                                opacity: isReverting || !canRevert || Boolean(inFlightScmOperation) ? 0.6 : 1,
                             }}
                         >
                             <Text style={{ color: 'white', fontSize: 12, ...Typography.default('semiBold') }}>Revert commit</Text>
@@ -311,7 +309,7 @@ export default function CommitScreen() {
             </View>
 
             <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
-                <GitDiffDisplay diffContent={diff} />
+                <ScmDiffDisplay diffContent={diff} />
             </ScrollView>
         </View>
     );

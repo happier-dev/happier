@@ -1,20 +1,21 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { FileActionToolbar } from './file/components/FileActionToolbar';
-import { FileContentPanel } from './file/components/FileContentPanel';
-import { FileHeader } from './file/components/FileHeader';
-import { FileBinaryState, FileErrorState, FileLoadingState } from './file/components/FileScreenState';
+import { FileActionToolbar, type FileDiffMode } from '@/components/sessions/files/file/FileActionToolbar';
+import { FileContentPanel } from '@/components/sessions/files/file/FileContentPanel';
+import { FileHeader } from '@/components/sessions/files/file/FileHeader';
+import { FileBinaryState, FileErrorState, FileLoadingState } from '@/components/sessions/files/file/FileScreenState';
 import {
-    sessionGitDiffFile,
+    sessionScmDiffFile,
     sessionReadFile,
 } from '@/sync/ops';
 import {
     storage,
     useSession,
     useSessions,
-    useSessionProjectGitInFlightOperation,
-    useSessionProjectGitSnapshot,
+    useSessionProjectScmCommitSelectionPaths,
+    useSessionProjectScmInFlightOperation,
+    useSessionProjectScmSnapshot,
     useSetting,
 } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
@@ -22,12 +23,15 @@ import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 import { decodeBase64 } from '@/encryption/base64';
-import { buildFileLineSelectionFingerprint, canUseLineSelection } from '@/sync/git/gitLineSelection';
-import { resolveGitWriteEnabled } from '@/sync/git/operations/featureFlags';
-import { getFileLanguageFromPath, isBinaryContent, isKnownBinaryPath } from '@/sync/git/utils/filePresentation';
-import { decodeSessionFilePathParam } from '@/sync/git/utils/filePathParam';
-import { useFileGitStageActions } from './file/hooks/useFileGitStageActions';
-import { resolveSessionPathState } from './file/utils/sessionPathState';
+import { buildFileLineSelectionFingerprint, canUseLineSelection } from '@/scm/scmLineSelection';
+import { resolveScmWriteEnabled } from '@/scm/operations/featureFlags';
+import { getFileLanguageFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
+import { decodeSessionFilePathParam } from '@/scm/utils/filePathParam';
+import { allowsLiveStaging, isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
+import { resolveDefaultDiffModeForFile } from '@/scm/diff/defaultMode';
+import { useFileScmStageActions } from '@/hooks/session/files/useFileScmStageActions';
+import { resolveSessionPathState } from '@/hooks/session/files/sessionPathState';
+import type { ScmDiffArea } from '@happier-dev/protocol';
 
 interface FileContent {
     content: string;
@@ -39,6 +43,12 @@ function decodeUtf8Base64(base64: string): string {
     return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
 }
 
+function toScmDiffArea(mode: FileDiffMode): ScmDiffArea {
+    if (mode === 'included') return 'included';
+    if (mode === 'pending') return 'pending';
+    return 'both';
+}
+
 export default function FileScreen() {
     const { theme } = useUnistyles();
     const { id: sessionIdParam } = useLocalSearchParams<{ id: string }>();
@@ -46,10 +56,12 @@ export default function FileScreen() {
     const searchParams = useLocalSearchParams();
 
     const experiments = useSetting('experiments');
-    const expGitOperations = useSetting('expGitOperations');
-    const gitWriteEnabled = resolveGitWriteEnabled({
+    const expScmOperations = useSetting('expScmOperations');
+    const scmCommitStrategy = useSetting('scmCommitStrategy');
+    const scmDefaultDiffModeByBackend = useSetting('scmDefaultDiffModeByBackend');
+    const scmWriteEnabled = resolveScmWriteEnabled({
         experiments,
-        expGitOperations,
+        expScmOperations,
     });
     const session = useSession(sessionId);
     const sessionsReady = useSessions() !== null;
@@ -58,30 +70,42 @@ export default function FileScreen() {
     const encodedPath = searchParams.path as string;
     const filePath = decodeSessionFilePathParam(encodedPath);
 
-    const gitSnapshot = useSessionProjectGitSnapshot(sessionId);
-    const inFlightGitOperation = useSessionProjectGitInFlightOperation(sessionId);
+    const scmSnapshot = useSessionProjectScmSnapshot(sessionId);
+    const commitSelectionPaths = useSessionProjectScmCommitSelectionPaths(sessionId);
+    const inFlightScmOperation = useSessionProjectScmInFlightOperation(sessionId);
     const fileEntry = React.useMemo(
-        () => gitSnapshot?.entries.find((entry) => entry.path === filePath) ?? null,
-        [filePath, gitSnapshot]
+        () => scmSnapshot?.entries.find((entry) => entry.path === filePath) ?? null,
+        [filePath, scmSnapshot]
     );
-    const hasConflicts = gitSnapshot?.hasConflicts === true;
+    const hasConflicts = scmSnapshot?.hasConflicts === true;
 
     const [fileContent, setFileContent] = React.useState<FileContent | null>(null);
     const [diffContent, setDiffContent] = React.useState<string | null>(null);
     const [displayMode, setDisplayMode] = React.useState<'file' | 'diff'>('diff');
-    const [diffMode, setDiffMode] = React.useState<'staged' | 'unstaged' | 'both'>('unstaged');
+    const [diffMode, setDiffMode] = React.useState<FileDiffMode>('pending');
     const [isLoading, setIsLoading] = React.useState(true);
     const [selectedLineIndexes, setSelectedLineIndexes] = React.useState<Set<number>>(new Set());
     const [error, setError] = React.useState<string | null>(null);
 
-    const hasStagedDelta = fileEntry?.hasStagedDelta === true;
-    const hasUnstagedDelta = fileEntry?.hasUnstagedDelta === true;
+    const hasIncludedDelta = fileEntry?.hasIncludedDelta === true;
+    const hasPendingDelta = fileEntry?.hasPendingDelta === true;
+    const includeExcludeEnabled = allowsLiveStaging({
+        strategy: scmCommitStrategy,
+        snapshot: scmSnapshot,
+    });
+    const virtualSelectionEnabled = isAtomicCommitStrategy(scmCommitStrategy)
+        && scmSnapshot?.capabilities?.writeCommitPathSelection === true;
+    const virtualLineSelectionEnabled = isAtomicCommitStrategy(scmCommitStrategy)
+        && scmSnapshot?.capabilities?.writeCommitLineSelection === true;
+    const isSelectedForCommit = commitSelectionPaths.includes(filePath);
     const lineSelectionFingerprint = React.useMemo(
         () => buildFileLineSelectionFingerprint(fileEntry),
         [fileEntry]
     );
     const lineSelectionEnabled = canUseLineSelection({
-        gitWriteEnabled,
+        scmWriteEnabled,
+        includeExcludeEnabled,
+        virtualLineSelectionEnabled,
         hasConflicts,
         isBinary: fileEntry?.stats.isBinary === true,
         diffMode,
@@ -89,16 +113,14 @@ export default function FileScreen() {
     });
 
     React.useEffect(() => {
-        if (hasStagedDelta && hasUnstagedDelta) {
-            setDiffMode('both');
-            return;
-        }
-        if (hasStagedDelta) {
-            setDiffMode('staged');
-            return;
-        }
-        setDiffMode('unstaged');
-    }, [hasStagedDelta, hasUnstagedDelta]);
+        const resolved = resolveDefaultDiffModeForFile({
+            snapshot: scmSnapshot,
+            backendOverrides: scmDefaultDiffModeByBackend as Record<string, ScmDiffArea> | undefined,
+            hasIncludedDelta,
+            hasPendingDelta,
+        });
+        setDiffMode(resolved);
+    }, [hasIncludedDelta, hasPendingDelta, scmDefaultDiffModeByBackend, scmSnapshot]);
 
     React.useEffect(() => {
         setSelectedLineIndexes(new Set());
@@ -132,10 +154,9 @@ export default function FileScreen() {
                 return;
             }
 
-            const diffResponse = await sessionGitDiffFile(sessionId, {
-                cwd: sessionPath ?? undefined,
+            const diffResponse = await sessionScmDiffFile(sessionId, {
                 path: filePath,
-                mode: diffMode,
+                area: toScmDiffArea(diffMode),
             });
 
             latestDiff = diffResponse.success ? (diffResponse.diff ?? '') : null;
@@ -197,15 +218,17 @@ export default function FileScreen() {
         isApplyingStage,
         handleStage,
         applySelectedLines,
-    } = useFileGitStageActions({
+    } = useFileScmStageActions({
         sessionId,
         sessionPath,
         filePath,
-        gitSnapshot,
-        gitWriteEnabled,
+        scmSnapshot,
+        scmWriteEnabled,
+        scmCommitStrategy,
         diffMode,
         diffContent,
         lineSelectionEnabled,
+        includeExcludeEnabled,
         selectedLineIndexes,
         refreshAll,
         setSelectedLineIndexes,
@@ -251,15 +274,17 @@ export default function FileScreen() {
                     onDisplayMode={setDisplayMode}
                     diffMode={diffMode}
                     onDiffMode={setDiffMode}
-                    hasUnstagedDelta={hasUnstagedDelta}
-                    hasStagedDelta={hasStagedDelta}
+                    hasPendingDelta={hasPendingDelta}
+                    hasIncludedDelta={hasIncludedDelta}
                     isUntrackedFile={fileEntry?.kind === 'untracked'}
-                    gitWriteEnabled={gitWriteEnabled}
+                    scmWriteEnabled={scmWriteEnabled}
+                    includeExcludeEnabled={includeExcludeEnabled}
+                    virtualSelectionEnabled={virtualSelectionEnabled}
+                    isSelectedForCommit={isSelectedForCommit}
                     lineSelectionEnabled={lineSelectionEnabled}
                     selectedLineCount={selectedLineIndexes.size}
                     isApplyingStage={isApplyingStage}
-                    hasConflicts={hasConflicts}
-                    inFlightGitOperation={inFlightGitOperation}
+                    inFlightScmOperation={inFlightScmOperation}
                     onStageFile={() => {
                         void handleStage(true);
                     }}

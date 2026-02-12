@@ -8,6 +8,10 @@ import { DEFAULT_AGENT_ID, isAgentId, type AgentId } from '@/agents/catalog/cata
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { dbgSettings, summarizeSettingsDelta } from '../settings/debugSettings';
 import { SecretStringSchema, type SecretString } from '../../encryption/secretSettings';
+import {
+    sanitizeNewSessionAutomationDraft,
+    type NewSessionAutomationDraft,
+} from '@/sync/domains/automations/automationDraft';
 
 const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
 const storageScope = isWebRuntime ? null : readStorageScopeFromEnv();
@@ -48,6 +52,7 @@ export interface NewSessionDraft {
      * This is UI-only draft state (not sent to server).
      */
     agentNewSessionOptionStateByAgentId?: Partial<Record<AgentId, Record<string, unknown>>> | null;
+    automationDraft?: NewSessionAutomationDraft | null;
     updatedAt: number;
 }
 
@@ -308,6 +313,7 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
         const legacyAuggieAllowIndexing = typeof (parsed as any).auggieAllowIndexing === 'boolean'
             ? (parsed as any).auggieAllowIndexing
             : undefined;
+        const automationDraft = sanitizeNewSessionAutomationDraft((parsed as any).automationDraft);
         const updatedAt = typeof parsed.updatedAt === 'number' ? parsed.updatedAt : Date.now();
 
         const migratedAgentOptions: Partial<Record<AgentId, Record<string, unknown>>> = {
@@ -336,6 +342,7 @@ export function loadNewSessionDraft(): NewSessionDraft | null {
             sessionType,
             ...(resumeSessionId ? { resumeSessionId } : {}),
             ...(Object.keys(migratedAgentOptions).length > 0 ? { agentNewSessionOptionStateByAgentId: migratedAgentOptions } : {}),
+            ...(automationDraft.enabled ? { automationDraft } : {}),
             updatedAt,
         };
     } catch (e) {

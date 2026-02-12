@@ -356,5 +356,36 @@ describe('persistence', () => {
             const draft = loadNewSessionDraft();
             expect(draft?.modelMode).toBe('default');
         });
+
+        it('roundtrips automation draft when automation is enabled', () => {
+            store.set(
+                'new-session-draft-v1',
+                JSON.stringify({
+                    input: '',
+                    selectedMachineId: null,
+                    selectedPath: null,
+                    selectedProfileId: null,
+                    agentType: 'gemini',
+                    permissionMode: 'default',
+                    modelMode: 'default',
+                    sessionType: 'simple',
+	                    automationDraft: {
+	                        enabled: true,
+	                        name: 'Nightly',
+	                        description: 'sync',
+	                        scheduleKind: 'interval',
+	                        everyMinutes: 30,
+	                        cronExpr: '0 * * * *',
+	                        timezone: 'UTC',
+	                    },
+                    updatedAt: Date.now(),
+                }),
+            );
+
+            const draft = loadNewSessionDraft();
+            expect(draft?.automationDraft?.enabled).toBe(true);
+            expect(draft?.automationDraft?.name).toBe('Nightly');
+            expect(draft?.automationDraft?.everyMinutes).toBe(30);
+        });
     });
 });

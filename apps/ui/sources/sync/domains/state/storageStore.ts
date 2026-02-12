@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import { createArtifactsDomain } from '../../store/domains/artifacts';
+import { createAutomationsDomain } from '../../store/domains/automations';
 import { createFeedDomain } from '../../store/domains/feed';
 import { createFriendsDomain } from '../../store/domains/friends';
 import { createMachinesDomain } from '../../store/domains/machines';
@@ -26,6 +27,7 @@ export const storage = create<StorageState>()((set, get) => {
     const messagesDomain = createMessagesDomain<StorageState>({ set, get });
     const realtimeDomain = createRealtimeDomain<StorageState>({ set, get });
     const artifactsDomain = createArtifactsDomain<StorageState>({ set, get });
+    const automationsDomain = createAutomationsDomain<StorageState>({ set, get });
     const friendsDomain = createFriendsDomain<StorageState>({ set, get });
     const feedDomain = createFeedDomain<StorageState>({ set, get });
 
@@ -35,6 +37,7 @@ export const storage = create<StorageState>()((set, get) => {
         ...sessionsDomain,
         ...machinesDomain,
         ...artifactsDomain,
+        ...automationsDomain,
         ...friendsDomain,
         ...feedDomain,
         ...todosDomain,

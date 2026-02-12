@@ -3,7 +3,28 @@
  * Groups sessions by machine ID and path to create project entities
  */
 
-import { Session, MachineMetadata, GitStatus, GitWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import {
+    Session,
+    MachineMetadata,
+    ScmCommitSelectionPatch,
+    ScmStatus,
+    ScmWorkingSnapshot,
+} from '@/sync/domains/state/storageTypes';
+import {
+    clearSessionScmCommitSelectionPatches,
+    clearSessionScmCommitSelectionPaths,
+    getSessionScmCommitSelectionPatches,
+    getSessionScmCommitSelectionPaths,
+    getSessionScmTouchedPaths,
+    markSessionScmCommitSelectionPaths,
+    markSessionScmTouchedPaths,
+    pruneSessionScmCommitSelectionPatches,
+    pruneSessionScmCommitSelectionPaths,
+    pruneSessionScmTouchedPaths,
+    removeSessionScmCommitSelectionPatch,
+    unmarkSessionScmCommitSelectionPaths,
+    upsertSessionScmCommitSelectionPatch,
+} from './projectScmSelectionState';
 
 /**
  * Unique project identifier based on machine ID and path
@@ -13,7 +34,15 @@ export interface ProjectKey {
     path: string;
 }
 
-export type GitProjectOperationKind =
+export function resolveProjectMachineScopeId(metadata: { machineId?: string | null; host?: string | null }): string {
+    const machineId = typeof metadata.machineId === 'string' ? metadata.machineId.trim() : '';
+    if (machineId) return machineId;
+    const host = typeof metadata.host === 'string' ? metadata.host.trim() : '';
+    if (host) return `host:${host}`;
+    return 'unknown';
+}
+
+export type ScmProjectOperationKind =
     | 'refresh'
     | 'stage'
     | 'unstage'
@@ -23,28 +52,28 @@ export type GitProjectOperationKind =
     | 'push'
     | 'revert';
 
-export type GitProjectOperationStatus = 'success' | 'failed';
+export type ScmProjectOperationStatus = 'success' | 'failed';
 
-export interface GitProjectOperationLogEntry {
+export interface ScmProjectOperationLogEntry {
     id: string;
     timestamp: number;
     sessionId: string;
-    operation: GitProjectOperationKind;
-    status: GitProjectOperationStatus;
+    operation: ScmProjectOperationKind;
+    status: ScmProjectOperationStatus;
     path?: string;
     detail?: string;
 }
 
-export interface GitProjectInFlightOperation {
+export interface ScmProjectInFlightOperation {
     id: string;
     startedAt: number;
     sessionId: string;
-    operation: GitProjectOperationKind;
+    operation: ScmProjectOperationKind;
 }
 
-export type BeginGitProjectOperationResult =
-    | { started: true; operation: GitProjectInFlightOperation }
-    | { started: false; reason: 'missing_project' | 'operation_in_flight'; inFlight: GitProjectInFlightOperation | null };
+export type BeginScmProjectOperationResult =
+    | { started: true; operation: ScmProjectInFlightOperation }
+    | { started: false; reason: 'missing_project' | 'operation_in_flight'; inFlight: ScmProjectInFlightOperation | null };
 
 /**
  * Project entity that groups sessions by location
@@ -58,18 +87,24 @@ export interface Project {
     sessionIds: string[];
     /** Optional machine metadata */
     machineMetadata?: MachineMetadata | null;
-    /** Git status for this project (shared across all sessions) */
-    gitStatus?: GitStatus | null;
-    /** Canonical Git working snapshot for this project */
-    gitSnapshot?: GitWorkingSnapshot | null;
+    /** Source control status for this project (shared across all sessions) */
+    scmStatus?: ScmStatus | null;
+    /** Canonical source-control working snapshot for this project */
+    scmSnapshot?: ScmWorkingSnapshot | null;
+    /** Last error encountered while refreshing source-control snapshot for this project */
+    scmSnapshotError?: { message: string; at: number } | null;
     /** Paths touched by each session (sessionId -> path -> timestamp) */
-    gitTouchedPathsBySession?: Record<string, Record<string, number>>;
+    scmTouchedPathsBySession?: Record<string, Record<string, number>>;
+    /** Virtual commit selection paths by session (sessionId -> path -> timestamp) */
+    scmCommitSelectionBySession?: Record<string, Record<string, number>>;
+    /** Virtual commit selection patches by session (sessionId -> path -> { path, patch, selectedAt }) */
+    scmCommitSelectionPatchesBySession?: Record<string, Record<string, ScmCommitSelectionPatch & { selectedAt: number }>>;
     /** Bounded operation log for auditability */
-    gitOperationLog?: GitProjectOperationLogEntry[];
+    scmOperationLog?: ScmProjectOperationLogEntry[];
     /** Single in-flight write operation lock */
-    gitOperationInFlight?: GitProjectInFlightOperation | null;
-    /** Timestamp when git status was last updated */
-    lastGitStatusUpdate?: number;
+    scmOperationInFlight?: ScmProjectInFlightOperation | null;
+    /** Timestamp when source-control status was last updated */
+    lastScmStatusUpdate?: number;
     /** Project creation timestamp */
     createdAt: number;
     /** Last update timestamp */
@@ -80,7 +115,7 @@ export interface Project {
  * In-memory project manager
  */
 class ProjectManager {
-    private static readonly MAX_GIT_OPERATION_LOG = 200;
+    private static readonly MAX_SCM_OPERATION_LOG = 200;
     private projects: Map<string, Project> = new Map();
     private projectKeyToId: Map<string, string> = new Map();
     private sessionToProject: Map<string, string> = new Map();
@@ -117,6 +152,7 @@ class ProjectManager {
                 key,
                 sessionIds: [],
                 machineMetadata,
+                scmSnapshotError: null,
                 createdAt: now,
                 updatedAt: now
             };
@@ -142,13 +178,13 @@ class ProjectManager {
      * Add or update a session in the project system
      */
     addSession(session: Session, machineMetadata?: MachineMetadata | null): void {
-        // Session must have metadata with machineId and path
-        if (!session.metadata?.machineId || !session.metadata?.path) {
+        // Session must have metadata path (machine id may be absent for legacy/terminal sessions).
+        if (!session.metadata?.path) {
             return;
         }
 
         const projectKey: ProjectKey = {
-            machineId: session.metadata.machineId,
+            machineId: resolveProjectMachineScopeId(session.metadata),
             path: session.metadata.path
         };
 
@@ -162,8 +198,17 @@ class ProjectManager {
                 const index = previousProject.sessionIds.indexOf(session.id);
                 if (index !== -1) {
                     previousProject.sessionIds.splice(index, 1);
-                    if (previousProject.gitOperationInFlight?.sessionId === session.id) {
-                        previousProject.gitOperationInFlight = null;
+                    if (previousProject.scmOperationInFlight?.sessionId === session.id) {
+                        previousProject.scmOperationInFlight = null;
+                    }
+                    if (previousProject.scmTouchedPathsBySession) {
+                        delete previousProject.scmTouchedPathsBySession[session.id];
+                    }
+                    if (previousProject.scmCommitSelectionBySession) {
+                        delete previousProject.scmCommitSelectionBySession[session.id];
+                    }
+                    if (previousProject.scmCommitSelectionPatchesBySession) {
+                        delete previousProject.scmCommitSelectionPatchesBySession[session.id];
                     }
                     previousProject.updatedAt = Date.now();
                     
@@ -203,14 +248,20 @@ class ProjectManager {
         const index = project.sessionIds.indexOf(sessionId);
         if (index !== -1) {
             project.sessionIds.splice(index, 1);
-            if (project.gitOperationInFlight?.sessionId === sessionId) {
-                project.gitOperationInFlight = null;
+            if (project.scmOperationInFlight?.sessionId === sessionId) {
+                project.scmOperationInFlight = null;
             }
             project.updatedAt = Date.now();
         }
 
-        if (project.gitTouchedPathsBySession) {
-            delete project.gitTouchedPathsBySession[sessionId];
+        if (project.scmTouchedPathsBySession) {
+            delete project.scmTouchedPathsBySession[sessionId];
+        }
+        if (project.scmCommitSelectionBySession) {
+            delete project.scmCommitSelectionBySession[sessionId];
+        }
+        if (project.scmCommitSelectionPatchesBySession) {
+            delete project.scmCommitSelectionPatchesBySession[sessionId];
         }
 
         this.sessionToProject.delete(sessionId);
@@ -300,9 +351,9 @@ class ProjectManager {
     }
 
     /**
-     * Update git status for a project (identified by project key)
+     * Update source-control status for a project (identified by project key)
      */
-    updateProjectGitStatus(projectKey: ProjectKey, gitStatus: GitStatus | null): void {
+    updateProjectScmStatus(projectKey: ProjectKey, scmStatus: ScmStatus | null): void {
         const keyString = this.getProjectKeyString(projectKey);
         const projectId = this.projectKeyToId.get(keyString);
         
@@ -316,16 +367,16 @@ class ProjectManager {
             return;
         }
 
-        // Update git status and timestamp
-        project.gitStatus = gitStatus;
-        project.lastGitStatusUpdate = Date.now();
+        // Update source-control status and timestamp
+        project.scmStatus = scmStatus;
+        project.lastScmStatusUpdate = Date.now();
         project.updatedAt = Date.now();
     }
 
     /**
-     * Update git snapshot for a project (identified by project key)
+     * Update source-control snapshot for a project (identified by project key)
      */
-    updateProjectGitSnapshot(projectKey: ProjectKey, gitSnapshot: GitWorkingSnapshot | null): void {
+    updateProjectScmSnapshot(projectKey: ProjectKey, scmSnapshot: ScmWorkingSnapshot | null): void {
         const keyString = this.getProjectKeyString(projectKey);
         const projectId = this.projectKeyToId.get(keyString);
         if (!projectId) return;
@@ -333,165 +384,265 @@ class ProjectManager {
         const project = this.projects.get(projectId);
         if (!project) return;
 
-        project.gitSnapshot = gitSnapshot;
-        project.lastGitStatusUpdate = Date.now();
+        project.scmSnapshot = scmSnapshot;
+        project.lastScmStatusUpdate = Date.now();
         project.updatedAt = Date.now();
     }
 
     /**
-     * Update git status for a project (identified by project ID)
+     * Update source-control status for a project (identified by project ID)
      */
-    updateProjectGitStatusById(projectId: string, gitStatus: GitStatus | null): void {
+    updateProjectScmStatusById(projectId: string, scmStatus: ScmStatus | null): void {
         const project = this.projects.get(projectId);
         if (!project) {
             return;
         }
 
-        project.gitStatus = gitStatus;
-        project.lastGitStatusUpdate = Date.now();
+        project.scmStatus = scmStatus;
+        project.lastScmStatusUpdate = Date.now();
         project.updatedAt = Date.now();
     }
 
     /**
-     * Update git snapshot for a project (identified by project ID)
+     * Update source-control snapshot for a project (identified by project ID)
      */
-    updateProjectGitSnapshotById(projectId: string, gitSnapshot: GitWorkingSnapshot | null): void {
+    updateProjectScmSnapshotById(projectId: string, scmSnapshot: ScmWorkingSnapshot | null): void {
         const project = this.projects.get(projectId);
         if (!project) return;
 
-        project.gitSnapshot = gitSnapshot;
-        project.lastGitStatusUpdate = Date.now();
+        project.scmSnapshot = scmSnapshot;
+        project.lastScmStatusUpdate = Date.now();
         project.updatedAt = Date.now();
     }
 
     /**
-     * Get git status for a project
+     * Get source-control status for a project
      */
-    getProjectGitStatus(projectId: string): GitStatus | null {
+    getProjectScmStatus(projectId: string): ScmStatus | null {
         const project = this.projects.get(projectId);
-        return project?.gitStatus || null;
+        return project?.scmStatus || null;
     }
 
     /**
-     * Get git snapshot for a project
+     * Get source-control snapshot for a project
      */
-    getProjectGitSnapshot(projectId: string): GitWorkingSnapshot | null {
+    getProjectScmSnapshot(projectId: string): ScmWorkingSnapshot | null {
         const project = this.projects.get(projectId);
-        return project?.gitSnapshot || null;
+        return project?.scmSnapshot || null;
     }
 
     /**
-     * Clear git status for a project
+     * Get last source-control snapshot refresh error for a project.
      */
-    clearProjectGitStatus(projectId: string): void {
+    getProjectScmSnapshotError(projectId: string): { message: string; at: number } | null {
+        const project = this.projects.get(projectId);
+        return project?.scmSnapshotError || null;
+    }
+
+    /**
+     * Clear source-control status for a project
+     */
+    clearProjectScmStatus(projectId: string): void {
         const project = this.projects.get(projectId);
         if (project) {
-            project.gitStatus = null;
-            project.gitSnapshot = null;
-            project.lastGitStatusUpdate = Date.now();
+            project.scmStatus = null;
+            project.scmSnapshot = null;
+            project.lastScmStatusUpdate = Date.now();
             project.updatedAt = Date.now();
         }
     }
 
     /**
-     * Get git status for a session via its project
+     * Get source-control status for a session via its project
      */
-    getSessionProjectGitStatus(sessionId: string): GitStatus | null {
+    getSessionProjectScmStatus(sessionId: string): ScmStatus | null {
         const project = this.getProjectForSession(sessionId);
-        return project?.gitStatus || null;
+        return project?.scmStatus || null;
     }
 
     /**
-     * Get git snapshot for a session via its project
+     * Get source-control snapshot for a session via its project
      */
-    getSessionProjectGitSnapshot(sessionId: string): GitWorkingSnapshot | null {
+    getSessionProjectScmSnapshot(sessionId: string): ScmWorkingSnapshot | null {
         const project = this.getProjectForSession(sessionId);
-        return project?.gitSnapshot || null;
+        return project?.scmSnapshot || null;
     }
 
     /**
-     * Update git status for a session's project
+     * Get last source-control snapshot refresh error for a session via its project.
      */
-    updateSessionProjectGitStatus(sessionId: string, gitStatus: GitStatus | null): void {
+    getSessionProjectScmSnapshotError(sessionId: string): { message: string; at: number } | null {
+        const project = this.getProjectForSession(sessionId);
+        return project?.scmSnapshotError || null;
+    }
+
+    /**
+     * Update source-control status for a session's project
+     */
+    updateSessionProjectScmStatus(sessionId: string, scmStatus: ScmStatus | null): void {
         const project = this.getProjectForSession(sessionId);
         if (project) {
-            this.updateProjectGitStatusById(project.id, gitStatus);
+            this.updateProjectScmStatusById(project.id, scmStatus);
         }
     }
 
     /**
-     * Update git snapshot for a session's project
+     * Update source-control snapshot for a session's project
      */
-    updateSessionProjectGitSnapshot(sessionId: string, gitSnapshot: GitWorkingSnapshot | null): void {
+    updateSessionProjectScmSnapshot(sessionId: string, scmSnapshot: ScmWorkingSnapshot | null): void {
         const project = this.getProjectForSession(sessionId);
         if (project) {
-            this.updateProjectGitSnapshotById(project.id, gitSnapshot);
+            this.updateProjectScmSnapshotById(project.id, scmSnapshot);
         }
+    }
+
+    /**
+     * Update last source-control snapshot refresh error for a session's project.
+     */
+    updateSessionProjectScmSnapshotError(
+        sessionId: string,
+        error: { message: string; at: number } | null
+    ): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        project.scmSnapshotError = error;
+        project.updatedAt = Date.now();
     }
 
     /**
      * Mark file paths as touched by a session in its current project.
      */
-    markSessionProjectGitTouchedPaths(sessionId: string, paths: string[], touchedAt: number = Date.now()): void {
+    markSessionProjectScmTouchedPaths(sessionId: string, paths: string[], touchedAt: number = Date.now()): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;
-        if (paths.length === 0) return;
-
-        if (!project.gitTouchedPathsBySession) {
-            project.gitTouchedPathsBySession = {};
-        }
-        if (!project.gitTouchedPathsBySession[sessionId]) {
-            project.gitTouchedPathsBySession[sessionId] = {};
-        }
-
-        for (const path of paths) {
-            if (!path) continue;
-            project.gitTouchedPathsBySession[sessionId]![path] = touchedAt;
-        }
-        project.updatedAt = Date.now();
+        markSessionScmTouchedPaths(project, sessionId, paths, touchedAt);
     }
 
     /**
      * Return touched paths for a session in its current project.
      */
-    getSessionProjectGitTouchedPaths(sessionId: string): string[] {
+    getSessionProjectScmTouchedPaths(sessionId: string): string[] {
         const project = this.getProjectForSession(sessionId);
-        if (!project?.gitTouchedPathsBySession?.[sessionId]) return [];
-        return Object.keys(project.gitTouchedPathsBySession[sessionId]!).sort((a, b) => a.localeCompare(b));
+        return getSessionScmTouchedPaths(project, sessionId);
     }
 
     /**
-     * Remove touched paths that are no longer active in the current git snapshot.
+     * Remove touched paths that are no longer active in the current source-control snapshot.
      */
-    pruneSessionProjectGitTouchedPaths(sessionId: string, activePaths: Set<string>): void {
+    pruneSessionProjectScmTouchedPaths(sessionId: string, activePaths: Set<string>): void {
         const project = this.getProjectForSession(sessionId);
-        const touched = project?.gitTouchedPathsBySession?.[sessionId];
-        if (!project || !touched) return;
-
-        for (const path of Object.keys(touched)) {
-            if (!activePaths.has(path)) {
-                delete touched[path];
-            }
-        }
-
-        if (Object.keys(touched).length === 0 && project.gitTouchedPathsBySession) {
-            delete project.gitTouchedPathsBySession[sessionId];
-        }
-        project.updatedAt = Date.now();
+        if (!project) return;
+        pruneSessionScmTouchedPaths(project, sessionId, activePaths);
     }
 
-    appendSessionProjectGitOperation(
+    /**
+     * Mark file paths as selected for virtual commit scope by a session.
+     */
+    markSessionProjectScmCommitSelectionPaths(
         sessionId: string,
-        entry: Omit<GitProjectOperationLogEntry, 'id' | 'sessionId'>,
-    ): GitProjectOperationLogEntry | null {
+        paths: string[],
+        selectedAt: number = Date.now(),
+    ): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        markSessionScmCommitSelectionPaths(project, sessionId, paths, selectedAt);
+    }
+
+    /**
+     * Remove file paths from virtual commit selection for a session.
+     */
+    unmarkSessionProjectScmCommitSelectionPaths(sessionId: string, paths: string[]): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        unmarkSessionScmCommitSelectionPaths(project, sessionId, paths);
+    }
+
+    /**
+     * Clear virtual commit selection for a session.
+     */
+    clearSessionProjectScmCommitSelectionPaths(sessionId: string): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        clearSessionScmCommitSelectionPaths(project, sessionId);
+    }
+
+    /**
+     * Return virtual commit selection paths for a session in its current project.
+     */
+    getSessionProjectScmCommitSelectionPaths(sessionId: string): string[] {
+        const project = this.getProjectForSession(sessionId);
+        return getSessionScmCommitSelectionPaths(project, sessionId);
+    }
+
+    /**
+     * Remove virtual commit selection paths that are no longer active in source-control snapshot.
+     */
+    pruneSessionProjectScmCommitSelectionPaths(sessionId: string, activePaths: Set<string>): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        pruneSessionScmCommitSelectionPaths(project, sessionId, activePaths);
+    }
+
+    /**
+     * Upsert a virtual commit patch selection for a session in its current project.
+     */
+    upsertSessionProjectScmCommitSelectionPatch(
+        sessionId: string,
+        patchSelection: ScmCommitSelectionPatch,
+        selectedAt: number = Date.now(),
+    ): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        upsertSessionScmCommitSelectionPatch(project, sessionId, patchSelection, selectedAt);
+    }
+
+    /**
+     * Return virtual commit patch selections for a session in its current project.
+     */
+    getSessionProjectScmCommitSelectionPatches(sessionId: string): ScmCommitSelectionPatch[] {
+        const project = this.getProjectForSession(sessionId);
+        return getSessionScmCommitSelectionPatches(project, sessionId);
+    }
+
+    /**
+     * Remove virtual commit patch selection for a specific path.
+     */
+    removeSessionProjectScmCommitSelectionPatch(sessionId: string, path: string): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        removeSessionScmCommitSelectionPatch(project, sessionId, path);
+    }
+
+    /**
+     * Clear virtual commit patch selections for a session.
+     */
+    clearSessionProjectScmCommitSelectionPatches(sessionId: string): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        clearSessionScmCommitSelectionPatches(project, sessionId);
+    }
+
+    /**
+     * Remove virtual commit patch selections that are no longer active in source-control snapshot.
+     */
+    pruneSessionProjectScmCommitSelectionPatches(sessionId: string, activePaths: Set<string>): void {
+        const project = this.getProjectForSession(sessionId);
+        if (!project) return;
+        pruneSessionScmCommitSelectionPatches(project, sessionId, activePaths);
+    }
+
+    appendSessionProjectScmOperation(
+        sessionId: string,
+        entry: Omit<ScmProjectOperationLogEntry, 'id' | 'sessionId'>,
+    ): ScmProjectOperationLogEntry | null {
         const project = this.getProjectForSession(sessionId);
         if (!project) return null;
 
-        if (!project.gitOperationLog) {
-            project.gitOperationLog = [];
+        if (!project.scmOperationLog) {
+            project.scmOperationLog = [];
         }
 
-        const next: GitProjectOperationLogEntry = {
+        const next: ScmProjectOperationLogEntry = {
             id: `${entry.timestamp}-${Math.random().toString(36).slice(2, 10)}`,
             sessionId,
             operation: entry.operation,
@@ -501,10 +652,10 @@ class ProjectManager {
             ...(entry.detail ? { detail: entry.detail } : {}),
         };
 
-        project.gitOperationLog.push(next);
-        if (project.gitOperationLog.length > ProjectManager.MAX_GIT_OPERATION_LOG) {
-            project.gitOperationLog = project.gitOperationLog.slice(
-                project.gitOperationLog.length - ProjectManager.MAX_GIT_OPERATION_LOG
+        project.scmOperationLog.push(next);
+        if (project.scmOperationLog.length > ProjectManager.MAX_SCM_OPERATION_LOG) {
+            project.scmOperationLog = project.scmOperationLog.slice(
+                project.scmOperationLog.length - ProjectManager.MAX_SCM_OPERATION_LOG
             );
         }
 
@@ -512,11 +663,11 @@ class ProjectManager {
         return next;
     }
 
-    beginSessionProjectGitOperation(
+    beginSessionProjectScmOperation(
         sessionId: string,
-        operation: GitProjectOperationKind,
+        operation: ScmProjectOperationKind,
         startedAt: number = Date.now(),
-    ): BeginGitProjectOperationResult {
+    ): BeginScmProjectOperationResult {
         const project = this.getProjectForSession(sessionId);
         if (!project) {
             return {
@@ -526,21 +677,21 @@ class ProjectManager {
             };
         }
 
-        if (project.gitOperationInFlight) {
+        if (project.scmOperationInFlight) {
             return {
                 started: false,
                 reason: 'operation_in_flight',
-                inFlight: project.gitOperationInFlight,
+                inFlight: project.scmOperationInFlight,
             };
         }
 
-        const inFlight: GitProjectInFlightOperation = {
+        const inFlight: ScmProjectInFlightOperation = {
             id: `${startedAt}-${Math.random().toString(36).slice(2, 10)}`,
             startedAt,
             sessionId,
             operation,
         };
-        project.gitOperationInFlight = inFlight;
+        project.scmOperationInFlight = inFlight;
         project.updatedAt = startedAt;
         return {
             started: true,
@@ -548,24 +699,24 @@ class ProjectManager {
         };
     }
 
-    finishSessionProjectGitOperation(sessionId: string, operationId: string): boolean {
+    finishSessionProjectScmOperation(sessionId: string, operationId: string): boolean {
         const project = this.getProjectForSession(sessionId);
-        if (!project?.gitOperationInFlight) return false;
-        if (project.gitOperationInFlight.id !== operationId) return false;
-        project.gitOperationInFlight = null;
+        if (!project?.scmOperationInFlight) return false;
+        if (project.scmOperationInFlight.id !== operationId) return false;
+        project.scmOperationInFlight = null;
         project.updatedAt = Date.now();
         return true;
     }
 
-    getSessionProjectGitInFlightOperation(sessionId: string): GitProjectInFlightOperation | null {
+    getSessionProjectScmInFlightOperation(sessionId: string): ScmProjectInFlightOperation | null {
         const project = this.getProjectForSession(sessionId);
-        return project?.gitOperationInFlight ?? null;
+        return project?.scmOperationInFlight ?? null;
     }
 
-    getSessionProjectGitOperationLog(sessionId: string): GitProjectOperationLogEntry[] {
+    getSessionProjectScmOperationLog(sessionId: string): ScmProjectOperationLogEntry[] {
         const project = this.getProjectForSession(sessionId);
-        if (!project?.gitOperationLog) return [];
-        return [...project.gitOperationLog].sort((a, b) => b.timestamp - a.timestamp);
+        if (!project?.scmOperationLog) return [];
+        return [...project.scmOperationLog].sort((a, b) => b.timestamp - a.timestamp);
     }
 
     /**

@@ -11,7 +11,7 @@ import { t } from '@/text';
 export default React.memo(function FeaturesSettingsScreen() {
     const [experiments, setExperiments] = useSettingMutable('experiments');
     const [expUsageReporting, setExpUsageReporting] = useSettingMutable('expUsageReporting');
-    const [expGitOperations, setExpGitOperations] = useSettingMutable('expGitOperations');
+    const [expScmOperations, setExpScmOperations] = useSettingMutable('expScmOperations');
     const [expShowThinkingMessages, setExpShowThinkingMessages] = useSettingMutable('expShowThinkingMessages');
     const [expSessionType, setExpSessionType] = useSettingMutable('expSessionType');
     const [expZen, setExpZen] = useSettingMutable('expZen');
@@ -29,12 +29,12 @@ export default React.memo(function FeaturesSettingsScreen() {
     const setAllExperimentToggles = React.useCallback((enabled: boolean) => {
         setExpUsageReporting(enabled);
         // Intentionally NOT auto-enabled: this exposes write operations on user repositories.
-        setExpGitOperations(false);
+        setExpScmOperations(false);
         setExpShowThinkingMessages(enabled);
         setExpSessionType(enabled);
         setExpZen(enabled);
     }, [
-        setExpGitOperations,
+        setExpScmOperations,
         setExpSessionType,
         setExpShowThinkingMessages,
         setExpUsageReporting,
@@ -166,10 +166,10 @@ export default React.memo(function FeaturesSettingsScreen() {
                         showChevron={false}
                     />
                     <Item
-                        title={t('settingsFeatures.expGitOperations')}
-                        subtitle={t('settingsFeatures.expGitOperationsSubtitle')}
+                        title={t('settingsFeatures.expScmOperations')}
+                        subtitle={t('settingsFeatures.expScmOperationsSubtitle')}
                         icon={<Ionicons name="git-branch-outline" size={29} color="#FF9500" />}
-                        rightElement={<Switch value={expGitOperations} onValueChange={setExpGitOperations} />}
+                        rightElement={<Switch value={expScmOperations} onValueChange={setExpScmOperations} />}
                         showChevron={false}
                     />
                     <Item

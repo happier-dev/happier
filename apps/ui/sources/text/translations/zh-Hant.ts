@@ -253,6 +253,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         enhancedSessionWizard: '增強工作階段精靈',
         enhancedSessionWizardEnabled: '設定檔優先的工作階段啟動器已啟用',
         enhancedSessionWizardDisabled: '使用標準工作階段啟動器',
+        expScmOperations: '版本控制操作',
+        expScmOperationsSubtitle: '啟用實驗性的版本控制寫入操作（stage/commit/push/pull）',
     },
 
     errors: {
@@ -615,8 +617,15 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         inferredSuppressed: ({ count }: { count: number }) =>
             `${count} inferred file${count === 1 ? '' : 's'} kept in repository-only changes.`,
         noSessionAttributedChanges: 'No session-attributed changes currently detected.',
-        notRepo: '不是 git 倉庫',
-        notUnderGit: '此目錄不在 git 版本控制下',
+        notRepo: '不是版本控制倉庫',
+        notUnderSourceControl: '此目錄不在版本控制下',
+        repositoryFolderLoadFailed: '無法載入資料夾',
+        repositoryCollapseAll: '全部摺疊',
+        reviewFilterPlaceholder: '篩選檔案...',
+        reviewNoMatches: '沒有符合項目',
+        reviewLargeDiffOneAtATime: '偵測到較大的 diff，將一次顯示一個檔案。',
+        reviewDiffRequestFailed: '無法載入 diff',
+        reviewUnableToLoadDiff: '無法載入 diff',
         searching: '正在搜尋檔案...',
         noFilesFound: '未找到檔案',
         noFilesInProject: '專案中沒有檔案',

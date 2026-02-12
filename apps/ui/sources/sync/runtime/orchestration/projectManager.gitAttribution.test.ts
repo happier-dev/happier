@@ -30,28 +30,46 @@ describe('projectManager git attribution', () => {
         projectManager.clear();
         projectManager.addSession(createSession('s1', 'm1', '/repo') as any);
 
-        projectManager.markSessionProjectGitTouchedPaths('s1', ['a.ts', 'b.ts'], 100);
-        expect(projectManager.getSessionProjectGitTouchedPaths('s1').sort()).toEqual(['a.ts', 'b.ts']);
+        projectManager.markSessionProjectScmTouchedPaths('s1', ['a.ts', 'b.ts'], 100);
+        expect(projectManager.getSessionProjectScmTouchedPaths('s1').sort()).toEqual(['a.ts', 'b.ts']);
 
-        projectManager.pruneSessionProjectGitTouchedPaths('s1', new Set(['a.ts']));
-        expect(projectManager.getSessionProjectGitTouchedPaths('s1')).toEqual(['a.ts']);
+        projectManager.pruneSessionProjectScmTouchedPaths('s1', new Set(['a.ts']));
+        expect(projectManager.getSessionProjectScmTouchedPaths('s1')).toEqual(['a.ts']);
     });
 
     it('stores bounded git operation log per project', () => {
         projectManager.clear();
         projectManager.addSession(createSession('s1', 'm1', '/repo') as any);
 
-        projectManager.appendSessionProjectGitOperation('s1', {
+        projectManager.appendSessionProjectScmOperation('s1', {
             operation: 'commit',
             status: 'success',
             detail: 'abc123',
             timestamp: 10,
         });
 
-        const log = projectManager.getSessionProjectGitOperationLog('s1');
+        const log = projectManager.getSessionProjectScmOperationLog('s1');
         expect(log).toHaveLength(1);
         expect(log[0]?.operation).toBe('commit');
         expect(log[0]?.status).toBe('success');
         expect(log[0]?.detail).toBe('abc123');
+    });
+
+    it('tracks and prunes per-session commit selection paths', () => {
+        projectManager.clear();
+        projectManager.addSession(createSession('s1', 'm1', '/repo') as any);
+
+        projectManager.markSessionProjectScmCommitSelectionPaths('s1', ['a.ts', 'b.ts']);
+        expect(projectManager.getSessionProjectScmCommitSelectionPaths('s1')).toEqual(['a.ts', 'b.ts']);
+
+        projectManager.unmarkSessionProjectScmCommitSelectionPaths('s1', ['b.ts']);
+        expect(projectManager.getSessionProjectScmCommitSelectionPaths('s1')).toEqual(['a.ts']);
+
+        projectManager.markSessionProjectScmCommitSelectionPaths('s1', ['stale.ts']);
+        projectManager.pruneSessionProjectScmCommitSelectionPaths('s1', new Set(['a.ts']));
+        expect(projectManager.getSessionProjectScmCommitSelectionPaths('s1')).toEqual(['a.ts']);
+
+        projectManager.clearSessionProjectScmCommitSelectionPaths('s1');
+        expect(projectManager.getSessionProjectScmCommitSelectionPaths('s1')).toEqual([]);
     });
 });

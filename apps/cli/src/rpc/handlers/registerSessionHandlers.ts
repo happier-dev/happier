@@ -11,7 +11,7 @@ import { registerBashHandler } from './bash';
 import { registerFileSystemHandlers } from './fileSystem';
 import { registerRipgrepHandler } from './ripgrep';
 import { registerDifftasticHandler } from './difftastic';
-import { registerGitHandlers } from './git';
+import { registerScmHandlers } from './scm';
 import { registerVoiceMediatorHandlers } from './voiceMediator';
 
 /*
@@ -131,7 +131,7 @@ export function registerSessionHandlers(
     registerFileSystemHandlers(rpcHandlerManager, workingDirectory);
     registerRipgrepHandler(rpcHandlerManager, workingDirectory);
     registerDifftasticHandler(rpcHandlerManager, workingDirectory);
-    registerGitHandlers(rpcHandlerManager, workingDirectory);
+    registerScmHandlers(rpcHandlerManager, workingDirectory);
     if (typeof opts?.flavor === 'string' && opts.flavor.trim().length > 0) {
         registerVoiceMediatorHandlers(rpcHandlerManager, { cwd: workingDirectory, flavor: opts.flavor });
     }

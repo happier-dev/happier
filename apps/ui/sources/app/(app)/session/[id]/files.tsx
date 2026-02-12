@@ -1,50 +1,61 @@
 import * as React from 'react';
 import { View, ActivityIndicator } from 'react-native';
-import { t } from '@/text';
 import { useRoute } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { Octicons } from '@expo/vector-icons';
-import { Text } from '@/components/ui/text/StyledText';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { Typography } from '@/constants/Typography';
-import { GitFileStatus } from '@/sync/git/gitStatusFiles';
-import { getDefaultChangedFilesViewMode } from '@/sync/git/gitAttribution';
-import { normalizeFilePath } from './files/utils';
-import { FilesToolbar } from './files/components/FilesToolbar';
-import { GitBranchSummary } from './files/components/GitBranchSummary';
-import { GitOperationsPanel } from './files/components/GitOperationsPanel';
+import { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { getDefaultChangedFilesViewMode } from '@/scm/scmAttribution';
+import { normalizeFilePath } from '@/components/sessions/files/filesUtils';
+import { FilesToolbar } from '@/components/sessions/files/FilesToolbar';
+import { SourceControlBranchSummary } from '@/components/sessions/files/SourceControlBranchSummary';
+import { SourceControlOperationsPanel } from '@/components/sessions/files/SourceControlOperationsPanel';
 import { searchFiles, FileItem } from '@/sync/domains/input/suggestionFile';
-import { SearchResultsList } from './files/components/content/SearchResultsList';
-import { ChangedFilesList } from './files/components/content/ChangedFilesList';
+import { SearchResultsList } from '@/components/sessions/files/content/SearchResultsList';
+import { ChangedFilesList } from '@/components/sessions/files/content/ChangedFilesList';
+import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
+import { RepositoryTreeList } from '@/components/sessions/files/content/RepositoryTreeList';
 import {
     storage,
-    useSessionProjectGitOperationLog,
-    useSessionProjectGitInFlightOperation,
-    useSessionProjectGitSnapshot,
-    useSessionProjectGitTouchedPaths,
+    useSession,
+    useSessionProjectScmOperationLog,
+    useSessionProjectScmInFlightOperation,
+    useSessionProjectScmSnapshot,
+    useSessionProjectScmSnapshotError,
+    useSessionProjectScmCommitSelectionPaths,
+    useSessionProjectScmCommitSelectionPatches,
+    useSessionProjectScmTouchedPaths,
+    useSessionRepositoryTreeExpandedPaths,
     useProjectForSession,
     useProjectSessions,
     useSetting,
 } from '@/sync/domains/state/storage';
-import { gitStatusSync } from '@/sync/git/gitStatusSync';
+import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
-import { useGitCommitHistory } from './files/hooks/useGitCommitHistory';
-import { useChangedFilesData } from './files/hooks/useChangedFilesData';
-import { useFilesGitOperations } from './files/hooks/useFilesGitOperations';
-import { shouldShowGitOperationsPanel } from './files/hooks/useGitOperationsVisibility';
-import { resolveGitWriteEnabled } from '@/sync/git/operations/featureFlags';
+import { useScmCommitHistory } from '@/hooks/session/files/useScmCommitHistory';
+import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
+import { useFilesScmOperations } from '@/hooks/session/files/useFilesScmOperations';
+import { shouldShowScmOperationsPanel } from '@/hooks/session/files/useScmOperationsVisibility';
+import { resolveScmWriteEnabled } from '@/scm/operations/featureFlags';
+import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
+import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
+import type { ChangedFilesPresentation } from '@/scm/scmAttribution';
 
 export default function FilesScreen() {
     const route = useRoute();
     const router = useRouter();
     const sessionId = (route.params! as any).id as string;
 
-    const gitSnapshot = useSessionProjectGitSnapshot(sessionId);
-    const touchedPaths = useSessionProjectGitTouchedPaths(sessionId);
-    const operationLog = useSessionProjectGitOperationLog(sessionId);
-    const inFlightGitOperation = useSessionProjectGitInFlightOperation(sessionId);
+    const session = useSession(sessionId);
+    const scmSnapshot = useSessionProjectScmSnapshot(sessionId);
+    const scmSnapshotError = useSessionProjectScmSnapshotError(sessionId);
+    const commitSelectionPaths = useSessionProjectScmCommitSelectionPaths(sessionId);
+    const commitSelectionPatches = useSessionProjectScmCommitSelectionPatches(sessionId);
+    const touchedPaths = useSessionProjectScmTouchedPaths(sessionId);
+    const operationLog = useSessionProjectScmOperationLog(sessionId);
+    const inFlightScmOperation = useSessionProjectScmInFlightOperation(sessionId);
+    const repositoryTreeExpandedPaths = useSessionRepositoryTreeExpandedPaths(sessionId);
     const project = useProjectForSession(sessionId);
     const projectSessionIds = useProjectSessions(project?.id ?? null);
 
@@ -54,27 +65,34 @@ export default function FilesScreen() {
     const [isSearching, setIsSearching] = React.useState(false);
     const [showAllRepositoryFiles, setShowAllRepositoryFiles] = React.useState(false);
     const [changedFilesViewMode, setChangedFilesViewMode] = React.useState(getDefaultChangedFilesViewMode);
+    const [changedFilesPresentation, setChangedFilesPresentation] = React.useState<ChangedFilesPresentation>('list');
 
     const { theme } = useUnistyles();
     const experiments = useSetting('experiments');
-    const expGitOperations = useSetting('expGitOperations');
-    const gitWriteEnabled = resolveGitWriteEnabled({
+    const expScmOperations = useSetting('expScmOperations');
+    const scmCommitStrategy = useSetting('scmCommitStrategy');
+    const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
+    const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
+    const scmReviewMaxFiles = useSetting('scmReviewMaxFiles');
+    const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
+    const scmWriteEnabled = resolveScmWriteEnabled({
         experiments,
-        expGitOperations,
+        expScmOperations,
     });
-    const sessionPath = storage.getState().sessions[sessionId]?.metadata?.path ?? null;
-    const hasConflicts = gitSnapshot?.hasConflicts === true;
-    const hasGlobalOperationInFlight = Boolean(inFlightGitOperation);
-    const showGitOperationsPanel = shouldShowGitOperationsPanel({
+    const sessionPath = session?.metadata?.path ?? null;
+    const hasConflicts = scmSnapshot?.hasConflicts === true;
+    const hasGlobalOperationInFlight = Boolean(inFlightScmOperation);
+    const showScmOperationsPanel = shouldShowScmOperationsPanel({
         isRefreshing,
-        isGitRepo: gitSnapshot?.repo.isGitRepo === true,
-        gitWriteEnabled,
+        isRepo: scmSnapshot?.repo.isRepo === true,
+        capabilities: scmSnapshot?.capabilities ?? null,
+        scmWriteEnabled,
     });
 
     const {
         attributionReliability,
         showSessionViewToggle,
-        gitStatusFiles,
+        scmStatusFiles,
         changedFilesCount,
         shouldShowAllFiles,
         allRepositoryChangedFiles,
@@ -83,7 +101,7 @@ export default function FilesScreen() {
         suppressedInferredCount,
     } = useChangedFilesData({
         sessionId,
-        gitSnapshot,
+        scmSnapshot,
         touchedPaths,
         operationLog,
         projectSessionIds,
@@ -102,53 +120,97 @@ export default function FilesScreen() {
         historyLoading,
         historyHasMore,
         loadCommitHistory,
-    } = useGitCommitHistory({
+    } = useScmCommitHistory({
         sessionId,
-        gitWriteEnabled,
+        readLogEnabled: scmSnapshot?.repo.isRepo === true && (scmSnapshot?.capabilities?.readLog ?? true),
         sessionPath,
     });
 
-    const refreshGitData = React.useCallback(async () => {
+    const loadCommitHistoryRef = React.useRef(loadCommitHistory);
+    React.useEffect(() => {
+        loadCommitHistoryRef.current = loadCommitHistory;
+    }, [loadCommitHistory]);
+
+    const pendingRefreshAfterSessionPathHydrationRef = React.useRef(false);
+
+    const refreshScmData = React.useCallback(async () => {
+        if (!sessionPath) {
+            return;
+        }
         setIsRefreshing(true);
         try {
-            await gitStatusSync.getSync(sessionId).invalidateAndAwait();
-            await loadCommitHistory({ reset: true });
+            await scmStatusSync.getSync(sessionId).invalidateAndAwait();
+            await loadCommitHistoryRef.current({ reset: true });
         } finally {
             setIsRefreshing(false);
         }
-    }, [loadCommitHistory, sessionId]);
+    }, [sessionId, sessionPath]);
 
     useFocusEffect(
         React.useCallback(() => {
             const refresh = async () => {
-                await refreshGitData();
+                await refreshScmData();
             };
+
+            if (!sessionPath) {
+                pendingRefreshAfterSessionPathHydrationRef.current = true;
+                return;
+            }
 
             refresh();
 
             return () => {};
-        }, [refreshGitData])
+        }, [refreshScmData, sessionPath])
     );
 
+    React.useEffect(() => {
+        if (!sessionPath) {
+            return;
+        }
+        if (!pendingRefreshAfterSessionPathHydrationRef.current) {
+            return;
+        }
+        pendingRefreshAfterSessionPathHydrationRef.current = false;
+        void refreshScmData();
+    }, [refreshScmData, sessionPath]);
+
     const {
-        gitOperationBusy,
-        gitOperationStatus,
+        scmOperationBusy,
+        scmOperationStatus,
         commitPreflight,
         pullPreflight,
         pushPreflight,
         runRemoteOperation,
         createCommit,
-    } = useFilesGitOperations({
+    } = useFilesScmOperations({
         sessionId,
         sessionPath,
-        gitSnapshot,
-        gitWriteEnabled,
-        refreshGitData,
+        scmSnapshot,
+        scmWriteEnabled,
+        scmCommitStrategy,
+        scmRemoteConfirmPolicy,
+        scmPushRejectPolicy,
+        refreshScmData,
         loadCommitHistory,
     });
     const commitAllowed = commitPreflight.allowed;
     const pullAllowed = pullPreflight.allowed;
     const pushAllowed = pushPreflight.allowed;
+    const scmUiPlugin = scmUiBackendRegistry.getPluginForSnapshot(scmSnapshot);
+    const backendLabel = scmUiPlugin.displayName;
+    const commitActionLabel = scmUiPlugin.commitActionConfig(scmSnapshot).label;
+    const commitSelectionCount = React.useMemo(() => {
+        const uniquePaths = new Set<string>();
+        for (const path of commitSelectionPaths) {
+            const normalized = path.trim();
+            if (normalized) uniquePaths.add(normalized);
+        }
+        for (const patchSelection of commitSelectionPatches) {
+            const normalized = patchSelection.path.trim();
+            if (normalized) uniquePaths.add(normalized);
+        }
+        return uniquePaths.size;
+    }, [commitSelectionPatches, commitSelectionPaths]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -160,9 +222,13 @@ export default function FilesScreen() {
 
             try {
                 setIsSearching(true);
-                const results = await searchFiles(sessionId, searchQuery, { limit: 100 });
+                if (!searchQuery.trim()) {
+                    setSearchResults([]);
+                    return;
+                }
+                const results = await searchFiles(sessionId, searchQuery, { limit: 250 });
                 if (!cancelled) {
-                    setSearchResults(results);
+                    setSearchResults(results.filter((entry) => entry.fileType === 'file'));
                 }
             } catch {
                 if (!cancelled) {
@@ -182,7 +248,7 @@ export default function FilesScreen() {
         };
     }, [isRefreshing, searchQuery, sessionId, shouldShowAllFiles]);
 
-    const handleFilePress = React.useCallback((file: GitFileStatus | FileItem) => {
+    const handleFilePress = React.useCallback((file: ScmFileStatus | FileItem) => {
         if ('fileType' in file && file.fileType === 'folder') {
             return;
         }
@@ -198,6 +264,10 @@ export default function FilesScreen() {
         } as any);
     }, [router, sessionId]);
 
+    const setRepositoryTreeExpandedPaths = React.useCallback((paths: string[]) => {
+        storage.getState().setSessionRepositoryTreeExpandedPaths(sessionId, paths);
+    }, [sessionId]);
+
     return (
         <View style={[styles.container, { backgroundColor: theme.colors.surface }]}>
             <FilesToolbar
@@ -205,25 +275,32 @@ export default function FilesScreen() {
                 searchQuery={searchQuery}
                 onSearchQueryChange={setSearchQuery}
                 showAllRepositoryFiles={showAllRepositoryFiles}
-                onShowChangedFiles={() => setShowAllRepositoryFiles(false)}
+                onShowChangedFiles={() => {
+                    setShowAllRepositoryFiles(false);
+                }}
                 onShowAllRepositoryFiles={() => setShowAllRepositoryFiles(true)}
                 changedFilesCount={changedFilesCount}
                 changedFilesViewMode={changedFilesViewMode}
+                changedFilesPresentation={changedFilesPresentation}
                 showSessionViewToggle={showSessionViewToggle}
                 onChangedFilesViewMode={setChangedFilesViewMode}
+                onChangedFilesPresentationChange={setChangedFilesPresentation}
             />
 
-            {!isRefreshing && gitStatusFiles && <GitBranchSummary theme={theme} gitStatusFiles={gitStatusFiles} />}
+            {!isRefreshing && scmStatusFiles && <SourceControlBranchSummary theme={theme} scmStatusFiles={scmStatusFiles} />}
 
-            {showGitOperationsPanel && (
-                <GitOperationsPanel
+            {showScmOperationsPanel && (
+                <SourceControlOperationsPanel
                     theme={theme}
+                    backendLabel={backendLabel}
+                    commitActionLabel={commitActionLabel}
+                    capabilities={scmSnapshot?.capabilities ?? null}
                     currentSessionId={sessionId}
                     hasConflicts={hasConflicts}
-                    gitOperationBusy={gitOperationBusy}
+                    scmOperationBusy={scmOperationBusy}
                     hasGlobalOperationInFlight={hasGlobalOperationInFlight}
-                    inFlightGitOperation={inFlightGitOperation}
-                    gitOperationStatus={gitOperationStatus}
+                    inFlightScmOperation={inFlightScmOperation}
+                    scmOperationStatus={scmOperationStatus}
                     commitAllowed={commitAllowed}
                     commitBlockedMessage={commitAllowed ? null : commitPreflight.message}
                     pullAllowed={pullAllowed}
@@ -258,6 +335,15 @@ export default function FilesScreen() {
                         } as any);
                     }}
                     operationLog={operationLog}
+                    commitSelectionCount={commitSelectionCount}
+                    onClearCommitSelection={
+                        commitSelectionCount > 0
+                            ? () => {
+                                storage.getState().clearSessionProjectScmCommitSelectionPaths(sessionId);
+                                storage.getState().clearSessionProjectScmCommitSelectionPatches(sessionId);
+                            }
+                            : undefined
+                    }
                 />
             )}
 
@@ -273,40 +359,31 @@ export default function FilesScreen() {
                     >
                         <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                     </View>
-                ) : gitSnapshot && !gitSnapshot.repo.isGitRepo ? (
-                    <View
-                        style={{
-                            flex: 1,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            paddingTop: 40,
-                            paddingHorizontal: 20,
+                ) : scmSnapshot && !scmSnapshot.repo.isRepo ? (
+                    <NotSourceControlRepositoryState />
+                ) : !scmSnapshot && scmSnapshotError ? (
+                    <SourceControlUnavailableState
+                        details={scmSnapshotError.message}
+                        onRetry={() => {
+                            void refreshScmData();
                         }}
-                    >
-                        <Octicons name="git-branch" size={48} color={theme.colors.textSecondary} />
-                        <Text
-                            style={{
-                                fontSize: 16,
-                                color: theme.colors.textSecondary,
-                                textAlign: 'center',
-                                marginTop: 16,
-                                ...Typography.default(),
-                            }}
-                        >
-                            {t('files.notRepo')}
-                        </Text>
-                        <Text
-                            style={{
-                                fontSize: 14,
-                                color: theme.colors.textSecondary,
-                                textAlign: 'center',
-                                marginTop: 8,
-                                ...Typography.default(),
-                            }}
-                        >
-                            {t('files.notUnderGit')}
-                        </Text>
-                    </View>
+                    />
+                ) : shouldShowAllFiles && !searchQuery.trim() ? (
+                    <RepositoryTreeList
+                        theme={theme}
+                        sessionId={sessionId}
+                        expandedPaths={repositoryTreeExpandedPaths}
+                        onExpandedPathsChange={setRepositoryTreeExpandedPaths}
+                        onOpenFile={(fullPath) => {
+                            const parts = fullPath.split('/');
+                            handleFilePress({
+                                fileName: parts.length > 0 ? (parts[parts.length - 1] || fullPath) : fullPath,
+                                filePath: '',
+                                fullPath,
+                                fileType: 'file',
+                            });
+                        }}
+                    />
                 ) : shouldShowAllFiles ? (
                     <SearchResultsList
                         theme={theme}
@@ -315,17 +392,34 @@ export default function FilesScreen() {
                         searchResults={searchResults}
                         onFilePress={handleFilePress}
                     />
-                ) : gitStatusFiles ? (
-                    <ChangedFilesList
-                        theme={theme}
-                        changedFilesViewMode={changedFilesViewMode}
-                        attributionReliability={attributionReliability}
-                        allRepositoryChangedFiles={allRepositoryChangedFiles}
-                        sessionAttributedFiles={sessionAttributedFiles}
-                        repositoryOnlyFiles={repositoryOnlyFiles}
-                        suppressedInferredCount={suppressedInferredCount}
-                        onFilePress={handleFilePress}
-                    />
+                ) : scmStatusFiles ? (
+                    changedFilesPresentation === 'review' && scmSnapshot?.capabilities?.readDiffFile !== false ? (
+                        <ChangedFilesReview
+                            theme={theme}
+                            sessionId={sessionId}
+                            snapshot={scmSnapshot}
+                            changedFilesViewMode={changedFilesViewMode}
+                            attributionReliability={attributionReliability}
+                            allRepositoryChangedFiles={allRepositoryChangedFiles}
+                            sessionAttributedFiles={sessionAttributedFiles}
+                            repositoryOnlyFiles={repositoryOnlyFiles}
+                            suppressedInferredCount={suppressedInferredCount}
+                            maxFiles={typeof scmReviewMaxFiles === 'number' ? scmReviewMaxFiles : 25}
+                            maxChangedLines={typeof scmReviewMaxChangedLines === 'number' ? scmReviewMaxChangedLines : 2000}
+                            onFilePress={handleFilePress}
+                        />
+                    ) : (
+                        <ChangedFilesList
+                            theme={theme}
+                            changedFilesViewMode={changedFilesViewMode}
+                            attributionReliability={attributionReliability}
+                            allRepositoryChangedFiles={allRepositoryChangedFiles}
+                            sessionAttributedFiles={sessionAttributedFiles}
+                            repositoryOnlyFiles={repositoryOnlyFiles}
+                            suppressedInferredCount={suppressedInferredCount}
+                            onFilePress={handleFilePress}
+                        />
+                    )
                 ) : null}
             </ItemList>
         </View>

@@ -249,7 +249,7 @@ jobs:
   ui:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_ui }}
     name: UI Tests (unit + integration)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
       - name: Checkout
@@ -274,11 +274,21 @@ jobs:
           corepack enable
           corepack prepare yarn@1.22.22 --activate
 
+      - name: Install Sapling
+        run: |
+          bash scripts/ci/install_sapling_ubuntu22.sh
+
+      - name: Verify Sapling CLI
+        run: sl --version
+
       - name: Install dependencies
         env:
           YARN_PRODUCTION: "false"
           npm_config_production: "false"
         run: yarn install --frozen-lockfile
+
+      - name: Run protocol unit tests
+        run: yarn workspace @happier-dev/protocol test
 
       - name: Run unit tests
         run: yarn workspace @happier-dev/app test:unit
@@ -388,7 +398,7 @@ jobs:
   cli:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_cli }}
     name: CLI Tests (unit + integration)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 25
     env:
       HAPPIER_CLI_TMUX_INTEGRATION: "1"
@@ -444,6 +454,13 @@ jobs:
             apt-get ${APT_FLAGS} install -y --no-install-recommends tmux
           fi
           tmux -V
+
+      - name: Install Sapling
+        run: |
+          bash scripts/ci/install_sapling_ubuntu22.sh
+
+      - name: Verify Sapling CLI
+        run: sl --version
 
       - name: Install dependencies
         env:

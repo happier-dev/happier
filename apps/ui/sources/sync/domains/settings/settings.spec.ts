@@ -108,7 +108,7 @@ describe('settings', () => {
             expect((parsed as any).expSessionType).toBe(true);
             expect((parsed as any).expZen).toBe(true);
             expect((parsed as any).expInboxFriends).toBe(true);
-            expect((parsed as any).expGitOperations).toBe(false);
+            expect((parsed as any).expScmOperations).toBe(false);
         });
 
         it('should default per-experiment toggles to false when experiments is false (migration)', () => {
@@ -123,7 +123,7 @@ describe('settings', () => {
             expect((parsed as any).expSessionType).toBe(false);
             expect((parsed as any).expZen).toBe(false);
             expect((parsed as any).expInboxFriends).toBe(false);
-            expect((parsed as any).expGitOperations).toBe(false);
+            expect((parsed as any).expScmOperations).toBe(false);
         });
 
         it('defaults per-agent new-session permission modes', () => {
@@ -133,21 +133,68 @@ describe('settings', () => {
             expect((parsed as any).sessionDefaultPermissionModeByAgent?.gemini).toBe('default');
         });
 
+        it('defaults source-control commit strategy to atomic', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).scmCommitStrategy).toBe('atomic');
+        });
+
+        it('defaults source-control backend/diff/remote policies', () => {
+            const parsed = settingsParse({} as any);
+            expect((parsed as any).scmGitRepoPreferredBackend).toBe('git');
+            expect((parsed as any).scmRemoteConfirmPolicy).toBe('always');
+            expect((parsed as any).scmPushRejectPolicy).toBe('prompt_fetch');
+            expect((parsed as any).scmDefaultDiffModeByBackend).toEqual({});
+            expect((parsed as any).scmReviewMaxFiles).toBe(25);
+            expect((parsed as any).scmReviewMaxChangedLines).toBe(2000);
+        });
+
         it('defaults permission mode apply timing to immediate', () => {
             const parsed = settingsParse({} as any);
             expect((parsed as any).sessionPermissionModeApplyTiming).toBe('immediate');
         });
 
-        it('defaults local voice mediator settings', () => {
+        it('defaults voice settings', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).voiceLocalConversationMode).toBe('direct_session');
-            expect((parsed as any).voiceLocalMediatorBackend).toBe('daemon');
-            expect((parsed as any).voiceMediatorPermissionPolicy).toBe('read_only');
-            expect((parsed as any).voiceMediatorIdleTtlSeconds).toBe(300);
-            expect((parsed as any).voiceMediatorChatModelSource).toBe('custom');
-            expect((parsed as any).voiceMediatorChatModelId).toBe('default');
-            expect((parsed as any).voiceMediatorCommitModelSource).toBe('chat');
-            expect((parsed as any).voiceMediatorVerbosity).toBe('short');
+            expect((parsed as any).voice.providerId).toBe('realtime_elevenlabs');
+
+            expect((parsed as any).voice.privacy.shareSessionSummary).toBe(true);
+            expect((parsed as any).voice.privacy.shareRecentMessages).toBe(true);
+            expect((parsed as any).voice.privacy.recentMessagesCount).toBe(3);
+            expect((parsed as any).voice.privacy.shareToolNames).toBe(true);
+            expect((parsed as any).voice.privacy.sharePermissionRequests).toBe(true);
+            expect((parsed as any).voice.privacy.shareFilePaths).toBe(false);
+            expect((parsed as any).voice.privacy.shareToolArgs).toBe(false);
+
+            expect((parsed as any).voice.adapters.local_conversation.conversationMode).toBe('direct_session');
+            expect((parsed as any).voice.adapters.local_conversation.mediator.backend).toBe('daemon');
+            expect((parsed as any).voice.adapters.local_conversation.handsFree.enabled).toBe(false);
+            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.silenceMs).toBe(450);
+            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.minSpeechMs).toBe(120);
+            expect((parsed as any).voice.adapters.local_conversation.tts.bargeInEnabled).toBe(true);
+            expect((parsed as any).voice.adapters.local_conversation.mediator.permissionPolicy).toBe('read_only');
+            expect((parsed as any).voice.adapters.local_conversation.mediator.idleTtlSeconds).toBe(300);
+            expect((parsed as any).voice.adapters.local_conversation.mediator.chatModelSource).toBe('custom');
+            expect((parsed as any).voice.adapters.local_conversation.mediator.chatModelId).toBe('default');
+            expect((parsed as any).voice.adapters.local_conversation.mediator.commitModelSource).toBe('chat');
+            expect((parsed as any).voice.adapters.local_conversation.streaming.enabled).toBe(false);
+            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsEnabled).toBe(false);
+            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsChunkChars).toBe(200);
+            expect((parsed as any).voice.adapters.local_conversation.mediator.verbosity).toBe('short');
+        });
+
+        it('does not mutate voice defaults while parsing a partial voice config', () => {
+            const parsed1 = settingsParse({
+                voice: {
+                    privacy: {
+                        shareFilePaths: true,
+                    },
+                },
+            } as any);
+            expect((parsed1 as any).voice.privacy.shareFilePaths).toBe(true);
+
+            const parsed2 = settingsParse({} as any);
+            // Defaults must remain stable across calls.
+            expect((parsed2 as any).voice.privacy.shareFilePaths).toBe(false);
         });
 
         it('defaults multi-server settings to disabled grouped mode', () => {
@@ -157,6 +204,8 @@ describe('settings', () => {
             expect((parsed as any).multiServerPresentation).toBe('grouped');
             expect((parsed as any).multiServerProfiles).toEqual([]);
             expect((parsed as any).multiServerActiveProfileId).toBeNull();
+            expect((parsed as any).activeServerTargetKind).toBeNull();
+            expect((parsed as any).activeServerTargetId).toBeNull();
         });
 
         it('defaults environment badge visibility to enabled', () => {
@@ -200,6 +249,33 @@ describe('settings', () => {
             expect((parsed as any).multiServerActiveProfileId).toBe('dev-work');
         });
 
+        it('parses active server target fields when provided', () => {
+            const parsed = settingsParse({
+                activeServerTargetKind: 'group',
+                activeServerTargetId: 'dev-work',
+            } as any);
+
+            expect((parsed as any).activeServerTargetKind).toBe('group');
+            expect((parsed as any).activeServerTargetId).toBe('dev-work');
+        });
+
+        it('migrates legacy active group selection into active target fields when missing', () => {
+            const parsed = settingsParse({
+                multiServerProfiles: [
+                    {
+                        id: 'dev-work',
+                        name: 'Dev Work',
+                        serverIds: ['server-a', 'server-b'],
+                        presentation: 'grouped',
+                    },
+                ],
+                multiServerActiveProfileId: 'dev-work',
+            } as any);
+
+            expect((parsed as any).activeServerTargetKind).toBe('group');
+            expect((parsed as any).activeServerTargetId).toBe('dev-work');
+        });
+
         it('migrates legacy sessionBusySteerSendPolicy=queue_for_review to server_pending', () => {
             const parsed = settingsParse({
                 schemaVersion: 2,
@@ -228,7 +304,7 @@ describe('settings', () => {
                 expSessionType: false,
                 expZen: true,
                 expInboxFriends: false,
-                expGitOperations: true,
+                expScmOperations: true,
             } as any);
 
             expect((parsed as any).expUsageReporting).toBe(true);
@@ -237,7 +313,7 @@ describe('settings', () => {
             expect((parsed as any).expSessionType).toBe(false);
             expect((parsed as any).expZen).toBe(true);
             expect((parsed as any).expInboxFriends).toBe(false);
-            expect((parsed as any).expGitOperations).toBe(true);
+            expect((parsed as any).expScmOperations).toBe(true);
         });
 
         it('keeps expFileViewer parse-compatible when explicitly present', () => {
@@ -660,31 +736,12 @@ describe('settings', () => {
         });
     });
 
-    describe('voiceProviderId migration', () => {
-        it('derives voiceProviderId from legacy voiceMode when missing', () => {
-            const off = settingsParse({ voiceMode: 'off' });
-            expect(off.voiceProviderId).toBe('off');
-
-            const happier = settingsParse({ voiceMode: 'happier' });
-            expect(happier.voiceProviderId).toBe('happier_elevenlabs_agents');
-
-            const byo = settingsParse({ voiceMode: 'byo_elevenlabs' });
-            expect(byo.voiceProviderId).toBe('byo_elevenlabs_agents');
-        });
-
-        it('prefers voiceProviderId when present (even if voiceMode disagrees)', () => {
-            const parsed = settingsParse({
-                voiceMode: 'off',
-                voiceProviderId: 'happier_elevenlabs_agents',
-            } as any);
-            expect(parsed.voiceProviderId).toBe('happier_elevenlabs_agents');
-        });
-    });
+    // Voice settings intentionally do not migrate legacy flat voice keys.
 
     describe('voice privacy settings', () => {
-        it('forces voiceShareToolArgs to false even if persisted true', () => {
-            const parsed = settingsParse({ voiceShareToolArgs: true } as any);
-            expect((parsed as any).voiceShareToolArgs).toBe(false);
+        it('forces voice.privacy.shareToolArgs to false even if persisted true', () => {
+            const parsed = settingsParse({ voice: { privacy: { shareToolArgs: true } } } as any);
+            expect((parsed as any).voice.privacy.shareToolArgs).toBe(false);
         });
     });
 

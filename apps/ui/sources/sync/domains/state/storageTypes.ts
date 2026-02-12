@@ -26,6 +26,7 @@ export const MetadataSchema = z.object({
     auggieSessionId: z.string().optional(), // Auggie ACP session ID (opaque)
     qwenSessionId: z.string().optional(), // Qwen Code ACP session ID (opaque)
     kimiSessionId: z.string().optional(), // Kimi ACP session ID (opaque)
+    kiloSessionId: z.string().optional(), // Kilo ACP session ID (opaque)
     piSessionId: z.string().optional(), // Pi RPC session ID (opaque)
     auggieAllowIndexing: z.boolean().optional(), // Auggie indexing enablement (spawn-time)
     tools: z.array(z.string()).optional(),
@@ -301,24 +302,24 @@ export interface Machine {
 }
 
 //
-// Git Status
+// Source Control Status
 //
 
-export interface GitStatus {
+export interface ScmStatus {
     branch: string | null;
     isDirty: boolean;
     modifiedCount: number;
     untrackedCount: number;
-    stagedCount: number;
+    includedCount: number;
     lastUpdatedAt: number;
-    // Line change statistics - separated by staged vs unstaged
-    stagedLinesAdded: number;
-    stagedLinesRemoved: number;
-    unstagedLinesAdded: number;
-    unstagedLinesRemoved: number;
+    // Line change statistics - separated by included vs pending
+    includedLinesAdded: number;
+    includedLinesRemoved: number;
+    pendingLinesAdded: number;
+    pendingLinesRemoved: number;
     // Computed totals
-    linesAdded: number;      // stagedLinesAdded + unstagedLinesAdded
-    linesRemoved: number;    // stagedLinesRemoved + unstagedLinesRemoved
+    linesAdded: number;      // includedLinesAdded + pendingLinesAdded
+    linesRemoved: number;    // includedLinesRemoved + pendingLinesRemoved
     linesChanged: number;    // Total lines that were modified (added + removed)
     // Branch tracking information (from porcelain v2)
     upstreamBranch?: string | null; // Name of upstream branch
@@ -327,7 +328,7 @@ export interface GitStatus {
     stashCount?: number; // Number of stash entries
 }
 
-export type GitEntryKind =
+export type ScmEntryKind =
     | 'modified'
     | 'added'
     | 'deleted'
@@ -336,32 +337,68 @@ export type GitEntryKind =
     | 'untracked'
     | 'conflicted';
 
-export interface GitPathStats {
-    stagedAdded: number;
-    stagedRemoved: number;
-    unstagedAdded: number;
-    unstagedRemoved: number;
+export interface ScmPathStats {
+    includedAdded: number;
+    includedRemoved: number;
+    pendingAdded: number;
+    pendingRemoved: number;
     isBinary: boolean;
 }
 
-export interface GitWorkingEntry {
+export interface ScmCommitSelectionPatch {
     path: string;
-    previousPath: string | null;
-    kind: GitEntryKind;
-    indexStatus: string;
-    worktreeStatus: string;
-    hasStagedDelta: boolean;
-    hasUnstagedDelta: boolean;
-    stats: GitPathStats;
+    patch: string;
 }
 
-export interface GitWorkingSnapshot {
+export interface ScmCapabilities {
+    readStatus: boolean;
+    readDiffFile: boolean;
+    readDiffCommit: boolean;
+    readLog: boolean;
+    writeInclude: boolean;
+    writeExclude: boolean;
+    writeCommit: boolean;
+    writeCommitPathSelection?: boolean;
+    writeCommitLineSelection?: boolean;
+    writeBackout: boolean;
+    writeRemoteFetch: boolean;
+    writeRemotePull: boolean;
+    writeRemotePush: boolean;
+    workspaceWorktreeCreate: boolean;
+    changeSetModel?: 'index' | 'working-copy';
+    supportedDiffAreas?: Array<'included' | 'pending' | 'both'>;
+    operationLabels?: {
+        commit?: string;
+        include?: string;
+        exclude?: string;
+        backout?: string;
+        fetch?: string;
+        pull?: string;
+        push?: string;
+    };
+}
+
+export interface ScmWorkingEntry {
+    path: string;
+    previousPath: string | null;
+    kind: ScmEntryKind;
+    includeStatus: string;
+    pendingStatus: string;
+    hasIncludedDelta: boolean;
+    hasPendingDelta: boolean;
+    stats: ScmPathStats;
+}
+
+export interface ScmWorkingSnapshot {
     projectKey: string;
     fetchedAt: number;
     repo: {
-        isGitRepo: boolean;
+        isRepo: boolean;
         rootPath: string | null;
+        backendId?: 'git' | 'sapling' | null;
+        mode?: '.git' | '.sl' | null;
     };
+    capabilities?: ScmCapabilities;
     branch: {
         head: string | null;
         upstream: string | null;
@@ -371,14 +408,14 @@ export interface GitWorkingSnapshot {
     };
     stashCount: number;
     hasConflicts: boolean;
-    entries: GitWorkingEntry[];
+    entries: ScmWorkingEntry[];
     totals: {
-        stagedFiles: number;
-        unstagedFiles: number;
+        includedFiles: number;
+        pendingFiles: number;
         untrackedFiles: number;
-        stagedAdded: number;
-        stagedRemoved: number;
-        unstagedAdded: number;
-        unstagedRemoved: number;
+        includedAdded: number;
+        includedRemoved: number;
+        pendingAdded: number;
+        pendingRemoved: number;
     };
 }

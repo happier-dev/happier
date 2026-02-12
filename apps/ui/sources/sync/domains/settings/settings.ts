@@ -7,6 +7,13 @@ import type { PermissionMode } from '../permissions/permissionTypes';
 import { CLAUDE_PERMISSION_MODES, CODEX_LIKE_PERMISSION_MODES } from '../permissions/permissionTypes';
 import { AGENT_IDS, getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { PROVIDER_SETTINGS_PLUGINS } from '@/agents/providers/_registry/providerSettingsRegistry';
+import { SCM_COMMIT_STRATEGIES } from '@/scm/settings/commitStrategy';
+import {
+    SCM_DIFF_MODE_OPTIONS,
+    SCM_GIT_REPO_BACKEND_OPTIONS,
+    SCM_PUSH_REJECT_POLICIES,
+    SCM_REMOTE_CONFIRM_POLICIES,
+} from '@/scm/settings/preferences';
 import { parsePermissionIntentAlias } from '@happier-dev/agents';
 
 //
@@ -280,7 +287,14 @@ const SettingsSchemaBase = z.object({
     expUsageReporting: z.boolean().describe('Experimental: enable usage reporting UI'),
     // Deprecated: kept parse-compatible for one migration window.
     expFileViewer: z.boolean().describe('Deprecated: legacy session file viewer experiment flag'),
-    expGitOperations: z.boolean().describe('Experimental: enable Git write operations UI'),
+    expScmOperations: z.boolean().describe('Experimental: enable source-control write operations UI'),
+    scmCommitStrategy: z.enum(SCM_COMMIT_STRATEGIES).describe('Source-control commit strategy: atomic working-copy commit or live Git staging'),
+    scmGitRepoPreferredBackend: z.enum(SCM_GIT_REPO_BACKEND_OPTIONS).describe('Preferred backend for .git repositories'),
+    scmRemoteConfirmPolicy: z.enum(SCM_REMOTE_CONFIRM_POLICIES).describe('Confirmation policy for SCM remote pull/push operations'),
+    scmPushRejectPolicy: z.enum(SCM_PUSH_REJECT_POLICIES).describe('Behavior when push is rejected as non-fast-forward'),
+    scmDefaultDiffModeByBackend: z.record(z.string(), z.enum(SCM_DIFF_MODE_OPTIONS)).default({}).describe('Preferred default diff mode by backend id'),
+    scmReviewMaxFiles: z.number().describe('Maximum file count for unified SCM diff review mode before falling back to single-file review'),
+    scmReviewMaxChangedLines: z.number().describe('Maximum total changed lines for unified SCM diff review mode before falling back to single-file review'),
     expShowThinkingMessages: z.boolean().describe('Experimental: show assistant thinking messages'),
     expSessionType: z.boolean().describe('Experimental: show session type selector (simple vs worktree)'),
     expZen: z.boolean().describe('Experimental: enable Zen navigation/experience'),
@@ -432,7 +446,14 @@ export const settingsDefaults: Settings = {
     backendEnabledById: DEFAULT_BACKEND_ENABLED_BY_ID,
     expUsageReporting: false,
     expFileViewer: false,
-    expGitOperations: false,
+    expScmOperations: false,
+    scmCommitStrategy: 'atomic',
+    scmGitRepoPreferredBackend: 'git',
+    scmRemoteConfirmPolicy: 'always',
+    scmPushRejectPolicy: 'prompt_fetch',
+    scmDefaultDiffModeByBackend: {},
+    scmReviewMaxFiles: 25,
+    scmReviewMaxChangedLines: 2000,
     expShowThinkingMessages: false,
     expSessionType: false,
     expZen: false,

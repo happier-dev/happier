@@ -11,27 +11,24 @@ import { nowServerMs } from '../runtime/time';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type {
-    GitCommitCreateRequest,
-    GitCommitCreateResponse,
-    GitCommitRevertRequest,
-    GitCommitRevertResponse,
-    GitDiffCommitRequest,
-    GitDiffCommitResponse,
-    GitDiffFileRequest,
-    GitDiffFileResponse,
-    GitLogListRequest,
-    GitLogListResponse,
-    GitPatchApplyRequest,
-    GitPatchApplyResponse,
-    GitRemoteRequest,
-    GitRemoteResponse,
-    GitStatusSnapshotRequest,
-    GitStatusSnapshotResponse,
     SpawnSessionResult
 } from '@happier-dev/protocol';
-import { GIT_OPERATION_ERROR_CODES, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
+export {
+    sessionScmChangeExclude,
+    sessionScmChangeInclude,
+    sessionScmCommitBackout,
+    sessionScmCommitCreate,
+    sessionScmDiffCommit,
+    sessionScmDiffFile,
+    sessionScmLogList,
+    sessionScmRemoteFetch,
+    sessionScmRemotePull,
+    sessionScmRemotePush,
+    sessionScmStatusSnapshot,
+} from './sessionScm';
 
 
 // Permission operation types
@@ -72,13 +69,12 @@ interface SessionBashResponse {
     error?: string;
 }
 
-function gitFallbackError<T extends { success: boolean; error?: string; errorCode?: string }>(error: unknown): T {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return {
-        success: false,
-        error: message,
-        errorCode: GIT_OPERATION_ERROR_CODES.COMMAND_FAILED,
-    } as T;
+function readRpcErrorCode(error: unknown): string | undefined {
+    if (!error || typeof error !== 'object' || !('rpcErrorCode' in error)) {
+        return undefined;
+    }
+    const rpcErrorCode = (error as { rpcErrorCode?: unknown }).rpcErrorCode;
+    return typeof rpcErrorCode === 'string' ? rpcErrorCode : undefined;
 }
 
 // Read file operation types
@@ -260,7 +256,7 @@ export async function sessionAbort(sessionId: string): Promise<void> {
             reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`
         });
     } catch (e) {
-        if (e instanceof Error && isRpcMethodNotAvailableError(e as any)) {
+        if (e instanceof Error && isRpcMethodNotAvailableError(e)) {
             // Session RPCs are unavailable when no agent process is attached (inactive/resumable).
             // Treat abort as a no-op in that case.
             return;
@@ -488,171 +484,6 @@ export async function sessionRipgrep(
     }
 }
 
-export async function sessionGitStatusSnapshot(
-    sessionId: string,
-    request: GitStatusSnapshotRequest
-): Promise<GitStatusSnapshotResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitStatusSnapshotResponse, GitStatusSnapshotRequest>(
-            sessionId,
-            RPC_METHODS.GIT_STATUS_SNAPSHOT,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitStatusSnapshotResponse>(error);
-    }
-}
-
-export async function sessionGitDiffFile(
-    sessionId: string,
-    request: GitDiffFileRequest
-): Promise<GitDiffFileResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitDiffFileResponse, GitDiffFileRequest>(
-            sessionId,
-            RPC_METHODS.GIT_DIFF_FILE,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitDiffFileResponse>(error);
-    }
-}
-
-export async function sessionGitDiffCommit(
-    sessionId: string,
-    request: GitDiffCommitRequest
-): Promise<GitDiffCommitResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitDiffCommitResponse, GitDiffCommitRequest>(
-            sessionId,
-            RPC_METHODS.GIT_DIFF_COMMIT,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitDiffCommitResponse>(error);
-    }
-}
-
-export async function sessionGitStageApply(
-    sessionId: string,
-    request: GitPatchApplyRequest
-): Promise<GitPatchApplyResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitPatchApplyResponse, GitPatchApplyRequest>(
-            sessionId,
-            RPC_METHODS.GIT_STAGE_APPLY,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitPatchApplyResponse>(error);
-    }
-}
-
-export async function sessionGitUnstageApply(
-    sessionId: string,
-    request: GitPatchApplyRequest
-): Promise<GitPatchApplyResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitPatchApplyResponse, GitPatchApplyRequest>(
-            sessionId,
-            RPC_METHODS.GIT_UNSTAGE_APPLY,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitPatchApplyResponse>(error);
-    }
-}
-
-export async function sessionGitCommitCreate(
-    sessionId: string,
-    request: GitCommitCreateRequest
-): Promise<GitCommitCreateResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitCommitCreateResponse, GitCommitCreateRequest>(
-            sessionId,
-            RPC_METHODS.GIT_COMMIT_CREATE,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitCommitCreateResponse>(error);
-    }
-}
-
-export async function sessionGitLogList(
-    sessionId: string,
-    request: GitLogListRequest
-): Promise<GitLogListResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitLogListResponse, GitLogListRequest>(
-            sessionId,
-            RPC_METHODS.GIT_LOG_LIST,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitLogListResponse>(error);
-    }
-}
-
-export async function sessionGitCommitRevert(
-    sessionId: string,
-    request: GitCommitRevertRequest
-): Promise<GitCommitRevertResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitCommitRevertResponse, GitCommitRevertRequest>(
-            sessionId,
-            RPC_METHODS.GIT_COMMIT_REVERT,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitCommitRevertResponse>(error);
-    }
-}
-
-export async function sessionGitRemoteFetch(
-    sessionId: string,
-    request: GitRemoteRequest
-): Promise<GitRemoteResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitRemoteResponse, GitRemoteRequest>(
-            sessionId,
-            RPC_METHODS.GIT_REMOTE_FETCH,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitRemoteResponse>(error);
-    }
-}
-
-export async function sessionGitRemotePush(
-    sessionId: string,
-    request: GitRemoteRequest
-): Promise<GitRemoteResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitRemoteResponse, GitRemoteRequest>(
-            sessionId,
-            RPC_METHODS.GIT_REMOTE_PUSH,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitRemoteResponse>(error);
-    }
-}
-
-export async function sessionGitRemotePull(
-    sessionId: string,
-    request: GitRemoteRequest
-): Promise<GitRemoteResponse> {
-    try {
-        return await apiSocket.sessionRPC<GitRemoteResponse, GitRemoteRequest>(
-            sessionId,
-            RPC_METHODS.GIT_REMOTE_PULL,
-            request
-        );
-    } catch (error) {
-        return gitFallbackError<GitRemoteResponse>(error);
-    }
-}
-
 /**
  * Kill the session process immediately
  */
@@ -668,7 +499,7 @@ export async function sessionKill(sessionId: string): Promise<SessionKillRespons
         return {
             success: false,
             message: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: error && typeof error === 'object' ? (error as any).rpcErrorCode : undefined,
+            errorCode: readRpcErrorCode(error),
         };
     }
 }
