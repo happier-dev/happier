@@ -87,4 +87,33 @@ describe('createOnHappySessionWebhook', () => {
     expect(awaiter).toHaveBeenCalledTimes(1);
     expect(pidToAwaiter.has(789)).toBe(false);
   });
+
+  it('does not resolve daemon awaiter on PID placeholder and resolves on canonical id', () => {
+    const tracked: TrackedSession = {
+      pid: 9001,
+      startedBy: 'daemon',
+    };
+    const pidToTrackedSession = new Map<number, TrackedSession>([[9001, tracked]]);
+    const awaiter = vi.fn();
+    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[9001, awaiter]]);
+
+    const onWebhook = createOnHappySessionWebhook({
+      pidToTrackedSession,
+      pidToAwaiter,
+      findHappyProcessByPidFn: async () => null,
+      writeSessionMarkerFn: async () => {},
+    });
+
+    onWebhook('PID-9001', createMetadata(9001, 'daemon'));
+
+    expect(awaiter).toHaveBeenCalledTimes(0);
+    expect(pidToAwaiter.has(9001)).toBe(true);
+    expect(pidToTrackedSession.get(9001)?.happySessionId).toBe('PID-9001');
+
+    onWebhook('session-real-9001', createMetadata(9001, 'daemon'));
+
+    expect(awaiter).toHaveBeenCalledTimes(1);
+    expect(pidToAwaiter.has(9001)).toBe(false);
+    expect(pidToTrackedSession.get(9001)?.happySessionId).toBe('session-real-9001');
+  });
 });

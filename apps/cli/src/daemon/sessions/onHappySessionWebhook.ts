@@ -41,6 +41,9 @@ export function createOnHappySessionWebhook(params: Readonly<{
     const existingSession = pidToTrackedSession.get(pid);
 
     if (existingSession) {
+      const pidPlaceholderSessionId = `PID-${pid}`;
+      const isPidPlaceholderSessionId = sessionId === pidPlaceholderSessionId;
+
       // Update tracked session with latest webhook data.
       existingSession.happySessionId = sessionId;
       existingSession.happySessionMetadataFromLocalWebhook = sessionMetadata;
@@ -50,9 +53,15 @@ export function createOnHappySessionWebhook(params: Readonly<{
         // Resolve any awaiter for this PID
         const awaiter = pidToAwaiter.get(pid);
         if (awaiter) {
-          pidToAwaiter.delete(pid);
-          awaiter(existingSession);
-          logger.debug(`[DAEMON RUN] Resolved session awaiter for PID ${pid}`);
+          if (isPidPlaceholderSessionId) {
+            logger.debug(
+              `[DAEMON RUN] Deferred awaiter resolution for PID ${pid}; waiting for canonical session id`,
+            );
+          } else {
+            pidToAwaiter.delete(pid);
+            awaiter(existingSession);
+            logger.debug(`[DAEMON RUN] Resolved session awaiter for PID ${pid}`);
+          }
         }
       } else if (existingSession.reattachedFromDiskMarker) {
         existingSession.startedBy = sessionMetadata.startedBy ?? existingSession.startedBy;
