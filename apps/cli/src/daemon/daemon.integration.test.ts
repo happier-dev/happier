@@ -10,7 +10,7 @@ import { execSync, spawn } from 'child_process';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { copyFile, mkdir, mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
-import { dirname, join } from 'path';
+import { basename, dirname, join } from 'path';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { 
   listDaemonSessions, 
@@ -21,7 +21,7 @@ import {
   stopDaemon,
   checkIfDaemonRunningAndCleanupStaleState,
 } from '@/daemon/controlClient';
-import { readDaemonState, clearDaemonState, writeDaemonState } from '@/persistence';
+import { readCredentials, readDaemonState, clearDaemonState, writeDaemonState } from '@/persistence';
 import { Metadata } from '@/api/types';
 import { spawnHappyCLI } from '@/utils/spawnHappyCLI';
 import { getLatestDaemonLog } from '@/ui/logger';
@@ -72,6 +72,7 @@ type EnvSnapshot = {
 };
 
 let isolatedHomeDir: string | null = null;
+let daemonIntegrationSourceHomeDir: string | null = null;
 const originalEnv: EnvSnapshot = {
   homeDir: process.env.HAPPIER_HOME_DIR,
   activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID,
@@ -88,8 +89,32 @@ async function copyIfExists(sourcePath: string, targetPath: string): Promise<voi
   await copyFile(sourcePath, targetPath);
 }
 
+async function copyLogsToSourceHomeBestEffort(): Promise<void> {
+  if (!isolatedHomeDir) return;
+  if (!daemonIntegrationSourceHomeDir) return;
+
+  const srcLogsDir = join(isolatedHomeDir, 'logs');
+  if (!existsSync(srcLogsDir)) return;
+  const dstLogsDir = join(daemonIntegrationSourceHomeDir, 'logs');
+  await mkdir(dstLogsDir, { recursive: true });
+
+  const runPrefix = `daemon-int-${basename(isolatedHomeDir)}`;
+  const entries = readdirSync(srcLogsDir);
+  for (const entry of entries) {
+    if (!entry.endsWith('.log')) continue;
+    const from = join(srcLogsDir, entry);
+    const to = join(dstLogsDir, `${runPrefix}-${entry}`);
+    try {
+      await copyFile(from, to);
+    } catch {
+      // best-effort
+    }
+  }
+}
+
 async function prepareIsolatedDaemonIntegrationHome(): Promise<void> {
   const sourceHome = configuration.happyHomeDir;
+  daemonIntegrationSourceHomeDir = sourceHome;
   const sourceSettingsFile = configuration.settingsFile;
   const sourceLegacyKeyFile = configuration.legacyPrivateKeyFile;
   const sourceServerKeyFile = configuration.privateKeyFile;
@@ -98,7 +123,11 @@ async function prepareIsolatedDaemonIntegrationHome(): Promise<void> {
   const sourceWebappUrl = configuration.webappUrl;
   const sourcePublicServerUrl = configuration.publicServerUrl;
 
-  isolatedHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-daemon-int-'));
+  // Keep daemon integration artifacts under the configured home dir so CI can reliably
+  // collect daemon logs/state even when the test suite isolates $HAPPIER_HOME_DIR.
+  const parentDir = join(sourceHome, 'tmp');
+  await mkdir(parentDir, { recursive: true });
+  isolatedHomeDir = await mkdtemp(join(parentDir, 'happier-cli-daemon-int-'));
 
   process.env.HAPPIER_HOME_DIR = isolatedHomeDir;
   process.env.HAPPIER_ACTIVE_SERVER_ID = sourceServerId;
@@ -127,9 +156,21 @@ async function restoreDaemonIntegrationEnvironment(): Promise<void> {
   reloadConfiguration();
 
   if (isolatedHomeDir) {
-    await rm(isolatedHomeDir, { recursive: true, force: true });
+    await copyLogsToSourceHomeBestEffort();
+    const expectedPrefix = daemonIntegrationSourceHomeDir
+      ? join(daemonIntegrationSourceHomeDir, 'tmp', 'happier-cli-daemon-int-')
+      : null;
+    const safeToDelete = expectedPrefix ? isolatedHomeDir.startsWith(expectedPrefix) : false;
+    if (!safeToDelete) {
+      process.stderr.write(
+        `[daemon.integration cleanup] Refusing to delete unexpected isolated home dir: ${isolatedHomeDir}\n`,
+      );
+    } else {
+      await rm(isolatedHomeDir, { recursive: true, force: true });
+    }
     isolatedHomeDir = null;
   }
+  daemonIntegrationSourceHomeDir = null;
 }
 
 function debugIntegrationPreflight(message: string): void {
@@ -288,6 +329,22 @@ async function waitForDaemonStateFileCleanup(opts: WaitForOptions): Promise<void
   await waitFor(async () => !existsSync(configuration.daemonStateFile), opts);
 }
 
+async function stopAllTrackedSessionsBestEffort(): Promise<void> {
+  const sessions = await listDaemonSessionsTyped().catch(() => [] as DaemonSessionRecord[]);
+  if (sessions.length === 0) return;
+
+  await Promise.all(
+    sessions.map(async (session) => {
+      if (!session?.happySessionId) return;
+      try {
+        await stopDaemonSession(session.happySessionId);
+      } catch {
+        // Best-effort cleanup only; daemon teardown still runs afterwards.
+      }
+    }),
+  );
+}
+
 function isProcessAlive(pid: number): boolean {
   try {
     // `process.kill(pid, 0)` can return true for zombies; prefer checking `ps` state.
@@ -317,14 +374,26 @@ async function isServerHealthy(): Promise<boolean> {
       debugIntegrationPreflight(`health endpoint failed with ${response.status} ${response.statusText}`);
       return false;
     }
-    
-    // Check if we have test credentials
-    const testCredentials = existsSync(join(configuration.happyHomeDir, 'access.key'));
-    if (!testCredentials) {
-      debugIntegrationPreflight(`missing test credentials at ${configuration.happyHomeDir}`);
+
+    const credentials = await readCredentials();
+    if (!credentials?.token) {
+      debugIntegrationPreflight(`missing readable credentials for active server in ${configuration.happyHomeDir}`);
       return false;
     }
-    
+
+    const profileUrl = new URL('/v1/account/profile', configuredServerUrl);
+    if (profileUrl.hostname === 'localhost') profileUrl.hostname = '127.0.0.1';
+    const profileResponse = await fetch(profileUrl.toString(), {
+      headers: {
+        Authorization: `Bearer ${credentials.token}`,
+      },
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (!profileResponse.ok) {
+      debugIntegrationPreflight(`authenticated profile probe failed with ${profileResponse.status} ${profileResponse.statusText}`);
+      return false;
+    }
+
     return true;
   } catch (error) {
     if (error instanceof Error) {
@@ -364,6 +433,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
   });
 
   afterEach(async () => {
+    await stopAllTrackedSessionsBestEffort();
     await stopDaemon()
   });
 
@@ -409,7 +479,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
   it('should spawn & stop a session via HTTP (not testing RPC route, but similar enough)', { timeout: 60_000 }, async () => {
     const response = await spawnDaemonSession('/tmp', 'spawned-test-456');
 
-    expect(response).toHaveProperty('success', true);
+    expect(response, `spawnDaemonSession(/tmp) response=${JSON.stringify(response)}`).toHaveProperty('success', true);
     expect(response).toHaveProperty('sessionId');
 
     // Verify session is tracked
@@ -438,7 +508,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     // Wait for all sessions to be spawned
     const results = await Promise.all(promises);
     results.forEach((result) => {
-      expect(result.success).toBe(true);
+      expect(result.success, `stress spawn result=${JSON.stringify(result)}`).toBe(true);
       expect(result.sessionId).toBeDefined();
     });
     const sessionIds = results.map(r => r.sessionId);
@@ -581,7 +651,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     
     // All should succeed
     results.forEach(res => {
-      expect(res.success).toBe(true);
+      expect(res.success, `concurrent spawn result=${JSON.stringify(res)}`).toBe(true);
       expect(res.sessionId).toBeDefined();
     });
 
