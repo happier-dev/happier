@@ -111,9 +111,8 @@ describe('local voice engine TTS behavior', () => {
         for (let i = 0; i < 10; i++) await Promise.resolve();
         expect(resolved).toBe(false);
 
-        const done = onDone;
-        if (!done) throw new Error('expected expo-speech onDone callback');
-        done();
+        if (onDone === null) throw new Error('expected expo-speech onDone callback');
+        onDone();
         await stopPromise;
 
         // Only STT fetch; no /v1/audio/speech call.
