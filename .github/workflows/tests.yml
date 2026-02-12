@@ -1046,10 +1046,37 @@ jobs:
       - name: Dump daemon logs (on failure)
         if: failure()
         run: |
-          LOG_DIR="${HAPPIER_HOME_DIR:-$HOME/.happier-dev-test}/logs"
-          ls -la "$LOG_DIR" || true
-          ls -1t "$LOG_DIR"/*-daemon.log 2>/dev/null | head -n 8 | while read -r f; do
+          ROOT="${HAPPIER_HOME_DIR:-$HOME/.happier-dev-test}"
+          echo "HAPPIER_HOME_DIR=${ROOT}"
+
+          echo "--- daemon.state.json candidates (redacted) ---"
+          find "$ROOT" -maxdepth 4 -type f -name 'daemon.state.json' -print | head -n 10 || true
+          find "$ROOT" -maxdepth 4 -type f -name 'daemon.state.json' -print | head -n 10 | while read -r f; do
+            node --input-type=module - <<'NODE' "$f" || true
+            import fs from "node:fs";
+            const file = process.argv[1];
+            const raw = fs.readFileSync(file, "utf8");
+            const data = JSON.parse(raw);
+            const redacted = {
+              pid: data?.pid,
+              httpPort: data?.httpPort,
+              startedAt: data?.startedAt,
+              startedWithCliVersion: data?.startedWithCliVersion,
+              daemonLogPath: data?.daemonLogPath,
+            };
+            console.log(`--- ${file} (redacted) ---`);
+            console.log(JSON.stringify(redacted, null, 2));
+NODE
+          done
+
+          echo "--- logs (tail) ---"
+          find "$ROOT" -maxdepth 6 -type f \( -name '*-daemon.log' -o -name '*.log' \) -print 2>/dev/null \
+            | xargs -r ls -1t | head -n 16 | while read -r f; do
             echo "=== tail: $f ==="
+            echo "--- error scan: $f ---"
+            # Avoid relying on ripgrep being installed; grep is always available.
+            grep -nE "SESSION_WEBHOOK_TIMEOUT|SPAWN_FAILED|Unauthorized|EADDRINUSE|ECONN|fetch failed|Request failed|HTTP 5[0-9]{2}" "$f" | tail -n 200 || true
+            echo
             tail -n 200 "$f" || true
             echo
           done
