@@ -52,6 +52,70 @@ export const VoiceMediatorSendTurnResponseSchema = z.object({
 });
 export type VoiceMediatorSendTurnResponse = z.infer<typeof VoiceMediatorSendTurnResponseSchema>;
 
+export const VoiceMediatorTurnStreamStartRequestSchema = z.object({
+  mediatorId: z.string(),
+  userText: z.string(),
+});
+export type VoiceMediatorTurnStreamStartRequest = z.infer<typeof VoiceMediatorTurnStreamStartRequestSchema>;
+
+export const VoiceMediatorTurnStreamStartResponseSchema = z.object({
+  streamId: z.string(),
+});
+export type VoiceMediatorTurnStreamStartResponse = z.infer<typeof VoiceMediatorTurnStreamStartResponseSchema>;
+
+export const VoiceMediatorTurnStreamReadRequestSchema = z.object({
+  mediatorId: z.string(),
+  streamId: z.string(),
+  cursor: z.number().int().min(0),
+  maxEvents: z.number().int().min(1).max(128).optional(),
+});
+export type VoiceMediatorTurnStreamReadRequest = z.infer<typeof VoiceMediatorTurnStreamReadRequestSchema>;
+
+export const VoiceMediatorTurnStreamEventDeltaSchema = z.object({
+  t: z.literal('delta'),
+  textDelta: z.string(),
+});
+export type VoiceMediatorTurnStreamEventDelta = z.infer<typeof VoiceMediatorTurnStreamEventDeltaSchema>;
+
+export const VoiceMediatorTurnStreamEventDoneSchema = z.object({
+  t: z.literal('done'),
+  assistantText: z.string(),
+});
+export type VoiceMediatorTurnStreamEventDone = z.infer<typeof VoiceMediatorTurnStreamEventDoneSchema>;
+
+export const VoiceMediatorTurnStreamEventErrorSchema = z.object({
+  t: z.literal('error'),
+  error: z.string(),
+  errorCode: z.string().optional(),
+});
+export type VoiceMediatorTurnStreamEventError = z.infer<typeof VoiceMediatorTurnStreamEventErrorSchema>;
+
+export const VoiceMediatorTurnStreamEventSchema = z.discriminatedUnion('t', [
+  VoiceMediatorTurnStreamEventDeltaSchema,
+  VoiceMediatorTurnStreamEventDoneSchema,
+  VoiceMediatorTurnStreamEventErrorSchema,
+]);
+export type VoiceMediatorTurnStreamEvent = z.infer<typeof VoiceMediatorTurnStreamEventSchema>;
+
+export const VoiceMediatorTurnStreamReadResponseSchema = z.object({
+  streamId: z.string(),
+  events: z.array(VoiceMediatorTurnStreamEventSchema),
+  nextCursor: z.number().int().min(0),
+  done: z.boolean(),
+});
+export type VoiceMediatorTurnStreamReadResponse = z.infer<typeof VoiceMediatorTurnStreamReadResponseSchema>;
+
+export const VoiceMediatorTurnStreamCancelRequestSchema = z.object({
+  mediatorId: z.string(),
+  streamId: z.string(),
+});
+export type VoiceMediatorTurnStreamCancelRequest = z.infer<typeof VoiceMediatorTurnStreamCancelRequestSchema>;
+
+export const VoiceMediatorTurnStreamCancelResponseSchema = z.object({
+  ok: z.literal(true),
+});
+export type VoiceMediatorTurnStreamCancelResponse = z.infer<typeof VoiceMediatorTurnStreamCancelResponseSchema>;
+
 export const VoiceMediatorCommitRequestSchema = z.object({
   mediatorId: z.string(),
   kind: z.literal('session_instruction'),
