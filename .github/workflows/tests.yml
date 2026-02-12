@@ -1015,7 +1015,7 @@ jobs:
           NODE
           )
 
-          yarn --cwd apps/cli -s vitest run src/daemon/daemon.integration.test.ts
+          yarn --cwd apps/cli -s vitest run --config vitest.integration.config.ts src/daemon/daemon.integration.test.ts
 
       - name: Dump server logs (on failure)
         if: failure()
