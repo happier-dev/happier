@@ -308,6 +308,10 @@ describe('sapling backend integration', () => {
     it('fetches, pulls, and pushes with branch shorthand against git remotes', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-scm-sl-remote-'));
         runGit(remote, ['init', '--bare']);
+        // Ensure clones of this temporary remote have a deterministic default branch.
+        // Without this, `git clone` may produce a repo without a local `main` branch, and
+        // `git push origin main` will fail even if `refs/heads/main` exists on the remote.
+        runGit(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
 
         const workspace = createSaplingWorkspace();
         runSapling(workspace, ['path', '--add', 'origin', remote]);
