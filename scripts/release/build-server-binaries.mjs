@@ -7,6 +7,7 @@ import {
   SERVER_TARGETS,
   commandExists,
   compileBunBinary,
+  execOrThrow,
   ensureFileExists,
   normalizeChannel,
   packageTargetBinary,
@@ -44,6 +45,32 @@ async function main() {
   await rm(tempDir, { recursive: true, force: true });
   await mkdir(tempDir, { recursive: true });
   await mkdir(outDir, { recursive: true });
+
+  // Ensure generated Prisma clients are present before compiling the server binary.
+  // Workspace installs do not reliably run app-level postinstall scripts in CI.
+  const yarn = commandExists('yarn')
+    ? { cmd: 'yarn', args: [] }
+    : commandExists('corepack')
+      ? { cmd: 'corepack', args: ['yarn'] }
+      : null;
+  if (!yarn) {
+    throw new Error('[release] building server binaries requires yarn or corepack (corepack yarn)');
+  }
+  const buildDbProviders = String(
+    process.env.HAPPIER_BUILD_DB_PROVIDERS ?? process.env.HAPPY_BUILD_DB_PROVIDERS ?? 'all',
+  ).trim() || 'all';
+  execOrThrow(
+    yarn.cmd,
+    [...yarn.args, '--cwd', 'apps/server', '-s', 'generate:providers'],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        HAPPIER_BUILD_DB_PROVIDERS: buildDbProviders,
+        HAPPY_BUILD_DB_PROVIDERS: buildDbProviders,
+      },
+    },
+  );
 
   const artifacts = [];
   for (const target of targets) {
