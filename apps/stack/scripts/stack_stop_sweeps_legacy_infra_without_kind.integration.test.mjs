@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
+import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 
 test('hstack stack stop sweeps legacy infra without HAPPIER_STACK_PROCESS_KIND=infra', async (t) => {
   const fixture = await setupStackStopSweepFixture({
@@ -19,6 +19,7 @@ test('hstack stack stop sweeps legacy infra without HAPPIER_STACK_PROCESS_KIND=i
     },
   }));
   assert.ok(Number(legacyInfra.pid) > 1, 'expected legacy infra pid');
+  await waitForProcessAlive({ pid: legacyInfra.pid, timeoutMs: 2_000, intervalMs: 25, label: 'legacy infra process (pre-stop)' });
   assert.ok(isAlive(legacyInfra.pid), 'expected legacy infra child to be alive');
 
   const sessionLike = fixture.trackChild(spawnOwnedSleep({
@@ -30,6 +31,7 @@ test('hstack stack stop sweeps legacy infra without HAPPIER_STACK_PROCESS_KIND=i
     },
   }));
   assert.ok(Number(sessionLike.pid) > 1, 'expected session-like child pid');
+  await waitForProcessAlive({ pid: sessionLike.pid, timeoutMs: 2_000, intervalMs: 25, label: 'session-like process (pre-stop)' });
   assert.ok(isAlive(sessionLike.pid), 'expected session-like child to be alive');
 
   const res = await fixture.runStackStop(['--json']);

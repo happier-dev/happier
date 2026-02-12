@@ -57,18 +57,26 @@ export async function resolveBaseRef({
 
   const stackFallback = String(stackRemoteFallback ?? '').trim();
   const inferredRemote = await inferRemoteFromBranchOwner({ cwd: repoDir });
-  const rawRemote = String(baseRemoteOverride ?? '').trim() || inferredRemote || stackFallback || 'upstream';
-  const remote = await normalizeRemoteName({ cwd: repoDir, remote: rawRemote });
-
-  const branch = String(baseBranchOverride ?? '').trim() || (await resolveRemoteDefaultBranch({ cwd: repoDir, remote }));
-  const ok = await ensureRemoteRefAvailable({ cwd: repoDir, remote, branch });
-  if (!ok) {
-    throw new Error(
-      `[review] unable to resolve base ref refs/remotes/${remote}/${branch} in ${repoDir}\n` +
-        `[review] hint: ensure remote "${remote}" exists and has a configured HEAD/default branch (or pass --base-ref).`
-    );
+  const remoteCandidates = [];
+  for (const name of [String(baseRemoteOverride ?? '').trim(), inferredRemote, stackFallback, 'upstream', 'origin', 'fork']) {
+    if (!name || remoteCandidates.includes(name)) continue;
+    remoteCandidates.push(name);
   }
 
-  return { baseRef: `${remote}/${branch}`, remote, branch };
-}
+  for (const candidate of remoteCandidates) {
+    const remote = await normalizeRemoteName({ cwd: repoDir, remote: candidate });
+    const branch = String(baseBranchOverride ?? '').trim() || (await resolveRemoteDefaultBranch({ cwd: repoDir, remote }));
+    const ok = await ensureRemoteRefAvailable({ cwd: repoDir, remote, branch });
+    if (ok) {
+      return { baseRef: `${remote}/${branch}`, remote, branch };
+    }
+  }
 
+  const first = remoteCandidates[0] || 'upstream';
+  const remote = await normalizeRemoteName({ cwd: repoDir, remote: first });
+  const branch = String(baseBranchOverride ?? '').trim() || (await resolveRemoteDefaultBranch({ cwd: repoDir, remote }));
+  throw new Error(
+    `[review] unable to resolve base ref refs/remotes/${remote}/${branch} in ${repoDir}\n` +
+      `[review] hint: ensure remote "${remote}" exists and has a configured HEAD/default branch (or pass --base-ref).`
+  );
+}

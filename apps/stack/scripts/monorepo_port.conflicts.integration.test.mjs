@@ -413,13 +413,14 @@ test('monorepo port guide quit leaves a plan; port continue resumes and complete
   // Wait for conflict prompt, then quit.
   await Promise.race([guide.waitForText('guide: waiting for conflict resolution', 10_000), guide.waitForText('guide: conflict detected', 10_000)]);
   await guide.waitForText('Resolve conflicts, then choose an action:', 10_000);
+  await guide.waitForText('quit guide (leave state as-is)', 10_000);
   const menuTail = guide.getOutput().combined.split('Resolve conflicts, then choose an action:').pop() || '';
-  const m = menuTail.match(/\n\s*(\d+)\)\s*quit guide \(leave state as-is\)/);
-  if (!m?.[1]) {
+  const quitMatch = menuTail.match(/\n\s*(\d+)\)\s*quit guide\s*\(leave state as-is\)/i);
+  if (!quitMatch?.[1]) {
     const output = guide.getOutput();
     throw new Error(`failed to locate quit option index\nstdout:\n${output.stdout}\nstderr:\n${output.stderr}`);
   }
-  sendLine(m[1]);
+  sendLine(quitMatch[1]);
   const quitResult = await guide.waitForExit(10_000);
   assert.notEqual(
     quitResult.code,

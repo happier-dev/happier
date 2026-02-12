@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmod, cp, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+
+const SELF_HOST_PORT_MIN = 20_000;
+const SELF_HOST_PORT_MAX = 29_999;
+const SELF_HOST_PORT_ATTEMPTS = 40;
+const SELF_HOST_INSTALL_TIMEOUT_MS = 420_000;
 
 function commandExists(cmd) {
   return spawnSync('bash', ['-lc', `command -v ${cmd} >/dev/null 2>&1`], { stdio: 'ignore' }).status === 0;
@@ -79,6 +85,30 @@ async function waitForHealth(url, timeoutMs = 60_000) {
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
   return false;
+}
+
+async function canBindLocalhostPort(port) {
+  return await new Promise((resolvePort) => {
+    const server = createServer();
+    server.unref();
+    server.once('error', () => resolvePort(false));
+    server.listen(port, '127.0.0.1', () => {
+      server.close((error) => {
+        resolvePort(!error);
+      });
+    });
+  });
+}
+
+async function reserveLocalhostPort() {
+  for (let attempt = 0; attempt < SELF_HOST_PORT_ATTEMPTS; attempt += 1) {
+    const candidate =
+      SELF_HOST_PORT_MIN + Math.floor(Math.random() * (SELF_HOST_PORT_MAX - SELF_HOST_PORT_MIN + 1));
+    if (await canBindLocalhostPort(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error('failed to reserve localhost port from non-ephemeral range');
 }
 
 test(
@@ -163,7 +193,7 @@ test(
     await chmod(hstackPath, 0o755);
 
     const serviceName = `happier-server-e2e-${Date.now().toString(36).slice(-6)}`;
-    const serverPort = 3900 + (process.pid % 500);
+    const serverPort = await reserveLocalhostPort();
     const commonEnv = {
       PATH: process.env.PATH ?? '',
       HAPPIER_SELF_HOST_INSTALL_ROOT: installRoot,
@@ -171,11 +201,16 @@ test(
       HAPPIER_SELF_HOST_SERVICE_NAME: serviceName,
       HAPPIER_SELF_HOST_SERVER_BINARY: extractedServer.binaryPath,
       HAPPIER_SELF_HOST_AUTO_UPDATE: '0',
+      HAPPIER_SELF_HOST_HEALTH_TIMEOUT_MS: '240000',
       HAPPIER_NONINTERACTIVE: '1',
       HAPPIER_WITH_CLI: '0',
       HAPPIER_SERVER_PORT: String(serverPort),
       HAPPIER_SERVER_HOST: '127.0.0.1',
     };
+    const configDir = String(commonEnv.HAPPIER_SELF_HOST_CONFIG_DIR ?? '/etc/happier');
+    const logDir = String(commonEnv.HAPPIER_SELF_HOST_LOG_DIR ?? '/var/log/happier');
+    const serverEnvPath = join(configDir, 'server.env');
+    const serverLogPath = join(logDir, 'server.log');
 
     let installSucceeded = false;
     t.after(() => {
@@ -193,15 +228,95 @@ test(
       );
     });
 
-    runAsRoot(
+    const installResult = runAsRoot(
       hstackPath,
       ['self-host', 'install', '--channel=preview', '--non-interactive', '--without-cli', '--json'],
       {
         env: commonEnv,
-        timeoutMs: 240_000,
+        timeoutMs: SELF_HOST_INSTALL_TIMEOUT_MS,
+        allowFail: true,
         cwd: '/tmp',
       }
     );
+    if ((installResult.status ?? 1) !== 0) {
+      const recoveredHealth = await waitForHealth(`http://127.0.0.1:${serverPort}/v1/version`, 120_000);
+      if (!recoveredHealth) {
+        const statusResult = runAsRoot(
+          'systemctl',
+          ['status', `${serviceName}.service`, '--no-pager', '--full'],
+          {
+            env: commonEnv,
+            allowFail: true,
+            timeoutMs: 30_000,
+            cwd: '/tmp',
+          }
+        );
+        const journalResult = runAsRoot(
+          'journalctl',
+          ['-u', `${serviceName}.service`, '-n', '200', '--no-pager'],
+          {
+            env: commonEnv,
+            allowFail: true,
+            timeoutMs: 30_000,
+            cwd: '/tmp',
+          }
+        );
+        const unitResult = runAsRoot(
+          'systemctl',
+          ['cat', `${serviceName}.service`],
+          {
+            env: commonEnv,
+            allowFail: true,
+            timeoutMs: 30_000,
+            cwd: '/tmp',
+          }
+        );
+        const envFileResult = runAsRoot(
+          'cat',
+          [serverEnvPath],
+          {
+            env: commonEnv,
+            allowFail: true,
+            timeoutMs: 30_000,
+            cwd: '/tmp',
+          }
+        );
+        const logDirResult = runAsRoot(
+          'ls',
+          ['-la', logDir],
+          {
+            env: commonEnv,
+            allowFail: true,
+            timeoutMs: 30_000,
+            cwd: '/tmp',
+          }
+        );
+        const serverLogResult = runAsRoot(
+          'tail',
+          ['-n', '300', serverLogPath],
+          {
+            env: commonEnv,
+            allowFail: true,
+            timeoutMs: 30_000,
+            cwd: '/tmp',
+          }
+        );
+        throw new Error(
+          [
+            '[self-host-systemd] self-host install failed and service never became healthy',
+            `install status: ${String(installResult.status ?? 'null')}`,
+            `install stdout:\n${String(installResult.stdout ?? '').trim()}`,
+            `install stderr:\n${String(installResult.stderr ?? '').trim()}`,
+            `systemctl status:\n${String(statusResult.stdout ?? '').trim()}\n${String(statusResult.stderr ?? '').trim()}`,
+            `journalctl tail:\n${String(journalResult.stdout ?? '').trim()}\n${String(journalResult.stderr ?? '').trim()}`,
+            `systemctl cat:\n${String(unitResult.stdout ?? '').trim()}\n${String(unitResult.stderr ?? '').trim()}`,
+            `server env (${serverEnvPath}):\n${String(envFileResult.stdout ?? '').trim()}\n${String(envFileResult.stderr ?? '').trim()}`,
+            `log dir (${logDir}):\n${String(logDirResult.stdout ?? '').trim()}\n${String(logDirResult.stderr ?? '').trim()}`,
+            `server log tail (${serverLogPath}):\n${String(serverLogResult.stdout ?? '').trim()}\n${String(serverLogResult.stderr ?? '').trim()}`,
+          ].join('\n\n')
+        );
+      }
+    }
     installSucceeded = true;
 
     const healthOk = await waitForHealth(`http://127.0.0.1:${serverPort}/v1/version`, 90_000);

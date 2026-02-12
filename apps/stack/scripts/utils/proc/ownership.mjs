@@ -1,11 +1,85 @@
 import { runCapture } from './proc.mjs';
 import { killPid } from '../expo/expo.mjs';
 import { terminateProcessGroup } from './terminate.mjs';
+import { readdir, readFile } from 'node:fs/promises';
+
+function normalizeNeedles(needles) {
+  const raw = Array.isArray(needles) ? needles : [];
+  return raw.map((n) => String(n ?? '').trim()).filter(Boolean);
+}
+
+async function readLinuxProcEnviron(pid) {
+  try {
+    const raw = await readFile(`/proc/${pid}/environ`, 'utf-8');
+    return String(raw ?? '').replaceAll('\0', ' ').trim();
+  } catch {
+    return '';
+  }
+}
+
+async function readLinuxProcCmdline(pid) {
+  try {
+    const raw = await readFile(`/proc/${pid}/cmdline`, 'utf-8');
+    return String(raw ?? '').replaceAll('\0', ' ').trim();
+  } catch {
+    return '';
+  }
+}
+
+async function listLinuxProcPidsWithEnvNeedles(needles) {
+  if (process.platform !== 'linux') return null;
+  const ns = normalizeNeedles(needles);
+  if (ns.length === 0) return [];
+  try {
+    const entries = await readdir('/proc', { withFileTypes: true });
+    const pids = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (!/^\d+$/.test(entry.name)) continue;
+      const pid = Number(entry.name);
+      if (!Number.isFinite(pid) || pid <= 1) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const envText = await readLinuxProcEnviron(pid);
+      if (!envText) continue;
+      if (ns.every((needle) => envText.includes(needle))) {
+        pids.push(pid);
+      }
+    }
+    return Array.from(new Set(pids));
+  } catch {
+    return null;
+  }
+}
+
+export function parsePsPidCommandOutputForNeedles(output, needles) {
+  const ns = normalizeNeedles(needles);
+  if (ns.length === 0) return [];
+
+  const text = String(output ?? '');
+  const pids = [];
+  for (const line of text.split('\n')) {
+    if (!ns.every((n) => line.includes(n))) continue;
+    const m = line.trim().match(/^(\d+)\s+/);
+    if (!m) continue;
+    const pid = Number(m[1]);
+    if (Number.isFinite(pid) && pid > 1) {
+      pids.push(pid);
+    }
+  }
+  return Array.from(new Set(pids));
+}
 
 export async function getPsEnvLine(pid) {
   const n = Number(pid);
   if (!Number.isFinite(n) || n <= 1) return null;
   if (process.platform === 'win32') return null;
+  if (process.platform === 'linux') {
+    const envText = await readLinuxProcEnviron(n);
+    if (envText) {
+      const cmdline = await readLinuxProcCmdline(n);
+      return `${n} ${cmdline} ${envText}`.trim();
+    }
+  }
   try {
     const out = await runCapture('ps', ['eww', '-p', String(n)]);
     // Output usually includes a header line and then a single process line.
@@ -35,44 +109,27 @@ export async function listPidsWithEnvNeedle(needle) {
   const n = String(needle ?? '').trim();
   if (!n) return [];
   if (process.platform === 'win32') return [];
+  const viaProc = await listLinuxProcPidsWithEnvNeedles([n]);
+  if (Array.isArray(viaProc)) return viaProc;
   try {
     // Include environment variables (eww) so we can match on HAPPIER_STACK_ENV_FILE=/.../env safely.
     const out = await runCapture('ps', ['eww', '-ax', '-o', 'pid=,command=']);
-    const pids = [];
-    for (const line of out.split('\n')) {
-      if (!line.includes(n)) continue;
-      const m = line.trim().match(/^(\d+)\s+/);
-      if (!m) continue;
-      const pid = Number(m[1]);
-      if (Number.isFinite(pid) && pid > 1) {
-        pids.push(pid);
-      }
-    }
-    return Array.from(new Set(pids));
+    return parsePsPidCommandOutputForNeedles(out, [n]);
   } catch {
     return [];
   }
 }
 
 export async function listPidsWithEnvNeedles(needles) {
-  const raw = Array.isArray(needles) ? needles : [];
-  const ns = raw.map((n) => String(n ?? '').trim()).filter(Boolean);
+  const ns = normalizeNeedles(needles);
   if (ns.length === 0) return [];
   if (process.platform === 'win32') return [];
+  const viaProc = await listLinuxProcPidsWithEnvNeedles(ns);
+  if (Array.isArray(viaProc)) return viaProc;
   try {
     // Include environment variables (eww) so we can match on HAPPIER_STACK_ENV_FILE=/.../env safely.
     const out = await runCapture('ps', ['eww', '-ax', '-o', 'pid=,command=']);
-    const pids = [];
-    for (const line of out.split('\n')) {
-      if (!ns.every((n) => line.includes(n))) continue;
-      const m = line.trim().match(/^(\d+)\s+/);
-      if (!m) continue;
-      const pid = Number(m[1]);
-      if (Number.isFinite(pid) && pid > 1) {
-        pids.push(pid);
-      }
-    }
-    return Array.from(new Set(pids));
+    return parsePsPidCommandOutputForNeedles(out, ns);
   } catch {
     return [];
   }

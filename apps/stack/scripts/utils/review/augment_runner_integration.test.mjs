@@ -98,5 +98,8 @@ process.stdout.write('ok\\n\\n===FINDINGS_JSON===\\n[]\\n');
   );
 
   assert.equal(res.status, 0, `expected exit 0; stderr:\n${res.stderr}\nstdout:\n${res.stdout}`);
-  assert.match(res.stdout, new RegExp(`\\[review\\] monorepo detected at ${repoRoot.replaceAll('\\', '\\\\')}`));
+  const repoRootPattern = repoRoot
+    .replaceAll('\\', '\\\\')
+    .replace(/^\/private/, '(?:\\/private)?');
+  assert.match(res.stdout, new RegExp(`\\[review\\] monorepo detected at ${repoRootPattern}`));
 });

@@ -67,6 +67,18 @@ test('resolveBaseRef uses stack remote fallback when no override is passed', asy
   }
 });
 
+test('resolveBaseRef falls back to origin when upstream is unavailable', async () => {
+  const { root, local } = await makeRepoWithRemoteHead('origin');
+  try {
+    const res = await resolveBaseRef({ cwd: local });
+    assert.equal(res.baseRef, 'origin/main');
+    assert.equal(res.remote, 'origin');
+    assert.equal(res.branch, 'main');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('resolveBaseRef throws for non-git directory', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'hs-review-base-ref-non-git-'));
   try {

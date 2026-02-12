@@ -34,7 +34,7 @@ async function writeYarnArgDumpStub({ binDir, outputPath }) {
   await writeFile(
     yarnPath,
     [
-      '#!/usr/bin/env sh',
+      '#!/usr/bin/env bash',
       'set -euo pipefail',
       'echo "$*" >> "${OUTPUT_PATH:?}"',
     ].join('\n') + '\n',
@@ -50,7 +50,7 @@ async function writeNpmArgDumpStub({ binDir, outputPath }) {
   await writeFile(
     npmPath,
     [
-      '#!/usr/bin/env sh',
+      '#!/usr/bin/env bash',
       'set -euo pipefail',
       'echo "$*" >> "${OUTPUT_PATH:?}"',
     ].join('\n') + '\n',
@@ -66,7 +66,7 @@ async function writeYarnBuildFailAfterDeletingDistStub({ binDir, outputPath }) {
   await writeFile(
     yarnPath,
     [
-      '#!/usr/bin/env sh',
+      '#!/usr/bin/env bash',
       'set -euo pipefail',
       'echo "$*" >> "${OUTPUT_PATH:?}"',
       'if [ "${1:-}" = "--version" ]; then',

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
+import { isAlive, setupStackStopSweepFixture, spawnOwnedSleep, waitForProcessAlive, waitForProcessExit } from './testkit/stack_stop_sweeps_testkit.mjs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -26,6 +26,7 @@ test('hstack stack stop sweeps infra when stack.runtime.json exists but ownerPid
     },
   }));
   assert.ok(Number(infra.pid) > 1, 'expected infra pid');
+  await waitForProcessAlive({ pid: infra.pid, timeoutMs: 2_000, intervalMs: 25, label: 'infra process (pre-stop)' });
   assert.ok(isAlive(infra.pid), 'expected infra child to be alive');
 
   const sessionLike = fixture.trackChild(spawnOwnedSleep({
@@ -37,6 +38,7 @@ test('hstack stack stop sweeps infra when stack.runtime.json exists but ownerPid
     },
   }));
   assert.ok(Number(sessionLike.pid) > 1, 'expected session-like child pid');
+  await waitForProcessAlive({ pid: sessionLike.pid, timeoutMs: 2_000, intervalMs: 25, label: 'session-like process (pre-stop)' });
   assert.ok(isAlive(sessionLike.pid), 'expected session-like child to be alive');
 
   const res = await fixture.runStackStop(['--json']);

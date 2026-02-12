@@ -7,9 +7,23 @@ import { fileURLToPath } from 'node:url';
 import { runNodeCapture } from './stack_script_command_testkit.mjs';
 
 function toSpawnEnv(env) {
+  const runtimeKeep = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'SHELL', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TERM'];
+  const ownershipFirst = ['HAPPIER_STACK_STACK', 'HAPPIER_STACK_ENV_FILE', 'HAPPIER_STACK_PROCESS_KIND', 'npm_lifecycle_event', 'npm_package_name'];
   const cleanEnv = {};
-  for (const [key, value] of Object.entries(env ?? {})) {
+  for (const key of runtimeKeep) {
+    const value = env?.[key];
     if (value == null) continue;
+    cleanEnv[key] = String(value);
+  }
+  for (const key of ownershipFirst) {
+    const value = env?.[key];
+    if (value == null) continue;
+    cleanEnv[key] = String(value);
+  }
+  for (const [key, value] of Object.entries(env ?? {})) {
+    if (key in cleanEnv) continue;
+    if (value == null) continue;
+    if (!key.startsWith('HAPPIER_') && !key.startsWith('npm_')) continue;
     cleanEnv[key] = String(value);
   }
   return cleanEnv;
@@ -50,7 +64,7 @@ export async function waitForProcessAlive({
 
 export async function waitForProcessExit({
   pid,
-  timeoutMs = 10_000,
+  timeoutMs = 20_000,
   intervalMs = 50,
   label = 'process',
 } = {}) {
