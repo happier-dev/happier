@@ -262,6 +262,10 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
     // Create realtime session
     const session = api.sessionSyncClient(baseSession);
+    // Report to daemon immediately so daemon session tracking does not depend on
+    // later startup work (metadata snapshot refresh, permission/model seeding, etc.).
+    await reportSessionToDaemonIfRunning({ sessionId: baseSession.id, metadata });
+
     // Mark the session as active and refresh metadata on startup.
     // For attach flows, wait for the persisted metadata snapshot before writing startup updates
     // to avoid overwriting the session's canonical workspace path with local defaults.
@@ -334,7 +338,6 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
 
     await persistTerminalAttachmentInfoIfNeeded({ sessionId: baseSession.id, terminal });
     sendTerminalFallbackMessageIfNeeded({ session, terminal });
-    await reportSessionToDaemonIfRunning({ sessionId: baseSession.id, metadata });
 
     // Extract SDK metadata in background and update session when ready
     extractSDKMetadataAsync(async (sdkMetadata) => {
