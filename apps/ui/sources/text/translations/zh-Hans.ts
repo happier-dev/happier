@@ -790,6 +790,8 @@ export const zhHans: TranslationStructure = {
         kimiSessionIdCopied: 'Kimi 会话 ID 已复制到剪贴板',
         kiloSessionId: 'Kilo 会话 ID',
         kiloSessionIdCopied: 'Kilo 会话 ID 已复制到剪贴板',
+        piSessionId: 'Pi 会话 ID',
+        piSessionIdCopied: 'Pi 会话 ID 已复制到剪贴板',
         metadataCopied: '元数据已复制到剪贴板',
         failedToCopyMetadata: '复制元数据失败',
         failedToKillSession: '终止会话失败',
@@ -922,6 +924,7 @@ export const zhHans: TranslationStructure = {
             qwen: 'Qwen Code',
             kimi: 'Kimi',
             kilo: 'Kilo',
+            pi: 'Pi',
         },
         auggieIndexingChip: {
             on: '已开启索引',
@@ -1932,6 +1935,7 @@ export const zhHans: TranslationStructure = {
             qwenSubtitleExperimental: 'Qwen Code 命令行（实验）',
             kimiSubtitleExperimental: 'Kimi 命令行（实验）',
             kiloSubtitleExperimental: 'Kilo 命令行（实验）',
+            piSubtitleExperimental: 'Pi 命令行（实验）',
         },
         tmux: {
             title: 'tmux',

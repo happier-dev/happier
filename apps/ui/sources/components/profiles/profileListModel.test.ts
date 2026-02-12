@@ -19,6 +19,7 @@ describe('profileListModel', () => {
             qwen: 'Qwen',
             kimi: 'Kimi',
             kilo: 'Kilo',
+            pi: 'Pi',
         },
     };
 

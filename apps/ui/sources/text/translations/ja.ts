@@ -251,6 +251,7 @@ export const ja: TranslationStructure = {
             qwenSubtitleExperimental: 'Qwen Code CLI（実験）',
             kimiSubtitleExperimental: 'Kimi CLI（実験）',
             kiloSubtitleExperimental: 'Kilo CLI（実験）',
+            piSubtitleExperimental: 'Pi CLI（実験）',
         },
         tmux: {
             title: 'Tmux',
@@ -1040,6 +1041,8 @@ export const ja: TranslationStructure = {
         kimiSessionIdCopied: 'Kimi セッション ID をクリップボードにコピーしました',
         kiloSessionId: 'Kilo セッション ID',
         kiloSessionIdCopied: 'Kilo セッション ID をクリップボードにコピーしました',
+        piSessionId: 'Pi セッション ID',
+        piSessionIdCopied: 'Pi セッション ID をクリップボードにコピーしました',
         metadataCopied: 'メタデータがクリップボードにコピーされました',
         failedToCopyMetadata: 'メタデータのコピーに失敗しました',
         failedToKillSession: 'セッションの終了に失敗しました',
@@ -1172,6 +1175,7 @@ export const ja: TranslationStructure = {
             qwen: 'Qwen Code',
             kimi: 'Kimi',
             kilo: 'Kilo',
+            pi: 'Pi',
         },
         auggieIndexingChip: {
             on: 'Indexing on',

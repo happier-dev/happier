@@ -12,6 +12,7 @@ import { AUGGIE_CORE } from '@/agents/providers/auggie/core';
 import { QWEN_CORE } from '@/agents/providers/qwen/core';
 import { KIMI_CORE } from '@/agents/providers/kimi/core';
 import { KILO_CORE } from '@/agents/providers/kilo/core';
+import { PI_CORE } from '@/agents/providers/pi/core';
 
 export { AGENT_IDS, DEFAULT_AGENT_ID };
 export type { AgentId };
@@ -182,6 +183,7 @@ export const AGENTS_CORE: Readonly<Record<AgentId, AgentCoreConfig>> = Object.fr
     qwen: QWEN_CORE,
     kimi: KIMI_CORE,
     kilo: KILO_CORE,
+    pi: PI_CORE,
 });
 
 export function isAgentId(value: unknown): value is AgentId {

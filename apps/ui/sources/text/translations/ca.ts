@@ -790,6 +790,8 @@ deps: {
         kimiSessionIdCopied: 'ID de la sessió de Kimi copiat al porta-retalls',
         kiloSessionId: 'ID de la sessió de Kilo',
         kiloSessionIdCopied: 'ID de la sessió de Kilo copiat al porta-retalls',
+        piSessionId: 'ID de la sessio de Pi',
+        piSessionIdCopied: 'ID de la sessio de Pi copiat al porta-retalls',
         metadataCopied: 'Metadades copiades al porta-retalls',
         failedToCopyMetadata: 'Ha fallat copiar les metadades',
         failedToKillSession: 'Ha fallat finalitzar la sessió',
@@ -922,6 +924,7 @@ deps: {
             qwen: 'Qwen Code',
             kimi: 'Kimi',
             kilo: 'Kilo',
+            pi: 'Pi',
         },
         auggieIndexingChip: {
             on: 'Indexing on',
@@ -1933,6 +1936,7 @@ deps: {
             qwenSubtitleExperimental: 'CLI de Qwen Code (experimental)',
             kimiSubtitleExperimental: 'CLI de Kimi (experimental)',
             kiloSubtitleExperimental: 'CLI de Kilo (experimental)',
+            piSubtitleExperimental: 'CLI de Pi (experimental)',
         },
         tmux: {
             title: 'Tmux',

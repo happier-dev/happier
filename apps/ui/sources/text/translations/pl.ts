@@ -801,6 +801,8 @@ export const pl: TranslationStructure = {
         kimiSessionIdCopied: 'ID sesji Kimi skopiowane do schowka',
         kiloSessionId: 'ID sesji Kilo',
         kiloSessionIdCopied: 'ID sesji Kilo skopiowane do schowka',
+        piSessionId: 'ID sesji Pi',
+        piSessionIdCopied: 'ID sesji Pi skopiowane do schowka',
         metadataCopied: 'Metadane skopiowane do schowka',
         failedToCopyMetadata: 'Nie udało się skopiować metadanych',
         failedToKillSession: 'Nie udało się zakończyć sesji',
@@ -932,6 +934,7 @@ export const pl: TranslationStructure = {
             qwen: 'Qwen Code',
             kimi: 'Kimi',
             kilo: 'Kilo',
+            pi: 'Pi',
         },
         auggieIndexingChip: {
             on: 'Indexing on',
@@ -2010,6 +2013,7 @@ export const pl: TranslationStructure = {
             qwenSubtitleExperimental: 'Qwen Code CLI (eksperymentalne)',
             kimiSubtitleExperimental: 'Kimi CLI (eksperymentalne)',
             kiloSubtitleExperimental: 'Kilo CLI (eksperymentalne)',
+            piSubtitleExperimental: 'Pi CLI (eksperymentalne)',
         },
         tmux: {
             title: 'Tmux',

@@ -18,7 +18,8 @@ function nextThinkingLevel(current: string): string {
 function formatThinkingLabel(level: string): string {
     const prefix = t('sessionInfo.thinkingLevel');
     const normalized = level.trim().toLowerCase();
-    if (!normalized) return `${prefix}: ${t('server.default')}`;
+    // Reuse a stable existing "Default" label. (Avoids introducing a new i18n key just for this chip.)
+    if (!normalized) return `${prefix}: ${t('agentInput.permissionMode.default')}`;
     const title = normalized.length > 0 ? `${normalized[0].toUpperCase()}${normalized.slice(1)}` : normalized;
     return `${prefix}: ${title}`;
 }
