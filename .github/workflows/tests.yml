@@ -1066,7 +1066,7 @@ jobs:
             };
             console.log(`--- ${file} (redacted) ---`);
             console.log(JSON.stringify(redacted, null, 2));
-NODE
+          NODE
           done
 
           echo "--- logs (tail) ---"
