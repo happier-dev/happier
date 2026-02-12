@@ -11,7 +11,7 @@ import { logger } from '@/ui/logger';
 import { Metadata } from '@/api/types';
 import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
 import { TrackedSession } from './types';
-import { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import { SPAWN_SESSION_ERROR_CODES, SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
 function safeTokenEquals(provided: string, expected: string): boolean {
   const hashA = createHash('sha256').update(provided).digest();
@@ -19,8 +19,11 @@ function safeTokenEquals(provided: string, expected: string): boolean {
   return timingSafeEqual(hashA, hashB);
 }
 
-function isCatalogAgentId(value: unknown): value is CatalogAgentId {
-  return typeof value === 'string' && (CATALOG_AGENT_IDS as readonly string[]).includes(value);
+function asNonEmptyStringTuple<T extends string>(values: readonly T[]): [T, ...T[]] {
+  if (values.length === 0) {
+    throw new Error('CATALOG_AGENT_IDS must not be empty');
+  }
+  return values as [T, ...T[]];
 }
 
 export function createDaemonControlApp({
@@ -159,7 +162,7 @@ export function createDaemonControlApp({
       body: z.object({
         directory: z.string(),
         sessionId: z.string().optional(),
-        agent: z.enum(CATALOG_AGENT_IDS).optional(),
+        agent: z.enum(asNonEmptyStringTuple(CATALOG_AGENT_IDS as readonly CatalogAgentId[])).optional(),
         terminal: z.object({
           mode: z.enum(['plain', 'tmux']).optional(),
           tmux: z.object({
@@ -192,11 +195,21 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    const { directory, sessionId, agent: rawAgent, terminal, environmentVariables } = request.body;
-    const agent = isCatalogAgentId(rawAgent) ? rawAgent : undefined;
+    const { directory, sessionId, agent, terminal, environmentVariables } = request.body;
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
-    const result = await spawnSession({ directory, sessionId, agent, terminal, environmentVariables });
+    let result: SpawnSessionResult;
+    try {
+      result = await spawnSession({ directory, sessionId, agent, terminal, environmentVariables });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(500);
+      return {
+        success: false,
+        error: `Failed to spawn session: ${message}`,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      };
+    }
 
     switch (result.type) {
       case 'success':

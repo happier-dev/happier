@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDaemonControlApp } from './controlServer';
+import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 
 describe('daemon control server: /spawn-session', () => {
   afterEach(() => {
@@ -66,7 +67,7 @@ describe('daemon control server: /spawn-session', () => {
         payload: JSON.stringify({
           directory: '/tmp',
           sessionId: 'explicit-session',
-          agent: 'codex',
+          agent: 'pi',
           terminal: {
             mode: 'tmux',
             tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
@@ -89,7 +90,7 @@ describe('daemon control server: /spawn-session', () => {
       expect(observed).toEqual({
         directory: '/tmp',
         sessionId: 'explicit-session',
-        agent: 'codex',
+        agent: 'pi',
         terminal: {
           mode: 'tmux',
           tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
@@ -98,6 +99,38 @@ describe('daemon control server: /spawn-session', () => {
           FOO: 'bar',
           TMUX_SESSION_NAME: 'legacy-ignored',
         },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns a structured 500 when spawnSession throws', async () => {
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      stopSession: async () => false,
+      spawnSession: async () => {
+        throw new Error('boom');
+      },
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/spawn-session',
+        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+        payload: JSON.stringify({ directory: '/tmp' }),
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({
+        success: false,
+        error: 'Failed to spawn session: boom',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
       });
     } finally {
       await app.close();
