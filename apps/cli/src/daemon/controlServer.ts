@@ -159,7 +159,7 @@ export function createDaemonControlApp({
       body: z.object({
         directory: z.string(),
         sessionId: z.string().optional(),
-        agent: z.enum(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'pi']).optional(),
+        agent: z.enum(CATALOG_AGENT_IDS).optional(),
         terminal: z.object({
           mode: z.enum(['plain', 'tmux']).optional(),
           tmux: z.object({

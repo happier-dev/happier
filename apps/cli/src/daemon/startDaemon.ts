@@ -53,10 +53,11 @@ import { startHappySessionInVisibleWindowsConsole } from './platform/windows/spa
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import { buildHappySessionControlArgs } from './sessionSpawnArgs';
 import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
-import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
-import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
-import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
-import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
+	import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
+	import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
+	import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
+	import { resolveSpawnChildEnvironment } from './spawn/resolveSpawnChildEnvironment';
+	import { createSpawnConcurrencyGate } from './spawn/createSpawnConcurrencyGate';
 
 function resolvePositiveIntEnv(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
   const value = (raw ?? '').trim();
@@ -146,9 +147,12 @@ export async function startDaemon(): Promise<void> {
 	    let apiMachineForSessions: ApiMachineClient | null = null;
 
     // Session spawning awaiter system
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
-    const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
-    const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
+	    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+	    const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
+	    const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
+	    const spawnConcurrencyGate = createSpawnConcurrencyGate(
+	      resolvePositiveIntEnv(process.env.HAPPIER_DAEMON_MAX_CONCURRENT_SPAWNS, 4, { min: 1, max: 64 }),
+	    );
 
     // Helper functions
     const getCurrentChildren = () => Array.from(pidToTrackedSession.values());
@@ -166,12 +170,13 @@ export async function startDaemon(): Promise<void> {
 	    };
 
 	    // Spawn a new session (sessionId reserved for future Happy session resume; vendor resume uses options.resume).
-		    const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
-	      // Do NOT log raw options: it may include secrets (token / env vars).
-	      const envKeysPreview = options.environmentVariables && typeof options.environmentVariables === 'object'
-	        ? Object.keys(options.environmentVariables as Record<string, unknown>)
-	        : [];
-	      const environmentVariablesValidation = validateEnvVarRecordStrict(options.environmentVariables);
+			    const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
+			      return await spawnConcurrencyGate.run(async () => {
+		      // Do NOT log raw options: it may include secrets (token / env vars).
+		      const envKeysPreview = options.environmentVariables && typeof options.environmentVariables === 'object'
+		        ? Object.keys(options.environmentVariables as Record<string, unknown>)
+		        : [];
+		      const environmentVariablesValidation = validateEnvVarRecordStrict(options.environmentVariables);
 		      logger.debugLargeJson('[DAEMON RUN] Spawning session', {
 		        directory: options.directory,
 		        sessionId: options.sessionId,
@@ -773,25 +778,26 @@ export async function startDaemon(): Promise<void> {
           errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
           errorMessage: 'Unexpected error in session spawning'
         };
-	      } catch (error) {
-	        if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
-	          spawnResourceCleanupOnFailure();
-	          spawnResourceCleanupOnFailure = null;
-	          spawnResourceCleanupOnExit = null;
-	        }
+		      } catch (error) {
+		        if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
+		          spawnResourceCleanupOnFailure();
+		          spawnResourceCleanupOnFailure = null;
+		          spawnResourceCleanupOnExit = null;
+		        }
 	        if (sessionAttachCleanup) {
 	          await sessionAttachCleanup();
 	          sessionAttachCleanup = null;
 	        }
 	        const errorMessage = error instanceof Error ? error.message : String(error);
 	        logger.debug('[DAEMON RUN] Failed to spawn session:', error);
-	        return {
-	          type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-	          errorMessage: `Failed to spawn session: ${errorMessage}`
-        };
-      }
-    };
+		        return {
+		          type: 'error',
+	            errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+		          errorMessage: `Failed to spawn session: ${errorMessage}`
+	        };
+	      }
+	    });
+	    };
 
 	    const stopSession = createStopSession({ pidToTrackedSession });
 

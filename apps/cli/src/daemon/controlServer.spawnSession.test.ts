@@ -66,7 +66,7 @@ describe('daemon control server: /spawn-session', () => {
         payload: JSON.stringify({
           directory: '/tmp',
           sessionId: 'explicit-session',
-          agent: 'pi',
+          agent: 'codex',
           terminal: {
             mode: 'tmux',
             tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
@@ -89,7 +89,7 @@ describe('daemon control server: /spawn-session', () => {
       expect(observed).toEqual({
         directory: '/tmp',
         sessionId: 'explicit-session',
-        agent: 'pi',
+        agent: 'codex',
         terminal: {
           mode: 'tmux',
           tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
