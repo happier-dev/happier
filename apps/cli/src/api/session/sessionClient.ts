@@ -304,7 +304,6 @@ export class ApiSessionClient extends EventEmitter {
                 pendingMessageCallback: this.pendingMessageCallback,
                 pendingMessages: this.pendingMessages,
                 emit: (event, payload) => this.emit(event, payload),
-                debug: (message, payload) => logger.debug(message, payload),
                 debugLargeJson: (message, payload) => logger.debugLargeJson(message, payload),
             });
             if (newMessageHandlingResult.handled) {
