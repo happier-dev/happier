@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_types';
+import type { TranslationStructure } from "../_types";
 
 /**
  * Catalan plural helper function
@@ -6,8 +6,16 @@ import type { TranslationStructure } from '../_types';
  * @param options - Object containing count, singular, and plural forms
  * @returns The appropriate form based on Catalan plural rules
  */
-function plural({ count, singular, plural }: { count: number; singular: string; plural: string }): string {
-    return count === 1 ? singular : plural;
+function plural({
+  count,
+  singular,
+  plural,
+}: {
+  count: number;
+  singular: string;
+  plural: string;
+}): string {
+  return count === 1 ? singular : plural;
 }
 
 /**
@@ -15,2077 +23,2445 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const ca: TranslationStructure = {
-    tabs: {
-        // Tab navigation labels
-        inbox: 'Amics',
-        sessions: 'Terminals',
-        settings: 'Configuració',
+  tabs: {
+    // Tab navigation labels
+    inbox: "Amics",
+    sessions: "Terminals",
+    settings: "Configuració",
+  },
+
+  inbox: {
+    // Inbox screen
+    emptyTitle: "Sense activitat d’amics",
+    emptyDescription:
+      "Afegeix amics per compartir sessions i veure activitat aquí.",
+    updates: "Activitat",
+  },
+
+  common: {
+    // Simple string constants
+    add: "Afegeix",
+    actions: "Accions",
+    cancel: "Cancel·la",
+    authenticate: "Autentica",
+    save: "Desa",
+    saveAs: "Desa com a",
+    error: "Error",
+    success: "Èxit",
+    ok: "D'acord",
+    continue: "Continua",
+    back: "Enrere",
+    create: "Crear",
+    rename: "Reanomena",
+    remove: "Remove",
+    signOut: "Sign out",
+    keep: "Keep",
+    reset: "Reinicia",
+    logout: "Tanca la sessió",
+    yes: "Sí",
+    no: "No",
+    discard: "Descarta",
+    discardChanges: "Descarta els canvis",
+    unsavedChangesWarning: "Tens canvis sense desar.",
+    keepEditing: "Continua editant",
+    version: "Versió",
+    details: "Detalls",
+    copied: "Copiat",
+    copy: "Copiar",
+    scanning: "Escanejant...",
+    urlPlaceholder: "https://exemple.com",
+    home: "Inici",
+    message: "Missatge",
+    send: "Envia",
+    files: "Fitxers",
+    fileViewer: "Visualitzador de fitxers",
+    loading: "Carregant...",
+    retry: "Torna-ho a provar",
+    delete: "Elimina",
+    optional: "Opcional",
+    noMatches: "Sense coincidències",
+    all: "Tots",
+    machine: "màquina",
+    clearSearch: "Neteja la cerca",
+    refresh: "Actualitza",
+  },
+
+  dropdown: {
+    category: {
+      general: "General",
+      results: "Resultats",
     },
+  },
 
-    inbox: {
-        // Inbox screen
-        emptyTitle: 'Sense activitat d’amics',
-        emptyDescription: 'Afegeix amics per compartir sessions i veure activitat aquí.',
-        updates: 'Activitat',
+  profile: {
+    userProfile: "Perfil d'usuari",
+    details: "Detalls",
+    firstName: "Nom",
+    lastName: "Cognoms",
+    username: "Nom d'usuari",
+    status: "Estat",
+  },
+
+  status: {
+    connected: "connectat",
+    connecting: "connectant",
+    disconnected: "desconnectat",
+    error: "error",
+    online: "en línia",
+    offline: "fora de línia",
+    lastSeen: ({ time }: { time: string }) => `vist per última vegada ${time}`,
+    permissionRequired: "permís requerit",
+    activeNow: "Actiu ara",
+    unknown: "desconegut",
+  },
+
+  time: {
+    justNow: "ara mateix",
+    minutesAgo: ({ count }: { count: number }) =>
+      `fa ${count} minut${count !== 1 ? "s" : ""}`,
+    hoursAgo: ({ count }: { count: number }) =>
+      `fa ${count} hora${count !== 1 ? "es" : ""}`,
+  },
+
+  connect: {
+    restoreAccount: "Restaura el compte",
+    enterSecretKey: "Introdueix la teva clau secreta",
+    invalidSecretKey:
+      "Clau secreta no vàlida. Comprova-ho i torna-ho a provar.",
+    enterUrlManually: "Introdueix l'URL manualment",
+    openMachine: "Obrir màquina",
+    terminalUrlPlaceholder: "happier://terminal?...",
+    restoreQrInstructions:
+      '1. Obre Happier al teu dispositiu mòbil\n2. Ves a Configuració → Compte\n3. Toca "Vincular nou dispositiu"\n4. Escaneja aquest codi QR',
+    restoreWithSecretKeyInstead: "Restaura amb clau secreta",
+    restoreWithSecretKeyDescription:
+      "Introdueix la teva clau secreta per recuperar l’accés al teu compte.",
+    lostAccessLink: "Sense accés?",
+    lostAccessTitle: "Has perdut l’accés al teu compte?",
+    lostAccessBody:
+      "Si ja no tens cap dispositiu enllaçat a aquest compte i has perdut la clau secreta, pots restablir el compte amb el teu proveïdor d’identitat. Això crea un nou compte de Happier. No es pot recuperar l’historial xifrat anterior.",
+    lostAccessContinue: ({ provider }: { provider: string }) =>
+      `Continua amb ${provider}`,
+    lostAccessConfirmTitle: "Restablir el compte?",
+    lostAccessConfirmBody:
+      "Això crearà un nou compte i tornarà a enllaçar la teva identitat. No es pot recuperar l’historial xifrat anterior.",
+    lostAccessConfirmButton: "Restablir i continuar",
+    secretKeyPlaceholder: "XXXXX-XXXXX-XXXXX...",
+    unsupported: {
+      connectTitle: ({ name }: { name: string }) => `Connecta ${name}`,
+      runCommandInTerminal: "Executa l'ordre següent al terminal:",
     },
+  },
 
-    common: {
-        // Simple string constants
-        add: 'Afegeix',
-        actions: 'Accions',
-        cancel: 'Cancel·la',
-        authenticate: 'Autentica',
-        save: 'Desa',
-        saveAs: 'Desa com a',
-        error: 'Error',
-        success: 'Èxit',
-        ok: 'D\'acord',
-        continue: 'Continua',
-        back: 'Enrere',
-        create: 'Crear',
-        rename: 'Reanomena',
-        remove: 'Remove',
-        signOut: 'Sign out',
-        keep: 'Keep',
-        reset: 'Reinicia',
-        logout: 'Tanca la sessió',
-        yes: 'Sí',
-        no: 'No',
-        discard: 'Descarta',
-        discardChanges: 'Descarta els canvis',
-        unsavedChangesWarning: 'Tens canvis sense desar.',
-        keepEditing: 'Continua editant',
-        version: 'Versió',
-        details: 'Detalls',
-        copied: 'Copiat',
-        copy: 'Copiar',
-        scanning: 'Escanejant...',
-        urlPlaceholder: 'https://exemple.com',
-        home: 'Inici',
-        message: 'Missatge',
-        files: 'Fitxers',
-        fileViewer: 'Visualitzador de fitxers',
-        loading: 'Carregant...',
-        retry: 'Torna-ho a provar',
-        delete: 'Elimina',
-        optional: 'Opcional',
-        noMatches: 'Sense coincidències',
-        all: 'Tots',
-        machine: 'màquina',
-        clearSearch: 'Neteja la cerca',
-        refresh: 'Actualitza',
+  settings: {
+    title: "Configuració",
+    connectedAccounts: "Comptes connectats",
+    connectAccount: "Connectar compte",
+    github: "GitHub",
+    machines: "Màquines",
+    features: "Funcions",
+    social: "Social",
+    account: "Compte",
+    accountSubtitle: "Gestiona els detalls del teu compte",
+    appearance: "Aparença",
+    appearanceSubtitle: "Personalitza l'aspecte de l'aplicació",
+    voiceAssistant: "Assistent de veu",
+    voiceAssistantSubtitle: "Configura les preferències d'interacció per veu",
+    featuresTitle: "Funcions",
+    featuresSubtitle: "Activa o desactiva les funcions de l'aplicació",
+    developer: "Desenvolupador",
+    developerTools: "Eines de desenvolupador",
+    about: "Quant a",
+    aboutFooter:
+      "Happier Coder és un client mòbil de Codex i Claude Code. Tot està xifrat punt a punt i el teu compte es guarda només al teu dispositiu. No està afiliat amb Anthropic.",
+    whatsNew: "Novetats",
+    whatsNewSubtitle: "Mira les últimes actualitzacions i millores",
+    reportIssue: "Informa d'un problema",
+    privacyPolicy: "Política de privadesa",
+    termsOfService: "Condicions del servei",
+    eula: "EULA",
+    supportUs: "Dona'ns suport",
+    supportUsSubtitlePro: "Gràcies pel teu suport!",
+    supportUsSubtitle: "Dona suport al desenvolupament del projecte",
+    scanQrCodeToAuthenticate: "Escaneja el codi QR per autenticar-te",
+    githubConnected: ({ login }: { login: string }) =>
+      `Connectat com a @${login}`,
+    connectGithubAccount: "Connecta el teu compte de GitHub",
+    claudeAuthSuccess: "Connexió amb Claude realitzada amb èxit",
+    exchangingTokens: "Intercanviant tokens...",
+    usage: "Ús",
+    usageSubtitle: "Veure l'ús de l'API i costos",
+    profiles: "Perfils",
+    profilesSubtitle: "Gestiona els perfils d'entorn i variables",
+    secrets: "Secrets",
+    secretsSubtitle:
+      "Gestiona els secrets desats (no es tornaran a mostrar després d’introduir-los)",
+    terminal: "Terminal",
+    session: "Sessió",
+    sessionSubtitleTmuxEnabled: "Tmux activat",
+    sessionSubtitleMessageSendingAndTmux: "Enviament de missatges i tmux",
+    servers: "Servidors",
+    serversSubtitle: "Servidors desats, grups i valors predeterminats",
+
+    // Dynamic settings messages
+    accountConnected: ({ service }: { service: string }) =>
+      `Compte de ${service} connectat`,
+    machineStatus: ({
+      name,
+      status,
+    }: {
+      name: string;
+      status: "online" | "offline";
+    }) => `${name} està ${status === "online" ? "en línia" : "fora de línia"}`,
+    featureToggled: ({
+      feature,
+      enabled,
+    }: {
+      feature: string;
+      enabled: boolean;
+    }) => `${feature} ${enabled ? "activada" : "desactivada"}`,
+  },
+
+  settingsProviders: {
+    title: "Configuració del proveïdor d’IA",
+    entrySubtitle: "Configura opcions específiques del proveïdor",
+    footer:
+      "Configura opcions específiques del proveïdor. Aquests ajustos poden afectar el comportament de la sessió.",
+    providerSubtitle: "Ajustos específics del proveïdor",
+    stateEnabled: "Enabled",
+    stateDisabled: "Disabled",
+    channelStable: "Stable",
+    channelExperimental: "Experimental",
+    supported: "Supported",
+    notSupported: "Not supported",
+    allowed: "Allowed",
+    notAllowed: "Not allowed",
+    notAvailable: "Not available",
+    enabledTitle: "Enabled",
+    enabledSubtitle: "Use this backend in pickers, profiles, and sessions",
+    releaseChannelTitle: "Release channel",
+    capabilitiesTitle: "Capabilities",
+    resumeSupportTitle: "Resume support",
+    sessionModeSupportTitle: "Session mode support",
+    runtimeModeSwitchingTitle: "Runtime mode switching",
+    localControlTitle: "Local control",
+    resumeSupportSupported: "Supported",
+    resumeSupportSupportedExperimental: "Supported (experimental)",
+    resumeSupportRuntimeGatedAcpLoadSession:
+      "Runtime-gated via ACP loadSession",
+    resumeSupportNotSupported: "Not supported",
+    sessionModeNone: "No ACP modes",
+    sessionModeAcpPolicyPresets: "ACP policy presets",
+    sessionModeAcpAgentModes: "ACP agent modes",
+    runtimeSwitchNone: "No runtime switch",
+    runtimeSwitchMetadataGating: "Metadata-gated",
+    runtimeSwitchAcpSetSessionMode: "ACP setSessionMode",
+    runtimeSwitchProviderNative: "Provider native",
+    modelsTitle: "Models",
+    modelSelectionTitle: "Model selection",
+    freeformModelIdsTitle: "Freeform model IDs",
+    defaultModelTitle: "Default model",
+    catalogModelListTitle: "Catalog model list",
+    catalogModelListEmpty: "No catalog models available",
+    dynamicModelProbeTitle: "Dynamic model probing",
+    dynamicModelProbeAuto: "Auto",
+    dynamicModelProbeStaticOnly: "Static only",
+    nonAcpApplyScopeTitle: "Non-ACP model apply scope",
+    nonAcpApplyScopeSpawnOnly: "Apply on session start",
+    nonAcpApplyScopeNextPrompt: "Apply on next prompt",
+    acpApplyBehaviorTitle: "ACP model apply behavior",
+    acpApplyBehaviorSetModel: "Set model live",
+    acpApplyBehaviorRestartSession: "Restart session",
+    acpConfigOptionTitle: "ACP model config option id",
+    cliConnectionTitle: "CLI & Connection",
+    detectedCliTitle: "Detected CLI",
+    installSetupTitle: "Install / setup",
+    installInfoSeeSetupGuide: "See setup guide",
+    installInfoUseProviderCliInstaller: "Use the provider CLI installer",
+    setupGuideUrlTitle: "Setup guide URL",
+    connectedServiceTitle: "Connected service",
+    notFoundTitle: "Proveïdor no trobat",
+    notFoundSubtitle: "Aquest proveïdor no té pantalla de configuració.",
+    noOptionsAvailable: "No hi ha opcions disponibles",
+    invalidNumber: "Número no vàlid",
+    invalidJson: "JSON no vàlid",
+  },
+
+  settingsAppearance: {
+    // Appearance settings screen
+    theme: "Tema",
+    themeDescription: "Tria el teu esquema de colors preferit",
+    themeOptions: {
+      adaptive: "Adaptatiu",
+      light: "Clar",
+      dark: "Fosc",
     },
-
-    dropdown: {
-        category: {
-            general: 'General',
-            results: 'Resultats',
-        },
+    themeDescriptions: {
+      adaptive: "Segueix la configuració del sistema",
+      light: "Usa sempre el tema clar",
+      dark: "Usa sempre el tema fosc",
     },
-
-    profile: {
-        userProfile: 'Perfil d\'usuari',
-        details: 'Detalls',
-        firstName: 'Nom',
-        lastName: 'Cognoms',
-        username: 'Nom d\'usuari',
-        status: 'Estat',
+    display: "Pantalla",
+    displayDescription: "Controla la disposició i l'espaiat",
+    inlineToolCalls: "Crides d'eines en línia",
+    inlineToolCallsDescription:
+      "Mostra les crides d'eines directament als missatges de xat",
+    expandTodoLists: "Expandeix les llistes de tasques",
+    expandTodoListsDescription:
+      "Mostra totes les tasques en lloc de només els canvis",
+    showLineNumbersInDiffs: "Mostra els números de línia a les diferències",
+    showLineNumbersInDiffsDescription:
+      "Mostra els números de línia a les diferències de codi",
+    showLineNumbersInToolViews:
+      "Mostra els números de línia a les vistes d'eines",
+    showLineNumbersInToolViewsDescription:
+      "Mostra els números de línia a les diferències de vistes d'eines",
+    wrapLinesInDiffs: "Ajusta les línies a les diferències",
+    wrapLinesInDiffsDescription:
+      "Ajusta les línies llargues en lloc de desplaçament horitzontal a les vistes de diferències",
+    alwaysShowContextSize: "Mostra sempre la mida del context",
+    alwaysShowContextSizeDescription:
+      "Mostra l'ús del context fins i tot quan no estigui prop del límit",
+    agentInputActionBarLayout: "Barra d’accions d’entrada",
+    agentInputActionBarLayoutDescription:
+      "Tria com es mostren els xips d’acció sobre el camp d’entrada",
+    agentInputActionBarLayoutOptions: {
+      auto: "Auto",
+      wrap: "Ajusta",
+      scroll: "Desplaçable",
+      collapsed: "Plegat",
     },
+    agentInputChipDensity: "Densitat dels xips d’acció",
+    agentInputChipDensityDescription:
+      "Tria si els xips d’acció mostren etiquetes o icones",
+    agentInputChipDensityOptions: {
+      auto: "Auto",
+      labels: "Etiquetes",
+      icons: "Només icones",
+    },
+    avatarStyle: "Estil d'avatar",
+    avatarStyleDescription: "Tria l'aparença de l'avatar de la sessió",
+    avatarOptions: {
+      pixelated: "Pixelat",
+      gradient: "Degradat",
+      brutalist: "Brutalista",
+    },
+    showFlavorIcons: "Mostrar icones de proveïdors d'IA",
+    showFlavorIconsDescription:
+      "Mostrar icones del proveïdor d'IA als avatars de sessió",
+    compactSessionView: "Vista compacta de sessions",
+    compactSessionViewDescription:
+      "Mostra les sessions actives en un disseny més compacte",
+  },
 
+  settingsFeatures: {
+    // Features settings screen
+    experiments: "Experiments",
+    experimentsDescription:
+      "Activa funcions experimentals que encara estan en desenvolupament. Aquestes funcions poden ser inestables o canviar sense avís.",
+    experimentalFeatures: "Funcions experimentals",
+    experimentalFeaturesEnabled: "Funcions experimentals activades",
+    experimentalFeaturesDisabled: "Utilitzant només funcions estables",
+    experimentalOptions: "Opcions experimentals",
+    experimentalOptionsDescription:
+      "Tria quines funcions experimentals estan activades.",
+    expAutomations: "Automations",
+    expAutomationsSubtitle: "Enable automations UI surfaces and scheduling",
+    expUsageReporting: "Informe d’ús",
+    expUsageReportingSubtitle: "Activa pantalles d’ús i tokens",
+    expScmOperations: "Source control operations",
+    expScmOperationsSubtitle:
+      "Enable experimental source-control write operations (stage/commit/push/pull)",
+    expShowThinkingMessages: "Mostra missatges de pensament",
+    expShowThinkingMessagesSubtitle:
+      "Mostra missatges d’estat/pensament de l’assistent al xat",
+    expSessionType: "Selector de tipus de sessió",
+    expSessionTypeSubtitle:
+      "Mostra el selector de tipus de sessió (simple vs worktree)",
+    expZen: "Zen",
+    expZenSubtitle: "Activa l’entrada de navegació Zen",
+    expVoiceAuthFlow: "Flux d’autenticació de veu",
+    expVoiceAuthFlowSubtitle:
+      "Utilitza el flux autenticat de tokens de veu (amb paywall)",
+    expInboxFriends: "Safata d’entrada i amics",
+    expInboxFriendsSubtitle:
+      "Activa la pestanya de Safata d’entrada i les funcions d’amics",
+    webFeatures: "Funcions web",
+    webFeaturesDescription:
+      "Funcions disponibles només a la versió web de l'app.",
+    enterToSend: "Enter per enviar",
+    enterToSendEnabled:
+      "Prem Enter per enviar (Maj+Enter per a una nova línia)",
+    enterToSendDisabled: "Enter insereix una nova línia",
+    commandPalette: "Paleta de comandes",
+    commandPaletteEnabled: "Prem ⌘K per obrir",
+    commandPaletteDisabled: "Accés ràpid a comandes desactivat",
+    markdownCopyV2: "Còpia de Markdown v2",
+    markdownCopyV2Subtitle: "Pulsació llarga obre modal de còpia",
+    hideInactiveSessions: "Amaga les sessions inactives",
+    hideInactiveSessionsSubtitle: "Mostra només els xats actius a la llista",
+    groupInactiveSessionsByProject:
+      "Agrupa les sessions inactives per projecte",
+    groupInactiveSessionsByProjectSubtitle:
+      "Organitza els xats inactius per projecte",
+    environmentBadge: "Environment badge",
+    environmentBadgeSubtitle:
+      "Show a small badge next to the Happier title indicating the current app environment",
+    enhancedSessionWizard: "Assistent de sessió millorat",
+    enhancedSessionWizardEnabled: "Llançador de sessió amb perfil actiu",
+    enhancedSessionWizardDisabled: "Usant el llançador de sessió estàndard",
+    profiles: "Perfils d'IA",
+    profilesEnabled: "Selecció de perfils activada",
+    profilesDisabled: "Selecció de perfils desactivada",
+    pickerSearch: "Cerca als selectors",
+    pickerSearchSubtitle:
+      "Mostra un camp de cerca als selectors de màquina i camí",
+    machinePickerSearch: "Cerca de màquines",
+    machinePickerSearchSubtitle:
+      "Mostra un camp de cerca als selectors de màquines",
+    pathPickerSearch: "Cerca de camins",
+    pathPickerSearchSubtitle: "Mostra un camp de cerca als selectors de camins",
+  },
 
+  errors: {
+    networkError: "Error de connexió",
+    serverError: "Error del servidor",
+    unknownError: "Error desconegut",
+    connectionTimeout: "S'ha esgotat el temps de connexió",
+    authenticationFailed: "L'autenticació ha fallat",
+    permissionDenied: "Permís denegat",
+    fileNotFound: "Fitxer no trobat",
+    invalidFormat: "Format no vàlid",
+    operationFailed: "L'operació ha fallat",
+    tryAgain: "Torna-ho a provar",
+    contactSupport: "Contacta amb el suport si el problema persisteix",
+    sessionNotFound: "Sessió no trobada",
+    voiceSessionFailed: "Ha fallat l'inici de la sessió de veu",
+    voiceServiceUnavailable: "El servei de veu no està disponible temporalment",
+    voiceAlreadyStarting: "La veu ja s’està iniciant en una altra sessió",
+    oauthInitializationFailed: "Ha fallat la inicialització del flux OAuth",
+    tokenStorageFailed: "Ha fallat l'emmagatzematge dels tokens d'autenticació",
+    oauthStateMismatch:
+      "Ha fallat la validació de seguretat. Si us plau, torna-ho a provar",
+    providerAlreadyLinked: ({ provider }: { provider: string }) =>
+      `${provider} ja està enllaçat a un compte Happier existent. Per iniciar sessió en aquest dispositiu, enllaça’l des d’un dispositiu on ja hagis iniciat sessió.`,
+    tokenExchangeFailed: "Ha fallat l'intercanvi del codi d'autorització",
+    oauthAuthorizationDenied: "L'autorització ha estat denegada",
+    webViewLoadFailed: "Ha fallat la càrrega de la pàgina d'autenticació",
+    failedToLoadProfile: "No s'ha pogut carregar el perfil d'usuari",
+    userNotFound: "Usuari no trobat",
+    sessionDeleted: "La sessió no està disponible",
+    sessionDeletedDescription:
+      "Pot haver-se suprimit o pot ser que ja no hi tinguis accés.",
+
+    // Error functions with context
+    fieldError: ({ field, reason }: { field: string; reason: string }) =>
+      `${field}: ${reason}`,
+    validationError: ({
+      field,
+      min,
+      max,
+    }: {
+      field: string;
+      min: number;
+      max: number;
+    }) => `${field} ha d'estar entre ${min} i ${max}`,
+    retryIn: ({ seconds }: { seconds: number }) =>
+      `Torna-ho a provar en ${seconds} ${seconds === 1 ? "segon" : "segons"}`,
+    errorWithCode: ({
+      message,
+      code,
+    }: {
+      message: string;
+      code: number | string;
+    }) => `${message} (Error ${code})`,
+    disconnectServiceFailed: ({ service }: { service: string }) =>
+      `Ha fallat la desconnexió de ${service}`,
+    connectServiceFailed: ({ service }: { service: string }) =>
+      `No s'ha pogut connectar ${service}. Si us plau, torna-ho a provar.`,
+    failedToLoadFriends: "No s'ha pogut carregar la llista d'amics",
+    failedToAcceptRequest: "No s'ha pogut acceptar la sol·licitud d'amistat",
+    failedToRejectRequest: "No s'ha pogut rebutjar la sol·licitud d'amistat",
+    failedToRemoveFriend: "No s'ha pogut eliminar l'amic",
+    searchFailed: "La cerca ha fallat. Si us plau, torna-ho a provar.",
+    failedToSendRequest: "No s'ha pogut enviar la sol·licitud d'amistat",
+    failedToResumeSession: "No s’ha pogut reprendre la sessió",
+    failedToSendMessage: "No s’ha pogut enviar el missatge",
+    failedToSwitchControl: "No s’ha pogut canviar el mode de control",
+    cannotShareWithSelf: "No pots compartir amb tu mateix",
+    canOnlyShareWithFriends: "Només pots compartir amb amics",
+    shareNotFound: "Compartició no trobada",
+    publicShareNotFound: "Enllaç públic no trobat o expirat",
+    consentRequired: "Es requereix consentiment per a l'accés",
+    maxUsesReached: "S'ha assolit el màxim d'usos",
+    invalidShareLink: "Enllaç de compartició no vàlid o caducat",
+    missingPermissionId: "Falta l’identificador de permís",
+    codexResumeNotInstalledTitle:
+      "Codex resume no està instal·lat en aquesta màquina",
+    codexResumeNotInstalledMessage:
+      "Per reprendre una conversa de Codex, instal·la el servidor de represa de Codex a la màquina de destinació (Detalls de la màquina → Represa de Codex).",
+    codexAcpNotInstalledTitle:
+      "Codex ACP no està instal·lat en aquesta màquina",
+    codexAcpNotInstalledMessage:
+      "Per fer servir l’experiment de Codex ACP, instal·la codex-acp a la màquina de destinació (Detalls de la màquina → Codex ACP) o desactiva l’experiment.",
+  },
+
+  deps: {
+    installNotSupported:
+      "Actualitza Happier CLI per instal·lar aquesta dependència.",
+    installFailed: "La instal·lació ha fallat",
+    installed: "Instal·lat",
+    installLog: ({ path }: { path: string }) =>
+      `Registre d'instal·lació: ${path}`,
+    installable: {
+      codexResume: {
+        title: "Servidor de represa de Codex",
+        installSpecTitle: "Origen d'instal·lació de Codex resume",
+      },
+      codexAcp: {
+        title: "Adaptador ACP de Codex",
+        installSpecTitle: "Origen d'instal·lació de Codex ACP",
+      },
+      installSpecDescription:
+        "Especificació NPM/Git/fitxer passada a `npm install` (experimental). Deixa-ho buit per usar el valor per defecte del dimoni.",
+    },
+    ui: {
+      notAvailable: "No disponible",
+      notAvailableUpdateCli: "No disponible (actualitza la CLI)",
+      errorRefresh: "Error (actualitzar)",
+      installed: "Instal·lat",
+      installedWithVersion: ({ version }: { version: string }) =>
+        `Instal·lat (v${version})`,
+      installedUpdateAvailable: ({
+        installedVersion,
+        latestVersion,
+      }: {
+        installedVersion: string;
+        latestVersion: string;
+      }) =>
+        `Instal·lat (v${installedVersion}) — actualització disponible (v${latestVersion})`,
+      notInstalled: "No instal·lat",
+      latest: "Darrera",
+      latestSubtitle: ({ version, tag }: { version: string; tag: string }) =>
+        `${version} (etiqueta: ${tag})`,
+      registryCheck: "Comprovació del registre",
+      registryCheckFailed: ({ error }: { error: string }) =>
+        `Ha fallat: ${error}`,
+      installSource: "Origen d'instal·lació",
+      installSourceDefault: "(per defecte)",
+      installSpecPlaceholder:
+        "p. ex. file:/ruta/al/paquet o github:propietari/repo#branca",
+      lastInstallLog: "Últim registre d'instal·lació",
+      installLogTitle: "Registre d'instal·lació",
+    },
+  },
+
+  newSession: {
+    // Used by new-session screen and launch flows
+    title: "Inicia una nova sessió",
+    selectAiProfileTitle: "Selecciona el perfil d’IA",
+    selectAiProfileDescription:
+      "Selecciona un perfil d’IA per aplicar variables d’entorn i valors per defecte a la sessió.",
+    changeProfile: "Canvia el perfil",
+    aiBackendSelectedByProfile:
+      "El backend d’IA el selecciona el teu perfil. Per canviar-lo, selecciona un perfil diferent.",
+    selectAiBackendTitle: "Selecciona el backend d’IA",
+    aiBackendLimitedByProfileAndMachineClis:
+      "Limitat pel perfil seleccionat i els CLI disponibles en aquesta màquina.",
+    aiBackendSelectWhichAiRuns: "Selecciona quina IA executa la sessió.",
+    aiBackendNotCompatibleWithSelectedProfile:
+      "No és compatible amb el perfil seleccionat.",
+    aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) =>
+      `No s’ha detectat el CLI de ${cli} en aquesta màquina.`,
+    selectMachineTitle: "Selecciona màquina",
+    selectMachineDescription: "Tria on s’executa aquesta sessió.",
+    selectPathTitle: "Selecciona camí",
+    selectWorkingDirectoryTitle: "Selecciona el directori de treball",
+    selectWorkingDirectoryDescription:
+      "Tria la carpeta usada per a ordres i context.",
+    selectPermissionModeTitle: "Selecciona el mode de permisos",
+    selectPermissionModeDescription:
+      "Controla com d’estrictes són les aprovacions.",
+    selectModelTitle: "Selecciona el model d’IA",
+    selectModelDescription: "Tria el model usat per aquesta sessió.",
+    selectSessionTypeTitle: "Selecciona el tipus de sessió",
+    selectSessionTypeDescription:
+      "Tria una sessió simple o una lligada a un worktree de Git.",
+    searchPathsPlaceholder: "Cerca camins...",
+    noMachinesFound:
+      "No s'han trobat màquines. Inicia una sessió de Happier al teu ordinador primer.",
+    allMachinesOffline: "Totes les màquines estan fora de línia",
+    machineDetails: "Veure detalls de la màquina →",
+    directoryDoesNotExist: "Directori no trobat",
+    createDirectoryConfirm: ({ directory }: { directory: string }) =>
+      `El directori ${directory} no existeix. Vols crear-lo?`,
+    sessionStarted: "Sessió iniciada",
+    sessionStartedMessage: "La sessió s'ha iniciat correctament.",
+    sessionSpawningFailed:
+      "Ha fallat la creació de la sessió - no s'ha retornat cap ID de sessió.",
+    failedToStart:
+      "Ha fallat l'inici de la sessió. Assegura't que el dimoni s'estigui executant a la màquina de destinació.",
+    sessionTimeout:
+      "L'inici de la sessió ha esgotat el temps d'espera. La màquina pot ser lenta o el dimoni pot no estar responent.",
+    notConnectedToServer:
+      "No connectat al servidor. Comprova la teva connexió a internet.",
+    startingSession: "Iniciant la sessió...",
+    startNewSessionInFolder: "Nova sessió aquí",
+    noMachineSelected:
+      "Si us plau, selecciona una màquina per iniciar la sessió",
+    noPathSelected: "Si us plau, selecciona un directori per iniciar la sessió",
+    machinePicker: {
+      searchPlaceholder: "Cerca màquines...",
+      recentTitle: "Recents",
+      favoritesTitle: "Preferits",
+      allTitle: "Totes",
+      emptyMessage: "No hi ha màquines disponibles",
+    },
+    pathPicker: {
+      enterPathTitle: "Introdueix el camí",
+      enterPathPlaceholder: "Introdueix un camí...",
+      customPathTitle: "Camí personalitzat",
+      recentTitle: "Recents",
+      favoritesTitle: "Preferits",
+      suggestedTitle: "Suggerits",
+      allTitle: "Totes",
+      emptyRecent: "No hi ha camins recents",
+      emptyFavorites: "No hi ha camins preferits",
+      emptySuggested: "No hi ha camins suggerits",
+      emptyAll: "No hi ha camins",
+    },
+    sessionType: {
+      title: "Tipus de sessió",
+      simple: "Simple",
+      worktree: "Worktree (Git)",
+      comingSoon: "Properament",
+    },
+    profileAvailability: {
+      requiresAgent: ({ agent }: { agent: string }) => `Requereix ${agent}`,
+      cliNotDetected: ({ cli }: { cli: string }) => `${cli} CLI no detectat`,
+    },
+    cliBanners: {
+      cliNotDetectedTitle: ({ cli }: { cli: string }) =>
+        `${cli} CLI no detectat`,
+      dontShowFor: "No mostris aquest avís per a",
+      thisMachine: "aquesta màquina",
+      anyMachine: "qualsevol màquina",
+      installCommand: ({ command }: { command: string }) =>
+        `Instal·la: ${command} •`,
+      installCliIfAvailable: ({ cli }: { cli: string }) =>
+        `Instal·la el CLI de ${cli} si està disponible •`,
+      viewInstallationGuide: "Veure la guia d’instal·lació →",
+      viewGeminiDocs: "Veure la documentació de Gemini →",
+    },
+    worktree: {
+      creating: ({ name }: { name: string }) => `Creant worktree '${name}'...`,
+      notGitRepo: "Els worktrees requereixen un repositori git",
+      failed: ({ error }: { error: string }) =>
+        `Error en crear el worktree: ${error}`,
+      success: "Worktree creat amb èxit",
+    },
+    resume: {
+      title: "Reprendre sessió",
+      optional: "Reprendre: Opcional",
+      pickerTitle: "Reprendre sessió",
+      subtitle: ({ agent }: { agent: string }) =>
+        `Enganxa un ID de sessió de ${agent} per reprendre`,
+      placeholder: ({ agent }: { agent: string }) =>
+        `Enganxa l’ID de sessió de ${agent}…`,
+      paste: "Enganxa",
+      save: "Desa",
+      clearAndRemove: "Esborra",
+      helpText:
+        "Pots trobar els IDs de sessió a la pantalla d’informació de sessió.",
+      cannotApplyBody:
+        "Aquest ID de represa no es pot aplicar ara mateix. Happier iniciarà una sessió nova.",
+    },
+    codexResumeBanner: {
+      title: "Codex resume",
+      updateAvailable: "Actualització disponible",
+      systemCodexVersion: ({ version }: { version: string }) =>
+        `Codex del sistema: ${version}`,
+      resumeServerVersion: ({ version }: { version: string }) =>
+        `Servidor de Codex resume: ${version}`,
+      notInstalled: "no instal·lat",
+      latestVersion: ({ version }: { version: string }) =>
+        `(més recent ${version})`,
+      registryCheckFailed: ({ error }: { error: string }) =>
+        `Ha fallat la comprovació del registre: ${error}`,
+      install: "Instal·lar",
+      update: "Actualitzar",
+      reinstall: "Reinstal·lar",
+    },
+    codexResumeInstallModal: {
+      installTitle: "Instal·lar Codex resume?",
+      updateTitle: "Actualitzar Codex resume?",
+      reinstallTitle: "Reinstal·lar Codex resume?",
+      description:
+        "Això instal·la un wrapper experimental del servidor MCP de Codex usat només per a operacions de represa.",
+    },
+    codexAcpBanner: {
+      title: "Codex ACP",
+      install: "Instal·lar",
+      update: "Actualitzar",
+      reinstall: "Reinstal·lar",
+    },
+    codexAcpInstallModal: {
+      installTitle: "Instal·lar Codex ACP?",
+      updateTitle: "Actualitzar Codex ACP?",
+      reinstallTitle: "Reinstal·lar Codex ACP?",
+      description:
+        "Això instal·la un adaptador ACP experimental al voltant de Codex que admet carregar/reprendre fils.",
+    },
+  },
+
+  sessionHistory: {
+    // Used by session history screen
+    title: "Historial de sessions",
+    empty: "No s'han trobat sessions",
+    today: "Avui",
+    yesterday: "Ahir",
+    daysAgo: ({ count }: { count: number }) =>
+      "fa " + count + " " + (count === 1 ? "dia" : "dies"),
+    viewAll: "Veure totes les sessions",
+  },
+
+  session: {
+    inputPlaceholder: "Escriu un missatge...",
+    resuming: "Reprenent...",
+    resumeFailed: "No s’ha pogut reprendre la sessió",
+    resumeSupportNoteChecking:
+      "Nota: Happier encara està comprovant si aquesta màquina pot reprendre la sessió del proveïdor.",
+    resumeSupportNoteUnverified:
+      "Nota: Happier no ha pogut verificar la compatibilitat de represa en aquesta màquina.",
+    resumeSupportDetails: {
+      cliNotDetected: "No s’ha detectat la CLI a la màquina.",
+      capabilityProbeFailed: "Ha fallat la comprovació de capacitats.",
+      acpProbeFailed: "Ha fallat la comprovació ACP.",
+      loadSessionFalse: "L’agent no admet carregar sessions.",
+    },
+    inactiveResumable: "Inactiva (es pot reprendre)",
+    inactiveMachineOffline: "Inactiva (màquina fora de línia)",
+    inactiveNotResumable: "Inactiva",
+    inactiveNotResumableNoticeTitle: "Aquesta sessió no es pot reprendre",
+    inactiveNotResumableNoticeBody: ({ provider }: { provider: string }) =>
+      `Aquesta sessió ha finalitzat i no es pot reprendre perquè ${provider} no admet restaurar el seu context aquí. Inicia una sessió nova per continuar.`,
+    machineOfflineNoticeTitle: "La màquina està fora de línia",
+    machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
+      `“${machine}” està fora de línia, així que Happier encara no pot reprendre aquesta sessió. Torna-la a posar en línia per continuar.`,
+    machineOfflineCannotResume:
+      "La màquina està fora de línia. Torna-la a posar en línia per reprendre aquesta sessió.",
+
+    sharing: {
+      title: "Compartició",
+      directSharing: "Compartició directa",
+      addShare: "Comparteix amb un amic",
+      accessLevel: "Nivell d'accés",
+      shareWith: "Comparteix amb",
+      sharedWith: "Compartit amb",
+      noShares: "No compartit",
+      viewOnly: "Només lectura",
+      viewOnlyDescription: "Pot veure la sessió però no pot enviar missatges.",
+      viewOnlyMode: "Només lectura (sessió compartida)",
+      noEditPermission: "Tens accés de només lectura a aquesta sessió.",
+      canEdit: "Pot editar",
+      canEditDescription: "Pot enviar missatges.",
+      canManage: "Pot gestionar",
+      canManageDescription: "Pot gestionar la compartició.",
+      manageSharingDenied:
+        "No tens permís per gestionar la compartició d’aquesta sessió.",
+      stopSharing: "Deixa de compartir",
+      recipientMissingKeys:
+        "Aquest usuari encara no ha registrat claus d'encriptació.",
+      permissionApprovals: "Pot aprovar permisos",
+      allowPermissionApprovals: "Permetre l’aprovació de permisos",
+      allowPermissionApprovalsDescription:
+        "Permet a aquest usuari aprovar sol·licituds de permís i executar eines a la teva màquina.",
+      permissionApprovalsDisabledTitle:
+        "L’aprovació de permisos està desactivada",
+      permissionApprovalsDisabledPublic:
+        "Els enllaços públics són de només lectura. No es poden aprovar permisos.",
+      permissionApprovalsDisabledReadOnly:
+        "Tens accés de només lectura a aquesta sessió.",
+      permissionApprovalsDisabledNotGranted:
+        "El propietari no t’ha permès aprovar permisos per a aquesta sessió.",
+      publicReadOnlyTitle: "Enllaç públic (només lectura)",
+      publicReadOnlyBody:
+        "Aquesta sessió es comparteix mitjançant un enllaç públic. Pots veure missatges i sortides d’eines, però no pots interactuar ni aprovar permisos.",
+
+      publicLink: "Enllaç públic",
+      publicLinkActive: "L'enllaç públic està actiu",
+      publicLinkDescription:
+        "Crea un enllaç perquè qualsevol pugui veure aquesta sessió.",
+      createPublicLink: "Crea un enllaç públic",
+      regeneratePublicLink: "Regenera l'enllaç públic",
+      deletePublicLink: "Suprimeix l'enllaç públic",
+      linkToken: "Token de l'enllaç",
+      tokenNotRecoverable: "Token no disponible",
+      tokenNotRecoverableDescription:
+        "Per seguretat, els tokens d'enllaç públic es desen com a hash i no es poden recuperar. Regenera l'enllaç per crear un token nou.",
+
+      expiresIn: "Caduca en",
+      expiresOn: "Caduca el",
+      days7: "7 dies",
+      days30: "30 dies",
+      never: "Mai",
+
+      maxUsesLabel: "Ús màxim",
+      unlimited: "Il·limitat",
+      uses10: "10 usos",
+      uses50: "50 usos",
+      usageCount: "Comptador d'usos",
+      usageCountWithMax: ({ used, max }: { used: number; max: number }) =>
+        `${used}/${max} usos`,
+      usageCountUnlimited: ({ used }: { used: number }) => `${used} usos`,
+
+      requireConsent: "Requereix consentiment",
+      requireConsentDescription:
+        "Demana consentiment abans de registrar l'accés.",
+      consentRequired: "Consentiment requerit",
+      consentDescription:
+        "Aquest enllaç requereix el teu consentiment per registrar la teva IP i agent d'usuari.",
+      acceptAndView: "Accepta i visualitza",
+      sharedBy: ({ name }: { name: string }) => `Compartit per ${name}`,
+
+      shareNotFound: "L'enllaç de compartició no existeix o ha caducat",
+      failedToDecrypt: "No s’ha pogut desxifrar la sessió",
+      noMessages: "Encara no hi ha missatges",
+      session: "Sessió",
+    },
+  },
+
+  commandPalette: {
+    placeholder: "Escriu una comanda o cerca...",
+    noCommandsFound: "No s'han trobat comandes",
+  },
+
+  commandView: {
+    completedWithNoOutput: "[Ordre completada sense sortida]",
+  },
+
+  voiceAssistant: {
+    connecting: "Connectant...",
+    active: "Assistent de veu actiu",
+    connectionError: "Error de connexió",
+    label: "Assistent de veu",
+    tapToEnd: "Toca per acabar",
+  },
+
+  server: {
+    // Used by Server Configuration screen (app/(app)/server.tsx)
+    serverConfiguration: "Configuració del servidor",
+    enterServerUrl: "Introdueix una URL del servidor",
+    notValidHappyServer: "No és un servidor Happier vàlid",
+    changeServer: "Canvia el servidor",
+    continueWithServer: "Continuar amb aquest servidor?",
+    resetToDefault: "Reinicia per defecte",
+    resetServerDefault: "Reiniciar el servidor per defecte?",
+    validating: "Validant...",
+    validatingServer: "Validant el servidor...",
+    serverReturnedError: "El servidor ha retornat un error",
+    failedToConnectToServer: "Ha fallat la connexió amb el servidor",
+    currentlyUsingCustomServer:
+      "Actualment utilitzant un servidor personalitzat",
+    customServerUrlLabel: "URL del servidor personalitzat",
+    advancedFeatureFooter:
+      "Aquesta és una funció avançada. Només canvia el servidor si saps el que fas. Hauràs de tancar la sessió i tornar-la a iniciar després de canviar els servidors.",
+    useThisServer: "Utilitza aquest servidor",
+    autoConfigHint:
+      "Si t’allotges tu mateix: configura primer el servidor, després inicia la sessió (o crea un compte) i, finalment, connecta el teu terminal.",
+    renameServer: "Rename server",
+    renameServerPrompt: "Enter a new name for this server.",
+    renameServerGroup: "Rename server group",
+    renameServerGroupPrompt: "Enter a new name for this server group.",
+    serverNamePlaceholder: "Server name",
+    cannotRenameCloud: "You can’t rename the cloud server.",
+    removeServer: "Remove server",
+    removeServerConfirm: ({ name }: { name: string }) =>
+      `Remove "${name}" from saved servers?`,
+    removeServerGroup: "Remove server group",
+    removeServerGroupConfirm: ({ name }: { name: string }) =>
+      `Remove "${name}" from saved server groups?`,
+    cannotRemoveCloud: "You can’t remove the cloud server.",
+    signOutThisServer: "Also sign out from this server?",
+    signOutThisServerPrompt:
+      "Stored credentials were found for this server on this device.",
+    savedServersTitle: "Saved servers",
+    signedIn: "Signed in",
+    signedOut: "Signed out",
+    authStatusUnknown: "Auth status unknown",
+    switchToServer: "Switch to this server",
+    active: "Active",
+    default: "Default",
+    addServerTitle: "Add server",
+    switchForThisTab: "Switch for this tab",
+    makeDefaultOnDevice: "Make default on this device",
+    serverNameLabel: "Server name",
+    addAndUse: "Add and use",
+    addTargetsTitle: "Add",
+    addServerSubtitle: "Add a new server and switch to it",
+    addServerGroupTitle: "Add server group",
+    addServerGroupSubtitle: "Create a reusable group of servers",
+    serverGroupNameLabel: "Group name",
+    serverGroupNamePlaceholder: "My server group",
+    serverGroupServersLabel: "Servers",
+    saveServerGroup: "Save group",
+    serverGroupMustHaveServer: "A server group must include at least one server.",
+  },
+
+  sessionInfo: {
+    // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
+    killSession: "Finalitza la sessió",
+    killSessionConfirm: "Segur que vols finalitzar aquesta sessió?",
+    archiveSession: "Arxiva la sessió",
+    archiveSessionConfirm: "Segur que vols arxivar aquesta sessió?",
+    happySessionIdCopied: "ID de la sessió de Happier copiat al porta-retalls",
+    failedToCopySessionId: "Ha fallat copiar l'ID de la sessió de Happier",
+    happySessionId: "ID de la sessió de Happier",
+    claudeCodeSessionId: "ID de la sessió de Claude Code",
+    claudeCodeSessionIdCopied:
+      "ID de la sessió de Claude Code copiat al porta-retalls",
+    aiProfile: "Perfil d'IA",
+    aiProvider: "Proveïdor d'IA",
+    failedToCopyClaudeCodeSessionId:
+      "Ha fallat copiar l'ID de la sessió de Claude Code",
+    codexSessionId: "ID de la sessió de Codex",
+    codexSessionIdCopied: "ID de la sessió de Codex copiat al porta-retalls",
+    failedToCopyCodexSessionId: "Ha fallat copiar l'ID de la sessió de Codex",
+    opencodeSessionId: "ID de la sessió d'OpenCode",
+    opencodeSessionIdCopied:
+      "ID de la sessió d'OpenCode copiat al porta-retalls",
+    auggieSessionId: "ID de la sessió d'Auggie",
+    auggieSessionIdCopied: "ID de la sessió d'Auggie copiat al porta-retalls",
+    geminiSessionId: "ID de la sessió de Gemini",
+    geminiSessionIdCopied: "ID de la sessió de Gemini copiat al porta-retalls",
+    qwenSessionId: "ID de la sessió de Qwen Code",
+    qwenSessionIdCopied: "ID de la sessió de Qwen Code copiat al porta-retalls",
+    kimiSessionId: "ID de la sessió de Kimi",
+    kimiSessionIdCopied: "ID de la sessió de Kimi copiat al porta-retalls",
+    kiloSessionId: "ID de la sessió de Kilo",
+    kiloSessionIdCopied: "ID de la sessió de Kilo copiat al porta-retalls",
+    piSessionId: "ID de la sessió de Pi",
+    piSessionIdCopied: "ID de la sessió de Pi copiat al porta-retalls",
+    metadataCopied: "Metadades copiades al porta-retalls",
+    failedToCopyMetadata: "Ha fallat copiar les metadades",
+    failedToKillSession: "Ha fallat finalitzar la sessió",
+    failedToArchiveSession: "Ha fallat arxivar la sessió",
+    connectionStatus: "Estat de la connexió",
+    created: "Creat",
+    lastUpdated: "Última actualització",
+    sequence: "Seqüència",
+    quickActions: "Accions ràpides",
+    copyResumeCommand: "Copia l’ordre de reprendre",
+    viewMachine: "Veure la màquina",
+    viewMachineSubtitle: "Veure detalls de la màquina i sessions",
+    killSessionSubtitle: "Finalitzar immediatament la sessió",
+    archiveSessionSubtitle: "Arxiva aquesta sessió i atura-la",
+    metadata: "Metadades",
+    host: "Host",
+    path: "Camí",
+    operatingSystem: "Sistema operatiu",
+    processId: "ID del procés",
+    happyHome: "Directori de Happier",
+    attachFromTerminal: "Adjunta des del terminal",
+    tmuxTarget: "Destí de tmux",
+    tmuxFallback: "Fallback de tmux",
+    copyMetadata: "Copia les metadades",
+    agentState: "Estat de l'agent",
+    rawJsonDevMode: "JSON en brut (mode desenvolupador)",
+    sessionStatus: "Estat de la sessió",
+    fullSessionObject: "Objecte complet de la sessió",
+    controlledByUser: "Controlat per l'usuari",
+    pendingRequests: "Sol·licituds pendents",
+    activity: "Activitat",
+    thinking: "Pensant",
+    thinkingSince: "Pensant des de",
+    thinkingLevel: "Nivell de pensament",
+    cliVersion: "Versió del CLI",
+    cliVersionOutdated: "Actualització del CLI requerida",
+    cliVersionOutdatedMessage: ({
+      currentVersion,
+      requiredVersion,
+    }: {
+      currentVersion: string;
+      requiredVersion: string;
+    }) =>
+      `Versió ${currentVersion} instal·lada. Actualitzeu a ${requiredVersion} o posterior`,
+    updateCliInstructions:
+      "Si us plau executeu npm install -g @happier-dev/cli@latest",
+    deleteSession: "Elimina la sessió",
+    deleteSessionSubtitle: "Elimina permanentment aquesta sessió",
+    deleteSessionConfirm: "Eliminar la sessió permanentment?",
+    deleteSessionWarning:
+      "Aquesta acció no es pot desfer. Tots els missatges i dades associats amb aquesta sessió s'eliminaran permanentment.",
+    failedToDeleteSession: "Error en eliminar la sessió",
+    sessionDeleted: "Sessió eliminada amb èxit",
+    manageSharing: "Gestiona l'accés",
+    manageSharingSubtitle:
+      "Comparteix aquesta sessió amb amics o crea un enllaç públic",
+    renameSession: "Canvia el nom de la sessió",
+    renameSessionSubtitle: "Canvia el nom de visualització d'aquesta sessió",
+    renameSessionPlaceholder: "Introduïu el nom de la sessió...",
+    failedToRenameSession: "Error en canviar el nom de la sessió",
+    sessionRenamed: "S'ha canviat el nom de la sessió correctament",
+  },
+
+  components: {
+    emptyMainScreen: {
+      // Used by EmptyMainScreen component
+      readyToCode: "Llest per programar?",
+      installCli: "Instal·la el Happier CLI",
+      runIt: "Executa'l",
+      scanQrCode: "Escaneja el codi QR",
+      openCamera: "Obre la càmera",
+      installCommand: "$ npm i -g @happier-dev/cli",
+      runCommand: "$ happier",
+    },
+    emptyMessages: {
+      noMessagesYet: "Encara no hi ha missatges",
+      created: ({ time }: { time: string }) => `Creat ${time}`,
+    },
+    emptySessionsTablet: {
+      noActiveSessions: "No hi ha sessions actives",
+      startNewSessionDescription:
+        "Inicia una sessió nova a qualsevol de les teves màquines connectades.",
+      startNewSessionButton: "Inicia una sessió nova",
+      openTerminalToStart:
+        "Obre un nou terminal a l'ordinador per iniciar una sessió.",
+    },
+  },
+
+  zen: {
+    title: "Zen",
+    add: {
+      placeholder: "Què s’ha de fer?",
+    },
+    home: {
+      noTasksYet: "Encara no hi ha tasques. Toca + per afegir-ne una.",
+    },
+    view: {
+      workOnTask: "Treballar en la tasca",
+      clarify: "Aclarir",
+      delete: "Suprimeix",
+      linkedSessions: "Sessions enllaçades",
+      tapTaskTextToEdit: "Toca el text de la tasca per editar",
+    },
+  },
+
+  agentInput: {
+    envVars: {
+      title: "Variables d'entorn",
+      titleWithCount: ({ count }: { count: number }) =>
+        `Variables d'entorn (${count})`,
+    },
+    resumeChip: {
+      withId: ({ title, id }: { title: string; id: string }) =>
+        `${title}: ${id}`,
+      withIdTruncated: ({
+        title,
+        prefix,
+        suffix,
+      }: {
+        title: string;
+        prefix: string;
+        suffix: string;
+      }) => `${title}: ${prefix}…${suffix}`,
+    },
+    permissionMode: {
+      title: "MODE DE PERMISOS",
+      default: "Per defecte",
+      readOnly: "Només lectura",
+      acceptEdits: "Accepta edicions",
+      safeYolo: "YOLO segur",
+      yolo: "YOLO",
+      plan: "Mode de planificació",
+      bypassPermissions: "Mode Yolo",
+      badgeAccept: "Accepta",
+      badgePlan: "Pla",
+      badgeReadOnly: "Només lectura",
+      badgeSafeYolo: "YOLO segur",
+      badgeYolo: "YOLO",
+      badgeAcceptAllEdits: "Accepta totes les edicions",
+      badgeBypassAllPermissions: "Omet tots els permisos",
+      badgePlanMode: "Mode de planificació",
+    },
+    agent: {
+      claude: "Claude",
+      codex: "Codex",
+      opencode: "OpenCode",
+      gemini: "Gemini",
+      auggie: "Auggie",
+      qwen: "Qwen Code",
+      kimi: "Kimi",
+      kilo: "Kilo",
+      pi: "Pi",
+    },
+    auggieIndexingChip: {
+      on: "Indexing on",
+      off: "Indexing off",
+    },
+    model: {
+      title: "MODEL",
+      configureInCli: "Configura els models a la configuració del CLI",
+    },
+    codexPermissionMode: {
+      title: "MODE DE PERMISOS CODEX",
+      default: "Configuració del CLI",
+      plan: "Mode de planificació",
+      readOnly: "Mode només lectura",
+      safeYolo: "YOLO segur",
+      yolo: "YOLO",
+      badgePlan: "Pla",
+      badgeReadOnly: "Només lectura",
+      badgeSafeYolo: "YOLO segur",
+      badgeYolo: "YOLO",
+    },
+    codexModel: {
+      title: "MODEL CODEX",
+      gpt5CodexLow: "gpt-5-codex baix",
+      gpt5CodexMedium: "gpt-5-codex mitjà",
+      gpt5CodexHigh: "gpt-5-codex alt",
+      gpt5Minimal: "GPT-5 Mínim",
+      gpt5Low: "GPT-5 Baix",
+      gpt5Medium: "GPT-5 Mitjà",
+      gpt5High: "GPT-5 Alt",
+    },
+    geminiPermissionMode: {
+      title: "MODE DE PERMISOS GEMINI",
+      default: "Per defecte",
+      readOnly: "Només lectura",
+      safeYolo: "YOLO segur",
+      yolo: "YOLO",
+      badgeReadOnly: "Només lectura",
+      badgeSafeYolo: "YOLO segur",
+      badgeYolo: "YOLO",
+    },
+    geminiModel: {
+      title: "MODEL GEMINI",
+      gemini25Pro: {
+        label: "Gemini 2.5 Pro",
+        description: "Més capaç",
+      },
+      gemini25Flash: {
+        label: "Gemini 2.5 Flash",
+        description: "Ràpid i eficient",
+      },
+      gemini25FlashLite: {
+        label: "Gemini 2.5 Flash Lite",
+        description: "Més ràpid",
+      },
+    },
+    context: {
+      remaining: ({ percent }: { percent: number }) => `${percent}% restant`,
+    },
+    suggestion: {
+      fileLabel: "FITXER",
+      folderLabel: "CARPETA",
+    },
+    actionMenu: {
+      title: "ACCIONS",
+      files: "Fitxers",
+      stop: "Atura",
+    },
+    noMachinesAvailable: "Sense màquines",
+  },
+
+  machineLauncher: {
+    showLess: "Mostra menys",
+    showAll: ({ count }: { count: number }) => `Mostra tots (${count} camins)`,
+    enterCustomPath: "Introdueix un camí personalitzat",
+    offlineUnableToSpawn: "No es pot crear una nova sessió, fora de línia",
+  },
+
+  sidebar: {
+    sessionsTitle: "Happier",
+  },
+
+  toolView: {
+    open: "Obrir detalls",
+    expand: "Expandir/contraure",
+    input: "Entrada",
+    output: "Sortida",
+  },
+
+  tools: {
+    fullView: {
+      description: "Descripció",
+      inputParams: "Paràmetres d'entrada",
+      output: "Sortida",
+      error: "Error",
+      completed: "Eina completada amb èxit",
+      noOutput: "No s'ha produït cap sortida",
+      running: "L'eina s'està executant...",
+      debug: "Depuració",
+      show: "Mostra",
+      hide: "Amaga",
+      rawJsonDevMode: "JSON en brut (mode desenvolupador)",
+    },
+    taskView: {
+      initializing: "Inicialitzant l'agent...",
+      moreTools: ({ count }: { count: number }) =>
+        `+${count} més ${plural({ count, singular: "eina", plural: "eines" })}`,
+    },
+    multiEdit: {
+      editNumber: ({ index, total }: { index: number; total: number }) =>
+        `Edició ${index} de ${total}`,
+      replaceAll: "Reemplaça tot",
+    },
+    names: {
+      task: "Tasca",
+      terminal: "Terminal",
+      searchFiles: "Cerca fitxers",
+      search: "Cerca",
+      searchContent: "Cerca contingut",
+      listFiles: "Llista fitxers",
+      planProposal: "Proposta de pla",
+      readFile: "Llegeix fitxer",
+      editFile: "Edita fitxer",
+      writeFile: "Escriu fitxer",
+      fetchUrl: "Obté URL",
+      readNotebook: "Llegeix quadern",
+      editNotebook: "Edita quadern",
+      todoList: "Llista de tasques",
+      webSearch: "Cerca web",
+      reasoning: "Raonament",
+      applyChanges: "Actualitza fitxer",
+      viewDiff: "Canvis del fitxer actual",
+      question: "Pregunta",
+      changeTitle: "Canvia el títol",
+    },
+    geminiExecute: {
+      cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
+    },
+    desc: {
+      terminalCmd: ({ cmd }: { cmd: string }) => `Terminal(cmd: ${cmd})`,
+      searchPattern: ({ pattern }: { pattern: string }) =>
+        `Cerca(patró: ${pattern})`,
+      searchPath: ({ basename }: { basename: string }) =>
+        `Cerca(camí: ${basename})`,
+      fetchUrlHost: ({ host }: { host: string }) => `Obté URL(url: ${host})`,
+      editNotebookMode: ({ path, mode }: { path: string; mode: string }) =>
+        `Edita quadern(fitxer: ${path}, mode: ${mode})`,
+      todoListCount: ({ count }: { count: number }) =>
+        `Llista de tasques(quantitat: ${count})`,
+      webSearchQuery: ({ query }: { query: string }) =>
+        `Cerca web(consulta: ${query})`,
+      grepPattern: ({ pattern }: { pattern: string }) =>
+        `grep(patró: ${pattern})`,
+      multiEditEdits: ({ path, count }: { path: string; count: number }) =>
+        `${path} (${count} edicions)`,
+      readingFile: ({ file }: { file: string }) => `Llegint ${file}`,
+      writingFile: ({ file }: { file: string }) => `Escrivint ${file}`,
+      modifyingFile: ({ file }: { file: string }) => `Modificant ${file}`,
+      modifyingFiles: ({ count }: { count: number }) =>
+        `Modificant ${count} fitxers`,
+      modifyingMultipleFiles: ({
+        file,
+        count,
+      }: {
+        file: string;
+        count: number;
+      }) => `${file} i ${count} més`,
+      showingDiff: "Mostrant canvis",
+    },
+    askUserQuestion: {
+      submit: "Envia resposta",
+      multipleQuestions: ({ count }: { count: number }) =>
+        `${count} ${plural({ count, singular: "pregunta", plural: "preguntes" })}`,
+      other: "Altres",
+      otherDescription: "Escriu la teva pròpia resposta",
+      otherPlaceholder: "Escriu la teva resposta...",
+    },
+    exitPlanMode: {
+      approve: "Aprovar el pla",
+      reject: "Rebutjar",
+      requestChanges: "Demanar canvis",
+      requestChangesPlaceholder:
+        "Explica a Claude què vols canviar en aquest pla…",
+      requestChangesSend: "Enviar comentaris",
+      requestChangesEmpty: "Escriu què vols canviar.",
+      requestChangesFailed: "No s'han pogut demanar canvis. Torna-ho a provar.",
+      responded: "Resposta enviada",
+      approvalMessage:
+        "Aprovo aquest pla. Si us plau, continua amb la implementació.",
+      rejectionMessage:
+        "No aprovo aquest pla. Si us plau, revisa’l o pregunta’m quins canvis voldria.",
+    },
+  },
+
+  files: {
+    searchPlaceholder: "Cerca fitxers...",
+    detachedHead: "HEAD separat",
+    summary: ({ staged, unstaged }: { staged: number; unstaged: number }) =>
+      `${staged} preparats • ${unstaged} sense preparar`,
+    repositoryChangedFiles: ({ count }: { count: number }) =>
+      `Repository changed files (${count})`,
+    sessionAttributedChanges: ({ count }: { count: number }) =>
+      `Session-attributed changes (${count})`,
+    otherRepositoryChanges: ({ count }: { count: number }) =>
+      `Other repository changes (${count})`,
+    attributionReliabilityHigh:
+      "Best effort attribution. Repository view remains the source of truth.",
+    attributionReliabilityLimited:
+      "Reliability limited: multiple sessions are active for this repository. Showing direct attribution only.",
+    attributionLegendFull:
+      "direct = from this session operations, inferred = snapshot-based attribution",
+    attributionLegendDirectOnly: "direct = from this session operations",
+    inferredSuppressed: ({ count }: { count: number }) =>
+      `${count} inferred file${count === 1 ? "" : "s"} kept in repository-only changes.`,
+    noSessionAttributedChanges:
+      "No session-attributed changes currently detected.",
+    notRepo: "No és un repositori git",
+    notUnderSourceControl: "Aquest directori no està sota control de versions git",
+    searching: "Cercant fitxers...",
+	    noFilesFound: "No s'han trobat fitxers",
+	    noFilesInProject: "No hi ha fitxers al projecte",
+	    repositoryFolderLoadFailed: "Unable to load folder",
+	    repositoryCollapseAll: "Collapse all",
+	    reviewFilterPlaceholder: "Filter files...",
+	    reviewNoMatches: "No matches",
+	    reviewLargeDiffOneAtATime: "Large diff detected, showing one file at a time.",
+	    reviewDiffRequestFailed: "Unable to load diff",
+	    reviewUnableToLoadDiff: "Unable to load diff",
+	    tryDifferentTerm: "Prova un terme de cerca diferent",
+	    searchResults: ({ count }: { count: number }) =>
+	      `Resultats de la cerca (${count})`,
+    projectRoot: "Arrel del projecte",
+    stagedChanges: ({ count }: { count: number }) =>
+      `Canvis preparats (${count})`,
+    unstagedChanges: ({ count }: { count: number }) =>
+      `Canvis sense preparar (${count})`,
+    // File viewer strings
+    loadingFile: ({ fileName }: { fileName: string }) =>
+      `Carregant ${fileName}...`,
+    binaryFile: "Fitxer binari",
+    cannotDisplayBinary: "No es pot mostrar el contingut del fitxer binari",
+    diff: "Diferències",
+    file: "Fitxer",
+    fileEmpty: "El fitxer està buit",
+    noChanges: "No hi ha canvis a mostrar",
+  },
+
+  settingsSession: {
+    messageSending: {
+      title: "Message sending",
+      footer:
+        "Controls what happens when you send a message while the agent is running.",
+      queueInAgentTitle: "Queue in agent (current)",
+      queueInAgentSubtitle:
+        "Write to transcript immediately; agent processes when ready.",
+      interruptTitle: "Interrupt & send",
+      interruptSubtitle: "Abort current turn, then send immediately.",
+      pendingTitle: "Pending until ready",
+      pendingSubtitle:
+        "Keep messages in a pending queue; agent pulls when ready.",
+      busySteerPolicyTitle: "When the agent is busy (steer-capable)",
+      busySteerPolicyFooter:
+        "If the agent supports in-flight steering, choose whether messages steer immediately or go to Pending first.",
+      busySteerPolicy: {
+        steerImmediatelyTitle: "Steer immediately",
+        steerImmediatelySubtitle:
+          "Send right away and steer the current turn (no interrupt).",
+        queueForReviewTitle: "Queue in Pending",
+        queueForReviewSubtitle:
+          "Put messages into Pending first; send later using “Steer now”.",
+      },
+    },
+    toolRendering: {
+      title: "Tool rendering",
+      footer:
+        "Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior.",
+      defaultToolDetailLevelTitle: "Default tool detail level",
+      localControlDefaultTitle: "Local-control default",
+      showDebugByDefaultTitle: "Show debug by default",
+      showDebugByDefaultSubtitle:
+        "Auto-expand raw tool payloads in the full tool view.",
+    },
+    toolDetailOverrides: {
+      title: "Tool detail overrides",
+      footer:
+        "Override the detail level for specific tools. Overrides apply to the canonical tool name (V2), after legacy normalization.",
+    },
+    defaultPermissions: {
+      title: "Default permissions",
+      footer:
+        "Applies when starting a new session. Profiles can optionally override this.",
+      applyPermissionChangesTitle: "Apply permission changes",
+      applyPermissionChangesImmediateSubtitle:
+        "Apply immediately for running sessions (updates session metadata).",
+      applyPermissionChangesNextPromptSubtitle: "Apply on next message only.",
+    },
+    toolDetailLevel: {
+      titleOnlyTitle: "Title only",
+      titleOnlySubtitle: "Show only the tool name (no body) in the timeline.",
+      summaryTitle: "Summary",
+      summarySubtitle: "Show a compact, safe summary in the timeline.",
+      fullTitle: "Full",
+      fullSubtitle: "Show full details inline in the timeline.",
+      defaultTitle: "Default",
+      defaultSubtitle: "Use the global default.",
+    },
+  },
+  settingsVoice: {
+    // Voice settings screen
+    modeTitle: "Veu",
+    modeDescription:
+      "Configura les funcions de veu. Pots desactivar la veu del tot, utilitzar Happier Voice (requereix subscripció) o utilitzar el teu compte d’ElevenLabs.",
+    mode: {
+      off: "Desactivat",
+      offSubtitle: "Desactiva totes les funcions de veu",
+      happier: "Happier Voice",
+      happierSubtitle: "Utilitza Happier Voice (cal subscripció)",
+      local: "Veu OSS local",
+      localSubtitle:
+        "Fes servir endpoints STT/TTS locals compatibles amb OpenAI",
+      byo: "Fes servir el meu ElevenLabs",
+      byoSubtitle: "Fes servir la teva clau API i l’agent d’ElevenLabs",
+    },
+    byo: {
+      title: "Fes servir el meu ElevenLabs",
+      configured:
+        "Configurat. L’ús de veu es facturarà al teu compte d’ElevenLabs.",
+      notConfigured:
+        'Set your ElevenLabs API key, then tap \"Create Happier Agent\" to auto-provision (it will fill the Agent ID).',
+      createAccount: "Crea un compte d'ElevenLabs",
+      createAccountSubtitle:
+        "Registra't (o inicia sessió) abans de crear una clau d'API",
+      openApiKeys: "Open ElevenLabs API keys",
+      openApiKeysSubtitle: "ElevenLabs → Developers → API Keys → Create API key",
+      apiKeyHelp: "How to create an API key",
+      apiKeyHelpSubtitle:
+        "Step-by-step help for creating and copying your ElevenLabs API key",
+      apiKeyHelpDialogTitle: "Create an ElevenLabs API key",
+      apiKeyHelpDialogBody:
+        "Open ElevenLabs → Developers → API Keys → Create API key → Copy the key.",
+      autoprovCreate: "Crea un agent Happier",
+      autoprovCreateSubtitle:
+        "Crea i configura un agent Happier al teu compte d’ElevenLabs amb la teva clau API",
+      autoprovUpdate: "Actualitza l’agent",
+      autoprovUpdateSubtitle:
+        "Actualitza l’agent al darrer template de Happier",
+      autoprovCreated: ({ agentId }: { agentId: string }) =>
+        `Agent creat: ${agentId}`,
+      autoprovUpdated: "Agent actualitzat",
+      autoprovFailed:
+        "No s’ha pogut crear/actualitzar l’agent. Torna-ho a provar.",
+      agentId: "ID de l’agent",
+      agentIdSet: "Establert",
+      agentIdNotSet: "No establert",
+      agentIdTitle: "ID de l’agent d’ElevenLabs",
+      agentIdDescription:
+        'If you used \"Create Happier Agent\", this is filled automatically. Otherwise copy the Agent ID from ElevenLabs.',
+      agentIdPlaceholder: "agent_...",
+      apiKey: "Clau API",
+      apiKeySet: "Establerta",
+      apiKeyNotSet: "No establerta",
+      apiKeyTitle: "Clau API d’ElevenLabs",
+      apiKeyDescription:
+        "Create an API key in ElevenLabs → Developers → API Keys. Paste it here (stored encrypted on-device).",
+      apiKeyPlaceholder: "xi-api-key",
+      apiKeySaveFailed: "No s’ha pogut desar la clau API. Torna-ho a provar.",
+      disconnect: "Desconnectar",
+      disconnectSubtitle:
+        "Elimina les credencials d’ElevenLabs desades en aquest dispositiu",
+      disconnectTitle: "Desconnectar ElevenLabs",
+      disconnectDescription:
+        "Això eliminarà la teva clau API i l’ID de l’agent d’ElevenLabs desats en aquest dispositiu.",
+      disconnectConfirm: "Desconnectar",
+    },
+    local: {
+      title: "Veu OSS local",
+      footer:
+        "Configura endpoints compatibles amb OpenAI per STT (speech-to-text) i TTS (text-to-speech).",
+      localhostWarning:
+        'Nota: "localhost" i "127.0.0.1" normalment no funcionen al telèfon. Usa la IP LAN del teu ordinador o un túnel.',
+      notSet: "No establert",
+      apiKeySet: "Establerta",
+      apiKeyNotSet: "No establerta",
+      baseUrlPlaceholder: "http://192.168.1.10:8000/v1",
+      apiKeyPlaceholder: "Opcional",
+      apiKeySaveFailed: "No s’ha pogut desar la clau API. Torna-ho a provar.",
+      conversationMode: "Mode de conversa",
+      conversationModeSubtitle:
+        "Directe a la sessió o mediador amb commit explícit",
+      mediatorBackend: "Backend del mediador",
+      mediatorBackendSubtitle:
+        "Daemon (fa servir el backend de Happier) o OpenAI-compatible HTTP",
+      mediatorBackendDaemon: "Daemon",
+      mediatorBackendOpenAi: "OpenAI-compatible HTTP",
+      mediatorAgentSource: "Font de l’agent del mediador",
+      mediatorAgentSourceSubtitle:
+        "Usa el backend de la sessió o força un agent específic",
+      mediatorAgentSourceSession: "Backend de la sessió",
+      mediatorAgentSourceAgent: "Agent específic",
+      mediatorAgentId: "Agent del mediador",
+      mediatorAgentIdSubtitle:
+        "Quin backend d’agent usar per al mediador (quan no s’usa la sessió)",
+      mediatorPermissionPolicy: "Permisos del mediador",
+      mediatorPermissionPolicySubtitle:
+        "Restringeix l’ús d’eines durant la mediació",
+      mediatorPermissionReadOnly: "Només lectura",
+      mediatorPermissionNoTools: "Sense eines",
+      mediatorVerbosity: "Verbositats del mediador",
+      mediatorVerbositySubtitle: "Com de detallat ha de ser el mediador",
+      mediatorVerbosityShort: "Curt",
+      mediatorVerbosityBalanced: "Equilibrat",
+      mediatorIdleTtl: "TTL d’inactivitat del mediador",
+      mediatorIdleTtlSubtitle:
+        "Atura automàticament després d’inactivitat (60–3600s)",
+      mediatorIdleTtlTitle: "TTL d’inactivitat del mediador (segons)",
+      mediatorIdleTtlDescription: "Introdueix un número entre 60 i 3600.",
+      mediatorIdleTtlInvalid: "Introdueix un número entre 60 i 3600.",
+      mediatorChatModelSource: "Origen del model (chat)",
+      mediatorChatModelSourceSubtitle:
+        "Usa el model de la sessió o un model ràpid personalitzat",
+      mediatorChatModelSourceSession: "Model de la sessió",
+      mediatorChatModelSourceCustom: "Model personalitzat",
+      mediatorCommitModelSource: "Origen del model (commit)",
+      mediatorCommitModelSourceSubtitle:
+        "Usa el model de chat, el de la sessió o un model personalitzat",
+      mediatorCommitModelSourceChat: "Model de chat",
+      mediatorCommitModelSourceSession: "Model de la sessió",
+      mediatorCommitModelSourceCustom: "Model personalitzat",
+      chatBaseUrl: "Chat Base URL",
+      chatBaseUrlTitle: "Chat Base URL",
+      chatBaseUrlDescription:
+        "URL base per l’endpoint de chat completion compatible amb OpenAI (normalment acaba en /v1).",
+      chatApiKey: "Clau API Chat",
+      chatApiKeyTitle: "Clau API Chat",
+      chatApiKeyDescription:
+        "Clau API opcional per al servidor de chat (desada xifrada). Deixa-ho en blanc per esborrar.",
+      chatModel: "Model de chat",
+      chatModelSubtitle: "Model ràpid per a la conversa de veu",
+      chatModelTitle: "Model de chat",
+      chatModelDescription:
+        "Nom del model a enviar al servidor de chat (camp compatible amb OpenAI).",
+      modelCustomTitle: "Personalitzat…",
+      modelCustomSubtitle: "Introdueix un ID de model",
+      commitModel: "Model de commit",
+      commitModelSubtitle: "Model per generar el missatge final d’instruccions",
+      commitModelTitle: "Model de commit",
+      commitModelDescription:
+        "Nom del model a usar en generar el missatge final.",
+      chatTemperature: "Temperatura del chat",
+      chatTemperatureSubtitle: "Controla l’aleatorietat (0–2)",
+      chatTemperatureTitle: "Temperatura del chat",
+      chatTemperatureDescription: "Introdueix un número entre 0 i 2.",
+      chatTemperatureInvalid: "Introdueix un número entre 0 i 2.",
+      chatMaxTokens: "Màx. tokens (chat)",
+      chatMaxTokensSubtitle: "Limita la longitud (en blanc = per defecte)",
+      chatMaxTokensTitle: "Màx. tokens (chat)",
+      chatMaxTokensDescription:
+        "Introdueix un enter positiu o deixa-ho en blanc per defecte.",
+      chatMaxTokensPlaceholder: "En blanc = per defecte",
+      chatMaxTokensUnlimited: "Per defecte",
+      chatMaxTokensInvalid: "Introdueix un número positiu o deixa-ho en blanc.",
+      sttBaseUrl: "STT Base URL",
+      sttBaseUrlTitle: "STT Base URL",
+      sttBaseUrlDescription:
+        "URL base per l’endpoint de transcripció compatible amb OpenAI (normalment acaba en /v1).",
+      sttApiKey: "Clau API STT",
+      sttApiKeyTitle: "Clau API STT",
+      sttApiKeyDescription:
+        "Clau API opcional per al servidor STT (desada xifrada). Deixa-ho en blanc per esborrar.",
+      sttModel: "Model STT",
+      sttModelSubtitle:
+        "Nom del model enviat a les sol·licituds de transcripció",
+      sttModelTitle: "Model STT",
+      sttModelDescription:
+        "Nom del model a enviar al servidor STT (camp compatible amb OpenAI).",
+      deviceStt: "Device STT (experimental)",
+      deviceSttSubtitle:
+        "Use on-device speech recognition instead of an OpenAI-compatible endpoint",
+      ttsBaseUrl: "TTS Base URL",
+      ttsBaseUrlTitle: "TTS Base URL",
+      ttsBaseUrlDescription:
+        "URL base per l’endpoint de veu compatible amb OpenAI (normalment acaba en /v1).",
+      ttsApiKey: "Clau API TTS",
+      ttsApiKeyTitle: "Clau API TTS",
+      ttsApiKeyDescription:
+        "Clau API opcional per al servidor TTS (desada xifrada). Deixa-ho en blanc per esborrar.",
+      ttsModel: "Model TTS",
+      ttsModelSubtitle: "Nom del model enviat a les sol·licituds de veu",
+      ttsModelTitle: "Model TTS",
+      ttsModelDescription:
+        "Nom del model a enviar al servidor TTS (camp compatible amb OpenAI).",
+      ttsVoice: "Veu TTS",
+      ttsVoiceSubtitle: "Nom/ID de la veu enviat a les sol·licituds de veu",
+      ttsVoiceTitle: "Veu TTS",
+      ttsVoiceDescription:
+        "Nom/ID de la veu a enviar al servidor TTS (camp compatible amb OpenAI).",
+      ttsFormat: "Format TTS",
+      ttsFormatSubtitle: "Format d’àudio retornat pel TTS",
+      testTts: "Test TTS",
+      testTtsSubtitle:
+        "Play a short sample using your configured local TTS (device TTS or endpoint)",
+      testTtsSample: "Hello from Happier. This is a test of your local TTS.",
+      testTtsMissingBaseUrl: "Set a TTS Base URL first.",
+      testTtsFailed:
+        "TTS test failed. Check your base URL, API key, model, and voice.",
+      deviceTts: "Device TTS (experimental)",
+      deviceTtsSubtitle:
+        "Use on-device speech synthesis instead of an OpenAI-compatible endpoint",
+
+      autoSpeak: "Auto-reprodueix respostes",
+      autoSpeakSubtitle:
+        "Reprodueix la següent resposta de l’assistent després d’enviar el missatge de veu",
+    },
+    privacy: {
+      title: "Privadesa",
+      footer: "Els proveïdors de veu reben el context de sessió seleccionat.",
+      shareSessionSummary: "Comparteix el resum de la sessió",
+      shareSessionSummarySubtitle:
+        "Inclou el resum de la sessió al context de veu",
+      shareRecentMessages: "Comparteix missatges recents",
+      shareRecentMessagesSubtitle: "Inclou missatges recents al context de veu",
+      recentMessagesCount: "Nombre de missatges recents",
+      recentMessagesCountSubtitle: "Quants missatges recents incloure (0–50)",
+      recentMessagesCountTitle: "Nombre de missatges recents",
+      recentMessagesCountDescription: "Introdueix un número entre 0 i 50.",
+      recentMessagesCountInvalid: "Introdueix un número entre 0 i 50.",
+      shareToolNames: "Comparteix noms d’eines",
+      shareToolNamesSubtitle:
+        "Inclou noms/descripcions d’eines (els arguments sempre es redueixen)",
+      sharePermissionRequests: "Comparteix sol·licituds de permisos",
+      sharePermissionRequestsSubtitle:
+        "Reenvia sol·licituds de permisos (els arguments sempre es redueixen)",
+      shareFilePaths: "Comparteix rutes locals",
+      shareFilePathsSubtitle:
+        "Inclou rutes locals al context de veu (no recomanat)",
+    },
+    languageTitle: "Idioma",
+    languageDescription:
+      "Tria el teu idioma preferit per a les interaccions amb l'assistent de veu. Aquesta configuració es sincronitza a tots els teus dispositius.",
+    preferredLanguage: "Idioma preferit",
+    preferredLanguageSubtitle:
+      "Idioma utilitzat per a les respostes de l'assistent de veu",
+    language: {
+      searchPlaceholder: "Cerca idiomes...",
+      title: "Idiomes",
+      footer: ({ count }: { count: number }) =>
+        `${count} ${plural({ count, singular: "idioma", plural: "idiomes" })} disponibles`,
+      autoDetect: "Detecta automàticament",
+    },
+  },
+
+  settingsAccount: {
+    // Account settings screen
+    accountInformation: "Informació del compte",
+    status: "Estat",
+    statusActive: "Actiu",
+    statusNotAuthenticated: "No autenticat",
+    anonymousId: "ID anònim",
+    publicId: "ID públic",
+    notAvailable: "No disponible",
+    linkNewDevice: "Enllaça un nou dispositiu",
+    linkNewDeviceSubtitle: "Escaneja el codi QR per enllaçar el dispositiu",
+    profile: "Perfil",
+    name: "Nom",
+    github: "GitHub",
+    showGitHubOnProfile: "Mostra al perfil",
+    showProviderOnProfile: ({ provider }: { provider: string }) =>
+      `Mostra ${provider} al perfil`,
+    tapToDisconnect: "Toca per desconnectar",
+    server: "Servidor",
+    backup: "Còpia de seguretat",
+    backupDescription:
+      "La teva clau secreta és l'única manera de recuperar el teu compte. Desa-la en un lloc segur com un gestor de contrasenyes.",
+    secretKey: "Clau secreta",
+    tapToReveal: "Toca per revelar",
+    tapToHide: "Toca per ocultar",
+    secretKeyLabel: "CLAU SECRETA (TOCA PER COPIAR)",
+    secretKeyCopied:
+      "Clau secreta copiada al porta-retalls. Desa-la en un lloc segur!",
+    secretKeyCopyFailed: "Ha fallat copiar la clau secreta",
+    privacy: "Privadesa",
+    privacyDescription:
+      "Ajuda a millorar l'aplicació compartint dades d'ús anònimes. No es recopila informació personal.",
+    analytics: "Analítiques",
+    analyticsDisabled: "No es comparteixen dades",
+    analyticsEnabled: "Es comparteixen dades d'ús anònimes",
+    dangerZone: "Zona de perill",
+    logout: "Tanca la sessió",
+    logoutSubtitle: "Tanca la sessió i esborra les dades locals",
+    logoutConfirm:
+      "Estàs segur que vols tancar la sessió? Assegura't d'haver fet una còpia de seguretat de la teva clau secreta!",
+  },
+
+  settingsLanguage: {
+    // Language settings screen
+    title: "Idioma",
+    description:
+      "Tria el teu idioma preferit per a la interfície de l'app. Això se sincronitzarà a tots els teus dispositius.",
+    currentLanguage: "Idioma actual",
+    automatic: "Automàtic",
+    automaticSubtitle: "Detecta des de la configuració del dispositiu",
+    needsRestart: "Idioma canviat",
+    needsRestartMessage:
+      "L'aplicació necessita reiniciar-se per aplicar la nova configuració d'idioma.",
+    restartNow: "Reinicia ara",
+  },
+
+  connectButton: {
+    authenticate: "Autentica el terminal",
+    authenticateWithUrlPaste: "Autentica el terminal amb enganxat d'URL",
+    pasteAuthUrl: "Enganxa l'URL d'autenticació del teu terminal",
+  },
+
+  updateBanner: {
+    updateAvailable: "Actualització disponible",
+    pressToApply: "Prem per aplicar l'actualització",
+    whatsNew: "Novetats",
+    seeLatest: "Mira les últimes actualitzacions i millores",
+    nativeUpdateAvailable: "Actualització de l'aplicació disponible",
+    tapToUpdateAppStore: "Toca per actualitzar a l'App Store",
+    tapToUpdatePlayStore: "Toca per actualitzar a Play Store",
+  },
+
+  changelog: {
+    // Used by the changelog screen
+    version: ({ version }: { version: number }) => `Versió ${version}`,
+    noEntriesAvailable: "No hi ha entrades de registre de canvis disponibles.",
+  },
+
+  terminal: {
+    // Used by terminal connection screens
+    webBrowserRequired: "Es requereix un navegador web",
+    webBrowserRequiredDescription:
+      "Els enllaços de connexió de terminal només es poden obrir en un navegador web per raons de seguretat. Utilitza l'escàner de codi QR o obre aquest enllaç en un ordinador.",
+    processingConnection: "Processant la connexió...",
+    invalidConnectionLink: "Enllaç de connexió no vàlid",
+    invalidConnectionLinkDescription:
+      "L'enllaç de connexió falta o no és vàlid. Comprova l'URL i torna-ho a provar.",
+    connectTerminal: "Connecta el terminal",
+    terminalRequestDescription:
+      "Un terminal està sol·licitant connectar-se al teu compte de Happier Coder. Això permetrà al terminal enviar i rebre missatges de forma segura.",
+    connectionDetails: "Detalls de la connexió",
+    publicKey: "Clau pública",
+    encryption: "Xifratge",
+    endToEndEncrypted: "Xifrat punt a punt",
+    acceptConnection: "Accepta la connexió",
+    connecting: "Connectant...",
+    reject: "Rebutja",
+    security: "Seguretat",
+    securityFooter:
+      "Aquest enllaç de connexió s'ha processat de forma segura al teu navegador i mai s'ha enviat a cap servidor. Les teves dades privades es mantindran segures i només tu pots desxifrar els missatges.",
+    securityFooterDevice:
+      "Aquesta connexió s'ha processat de forma segura al teu dispositiu i mai s'ha enviat a cap servidor. Les teves dades privades es mantindran segures i només tu pots desxifrar els missatges.",
+    clientSideProcessing: "Processament del costat del client",
+    linkProcessedLocally: "Enllaç processat localment al navegador",
+    linkProcessedOnDevice: "Enllaç processat localment al dispositiu",
+    switchServerToConnectTerminal: ({ serverUrl }: { serverUrl: string }) =>
+      `Aquesta connexió és per a ${serverUrl}. Vols canviar de servidor i continuar?`,
+  },
+
+  modals: {
+    // Used across connect flows and settings
+    authenticateTerminal: "Autentica el terminal",
+    pasteUrlFromTerminal: "Enganxa l'URL d'autenticació del teu terminal",
+    deviceLinkedSuccessfully: "Dispositiu enllaçat amb èxit",
+    terminalConnectedSuccessfully: "Terminal connectat amb èxit",
+    pleaseSignInFirst:
+      "Si us plau, inicia la sessió (o crea un compte) primer.",
+    invalidAuthUrl: "URL d'autenticació no vàlida",
+    microphoneAccessRequiredTitle: "Cal accés al micròfon",
+    microphoneAccessRequiredRequestPermission:
+      "Happier necessita accés al micròfon per al xat de veu. Concedeix el permís quan se’t demani.",
+    microphoneAccessRequiredEnableInSettings:
+      "Happier necessita accés al micròfon per al xat de veu. Activa l’accés al micròfon a la configuració del dispositiu.",
+    microphoneAccessRequiredBrowserInstructions:
+      "Permet l’accés al micròfon a la configuració del navegador. Potser hauràs de fer clic a la icona del cadenat a la barra d’adreces i habilitar el permís del micròfon per a aquest lloc.",
+    openSettings: "Obre la configuració",
+    developerMode: "Mode desenvolupador",
+    developerModeEnabled: "Mode desenvolupador activat",
+    developerModeDisabled: "Mode desenvolupador desactivat",
+    disconnectGithub: "Desconnecta GitHub",
+    disconnectGithubConfirm:
+      "En desconnectar, Amics i la compartició entre amics es desactiven fins que tornis a connectar.",
+    disconnectService: ({ service }: { service: string }) =>
+      `Desconnecta ${service}`,
+    disconnectServiceConfirm: ({ service }: { service: string }) =>
+      `Segur que vols desconnectar ${service} del teu compte?`,
+    disconnect: "Desconnecta",
+    failedToConnectTerminal: "Ha fallat connectar el terminal",
+    cameraPermissionsRequiredToConnectTerminal:
+      "Es requereixen permisos de càmera per connectar el terminal",
+    failedToLinkDevice: "Ha fallat enllaçar el dispositiu",
+    cameraPermissionsRequiredToScanQr:
+      "Es requereixen permisos de càmera per escanejar codis QR",
+  },
+
+  navigation: {
+    // Navigation titles and screen headers
+    connectTerminal: "Connecta el terminal",
+    linkNewDevice: "Enllaça un nou dispositiu",
+    restoreWithSecretKey: "Restaura amb clau secreta",
+    whatsNew: "Novetats",
+    friends: "Amics",
+  },
+
+  welcome: {
+    // Main welcome screen for unauthenticated users
+    title: "Client mòbil de Codex i Claude Code",
+    subtitle:
+      "Xifrat punt a punt i el teu compte s'emmagatzema només al teu dispositiu.",
+    createAccount: "Crea un compte",
+    signUpWithProvider: ({ provider }: { provider: string }) =>
+      `Continua amb ${provider}`,
+    linkOrRestoreAccount: "Enllaça o restaura un compte",
+    loginWithMobileApp: "Inicia sessió amb l'aplicació mòbil",
+  },
+
+  review: {
+    // Used by utils/requestReview.ts
+    enjoyingApp: "T'està agradant l'aplicació?",
+    feedbackPrompt: "Ens encantaria conèixer la teva opinió!",
+    yesILoveIt: "Sí, m'encanta!",
+    notReally: "No gaire",
+  },
+
+  items: {
+    // Used by Item component for copy toast
+    copiedToClipboard: ({ label }: { label: string }) =>
+      `${label} copiat al porta-retalls`,
+  },
+
+  machine: {
+    offlineUnableToSpawn:
+      "El llançador està desactivat mentre la màquina està fora de línia",
+    offlineHelp:
+      "• Assegura't que l'ordinador estigui en línia\n• Executa `happier daemon status` per diagnosticar\n• Fas servir l'última versió del CLI? Actualitza amb `npm install -g @happier-dev/cli@latest`",
+    launchNewSessionInDirectory: "Inicia una nova sessió al directori",
+    daemon: "Dimoni",
+    status: "Estat",
+    stopDaemon: "Atura el dimoni",
+    stopDaemonConfirmTitle: "Aturar el dimoni?",
+    stopDaemonConfirmBody:
+      "No podràs iniciar sessions noves en aquesta màquina fins que reiniciïs el dimoni a l’ordinador. Les sessions actuals continuaran actives.",
+    daemonStoppedTitle: "Dimoni aturat",
+    stopDaemonFailed:
+      "No s’ha pogut aturar el dimoni. Pot ser que no estigui en execució.",
+    renameTitle: "Canvia el nom de la màquina",
+    renameDescription:
+      "Dona a aquesta màquina un nom personalitzat. Deixa-ho buit per usar el hostname per defecte.",
+    renamePlaceholder: "Introdueix el nom de la màquina",
+    renamedSuccess: "Màquina reanomenada correctament",
+    renameFailed: "No s’ha pogut reanomenar la màquina",
+    lastKnownPid: "Últim PID conegut",
+    lastKnownHttpPort: "Últim port HTTP conegut",
+    startedAt: "Iniciat a",
+    cliVersion: "Versió del CLI",
+    daemonStateVersion: "Versió de l'estat del dimoni",
+    activeSessions: ({ count }: { count: number }) =>
+      `Sessions actives (${count})`,
+    machineGroup: "Màquina",
+    host: "Host",
+    machineId: "ID de la màquina",
+    username: "Nom d'usuari",
+    homeDirectory: "Directori principal",
+    platform: "Plataforma",
+    architecture: "Arquitectura",
+    lastSeen: "Vist per última vegada",
+    never: "Mai",
+    metadataVersion: "Versió de les metadades",
+    detectedClis: "CLI detectats",
+    detectedCliNotDetected: "No detectat",
+    detectedCliUnknown: "Desconegut",
+    detectedCliNotSupported: "No compatible (actualitza @happier-dev/cli)",
+    untitledSession: "Sessió sense títol",
+    back: "Enrere",
+    notFound: "Màquina no trobada",
+    unknownMachine: "màquina desconeguda",
+    unknownPath: "camí desconegut",
+    tmux: {
+      overrideTitle: "Sobreescriu la configuració global de tmux",
+      overrideEnabledSubtitle:
+        "La configuració personalitzada de tmux s'aplica a les noves sessions d'aquesta màquina.",
+      overrideDisabledSubtitle:
+        "Les noves sessions utilitzen la configuració global de tmux.",
+      notDetectedSubtitle: "tmux no s'ha detectat en aquesta màquina.",
+      notDetectedMessage:
+        "tmux no s'ha detectat en aquesta màquina. Instal·la tmux i actualitza la detecció.",
+    },
+    windows: {
+      title: "Windows",
+      remoteSessionConsoleTitle: "Mostra la consola per a sessions remotes",
+      remoteSessionConsoleVisibleSubtitle:
+        "Les sessions remotes s’obren en una finestra de consola visible en aquesta màquina.",
+      remoteSessionConsoleHiddenSubtitle:
+        "Les sessions remotes s’inicien amagades per evitar finestres que s’obren i es tanquen.",
+      remoteSessionConsoleUpdateFailed:
+        "No s’ha pogut actualitzar la configuració de la consola de sessions a Windows.",
+    },
+  },
+
+  message: {
+    switchedToMode: ({ mode }: { mode: string }) =>
+      `S'ha canviat al mode ${mode}`,
+    discarded: "Descartat",
+    unknownEvent: "Esdeveniment desconegut",
+    usageLimitUntil: ({ time }: { time: string }) =>
+      `Límit d'ús assolit fins a ${time}`,
+    unknownTime: "temps desconegut",
+  },
+
+  chatFooter: {
+    permissionsTerminalOnly:
+      "Els permisos només es mostren al terminal. Reinicia o envia un missatge per controlar des de l'app.",
+    switchToRemote: "Canvia a remot",
+    localModeAvailable: "El mode local està disponible per a aquesta sessió.",
+    localModeUnavailableMachineOffline:
+      "El mode local no està disponible mentre aquesta màquina estigui fora de línia.",
+    localModeUnavailableDaemonStarted:
+      "El mode local no està disponible per a sessions iniciades pel dimoni.",
+    localModeUnavailableNeedsResume:
+      "El mode local requereix suport de represa per a aquest proveïdor.",
+    switchToLocal: "Canvia a local",
+  },
+
+  codex: {
+    // Codex permission dialog buttons
+    permissions: {
+      yesAlwaysAllowCommand: "Sí, permet globalment",
+      yesForSession: "Sí, i no preguntar per aquesta sessió",
+      stopAndExplain: "Atura, i explica què fer",
+    },
+  },
+
+  claude: {
+    // Claude permission dialog buttons
+    permissions: {
+      yesAllowAllEdits: "Sí, permet totes les edicions durant aquesta sessió",
+      yesForTool: "Sí, no tornis a preguntar per aquesta eina",
+      yesForCommandPrefix:
+        "Sí, no tornis a preguntar per aquest prefix d'ordre",
+      yesForSubcommand: "Sí, no tornis a preguntar per aquesta subordre",
+      yesForCommandName: "Sí, no tornis a preguntar per aquesta ordre",
+      noTellClaude: "No, proporciona comentaris",
+    },
+  },
+
+  textSelection: {
+    // Text selection screen
+    selectText: "Seleccionar rang de text",
+    title: "Seleccionar text",
+    noTextProvided: "No s'ha proporcionat text",
+    textNotFound: "Text no trobat o expirat",
+    textCopied: "Text copiat al porta-retalls",
+    failedToCopy: "No s'ha pogut copiar el text al porta-retalls",
+    noTextToCopy: "No hi ha text disponible per copiar",
+    failedToOpen: "No s'ha pogut obrir la selecció de text. Torna-ho a provar.",
+  },
+
+  markdown: {
+    // Markdown copy functionality
+    codeCopied: "Codi copiat",
+    copyFailed: "Error al copiar",
+    mermaidRenderFailed: "Error al renderitzar el diagrama mermaid",
+  },
+
+  artifacts: {
+    title: "Artefactes",
+    countSingular: "1 artefacte",
+    countPlural: ({ count }: { count: number }) => `${count} artefactes`,
+    empty: "Encara no hi ha artefactes",
+    emptyDescription:
+      "Crea el teu primer artefacte per desar i organitzar contingut",
+    new: "Nou artefacte",
+    edit: "Edita artefacte",
+    delete: "Elimina",
+    updateError:
+      "No s'ha pogut actualitzar l'artefacte. Si us plau, torna-ho a provar.",
+    deleteError: "No s'ha pogut eliminar l'artefacte. Torna-ho a provar.",
+    notFound: "Artefacte no trobat",
+    discardChanges: "Descartar els canvis?",
+    discardChangesDescription:
+      "Tens canvis sense desar. Estàs segur que vols descartar-los?",
+    deleteConfirm: "Eliminar artefacte?",
+    deleteConfirmDescription: "Aquest artefacte s'eliminarà permanentment.",
+    noContent: "Sense contingut",
+    untitled: "Sense títol",
+    titlePlaceholder: "Títol de l'artefacte",
+    bodyPlaceholder: "Escriu aquí el contingut...",
+    save: "Desa",
+    saving: "Desant...",
+    loading: "Carregant...",
+    error: "Error en carregar els artefactes",
+    titleLabel: "TÍTOL",
+    bodyLabel: "CONTINGUT",
+    emptyFieldsError: "Si us plau, introdueix un títol o contingut",
+    createError:
+      "No s'ha pogut crear l'artefacte. Si us plau, torna-ho a provar.",
+  },
+
+  friends: {
+    // Friends feature
+    title: "Amics",
+    sharedSessions: "Sessions compartides",
+    noSharedSessions: "Encara no hi ha sessions compartides",
+    manageFriends: "Gestiona els teus amics i connexions",
+    searchTitle: "Buscar amics",
+    pendingRequests: "Sol·licituds d'amistat",
+    myFriends: "Els meus amics",
+    noFriendsYet: "Encara no tens amics",
+    findFriends: "Buscar amics",
+    remove: "Eliminar",
+    pendingRequest: "Pendent",
+    sentOn: ({ date }: { date: string }) => `Enviat el ${date}`,
+    accept: "Acceptar",
+    reject: "Rebutjar",
+    addFriend: "Afegir amic",
+    alreadyFriends: "Ja sou amics",
+    requestPending: "Sol·licitud pendent",
+    searchInstructions: "Introdueix un nom d'usuari per buscar amics",
+    searchPlaceholder: "Introdueix nom d'usuari...",
+    searching: "Buscant...",
+    userNotFound: "Usuari no trobat",
+    noUserFound: "No s'ha trobat cap usuari amb aquest nom",
+    checkUsername: "Si us plau, verifica el nom d'usuari i torna-ho a provar",
+    howToFind: "Com trobar amics",
+    findInstructions:
+      "Cerca amics pel seu nom d'usuari. Depenent del servidor, potser has de connectar un proveïdor o triar un nom d’usuari per fer servir Amics.",
+    requestSent: "Sol·licitud d'amistat enviada!",
+    requestAccepted: "Sol·licitud d'amistat acceptada!",
+    requestRejected: "Sol·licitud d'amistat rebutjada",
+    friendRemoved: "Amic eliminat",
+    confirmRemove: "Eliminar amic",
+    confirmRemoveMessage: "Estàs segur que vols eliminar aquest amic?",
+    cannotAddYourself:
+      "No pots enviar-te una sol·licitud d'amistat a tu mateix",
+    bothMustHaveGithub:
+      "Ambdós usuaris han de tenir connectat el proveïdor requerit per ser amics",
     status: {
-        connected: 'connectat',
-        connecting: 'connectant',
-        disconnected: 'desconnectat',
-        error: 'error',
-        online: 'en línia',
-        offline: 'fora de línia',
-        lastSeen: ({ time }: { time: string }) => `vist per última vegada ${time}`,
-        permissionRequired: 'permís requerit',
-        activeNow: 'Actiu ara',
-        unknown: 'desconegut',
+      none: "No connectat",
+      requested: "Sol·licitud enviada",
+      pending: "Sol·licitud pendent",
+      friend: "Amics",
+      rejected: "Rebutjada",
     },
-
-    time: {
-        justNow: 'ara mateix',
-        minutesAgo: ({ count }: { count: number }) => `fa ${count} minut${count !== 1 ? 's' : ''}`,
-        hoursAgo: ({ count }: { count: number }) => `fa ${count} hora${count !== 1 ? 'es' : ''}`,
+    acceptRequest: "Acceptar sol·licitud",
+    removeFriend: "Eliminar dels amics",
+    removeFriendConfirm: ({ name }: { name: string }) =>
+      `Estàs segur que vols eliminar ${name} dels teus amics?`,
+    requestSentDescription: ({ name }: { name: string }) =>
+      `La teva sol·licitud d\'amistat ha estat enviada a ${name}`,
+    requestFriendship: "Sol·licitar amistat",
+    cancelRequest: "Cancel·lar sol·licitud d'amistat",
+    cancelRequestConfirm: ({ name }: { name: string }) =>
+      `Cancel·lar la teva sol·licitud d\'amistat a ${name}?`,
+    denyRequest: "Rebutjar sol·licitud",
+    nowFriendsWith: ({ name }: { name: string }) => `Ara ets amic de ${name}`,
+    disabled: "Amics està desactivat en aquest servidor.",
+    username: {
+      required: "Tria un nom d’usuari per fer servir Amics.",
+      taken: "Aquest nom d’usuari ja està en ús.",
+      invalid: "Aquest nom d’usuari no és permès.",
+      disabled:
+        "La modalitat d’Amics amb nom d’usuari no està activada en aquest servidor.",
+      preferredNotAvailable:
+        "El teu nom d’usuari preferit no està disponible en aquest servidor. Si us plau, tria’n un altre.",
+      preferredNotAvailableWithLogin: ({ login }: { login: string }) =>
+        `El teu nom d’usuari preferit @${login} no està disponible en aquest servidor. Si us plau, tria’n un altre.`,
     },
-
-    connect: {
-        restoreAccount: 'Restaura el compte',
-        enterSecretKey: 'Introdueix la teva clau secreta',
-        invalidSecretKey: 'Clau secreta no vàlida. Comprova-ho i torna-ho a provar.',
-        enterUrlManually: 'Introdueix l\'URL manualment',
-        openMachine: 'Obrir màquina',
-        terminalUrlPlaceholder: 'happier://terminal?...',
-        restoreQrInstructions: '1. Obre Happier al teu dispositiu mòbil\n2. Ves a Configuració → Compte\n3. Toca "Vincular nou dispositiu"\n4. Escaneja aquest codi QR',
-        restoreWithSecretKeyInstead: 'Restaura amb clau secreta',
-        restoreWithSecretKeyDescription: 'Introdueix la teva clau secreta per recuperar l’accés al teu compte.',
-        lostAccessLink: 'Sense accés?',
-        lostAccessTitle: 'Has perdut l’accés al teu compte?',
-        lostAccessBody:
-            'Si ja no tens cap dispositiu enllaçat a aquest compte i has perdut la clau secreta, pots restablir el compte amb el teu proveïdor d’identitat. Això crea un nou compte de Happier. No es pot recuperar l’historial xifrat anterior.',
-        lostAccessContinue: ({ provider }: { provider: string }) => `Continua amb ${provider}`,
-        lostAccessConfirmTitle: 'Restablir el compte?',
-        lostAccessConfirmBody:
-            'Això crearà un nou compte i tornarà a enllaçar la teva identitat. No es pot recuperar l’historial xifrat anterior.',
-        lostAccessConfirmButton: 'Restablir i continuar',
-        secretKeyPlaceholder: 'XXXXX-XXXXX-XXXXX...',
-        unsupported: {
-            connectTitle: ({ name }: { name: string }) => `Connecta ${name}`,
-            runCommandInTerminal: 'Executa l\'ordre següent al terminal:',
-        },
+    githubGate: {
+      title: "Connecta GitHub per fer servir Amics",
+      body: "Amics fa servir els noms d’usuari de GitHub per trobar i compartir.",
+      connect: "Connecta GitHub",
+      notAvailable: "No disponible?",
+      notConfigured: "GitHub OAuth no està configurat en aquest servidor.",
     },
-
-    settings: {
-        title: 'Configuració',
-        connectedAccounts: 'Comptes connectats',
-        connectAccount: 'Connectar compte',
-        github: 'GitHub',
-        machines: 'Màquines',
-        features: 'Funcions',
-        social: 'Social',
-        account: 'Compte',
-        accountSubtitle: 'Gestiona els detalls del teu compte',
-        appearance: 'Aparença',
-        appearanceSubtitle: 'Personalitza l\'aspecte de l\'aplicació',
-        voiceAssistant: 'Assistent de veu',
-        voiceAssistantSubtitle: 'Configura les preferències d\'interacció per veu',
-        featuresTitle: 'Funcions',
-        featuresSubtitle: 'Activa o desactiva les funcions de l\'aplicació',
-        developer: 'Desenvolupador',
-        developerTools: 'Eines de desenvolupador',
-        about: 'Quant a',
-        aboutFooter: 'Happier Coder és un client mòbil de Codex i Claude Code. Tot està xifrat punt a punt i el teu compte es guarda només al teu dispositiu. No està afiliat amb Anthropic.',
-        whatsNew: 'Novetats',
-        whatsNewSubtitle: 'Mira les últimes actualitzacions i millores',
-        reportIssue: 'Informa d\'un problema',
-        privacyPolicy: 'Política de privadesa',
-        termsOfService: 'Condicions del servei',
-        eula: 'EULA',
-        supportUs: 'Dona\'ns suport',
-        supportUsSubtitlePro: 'Gràcies pel teu suport!',
-        supportUsSubtitle: 'Dona suport al desenvolupament del projecte',
-        scanQrCodeToAuthenticate: 'Escaneja el codi QR per autenticar-te',
-        githubConnected: ({ login }: { login: string }) => `Connectat com a @${login}`,
-        connectGithubAccount: 'Connecta el teu compte de GitHub',
-        claudeAuthSuccess: 'Connexió amb Claude realitzada amb èxit',
-        exchangingTokens: 'Intercanviant tokens...',
-        usage: 'Ús',
-        usageSubtitle: "Veure l'ús de l'API i costos",
-        profiles: 'Perfils',
-        profilesSubtitle: 'Gestiona els perfils d\'entorn i variables',
-        secrets: 'Secrets',
-        secretsSubtitle: 'Gestiona els secrets desats (no es tornaran a mostrar després d’introduir-los)',
-        terminal: 'Terminal',
-        session: 'Sessió',
-        sessionSubtitleTmuxEnabled: 'Tmux activat',
-        sessionSubtitleMessageSendingAndTmux: 'Enviament de missatges i tmux',
-
-        // Dynamic settings messages
-        accountConnected: ({ service }: { service: string }) => `Compte de ${service} connectat`,
-        machineStatus: ({ name, status }: { name: string; status: 'online' | 'offline' }) =>
-            `${name} està ${status === 'online' ? 'en línia' : 'fora de línia'}`,
-        featureToggled: ({ feature, enabled }: { feature: string; enabled: boolean }) =>
-            `${feature} ${enabled ? 'activada' : 'desactivada'}`,
+    providerGate: {
+      title: ({ provider }: { provider: string }) =>
+        `Connecta ${provider} per fer servir Amics`,
+      body: ({ provider }: { provider: string }) =>
+        `Amics fa servir els noms d’usuari de ${provider} per trobar i compartir.`,
+      connect: ({ provider }: { provider: string }) => `Connecta ${provider}`,
+      notAvailable: "No disponible?",
+      notConfigured: ({ provider }: { provider: string }) =>
+        `${provider} OAuth no està configurat en aquest servidor.`,
     },
+  },
 
-    settingsProviders: {
-        title: 'Configuració del proveïdor d’IA',
-        entrySubtitle: 'Configura opcions específiques del proveïdor',
-        footer: 'Configura opcions específiques del proveïdor. Aquests ajustos poden afectar el comportament de la sessió.',
-        providerSubtitle: 'Ajustos específics del proveïdor',
-        stateEnabled: 'Enabled',
-        stateDisabled: 'Disabled',
-        channelStable: 'Stable',
-        channelExperimental: 'Experimental',
-        supported: 'Supported',
-        notSupported: 'Not supported',
-        allowed: 'Allowed',
-        notAllowed: 'Not allowed',
-        notAvailable: 'Not available',
-        enabledTitle: 'Enabled',
-        enabledSubtitle: 'Use this backend in pickers, profiles, and sessions',
-        releaseChannelTitle: 'Release channel',
-        capabilitiesTitle: 'Capabilities',
-        resumeSupportTitle: 'Resume support',
-        sessionModeSupportTitle: 'Session mode support',
-        runtimeModeSwitchingTitle: 'Runtime mode switching',
-        localControlTitle: 'Local control',
-        resumeSupportSupported: 'Supported',
-        resumeSupportSupportedExperimental: 'Supported (experimental)',
-        resumeSupportRuntimeGatedAcpLoadSession: 'Runtime-gated via ACP loadSession',
-        resumeSupportNotSupported: 'Not supported',
-        sessionModeNone: 'No ACP modes',
-        sessionModeAcpPolicyPresets: 'ACP policy presets',
-        sessionModeAcpAgentModes: 'ACP agent modes',
-        runtimeSwitchNone: 'No runtime switch',
-        runtimeSwitchMetadataGating: 'Metadata-gated',
-        runtimeSwitchAcpSetSessionMode: 'ACP setSessionMode',
-        runtimeSwitchProviderNative: 'Provider native',
-        modelsTitle: 'Models',
-        modelSelectionTitle: 'Model selection',
-        freeformModelIdsTitle: 'Freeform model IDs',
-        defaultModelTitle: 'Default model',
-        catalogModelListTitle: 'Catalog model list',
-        catalogModelListEmpty: 'No catalog models available',
-        dynamicModelProbeTitle: 'Dynamic model probing',
-        dynamicModelProbeAuto: 'Auto',
-        dynamicModelProbeStaticOnly: 'Static only',
-        nonAcpApplyScopeTitle: 'Non-ACP model apply scope',
-        nonAcpApplyScopeSpawnOnly: 'Apply on session start',
-        nonAcpApplyScopeNextPrompt: 'Apply on next prompt',
-        acpApplyBehaviorTitle: 'ACP model apply behavior',
-        acpApplyBehaviorSetModel: 'Set model live',
-        acpApplyBehaviorRestartSession: 'Restart session',
-        acpConfigOptionTitle: 'ACP model config option id',
-        cliConnectionTitle: 'CLI & Connection',
-        detectedCliTitle: 'Detected CLI',
-        installSetupTitle: 'Install / setup',
-        installInfoSeeSetupGuide: 'See setup guide',
-        installInfoUseProviderCliInstaller: 'Use the provider CLI installer',
-        setupGuideUrlTitle: 'Setup guide URL',
-        connectedServiceTitle: 'Connected service',
-        notFoundTitle: 'Proveïdor no trobat',
-        notFoundSubtitle: 'Aquest proveïdor no té pantalla de configuració.',
-        noOptionsAvailable: 'No hi ha opcions disponibles',
-        invalidNumber: 'Número no vàlid',
-        invalidJson: 'JSON no vàlid',
+  usage: {
+    // Usage panel strings
+    today: "Avui",
+    last7Days: "Últims 7 dies",
+    last30Days: "Últims 30 dies",
+    totalTokens: "Tokens totals",
+    totalCost: "Cost total",
+    tokens: "Tokens",
+    cost: "Cost",
+    usageOverTime: "Ús al llarg del temps",
+    byModel: "Per model",
+    noData: "No hi ha dades d'ús disponibles",
+  },
+
+  profiles: {
+    title: "Perfils",
+    subtitle: "Gestiona els teus perfils de configuració",
+    sessionUses: ({ profile }: { profile: string }) =>
+      `Aquesta sessió utilitza: ${profile}`,
+    profilesFixedPerSession:
+      "Els perfils són fixos per sessió. Per utilitzar un perfil diferent, inicia una sessió nova.",
+    noProfile: "Cap perfil",
+    noProfileDescription:
+      "Crea un perfil per gestionar la teva configuració d'entorn",
+    addProfile: "Afegeix un perfil",
+    addProfileTitle: "Títol del perfil d'addició",
+    editProfile: "Edita el perfil",
+    profileName: "Nom del perfil",
+    enterName: "Introdueix el nom del perfil",
+    baseURL: "URL base",
+    authToken: "Token d'autenticació",
+    enterToken: "Introdueix el token d'autenticació",
+    model: "Model",
+    defaultModel: "Model per defecte",
+    tmuxSession: "Sessió tmux",
+    enterTmuxSession: "Introdueix el nom de la sessió tmux",
+    tmuxTempDir: "Directori temporal tmux",
+    enterTmuxTempDir: "Introdueix el directori temporal tmux",
+    tmuxUpdateEnvironment: "Actualitza l'entorn tmux",
+    deleteConfirm: ({ name }: { name: string }) =>
+      `Segur que vols eliminar el perfil "${name}"?`,
+    nameRequired: "El nom del perfil és obligatori",
+    builtIn: "Integrat",
+    custom: "Personalitzat",
+    builtInSaveAsHint:
+      "Desar un perfil integrat crea un nou perfil personalitzat.",
+    builtInNames: {
+      anthropic: "Anthropic (Per defecte)",
+      deepseek: "DeepSeek (Raonament)",
+      zai: "Z.AI (GLM-4.6)",
+      codex: "Codex (Default)",
+      openai: "OpenAI (GPT-5)",
+      azureOpenai: "Azure OpenAI",
+      gemini: "Gemini (Default)",
+      geminiApiKey: "Gemini (API key)",
+      geminiVertex: "Gemini (Vertex AI)",
     },
-
-    settingsAppearance: {
-        // Appearance settings screen
-        theme: 'Tema',
-        themeDescription: 'Tria el teu esquema de colors preferit',
-        themeOptions: {
-            adaptive: 'Adaptatiu',
-            light: 'Clar', 
-            dark: 'Fosc',
-        },
-        themeDescriptions: {
-            adaptive: 'Segueix la configuració del sistema',
-            light: 'Usa sempre el tema clar',
-            dark: 'Usa sempre el tema fosc',
-        },
-        display: 'Pantalla',
-        displayDescription: 'Controla la disposició i l\'espaiat',
-        inlineToolCalls: 'Crides d\'eines en línia',
-        inlineToolCallsDescription: 'Mostra les crides d\'eines directament als missatges de xat',
-        expandTodoLists: 'Expandeix les llistes de tasques',
-        expandTodoListsDescription: 'Mostra totes les tasques en lloc de només els canvis',
-        showLineNumbersInDiffs: 'Mostra els números de línia a les diferències',
-        showLineNumbersInDiffsDescription: 'Mostra els números de línia a les diferències de codi',
-        showLineNumbersInToolViews: 'Mostra els números de línia a les vistes d\'eines',
-        showLineNumbersInToolViewsDescription: 'Mostra els números de línia a les diferències de vistes d\'eines',
-        wrapLinesInDiffs: 'Ajusta les línies a les diferències',
-        wrapLinesInDiffsDescription: 'Ajusta les línies llargues en lloc de desplaçament horitzontal a les vistes de diferències',
-        alwaysShowContextSize: 'Mostra sempre la mida del context',
-        alwaysShowContextSizeDescription: 'Mostra l\'ús del context fins i tot quan no estigui prop del límit',
-        agentInputActionBarLayout: 'Barra d’accions d’entrada',
-        agentInputActionBarLayoutDescription: 'Tria com es mostren els xips d’acció sobre el camp d’entrada',
-        agentInputActionBarLayoutOptions: {
-            auto: 'Auto',
-            wrap: 'Ajusta',
-            scroll: 'Desplaçable',
-            collapsed: 'Plegat',
-        },
-        agentInputChipDensity: 'Densitat dels xips d’acció',
-        agentInputChipDensityDescription: 'Tria si els xips d’acció mostren etiquetes o icones',
-        agentInputChipDensityOptions: {
-            auto: 'Auto',
-            labels: 'Etiquetes',
-            icons: 'Només icones',
-        },
-        avatarStyle: 'Estil d\'avatar',
-        avatarStyleDescription: 'Tria l\'aparença de l\'avatar de la sessió',
-        avatarOptions: {
-            pixelated: 'Pixelat',
-            gradient: 'Degradat',
-            brutalist: 'Brutalista',
-        },
-        showFlavorIcons: "Mostrar icones de proveïdors d'IA",
-        showFlavorIconsDescription: "Mostrar icones del proveïdor d'IA als avatars de sessió",
-        compactSessionView: 'Vista compacta de sessions',
-        compactSessionViewDescription: 'Mostra les sessions actives en un disseny més compacte',
+    groups: {
+      favorites: "Preferits",
+      custom: "Els teus perfils",
+      builtIn: "Perfils integrats",
     },
-
-    settingsFeatures: {
-        // Features settings screen
-        experiments: 'Experiments',
-        experimentsDescription: 'Activa funcions experimentals que encara estan en desenvolupament. Aquestes funcions poden ser inestables o canviar sense avís.',
-        experimentalFeatures: 'Funcions experimentals',
-        experimentalFeaturesEnabled: 'Funcions experimentals activades',
-        experimentalFeaturesDisabled: 'Utilitzant només funcions estables',
-        experimentalOptions: 'Opcions experimentals',
-        experimentalOptionsDescription: 'Tria quines funcions experimentals estan activades.',
-        expUsageReporting: 'Informe d’ús',
-        expUsageReportingSubtitle: 'Activa pantalles d’ús i tokens',
-        expScmOperations: 'Operacions de control de versions',
-        expScmOperationsSubtitle: 'Habilita operacions d'escriptura experimentals de control de versions (stage/commit/push/pull)',
-        expShowThinkingMessages: 'Mostra missatges de pensament',
-        expShowThinkingMessagesSubtitle: 'Mostra missatges d’estat/pensament de l’assistent al xat',
-        expSessionType: 'Selector de tipus de sessió',
-        expSessionTypeSubtitle: 'Mostra el selector de tipus de sessió (simple vs worktree)',
-        expZen: 'Zen',
-        expZenSubtitle: 'Activa l’entrada de navegació Zen',
-        expVoiceAuthFlow: 'Flux d’autenticació de veu',
-        expVoiceAuthFlowSubtitle: 'Utilitza el flux autenticat de tokens de veu (amb paywall)',
-            expInboxFriends: 'Safata d’entrada i amics',
-            expInboxFriendsSubtitle: 'Activa la pestanya de Safata d’entrada i les funcions d’amics',
-            webFeatures: 'Funcions web',
-            webFeaturesDescription: 'Funcions disponibles només a la versió web de l\'app.',
-        enterToSend: 'Enter per enviar',
-        enterToSendEnabled: 'Prem Enter per enviar (Maj+Enter per a una nova línia)',
-        enterToSendDisabled: 'Enter insereix una nova línia',
-        commandPalette: 'Paleta de comandes',
-        commandPaletteEnabled: 'Prem ⌘K per obrir',
-        commandPaletteDisabled: 'Accés ràpid a comandes desactivat',
-        markdownCopyV2: 'Còpia de Markdown v2',
-        markdownCopyV2Subtitle: 'Pulsació llarga obre modal de còpia',
-        hideInactiveSessions: 'Amaga les sessions inactives',
-        hideInactiveSessionsSubtitle: 'Mostra només els xats actius a la llista',
-        groupInactiveSessionsByProject: 'Agrupa les sessions inactives per projecte',
-        groupInactiveSessionsByProjectSubtitle: 'Organitza els xats inactius per projecte',
-        environmentBadge: 'Environment badge',
-        environmentBadgeSubtitle: 'Show a small badge next to the Happier title indicating the current app environment',
-        enhancedSessionWizard: 'Assistent de sessió millorat',
-        enhancedSessionWizardEnabled: 'Llançador de sessió amb perfil actiu',
-        enhancedSessionWizardDisabled: 'Usant el llançador de sessió estàndard',
-        profiles: 'Perfils d\'IA',
-        profilesEnabled: 'Selecció de perfils activada',
-        profilesDisabled: 'Selecció de perfils desactivada',
-        pickerSearch: 'Cerca als selectors',
-        pickerSearchSubtitle: 'Mostra un camp de cerca als selectors de màquina i camí',
-        machinePickerSearch: 'Cerca de màquines',
-        machinePickerSearchSubtitle: 'Mostra un camp de cerca als selectors de màquines',
-        pathPickerSearch: 'Cerca de camins',
-        pathPickerSearchSubtitle: 'Mostra un camp de cerca als selectors de camins',
+    actions: {
+      viewEnvironmentVariables: "Variables d'entorn",
+      addToFavorites: "Afegeix als preferits",
+      removeFromFavorites: "Treu dels preferits",
+      editProfile: "Edita el perfil",
+      duplicateProfile: "Duplica el perfil",
+      deleteProfile: "Elimina el perfil",
     },
-
-    errors: {
-        networkError: 'Error de connexió',
-        serverError: 'Error del servidor',
-        unknownError: 'Error desconegut',
-        connectionTimeout: 'S\'ha esgotat el temps de connexió',
-        authenticationFailed: 'L\'autenticació ha fallat',
-        permissionDenied: 'Permís denegat',
-        fileNotFound: 'Fitxer no trobat',
-        invalidFormat: 'Format no vàlid',
-        operationFailed: 'L\'operació ha fallat',
-        tryAgain: 'Torna-ho a provar',
-        contactSupport: 'Contacta amb el suport si el problema persisteix',
-        sessionNotFound: 'Sessió no trobada',
-        voiceSessionFailed: 'Ha fallat l\'inici de la sessió de veu',
-        voiceServiceUnavailable: 'El servei de veu no està disponible temporalment',
-        voiceAlreadyStarting: 'La veu ja s’està iniciant en una altra sessió',
-        voiceMediatorNotActive: 'Primer inicia una conversa amb el mediador i després confirma.',
-        oauthInitializationFailed: 'Ha fallat la inicialització del flux OAuth',
-        tokenStorageFailed: 'Ha fallat l\'emmagatzematge dels tokens d\'autenticació',
-        oauthStateMismatch: 'Ha fallat la validació de seguretat. Si us plau, torna-ho a provar',
-        providerAlreadyLinked: ({ provider }: { provider: string }) =>
-            `${provider} ja està enllaçat a un compte Happier existent. Per iniciar sessió en aquest dispositiu, enllaça’l des d’un dispositiu on ja hagis iniciat sessió.`,
-        tokenExchangeFailed: 'Ha fallat l\'intercanvi del codi d\'autorització',
-        oauthAuthorizationDenied: 'L\'autorització ha estat denegada',
-        webViewLoadFailed: 'Ha fallat la càrrega de la pàgina d\'autenticació',
-        failedToLoadProfile: 'No s\'ha pogut carregar el perfil d\'usuari',
-        userNotFound: 'Usuari no trobat',
-        sessionDeleted: 'La sessió no està disponible',
-        sessionDeletedDescription: 'Pot haver-se suprimit o pot ser que ja no hi tinguis accés.',
-
-        // Error functions with context
-        fieldError: ({ field, reason }: { field: string; reason: string }) =>
-            `${field}: ${reason}`,
-        validationError: ({ field, min, max }: { field: string; min: number; max: number }) =>
-            `${field} ha d'estar entre ${min} i ${max}`,
-        retryIn: ({ seconds }: { seconds: number }) =>
-            `Torna-ho a provar en ${seconds} ${seconds === 1 ? 'segon' : 'segons'}`,
-        errorWithCode: ({ message, code }: { message: string; code: number | string }) =>
-            `${message} (Error ${code})`,
-        disconnectServiceFailed: ({ service }: { service: string }) => 
-            `Ha fallat la desconnexió de ${service}`,
-        connectServiceFailed: ({ service }: { service: string }) =>
-            `No s'ha pogut connectar ${service}. Si us plau, torna-ho a provar.`,
-        failedToLoadFriends: 'No s\'ha pogut carregar la llista d\'amics',
-        failedToAcceptRequest: 'No s\'ha pogut acceptar la sol·licitud d\'amistat',
-        failedToRejectRequest: 'No s\'ha pogut rebutjar la sol·licitud d\'amistat',
-        failedToRemoveFriend: 'No s\'ha pogut eliminar l\'amic',
-        searchFailed: 'La cerca ha fallat. Si us plau, torna-ho a provar.',
-        failedToSendRequest: 'No s\'ha pogut enviar la sol·licitud d\'amistat',
-        failedToResumeSession: 'No s’ha pogut reprendre la sessió',
-        failedToSendMessage: 'No s’ha pogut enviar el missatge',
-        failedToSwitchControl: 'No s’ha pogut canviar el mode de control',
-        cannotShareWithSelf: 'No pots compartir amb tu mateix',
-        canOnlyShareWithFriends: 'Només pots compartir amb amics',
-        shareNotFound: 'Compartició no trobada',
-        publicShareNotFound: 'Enllaç públic no trobat o expirat',
-        consentRequired: 'Es requereix consentiment per a l\'accés',
-        maxUsesReached: 'S\'ha assolit el màxim d\'usos',
-        invalidShareLink: 'Enllaç de compartició no vàlid o caducat',
-            missingPermissionId: 'Falta l’identificador de permís',
-            codexResumeNotInstalledTitle: 'Codex resume no està instal·lat en aquesta màquina',
-            codexResumeNotInstalledMessage:
-                'Per reprendre una conversa de Codex, instal·la el servidor de represa de Codex a la màquina de destinació (Detalls de la màquina → Represa de Codex).',
-        codexAcpNotInstalledTitle: 'Codex ACP no està instal·lat en aquesta màquina',
-        codexAcpNotInstalledMessage:
-            'Per fer servir l’experiment de Codex ACP, instal·la codex-acp a la màquina de destinació (Detalls de la màquina → Codex ACP) o desactiva l’experiment.',
-},
-
-deps: {
-        installNotSupported: 'Actualitza Happier CLI per instal·lar aquesta dependència.',
-        installFailed: 'La instal·lació ha fallat',
-        installed: 'Instal·lat',
-        installLog: ({ path }: { path: string }) => `Registre d'instal·lació: ${path}`,
-        installable: {
-            codexResume: {
-                title: 'Servidor de represa de Codex',
-                installSpecTitle: 'Origen d\'instal·lació de Codex resume',
-            },
-            codexAcp: {
-                title: 'Adaptador ACP de Codex',
-                installSpecTitle: 'Origen d\'instal·lació de Codex ACP',
-            },
-            installSpecDescription: 'Especificació NPM/Git/fitxer passada a `npm install` (experimental). Deixa-ho buit per usar el valor per defecte del dimoni.',
-        },
-        ui: {
-            notAvailable: 'No disponible',
-            notAvailableUpdateCli: 'No disponible (actualitza la CLI)',
-            errorRefresh: 'Error (actualitzar)',
-            installed: 'Instal·lat',
-            installedWithVersion: ({ version }: { version: string }) => `Instal·lat (v${version})`,
-            installedUpdateAvailable: ({ installedVersion, latestVersion }: { installedVersion: string; latestVersion: string }) =>
-                `Instal·lat (v${installedVersion}) — actualització disponible (v${latestVersion})`,
-            notInstalled: 'No instal·lat',
-            latest: 'Darrera',
-            latestSubtitle: ({ version, tag }: { version: string; tag: string }) => `${version} (etiqueta: ${tag})`,
-            registryCheck: 'Comprovació del registre',
-            registryCheckFailed: ({ error }: { error: string }) => `Ha fallat: ${error}`,
-            installSource: 'Origen d\'instal·lació',
-            installSourceDefault: '(per defecte)',
-            installSpecPlaceholder: 'p. ex. file:/ruta/al/paquet o github:propietari/repo#branca',
-            lastInstallLog: 'Últim registre d\'instal·lació',
-            installLogTitle: 'Registre d\'instal·lació',
-        },
+    copySuffix: "(Còpia)",
+    duplicateName: "Ja existeix un perfil amb aquest nom",
+    setupInstructions: {
+      title: "Instruccions de configuració",
+      viewCloudGuide: "Veure la guia oficial de configuració",
     },
-
-    newSession: {
-        // Used by new-session screen and launch flows
-        title: 'Inicia una nova sessió',
-        selectAiProfileTitle: 'Selecciona el perfil d’IA',
-        selectAiProfileDescription: 'Selecciona un perfil d’IA per aplicar variables d’entorn i valors per defecte a la sessió.',
-        changeProfile: 'Canvia el perfil',
-        aiBackendSelectedByProfile: 'El backend d’IA el selecciona el teu perfil. Per canviar-lo, selecciona un perfil diferent.',
-        selectAiBackendTitle: 'Selecciona el backend d’IA',
-        aiBackendLimitedByProfileAndMachineClis: 'Limitat pel perfil seleccionat i els CLI disponibles en aquesta màquina.',
-        aiBackendSelectWhichAiRuns: 'Selecciona quina IA executa la sessió.',
-        aiBackendNotCompatibleWithSelectedProfile: 'No és compatible amb el perfil seleccionat.',
-        aiBackendCliNotDetectedOnMachine: ({ cli }: { cli: string }) => `No s’ha detectat el CLI de ${cli} en aquesta màquina.`,
-        selectMachineTitle: 'Selecciona màquina',
-        selectMachineDescription: 'Tria on s’executa aquesta sessió.',
-        selectPathTitle: 'Selecciona camí',
-        selectWorkingDirectoryTitle: 'Selecciona el directori de treball',
-        selectWorkingDirectoryDescription: 'Tria la carpeta usada per a ordres i context.',
-        selectPermissionModeTitle: 'Selecciona el mode de permisos',
-        selectPermissionModeDescription: 'Controla com d’estrictes són les aprovacions.',
-        selectModelTitle: 'Selecciona el model d’IA',
-        selectModelDescription: 'Tria el model usat per aquesta sessió.',
-        selectSessionTypeTitle: 'Selecciona el tipus de sessió',
-        selectSessionTypeDescription: 'Tria una sessió simple o una lligada a un worktree de Git.',
-        searchPathsPlaceholder: 'Cerca camins...',
-        noMachinesFound: 'No s\'han trobat màquines. Inicia una sessió de Happier al teu ordinador primer.',
-        allMachinesOffline: 'Totes les màquines estan fora de línia',
-        machineDetails: 'Veure detalls de la màquina →',
-        directoryDoesNotExist: 'Directori no trobat',
-        createDirectoryConfirm: ({ directory }: { directory: string }) => `El directori ${directory} no existeix. Vols crear-lo?`,
-        sessionStarted: 'Sessió iniciada',
-        sessionStartedMessage: 'La sessió s\'ha iniciat correctament.',
-        sessionSpawningFailed: 'Ha fallat la creació de la sessió - no s\'ha retornat cap ID de sessió.',
-        failedToStart: 'Ha fallat l\'inici de la sessió. Assegura\'t que el dimoni s\'estigui executant a la màquina de destinació.',
-        sessionTimeout: 'L\'inici de la sessió ha esgotat el temps d\'espera. La màquina pot ser lenta o el dimoni pot no estar responent.',
-        notConnectedToServer: 'No connectat al servidor. Comprova la teva connexió a internet.',
-        startingSession: 'Iniciant la sessió...',
-        startNewSessionInFolder: 'Nova sessió aquí',
-        noMachineSelected: 'Si us plau, selecciona una màquina per iniciar la sessió',
-        noPathSelected: 'Si us plau, selecciona un directori per iniciar la sessió',
-        machinePicker: {
-            searchPlaceholder: 'Cerca màquines...',
-            recentTitle: 'Recents',
-            favoritesTitle: 'Preferits',
-            allTitle: 'Totes',
-            emptyMessage: 'No hi ha màquines disponibles',
-        },
-        pathPicker: {
-            enterPathTitle: 'Introdueix el camí',
-            enterPathPlaceholder: 'Introdueix un camí...',
-            customPathTitle: 'Camí personalitzat',
-            recentTitle: 'Recents',
-            favoritesTitle: 'Preferits',
-            suggestedTitle: 'Suggerits',
-            allTitle: 'Totes',
-            emptyRecent: 'No hi ha camins recents',
-            emptyFavorites: 'No hi ha camins preferits',
-            emptySuggested: 'No hi ha camins suggerits',
-            emptyAll: 'No hi ha camins',
-        },
-        sessionType: {
-            title: 'Tipus de sessió',
-            simple: 'Simple',
-            worktree: 'Worktree (Git)',
-            comingSoon: 'Properament',
-        },
-        profileAvailability: {
-            requiresAgent: ({ agent }: { agent: string }) => `Requereix ${agent}`,
-            cliNotDetected: ({ cli }: { cli: string }) => `${cli} CLI no detectat`,
-        },
-        cliBanners: {
-            cliNotDetectedTitle: ({ cli }: { cli: string }) => `${cli} CLI no detectat`,
-            dontShowFor: 'No mostris aquest avís per a',
-            thisMachine: 'aquesta màquina',
-            anyMachine: 'qualsevol màquina',
-            installCommand: ({ command }: { command: string }) => `Instal·la: ${command} •`,
-            installCliIfAvailable: ({ cli }: { cli: string }) => `Instal·la el CLI de ${cli} si està disponible •`,
-            viewInstallationGuide: 'Veure la guia d’instal·lació →',
-            viewGeminiDocs: 'Veure la documentació de Gemini →',
-        },
-        worktree: {
-            creating: ({ name }: { name: string }) => `Creant worktree '${name}'...`,
-            notGitRepo: 'Els worktrees requereixen un repositori git',
-            failed: ({ error }: { error: string }) => `Error en crear el worktree: ${error}`,
-            success: 'Worktree creat amb èxit',
-        },
-        resume: {
-            title: 'Reprendre sessió',
-            optional: 'Reprendre: Opcional',
-            pickerTitle: 'Reprendre sessió',
-            subtitle: ({ agent }: { agent: string }) => `Enganxa un ID de sessió de ${agent} per reprendre`,
-            placeholder: ({ agent }: { agent: string }) => `Enganxa l’ID de sessió de ${agent}…`,
-            paste: 'Enganxa',
-            save: 'Desa',
-            clearAndRemove: 'Esborra',
-            helpText: 'Pots trobar els IDs de sessió a la pantalla d’informació de sessió.',
-            cannotApplyBody: 'Aquest ID de represa no es pot aplicar ara mateix. Happier iniciarà una sessió nova.',
-        },
-        codexResumeBanner: {
-            title: 'Codex resume',
-            updateAvailable: 'Actualització disponible',
-            systemCodexVersion: ({ version }: { version: string }) => `Codex del sistema: ${version}`,
-            resumeServerVersion: ({ version }: { version: string }) => `Servidor de Codex resume: ${version}`,
-            notInstalled: 'no instal·lat',
-            latestVersion: ({ version }: { version: string }) => `(més recent ${version})`,
-            registryCheckFailed: ({ error }: { error: string }) => `Ha fallat la comprovació del registre: ${error}`,
-            install: 'Instal·lar',
-            update: 'Actualitzar',
-            reinstall: 'Reinstal·lar',
-        },
-        codexResumeInstallModal: {
-            installTitle: 'Instal·lar Codex resume?',
-            updateTitle: 'Actualitzar Codex resume?',
-            reinstallTitle: 'Reinstal·lar Codex resume?',
-            description: 'Això instal·la un wrapper experimental del servidor MCP de Codex usat només per a operacions de represa.',
-        },
-        codexAcpBanner: {
-            title: 'Codex ACP',
-            install: 'Instal·lar',
-            update: 'Actualitzar',
-            reinstall: 'Reinstal·lar',
-        },
-        codexAcpInstallModal: {
-            installTitle: 'Instal·lar Codex ACP?',
-            updateTitle: 'Actualitzar Codex ACP?',
-            reinstallTitle: 'Reinstal·lar Codex ACP?',
-            description: 'Això instal·la un adaptador ACP experimental al voltant de Codex que admet carregar/reprendre fils.',
-        },
+    machineLogin: {
+      title: "Inici de sessió CLI",
+      subtitle:
+        "Aquest perfil depèn d’una memòria cau d’inici de sessió del CLI a la màquina seleccionada.",
+      status: {
+        loggedIn: "Sessió iniciada",
+        notLoggedIn: "Sense sessió iniciada",
+      },
+      claudeCode: {
+        title: "Claude Code",
+        instructions:
+          "Executa `claude` i després escriu `/login` per iniciar sessió.",
+        warning:
+          "Nota: definir `ANTHROPIC_AUTH_TOKEN` substitueix l’inici de sessió del CLI.",
+      },
+      codex: {
+        title: "Codex",
+        instructions: "Executa `codex login` per iniciar sessió.",
+      },
+      geminiCli: {
+        title: "Gemini CLI",
+        instructions: "Executa `gemini auth` per iniciar sessió.",
+      },
     },
-
-    sessionHistory: {
-        // Used by session history screen
-        title: 'Historial de sessions',
-        empty: 'No s\'han trobat sessions',
-        today: 'Avui',
-        yesterday: 'Ahir',
-        daysAgo: ({ count }: { count: number }) => 'fa ' + count + ' ' + (count === 1 ? 'dia' : 'dies'),
-        viewAll: 'Veure totes les sessions',
-    },
-
-    session: {
-        inputPlaceholder: 'Escriu un missatge...',
-        resuming: 'Reprenent...',
-        resumeFailed: 'No s’ha pogut reprendre la sessió',
-        resumeSupportNoteChecking: 'Nota: Happier encara està comprovant si aquesta màquina pot reprendre la sessió del proveïdor.',
-        resumeSupportNoteUnverified: 'Nota: Happier no ha pogut verificar la compatibilitat de represa en aquesta màquina.',
-        resumeSupportDetails: {
-            cliNotDetected: 'No s’ha detectat la CLI a la màquina.',
-            capabilityProbeFailed: 'Ha fallat la comprovació de capacitats.',
-            acpProbeFailed: 'Ha fallat la comprovació ACP.',
-            loadSessionFalse: 'L’agent no admet carregar sessions.',
-        },
-        inactiveResumable: 'Inactiva (es pot reprendre)',
-        inactiveMachineOffline: 'Inactiva (màquina fora de línia)',
-        inactiveNotResumable: 'Inactiva',
-        inactiveNotResumableNoticeTitle: 'Aquesta sessió no es pot reprendre',
-        inactiveNotResumableNoticeBody: ({ provider }: { provider: string }) =>
-            `Aquesta sessió ha finalitzat i no es pot reprendre perquè ${provider} no admet restaurar el seu context aquí. Inicia una sessió nova per continuar.`,
-        machineOfflineNoticeTitle: 'La màquina està fora de línia',
-        machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-            `“${machine}” està fora de línia, així que Happier encara no pot reprendre aquesta sessió. Torna-la a posar en línia per continuar.`,
-        machineOfflineCannotResume: 'La màquina està fora de línia. Torna-la a posar en línia per reprendre aquesta sessió.',
-
-        sharing: {
-            title: 'Compartició',
-            directSharing: 'Compartició directa',
-            addShare: 'Comparteix amb un amic',
-            accessLevel: "Nivell d'accés",
-            shareWith: 'Comparteix amb',
-            sharedWith: 'Compartit amb',
-            noShares: 'No compartit',
-            viewOnly: 'Només lectura',
-            viewOnlyDescription: 'Pot veure la sessió però no pot enviar missatges.',
-            viewOnlyMode: 'Només lectura (sessió compartida)',
-            noEditPermission: 'Tens accés de només lectura a aquesta sessió.',
-            canEdit: 'Pot editar',
-            canEditDescription: 'Pot enviar missatges.',
-            canManage: 'Pot gestionar',
-            canManageDescription: 'Pot gestionar la compartició.',
-            manageSharingDenied: 'No tens permís per gestionar la compartició d’aquesta sessió.',
-            stopSharing: 'Deixa de compartir',
-            recipientMissingKeys: "Aquest usuari encara no ha registrat claus d'encriptació.",
-            permissionApprovals: 'Pot aprovar permisos',
-            allowPermissionApprovals: 'Permetre l’aprovació de permisos',
-            allowPermissionApprovalsDescription: 'Permet a aquest usuari aprovar sol·licituds de permís i executar eines a la teva màquina.',
-            permissionApprovalsDisabledTitle: 'L’aprovació de permisos està desactivada',
-            permissionApprovalsDisabledPublic: 'Els enllaços públics són de només lectura. No es poden aprovar permisos.',
-            permissionApprovalsDisabledReadOnly: 'Tens accés de només lectura a aquesta sessió.',
-            permissionApprovalsDisabledNotGranted: 'El propietari no t’ha permès aprovar permisos per a aquesta sessió.',
-            publicReadOnlyTitle: 'Enllaç públic (només lectura)',
-            publicReadOnlyBody: 'Aquesta sessió es comparteix mitjançant un enllaç públic. Pots veure missatges i sortides d’eines, però no pots interactuar ni aprovar permisos.',
-
-            publicLink: 'Enllaç públic',
-            publicLinkActive: "L'enllaç públic està actiu",
-            publicLinkDescription: 'Crea un enllaç perquè qualsevol pugui veure aquesta sessió.',
-            createPublicLink: 'Crea un enllaç públic',
-            regeneratePublicLink: "Regenera l'enllaç públic",
-            deletePublicLink: "Suprimeix l'enllaç públic",
-            linkToken: "Token de l'enllaç",
-            tokenNotRecoverable: 'Token no disponible',
-            tokenNotRecoverableDescription: "Per seguretat, els tokens d'enllaç públic es desen com a hash i no es poden recuperar. Regenera l'enllaç per crear un token nou.",
-
-            expiresIn: 'Caduca en',
-            expiresOn: 'Caduca el',
-            days7: '7 dies',
-            days30: '30 dies',
-            never: 'Mai',
-
-            maxUsesLabel: 'Ús màxim',
-            unlimited: 'Il·limitat',
-            uses10: '10 usos',
-            uses50: '50 usos',
-            usageCount: "Comptador d'usos",
-            usageCountWithMax: ({ used, max }: { used: number; max: number }) => `${used}/${max} usos`,
-            usageCountUnlimited: ({ used }: { used: number }) => `${used} usos`,
-
-            requireConsent: 'Requereix consentiment',
-            requireConsentDescription: "Demana consentiment abans de registrar l'accés.",
-            consentRequired: 'Consentiment requerit',
-            consentDescription: "Aquest enllaç requereix el teu consentiment per registrar la teva IP i agent d'usuari.",
-            acceptAndView: 'Accepta i visualitza',
-            sharedBy: ({ name }: { name: string }) => `Compartit per ${name}`,
-
-            shareNotFound: "L'enllaç de compartició no existeix o ha caducat",
-            failedToDecrypt: 'No s’ha pogut desxifrar la sessió',
-            noMessages: 'Encara no hi ha missatges',
-            session: 'Sessió',
-        },
-    },
-
-    commandPalette: {
-        placeholder: 'Escriu una comanda o cerca...',
-        noCommandsFound: 'No s\'han trobat comandes',
-    },
-
-    commandView: {
-        completedWithNoOutput: '[Ordre completada sense sortida]',
-    },
-
-    voiceAssistant: {
-        connecting: 'Connectant...',
-        active: 'Assistent de veu actiu',
-        connectionError: 'Error de connexió',
-        label: 'Assistent de veu',
-        tapToEnd: 'Toca per acabar',
-    },
-
-    voiceMediator: {
-        commitChip: 'Confirmar',
-        commitTitle: 'Confirmar a la sessió',
-        commitSend: 'Enviar',
-        commitEdit: 'Editar',
-    },
-
-    server: {
-        // Used by Server Configuration screen (app/(app)/server.tsx)
-        serverConfiguration: 'Configuració del servidor',
-        enterServerUrl: 'Introdueix una URL del servidor',
-        notValidHappyServer: 'No és un servidor Happier vàlid',
-        changeServer: 'Canvia el servidor',
-        continueWithServer: 'Continuar amb aquest servidor?',
-        resetToDefault: 'Reinicia per defecte',
-        resetServerDefault: 'Reiniciar el servidor per defecte?',
-        validating: 'Validant...',
-        validatingServer: 'Validant el servidor...',
-        serverReturnedError: 'El servidor ha retornat un error',
-        failedToConnectToServer: 'Ha fallat la connexió amb el servidor',
-        currentlyUsingCustomServer: 'Actualment utilitzant un servidor personalitzat',
-        customServerUrlLabel: 'URL del servidor personalitzat',
-        advancedFeatureFooter: 'Aquesta és una funció avançada. Només canvia el servidor si saps el que fas. Hauràs de tancar la sessió i tornar-la a iniciar després de canviar els servidors.',
-        useThisServer: 'Utilitza aquest servidor',
-        autoConfigHint: 'Si t’allotges tu mateix: configura primer el servidor, després inicia la sessió (o crea un compte) i, finalment, connecta el teu terminal.',
-        renameServer: 'Rename server',
-        renameServerPrompt: 'Enter a new name for this server.',
-        serverNamePlaceholder: 'Server name',
-        cannotRenameCloud: 'You can’t rename the cloud server.',
-        removeServer: 'Remove server',
-        removeServerConfirm: ({ name }: { name: string }) => `Remove "${name}" from saved servers?`,
-        cannotRemoveCloud: 'You can’t remove the cloud server.',
-        signOutThisServer: 'Also sign out from this server?',
-        signOutThisServerPrompt: 'Stored credentials were found for this server on this device.',
-        savedServersTitle: 'Saved servers',
-        signedIn: 'Signed in',
-        signedOut: 'Signed out',
-        authStatusUnknown: 'Auth status unknown',
-        switchToServer: 'Switch to this server',
-        active: 'Active',
-        addServerTitle: 'Add server',
-        switchForThisTab: 'Switch for this tab',
-        makeDefaultOnDevice: 'Make default on this device',
-        serverNameLabel: 'Server name',
-        addAndUse: 'Add and use',
-    },
-
-    sessionInfo: {
-        // Used by Session Info screen (app/(app)/session/[id]/info.tsx)
-        killSession: 'Finalitza la sessió',
-        killSessionConfirm: 'Segur que vols finalitzar aquesta sessió?',
-        archiveSession: 'Arxiva la sessió',
-        archiveSessionConfirm: 'Segur que vols arxivar aquesta sessió?',
-        happySessionIdCopied: 'ID de la sessió de Happier copiat al porta-retalls',
-        failedToCopySessionId: 'Ha fallat copiar l\'ID de la sessió de Happier',
-        happySessionId: 'ID de la sessió de Happier',
-        claudeCodeSessionId: 'ID de la sessió de Claude Code',
-        claudeCodeSessionIdCopied: 'ID de la sessió de Claude Code copiat al porta-retalls',
-        aiProfile: 'Perfil d\'IA',
-        aiProvider: 'Proveïdor d\'IA',
-        failedToCopyClaudeCodeSessionId: 'Ha fallat copiar l\'ID de la sessió de Claude Code',
-        codexSessionId: 'ID de la sessió de Codex',
-        codexSessionIdCopied: 'ID de la sessió de Codex copiat al porta-retalls',
-        failedToCopyCodexSessionId: 'Ha fallat copiar l\'ID de la sessió de Codex',
-        opencodeSessionId: 'ID de la sessió d\'OpenCode',
-        opencodeSessionIdCopied: 'ID de la sessió d\'OpenCode copiat al porta-retalls',
-        auggieSessionId: 'ID de la sessió d\'Auggie',
-        auggieSessionIdCopied: 'ID de la sessió d\'Auggie copiat al porta-retalls',
-        geminiSessionId: 'ID de la sessió de Gemini',
-        geminiSessionIdCopied: 'ID de la sessió de Gemini copiat al porta-retalls',
-        qwenSessionId: 'ID de la sessió de Qwen Code',
-        qwenSessionIdCopied: 'ID de la sessió de Qwen Code copiat al porta-retalls',
-        kimiSessionId: 'ID de la sessió de Kimi',
-        kimiSessionIdCopied: 'ID de la sessió de Kimi copiat al porta-retalls',
-        kiloSessionId: 'ID de la sessió de Kilo',
-        kiloSessionIdCopied: 'ID de la sessió de Kilo copiat al porta-retalls',
-        piSessionId: 'ID de la sessio de Pi',
-        piSessionIdCopied: 'ID de la sessio de Pi copiat al porta-retalls',
-        metadataCopied: 'Metadades copiades al porta-retalls',
-        failedToCopyMetadata: 'Ha fallat copiar les metadades',
-        failedToKillSession: 'Ha fallat finalitzar la sessió',
-        failedToArchiveSession: 'Ha fallat arxivar la sessió',
-        connectionStatus: 'Estat de la connexió',
-        created: 'Creat',
-        lastUpdated: 'Última actualització',
-        sequence: 'Seqüència',
-        quickActions: 'Accions ràpides',
-        copyResumeCommand: 'Copia l’ordre de reprendre',
-        viewMachine: 'Veure la màquina',
-        viewMachineSubtitle: 'Veure detalls de la màquina i sessions',
-        killSessionSubtitle: 'Finalitzar immediatament la sessió',
-        archiveSessionSubtitle: 'Arxiva aquesta sessió i atura-la',
-        metadata: 'Metadades',
-        host: 'Host',
-        path: 'Camí',
-        operatingSystem: 'Sistema operatiu',
-        processId: 'ID del procés',
-        happyHome: 'Directori de Happier',
-        attachFromTerminal: 'Adjunta des del terminal',
-        tmuxTarget: 'Destí de tmux',
-        tmuxFallback: 'Fallback de tmux',
-        copyMetadata: 'Copia les metadades',
-        agentState: 'Estat de l\'agent',
-        rawJsonDevMode: 'JSON en brut (mode desenvolupador)',
-        sessionStatus: 'Estat de la sessió',
-        fullSessionObject: 'Objecte complet de la sessió',
-        controlledByUser: 'Controlat per l\'usuari',
-        pendingRequests: 'Sol·licituds pendents',
-        activity: 'Activitat',
-        thinking: 'Pensant',
-        thinkingSince: 'Pensant des de',
-        thinkingLevel: 'Nivell de pensament',
-        cliVersion: 'Versió del CLI',
-        cliVersionOutdated: 'Actualització del CLI requerida',
-        cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
-            `Versió ${currentVersion} instal·lada. Actualitzeu a ${requiredVersion} o posterior`,
-        updateCliInstructions: 'Si us plau executeu npm install -g @happier-dev/cli@latest',
-        deleteSession: 'Elimina la sessió',
-        deleteSessionSubtitle: 'Elimina permanentment aquesta sessió',
-        deleteSessionConfirm: 'Eliminar la sessió permanentment?',
-        deleteSessionWarning: 'Aquesta acció no es pot desfer. Tots els missatges i dades associats amb aquesta sessió s\'eliminaran permanentment.',
-        failedToDeleteSession: 'Error en eliminar la sessió',
-        sessionDeleted: 'Sessió eliminada amb èxit',
-        manageSharing: 'Gestiona l\'accés',
-        manageSharingSubtitle: 'Comparteix aquesta sessió amb amics o crea un enllaç públic',
-        renameSession: 'Canvia el nom de la sessió',
-        renameSessionSubtitle: 'Canvia el nom de visualització d\'aquesta sessió',
-        renameSessionPlaceholder: 'Introduïu el nom de la sessió...',
-        failedToRenameSession: 'Error en canviar el nom de la sessió',
-        sessionRenamed: 'S\'ha canviat el nom de la sessió correctament',
-
-    },
-
-    components: {
-        emptyMainScreen: {
-            // Used by EmptyMainScreen component
-            readyToCode: 'Llest per programar?',
-            installCli: 'Instal·la el Happier CLI',
-            runIt: 'Executa\'l',
-            scanQrCode: 'Escaneja el codi QR',
-            openCamera: 'Obre la càmera',
-            installCommand: '$ npm i -g @happier-dev/cli',
-            runCommand: '$ happier',
-        },
-        emptyMessages: {
-            noMessagesYet: 'Encara no hi ha missatges',
-            created: ({ time }: { time: string }) => `Creat ${time}`,
-        },
-        emptySessionsTablet: {
-            noActiveSessions: 'No hi ha sessions actives',
-            startNewSessionDescription: 'Inicia una sessió nova a qualsevol de les teves màquines connectades.',
-            startNewSessionButton: 'Inicia una sessió nova',
-            openTerminalToStart: 'Obre un nou terminal a l\'ordinador per iniciar una sessió.',
-        },
-    },
-
-    zen: {
-        title: 'Zen',
-        add: {
-            placeholder: 'Què s’ha de fer?',
-        },
-        home: {
-            noTasksYet: 'Encara no hi ha tasques. Toca + per afegir-ne una.',
-        },
-        view: {
-            workOnTask: 'Treballar en la tasca',
-            clarify: 'Aclarir',
-            delete: 'Suprimeix',
-            linkedSessions: 'Sessions enllaçades',
-            tapTaskTextToEdit: 'Toca el text de la tasca per editar',
-        },
-    },
-
-    agentInput: {
-        envVars: {
-            title: 'Variables d\'entorn',
-            titleWithCount: ({ count }: { count: number }) => `Variables d'entorn (${count})`,
-        },
-        resumeChip: {
-            withId: ({ title, id }: { title: string; id: string }) => `${title}: ${id}`,
-            withIdTruncated: ({ title, prefix, suffix }: { title: string; prefix: string; suffix: string }) =>
-                `${title}: ${prefix}…${suffix}`,
-        },
-        permissionMode: {
-            title: 'MODE DE PERMISOS',
-            default: 'Per defecte',
-            readOnly: 'Només lectura',
-            acceptEdits: 'Accepta edicions',
-            safeYolo: 'YOLO segur',
-            yolo: 'YOLO',
-            plan: 'Mode de planificació',
-            bypassPermissions: 'Mode Yolo',
-            badgeAccept: 'Accepta',
-            badgePlan: 'Pla',
-            badgeReadOnly: 'Només lectura',
-            badgeSafeYolo: 'YOLO segur',
-            badgeYolo: 'YOLO',
-            badgeAcceptAllEdits: 'Accepta totes les edicions',
-            badgeBypassAllPermissions: 'Omet tots els permisos',
-            badgePlanMode: 'Mode de planificació',
-        },
-        agent: {
-            claude: 'Claude',
-            codex: 'Codex',
-            opencode: 'OpenCode',
-            gemini: 'Gemini',
-            auggie: 'Auggie',
-            qwen: 'Qwen Code',
-            kimi: 'Kimi',
-            kilo: 'Kilo',
-            pi: 'Pi',
-        },
-        auggieIndexingChip: {
-            on: 'Indexing on',
-            off: 'Indexing off',
-        },
-        model: {
-            title: 'MODEL',
-            configureInCli: 'Configura els models a la configuració del CLI',
-        },
-        codexPermissionMode: {
-            title: 'MODE DE PERMISOS CODEX',
-            default: 'Configuració del CLI',
-            plan: 'Mode de planificació',
-            readOnly: 'Mode només lectura',
-            safeYolo: 'YOLO segur',
-            yolo: 'YOLO',
-            badgePlan: 'Pla',
-            badgeReadOnly: 'Només lectura',
-            badgeSafeYolo: 'YOLO segur',
-            badgeYolo: 'YOLO',
-        },
-        codexModel: {
-            title: 'MODEL CODEX',
-            gpt5CodexLow: 'gpt-5-codex baix',
-            gpt5CodexMedium: 'gpt-5-codex mitjà',
-            gpt5CodexHigh: 'gpt-5-codex alt',
-            gpt5Minimal: 'GPT-5 Mínim',
-            gpt5Low: 'GPT-5 Baix',
-            gpt5Medium: 'GPT-5 Mitjà',
-            gpt5High: 'GPT-5 Alt',
-        },
-        geminiPermissionMode: {
-            title: 'MODE DE PERMISOS GEMINI',
-            default: 'Per defecte',
-            readOnly: 'Només lectura',
-            safeYolo: 'YOLO segur',
-            yolo: 'YOLO',
-            badgeReadOnly: 'Només lectura',
-            badgeSafeYolo: 'YOLO segur',
-            badgeYolo: 'YOLO',
-        },
-        geminiModel: {
-            title: 'MODEL GEMINI',
-            gemini25Pro: {
-                label: 'Gemini 2.5 Pro',
-                description: 'Més capaç',
-            },
-            gemini25Flash: {
-                label: 'Gemini 2.5 Flash',
-                description: 'Ràpid i eficient',
-            },
-            gemini25FlashLite: {
-                label: 'Gemini 2.5 Flash Lite',
-                description: 'Més ràpid',
-            },
-        },
-        context: {
-            remaining: ({ percent }: { percent: number }) => `${percent}% restant`,
-        },
-        suggestion: {
-            fileLabel: 'FITXER',
-            folderLabel: 'CARPETA',
-        },
-        actionMenu: {
-            title: 'ACCIONS',
-            files: 'Fitxers',
-            stop: 'Atura',
-        },
-        noMachinesAvailable: 'Sense màquines',
-    },
-
-    machineLauncher: {
-        showLess: 'Mostra menys',
-        showAll: ({ count }: { count: number }) => `Mostra tots (${count} camins)`,
-        enterCustomPath: 'Introdueix un camí personalitzat',
-        offlineUnableToSpawn: 'No es pot crear una nova sessió, fora de línia',
-    },
-
-    sidebar: {
-        sessionsTitle: 'Happier',
-    },
-
-    toolView: {
-        open: 'Obrir detalls',
-        expand: 'Expandir/contraure',
-        input: 'Entrada',
-        output: 'Sortida',
-    },
-
-    tools: {
-        fullView: {
-            description: 'Descripció',
-            inputParams: 'Paràmetres d\'entrada',
-            output: 'Sortida',
-            error: 'Error',
-            completed: 'Eina completada amb èxit',
-            noOutput: 'No s\'ha produït cap sortida',
-            running: 'L\'eina s\'està executant...',
-            debug: 'Depuració',
-            show: 'Mostra',
-            hide: 'Amaga',
-            rawJsonDevMode: 'JSON en brut (mode desenvolupador)',
-        },
-        taskView: {
-            initializing: 'Inicialitzant l\'agent...',
-            moreTools: ({ count }: { count: number }) => `+${count} més ${plural({ count, singular: 'eina', plural: 'eines' })}`,
-        },
-        multiEdit: {
-            editNumber: ({ index, total }: { index: number; total: number }) => `Edició ${index} de ${total}`,
-            replaceAll: 'Reemplaça tot',
-        },
-        names: {
-            task: 'Tasca',
-            terminal: 'Terminal',
-            searchFiles: 'Cerca fitxers',
-            search: 'Cerca',
-            searchContent: 'Cerca contingut',
-            listFiles: 'Llista fitxers',
-            planProposal: 'Proposta de pla',
-            readFile: 'Llegeix fitxer',
-            editFile: 'Edita fitxer',
-            writeFile: 'Escriu fitxer',
-            fetchUrl: 'Obté URL',
-            readNotebook: 'Llegeix quadern',
-            editNotebook: 'Edita quadern',
-            todoList: 'Llista de tasques',
-            webSearch: 'Cerca web',
-            reasoning: 'Raonament',
-            applyChanges: 'Actualitza fitxer',
-            viewDiff: 'Canvis del fitxer actual',
-            question: 'Pregunta',
-            changeTitle: 'Canvia el títol',
-        },
-        geminiExecute: {
-            cwd: ({ cwd }: { cwd: string }) => `📁 ${cwd}`,
-        },
-        desc: {
-            terminalCmd: ({ cmd }: { cmd: string }) => `Terminal(cmd: ${cmd})`,
-            searchPattern: ({ pattern }: { pattern: string }) => `Cerca(patró: ${pattern})`,
-            searchPath: ({ basename }: { basename: string }) => `Cerca(camí: ${basename})`,
-            fetchUrlHost: ({ host }: { host: string }) => `Obté URL(url: ${host})`,
-            editNotebookMode: ({ path, mode }: { path: string; mode: string }) => `Edita quadern(fitxer: ${path}, mode: ${mode})`,
-            todoListCount: ({ count }: { count: number }) => `Llista de tasques(quantitat: ${count})`,
-            webSearchQuery: ({ query }: { query: string }) => `Cerca web(consulta: ${query})`,
-            grepPattern: ({ pattern }: { pattern: string }) => `grep(patró: ${pattern})`,
-            multiEditEdits: ({ path, count }: { path: string; count: number }) => `${path} (${count} edicions)`,
-            readingFile: ({ file }: { file: string }) => `Llegint ${file}`,
-            writingFile: ({ file }: { file: string }) => `Escrivint ${file}`,
-            modifyingFile: ({ file }: { file: string }) => `Modificant ${file}`,
-            modifyingFiles: ({ count }: { count: number }) => `Modificant ${count} fitxers`,
-            modifyingMultipleFiles: ({ file, count }: { file: string; count: number }) => `${file} i ${count} més`,
-            showingDiff: 'Mostrant canvis',
-        },
-        askUserQuestion: {
-            submit: 'Envia resposta',
-            multipleQuestions: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'pregunta', plural: 'preguntes' })}`,
-            other: 'Altres',
-            otherDescription: 'Escriu la teva pròpia resposta',
-            otherPlaceholder: 'Escriu la teva resposta...',
-        },
-        exitPlanMode: {
-            approve: 'Aprovar el pla',
-            reject: 'Rebutjar',
-            requestChanges: 'Demanar canvis',
-            requestChangesPlaceholder: 'Explica a Claude què vols canviar en aquest pla…',
-            requestChangesSend: 'Enviar comentaris',
-            requestChangesEmpty: 'Escriu què vols canviar.',
-            requestChangesFailed: 'No s\'han pogut demanar canvis. Torna-ho a provar.',
-            responded: 'Resposta enviada',
-            approvalMessage: 'Aprovo aquest pla. Si us plau, continua amb la implementació.',
-            rejectionMessage: 'No aprovo aquest pla. Si us plau, revisa’l o pregunta’m quins canvis voldria.',
-        },
-    },
-
-    files: {
-        searchPlaceholder: 'Cerca fitxers...',
-        detachedHead: 'HEAD separat',
-        summary: ({ staged, unstaged }: { staged: number; unstaged: number }) => `${staged} preparats • ${unstaged} sense preparar`,
-        repositoryChangedFiles: ({ count }: { count: number }) => `Repository changed files (${count})`,
-        sessionAttributedChanges: ({ count }: { count: number }) => `Session-attributed changes (${count})`,
-        otherRepositoryChanges: ({ count }: { count: number }) => `Other repository changes (${count})`,
-        attributionReliabilityHigh: 'Best effort attribution. Repository view remains the source of truth.',
-        attributionReliabilityLimited: 'Reliability limited: multiple sessions are active for this repository. Showing direct attribution only.',
-        attributionLegendFull: 'direct = from this session operations, inferred = snapshot-based attribution',
-        attributionLegendDirectOnly: 'direct = from this session operations',
-        inferredSuppressed: ({ count }: { count: number }) =>
-            `${count} inferred file${count === 1 ? '' : 's'} kept in repository-only changes.`,
-        noSessionAttributedChanges: 'No session-attributed changes currently detected.',
-        notRepo: 'No és un repositori de control de versions',
-        notUnderSourceControl: 'Aquest directori no està sota control de versions',
-        repositoryFolderLoadFailed: 'No s'ha pogut carregar la carpeta',
-        repositoryCollapseAll: 'Replega-ho tot',
-        reviewFilterPlaceholder: 'Filtra fitxers...',
-        reviewNoMatches: 'Sense coincidències',
-        reviewLargeDiffOneAtATime: 'S'ha detectat un diff gran; es mostra un fitxer a la vegada.',
-        reviewDiffRequestFailed: 'No s'ha pogut carregar el diff',
-        reviewUnableToLoadDiff: 'No s'ha pogut carregar el diff',
-        searching: 'Cercant fitxers...',
-        noFilesFound: 'No s\'han trobat fitxers',
-        noFilesInProject: 'No hi ha fitxers al projecte',
-        tryDifferentTerm: 'Prova un terme de cerca diferent',
-        searchResults: ({ count }: { count: number }) => `Resultats de la cerca (${count})`,
-        projectRoot: 'Arrel del projecte',
-        stagedChanges: ({ count }: { count: number }) => `Canvis preparats (${count})`,
-        unstagedChanges: ({ count }: { count: number }) => `Canvis sense preparar (${count})`,
-        // File viewer strings
-        loadingFile: ({ fileName }: { fileName: string }) => `Carregant ${fileName}...`,
-        binaryFile: 'Fitxer binari',
-        cannotDisplayBinary: 'No es pot mostrar el contingut del fitxer binari',
-        diff: 'Diferències',
-        file: 'Fitxer',
-        fileEmpty: 'El fitxer està buit',
-        noChanges: 'No hi ha canvis a mostrar',
-    },
-
-    settingsSession: {
-        messageSending: {
-            title: 'Message sending',
-            footer: 'Controls what happens when you send a message while the agent is running.',
-            queueInAgentTitle: 'Queue in agent (current)',
-            queueInAgentSubtitle: 'Write to transcript immediately; agent processes when ready.',
-            interruptTitle: 'Interrupt & send',
-            interruptSubtitle: 'Abort current turn, then send immediately.',
-            pendingTitle: 'Pending until ready',
-            pendingSubtitle: 'Keep messages in a pending queue; agent pulls when ready.',
-            busySteerPolicyTitle: 'When the agent is busy (steer-capable)',
-            busySteerPolicyFooter: 'If the agent supports in-flight steering, choose whether messages steer immediately or go to Pending first.',
-            busySteerPolicy: {
-                steerImmediatelyTitle: 'Steer immediately',
-                steerImmediatelySubtitle: 'Send right away and steer the current turn (no interrupt).',
-                queueForReviewTitle: 'Queue in Pending',
-                queueForReviewSubtitle: 'Put messages into Pending first; send later using “Steer now”.',
-            },
-        },
-        toolRendering: {
-            title: 'Tool rendering',
-            footer: 'Controls how much tool detail is shown in the session timeline. This is a UI preference; it does not change agent behavior.',
-            defaultToolDetailLevelTitle: 'Default tool detail level',
-            localControlDefaultTitle: 'Local-control default',
-            showDebugByDefaultTitle: 'Show debug by default',
-            showDebugByDefaultSubtitle: 'Auto-expand raw tool payloads in the full tool view.',
-        },
-        toolDetailOverrides: {
-            title: 'Tool detail overrides',
-            footer: 'Override the detail level for specific tools. Overrides apply to the canonical tool name (V2), after legacy normalization.',
-        },
-        defaultPermissions: {
-            title: 'Default permissions',
-            footer: 'Applies when starting a new session. Profiles can optionally override this.',
-            applyPermissionChangesTitle: 'Apply permission changes',
-            applyPermissionChangesImmediateSubtitle: 'Apply immediately for running sessions (updates session metadata).',
-            applyPermissionChangesNextPromptSubtitle: 'Apply on next message only.',
-        },
-        toolDetailLevel: {
-            titleOnlyTitle: 'Title only',
-            titleOnlySubtitle: 'Show only the tool name (no body) in the timeline.',
-            summaryTitle: 'Summary',
-            summarySubtitle: 'Show a compact, safe summary in the timeline.',
-            fullTitle: 'Full',
-            fullSubtitle: 'Show full details inline in the timeline.',
-            defaultTitle: 'Default',
-            defaultSubtitle: 'Use the global default.',
-        },
-    },
-    settingsVoice: {
-        // Voice settings screen
-        modeTitle: 'Veu',
-        modeDescription: 'Configura les funcions de veu. Pots desactivar la veu del tot, utilitzar Happier Voice (requereix subscripció) o utilitzar el teu compte d’ElevenLabs.',
-        mode: {
-            off: 'Desactivat',
-            offSubtitle: 'Desactiva totes les funcions de veu',
-            happier: 'Happier Voice',
-            happierSubtitle: 'Utilitza Happier Voice (cal subscripció)',
-            local: 'Veu OSS local',
-            localSubtitle: 'Fes servir endpoints STT/TTS locals compatibles amb OpenAI',
-            byo: 'Fes servir el meu ElevenLabs',
-            byoSubtitle: 'Fes servir la teva clau API i l’agent d’ElevenLabs',
-        },
-        byo: {
-            title: 'Fes servir el meu ElevenLabs',
-            configured: 'Configurat. L’ús de veu es facturarà al teu compte d’ElevenLabs.',
-            notConfigured: 'Set your ElevenLabs API key, then tap \"Create Happier Agent\" to auto-provision (it will fill the Agent ID).',
-            createAccount: "Crea un compte d'ElevenLabs",
-            createAccountSubtitle: "Registra't (o inicia sessió) abans de crear una clau d'API",
-            openApiKeys: 'Open ElevenLabs API keys',
-            openApiKeysSubtitle: 'ElevenLabs → Settings → API keys → Create API key',
-            apiKeyHelp: 'How to create an API key',
-            apiKeyHelpSubtitle: 'Step-by-step help for creating and copying your ElevenLabs API key',
-            apiKeyHelpDialogTitle: 'Create an ElevenLabs API key',
-            apiKeyHelpDialogBody: 'Open ElevenLabs → Settings → API keys → Create API key → Copy the key.',
-            autoprovCreate: 'Crea un agent Happier',
-            autoprovCreateSubtitle: 'Crea i configura un agent Happier al teu compte d’ElevenLabs amb la teva clau API',
-            autoprovUpdate: 'Actualitza l’agent',
-            autoprovUpdateSubtitle: 'Actualitza l’agent al darrer template de Happier',
-            autoprovCreated: ({ agentId }: { agentId: string }) => `Agent creat: ${agentId}`,
-            autoprovUpdated: 'Agent actualitzat',
-            autoprovFailed: 'No s’ha pogut crear/actualitzar l’agent. Torna-ho a provar.',
-            agentId: 'ID de l’agent',
-            agentIdSet: 'Establert',
-            agentIdNotSet: 'No establert',
-            agentIdTitle: 'ID de l’agent d’ElevenLabs',
-            agentIdDescription: 'If you used \"Create Happier Agent\", this is filled automatically. Otherwise copy the Agent ID from ElevenLabs.',
-            agentIdPlaceholder: 'agent_...',
-            apiKey: 'Clau API',
-            apiKeySet: 'Establerta',
-            apiKeyNotSet: 'No establerta',
-            apiKeyTitle: 'Clau API d’ElevenLabs',
-            apiKeyDescription: 'Create an API key in ElevenLabs → Settings → API keys. Paste it here (stored encrypted on-device).',
-            apiKeyPlaceholder: 'xi-api-key',
-            apiKeySaveFailed: 'No s’ha pogut desar la clau API. Torna-ho a provar.',
-            disconnect: 'Desconnectar',
-            disconnectSubtitle: 'Elimina les credencials d’ElevenLabs desades en aquest dispositiu',
-            disconnectTitle: 'Desconnectar ElevenLabs',
-            disconnectDescription: 'Això eliminarà la teva clau API i l’ID de l’agent d’ElevenLabs desats en aquest dispositiu.',
-            disconnectConfirm: 'Desconnectar',
-        },
-        local: {
-            title: 'Veu OSS local',
-            footer: 'Configura endpoints compatibles amb OpenAI per STT (speech-to-text) i TTS (text-to-speech).',
-            localhostWarning: 'Nota: "localhost" i "127.0.0.1" normalment no funcionen al telèfon. Usa la IP LAN del teu ordinador o un túnel.',
-            notSet: 'No establert',
-            apiKeySet: 'Establerta',
-            apiKeyNotSet: 'No establerta',
-            baseUrlPlaceholder: 'http://192.168.1.10:8000/v1',
-            apiKeyPlaceholder: 'Opcional',
-            apiKeySaveFailed: 'No s’ha pogut desar la clau API. Torna-ho a provar.',
-            conversationMode: 'Mode de conversa',
-            conversationModeSubtitle: 'Directe a la sessió o mediador amb commit explícit',
-            mediatorBackend: 'Backend del mediador',
-            mediatorBackendSubtitle: 'Daemon (fa servir el backend de Happier) o OpenAI-compatible HTTP',
-            mediatorBackendDaemon: 'Daemon',
-            mediatorBackendOpenAi: 'OpenAI-compatible HTTP',
-            mediatorAgentSource: 'Font de l’agent del mediador',
-            mediatorAgentSourceSubtitle: 'Usa el backend de la sessió o força un agent específic',
-            mediatorAgentSourceSession: 'Backend de la sessió',
-            mediatorAgentSourceAgent: 'Agent específic',
-            mediatorAgentId: 'Agent del mediador',
-            mediatorAgentIdSubtitle: 'Quin backend d’agent usar per al mediador (quan no s’usa la sessió)',
-            mediatorPermissionPolicy: 'Permisos del mediador',
-            mediatorPermissionPolicySubtitle: 'Restringeix l’ús d’eines durant la mediació',
-            mediatorPermissionReadOnly: 'Només lectura',
-            mediatorPermissionNoTools: 'Sense eines',
-            mediatorVerbosity: 'Verbositats del mediador',
-            mediatorVerbositySubtitle: 'Com de detallat ha de ser el mediador',
-            mediatorVerbosityShort: 'Curt',
-            mediatorVerbosityBalanced: 'Equilibrat',
-            mediatorIdleTtl: 'TTL d’inactivitat del mediador',
-            mediatorIdleTtlSubtitle: 'Atura automàticament després d’inactivitat (60–3600s)',
-            mediatorIdleTtlTitle: 'TTL d’inactivitat del mediador (segons)',
-            mediatorIdleTtlDescription: 'Introdueix un número entre 60 i 3600.',
-            mediatorIdleTtlInvalid: 'Introdueix un número entre 60 i 3600.',
-            mediatorChatModelSource: 'Origen del model (chat)',
-            mediatorChatModelSourceSubtitle: 'Usa el model de la sessió o un model ràpid personalitzat',
-            mediatorChatModelSourceSession: 'Model de la sessió',
-            mediatorChatModelSourceCustom: 'Model personalitzat',
-            mediatorCommitModelSource: 'Origen del model (commit)',
-            mediatorCommitModelSourceSubtitle: 'Usa el model de chat, el de la sessió o un model personalitzat',
-            mediatorCommitModelSourceChat: 'Model de chat',
-            mediatorCommitModelSourceSession: 'Model de la sessió',
-            mediatorCommitModelSourceCustom: 'Model personalitzat',
-            chatBaseUrl: 'Chat Base URL',
-            chatBaseUrlTitle: 'Chat Base URL',
-            chatBaseUrlDescription: 'URL base per l’endpoint de chat completion compatible amb OpenAI (normalment acaba en /v1).',
-            chatApiKey: 'Clau API Chat',
-            chatApiKeyTitle: 'Clau API Chat',
-            chatApiKeyDescription: 'Clau API opcional per al servidor de chat (desada xifrada). Deixa-ho en blanc per esborrar.',
-            chatModel: 'Model de chat',
-            chatModelSubtitle: 'Model ràpid per a la conversa de veu',
-            chatModelTitle: 'Model de chat',
-            chatModelDescription: 'Nom del model a enviar al servidor de chat (camp compatible amb OpenAI).',
-            modelCustomTitle: 'Personalitzat…',
-            modelCustomSubtitle: 'Introdueix un ID de model',
-            commitModel: 'Model de commit',
-            commitModelSubtitle: 'Model per generar el missatge final d’instruccions',
-            commitModelTitle: 'Model de commit',
-            commitModelDescription: 'Nom del model a usar en generar el missatge final.',
-            chatTemperature: 'Temperatura del chat',
-            chatTemperatureSubtitle: 'Controla l’aleatorietat (0–2)',
-            chatTemperatureTitle: 'Temperatura del chat',
-            chatTemperatureDescription: 'Introdueix un número entre 0 i 2.',
-            chatTemperatureInvalid: 'Introdueix un número entre 0 i 2.',
-            chatMaxTokens: 'Màx. tokens (chat)',
-            chatMaxTokensSubtitle: 'Limita la longitud (en blanc = per defecte)',
-            chatMaxTokensTitle: 'Màx. tokens (chat)',
-            chatMaxTokensDescription: 'Introdueix un enter positiu o deixa-ho en blanc per defecte.',
-            chatMaxTokensPlaceholder: 'En blanc = per defecte',
-            chatMaxTokensUnlimited: 'Per defecte',
-            chatMaxTokensInvalid: 'Introdueix un número positiu o deixa-ho en blanc.',
-            deviceStt: 'Device STT (experimental)',
-            deviceSttSubtitle: 'Use on-device speech recognition instead of an OpenAI-compatible endpoint',
-            sttBaseUrl: 'STT Base URL',
-            sttBaseUrlTitle: 'STT Base URL',
-            sttBaseUrlDescription: 'URL base per l’endpoint de transcripció compatible amb OpenAI (normalment acaba en /v1).',
-            sttApiKey: 'Clau API STT',
-            sttApiKeyTitle: 'Clau API STT',
-            sttApiKeyDescription: 'Clau API opcional per al servidor STT (desada xifrada). Deixa-ho en blanc per esborrar.',
-            sttModel: 'Model STT',
-            sttModelSubtitle: 'Nom del model enviat a les sol·licituds de transcripció',
-            sttModelTitle: 'Model STT',
-            sttModelDescription: 'Nom del model a enviar al servidor STT (camp compatible amb OpenAI).',
-            deviceTts: 'Device TTS (experimental)',
-            deviceTtsSubtitle: 'Use on-device speech synthesis instead of an OpenAI-compatible endpoint',
-            ttsBaseUrl: 'TTS Base URL',
-            ttsBaseUrlTitle: 'TTS Base URL',
-            ttsBaseUrlDescription: 'URL base per l’endpoint de veu compatible amb OpenAI (normalment acaba en /v1).',
-            ttsApiKey: 'Clau API TTS',
-            ttsApiKeyTitle: 'Clau API TTS',
-            ttsApiKeyDescription: 'Clau API opcional per al servidor TTS (desada xifrada). Deixa-ho en blanc per esborrar.',
-            ttsModel: 'Model TTS',
-            ttsModelSubtitle: 'Nom del model enviat a les sol·licituds de veu',
-            ttsModelTitle: 'Model TTS',
-            ttsModelDescription: 'Nom del model a enviar al servidor TTS (camp compatible amb OpenAI).',
-            ttsVoice: 'Veu TTS',
-            ttsVoiceSubtitle: 'Nom/ID de la veu enviat a les sol·licituds de veu',
-            ttsVoiceTitle: 'Veu TTS',
-            ttsVoiceDescription: 'Nom/ID de la veu a enviar al servidor TTS (camp compatible amb OpenAI).',
-            ttsFormat: 'Format TTS',
-            ttsFormatSubtitle: 'Format d’àudio retornat pel TTS',
-            testTts: 'Test TTS',
-            testTtsSubtitle: 'Play a short sample using your configured local TTS (device TTS or endpoint)',
-            testTtsSample: 'Hello from Happier. This is a test of your local TTS.',
-            testTtsMissingBaseUrl: 'Set a TTS Base URL first.',
-            testTtsFailed: 'TTS test failed. Check your base URL, API key, model, and voice.',
-            autoSpeak: 'Auto-reprodueix respostes',
-            autoSpeakSubtitle: 'Reprodueix la següent resposta de l’assistent després d’enviar el missatge de veu',
-        },
-        privacy: {
-            title: 'Privadesa',
-            footer: 'Els proveïdors de veu reben el context de sessió seleccionat.',
-            shareSessionSummary: 'Comparteix el resum de la sessió',
-            shareSessionSummarySubtitle: 'Inclou el resum de la sessió al context de veu',
-            shareRecentMessages: 'Comparteix missatges recents',
-            shareRecentMessagesSubtitle: 'Inclou missatges recents al context de veu',
-            recentMessagesCount: 'Nombre de missatges recents',
-            recentMessagesCountSubtitle: 'Quants missatges recents incloure (0–50)',
-            recentMessagesCountTitle: 'Nombre de missatges recents',
-            recentMessagesCountDescription: 'Introdueix un número entre 0 i 50.',
-            recentMessagesCountInvalid: 'Introdueix un número entre 0 i 50.',
-            shareToolNames: 'Comparteix noms d’eines',
-            shareToolNamesSubtitle: 'Inclou noms/descripcions d’eines (els arguments sempre es redueixen)',
-            sharePermissionRequests: 'Comparteix sol·licituds de permisos',
-            sharePermissionRequestsSubtitle: 'Reenvia sol·licituds de permisos (els arguments sempre es redueixen)',
-            shareFilePaths: 'Comparteix rutes locals',
-            shareFilePathsSubtitle: 'Inclou rutes locals al context de veu (no recomanat)',
-        },
-        languageTitle: 'Idioma',
-        languageDescription: 'Tria el teu idioma preferit per a les interaccions amb l\'assistent de veu. Aquesta configuració es sincronitza a tots els teus dispositius.',
-        preferredLanguage: 'Idioma preferit',
-        preferredLanguageSubtitle: 'Idioma utilitzat per a les respostes de l\'assistent de veu',
-        language: {
-            searchPlaceholder: 'Cerca idiomes...',
-            title: 'Idiomes',
-            footer: ({ count }: { count: number }) => `${count} ${plural({ count, singular: 'idioma', plural: 'idiomes' })} disponibles`,
-            autoDetect: 'Detecta automàticament',
-        },
-    },
-
-    settingsAccount: {
-        // Account settings screen
-        accountInformation: 'Informació del compte',
-        status: 'Estat',
-        statusActive: 'Actiu',
-        statusNotAuthenticated: 'No autenticat',
-        anonymousId: 'ID anònim',
-        publicId: 'ID públic',
-        notAvailable: 'No disponible',
-        linkNewDevice: 'Enllaça un nou dispositiu',
-        linkNewDeviceSubtitle: 'Escaneja el codi QR per enllaçar el dispositiu',
-        profile: 'Perfil',
-        name: 'Nom',
-        github: 'GitHub',
-        showGitHubOnProfile: 'Mostra al perfil',
-        showProviderOnProfile: ({ provider }: { provider: string }) => `Mostra ${provider} al perfil`,
-        tapToDisconnect: 'Toca per desconnectar',
-        server: 'Servidor',
-        backup: 'Còpia de seguretat',
-        backupDescription: 'La teva clau secreta és l\'única manera de recuperar el teu compte. Desa-la en un lloc segur com un gestor de contrasenyes.',
-        secretKey: 'Clau secreta',
-        tapToReveal: 'Toca per revelar',
-        tapToHide: 'Toca per ocultar',
-        secretKeyLabel: 'CLAU SECRETA (TOCA PER COPIAR)',
-        secretKeyCopied: 'Clau secreta copiada al porta-retalls. Desa-la en un lloc segur!',
-        secretKeyCopyFailed: 'Ha fallat copiar la clau secreta',
-        privacy: 'Privadesa',
-        privacyDescription: 'Ajuda a millorar l\'aplicació compartint dades d\'ús anònimes. No es recopila informació personal.',
-        analytics: 'Analítiques',
-        analyticsDisabled: 'No es comparteixen dades',
-        analyticsEnabled: 'Es comparteixen dades d\'ús anònimes',
-        dangerZone: 'Zona de perill',
-        logout: 'Tanca la sessió',
-        logoutSubtitle: 'Tanca la sessió i esborra les dades locals',
-        logoutConfirm: 'Estàs segur que vols tancar la sessió? Assegura\'t d\'haver fet una còpia de seguretat de la teva clau secreta!',
-    },
-
-    settingsLanguage: {
-        // Language settings screen
-        title: 'Idioma',
-        description: 'Tria el teu idioma preferit per a la interfície de l\'app. Això se sincronitzarà a tots els teus dispositius.',
-        currentLanguage: 'Idioma actual',
-        automatic: 'Automàtic',
-        automaticSubtitle: 'Detecta des de la configuració del dispositiu',
-        needsRestart: 'Idioma canviat',
-        needsRestartMessage: 'L\'aplicació necessita reiniciar-se per aplicar la nova configuració d\'idioma.',
-        restartNow: 'Reinicia ara',
-    },
-
-    connectButton: {
-        authenticate: 'Autentica el terminal',
-        authenticateWithUrlPaste: 'Autentica el terminal amb enganxat d\'URL',
-        pasteAuthUrl: 'Enganxa l\'URL d\'autenticació del teu terminal',
-    },
-
-    updateBanner: {
-        updateAvailable: 'Actualització disponible',
-        pressToApply: 'Prem per aplicar l\'actualització',
-        whatsNew: 'Novetats',
-        seeLatest: 'Mira les últimes actualitzacions i millores',
-        nativeUpdateAvailable: 'Actualització de l\'aplicació disponible',
-        tapToUpdateAppStore: 'Toca per actualitzar a l\'App Store',
-        tapToUpdatePlayStore: 'Toca per actualitzar a Play Store',
-    },
-
-    changelog: {
-        // Used by the changelog screen
-        version: ({ version }: { version: number }) => `Versió ${version}`,
-        noEntriesAvailable: 'No hi ha entrades de registre de canvis disponibles.',
-    },
-
-    terminal: {
-        // Used by terminal connection screens
-        webBrowserRequired: 'Es requereix un navegador web',
-        webBrowserRequiredDescription: 'Els enllaços de connexió de terminal només es poden obrir en un navegador web per raons de seguretat. Utilitza l\'escàner de codi QR o obre aquest enllaç en un ordinador.',
-        processingConnection: 'Processant la connexió...',
-        invalidConnectionLink: 'Enllaç de connexió no vàlid',
-        invalidConnectionLinkDescription: 'L\'enllaç de connexió falta o no és vàlid. Comprova l\'URL i torna-ho a provar.',
-        connectTerminal: 'Connecta el terminal',
-        terminalRequestDescription: 'Un terminal està sol·licitant connectar-se al teu compte de Happier Coder. Això permetrà al terminal enviar i rebre missatges de forma segura.',
-        connectionDetails: 'Detalls de la connexió',
-        publicKey: 'Clau pública',
-        encryption: 'Xifratge',
-        endToEndEncrypted: 'Xifrat punt a punt',
-        acceptConnection: 'Accepta la connexió',
-        connecting: 'Connectant...',
-        reject: 'Rebutja',
-        security: 'Seguretat',
-        securityFooter: 'Aquest enllaç de connexió s\'ha processat de forma segura al teu navegador i mai s\'ha enviat a cap servidor. Les teves dades privades es mantindran segures i només tu pots desxifrar els missatges.',
-        securityFooterDevice: 'Aquesta connexió s\'ha processat de forma segura al teu dispositiu i mai s\'ha enviat a cap servidor. Les teves dades privades es mantindran segures i només tu pots desxifrar els missatges.',
-        clientSideProcessing: 'Processament del costat del client',
-        linkProcessedLocally: 'Enllaç processat localment al navegador',
-        linkProcessedOnDevice: 'Enllaç processat localment al dispositiu',
-        switchServerToConnectTerminal: ({ serverUrl }: { serverUrl: string }) =>
-            `Aquesta connexió és per a ${serverUrl}. Vols canviar de servidor i continuar?`,
-    },
-
-    modals: {
-        // Used across connect flows and settings
-        authenticateTerminal: 'Autentica el terminal',
-        pasteUrlFromTerminal: 'Enganxa l\'URL d\'autenticació del teu terminal',
-        deviceLinkedSuccessfully: 'Dispositiu enllaçat amb èxit',
-        terminalConnectedSuccessfully: 'Terminal connectat amb èxit',
-        pleaseSignInFirst: 'Si us plau, inicia la sessió (o crea un compte) primer.',
-        invalidAuthUrl: 'URL d\'autenticació no vàlida',
-        microphoneAccessRequiredTitle: 'Cal accés al micròfon',
-        microphoneAccessRequiredRequestPermission: 'Happier necessita accés al micròfon per al xat de veu. Concedeix el permís quan se’t demani.',
-        microphoneAccessRequiredEnableInSettings: 'Happier necessita accés al micròfon per al xat de veu. Activa l’accés al micròfon a la configuració del dispositiu.',
-        microphoneAccessRequiredBrowserInstructions: 'Permet l’accés al micròfon a la configuració del navegador. Potser hauràs de fer clic a la icona del cadenat a la barra d’adreces i habilitar el permís del micròfon per a aquest lloc.',
-        openSettings: 'Obre la configuració',
-        developerMode: 'Mode desenvolupador',
-        developerModeEnabled: 'Mode desenvolupador activat',
-        developerModeDisabled: 'Mode desenvolupador desactivat',
-        disconnectGithub: 'Desconnecta GitHub',
-        disconnectGithubConfirm: 'En desconnectar, Amics i la compartició entre amics es desactiven fins que tornis a connectar.',
-        disconnectService: ({ service }: { service: string }) => 
-            `Desconnecta ${service}`,
-        disconnectServiceConfirm: ({ service }: { service: string }) => 
-            `Segur que vols desconnectar ${service} del teu compte?`,
-        disconnect: 'Desconnecta',
-        failedToConnectTerminal: 'Ha fallat connectar el terminal',
-        cameraPermissionsRequiredToConnectTerminal: 'Es requereixen permisos de càmera per connectar el terminal',
-        failedToLinkDevice: 'Ha fallat enllaçar el dispositiu',
-        cameraPermissionsRequiredToScanQr: 'Es requereixen permisos de càmera per escanejar codis QR'
-    },
-
-    navigation: {
-        // Navigation titles and screen headers
-        connectTerminal: 'Connecta el terminal',
-        linkNewDevice: 'Enllaça un nou dispositiu', 
-        restoreWithSecretKey: 'Restaura amb clau secreta',
-        whatsNew: 'Novetats',
-        friends: 'Amics',
-    },
-
-    welcome: {
-        // Main welcome screen for unauthenticated users
-        title: 'Client mòbil de Codex i Claude Code',
-        subtitle: 'Xifrat punt a punt i el teu compte s\'emmagatzema només al teu dispositiu.',
-        createAccount: 'Crea un compte',
-        signUpWithProvider: ({ provider }: { provider: string }) => `Continua amb ${provider}`,
-        linkOrRestoreAccount: 'Enllaça o restaura un compte',
-        loginWithMobileApp: 'Inicia sessió amb l\'aplicació mòbil',
-    },
-
-    review: {
-        // Used by utils/requestReview.ts
-        enjoyingApp: 'T\'està agradant l\'aplicació?',
-        feedbackPrompt: 'Ens encantaria conèixer la teva opinió!',
-        yesILoveIt: 'Sí, m\'encanta!',
-        notReally: 'No gaire'
-    },
-
-    items: {
-        // Used by Item component for copy toast
-        copiedToClipboard: ({ label }: { label: string }) => `${label} copiat al porta-retalls`
-    },
-
-    machine: {
-        offlineUnableToSpawn: 'El llançador està desactivat mentre la màquina està fora de línia',
-        offlineHelp: '• Assegura\'t que l\'ordinador estigui en línia\n• Executa `happier daemon status` per diagnosticar\n• Fas servir l\'última versió del CLI? Actualitza amb `npm install -g @happier-dev/cli@latest`',
-        launchNewSessionInDirectory: 'Inicia una nova sessió al directori',
-        daemon: 'Dimoni',
-        status: 'Estat',
-        stopDaemon: 'Atura el dimoni',
-        stopDaemonConfirmTitle: 'Aturar el dimoni?',
-        stopDaemonConfirmBody: 'No podràs iniciar sessions noves en aquesta màquina fins que reiniciïs el dimoni a l’ordinador. Les sessions actuals continuaran actives.',
-        daemonStoppedTitle: 'Dimoni aturat',
-        stopDaemonFailed: 'No s’ha pogut aturar el dimoni. Pot ser que no estigui en execució.',
-        renameTitle: 'Canvia el nom de la màquina',
-        renameDescription: 'Dona a aquesta màquina un nom personalitzat. Deixa-ho buit per usar el hostname per defecte.',
-        renamePlaceholder: 'Introdueix el nom de la màquina',
-        renamedSuccess: 'Màquina reanomenada correctament',
-        renameFailed: 'No s’ha pogut reanomenar la màquina',
-        lastKnownPid: 'Últim PID conegut',
-        lastKnownHttpPort: 'Últim port HTTP conegut',
-        startedAt: 'Iniciat a',
-        cliVersion: 'Versió del CLI',
-        daemonStateVersion: 'Versió de l\'estat del dimoni',
-        activeSessions: ({ count }: { count: number }) => `Sessions actives (${count})`,
-        machineGroup: 'Màquina',
-        host: 'Host',
-        machineId: 'ID de la màquina',
-        username: 'Nom d\'usuari',
-        homeDirectory: 'Directori principal',
-        platform: 'Plataforma',
-        architecture: 'Arquitectura',
-        lastSeen: 'Vist per última vegada',
-        never: 'Mai',
-        metadataVersion: 'Versió de les metadades',
-        detectedClis: 'CLI detectats',
-        detectedCliNotDetected: 'No detectat',
-        detectedCliUnknown: 'Desconegut',
-        detectedCliNotSupported: 'No compatible (actualitza @happier-dev/cli)',
-        untitledSession: 'Sessió sense títol',
-        back: 'Enrere',
-        notFound: 'Màquina no trobada',
-        unknownMachine: 'màquina desconeguda',
-        unknownPath: 'camí desconegut',
-        tmux: {
-            overrideTitle: 'Sobreescriu la configuració global de tmux',
-            overrideEnabledSubtitle: 'La configuració personalitzada de tmux s\'aplica a les noves sessions d\'aquesta màquina.',
-            overrideDisabledSubtitle: 'Les noves sessions utilitzen la configuració global de tmux.',
-            notDetectedSubtitle: 'tmux no s\'ha detectat en aquesta màquina.',
-            notDetectedMessage: 'tmux no s\'ha detectat en aquesta màquina. Instal·la tmux i actualitza la detecció.',
-        },
-        windows: {
-            title: 'Windows',
-            remoteSessionConsoleTitle: 'Mostra la consola per a sessions remotes',
-            remoteSessionConsoleVisibleSubtitle: 'Les sessions remotes s’obren en una finestra de consola visible en aquesta màquina.',
-            remoteSessionConsoleHiddenSubtitle: 'Les sessions remotes s’inicien amagades per evitar finestres que s’obren i es tanquen.',
-            remoteSessionConsoleUpdateFailed: 'No s’ha pogut actualitzar la configuració de la consola de sessions a Windows.',
-        },
-    },
-
-    message: {
-        switchedToMode: ({ mode }: { mode: string }) => `S'ha canviat al mode ${mode}`,
-        discarded: 'Descartat',
-        unknownEvent: 'Esdeveniment desconegut',
-        usageLimitUntil: ({ time }: { time: string }) => `Límit d'ús assolit fins a ${time}`,
-        unknownTime: 'temps desconegut',
-    },
-
-    chatFooter: {
-        permissionsTerminalOnly: 'Els permisos només es mostren al terminal. Reinicia o envia un missatge per controlar des de l\'app.',
-        switchToRemote: 'Canvia a remot',
-        localModeAvailable: 'El mode local està disponible per a aquesta sessió.',
-        localModeUnavailableMachineOffline: 'El mode local no està disponible mentre aquesta màquina estigui fora de línia.',
-        localModeUnavailableDaemonStarted: 'El mode local no està disponible per a sessions iniciades pel dimoni.',
-        localModeUnavailableNeedsResume: 'El mode local requereix suport de represa per a aquest proveïdor.',
-        switchToLocal: 'Canvia a local',
-    },
-
-    codex: {
-        // Codex permission dialog buttons
-        permissions: {
-            yesAlwaysAllowCommand: 'Sí, permet globalment',
-            yesForSession: 'Sí, i no preguntar per aquesta sessió',
-            stopAndExplain: 'Atura, i explica què fer',
-        }
-    },
-
-    claude: {
-        // Claude permission dialog buttons
-        permissions: {
-            yesAllowAllEdits: 'Sí, permet totes les edicions durant aquesta sessió',
-            yesForTool: 'Sí, no tornis a preguntar per aquesta eina',
-            yesForCommandPrefix: "Sí, no tornis a preguntar per aquest prefix d'ordre",
-            yesForSubcommand: "Sí, no tornis a preguntar per aquesta subordre",
-            yesForCommandName: "Sí, no tornis a preguntar per aquesta ordre",
-            noTellClaude: 'No, proporciona comentaris',
-        }
-    },
-
-    textSelection: {
-        // Text selection screen
-        selectText: 'Seleccionar rang de text',
-        title: 'Seleccionar text',
-        noTextProvided: 'No s\'ha proporcionat text',
-        textNotFound: 'Text no trobat o expirat',
-        textCopied: 'Text copiat al porta-retalls',
-        failedToCopy: 'No s\'ha pogut copiar el text al porta-retalls',
-        noTextToCopy: 'No hi ha text disponible per copiar',
-        failedToOpen: 'No s\'ha pogut obrir la selecció de text. Torna-ho a provar.',
-    },
-
-    markdown: {
-        // Markdown copy functionality
-        codeCopied: 'Codi copiat',
-        copyFailed: 'Error al copiar',
-        mermaidRenderFailed: 'Error al renderitzar el diagrama mermaid',
-    },
-
-    artifacts: {
-        title: 'Artefactes',
-        countSingular: '1 artefacte',
-        countPlural: ({ count }: { count: number }) => `${count} artefactes`,
-        empty: 'Encara no hi ha artefactes',
-        emptyDescription: 'Crea el teu primer artefacte per desar i organitzar contingut',
-        new: 'Nou artefacte',
-        edit: 'Edita artefacte',
-        delete: 'Elimina',
-        updateError: 'No s\'ha pogut actualitzar l\'artefacte. Si us plau, torna-ho a provar.',
-        deleteError: 'No s\'ha pogut eliminar l\'artefacte. Torna-ho a provar.',
-        notFound: 'Artefacte no trobat',
-        discardChanges: 'Descartar els canvis?',
-        discardChangesDescription: 'Tens canvis sense desar. Estàs segur que vols descartar-los?',
-        deleteConfirm: 'Eliminar artefacte?',
-        deleteConfirmDescription: 'Aquest artefacte s\'eliminarà permanentment.',
-        noContent: 'Sense contingut',
-        untitled: 'Sense títol',
-        titlePlaceholder: 'Títol de l\'artefacte',
-        bodyPlaceholder: 'Escriu aquí el contingut...',
-        save: 'Desa',
-        saving: 'Desant...',
-        loading: 'Carregant...',
-        error: 'Error en carregar els artefactes',
-        titleLabel: 'TÍTOL',
-        bodyLabel: 'CONTINGUT',
-        emptyFieldsError: 'Si us plau, introdueix un títol o contingut',
-        createError: 'No s\'ha pogut crear l\'artefacte. Si us plau, torna-ho a provar.',
-    },
-
-    friends: {
-        // Friends feature
-        title: 'Amics',
-        sharedSessions: 'Sessions compartides',
-        noSharedSessions: 'Encara no hi ha sessions compartides',
-        manageFriends: 'Gestiona els teus amics i connexions',
-        searchTitle: 'Buscar amics',
-        pendingRequests: 'Sol·licituds d\'amistat',
-        myFriends: 'Els meus amics',
-        noFriendsYet: 'Encara no tens amics',
-        findFriends: 'Buscar amics',
-        remove: 'Eliminar',
-        pendingRequest: 'Pendent',
-        sentOn: ({ date }: { date: string }) => `Enviat el ${date}`,
-        accept: 'Acceptar',
-        reject: 'Rebutjar',
-        addFriend: 'Afegir amic',
-        alreadyFriends: 'Ja sou amics',
-        requestPending: 'Sol·licitud pendent',
-        searchInstructions: 'Introdueix un nom d\'usuari per buscar amics',
-        searchPlaceholder: 'Introdueix nom d\'usuari...',
-        searching: 'Buscant...',
-        userNotFound: 'Usuari no trobat',
-        noUserFound: 'No s\'ha trobat cap usuari amb aquest nom',
-        checkUsername: 'Si us plau, verifica el nom d\'usuari i torna-ho a provar',
-        howToFind: 'Com trobar amics',
-        findInstructions: 'Cerca amics pel seu nom d\'usuari. Depenent del servidor, potser has de connectar un proveïdor o triar un nom d’usuari per fer servir Amics.',
-        requestSent: 'Sol·licitud d\'amistat enviada!',
-        requestAccepted: 'Sol·licitud d\'amistat acceptada!',
-        requestRejected: 'Sol·licitud d\'amistat rebutjada',
-        friendRemoved: 'Amic eliminat',
-        confirmRemove: 'Eliminar amic',
-        confirmRemoveMessage: 'Estàs segur que vols eliminar aquest amic?',
-        cannotAddYourself: 'No pots enviar-te una sol·licitud d\'amistat a tu mateix',
-        bothMustHaveGithub: 'Ambdós usuaris han de tenir connectat el proveïdor requerit per ser amics',
-        status: {
-            none: 'No connectat',
-            requested: 'Sol·licitud enviada',
-            pending: 'Sol·licitud pendent',
-            friend: 'Amics',
-            rejected: 'Rebutjada',
-        },
-        acceptRequest: 'Acceptar sol·licitud',
-        removeFriend: 'Eliminar dels amics',
-        removeFriendConfirm: ({ name }: { name: string }) => `Estàs segur que vols eliminar ${name} dels teus amics?`,
-        requestSentDescription: ({ name }: { name: string }) => `La teva sol·licitud d\'amistat ha estat enviada a ${name}`,
-        requestFriendship: 'Sol·licitar amistat',
-        cancelRequest: 'Cancel·lar sol·licitud d\'amistat',
-        cancelRequestConfirm: ({ name }: { name: string }) => `Cancel·lar la teva sol·licitud d\'amistat a ${name}?`,
-        denyRequest: 'Rebutjar sol·licitud',
-        nowFriendsWith: ({ name }: { name: string }) => `Ara ets amic de ${name}`,
-        disabled: 'Amics està desactivat en aquest servidor.',
-        username: {
-            required: 'Tria un nom d’usuari per fer servir Amics.',
-            taken: 'Aquest nom d’usuari ja està en ús.',
-            invalid: 'Aquest nom d’usuari no és permès.',
-            disabled: 'La modalitat d’Amics amb nom d’usuari no està activada en aquest servidor.',
-            preferredNotAvailable: 'El teu nom d’usuari preferit no està disponible en aquest servidor. Si us plau, tria’n un altre.',
-            preferredNotAvailableWithLogin: ({ login }: { login: string }) =>
-                `El teu nom d’usuari preferit @${login} no està disponible en aquest servidor. Si us plau, tria’n un altre.`,
-        },
-        githubGate: {
-            title: 'Connecta GitHub per fer servir Amics',
-            body: 'Amics fa servir els noms d’usuari de GitHub per trobar i compartir.',
-            connect: 'Connecta GitHub',
-            notAvailable: 'No disponible?',
-            notConfigured: 'GitHub OAuth no està configurat en aquest servidor.',
-        },
-        providerGate: {
-            title: ({ provider }: { provider: string }) => `Connecta ${provider} per fer servir Amics`,
-            body: ({ provider }: { provider: string }) =>
-                `Amics fa servir els noms d’usuari de ${provider} per trobar i compartir.`,
-            connect: ({ provider }: { provider: string }) => `Connecta ${provider}`,
-            notAvailable: 'No disponible?',
-            notConfigured: ({ provider }: { provider: string }) => `${provider} OAuth no està configurat en aquest servidor.`,
-        },
-    },
-
-    usage: {
-        // Usage panel strings
-        today: 'Avui',
-        last7Days: 'Últims 7 dies',
-        last30Days: 'Últims 30 dies',
-        totalTokens: 'Tokens totals',
-        totalCost: 'Cost total',
-        tokens: 'Tokens',
-        cost: 'Cost',
-        usageOverTime: 'Ús al llarg del temps',
-        byModel: 'Per model',
-        noData: "No hi ha dades d'ús disponibles",
-    },
-
-    profiles: {
-        title: 'Perfils',
-        subtitle: 'Gestiona els teus perfils de configuració',
-        sessionUses: ({ profile }: { profile: string }) => `Aquesta sessió utilitza: ${profile}`,
-        profilesFixedPerSession: 'Els perfils són fixos per sessió. Per utilitzar un perfil diferent, inicia una sessió nova.',
-        noProfile: 'Cap perfil',
-        noProfileDescription: 'Crea un perfil per gestionar la teva configuració d\'entorn',
-        addProfile: 'Afegeix un perfil',
-        addProfileTitle: 'Títol del perfil d\'addició',
-        editProfile: 'Edita el perfil',
-        profileName: 'Nom del perfil',
-        enterName: 'Introdueix el nom del perfil',
-        baseURL: 'URL base',
-        authToken: 'Token d\'autenticació',
-        enterToken: 'Introdueix el token d\'autenticació',
-        model: 'Model',
-        defaultModel: 'Model per defecte',
-        tmuxSession: 'Sessió tmux',
-        enterTmuxSession: 'Introdueix el nom de la sessió tmux',
-        tmuxTempDir: 'Directori temporal tmux',
-        enterTmuxTempDir: 'Introdueix el directori temporal tmux',
-        tmuxUpdateEnvironment: 'Actualitza l\'entorn tmux',
-        deleteConfirm: ({ name }: { name: string }) => `Segur que vols eliminar el perfil "${name}"?`,
-        nameRequired: 'El nom del perfil és obligatori',
-        builtIn: 'Integrat',
-        custom: 'Personalitzat',
-        builtInSaveAsHint: 'Desar un perfil integrat crea un nou perfil personalitzat.',
-        builtInNames: {
-            anthropic: 'Anthropic (Per defecte)',
-            deepseek: 'DeepSeek (Raonament)',
-            zai: 'Z.AI (GLM-4.6)',
-            codex: 'Codex (Default)',
-            openai: 'OpenAI (GPT-5)',
-            azureOpenai: 'Azure OpenAI',
-            gemini: 'Gemini (Default)',
-            geminiApiKey: 'Gemini (API key)',
-            geminiVertex: 'Gemini (Vertex AI)',
-        },
-        groups: {
-            favorites: 'Preferits',
-            custom: 'Els teus perfils',
-            builtIn: 'Perfils integrats',
-        },
-        actions: {
-            viewEnvironmentVariables: 'Variables d\'entorn',
-            addToFavorites: 'Afegeix als preferits',
-            removeFromFavorites: 'Treu dels preferits',
-            editProfile: 'Edita el perfil',
-            duplicateProfile: 'Duplica el perfil',
-            deleteProfile: 'Elimina el perfil',
-        },
-        copySuffix: '(Còpia)',
-        duplicateName: 'Ja existeix un perfil amb aquest nom',
-        setupInstructions: {
-            title: 'Instruccions de configuració',
-            viewCloudGuide: 'Veure la guia oficial de configuració',
+    requirements: {
+      secretRequired: "Secret",
+      configured: "Configurada a la màquina",
+      notConfigured: "No configurada",
+      checking: "Comprovant…",
+      missingConfigForProfile: ({ env }: { env: string }) =>
+        `Aquest perfil requereix que ${env} estigui configurat a la màquina.`,
+      modalTitle: "Cal un secret",
+      modalBody:
+        "Aquest perfil requereix un secret.\n\nOpcions disponibles:\n• Fer servir l’entorn de la màquina (recomanat)\n• Fer servir un secret desat a la configuració de l’app\n• Introduir un secret només per a aquesta sessió",
+      sectionTitle: "Requisits",
+      sectionSubtitle:
+        "Aquests camps s’utilitzen per comprovar l’estat i evitar fallades inesperades.",
+      secretEnvVarPromptDescription:
+        "Introdueix el nom de la variable d’entorn secreta necessària (p. ex., OPENAI_API_KEY).",
+      modalHelpWithEnv: ({ env }: { env: string }) =>
+        `Aquest perfil necessita ${env}. Tria una opció a continuació.`,
+      modalHelpGeneric:
+        "Aquest perfil necessita un secret. Tria una opció a continuació.",
+      chooseOptionTitle: "Tria una opció",
+      machineEnvStatus: {
+        theMachine: "la màquina",
+        checkFor: ({ env }: { env: string }) => `Comprova ${env}`,
+        checking: ({ env }: { env: string }) => `Comprovant ${env}…`,
+        found: ({ env, machine }: { env: string; machine: string }) =>
+          `${env} trobat a ${machine}`,
+        notFound: ({ env, machine }: { env: string; machine: string }) =>
+          `${env} no trobat a ${machine}`,
+      },
+      machineEnvSubtitle: {
+        checking: "Comprovant l’entorn del dimoni…",
+        found: "Trobat a l’entorn del dimoni a la màquina.",
+        notFound:
+          "Configura-ho a l’entorn del dimoni a la màquina i reinicia el dimoni.",
+      },
+      options: {
+        none: {
+          title: "Cap",
+          subtitle: "No requereix secret ni inici de sessió per CLI.",
         },
         machineLogin: {
-            title: 'Inici de sessió CLI',
-            subtitle: 'Aquest perfil depèn d’una memòria cau d’inici de sessió del CLI a la màquina seleccionada.',
-            status: {
-                loggedIn: 'Sessió iniciada',
-                notLoggedIn: 'Sense sessió iniciada',
-            },
-            claudeCode: {
-                title: 'Claude Code',
-                instructions: 'Executa `claude` i després escriu `/login` per iniciar sessió.',
-                warning: 'Nota: definir `ANTHROPIC_AUTH_TOKEN` substitueix l’inici de sessió del CLI.',
-            },
-            codex: {
-                title: 'Codex',
-                instructions: 'Executa `codex login` per iniciar sessió.',
-            },
-            geminiCli: {
-                title: 'Gemini CLI',
-                instructions: 'Executa `gemini auth` per iniciar sessió.',
-            },
+          subtitle:
+            "Requereix haver iniciat sessió via un CLI a la màquina de destinació.",
+          longSubtitle:
+            "Requereix haver iniciat sessió via el CLI del backend d’IA escollit a la màquina de destinació.",
         },
-        requirements: {
-            secretRequired: 'Secret',
-            configured: 'Configurada a la màquina',
-            notConfigured: 'No configurada',
-            checking: 'Comprovant…',
-            missingConfigForProfile: ({ env }: { env: string }) => `Aquest perfil requereix que ${env} estigui configurat a la màquina.`,
-            modalTitle: 'Cal un secret',
-            modalBody: 'Aquest perfil requereix un secret.\n\nOpcions disponibles:\n• Fer servir l’entorn de la màquina (recomanat)\n• Fer servir un secret desat a la configuració de l’app\n• Introduir un secret només per a aquesta sessió',
-            sectionTitle: 'Requisits',
-            sectionSubtitle: 'Aquests camps s’utilitzen per comprovar l’estat i evitar fallades inesperades.',
-            secretEnvVarPromptDescription: 'Introdueix el nom de la variable d’entorn secreta necessària (p. ex., OPENAI_API_KEY).',
-            modalHelpWithEnv: ({ env }: { env: string }) => `Aquest perfil necessita ${env}. Tria una opció a continuació.`,
-            modalHelpGeneric: 'Aquest perfil necessita un secret. Tria una opció a continuació.',
-            chooseOptionTitle: 'Tria una opció',
-            machineEnvStatus: {
-                theMachine: 'la màquina',
-                checkFor: ({ env }: { env: string }) => `Comprova ${env}`,
-                checking: ({ env }: { env: string }) => `Comprovant ${env}…`,
-                found: ({ env, machine }: { env: string; machine: string }) => `${env} trobat a ${machine}`,
-                notFound: ({ env, machine }: { env: string; machine: string }) => `${env} no trobat a ${machine}`,
-            },
-            machineEnvSubtitle: {
-                checking: 'Comprovant l’entorn del dimoni…',
-                found: 'Trobat a l’entorn del dimoni a la màquina.',
-                notFound: 'Configura-ho a l’entorn del dimoni a la màquina i reinicia el dimoni.',
-            },
-            options: {
-                none: {
-                    title: 'Cap',
-                    subtitle: 'No requereix secret ni inici de sessió per CLI.',
-                },
-                machineLogin: {
-                    subtitle: 'Requereix haver iniciat sessió via un CLI a la màquina de destinació.',
-                    longSubtitle: 'Requereix haver iniciat sessió via el CLI del backend d’IA escollit a la màquina de destinació.',
-                },
-                useMachineEnvironment: {
-                    title: 'Fer servir l’entorn de la màquina',
-                    subtitleWithEnv: ({ env }: { env: string }) => `Fer servir ${env} de l’entorn del dimoni.`,
-                    subtitleGeneric: 'Fer servir el secret de l’entorn del dimoni.',
-                },
-                useSavedSecret: {
-                    title: 'Fer servir un secret desat',
-                    subtitle: 'Selecciona (o afegeix) un secret desat a l’app.',
-                },
-                enterOnce: {
-                    title: 'Introduir un secret',
-                    subtitle: 'Enganxa un secret només per a aquesta sessió (no es desarà).',
-                },
-            },
-            secretEnvVar: {
-                title: 'Variable d’entorn del secret',
-                subtitle: 'Introdueix el nom de la variable d’entorn que aquest proveïdor espera per al secret (p. ex., OPENAI_API_KEY).',
-                label: 'Nom de la variable d’entorn',
-            },
-            sections: {
-                machineEnvironment: 'Entorn de la màquina',
-                useOnceTitle: 'Fer servir una vegada',
-                useOnceLabel: 'Introdueix un secret',
-                useOnceFooter: 'Enganxa un secret només per a aquesta sessió. No es desarà.',
-            },
-            actions: {
-                useMachineEnvironment: {
-                    subtitle: 'Comença amb la clau que ja és present a la màquina.',
-                },
-                useOnceButton: 'Fer servir una vegada (només sessió)',
-            },
+        useMachineEnvironment: {
+          title: "Fer servir l’entorn de la màquina",
+          subtitleWithEnv: ({ env }: { env: string }) =>
+            `Fer servir ${env} de l’entorn del dimoni.`,
+          subtitleGeneric: "Fer servir el secret de l’entorn del dimoni.",
         },
-        defaultSessionType: 'Tipus de sessió predeterminat',
-        defaultPermissionMode: {
-            title: 'Mode de permisos predeterminat',
-            descriptions: {
-                default: 'Demana permisos',
-                acceptEdits: 'Aprova edicions automàticament',
-                plan: 'Planifica abans d\'executar',
-                bypassPermissions: 'Salta tots els permisos',
-            },
+        useSavedSecret: {
+          title: "Fer servir un secret desat",
+          subtitle: "Selecciona (o afegeix) un secret desat a l’app.",
         },
-        aiBackend: {
-            title: 'Backend d\'IA',
-            selectAtLeastOneError: 'Selecciona com a mínim un backend d\'IA.',
-            claudeSubtitle: 'CLI de Claude',
-            codexSubtitle: 'CLI de Codex',
-            opencodeSubtitle: 'CLI d\'OpenCode',
-            geminiSubtitleExperimental: 'CLI de Gemini (experimental)',
-            auggieSubtitle: 'CLI d\'Auggie',
-            qwenSubtitleExperimental: 'CLI de Qwen Code (experimental)',
-            kimiSubtitleExperimental: 'CLI de Kimi (experimental)',
-            kiloSubtitleExperimental: 'CLI de Kilo (experimental)',
-            piSubtitleExperimental: 'CLI de Pi (experimental)',
+        enterOnce: {
+          title: "Introduir un secret",
+          subtitle:
+            "Enganxa un secret només per a aquesta sessió (no es desarà).",
         },
-        tmux: {
-            title: 'Tmux',
-            spawnSessionsTitle: 'Inicia sessions a Tmux',
-            spawnSessionsEnabledSubtitle: 'Les sessions s\'inicien en noves finestres de tmux.',
-            spawnSessionsDisabledSubtitle: 'Les sessions s\'inicien en un shell normal (sense integració amb tmux)',
-            isolatedServerTitle: 'Servidor tmux aïllat',
-            isolatedServerEnabledSubtitle: 'Inicia sessions en un servidor tmux aïllat (recomanat).',
-            isolatedServerDisabledSubtitle: 'Inicia sessions al servidor tmux predeterminat.',
-            sessionNamePlaceholder: 'Buit = sessió actual/més recent',
-            tempDirPlaceholder: 'Deixa-ho buit per generar automàticament',
+      },
+      secretEnvVar: {
+        title: "Variable d’entorn del secret",
+        subtitle:
+          "Introdueix el nom de la variable d’entorn que aquest proveïdor espera per al secret (p. ex., OPENAI_API_KEY).",
+        label: "Nom de la variable d’entorn",
+      },
+      sections: {
+        machineEnvironment: "Entorn de la màquina",
+        useOnceTitle: "Fer servir una vegada",
+        useOnceLabel: "Introdueix un secret",
+        useOnceFooter:
+          "Enganxa un secret només per a aquesta sessió. No es desarà.",
+      },
+      actions: {
+        useMachineEnvironment: {
+          subtitle: "Comença amb la clau que ja és present a la màquina.",
         },
-        previewMachine: {
-            title: 'Previsualitza màquina',
-            itemTitle: 'Màquina de previsualització per a variables d\'entorn',
-            selectMachine: 'Selecciona màquina',
-            resolveSubtitle: 'S\'usa només per previsualitzar els valors resolts a continuació (no canvia el que es desa).',
-            selectSubtitle: 'Selecciona una màquina per previsualitzar els valors resolts a continuació.',
-        },
-        environmentVariables: {
-            title: 'Variables d\'entorn',
-            addVariable: 'Afegeix variable',
-            namePlaceholder: 'Nom de variable (p. ex., MY_CUSTOM_VAR)',
-            valuePlaceholder: 'Valor (p. ex., my-value o ${MY_VAR})',
-            validation: {
-                nameRequired: 'Introdueix un nom de variable.',
-                invalidNameFormat: 'Els noms de variable han de ser lletres majúscules, números i guions baixos, i no poden començar amb un número.',
-                duplicateName: 'Aquesta variable ja existeix.',
-            },
-            card: {
-                valueLabel: 'Valor:',
-                fallbackValueLabel: 'Valor de reserva:',
-                valueInputPlaceholder: 'Valor',
-                defaultValueInputPlaceholder: 'Valor per defecte',
-                fallbackDisabledForVault: 'Els valors de reserva estan desactivats quan s\'utilitza el magatzem de secrets.',
-                secretNotRetrieved: 'Valor secret - no es recupera per seguretat',
-                secretToggleLabel: 'Amaga el valor a la UI',
-                secretToggleSubtitle: 'Amaga el valor a la UI i evita obtenir-lo de la màquina per a la previsualització.',
-                secretToggleEnforcedByDaemon: 'Imposat pel dimoni',
-                secretToggleEnforcedByVault: 'Imposat pel cofre de secrets',
-                secretToggleResetToAuto: 'Restablir a automàtic',
-                requirementRequiredLabel: 'Obligatori',
-                requirementRequiredSubtitle: 'Bloqueja la creació de la sessió si falta la variable.',
-                requirementUseVaultLabel: 'Utilitza el magatzem de secrets',
-                requirementUseVaultSubtitle: 'Utilitza un secret desat (sense valors de reserva).',
-                defaultSecretLabel: 'Secret per defecte',
-                overridingDefault: ({ expectedValue }: { expectedValue: string }) =>
-                    `S'està substituint el valor predeterminat documentat: ${expectedValue}`,
-                useMachineEnvToggle: 'Utilitza el valor de l\'entorn de la màquina',
-                resolvedOnSessionStart: 'Es resol quan la sessió s\'inicia a la màquina seleccionada.',
-                sourceVariableLabel: 'Variable d\'origen',
-                sourceVariablePlaceholder: 'Nom de variable d\'origen (p. ex., Z_AI_MODEL)',
-                checkingMachine: ({ machine }: { machine: string }) => `Comprovant ${machine}...`,
-                emptyOnMachine: ({ machine }: { machine: string }) => `Buit a ${machine}`,
-                emptyOnMachineUsingFallback: ({ machine }: { machine: string }) => `Buit a ${machine} (utilitzant reserva)`,
-                notFoundOnMachine: ({ machine }: { machine: string }) => `No trobat a ${machine}`,
-                notFoundOnMachineUsingFallback: ({ machine }: { machine: string }) => `No trobat a ${machine} (utilitzant reserva)`,
-                valueFoundOnMachine: ({ machine }: { machine: string }) => `Valor trobat a ${machine}`,
-                differsFromDocumented: ({ expectedValue }: { expectedValue: string }) =>
-                    `Difiereix del valor documentat: ${expectedValue}`,
-            },
-            preview: {
-                secretValueHidden: ({ value }: { value: string }) => `${value} - ocult per seguretat`,
-                hiddenValue: '***ocult***',
-                emptyValue: '(buit)',
-                sessionWillReceive: ({ name, value }: { name: string; value: string }) =>
-                    `La sessió rebrà: ${name} = ${value}`,
-            },
-            previewModal: {
-                titleWithProfile: ({ profileName }: { profileName: string }) => `Variables d'entorn · ${profileName}`,
-                descriptionPrefix: 'Aquestes variables d\'entorn s\'envien en iniciar la sessió. Els valors es resolen usant el dimoni a',
-                descriptionFallbackMachine: 'la màquina seleccionada',
-                descriptionSuffix: '.',
-                emptyMessage: 'No hi ha variables d\'entorn configurades per a aquest perfil.',
-                checkingSuffix: '(comprovant…)',
-                detail: {
-                    fixed: 'Fix',
-                    machine: 'Màquina',
-                    checking: 'Comprovant',
-                    fallback: 'Reserva',
-                    missing: 'Falta',
-                },
-            },
-        },
-        delete: {
-            title: 'Eliminar Perfil',
-            message: ({ name }: { name: string }) => `Estàs segur que vols eliminar "${name}"? Aquesta acció no es pot desfer.`,
-            confirm: 'Eliminar',
-            cancel: 'Cancel·lar',
-        },
+        useOnceButton: "Fer servir una vegada (només sessió)",
+      },
     },
-
-    secrets: {
-        addTitle: 'Nou secret',
-        savedTitle: 'Secrets desats',
-        badgeReady: 'Secret',
-        badgeRequired: 'Cal un secret',
-        missingForProfile: ({ env }: { env: string | null }) =>
-            `Falta el secret (${env ?? 'secret'}). Configura’l a la màquina o selecciona/introdueix un secret.`,
-        defaultForProfileTitle: 'Secret predeterminat',
-        defineDefaultForProfileTitle: 'Defineix el secret predeterminat per a aquest perfil',
-        addSubtitle: 'Afegeix un secret desat',
-        noneTitle: 'Cap',
-        noneSubtitle: 'Fes servir l’entorn de la màquina o introdueix un secret per a aquesta sessió',
-        emptyTitle: 'No hi ha secrets desats',
-        emptySubtitle: 'Afegeix-ne un per utilitzar perfils amb secret sense configurar variables d’entorn a la màquina.',
-        savedHiddenSubtitle: 'Desada (valor ocult)',
-        defaultLabel: 'Per defecte',
-        fields: {
-            name: 'Nom',
-            value: 'Valor',
-        },
-        placeholders: {
-            nameExample: 'p. ex., Work OpenAI',
-        },
-        validation: {
-            nameRequired: 'El nom és obligatori.',
-            valueRequired: 'El valor és obligatori.',
-        },
-        actions: {
-            replace: 'Substitueix',
-            replaceValue: 'Substitueix el valor',
-            setDefault: 'Estableix com a per defecte',
-            unsetDefault: 'Treu com a per defecte',
-        },
-        prompts: {
-            renameTitle: 'Reanomena el secret',
-            renameDescription: 'Actualitza el nom descriptiu d’aquest secret.',
-            replaceValueTitle: 'Substitueix el valor del secret',
-            replaceValueDescription: 'Enganxa el nou valor del secret. No es tornarà a mostrar després de desar-lo.',
-            deleteTitle: 'Elimina el secret',
-            deleteConfirm: ({ name }: { name: string }) => `Vols eliminar “${name}”? Aquesta acció no es pot desfer.`,
-        },
+    defaultSessionType: "Tipus de sessió predeterminat",
+    defaultPermissionMode: {
+      title: "Mode de permisos predeterminat",
+      descriptions: {
+        default: "Demana permisos",
+        acceptEdits: "Aprova edicions automàticament",
+        plan: "Planifica abans d'executar",
+        bypassPermissions: "Salta tots els permisos",
+      },
     },
+    aiBackend: {
+      title: "Backend d'IA",
+      selectAtLeastOneError: "Selecciona com a mínim un backend d'IA.",
+      claudeSubtitle: "CLI de Claude",
+      codexSubtitle: "CLI de Codex",
+      opencodeSubtitle: "CLI d'OpenCode",
+      geminiSubtitleExperimental: "CLI de Gemini (experimental)",
+      auggieSubtitle: "CLI d'Auggie",
+      qwenSubtitleExperimental: "CLI de Qwen Code (experimental)",
+      kimiSubtitleExperimental: "CLI de Kimi (experimental)",
+      kiloSubtitleExperimental: "CLI de Kilo (experimental)",
+      piSubtitleExperimental: "CLI de Pi (experimental)",
+    },
+    tmux: {
+      title: "Tmux",
+      spawnSessionsTitle: "Inicia sessions a Tmux",
+      spawnSessionsEnabledSubtitle:
+        "Les sessions s'inicien en noves finestres de tmux.",
+      spawnSessionsDisabledSubtitle:
+        "Les sessions s'inicien en un shell normal (sense integració amb tmux)",
+      isolatedServerTitle: "Servidor tmux aïllat",
+      isolatedServerEnabledSubtitle:
+        "Inicia sessions en un servidor tmux aïllat (recomanat).",
+      isolatedServerDisabledSubtitle:
+        "Inicia sessions al servidor tmux predeterminat.",
+      sessionNamePlaceholder: "Buit = sessió actual/més recent",
+      tempDirPlaceholder: "Deixa-ho buit per generar automàticament",
+    },
+    previewMachine: {
+      title: "Previsualitza màquina",
+      itemTitle: "Màquina de previsualització per a variables d'entorn",
+      selectMachine: "Selecciona màquina",
+      resolveSubtitle:
+        "S'usa només per previsualitzar els valors resolts a continuació (no canvia el que es desa).",
+      selectSubtitle:
+        "Selecciona una màquina per previsualitzar els valors resolts a continuació.",
+    },
+    environmentVariables: {
+      title: "Variables d'entorn",
+      addVariable: "Afegeix variable",
+      namePlaceholder: "Nom de variable (p. ex., MY_CUSTOM_VAR)",
+      valuePlaceholder: "Valor (p. ex., my-value o ${MY_VAR})",
+      validation: {
+        nameRequired: "Introdueix un nom de variable.",
+        invalidNameFormat:
+          "Els noms de variable han de ser lletres majúscules, números i guions baixos, i no poden començar amb un número.",
+        duplicateName: "Aquesta variable ja existeix.",
+      },
+      card: {
+        valueLabel: "Valor:",
+        fallbackValueLabel: "Valor de reserva:",
+        valueInputPlaceholder: "Valor",
+        defaultValueInputPlaceholder: "Valor per defecte",
+        fallbackDisabledForVault:
+          "Els valors de reserva estan desactivats quan s'utilitza el magatzem de secrets.",
+        secretNotRetrieved: "Valor secret - no es recupera per seguretat",
+        secretToggleLabel: "Amaga el valor a la UI",
+        secretToggleSubtitle:
+          "Amaga el valor a la UI i evita obtenir-lo de la màquina per a la previsualització.",
+        secretToggleEnforcedByDaemon: "Imposat pel dimoni",
+        secretToggleEnforcedByVault: "Imposat pel cofre de secrets",
+        secretToggleResetToAuto: "Restablir a automàtic",
+        requirementRequiredLabel: "Obligatori",
+        requirementRequiredSubtitle:
+          "Bloqueja la creació de la sessió si falta la variable.",
+        requirementUseVaultLabel: "Utilitza el magatzem de secrets",
+        requirementUseVaultSubtitle:
+          "Utilitza un secret desat (sense valors de reserva).",
+        defaultSecretLabel: "Secret per defecte",
+        overridingDefault: ({ expectedValue }: { expectedValue: string }) =>
+          `S'està substituint el valor predeterminat documentat: ${expectedValue}`,
+        useMachineEnvToggle: "Utilitza el valor de l'entorn de la màquina",
+        resolvedOnSessionStart:
+          "Es resol quan la sessió s'inicia a la màquina seleccionada.",
+        sourceVariableLabel: "Variable d'origen",
+        sourceVariablePlaceholder:
+          "Nom de variable d'origen (p. ex., Z_AI_MODEL)",
+        checkingMachine: ({ machine }: { machine: string }) =>
+          `Comprovant ${machine}...`,
+        emptyOnMachine: ({ machine }: { machine: string }) =>
+          `Buit a ${machine}`,
+        emptyOnMachineUsingFallback: ({ machine }: { machine: string }) =>
+          `Buit a ${machine} (utilitzant reserva)`,
+        notFoundOnMachine: ({ machine }: { machine: string }) =>
+          `No trobat a ${machine}`,
+        notFoundOnMachineUsingFallback: ({ machine }: { machine: string }) =>
+          `No trobat a ${machine} (utilitzant reserva)`,
+        valueFoundOnMachine: ({ machine }: { machine: string }) =>
+          `Valor trobat a ${machine}`,
+        differsFromDocumented: ({ expectedValue }: { expectedValue: string }) =>
+          `Difiereix del valor documentat: ${expectedValue}`,
+      },
+      preview: {
+        secretValueHidden: ({ value }: { value: string }) =>
+          `${value} - ocult per seguretat`,
+        hiddenValue: "***ocult***",
+        emptyValue: "(buit)",
+        sessionWillReceive: ({
+          name,
+          value,
+        }: {
+          name: string;
+          value: string;
+        }) => `La sessió rebrà: ${name} = ${value}`,
+      },
+      previewModal: {
+        titleWithProfile: ({ profileName }: { profileName: string }) =>
+          `Variables d'entorn · ${profileName}`,
+        descriptionPrefix:
+          "Aquestes variables d'entorn s'envien en iniciar la sessió. Els valors es resolen usant el dimoni a",
+        descriptionFallbackMachine: "la màquina seleccionada",
+        descriptionSuffix: ".",
+        emptyMessage:
+          "No hi ha variables d'entorn configurades per a aquest perfil.",
+        checkingSuffix: "(comprovant…)",
+        detail: {
+          fixed: "Fix",
+          machine: "Màquina",
+          checking: "Comprovant",
+          fallback: "Reserva",
+          missing: "Falta",
+        },
+      },
+    },
+    delete: {
+      title: "Eliminar Perfil",
+      message: ({ name }: { name: string }) =>
+        `Estàs segur que vols eliminar "${name}"? Aquesta acció no es pot desfer.`,
+      confirm: "Eliminar",
+      cancel: "Cancel·lar",
+    },
+  },
 
-    feed: {
-        // Feed notifications for friend requests and acceptances
-        friendRequestFrom: ({ name }: { name: string }) => `${name} t'ha enviat una sol·licitud d'amistat`,
-        friendRequestGeneric: 'Nova sol·licitud d\'amistat',
-        friendAccepted: ({ name }: { name: string }) => `Ara ets amic de ${name}`,
-        friendAcceptedGeneric: 'Sol·licitud d\'amistat acceptada',
-    }
+  secrets: {
+    addTitle: "Nou secret",
+    savedTitle: "Secrets desats",
+    badgeReady: "Secret",
+    badgeRequired: "Cal un secret",
+    missingForProfile: ({ env }: { env: string | null }) =>
+      `Falta el secret (${env ?? "secret"}). Configura’l a la màquina o selecciona/introdueix un secret.`,
+    defaultForProfileTitle: "Secret predeterminat",
+    defineDefaultForProfileTitle:
+      "Defineix el secret predeterminat per a aquest perfil",
+    addSubtitle: "Afegeix un secret desat",
+    noneTitle: "Cap",
+    noneSubtitle:
+      "Fes servir l’entorn de la màquina o introdueix un secret per a aquesta sessió",
+    emptyTitle: "No hi ha secrets desats",
+    emptySubtitle:
+      "Afegeix-ne un per utilitzar perfils amb secret sense configurar variables d’entorn a la màquina.",
+    savedHiddenSubtitle: "Desada (valor ocult)",
+    defaultLabel: "Per defecte",
+    fields: {
+      name: "Nom",
+      value: "Valor",
+    },
+    placeholders: {
+      nameExample: "p. ex., Work OpenAI",
+    },
+    validation: {
+      nameRequired: "El nom és obligatori.",
+      valueRequired: "El valor és obligatori.",
+    },
+    actions: {
+      replace: "Substitueix",
+      replaceValue: "Substitueix el valor",
+      setDefault: "Estableix com a per defecte",
+      unsetDefault: "Treu com a per defecte",
+    },
+    prompts: {
+      renameTitle: "Reanomena el secret",
+      renameDescription: "Actualitza el nom descriptiu d’aquest secret.",
+      replaceValueTitle: "Substitueix el valor del secret",
+      replaceValueDescription:
+        "Enganxa el nou valor del secret. No es tornarà a mostrar després de desar-lo.",
+      deleteTitle: "Elimina el secret",
+      deleteConfirm: ({ name }: { name: string }) =>
+        `Vols eliminar “${name}”? Aquesta acció no es pot desfer.`,
+    },
+  },
+
+  feed: {
+    // Feed notifications for friend requests and acceptances
+    friendRequestFrom: ({ name }: { name: string }) =>
+      `${name} t'ha enviat una sol·licitud d'amistat`,
+    friendRequestGeneric: "Nova sol·licitud d'amistat",
+    friendAccepted: ({ name }: { name: string }) => `Ara ets amic de ${name}`,
+    friendAcceptedGeneric: "Sol·licitud d'amistat acceptada",
+  },
 } as const;
 
 export type TranslationsCa = typeof ca;
