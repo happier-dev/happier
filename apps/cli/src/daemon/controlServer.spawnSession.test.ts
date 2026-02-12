@@ -137,6 +137,36 @@ describe('daemon control server: /spawn-session', () => {
     }
   });
 
+  it('returns a structured 500 when spawnSession returns an invalid result', async () => {
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      stopSession: async () => false,
+      spawnSession: async () => undefined as any,
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/spawn-session',
+        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+        payload: JSON.stringify({ directory: '/tmp' }),
+      });
+
+      expect(res.statusCode).toBe(500);
+      expect(res.json()).toEqual({
+        success: false,
+        error: 'Failed to spawn session: invalid result',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
   it('does not pass unknown agent ids through to spawnSession', async () => {
     let observed: any = null;
 
