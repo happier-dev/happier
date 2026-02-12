@@ -73,4 +73,28 @@ describe('startup side effects: daemon session reporting retry', () => {
 
     expect(observedTimeouts).toEqual([2_500]);
   });
+
+  it('uses a longer default retry window for daemon-started sessions', async () => {
+    let calls = 0;
+    let now = 0;
+
+    await reportSessionToDaemonIfRunning(
+      { sessionId: 'session-4', metadata: { startedBy: 'daemon' } as Metadata },
+      {
+        notifyDaemonSessionStartedFn: async () => {
+          calls++;
+          return { error: 'No daemon running, no state file found' };
+        },
+        sleepFn: async (ms) => {
+          now += ms;
+        },
+        nowFn: () => now,
+        retryIntervalMs: 30_000,
+      },
+    );
+
+    // With retryInterval=30s and daemon-default retryTimeout=90s, we should observe:
+    // attempt at t=0, 30s, 60s, 90s (then stop).
+    expect(calls).toBe(4);
+  });
 });

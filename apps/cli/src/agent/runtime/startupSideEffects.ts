@@ -82,9 +82,11 @@ export async function reportSessionToDaemonIfRunning(opts: {
     const notifyFn = deps.notifyDaemonSessionStartedFn ?? notifyDaemonSessionStarted;
     const sleepFn = deps.sleepFn ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     const nowFn = deps.nowFn ?? (() => Date.now());
+    const startedBy = String(opts.metadata?.startedBy ?? '').trim().toLowerCase();
+    const defaultRetryTimeoutMs = startedBy === 'daemon' ? 90_000 : 10_000;
     const retryTimeoutMs =
         deps.retryTimeoutMs ??
-        resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS, 10_000, {
+        resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS, defaultRetryTimeoutMs, {
             min: 0,
             max: 120_000,
         });
