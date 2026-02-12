@@ -23,6 +23,26 @@ describe('acp token_count -> usage-report', () => {
     });
   });
 
+  it('includes cost.total when provided on the token_count body', () => {
+    const report = buildUsageReportFromAcpTokenCount({
+      provider: 'pi' as any,
+      sessionId: 'sess4',
+      body: {
+        type: 'token_count',
+        key: 'turn-2',
+        tokens: { total: 10, input: 4, output: 6 },
+        cost: { total: 0.42 },
+      },
+    });
+
+    expect(report).toEqual({
+      key: 'turn-2',
+      sessionId: 'sess4',
+      tokens: { total: 10, input: 4, output: 6 },
+      cost: { total: 0.42 },
+    });
+  });
+
   it('falls back to a per-provider session key when none is present', () => {
     const report = buildUsageReportFromAcpTokenCount({
       provider: 'gemini',
@@ -51,5 +71,22 @@ describe('acp token_count -> usage-report', () => {
       tokens: { total: 7, input: 4, output: 3 },
       cost: { total: 0 },
     });
+  });
+
+  it('does not allow __proto__ keys to mutate cost map prototypes', () => {
+    const report = buildUsageReportFromAcpTokenCount({
+      provider: 'pi' as any,
+      sessionId: 'sess5',
+      body: {
+        type: 'token_count',
+        tokens: { total: 3, input: 1, output: 2 },
+        cost: { component: 0.1, __proto__: 1 },
+      },
+    });
+
+    expect(report).toBeTruthy();
+    expect(Object.getPrototypeOf((report as any).cost)).toBeNull();
+    expect((report as any).cost.component).toBe(0.1);
+    expect((report as any).cost.polluted).toBeUndefined();
   });
 });

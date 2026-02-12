@@ -6,6 +6,7 @@ import { agent as gemini } from '@/backends/gemini';
 import { agent as kimi } from '@/backends/kimi';
 import { agent as kilo } from '@/backends/kilo';
 import { agent as opencode } from '@/backends/opencode';
+import { agent as pi } from '@/backends/pi';
 import { agent as qwen } from '@/backends/qwen';
 import { DEFAULT_CATALOG_AGENT_ID } from './types';
 import type { AgentCatalogEntry, CatalogAgentId, VendorResumeSupportFn } from './types';
@@ -21,6 +22,7 @@ export const AGENTS: Record<CatalogAgentId, AgentCatalogEntry> = {
   qwen,
   kimi,
   kilo,
+  pi,
 };
 
 const cachedVendorResumeSupportPromises = new Map<CatalogAgentId, Promise<VendorResumeSupportFn>>();

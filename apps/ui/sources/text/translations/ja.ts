@@ -1073,6 +1073,7 @@ export const ja: TranslationStructure = {
         activity: 'アクティビティ',
         thinking: '思考中',
         thinkingSince: '思考開始時刻',
+        thinkingLevel: '思考レベル',
         cliVersion: 'CLIバージョン',
         cliVersionOutdated: 'CLIの更新が必要',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>

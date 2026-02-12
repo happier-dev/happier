@@ -433,6 +433,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         activity: '活動',
         thinking: '思考中',
         thinkingSince: '思考開始時間',
+        thinkingLevel: '思考等級',
         cliVersion: 'CLI 版本',
         cliVersionOutdated: '需要更新 CLI',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>

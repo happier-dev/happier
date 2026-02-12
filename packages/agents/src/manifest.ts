@@ -67,4 +67,12 @@ export const AGENTS_CORE = {
         cloudConnect: null,
         resume: { vendorResume: 'supported', vendorResumeIdField: 'kiloSessionId', runtimeGate: 'acpLoadSession' },
     },
+    pi: {
+        id: 'pi',
+        cliSubcommand: 'pi',
+        detectKey: 'pi',
+        flavorAliases: ['pi-coding-agent'],
+        cloudConnect: null,
+        resume: { vendorResume: 'unsupported', vendorResumeIdField: 'piSessionId', runtimeGate: null },
+    },
 } as const satisfies Record<AgentId, AgentCore>;

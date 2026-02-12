@@ -11,6 +11,10 @@ describe('AGENTS', () => {
     expect(Object.prototype.hasOwnProperty.call(AGENTS, 'kilo')).toBe(true);
   });
 
+  it('includes pi', () => {
+    expect(Object.prototype.hasOwnProperty.call(AGENTS, 'pi')).toBe(true);
+  });
+
   it('has unique cliSubcommand values', () => {
     const values = Object.values(AGENTS).map((entry) => entry.cliSubcommand);
     expect(new Set(values).size).toBe(values.length);

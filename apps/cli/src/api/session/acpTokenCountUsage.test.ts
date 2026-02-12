@@ -59,4 +59,17 @@ describe('acp token_count usage extraction', () => {
     const res = extractTokensFromAcpTokenCountMessage({ type: 'token_count', tokens: { total: 'x' } });
     expect(res).toBeNull();
   });
+
+  it('does not allow __proto__ token keys to mutate the resulting map prototype', () => {
+    const res = extractTokensFromAcpTokenCountMessage({
+      type: 'token_count',
+      tokens: { input: 1, output: 2, __proto__: 123 },
+    });
+
+    expect(res).toBeTruthy();
+    expect(Object.getPrototypeOf((res as any).tokens)).toBeNull();
+    expect((res as any).tokens.input).toBe(1);
+    expect((res as any).tokens.output).toBe(2);
+    expect((res as any).tokens.polluted).toBeUndefined();
+  });
 });

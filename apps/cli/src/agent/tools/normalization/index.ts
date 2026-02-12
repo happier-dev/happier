@@ -197,6 +197,35 @@ export function canonicalizeToolNameV2(opts: {
 
     // Search / listing.
     if (lower === 'glob') return 'Glob';
+    if (lower === 'find') {
+        const record = asRecord(opts.toolInput) ?? {};
+
+        const hasFilesystemHints =
+            typeof (record as any).pattern === 'string' ||
+            typeof (record as any).glob === 'string' ||
+            typeof (record as any).path === 'string' ||
+            typeof (record as any).directory === 'string' ||
+            typeof (record as any).root === 'string' ||
+            typeof (record as any).cwd === 'string';
+
+        const queryCandidate =
+            typeof (record as any).query === 'string'
+                ? (record as any).query
+                : typeof (record as any).q === 'string'
+                    ? (record as any).q
+                    : typeof (record as any).text === 'string'
+                        ? (record as any).text
+                        : null;
+        const hasQuery = typeof queryCandidate === 'string' && queryCandidate.trim().length > 0;
+
+        if (hasQuery && !hasFilesystemHints) {
+            const queryText = String(queryCandidate).trim();
+            const looksGlobLike = /[*?[\]{}]/.test(queryText) || queryText.includes('**');
+            if (looksGlobLike) return 'Glob';
+            return 'CodeSearch';
+        }
+        return 'Glob';
+    }
     if (lower === 'grep') return 'Grep';
     if (lower === 'ls') return 'LS';
     if (lower === 'search') return 'CodeSearch';

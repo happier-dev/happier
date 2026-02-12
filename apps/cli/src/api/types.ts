@@ -351,6 +351,7 @@ export type Metadata = {
   qwenSessionId?: string, // Qwen Code ACP session ID (opaque)
   kimiSessionId?: string, // Kimi ACP session ID (opaque)
   kiloSessionId?: string, // Kilo ACP session ID (opaque)
+  piSessionId?: string, // Pi RPC session ID (opaque)
   auggieAllowIndexing?: boolean, // Auggie indexing enablement (spawn-time)
   tools?: string[],
   slashCommands?: string[],

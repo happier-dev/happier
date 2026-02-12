@@ -12,10 +12,16 @@ function asFiniteNonNegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+function createSafeNumberMap(): Record<string, number> {
+  // Null-prototype objects avoid `__proto__` mutation semantics.
+  return Object.create(null) as Record<string, number>;
+}
+
 function normalizeTokenMap(raw: unknown): Record<string, number> {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
-  const out: Record<string, number> = {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return createSafeNumberMap();
+  const out = createSafeNumberMap();
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
     const num = asFiniteNonNegativeNumber(value);
     if (num == null) continue;
     out[key] = num;
@@ -91,15 +97,14 @@ export function extractTokensFromAcpTokenCountMessage(body: unknown): TokenCount
   const anyPresent = input != null || output != null || cacheCreation != null || cacheRead != null || thought != null;
   if (!anyPresent) return null;
 
-  const tokens: Record<string, number> = {
-    total: computeTotalFromParts({
-      input: input ?? undefined,
-      output: output ?? undefined,
-      cache_creation: cacheCreation ?? undefined,
-      cache_read: cacheRead ?? undefined,
-      thought: thought ?? undefined,
-    }),
-  };
+  const tokens = createSafeNumberMap();
+  tokens.total = computeTotalFromParts({
+    input: input ?? undefined,
+    output: output ?? undefined,
+    cache_creation: cacheCreation ?? undefined,
+    cache_read: cacheRead ?? undefined,
+    thought: thought ?? undefined,
+  });
   if (input != null) tokens.input = input;
   if (output != null) tokens.output = output;
   if (cacheCreation != null) tokens.cache_creation = cacheCreation;

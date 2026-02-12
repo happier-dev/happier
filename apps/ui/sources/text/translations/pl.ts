@@ -834,6 +834,7 @@ export const pl: TranslationStructure = {
         activity: 'Aktywność',
         thinking: 'Myśli',
         thinkingSince: 'Myśli od',
+        thinkingLevel: 'Poziom myślenia',
         cliVersion: 'Wersja CLI',
         cliVersionOutdated: 'Wymagana aktualizacja CLI',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>

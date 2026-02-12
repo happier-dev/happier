@@ -130,6 +130,13 @@ export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = O
     defaultMode: 'default',
     allowedModes: ['default'],
   },
+  pi: {
+    supportsSelection: true,
+    supportsFreeform: true,
+    nonAcpApplyScope: 'next_prompt',
+    defaultMode: 'default',
+    allowedModes: ['default'],
+  },
 });
 
 export function getAgentModelConfig(agentId: AgentId): AgentModelConfig {

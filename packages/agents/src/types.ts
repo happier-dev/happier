@@ -1,4 +1,4 @@
-export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo'] as const;
+export const AGENT_IDS = ['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'pi'] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 
 export const PERMISSION_MODES = [
@@ -40,7 +40,8 @@ export type VendorResumeIdField =
     | 'auggieSessionId'
     | 'qwenSessionId'
     | 'kimiSessionId'
-    | 'kiloSessionId';
+    | 'kiloSessionId'
+    | 'piSessionId';
 
 export type CloudVendorKey = 'openai' | 'anthropic' | 'gemini';
 export type CloudConnectTargetStatus = 'wired' | 'experimental';

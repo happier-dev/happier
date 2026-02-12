@@ -691,6 +691,7 @@ export const ru: TranslationStructure = {
         activity: 'Активность',
         thinking: 'Думает',
         thinkingSince: 'Думает с',
+        thinkingLevel: 'Уровень размышлений',
         cliVersion: 'Версия CLI',
         cliVersionOutdated: 'Требуется обновление CLI',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>

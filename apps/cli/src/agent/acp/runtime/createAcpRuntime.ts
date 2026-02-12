@@ -19,6 +19,8 @@ import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import { getAgentModelConfig, type AgentId } from '@happier-dev/agents';
 
+import { buildTokenCountSessionMessageForForwarding } from './tokenCountForwarding';
+
 export type AcpRuntime = Readonly<{
   getSessionId: () => string | null;
   /**
@@ -580,16 +582,9 @@ export function createAcpRuntime(params: {
         case 'token-count': {
           // Forward per-turn token usage when available (ACP PromptResponse.usage or agent-provided usage_update).
           // This is converted into a `token_count` session message so the server can emit `usage` ephemerals.
-          const record = msg as Record<string, unknown>;
-          const tokens = record.tokens;
-          if (tokens === undefined) {
-            break;
-          }
-          params.session.sendAgentMessage(params.provider, {
-            type: 'token_count',
-            tokens,
-            id: randomUUID(),
-          });
+          const tokenCount = buildTokenCountSessionMessageForForwarding(msg as Record<string, unknown>);
+          if (!tokenCount) break;
+          params.session.sendAgentMessage(params.provider, { ...tokenCount, id: randomUUID() });
           break;
         }
 

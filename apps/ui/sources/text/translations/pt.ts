@@ -823,6 +823,7 @@ export const pt: TranslationStructure = {
         activity: 'Atividade',
         thinking: 'Pensando',
         thinkingSince: 'Pensando desde',
+        thinkingLevel: 'Nível de pensamento',
         cliVersion: 'Versão do CLI',
         cliVersionOutdated: 'Atualização do CLI necessária',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>

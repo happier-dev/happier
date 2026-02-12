@@ -1080,6 +1080,7 @@ export const it: TranslationStructure = {
         activity: 'Attività',
         thinking: 'Pensando',
         thinkingSince: 'Pensando da',
+        thinkingLevel: 'Livello di pensiero',
         cliVersion: 'Versione CLI',
         cliVersionOutdated: 'Aggiornamento CLI richiesto',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>

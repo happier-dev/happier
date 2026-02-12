@@ -1,0 +1,20 @@
+{
+  "v": 1,
+  "tiers": {
+    "smoke": ["pi_read_known_file_smoke"],
+    "extended": [
+      "acp_probe_models",
+      "read_known_file",
+      "search_known_token",
+      "glob_list_files",
+      "search_ls_equivalence",
+      "read_missing_file_in_workspace",
+      "multi_file_edit_in_workspace",
+      "abort_turn_then_continue",
+      "permission_mode_default_outside_workspace",
+      "permission_mode_safe_yolo_outside_workspace",
+      "permission_mode_read_only_outside_workspace",
+      "permission_mode_yolo_outside_workspace"
+    ]
+  }
+}

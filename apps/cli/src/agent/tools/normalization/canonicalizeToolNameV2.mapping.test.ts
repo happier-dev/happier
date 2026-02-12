@@ -37,6 +37,23 @@ describe('canonicalizeToolNameV2 mappings', () => {
     expect(canonicalize(toolName)).toBe(expected);
   });
 
+  it('normalizes find inputs with query-like payloads to CodeSearch', () => {
+    expect(canonicalize('find', { query: 'foo' })).toBe('CodeSearch');
+    expect(canonicalize('find', { q: 'foo' })).toBe('CodeSearch');
+    expect(canonicalize('find', { text: 'foo' })).toBe('CodeSearch');
+  });
+
+  it('normalizes find inputs with query payloads that look like globs to Glob', () => {
+    expect(canonicalize('find', { query: '**/*.ts' })).toBe('Glob');
+    expect(canonicalize('find', { q: '*.json' })).toBe('Glob');
+  });
+
+  it('normalizes find inputs with filesystem-like payloads to Glob', () => {
+    expect(canonicalize('find', { pattern: '**/*.ts', path: '.' })).toBe('Glob');
+    expect(canonicalize('find', { pattern: 'package.json', directory: '/tmp' })).toBe('Glob');
+    expect(canonicalize('find')).toBe('Glob');
+  });
+
   it.each(['TaskCreate', 'TaskList', 'TaskUpdate', 'task'])('normalizes `%s` to Task', (toolName) => {
     expect(canonicalize(toolName)).toBe('Task');
   });

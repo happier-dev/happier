@@ -840,6 +840,7 @@ export const en = {
         activity: 'Activity',
         thinking: 'Thinking',
         thinkingSince: 'Thinking Since',
+        thinkingLevel: 'Thinking level',
         cliVersion: 'CLI Version',
         cliVersionOutdated: 'CLI Update Required',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>

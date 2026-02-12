@@ -823,6 +823,7 @@ export const zhHans: TranslationStructure = {
         activity: '活动',
         thinking: '思考中',
         thinkingSince: '思考开始时间',
+        thinkingLevel: '思考级别',
         cliVersion: 'CLI 版本',
         cliVersionOutdated: '需要更新 CLI',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>

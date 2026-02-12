@@ -1,0 +1,14 @@
+import type { UnistylesThemes } from 'react-native-unistyles';
+
+import type { AgentUiConfig } from '@/agents/registry/registryUi';
+
+export const PI_UI: AgentUiConfig = {
+    id: 'pi',
+    icon: require('@/assets/images/icon-monochrome.png'),
+    tintColor: (theme: UnistylesThemes[keyof UnistylesThemes]) => theme.colors.text,
+    avatarOverlay: {
+        circleScale: 0.35,
+        iconScale: ({ size }: { size: number }) => Math.round(size * 0.25),
+    },
+    cliGlyph: 'PI',
+};
