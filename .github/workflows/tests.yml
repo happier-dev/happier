@@ -1004,14 +1004,36 @@ jobs:
             process.exit(1);
           }
 
+          const deriveServerIdFromUrl = (rawUrl) => {
+            const normalized = String(rawUrl || "").trim().replace(/\/+$/, "");
+            let h = 2166136261;
+            for (let i = 0; i < normalized.length; i += 1) {
+              h ^= normalized.charCodeAt(i);
+              h = Math.imul(h, 16777619);
+            }
+            return `env_${(h >>> 0).toString(16)}`;
+          };
+          const sanitizeServerId = (rawId) => {
+            const safe = String(rawId || "").trim().replace(/[^a-zA-Z0-9._-]/g, "_");
+            return safe || "cloud";
+          };
+
           const happierHomeDir = process.env.HAPPIER_HOME_DIR || path.join(os.homedir(), ".happier-dev-test");
           fs.mkdirSync(happierHomeDir, { recursive: true });
           const secret = Buffer.alloc(32, 7).toString("base64");
-          fs.writeFileSync(
-            path.join(happierHomeDir, "access.key"),
-            JSON.stringify({ token: data.token, secret }, null, 2),
-            { mode: 0o600 },
+          const payload = JSON.stringify({ token: data.token, secret }, null, 2);
+          const activeServerId = sanitizeServerId(
+            process.env.HAPPIER_ACTIVE_SERVER_ID || deriveServerIdFromUrl(serverUrl),
           );
+          const scopedCredentialsDir = path.join(happierHomeDir, "servers", activeServerId);
+          fs.mkdirSync(scopedCredentialsDir, { recursive: true });
+
+          for (const credentialsPath of [
+            path.join(happierHomeDir, "access.key"),
+            path.join(scopedCredentialsDir, "access.key"),
+          ]) {
+            fs.writeFileSync(credentialsPath, payload, { mode: 0o600 });
+          }
           NODE
           )
 
