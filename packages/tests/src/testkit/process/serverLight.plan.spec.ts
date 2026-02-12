@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  shouldRetryServerStartFromFailureContext,
   resolveTestDbProvider,
   resolveMigrateCommandArgs,
   resolveStartCommandArgs,
@@ -42,5 +43,17 @@ describe("startServerLight planning helpers", () => {
   ])("uses the expected migration command for %s", (provider, expected) => {
     const args = resolveMigrateCommandArgs(provider).join(" ");
     expect(args).toContain(expected);
+  });
+
+  it("retries server start when startup failure tail contains EADDRINUSE", () => {
+    const retry = shouldRetryServerStartFromFailureContext({
+      attempt: 1,
+      maxAttempts: 5,
+      preflightPortAvailable: true,
+      error: new Error("server-light exited before /health was ready (code=1)"),
+      stderrTail: "Error: listen EADDRINUSE: address already in use 127.0.0.1:58786",
+      stdoutTail: "",
+    });
+    expect(retry).toBe(true);
   });
 });

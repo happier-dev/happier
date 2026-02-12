@@ -1,5 +1,10 @@
 import * as privacyKit from "privacy-kit";
+import { createHash } from "node:crypto";
 import { log } from "@/utils/logging/log";
+import {
+    isOAuthStateUnavailableError,
+    OAuthStateUnavailableError,
+} from "./oauthStateErrors";
 
 interface TokenCacheEntry {
     userId: string;
@@ -7,11 +12,23 @@ interface TokenCacheEntry {
     cachedAt: number;
 }
 
+interface TokenGeneratorLike {
+    new: (payload: any) => Promise<string>;
+    publicKey: Uint8Array | number[];
+}
+
+interface TokenVerifierLike {
+    verify: (token: string) => Promise<any>;
+}
+
 interface AuthTokens {
-    generator: Awaited<ReturnType<typeof privacyKit.createPersistentTokenGenerator>>;
-    verifier: Awaited<ReturnType<typeof privacyKit.createPersistentTokenVerifier>>;
-    oauthStateVerifier: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenVerifier>>;
-    oauthStateGenerator: Awaited<ReturnType<typeof privacyKit.createEphemeralTokenGenerator>>;
+    generator: TokenGeneratorLike;
+    verifier: TokenVerifierLike;
+}
+
+interface OAuthStateTokens {
+    oauthStateVerifier: TokenVerifierLike;
+    oauthStateGenerator: TokenGeneratorLike;
 }
 
 type OAuthStatePayload = Readonly<{
@@ -25,6 +42,8 @@ type OAuthStatePayload = Readonly<{
 class AuthModule {
     private tokenCache = new Map<string, TokenCacheEntry>();
     private tokens: AuthTokens | null = null;
+    private oauthStateTokens: OAuthStateTokens | null = null;
+    private oauthStateTokensInitPromise: Promise<OAuthStateTokens> | null = null;
     
     private resolveOauthStateTtlMsFromEnv(env: NodeJS.ProcessEnv): number {
         const raw = (env.OAUTH_STATE_TTL_SECONDS ?? "").toString().trim();
@@ -34,6 +53,125 @@ class AuthModule {
         return clampedSeconds * 1000;
     }
 
+    private requireMasterSecret(env: NodeJS.ProcessEnv): string {
+        const masterSecret = (env.HANDY_MASTER_SECRET ?? "").toString().trim();
+        if (!masterSecret) {
+            throw new Error("HANDY_MASTER_SECRET is required");
+        }
+        return masterSecret;
+    }
+
+    private resolvePersistentSeedCompatibilityAttempts(env: NodeJS.ProcessEnv): number {
+        const raw = (env.HAPPIER_AUTH_SEED_COMPAT_ATTEMPTS ?? "").toString().trim();
+        const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+        const attempts = Number.isFinite(parsed) && parsed > 0 ? parsed : 32;
+        return Math.max(1, Math.min(64, attempts));
+    }
+
+    private isRetryableRuntimeSeedCompatibilityError(error: unknown): boolean {
+        if (!error || typeof error !== "object") {
+            return false;
+        }
+        const errorName =
+            typeof (error as { name?: unknown }).name === "string"
+                ? String((error as { name?: unknown }).name)
+                : "";
+        const errorMessage =
+            typeof (error as { message?: unknown }).message === "string"
+                ? String((error as { message?: unknown }).message)
+                : "";
+        return (
+            errorName === "DataError" ||
+            /data provided to an operation does not meet requirements/i.test(errorMessage)
+        );
+    }
+
+    private derivePersistentSeedCandidate(masterSecret: string, attempt: number): string {
+        if (attempt === 0) {
+            return masterSecret;
+        }
+        return createHash("sha256")
+            .update(`happier-auth-seed-v1:${attempt}:${masterSecret}`)
+            .digest("base64url");
+    }
+
+    private async createPersistentAuthTokens(masterSecret: string): Promise<AuthTokens> {
+        const maxAttempts = this.resolvePersistentSeedCompatibilityAttempts(process.env);
+        let lastError: unknown = null;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+            const seed = this.derivePersistentSeedCandidate(masterSecret, attempt);
+            try {
+                const generator = await privacyKit.createPersistentTokenGenerator({
+                    service: "handy",
+                    seed,
+                });
+                const verifier = await privacyKit.createPersistentTokenVerifier({
+                    service: "handy",
+                    publicKey: Uint8Array.from(generator.publicKey),
+                });
+                if (attempt > 0) {
+                    log(
+                        { module: "auth", level: "warn" },
+                        `Persistent auth seed required runtime compatibility derivation (attempt=${attempt + 1})`,
+                    );
+                }
+                return { generator, verifier };
+            } catch (error) {
+                lastError = error;
+                if (
+                    attempt < maxAttempts - 1 &&
+                    this.isRetryableRuntimeSeedCompatibilityError(error)
+                ) {
+                    continue;
+                }
+                throw error;
+            }
+        }
+
+        throw lastError instanceof Error
+            ? lastError
+            : new Error("Failed to initialize persistent auth tokens");
+    }
+
+    private async getOauthStateTokens(): Promise<OAuthStateTokens> {
+        if (this.oauthStateTokens) {
+            return this.oauthStateTokens;
+        }
+        if (this.oauthStateTokensInitPromise) {
+            return await this.oauthStateTokensInitPromise;
+        }
+        const masterSecret = this.requireMasterSecret(process.env);
+        const oauthStateTtlMs = this.resolveOauthStateTtlMsFromEnv(process.env);
+        this.oauthStateTokensInitPromise = (async () => {
+            try {
+                const oauthStateGenerator = await privacyKit.createEphemeralTokenGenerator({
+                    service: "happier-oauth-state",
+                    seed: masterSecret,
+                    ttl: oauthStateTtlMs,
+                });
+                const oauthStateVerifier = await privacyKit.createEphemeralTokenVerifier({
+                    service: "happier-oauth-state",
+                    publicKey: Uint8Array.from(oauthStateGenerator.publicKey),
+                });
+                return { oauthStateGenerator, oauthStateVerifier };
+            } catch {
+                log(
+                    { module: "auth", level: "warn" },
+                    "OAuth state backend unavailable (ephemeral token init failed)"
+                );
+                throw new OAuthStateUnavailableError();
+            }
+        })();
+
+        try {
+            this.oauthStateTokens = await this.oauthStateTokensInitPromise;
+            return this.oauthStateTokens;
+        } finally {
+            this.oauthStateTokensInitPromise = null;
+        }
+    }
+
     async init(): Promise<void> {
         if (this.tokens) {
             return; // Already initialized
@@ -41,30 +179,9 @@ class AuthModule {
         
         log({ module: 'auth' }, 'Initializing auth module...');
         
-        const generator = await privacyKit.createPersistentTokenGenerator({
-            service: 'handy',
-            seed: process.env.HANDY_MASTER_SECRET!
-        });
+        const masterSecret = this.requireMasterSecret(process.env);
 
-        
-        const verifier = await privacyKit.createPersistentTokenVerifier({
-            service: 'handy',
-            publicKey: Uint8Array.from(generator.publicKey)
-        });
-        
-        const oauthStateGenerator = await privacyKit.createEphemeralTokenGenerator({
-            service: "happier-oauth-state",
-            seed: process.env.HANDY_MASTER_SECRET!,
-            ttl: this.resolveOauthStateTtlMsFromEnv(process.env),
-        });
-
-        const oauthStateVerifier = await privacyKit.createEphemeralTokenVerifier({
-            service: "happier-oauth-state",
-            publicKey: Uint8Array.from(oauthStateGenerator.publicKey),
-        });
-
-
-        this.tokens = { generator, verifier, oauthStateVerifier, oauthStateGenerator };
+        this.tokens = await this.createPersistentAuthTokens(masterSecret);
         
         log({ module: 'auth' }, 'Auth module initialized');
     }
@@ -168,6 +285,7 @@ class AuthModule {
         if (!this.tokens) {
             throw new Error("Auth module not initialized");
         }
+        const oauthStateTokens = await this.getOauthStateTokens();
 
         const provider = payload.provider?.toString().trim().toLowerCase() ?? "";
         if (!provider) {
@@ -182,7 +300,7 @@ class AuthModule {
         const userId = payload.userId?.toString().trim() || null;
         const publicKey = payload.publicKey?.toString().trim() || null;
 
-        return await this.tokens.oauthStateGenerator.new({
+        return await oauthStateTokens.oauthStateGenerator.new({
             user: "oauth-state",
             extras: {
                 provider,
@@ -206,7 +324,8 @@ class AuthModule {
         }
 
         try {
-            const verified: any = await this.tokens.oauthStateVerifier.verify(token);
+            const oauthStateTokens = await this.getOauthStateTokens();
+            const verified: any = await oauthStateTokens.oauthStateVerifier.verify(token);
             if (!verified) {
                 return null;
             }
@@ -228,6 +347,9 @@ class AuthModule {
                         : null,
             };
         } catch (error) {
+            if (isOAuthStateUnavailableError(error)) {
+                return null;
+            }
             // Avoid logging the raw token or verifier error payloads (which can include sensitive details).
             log({ module: "auth", level: "error" }, "OAuth state token verification failed");
             return null;

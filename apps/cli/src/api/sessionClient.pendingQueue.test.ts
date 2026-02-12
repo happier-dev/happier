@@ -134,6 +134,13 @@ describe('ApiSessionClient pending queue materialization', () => {
         expect(popped).toBe(false);
         expect(postSpy).toHaveBeenCalled();
         expect(String(postSpy.mock.calls[0]?.[0] ?? '')).toContain(`/v2/sessions/${mockSession.id}/pending/materialize-next`);
+        expect(postSpy.mock.calls[0]?.[1]).toEqual({});
+        expect(postSpy.mock.calls[0]?.[2]).toMatchObject({
+            headers: expect.objectContaining({
+                Authorization: 'Bearer fake-token',
+                'Content-Type': 'application/json',
+            }),
+        });
     });
 
     it('popPendingMessage falls back to HTTP materialize when the session socket is disconnected', async () => {
@@ -156,6 +163,13 @@ describe('ApiSessionClient pending queue materialization', () => {
         expect(popped).toBe(false);
         expect(postSpy).toHaveBeenCalled();
         expect(String(postSpy.mock.calls[0]?.[0] ?? '')).toContain(`/v2/sessions/${mockSession.id}/pending/materialize-next`);
+        expect(postSpy.mock.calls[0]?.[1]).toEqual({});
+        expect(postSpy.mock.calls[0]?.[2]).toMatchObject({
+            headers: expect.objectContaining({
+                Authorization: 'Bearer fake-token',
+                'Content-Type': 'application/json',
+            }),
+        });
     });
 
     it('waitForMetadataUpdate resolves when pending-changed update arrives', async () => {

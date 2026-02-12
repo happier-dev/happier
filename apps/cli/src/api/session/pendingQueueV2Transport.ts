@@ -78,10 +78,17 @@ async function tryMaterializeNextViaHttp(params: {
     sessionId: string;
 }): Promise<PendingQueueSocketMaterializeResult> {
     try {
-        const response = await axios.post(`${configuration.serverUrl}/v2/sessions/${params.sessionId}/pending/materialize-next`, null, {
-            headers: { Authorization: `Bearer ${params.token}` },
-            timeout: 10_000,
-        });
+        const response = await axios.post(
+            `${configuration.serverUrl}/v2/sessions/${params.sessionId}/pending/materialize-next`,
+            {},
+            {
+                headers: {
+                    Authorization: `Bearer ${params.token}`,
+                    "Content-Type": "application/json",
+                },
+                timeout: 10_000,
+            },
+        );
         const data = response?.data;
         if (!data || typeof data !== 'object') return { ok: false };
         if (data.ok !== true) return { ok: false };

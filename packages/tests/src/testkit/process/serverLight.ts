@@ -52,6 +52,54 @@ export function shouldRetryServerStart(params: {
   return isAddrInUseError(params.error);
 }
 
+function composeServerStartTail(stderrTail: string, stdoutTail: string): string {
+  return `${stderrTail}\n${stdoutTail}`.trim();
+}
+
+function attachServerStartTailToError(params: {
+  error: unknown;
+  stderrTail: string;
+  stdoutTail: string;
+}): unknown {
+  const tail = composeServerStartTail(params.stderrTail, params.stdoutTail);
+  if (!tail) {
+    return params.error;
+  }
+
+  if (params.error instanceof Error) {
+    if (params.error.message.includes('| serverTail=')) {
+      return params.error;
+    }
+    const next = new Error(`${params.error.message} | serverTail=${tail}`);
+    next.stack = params.error.stack;
+    return next;
+  }
+
+  const baseMessage = typeof params.error === 'string' ? params.error : 'Failed to start server-light';
+  return new Error(`${baseMessage} | serverTail=${tail}`);
+}
+
+export function shouldRetryServerStartFromFailureContext(params: {
+  attempt: number;
+  maxAttempts: number;
+  preflightPortAvailable: boolean;
+  error: unknown;
+  stderrTail: string;
+  stdoutTail: string;
+}): boolean {
+  const contextualError = attachServerStartTailToError({
+    error: params.error,
+    stderrTail: params.stderrTail,
+    stdoutTail: params.stdoutTail,
+  });
+  return shouldRetryServerStart({
+    attempt: params.attempt,
+    maxAttempts: params.maxAttempts,
+    preflightPortAvailable: params.preflightPortAvailable,
+    error: contextualError,
+  });
+}
+
 export type StartedServer = {
   baseUrl: string;
   port: number;
@@ -275,28 +323,31 @@ export async function startServerLight(params: {
         },
       };
     } catch (e) {
-      lastError = e;
       removeTailListeners();
       if (exitHandler) proc.child.off('exit', exitHandler);
       await proc.stop().catch(() => {});
 
+      const contextualError = attachServerStartTailToError({
+        error: e,
+        stderrTail,
+        stdoutTail,
+      });
+      lastError = contextualError;
+
       if (
-        shouldRetryServerStart({
+        shouldRetryServerStartFromFailureContext({
           attempt,
           maxAttempts,
           preflightPortAvailable,
-          error: e,
+          error: contextualError,
+          stderrTail,
+          stdoutTail,
         })
       ) {
         continue;
       }
 
-      const combinedTail = `${stderrTail}\n${stdoutTail}`.trim();
-      if (combinedTail.length > 0 && e instanceof Error) {
-        e.message = `${e.message} | serverTail=${combinedTail}`;
-      }
-
-      throw e;
+      throw contextualError;
     }
   }
 
