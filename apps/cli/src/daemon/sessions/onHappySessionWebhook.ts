@@ -9,8 +9,15 @@ import { hashProcessCommand, writeSessionMarker } from '../sessionRegistry';
 export function createOnHappySessionWebhook(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
   pidToAwaiter: Map<number, (session: TrackedSession) => void>;
+  findHappyProcessByPidFn?: typeof findHappyProcessByPid;
+  writeSessionMarkerFn?: typeof writeSessionMarker;
 }>): (sessionId: string, sessionMetadata: Metadata) => void {
-  const { pidToTrackedSession, pidToAwaiter } = params;
+  const {
+    pidToTrackedSession,
+    pidToAwaiter,
+    findHappyProcessByPidFn = findHappyProcessByPid,
+    writeSessionMarkerFn = writeSessionMarker,
+  } = params;
 
   return (sessionId: string, sessionMetadata: Metadata) => {
     logger.debugLargeJson(`[DAEMON RUN] Session reported`, sessionMetadata);
@@ -33,18 +40,26 @@ export function createOnHappySessionWebhook(params: Readonly<{
     // Check if we already have this PID (daemon-spawned)
     const existingSession = pidToTrackedSession.get(pid);
 
-    if (existingSession && existingSession.startedBy === 'daemon') {
-      // Update daemon-spawned session with reported data
+    if (existingSession) {
+      // Update tracked session with latest webhook data.
       existingSession.happySessionId = sessionId;
       existingSession.happySessionMetadataFromLocalWebhook = sessionMetadata;
-      logger.debug(`[DAEMON RUN] Updated daemon-spawned session ${sessionId} with metadata`);
+      if (existingSession.startedBy === 'daemon') {
+        logger.debug(`[DAEMON RUN] Updated daemon-spawned session ${sessionId} with metadata`);
 
-      // Resolve any awaiter for this PID
-      const awaiter = pidToAwaiter.get(pid);
-      if (awaiter) {
-        pidToAwaiter.delete(pid);
-        awaiter(existingSession);
-        logger.debug(`[DAEMON RUN] Resolved session awaiter for PID ${pid}`);
+        // Resolve any awaiter for this PID
+        const awaiter = pidToAwaiter.get(pid);
+        if (awaiter) {
+          pidToAwaiter.delete(pid);
+          awaiter(existingSession);
+          logger.debug(`[DAEMON RUN] Resolved session awaiter for PID ${pid}`);
+        }
+      } else if (existingSession.reattachedFromDiskMarker) {
+        existingSession.startedBy = sessionMetadata.startedBy ?? existingSession.startedBy;
+        logger.debug(`[DAEMON RUN] Refreshed reattached session ${sessionId} metadata`);
+      } else {
+        existingSession.startedBy = 'happy directly - likely by user from terminal';
+        logger.debug(`[DAEMON RUN] Refreshed externally-started session ${sessionId}`);
       }
     } else if (!existingSession) {
       // New session started externally
@@ -56,17 +71,12 @@ export function createOnHappySessionWebhook(params: Readonly<{
       };
       pidToTrackedSession.set(pid, trackedSession);
       logger.debug(`[DAEMON RUN] Registered externally-started session ${sessionId}`);
-    } else if (existingSession?.reattachedFromDiskMarker) {
-      // Reattached sessions remain kill-protected (PID reuse safety), but we still keep metadata up to date.
-      existingSession.startedBy = sessionMetadata.startedBy ?? existingSession.startedBy;
-      existingSession.happySessionId = sessionId;
-      existingSession.happySessionMetadataFromLocalWebhook = sessionMetadata;
     }
 
     // Best-effort: write/update marker so future daemon restarts can reattach.
     // Also capture a process command hash so reattach/stop can be PID-reuse-safe.
     void (async () => {
-      const proc = await findHappyProcessByPid(pid);
+      const proc = await findHappyProcessByPidFn(pid);
       const processCommandHash = proc?.command ? hashProcessCommand(proc.command) : undefined;
       if (processCommandHash) {
         // Store on the tracked session too so stopSession can require a match.
@@ -76,7 +86,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         logger.debug(`[DAEMON RUN] Could not determine process command for PID ${pid}; marker will be weaker`);
       }
 
-      await writeSessionMarker({
+      await writeSessionMarkerFn({
         pid,
         happySessionId: sessionId,
         startedBy: sessionMetadata.startedBy ?? 'terminal',

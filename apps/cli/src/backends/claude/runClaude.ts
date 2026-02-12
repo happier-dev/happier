@@ -193,6 +193,13 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         modelUpdatedAt: initialModelUpdatedAt,
     });
 
+    // Let the daemon track externally started terminal sessions immediately, even if
+    // upstream session creation is delayed. A later report with the real session id
+    // will reconcile the tracked session record.
+    if (options.startedBy === 'terminal' || options.startedBy === 'daemon') {
+        await reportSessionToDaemonIfRunning({ sessionId: `PID-${process.pid}`, metadata });
+    }
+
     // Handle existing session (for inactive session resume) vs new session.
     let baseSession: ApiSession;
     if (options.existingSessionId) {
