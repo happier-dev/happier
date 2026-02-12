@@ -116,6 +116,30 @@ export type MachinePreviewEnvResult =
     | { supported: true; response: PreviewEnvResponse }
     | { supported: false };
 
+export type BugReportCollectDiagnosticsResult = {
+    daemonState: {
+        pid: number;
+        httpPort: number;
+        startedAt: number;
+        startedWithCliVersion: string;
+        hasControlToken: boolean;
+        daemonLogPath: string | null;
+    } | null;
+    daemonLogs: Array<{ file: string; path: string; modifiedAt: string }>;
+    runtime: { cwd: string; platform: string; nodeVersion: string };
+    stackContext?: {
+        stackName: string | null;
+        stackEnvPath: string | null;
+        runtimeStatePath: string | null;
+        runtimeState: string | null;
+        logCandidates: string[];
+    } | null;
+};
+
+export type BugReportLogTailResult =
+    | { ok: true; path: string; tail: string }
+    | { ok: false; error: string };
+
 
 /**
  * Preview environment variables exactly as the daemon will spawn them.
@@ -209,6 +233,45 @@ export async function machinePreviewEnv(
         return { supported: true, response };
     } catch {
         return { supported: false };
+    }
+}
+
+export async function machineCollectBugReportDiagnostics(
+    machineId: string,
+    options?: { timeoutMs?: number },
+): Promise<BugReportCollectDiagnosticsResult | null> {
+    try {
+        return await apiSocket.machineRPC<BugReportCollectDiagnosticsResult, {}>(
+            machineId,
+            RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS,
+            {},
+            options,
+        );
+    } catch {
+        return null;
+    }
+}
+
+export async function machineGetBugReportLogTail(
+    machineId: string,
+    params?: { path?: string; maxBytes?: number },
+    options?: { timeoutMs?: number },
+): Promise<BugReportLogTailResult> {
+    try {
+        return await apiSocket.machineRPC<BugReportLogTailResult, { path?: string; maxBytes?: number }>(
+            machineId,
+            RPC_METHODS.BUGREPORT_GET_LOG_TAIL,
+            {
+                path: params?.path,
+                maxBytes: params?.maxBytes,
+            },
+            options,
+        );
+    } catch (error) {
+        return {
+            ok: false,
+            error: error instanceof Error ? error.message : 'Failed to read log tail',
+        };
     }
 }
 
