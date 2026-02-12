@@ -60,9 +60,12 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
       cwd: repoRoot,
       encoding: 'utf-8',
       env: { ...process.env },
+      // `inherit` makes it easier to read interactively, but on CI failures we need the full output.
+      // Increase buffer because build logs can be large.
+      maxBuffer: 50 * 1024 * 1024,
     }
   );
-  assert.equal(buildCli.status, 0, buildCli.stderr || buildCli.stdout);
+  assert.equal(buildCli.status, 0, `${buildCli.stderr || ''}\n${buildCli.stdout || ''}`.trim());
 
   const cliArtifactPath = join(repoRoot, 'dist', 'release-assets', 'cli', `happier-v${version}-${target}.tar.gz`);
   const cliExtract = await extractBinaryFromArtifact({ artifactPath: cliArtifactPath, binaryName: 'happier' });
@@ -97,9 +100,10 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
         cwd: repoRoot,
         encoding: 'utf-8',
         env: { ...process.env },
+        maxBuffer: 50 * 1024 * 1024,
       }
     );
-    assert.equal(buildServer.status, 0, buildServer.stderr || buildServer.stdout);
+    assert.equal(buildServer.status, 0, `${buildServer.stderr || ''}\n${buildServer.stdout || ''}`.trim());
 
     const serverArtifactPath = join(repoRoot, 'dist', 'release-assets', 'server', `happier-server-v${version}-${target}.tar.gz`);
     const serverExtract = await extractBinaryFromArtifact({ artifactPath: serverArtifactPath, binaryName: 'happier-server' });
