@@ -195,6 +195,47 @@ export function useProjectSessions(projectId: string | null) {
   return getStorage()(useShallow((state) => (projectId ? state.getProjectSessions(projectId) : [])));
 }
 
+// Backwards-compatible aliases for older "git" naming in UI code.
+export function useProjectGitStatus(projectId: string | null) {
+  return getStorage()(useShallow((state) => (projectId ? state.getProjectGitStatus(projectId) : null)));
+}
+
+export function useSessionProjectGitStatus(sessionId: string | null) {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectGitStatus(sessionId) : null))
+  );
+}
+
+export function useProjectGitSnapshot(projectId: string | null): ScmWorkingSnapshot | null {
+  return getStorage()(
+    useShallow((state) => (projectId ? state.getProjectGitSnapshot(projectId) : null))
+  );
+}
+
+export function useSessionProjectGitSnapshot(sessionId: string | null): ScmWorkingSnapshot | null {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectGitSnapshot(sessionId) : null))
+  );
+}
+
+export function useSessionProjectGitTouchedPaths(sessionId: string | null): string[] {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectGitTouchedPaths(sessionId) : []))
+  );
+}
+
+export function useSessionProjectGitOperationLog(sessionId: string | null) {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectGitOperationLog(sessionId) : []))
+  );
+}
+
+export function useSessionProjectGitInFlightOperation(sessionId: string | null) {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectGitInFlightOperation(sessionId) : null))
+  );
+}
+
 export function useProjectScmStatus(projectId: string | null) {
   return getStorage()(useShallow((state) => (projectId ? state.getProjectScmStatus(projectId) : null)));
 }
@@ -360,6 +401,11 @@ export function useSyncError() {
 
 export function useLastSyncAt() {
   return getStorage()(useShallow((state) => state.lastSyncAt));
+}
+
+// Backwards-compatible alias for older "git" naming in UI code.
+export function useSessionGitStatus(sessionId: string): ScmStatus | null {
+  return getStorage()(useShallow((state) => state.sessionScmStatus[sessionId] ?? null));
 }
 
 export function useSessionScmStatus(sessionId: string): ScmStatus | null {

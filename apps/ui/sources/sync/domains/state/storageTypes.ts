@@ -328,6 +328,9 @@ export interface ScmStatus {
     stashCount?: number; // Number of stash entries
 }
 
+// Backwards-compatible aliases for older "git" naming in UI code.
+export type GitStatus = ScmStatus;
+
 export type ScmEntryKind =
     | 'modified'
     | 'added'
@@ -419,3 +422,6 @@ export interface ScmWorkingSnapshot {
         pendingRemoved: number;
     };
 }
+
+// Backwards-compatible aliases for older "git" naming in UI code.
+export type GitWorkingSnapshot = ScmWorkingSnapshot;

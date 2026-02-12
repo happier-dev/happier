@@ -177,6 +177,28 @@ export interface ProjectDomainSlice {
         operation: import('../runtime/orchestration/projectManager').ScmProjectOperationKind,
     ) => import('../runtime/orchestration/projectManager').BeginScmProjectOperationResult;
     finishSessionProjectScmOperation: (sessionId: string, operationId: string) => boolean;
+
+    // Backwards-compatible aliases for older "git" naming in UI code.
+    getProjectGitStatus: (projectId: string) => ScmStatus | null;
+    getSessionProjectGitStatus: (sessionId: string) => ScmStatus | null;
+    updateSessionProjectGitStatus: (sessionId: string, status: ScmStatus | null) => void;
+    getProjectGitSnapshot: (projectId: string) => ScmWorkingSnapshot | null;
+    getSessionProjectGitSnapshot: (sessionId: string) => ScmWorkingSnapshot | null;
+    updateSessionProjectGitSnapshot: (sessionId: string, snapshot: ScmWorkingSnapshot | null) => void;
+    getSessionProjectGitTouchedPaths: (sessionId: string) => string[];
+    markSessionProjectGitTouchedPaths: (sessionId: string, paths: string[]) => void;
+    pruneSessionProjectGitTouchedPaths: (sessionId: string, activePaths: Set<string>) => void;
+    getSessionProjectGitOperationLog: (sessionId: string) => import('../runtime/orchestration/projectManager').ScmProjectOperationLogEntry[];
+    appendSessionProjectGitOperation: (
+        sessionId: string,
+        entry: Omit<import('../runtime/orchestration/projectManager').ScmProjectOperationLogEntry, 'id' | 'sessionId'>,
+    ) => void;
+    getSessionProjectGitInFlightOperation: (sessionId: string) => import('../runtime/orchestration/projectManager').ScmProjectInFlightOperation | null;
+    beginSessionProjectGitOperation: (
+        sessionId: string,
+        operation: import('../runtime/orchestration/projectManager').ScmProjectOperationKind,
+    ) => import('../runtime/orchestration/projectManager').BeginScmProjectOperationResult;
+    finishSessionProjectGitOperation: (sessionId: string, operationId: string) => boolean;
 }
 
 export interface FriendsDomainSlice {

@@ -92,6 +92,28 @@ export type SessionsDomain = {
     ) => BeginScmOperationResult;
     finishSessionProjectScmOperation: (sessionId: string, operationId: string) => boolean;
 
+    // Backwards-compatible aliases for older "git" naming in UI code.
+    getProjectGitStatus: (projectId: string) => ScmStatus | null;
+    getSessionProjectGitStatus: (sessionId: string) => ScmStatus | null;
+    updateSessionProjectGitStatus: (sessionId: string, status: ScmStatus | null) => void;
+    getProjectGitSnapshot: (projectId: string) => ScmWorkingSnapshot | null;
+    getSessionProjectGitSnapshot: (sessionId: string) => ScmWorkingSnapshot | null;
+    updateSessionProjectGitSnapshot: (sessionId: string, snapshot: ScmWorkingSnapshot | null) => void;
+    getSessionProjectGitTouchedPaths: (sessionId: string) => string[];
+    markSessionProjectGitTouchedPaths: (sessionId: string, paths: string[]) => void;
+    pruneSessionProjectGitTouchedPaths: (sessionId: string, activePaths: Set<string>) => void;
+    getSessionProjectGitOperationLog: (sessionId: string) => ScmOperationLogEntry[];
+    appendSessionProjectGitOperation: (
+        sessionId: string,
+        entry: Omit<ScmOperationLogEntry, 'id' | 'sessionId'>,
+    ) => void;
+    getSessionProjectGitInFlightOperation: (sessionId: string) => ScmInFlightOperation | null;
+    beginSessionProjectGitOperation: (
+        sessionId: string,
+        operation: import('../../runtime/orchestration/projectManager').ScmProjectOperationKind,
+    ) => BeginScmOperationResult;
+    finishSessionProjectGitOperation: (sessionId: string, operationId: string) => boolean;
+
     deleteSession: (sessionId: string) => void;
 };
 
@@ -730,10 +752,59 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             }
             return finished;
         },
+        // Backwards-compatible aliases for older "git" naming in UI code.
+        getProjectGitStatus: (projectId: string) => projectManager.getProjectScmStatus(projectId),
+        getSessionProjectGitStatus: (sessionId: string) => projectManager.getSessionProjectScmStatus(sessionId),
+        updateSessionProjectGitStatus: (sessionId: string, status: ScmStatus | null) => {
+            projectManager.updateSessionProjectScmStatus(sessionId, status);
+            set((state) => ({ ...state }));
+        },
+        getProjectGitSnapshot: (projectId: string) => projectManager.getProjectScmSnapshot(projectId),
+        getSessionProjectGitSnapshot: (sessionId: string) => projectManager.getSessionProjectScmSnapshot(sessionId),
+        updateSessionProjectGitSnapshot: (sessionId: string, snapshot: ScmWorkingSnapshot | null) => {
+            projectManager.updateSessionProjectScmSnapshot(sessionId, snapshot);
+            set((state) => ({ ...state }));
+        },
+        getSessionProjectGitTouchedPaths: (sessionId: string) => projectManager.getSessionProjectScmTouchedPaths(sessionId),
+        markSessionProjectGitTouchedPaths: (sessionId: string, paths: string[]) => {
+            projectManager.markSessionProjectScmTouchedPaths(sessionId, paths);
+            set((state) => ({ ...state }));
+        },
+        pruneSessionProjectGitTouchedPaths: (sessionId: string, activePaths: Set<string>) => {
+            projectManager.pruneSessionProjectScmTouchedPaths(sessionId, activePaths);
+            set((state) => ({ ...state }));
+        },
+        getSessionProjectGitOperationLog: (sessionId: string) => projectManager.getSessionProjectScmOperationLog(sessionId),
+        appendSessionProjectGitOperation: (
+            sessionId: string,
+            entry: Omit<ScmOperationLogEntry, 'id' | 'sessionId'>,
+        ) => {
+            projectManager.appendSessionProjectScmOperation(sessionId, entry);
+            set((state) => ({ ...state }));
+        },
+        getSessionProjectGitInFlightOperation: (sessionId: string) =>
+            projectManager.getSessionProjectScmInFlightOperation(sessionId),
+        beginSessionProjectGitOperation: (
+            sessionId: string,
+            operation: import('../../runtime/orchestration/projectManager').ScmProjectOperationKind,
+        ) => {
+            const result = projectManager.beginSessionProjectScmOperation(sessionId, operation);
+            if (result.started || result.reason === 'operation_in_flight') {
+                set((state) => ({ ...state }));
+            }
+            return result;
+        },
+        finishSessionProjectGitOperation: (sessionId: string, operationId: string) => {
+            const finished = projectManager.finishSessionProjectScmOperation(sessionId, operationId);
+            if (finished) {
+                set((state) => ({ ...state }));
+            }
+            return finished;
+        },
         deleteSession: (sessionId: string) => set((state) => {
-	            const optimisticTimeout = optimisticThinkingTimeoutBySessionId.get(sessionId);
-	            if (optimisticTimeout) {
-	                clearTimeout(optimisticTimeout);
+		            const optimisticTimeout = optimisticThinkingTimeoutBySessionId.get(sessionId);
+		            if (optimisticTimeout) {
+		                clearTimeout(optimisticTimeout);
 	                optimisticThinkingTimeoutBySessionId.delete(sessionId);
 	            }
 

@@ -33,7 +33,20 @@ export {
 // Backwards-compatible aliases for older "git" naming in UI call-sites.
 export {
     sessionScmCommitBackout as sessionGitCommitRevert,
+    sessionScmCommitCreate as sessionGitCommitCreate,
     sessionScmDiffCommit as sessionGitDiffCommit,
+    sessionScmDiffFile as sessionGitDiffFile,
+    sessionScmLogList as sessionGitLogList,
+    sessionScmRemoteFetch as sessionGitRemoteFetch,
+    sessionScmRemotePull as sessionGitRemotePull,
+    sessionScmRemotePush as sessionGitRemotePush,
+    sessionScmStatusSnapshot as sessionGitStatusSnapshot,
+} from './sessionScm';
+
+// Staging/unstaging is modeled as SCM change-include/exclude.
+export {
+    sessionScmChangeInclude as sessionGitStageApply,
+    sessionScmChangeExclude as sessionGitUnstageApply,
 } from './sessionScm';
 
 
