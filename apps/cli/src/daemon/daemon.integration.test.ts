@@ -16,7 +16,8 @@ import {
   spawnDaemonSession, 
   stopDaemonHttp, 
   notifyDaemonSessionStarted, 
-  stopDaemon
+  stopDaemon,
+  checkIfDaemonRunningAndCleanupStaleState,
 } from '@/daemon/controlClient';
 import { readDaemonState, clearDaemonState, writeDaemonState } from '@/persistence';
 import { Metadata } from '@/api/types';
@@ -167,7 +168,13 @@ async function waitForDaemonReadyState(): Promise<void> {
   await waitFor(
     async () => {
       const state = await readDaemonState();
-      return Boolean(state && typeof state.pid === 'number' && typeof state.httpPort === 'number' && state.httpPort > 0);
+      if (!state || typeof state.pid !== 'number' || typeof state.httpPort !== 'number' || state.httpPort <= 0) {
+        return false;
+      }
+      if (!isProcessAlive(state.pid)) {
+        return false;
+      }
+      return await checkIfDaemonRunningAndCleanupStaleState();
     },
     DAEMON_READY_WAIT,
   );
