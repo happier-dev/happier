@@ -15,6 +15,11 @@ export type DaemonControlRequestOptions = {
   timeoutMs?: number;
 };
 
+const DEFAULT_DAEMON_HTTP_TIMEOUT_MS = 10_000;
+const DEFAULT_DAEMON_SPAWN_HTTP_TIMEOUT_MS = 60_000;
+const DAEMON_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_HTTP_TIMEOUT';
+const DAEMON_SPAWN_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT';
+
 function resolvePositiveIntValue(
   raw: string | number | undefined,
   fallback: number,
@@ -29,6 +34,31 @@ function resolvePositiveIntValue(
         : Number.NaN;
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(parsed)));
+}
+
+function resolveDaemonControlTimeoutMs(path: string, options: DaemonControlRequestOptions): number {
+  if (options.timeoutMs !== undefined) {
+    return resolvePositiveIntValue(options.timeoutMs, DEFAULT_DAEMON_HTTP_TIMEOUT_MS, { min: 100, max: 300_000 });
+  }
+
+  if (path === '/spawn-session') {
+    const rawSpawnTimeout = process.env[DAEMON_SPAWN_HTTP_TIMEOUT_ENV_KEY];
+    if (rawSpawnTimeout !== undefined && String(rawSpawnTimeout).trim().length > 0) {
+      return resolvePositiveIntValue(rawSpawnTimeout, DEFAULT_DAEMON_SPAWN_HTTP_TIMEOUT_MS, {
+        min: 100,
+        max: 300_000,
+      });
+    }
+    return resolvePositiveIntValue(process.env[DAEMON_HTTP_TIMEOUT_ENV_KEY], DEFAULT_DAEMON_SPAWN_HTTP_TIMEOUT_MS, {
+      min: 100,
+      max: 300_000,
+    });
+  }
+
+  return resolvePositiveIntValue(process.env[DAEMON_HTTP_TIMEOUT_ENV_KEY], DEFAULT_DAEMON_HTTP_TIMEOUT_MS, {
+    min: 100,
+    max: 300_000,
+  });
 }
 
 async function daemonPost(path: string, body?: any, options: DaemonControlRequestOptions = {}): Promise<{ error?: string } | any> {
@@ -52,10 +82,7 @@ async function daemonPost(path: string, body?: any, options: DaemonControlReques
   }
 
   try {
-    const timeout =
-      options.timeoutMs !== undefined
-        ? resolvePositiveIntValue(options.timeoutMs, 10_000, { min: 100, max: 120_000 })
-        : resolvePositiveIntValue(process.env.HAPPIER_DAEMON_HTTP_TIMEOUT, 10_000, { min: 100, max: 120_000 });
+    const timeout = resolveDaemonControlTimeoutMs(path, options);
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (state.controlToken) {
       headers['x-happier-daemon-token'] = state.controlToken;

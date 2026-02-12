@@ -72,6 +72,17 @@ export function commandExists(cmd) {
   return (result.status ?? 1) === 0;
 }
 
+export function resolveYarnCommand({ commandProbe } = {}) {
+  const probe = typeof commandProbe === 'function' ? commandProbe : commandExists;
+  if (probe('yarn')) {
+    return { cmd: 'yarn', args: [] };
+  }
+  if (probe('corepack')) {
+    return { cmd: 'corepack', args: ['yarn'] };
+  }
+  throw new Error('[release] building CLI binaries requires yarn or corepack (corepack yarn)');
+}
+
 export async function ensureCleanDir(path) {
   await rm(path, { recursive: true, force: true });
   await mkdir(path, { recursive: true });
@@ -195,12 +206,20 @@ export async function packageTargetBinary({
   buildTempDir,
   outDir,
   compiledPath,
+  additionalStageEntries = [],
 }) {
   const exeName = `${executableName}${target.exeExt}`;
   const artifactStem = `${product}-v${version}-${target.os}-${target.arch}`;
   const stageDir = join(buildTempDir, artifactStem);
   await ensureCleanDir(stageDir);
   await cp(compiledPath, join(stageDir, exeName));
+  for (const entry of additionalStageEntries) {
+    if (!entry || typeof entry !== 'object') continue;
+    const sourcePath = String(entry.sourcePath ?? '').trim();
+    const targetPath = String(entry.targetPath ?? '').trim();
+    if (!sourcePath || !targetPath) continue;
+    await cp(sourcePath, join(stageDir, targetPath), { recursive: true });
+  }
   const archiveName = `${artifactStem}.tar.gz`;
   const archivePath = join(outDir, archiveName);
   await createDeterministicArchive({

@@ -2,7 +2,8 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import { PGlite } from "@electric-sql/pglite";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { acquirePgliteDirLock } from "./locks/pgliteLock";
 
 export { Prisma };
@@ -27,6 +28,13 @@ export function resolveGeneratedClientEntrypoint(modulePath: string): string {
     const trimmed = modulePath.trim();
     if (/\.(?:mjs|cjs|js)$/.test(trimmed)) return trimmed;
     return trimmed.endsWith("/") ? `${trimmed}index.js` : `${trimmed}/index.js`;
+}
+
+export function resolvePackagedGeneratedClientEntrypoint(
+    provider: "mysql" | "sqlite",
+    executablePath: string = process.execPath,
+): string {
+    return join(dirname(executablePath), "generated", `${provider}-client`, "index.js");
 }
 
 let _db: PrismaClientType | null = null;
@@ -68,20 +76,37 @@ export function initDbPostgres(): void {
     _db = new PrismaClient();
 }
 
-async function initDbFromGeneratedClient(modulePath: string, provider: DbProvider): Promise<void> {
+async function importGeneratedClient(provider: "mysql" | "sqlite"): Promise<any> {
+    try {
+        if (provider === "mysql") {
+            return await import("../../generated/mysql-client/index.js");
+        }
+        return await import("../../generated/sqlite-client/index.js");
+    } catch (error) {
+        const packagedEntrypoint = resolvePackagedGeneratedClientEntrypoint(provider);
+        try {
+            return await import(pathToFileURL(packagedEntrypoint).href);
+        } catch {
+            throw error;
+        }
+    }
+}
+
+async function initDbFromGeneratedClient(provider: "mysql" | "sqlite"): Promise<void> {
     if (_db || _pglite || _pgliteServer) {
         throw new Error("Database client is already initialized.");
     }
-    const entrypoint = resolveGeneratedClientEntrypoint(modulePath);
+    const entrypoint =
+        provider === "mysql"
+            ? resolveGeneratedClientEntrypoint("../../generated/mysql-client")
+            : resolveGeneratedClientEntrypoint("../../generated/sqlite-client");
     let mod: any;
     try {
-        mod = await import(entrypoint);
+        mod = await importGeneratedClient(provider);
     } catch (err: any) {
         const code = err?.code ? String(err.code) : "";
         const hint =
-            provider === "mysql" || provider === "sqlite"
-                ? `This usually means the server was built without the ${provider} Prisma client. Rebuild with HAPPIER_BUILD_DB_PROVIDERS including ${provider} (or leave it unset to build all providers).`
-                : "";
+            `This usually means the server was built without the ${provider} Prisma client. Rebuild with HAPPIER_BUILD_DB_PROVIDERS including ${provider} (or leave it unset to build all providers).`;
         if (code === "ERR_MODULE_NOT_FOUND" || /Cannot find module/i.test(String(err?.message ?? ""))) {
             throw new Error(
                 `Missing generated Prisma client for provider ${provider} (${entrypoint}). ${hint}`.trim(),
@@ -97,11 +122,11 @@ async function initDbFromGeneratedClient(modulePath: string, provider: DbProvide
 }
 
 export async function initDbMysql(): Promise<void> {
-    await initDbFromGeneratedClient("../../generated/mysql-client", "mysql");
+    await initDbFromGeneratedClient("mysql");
 }
 
 export async function initDbSqlite(): Promise<void> {
-    await initDbFromGeneratedClient("../../generated/sqlite-client", "sqlite");
+    await initDbFromGeneratedClient("sqlite");
 }
 
 function resolveLightPgliteDirFromEnv(env: NodeJS.ProcessEnv): string {

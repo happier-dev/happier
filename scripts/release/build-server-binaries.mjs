@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { join } from 'node:path';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, rm, stat } from 'node:fs/promises';
 
 import {
   SERVER_TARGETS,
@@ -72,6 +72,31 @@ async function main() {
     },
   );
 
+  const parseGeneratedProviderDirs = async () => {
+    const normalized = buildDbProviders.toLowerCase();
+    const requested = normalized === 'all'
+      ? ['sqlite', 'mysql']
+      : normalized
+          .split(',')
+          .map((value) => value.trim())
+          .filter((value) => value === 'sqlite' || value === 'mysql');
+    const deduped = [...new Set(requested)];
+    const entries = [];
+    for (const provider of deduped) {
+      const sourcePath = join(repoRoot, 'apps', 'server', 'generated', `${provider}-client`);
+      const info = await stat(sourcePath).catch(() => null);
+      if (!info?.isDirectory()) {
+        throw new Error(`[release] missing generated Prisma directory for provider ${provider}: ${sourcePath}`);
+      }
+      entries.push({
+        sourcePath,
+        targetPath: join('generated', `${provider}-client`),
+      });
+    }
+    return entries;
+  };
+  const additionalStageEntries = await parseGeneratedProviderDirs();
+
   const artifacts = [];
   for (const target of targets) {
     const compiledPath = join(tempDir, `happier-server-${target.os}-${target.arch}${target.exeExt}`);
@@ -90,6 +115,7 @@ async function main() {
       buildTempDir: tempDir,
       outDir,
       compiledPath,
+      additionalStageEntries,
     });
     artifacts.push(artifact);
   }

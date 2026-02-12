@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 describe.sequential('daemon control client PID safety', () => {
   const previousHomeDir = process.env.HAPPIER_HOME_DIR;
   const previousTimeout = process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
+  const previousSpawnTimeout = process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
   const spawnedChildren: Array<ReturnType<typeof spawn>> = [];
 
   function killTrackedChildren(): void {
@@ -28,6 +29,9 @@ describe.sequential('daemon control client PID safety', () => {
 
     if (previousTimeout === undefined) delete process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
     else process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = previousTimeout;
+
+    if (previousSpawnTimeout === undefined) delete process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
+    else process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT = previousSpawnTimeout;
   });
 
   it('stopDaemon refuses to kill an unrelated PID when HTTP stop fails', async () => {
@@ -169,4 +173,53 @@ describe.sequential('daemon control client PID safety', () => {
       rmSync(homeDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it('spawnDaemonSession uses an extended default timeout budget', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-spawn-timeout-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    delete process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
+    delete process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
+
+    vi.resetModules();
+    const [
+      { configuration },
+      { spawnDaemonSession },
+    ] = await Promise.all([
+      import('@/configuration'),
+      import('./controlClient'),
+    ]);
+
+    writeFileSync(
+      configuration.daemonStateFile,
+      JSON.stringify(
+        {
+          pid: process.pid,
+          httpPort: 43210,
+          startedAt: Date.now(),
+          startedWithCliVersion: '0.0.0-test',
+          controlToken: 'token-123',
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    const fetchSpy = vi.fn(async () => new Response(JSON.stringify({ success: true, sessionId: 's-1' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    try {
+      vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
+      const result = await spawnDaemonSession('/tmp');
+      expect(result).toEqual({ success: true, sessionId: 's-1' });
+      expect(timeoutSpy).toHaveBeenCalledWith(60_000);
+    } finally {
+      timeoutSpy.mockRestore();
+      vi.unstubAllGlobals();
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
 });
