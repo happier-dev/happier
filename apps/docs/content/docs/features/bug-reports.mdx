@@ -11,11 +11,60 @@ When enabled by your server, users can submit:
 - optional diagnostic payloads (for example logs),
 - metadata that helps support reproduce and triage issues.
 
+## Server controls
+
+Use these env vars on the Happier server:
+
+- `HAPPIER_BUG_REPORTS_ENABLED` (default `1`)
+- `HAPPIER_BUG_REPORTS_PROVIDER_URL` (default `https://reports.happier.dev`)
+  - If set to an invalid URL, provider submission is disabled instead of falling back to a central default.
+- `HAPPIER_BUG_REPORTS_DEFAULT_INCLUDE_DIAGNOSTICS` (default `1`)
+- `HAPPIER_BUG_REPORTS_MAX_ARTIFACT_BYTES` (default `10485760`)
+- `HAPPIER_BUG_REPORTS_UPLOAD_TIMEOUT_MS` (default `120000`)
+- `HAPPIER_BUG_REPORTS_CONTEXT_WINDOW_MS` (default `1800000`; min `1000`, max `86400000`)
+- `HAPPIER_BUG_REPORTS_ACCEPTED_ARTIFACT_KINDS` (comma-separated allowlist)
+- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED` (default `0`)
+- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ACCESS_MODE` (default `owner`, allowed: `authenticated`, `owner`)
+- `HAPPIER_SERVER_OWNER_USER_IDS` (comma-separated server owner account ids for owner-gated features)
+- `HAPPIER_BUG_REPORTS_SERVER_LOG_PATH` (optional explicit server log path)
+- `HAPPIER_BUG_REPORTS_SERVER_LOG_MAX_BYTES` (default `262144`, max tail bytes read from server log snapshot)
+- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_MAX` (default `30`)
+- `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_RATE_LIMIT_WINDOW` (default `1 minute`)
+
+To hard-disable server log exfiltration, keep `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ENABLED=0` and/or remove `server` from `HAPPIER_BUG_REPORTS_ACCEPTED_ARTIFACT_KINDS`.
+
+For shared servers, keep `HAPPIER_BUG_REPORTS_SERVER_DIAGNOSTICS_ACCESS_MODE=owner` (or leave it unset) and define `HAPPIER_SERVER_OWNER_USER_IDS` so only configured owners can fetch server diagnostics snapshots.
+
+`HAPPIER_SERVER_OWNER_USER_IDS` uses Happier account ids (not usernames). Owners can copy their id from Settings → Account in the app.
+
 ## Privacy and control
 
 - Diagnostic upload is optional at submit time.
-- Server operators can disable bug report functionality for restricted environments.
+- Server operators can disable automated provider submission for restricted environments.
 - User-facing UI follows server capability flags.
+- Clients remain backward-compatible with older servers that do not expose `features.bugReports` (treated as disabled).
+- When provider submission is unavailable, clients can still offer a prefilled public GitHub issue fallback (without private artifacts).
+
+## CLI reporting
+
+You can submit reports from CLI too:
+
+```bash
+happier bug-report \
+  --title "CLI crash while starting daemon" \
+  --github-username "@octocat" \
+  --summary "Daemon start exits immediately" \
+  --current-behavior "happier daemon start exits with unknown error" \
+  --expected-behavior "daemon starts successfully" \
+  --repro-step "Run happier daemon start" \
+  --accept-privacy-notice
+```
+
+If required fields are missing in an interactive terminal, the CLI prompts for them. In non-interactive mode, pass all required flags.
+
+### Reporter GitHub username (optional)
+
+If you want maintainers to be able to reach you, provide your GitHub username via `--github-username`. Happier appends a `Reporter GitHub: \`...\`` line to the report summary (sanitized to avoid accidental formatting/pings).
 
 ## When to use
 

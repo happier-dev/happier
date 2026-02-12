@@ -151,7 +151,17 @@ export {
 export { splitUnifiedDiffByFile } from './diff/splitUnifiedDiffByFile.js';
 
 // Happier server feature discovery + social contracts
-export { FeaturesResponseSchema, type FeaturesResponse, OAuthProviderStatusSchema, type OAuthProviderStatus } from './features.js';
+export {
+  BUG_REPORT_DEFAULT_ACCEPTED_ARTIFACT_KINDS,
+  BugReportsFeatureSchema,
+  DEFAULT_BUG_REPORTS_FEATURE,
+  FeaturesResponseSchema,
+  OAuthProviderStatusSchema,
+  coerceBugReportsFeatureFromFeaturesPayload,
+  type BugReportsFeature,
+  type FeaturesResponse,
+  type OAuthProviderStatus,
+} from './features.js';
 export {
   RelationshipStatusSchema,
   type RelationshipStatus,
@@ -195,3 +205,44 @@ export {
   type ExternalOAuthFinalizeConnectSuccessResponse,
   type ExternalOAuthParamsResponse,
 } from './auth/externalOAuth.js';
+
+export {
+  BUG_REPORT_DEFAULT_ISSUE_LABELS,
+  BUG_REPORT_DEFAULT_ISSUE_OWNER,
+  BUG_REPORT_DEFAULT_ISSUE_REPO,
+  BUG_REPORT_FALLBACK_BODY_TRUNCATION_SUFFIX,
+  BUG_REPORT_FALLBACK_ISSUE_URL_MAX_LENGTH,
+  buildBugReportFallbackIssueUrl,
+  formatBugReportFallbackIssueBody,
+  appendBugReportReporterToSummary,
+  hasAcceptedBugReportArtifactKind,
+  inferBugReportDeploymentTypeFromServerUrl,
+  normalizeBugReportGithubUsername,
+  normalizeBugReportIssueSlug,
+  normalizeBugReportIssueTarget,
+  normalizeBugReportProviderUrl,
+  normalizeBugReportReproductionSteps,
+  pushBugReportArtifact,
+  redactBugReportSensitiveText,
+  resolveBugReportIssueTargetWithDefaults,
+  resolveBugReportServerDiagnosticsLines,
+  sanitizeBugReportArtifactFileSegment,
+  sanitizeBugReportArtifactPath,
+  sanitizeBugReportDaemonDiagnosticsPayload,
+  sanitizeBugReportStackContextPayload,
+  sanitizeBugReportUrl,
+  submitBugReportToService,
+  trimBugReportTextToMaxBytes,
+  type BugReportArtifactPayload,
+  type BugReportDeploymentType,
+  type BugReportEnvironmentPayload,
+  type BugReportFormPayload,
+  type BugReportFrequency,
+  type BugReportMachineDaemonLogLike,
+  type BugReportMachineDaemonStateLike,
+  type BugReportMachineDiagnosticsLike,
+  type BugReportMachineRuntimeLike,
+  type BugReportMachineStackContextLike,
+  type BugReportServiceSubmitInput,
+  type BugReportSeverity,
+} from './bugReports.js';

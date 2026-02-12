@@ -2181,7 +2181,7 @@ async function main() {
                     '  hstack stack eas happier build --platform android --profile production',
                     '  hstack stack eas happier env:sync --environment production',
                   ]
-              : cmd === 'daemon'
+            : cmd === 'daemon'
                 ? [
                     '[stack] usage:',
                     '  hstack stack daemon <name> start|stop|restart|status [--json]',
@@ -2189,6 +2189,14 @@ async function main() {
                   'example:',
                   '  hstack stack daemon main status',
                 ]
+              : cmd === 'bug-report'
+                ? [
+                    '[stack] usage:',
+                    '  hstack stack bug-report <name> [-- ...]',
+                    '',
+                    'example:',
+                    '  hstack stack bug-report exp1 -- --title "Crash on launch" --summary "..." --current-behavior "..." --expected-behavior "..."',
+                  ]
             : cmd.startsWith('tailscale:')
               ? [
                   '[stack] usage:',
@@ -2252,6 +2260,21 @@ async function main() {
   }
   if (cmd === 'happier') {
     await runStackHappierPassthroughCommand({ rootDir, stackName, passthrough });
+    return;
+  }
+  if (cmd === 'bug-report') {
+    const bugReportPassthroughRaw = passthrough[0] === '--' ? passthrough.slice(1) : passthrough;
+    const separatorIndex = bugReportPassthroughRaw.indexOf('--');
+    const bugReportPassthrough =
+      separatorIndex === -1
+        ? ['bug-report', ...bugReportPassthroughRaw]
+        : [
+            ...bugReportPassthroughRaw.slice(0, separatorIndex),
+            '--',
+            'bug-report',
+            ...bugReportPassthroughRaw.slice(separatorIndex + 1),
+          ];
+    await runStackHappierPassthroughCommand({ rootDir, stackName, passthrough: bugReportPassthrough });
     return;
   }
   if (STACK_BACKGROUND_SCRIPT_BY_COMMAND.has(cmd)) {

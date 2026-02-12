@@ -1,4 +1,6 @@
+import { realpath } from 'node:fs/promises';
 import { logger } from '@/ui/logger';
+import { collectBugReportMachineDiagnosticsSnapshot, readBugReportLogTail } from '@/diagnostics/bugReportMachineDiagnostics';
 
 import {
   SPAWN_SESSION_ERROR_CODES,
@@ -14,6 +16,16 @@ export type MachineRpcHandlers = {
   stopSession: (sessionId: string) => Promise<boolean>;
   requestShutdown: () => void;
 };
+
+async function toCanonicalPath(path: string): Promise<string | null> {
+  const normalized = String(path ?? '').trim();
+  if (!normalized) return null;
+  try {
+    return await realpath(normalized);
+  } catch {
+    return null;
+  }
+}
 
 export function registerMachineRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
@@ -204,5 +216,91 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }, 100);
 
     return { message: 'Daemon stop request acknowledged, starting shutdown sequence...' };
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_COLLECT_DIAGNOSTICS, async () => {
+    return await collectBugReportMachineDiagnosticsSnapshot({
+      daemonLogLimit: 5,
+      stackLogLimit: 3,
+      stackRuntimeMaxChars: 400_000,
+    });
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_GET_LOG_TAIL, async (params: any) => {
+    const maxBytes = typeof params?.maxBytes === 'number' && Number.isFinite(params.maxBytes)
+      ? Math.min(Math.max(Math.floor(params.maxBytes), 1024), 1_000_000)
+      : 200_000;
+    const path = typeof params?.path === 'string' && params.path.trim().length > 0 ? params.path.trim() : '';
+    const diagnostics = await collectBugReportMachineDiagnosticsSnapshot({
+      daemonLogLimit: 5,
+      stackLogLimit: 3,
+      stackRuntimeMaxChars: 400_000,
+    });
+    const allowedPaths = new Set<string>();
+    if (diagnostics.daemonState?.daemonLogPath) {
+      allowedPaths.add(diagnostics.daemonState.daemonLogPath.trim());
+    }
+    for (const entry of diagnostics.daemonLogs) {
+      if (typeof entry.path === 'string' && entry.path.trim().length > 0) {
+        allowedPaths.add(entry.path.trim());
+      }
+    }
+    for (const entry of diagnostics.stackContext?.logCandidates ?? []) {
+      if (typeof entry === 'string' && entry.trim().length > 0) {
+        allowedPaths.add(entry.trim());
+      }
+    }
+
+    const canonicalAllowedPaths = new Set<string>();
+    for (const candidatePath of allowedPaths) {
+      const canonicalPath = await toCanonicalPath(candidatePath);
+      if (canonicalPath) {
+        canonicalAllowedPaths.add(canonicalPath);
+      }
+    }
+
+    let canonicalRequestedPath: string | null = null;
+    if (path) {
+      canonicalRequestedPath = await toCanonicalPath(path);
+      if (!canonicalRequestedPath || !canonicalAllowedPaths.has(canonicalRequestedPath)) {
+        return {
+          ok: false,
+          error: 'Requested log path is not allowed for bug report diagnostics',
+        };
+      }
+    }
+
+    const fallbackPath = Array.from(canonicalAllowedPaths)[0] ?? null;
+    const targetPath = canonicalRequestedPath ?? fallbackPath;
+    if (!targetPath) {
+      return {
+        ok: false,
+        error: 'No daemon log path available',
+      };
+    }
+
+    try {
+      const tail = await readBugReportLogTail(targetPath, maxBytes);
+      return {
+        ok: true,
+        path: targetPath,
+        tail,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.BUGREPORT_UPLOAD_ARTIFACT, async (params: any) => {
+    // Upload is intentionally delegated to UI/service clients via pre-signed URLs.
+    // Keep the RPC for capability negotiation and future transport optimizations.
+    return {
+      ok: false,
+      error: 'Daemon-side upload is not enabled; upload via report service pre-signed URL from UI.',
+      uploadUrl: typeof params?.uploadUrl === 'string' ? params.uploadUrl : null,
+    };
   });
 }

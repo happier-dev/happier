@@ -2,6 +2,15 @@ import type { FeaturesResponse as RootLayoutFeatures } from '@happier-dev/protoc
 
 const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
     features: {
+        bugReports: {
+            enabled: true,
+            providerUrl: 'https://reports.happier.dev',
+            defaultIncludeDiagnostics: true,
+            maxArtifactBytes: 10 * 1024 * 1024,
+            acceptedArtifactKinds: ['ui-mobile', 'daemon', 'server', 'cli'],
+            uploadTimeoutMs: 20_000,
+            contextWindowMs: 30 * 60 * 1_000,
+        },
         sharing: {
             session: { enabled: true },
             public: { enabled: true },

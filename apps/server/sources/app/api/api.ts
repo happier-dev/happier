@@ -27,6 +27,7 @@ import { shareRoutes } from "./routes/share/shareRoutes";
 import { publicShareRoutes } from "./routes/share/publicShareRoutes";
 import { featuresRoutes } from "./routes/features/featuresRoutes";
 import { sessionPendingRoutes } from "./routes/session/pendingRoutes";
+import { bugReportDiagnosticsRoutes } from "./routes/diagnostics/bugReportDiagnosticsRoutes";
 
 export function resolveApiListenHost(env: Record<string, string | undefined>): string {
     const host = (env.HAPPIER_SERVER_HOST ?? env.HAPPY_SERVER_HOST ?? '').toString().trim();
@@ -79,6 +80,7 @@ export async function startApi() {
     devRoutes(typed);
     versionRoutes(typed);
     featuresRoutes(typed);
+    bugReportDiagnosticsRoutes(typed);
     sessionPendingRoutes(typed);
     voiceRoutes(typed);
     userRoutes(typed);

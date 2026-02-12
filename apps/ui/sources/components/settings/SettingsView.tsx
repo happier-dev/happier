@@ -28,6 +28,7 @@ import { t } from '@/text';
 import { MachineCliGlyphs } from '@/components/sessions/new/components/MachineCliGlyphs';
 import { DEFAULT_AGENT_ID, getAgentCore, getAgentIconSource, getAgentIconTintColor, resolveAgentIdFromConnectedServiceId } from '@/agents/catalog/catalog';
 import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
+import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 
 export const SettingsView = React.memo(function SettingsView() {
     const { theme } = useUnistyles();
@@ -104,11 +105,8 @@ export const SettingsView = React.memo(function SettingsView() {
     };
 
     const handleReportIssue = async () => {
-        const url = 'https://github.com/happier-dev/happier/issues';
-        const supported = await Linking.canOpenURL(url);
-        if (supported) {
-            await Linking.openURL(url);
-        }
+        recordBugReportUserAction('settings.report_issue_open');
+        router.push('/(app)/settings/report-issue');
     };
 
     const handleSubscribe = async () => {

@@ -26,6 +26,8 @@ import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
 import { DesktopUpdateBanner } from '@/components/ui/feedback/DesktopUpdateBanner';
 // import * as SystemUI from 'expo-system-ui';
 import { monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds } from '@/utils/system/remoteLogger';
+import { installBugReportConsoleCapture } from '@/utils/system/bugReportLogBuffer';
+import { configureBugReportUserActionTrail } from '@/utils/system/bugReportActionTrail';
 import { useUnistyles } from 'react-native-unistyles';
 import { AsyncLock } from '@/utils/system/lock';
 
@@ -301,6 +303,8 @@ SplashScreen.preventAutoHideAsync();
 if (!!process.env.PUBLIC_EXPO_DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING) {
     monkeyPatchConsoleForRemoteLoggingForFasterAiAutoDebuggingOnlyInLocalBuilds()
 }
+installBugReportConsoleCapture({ maxEntries: 300 });
+configureBugReportUserActionTrail({ maxActions: 300 });
 
 if (shouldCaptureRnwUnexpectedTextNodeStacks()) {
     installRnwUnexpectedTextNodeStackCaptureOnce();

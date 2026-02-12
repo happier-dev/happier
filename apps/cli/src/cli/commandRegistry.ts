@@ -4,6 +4,7 @@ import { AGENTS, type AgentCatalogEntry } from '@/backends/catalog';
 
 import { handleAttachCliCommand } from './commands/attach';
 import { handleAuthCliCommand } from './commands/auth';
+import { handleBugReportCliCommand } from './commands/bugReport';
 import { handleConnectCliCommand } from './commands/connect';
 import { handleDaemonCliCommand } from './commands/daemon';
 import { handleDoctorCliCommand } from './commands/doctor';
@@ -39,6 +40,7 @@ function buildAgentCommandRegistry(): Readonly<Record<string, CommandHandler>> {
 export const commandRegistry: Readonly<Record<string, CommandHandler>> = {
   attach: handleAttachCliCommand,
   auth: handleAuthCliCommand,
+  'bug-report': handleBugReportCliCommand,
   connect: handleConnectCliCommand,
   daemon: handleDaemonCliCommand,
   doctor: handleDoctorCliCommand,
