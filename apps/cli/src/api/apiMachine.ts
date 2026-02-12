@@ -15,6 +15,7 @@ import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { fetchChanges } from './changes';
 import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
+import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import { registerMachineRpcHandlers, type MachineRpcHandlers } from './machine/rpcHandlers';
@@ -125,7 +126,7 @@ export class ApiMachineClient {
 
     connect(params?: { onConnect?: () => void | Promise<void> }) {
         // socket.io-client expects an http(s) URL (even when forcing websocket transport).
-        const serverUrl = configuration.serverUrl;
+        const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
         this.socket = io(serverUrl, {
@@ -281,7 +282,8 @@ export class ApiMachineClient {
         }
 
         const p = (async () => {
-            const response = await axios.get(`${configuration.serverUrl}/v1/account/profile`, {
+            const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+            const response = await axios.get(`${serverUrl}/v1/account/profile`, {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
                     'Content-Type': 'application/json',
@@ -306,7 +308,8 @@ export class ApiMachineClient {
 
     private async refreshMachineFromServer(): Promise<void> {
         try {
-            const response = await axios.get(`${configuration.serverUrl}/v1/machines/${this.machine.id}`, {
+            const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+            const response = await axios.get(`${serverUrl}/v1/machines/${this.machine.id}`, {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
                     'Content-Type': 'application/json',

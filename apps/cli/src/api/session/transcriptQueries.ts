@@ -4,6 +4,7 @@ import { resolveLatestPermissionIntent } from '@happier-dev/agents';
 
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 
 import { decodeBase64, decrypt } from '../encryption';
 import type { PermissionMode } from '../types';
@@ -26,9 +27,10 @@ export async function fetchRecentTranscriptTextItemsForAcpImportFromServer(
   params: SessionTranscriptQueryParams & { take?: number },
 ): Promise<Array<{ role: 'user' | 'agent'; text: string }>> {
   const take = normalizeTake(params.take, 150);
+  const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
 
   try {
-    const response = await axios.get(`${configuration.serverUrl}/v1/sessions/${params.sessionId}/messages`, {
+    const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
       headers: {
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',
@@ -92,9 +94,10 @@ export async function fetchLatestUserPermissionIntentFromEncryptedTranscript(
   params: SessionTranscriptQueryParams & { take?: number },
 ): Promise<{ intent: PermissionMode; updatedAt: number } | null> {
   const take = normalizeTake(params.take, 200);
+  const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
 
   try {
-    const response = await axios.get(`${configuration.serverUrl}/v1/sessions/${params.sessionId}/messages`, {
+    const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
       headers: {
         Authorization: `Bearer ${params.token}`,
         'Content-Type': 'application/json',

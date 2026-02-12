@@ -6,6 +6,7 @@ import { AgentState, ClientToServerEvents, MessageAckResponseSchema, MessageCont
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { backoff } from '@/utils/time';
 import { configuration } from '@/configuration';
+import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 import type { RawJSONLines } from '@/backends/claude/types';
 import { randomUUID } from 'node:crypto';
 import { AsyncLock } from '@/utils/lock';
@@ -36,8 +37,11 @@ import { isV2ChangesSyncEnabled, runSessionChangesSyncOnConnect } from './sessio
 import { handleSessionNewMessageUpdate } from './sessionNewMessageUpdate';
 import { handleSessionStateUpdate } from './sessionStateUpdateHandling';
 import type { ACPMessageData, ACPProvider, SessionEventMessage } from './sessionMessageTypes';
+import { consumeDaemonInitialPromptFromEnv } from '@/agent/runtime/daemonInitialPrompt';
 
 export class ApiSessionClient extends EventEmitter {
+    private static readonly STARTUP_MESSAGE_CATCH_UP_RETRY_DELAYS_MS = [250, 1_000, 2_500] as const;
+
     private readonly token: string;
     readonly sessionId: string;
     private metadata: Metadata | null;
@@ -69,6 +73,12 @@ export class ApiSessionClient extends EventEmitter {
     private hasConnectedOnce = false;
     private changesSyncInFlight: Promise<void> | null = null;
     private accountIdPromise: Promise<string> | null = null;
+    private daemonInitialPrompt: string | null = null;
+    private daemonInitialPromptSeeded = false;
+    private startupMessageCatchUpStarted = false;
+    private startupMessageCatchUpRetryIndex = 0;
+    private startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    private readonly startedByDaemonProcess: boolean;
 
     /**
      * Returns the latest known agentState (may be stale if socket is disconnected).
@@ -97,6 +107,13 @@ export class ApiSessionClient extends EventEmitter {
         this.agentStateVersion = session.agentStateVersion;
         this.encryptionKey = session.encryptionKey;
         this.encryptionVariant = session.encryptionVariant;
+        this.daemonInitialPrompt = consumeDaemonInitialPromptFromEnv();
+        this.startedByDaemonProcess = (() => {
+            const idx = process.argv.indexOf('--started-by');
+            if (idx < 0) return false;
+            const value = process.argv[idx + 1];
+            return value === 'daemon';
+        })();
 
         // Initialize RPC handler manager
         this.rpcHandlerManager = new RpcHandlerManager({
@@ -287,6 +304,7 @@ export class ApiSessionClient extends EventEmitter {
                 pendingMessageCallback: this.pendingMessageCallback,
                 pendingMessages: this.pendingMessages,
                 emit: (event, payload) => this.emit(event, payload),
+                debug: (message, payload) => logger.debug(message, payload),
                 debugLargeJson: (message, payload) => logger.debugLargeJson(message, payload),
             });
             if (newMessageHandlingResult.handled) {
@@ -334,7 +352,8 @@ export class ApiSessionClient extends EventEmitter {
         }
 
         const p = (async () => {
-            const response = await axios.get(`${configuration.serverUrl}/v1/account/profile`, {
+            const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+            const response = await axios.get(`${serverUrl}/v1/account/profile`, {
                 headers: {
                     Authorization: `Bearer ${this.token}`,
                     'Content-Type': 'application/json',
@@ -364,6 +383,45 @@ export class ApiSessionClient extends EventEmitter {
             afterSeq,
             onUpdate: (update) => this.handleUpdate(update, { source: 'session-scoped' }),
         });
+    }
+
+    private scheduleNextStartupMessageCatchUpRetry(): void {
+        if (this.closed) return;
+        if (this.lastObservedMessageSeq > 0) return;
+        if (this.startupMessageCatchUpRetryTimer) return;
+        const shouldRetryForDaemonStart =
+            this.startedByDaemonProcess ||
+            this.metadata?.startedBy === 'daemon' ||
+            this.metadata?.startedFromDaemon === true;
+        if (!shouldRetryForDaemonStart) return;
+
+        const delayMs = ApiSessionClient.STARTUP_MESSAGE_CATCH_UP_RETRY_DELAYS_MS[this.startupMessageCatchUpRetryIndex];
+        if (typeof delayMs !== 'number') return;
+
+        logger.debug('[API] Scheduling startup transcript catch-up retry', {
+            delayMs,
+            retryIndex: this.startupMessageCatchUpRetryIndex,
+            lastObservedMessageSeq: this.lastObservedMessageSeq,
+        });
+        this.startupMessageCatchUpRetryTimer = setTimeout(() => {
+            this.startupMessageCatchUpRetryTimer = null;
+            if (this.closed) return;
+            if (this.lastObservedMessageSeq > 0) return;
+
+            this.startupMessageCatchUpRetryIndex += 1;
+            logger.debug('[API] Running startup transcript catch-up retry', {
+                retryIndex: this.startupMessageCatchUpRetryIndex,
+                afterSeq: this.lastObservedMessageSeq,
+            });
+            void this.catchUpSessionMessages(this.lastObservedMessageSeq)
+                .catch((error) => {
+                    logger.debug('[API] Startup transcript catch-up retry failed (non-fatal)', { error });
+                })
+                .finally(() => {
+                    this.scheduleNextStartupMessageCatchUpRetry();
+                });
+        }, delayMs);
+        this.startupMessageCatchUpRetryTimer.unref?.();
     }
 
     private async syncChangesOnConnect(opts: { reason: 'connect' | 'reconnect' }): Promise<void> {
@@ -433,19 +491,56 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private scheduleMaterializationRecovery(localId: string): void {
-        // Belt-and-suspenders: if we fail to observe the user-scoped update (connect race, brief disconnect),
+        // Belt-and-suspenders: if we fail to observe the socket broadcast for a committed transcript row,
         // recover by scanning the transcript and re-injecting the message into the normal update pipeline.
+        const delayMs = 500;
         const timer = setTimeout(() => {
             if (!this.hasMaterializedLocalId(localId)) return;
             void this.recoverMaterializedLocalId(localId, { maxWaitMs: 7_500 });
-        }, 500);
+        }, delayMs);
         timer.unref?.();
     }
 
     onUserMessage(callback: (data: UserMessage) => void) {
+        logger.debug('[API] onUserMessage callback attached', {
+            sessionId: this.sessionId,
+            startedByDaemonProcess: this.startedByDaemonProcess,
+            metadataStartedBy: this.metadata?.startedBy ?? null,
+            metadataStartedFromDaemon: this.metadata?.startedFromDaemon ?? null,
+        });
         this.pendingMessageCallback = callback;
         while (this.pendingMessages.length > 0) {
             callback(this.pendingMessages.shift()!);
+        }
+        if (!this.daemonInitialPromptSeeded && typeof this.daemonInitialPrompt === 'string') {
+            this.daemonInitialPromptSeeded = true;
+            const initialPrompt = this.daemonInitialPrompt;
+            this.daemonInitialPrompt = null;
+
+            // Seed the runtime queue immediately so daemon-started sessions process the initial prompt
+            // even though transcript echo messages with source/sentFrom=cli are intentionally ignored.
+            callback({
+                role: 'user',
+                content: { type: 'text', text: initialPrompt },
+                createdAt: Date.now(),
+                meta: {
+                    source: 'daemon-initial-prompt',
+                    sentFrom: 'cli',
+                },
+            });
+            this.sendUserTextMessage(initialPrompt);
+        }
+
+        if (!this.startupMessageCatchUpStarted) {
+            this.startupMessageCatchUpStarted = true;
+            this.startupMessageCatchUpRetryIndex = 0;
+            void this.catchUpSessionMessages(this.lastObservedMessageSeq)
+                .catch((error) => {
+                    logger.debug('[API] Initial transcript catch-up failed (non-fatal)', { error });
+                })
+                .finally(() => {
+                    this.scheduleNextStartupMessageCatchUpRetry();
+                });
         }
     }
 
@@ -1144,6 +1239,10 @@ export class ApiSessionClient extends EventEmitter {
     async close() {
         logger.debug('[API] socket.close() called');
         this.closed = true;
+        if (this.startupMessageCatchUpRetryTimer) {
+            clearTimeout(this.startupMessageCatchUpRetryTimer);
+            this.startupMessageCatchUpRetryTimer = null;
+        }
         if (this.userSocketDisconnectTimer) {
             clearTimeout(this.userSocketDisconnectTimer);
             this.userSocketDisconnectTimer = null;

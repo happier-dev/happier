@@ -9,6 +9,7 @@ import { configuration } from '@/configuration';
 import { Credentials } from '@/persistence';
 
 import { resolveMachineEncryptionContext, resolveSessionEncryptionContext } from './client/encryptionKey';
+import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
 import {
   shouldReturnMinimalMachineForGetOrCreateMachineError,
   shouldReturnNullForGetOrCreateSessionError,
@@ -64,6 +65,10 @@ function serializeAxiosErrorForLog(error: unknown): Record<string, unknown> {
   return { message: String(error) };
 }
 
+function resolveServerHttpBaseUrl(): string {
+  return resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+}
+
 export class ApiClient {
 
   static async create(credential: Credentials) {
@@ -75,7 +80,7 @@ export class ApiClient {
 
   private constructor(credential: Credentials) {
     this.credential = credential
-    this.pushClient = new PushNotificationClient(credential.token, configuration.serverUrl)
+    this.pushClient = new PushNotificationClient(credential.token, resolveServerHttpBaseUrl())
   }
 
   /**
@@ -87,11 +92,12 @@ export class ApiClient {
     state: AgentState | null
   }): Promise<Session | null> {
     const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveSessionEncryptionContext(this.credential);
+    const sessionsUrl = `${resolveServerHttpBaseUrl()}/v1/sessions`;
 
     // Create session
     try {
       const response = await axios.post<CreateSessionResponse>(
-        `${configuration.serverUrl}/v1/sessions`,
+        sessionsUrl,
         {
           tag: opts.tag,
           metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
@@ -124,7 +130,7 @@ export class ApiClient {
       // Never log raw Axios errors: they can contain bearer tokens or vendor keys.
       logger.debug('[API] [ERROR] Failed to get or create session:', serializeAxiosErrorForLog(error));
 
-      if (shouldReturnNullForGetOrCreateSessionError(error, { url: `${configuration.serverUrl}/v1/sessions` })) {
+      if (shouldReturnNullForGetOrCreateSessionError(error, { url: sessionsUrl })) {
         return null;
       }
 
@@ -143,6 +149,7 @@ export class ApiClient {
     timeoutMs?: number,
   }): Promise<Machine> {
     const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveMachineEncryptionContext(this.credential);
+    const machinesUrl = `${resolveServerHttpBaseUrl()}/v1/machines`;
 
     // Helper to create minimal machine object for offline mode (DRY)
     const createMinimalMachine = (): Machine => ({
@@ -162,7 +169,7 @@ export class ApiClient {
           ? Math.floor(opts.timeoutMs)
           : 60_000;
       const response = await axios.post(
-        `${configuration.serverUrl}/v1/machines`,
+        machinesUrl,
         {
           id: opts.machineId,
           metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
@@ -202,7 +209,7 @@ export class ApiClient {
         throw new MachineIdConflictError(opts.machineId);
       }
 
-      if (shouldReturnMinimalMachineForGetOrCreateMachineError(error, { url: `${configuration.serverUrl}/v1/machines` })) {
+      if (shouldReturnMinimalMachineForGetOrCreateMachineError(error, { url: machinesUrl })) {
         return createMinimalMachine();
       }
 
@@ -228,9 +235,10 @@ export class ApiClient {
    * The token is sent as a JSON string - server handles encryption
    */
   async registerVendorToken(vendor: 'openai' | 'anthropic' | 'gemini', apiKey: any): Promise<void> {
+    const serverUrl = resolveServerHttpBaseUrl();
     try {
       const response = await axios.post(
-        `${configuration.serverUrl}/v1/connect/${vendor}/register`,
+        `${serverUrl}/v1/connect/${vendor}/register`,
         {
           token: JSON.stringify(apiKey)
         },
@@ -260,9 +268,10 @@ export class ApiClient {
    * Returns the token if it exists, null otherwise
    */
   async getVendorToken(vendor: 'openai' | 'anthropic' | 'gemini'): Promise<any | null> {
+    const serverUrl = resolveServerHttpBaseUrl();
     try {
       const response = await axios.get(
-        `${configuration.serverUrl}/v1/connect/${vendor}/token`,
+        `${serverUrl}/v1/connect/${vendor}/token`,
         {
           headers: {
             'Authorization': `Bearer ${this.credential.token}`,

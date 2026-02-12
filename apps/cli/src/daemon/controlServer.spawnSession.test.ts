@@ -66,6 +66,7 @@ describe('daemon control server: /spawn-session', () => {
         payload: JSON.stringify({
           directory: '/tmp',
           sessionId: 'explicit-session',
+          agent: 'pi',
           terminal: {
             mode: 'tmux',
             tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
@@ -88,6 +89,7 @@ describe('daemon control server: /spawn-session', () => {
       expect(observed).toEqual({
         directory: '/tmp',
         sessionId: 'explicit-session',
+        agent: 'pi',
         terminal: {
           mode: 'tmux',
           tmux: { sessionName: 'happy-e2e', isolated: true, tmpDir: '/tmp/happy-tmux' },
@@ -97,6 +99,40 @@ describe('daemon control server: /spawn-session', () => {
           TMUX_SESSION_NAME: 'legacy-ignored',
         },
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('does not pass unknown agent ids through to spawnSession', async () => {
+    let observed: any = null;
+
+    const app = createDaemonControlApp({
+      getChildren: () => [],
+      stopSession: async () => false,
+      spawnSession: async (options: any) => {
+        observed = options;
+        return { type: 'success', sessionId: 'happy-test-123' };
+      },
+      requestShutdown: () => {},
+      onHappySessionWebhook: () => {},
+      controlToken: 'test-token',
+    });
+
+    try {
+      await app.ready();
+      const res = await app.inject({
+        method: 'POST',
+        url: '/spawn-session',
+        headers: { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' },
+        payload: JSON.stringify({
+          directory: '/tmp',
+          agent: 'unknown-agent',
+        }),
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(observed).toBeNull();
     } finally {
       await app.close();
     }

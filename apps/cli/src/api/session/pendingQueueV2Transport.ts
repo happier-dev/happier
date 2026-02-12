@@ -3,6 +3,7 @@ import type { Socket } from 'socket.io-client';
 
 import { configuration } from '@/configuration';
 import type { ClientToServerEvents, ServerToClientEvents } from '../types';
+import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 
 export type PendingQueueMaterializeNextResult = {
     didMaterialize: boolean;
@@ -20,7 +21,8 @@ export async function listPendingQueueV2LocalIdsFromServer(params: {
     sessionId: string;
 }): Promise<string[]> {
     try {
-        const response = await axios.get(`${configuration.serverUrl}/v2/sessions/${params.sessionId}/pending`, {
+        const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+        const response = await axios.get(`${serverUrl}/v2/sessions/${params.sessionId}/pending`, {
             headers: { Authorization: `Bearer ${params.token}` },
             timeout: 10_000,
         });
@@ -41,10 +43,11 @@ export async function discardPendingQueueV2Messages(params: {
     reason: 'switch_to_local' | 'manual';
 }): Promise<number> {
     let discarded = 0;
+    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
     for (const localId of params.localIds) {
         try {
             await axios.post(
-                `${configuration.serverUrl}/v2/sessions/${params.sessionId}/pending/${encodeURIComponent(localId)}/discard`,
+                `${serverUrl}/v2/sessions/${params.sessionId}/pending/${encodeURIComponent(localId)}/discard`,
                 { reason: params.reason },
                 { headers: { Authorization: `Bearer ${params.token}` }, timeout: 10_000 },
             );
@@ -78,8 +81,9 @@ async function tryMaterializeNextViaHttp(params: {
     sessionId: string;
 }): Promise<PendingQueueSocketMaterializeResult> {
     try {
+        const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
         const response = await axios.post(
-            `${configuration.serverUrl}/v2/sessions/${params.sessionId}/pending/materialize-next`,
+            `${serverUrl}/v2/sessions/${params.sessionId}/pending/materialize-next`,
             {},
             {
                 headers: {

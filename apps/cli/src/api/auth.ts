@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { encodeBase64, encodeBase64Url, authChallenge } from './encryption';
 import { configuration } from '@/configuration';
+import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
 
 /**
  * Note: This function is deprecated. Use readPrivateKey/writePrivateKey from persistence module instead.
@@ -19,7 +20,8 @@ export async function getOrCreateSecretKey(): Promise<Uint8Array> {
 export async function authGetToken(secret: Uint8Array): Promise<string> {
   const { challenge, publicKey, signature } = authChallenge(secret);
   
-  const response = await axios.post(`${configuration.serverUrl}/v1/auth`, {
+  const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+  const response = await axios.post(`${serverUrl}/v1/auth`, {
     challenge: encodeBase64(challenge),
     publicKey: encodeBase64(publicKey),
     signature: encodeBase64(signature)

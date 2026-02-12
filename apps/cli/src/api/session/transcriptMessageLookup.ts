@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 import { configuration } from '@/configuration';
+import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 
 export type TranscriptMessageLookupResult = {
     id: string;
@@ -16,7 +17,8 @@ export async function findTranscriptEncryptedMessageByLocalId(params: {
     onError?: (error: unknown) => void;
 }): Promise<TranscriptMessageLookupResult | null> {
     try {
-        const response = await axios.get(`${configuration.serverUrl}/v1/sessions/${params.sessionId}/messages`, {
+        const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+        const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
             headers: {
                 Authorization: `Bearer ${params.token}`,
                 'Content-Type': 'application/json',

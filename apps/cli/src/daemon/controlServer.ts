@@ -9,6 +9,7 @@ import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { Metadata } from '@/api/types';
+import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
 import { TrackedSession } from './types';
 import { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
 
@@ -16,6 +17,10 @@ function safeTokenEquals(provided: string, expected: string): boolean {
   const hashA = createHash('sha256').update(provided).digest();
   const hashB = createHash('sha256').update(expected).digest();
   return timingSafeEqual(hashA, hashB);
+}
+
+function isCatalogAgentId(value: unknown): value is CatalogAgentId {
+  return typeof value === 'string' && (CATALOG_AGENT_IDS as readonly string[]).includes(value);
 }
 
 export function createDaemonControlApp({
@@ -154,6 +159,7 @@ export function createDaemonControlApp({
       body: z.object({
         directory: z.string(),
         sessionId: z.string().optional(),
+        agent: z.enum(['claude', 'codex', 'opencode', 'gemini', 'auggie', 'qwen', 'kimi', 'kilo', 'pi']).optional(),
         terminal: z.object({
           mode: z.enum(['plain', 'tmux']).optional(),
           tmux: z.object({
@@ -186,10 +192,11 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    const { directory, sessionId, terminal, environmentVariables } = request.body;
+    const { directory, sessionId, agent: rawAgent, terminal, environmentVariables } = request.body;
+    const agent = isCatalogAgentId(rawAgent) ? rawAgent : undefined;
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
-    const result = await spawnSession({ directory, sessionId, terminal, environmentVariables });
+    const result = await spawnSession({ directory, sessionId, agent, terminal, environmentVariables });
 
     switch (result.type) {
       case 'success':

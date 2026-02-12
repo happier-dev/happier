@@ -2,6 +2,7 @@ import axios, { type AxiosResponse } from 'axios';
 import { configuration } from '@/configuration';
 import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt } from '../encryption';
+import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 
 export function shouldSyncSessionSnapshotOnConnect(opts: { metadataVersion: number; agentStateVersion: number }): boolean {
     return opts.metadataVersion < 0 || opts.agentStateVersion < 0;
@@ -19,11 +20,12 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
     agentState?: { agentState: AgentState | null; agentStateVersion: number };
 }> {
     let raw: any | null = null;
+    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
 
     // Preferred path: fetch the single session by id.
     // Backward compatible: if the server doesn't implement this route yet, fall back to scanning /v2/sessions pages.
     try {
-        const response = await axios.get(`${configuration.serverUrl}/v2/sessions/${opts.sessionId}`, {
+        const response = await axios.get(`${serverUrl}/v2/sessions/${opts.sessionId}`, {
             headers: {
                 Authorization: `Bearer ${opts.token}`,
                 'Content-Type': 'application/json',
@@ -69,7 +71,7 @@ export async function fetchSessionSnapshotUpdateFromServer(opts: {
             nextCursor?: unknown;
         };
         for (let page = 0; page < 20; page++) {
-            const response: AxiosResponse<SessionsPage> = await axios.get(`${configuration.serverUrl}/v2/sessions`, {
+            const response: AxiosResponse<SessionsPage> = await axios.get(`${serverUrl}/v2/sessions`, {
                 headers: {
                     Authorization: `Bearer ${opts.token}`,
                     'Content-Type': 'application/json',

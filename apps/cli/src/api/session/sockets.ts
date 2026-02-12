@@ -1,9 +1,11 @@
 import { configuration } from '@/configuration';
 import type { ClientToServerEvents, ServerToClientEvents } from '../types';
 import { io, Socket } from 'socket.io-client'
+import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 
 export function createSessionScopedSocket(opts: { token: string; sessionId: string }): Socket<ServerToClientEvents, ClientToServerEvents> {
-    return io(configuration.serverUrl, {
+    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+    return io(serverUrl, {
         auth: {
             token: opts.token,
             clientType: 'session-scoped' as const,
@@ -21,7 +23,8 @@ export function createSessionScopedSocket(opts: { token: string; sessionId: stri
 }
 
 export function createUserScopedSocket(opts: { token: string }): Socket<ServerToClientEvents, ClientToServerEvents> {
-    return io(configuration.serverUrl, {
+    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
+    return io(serverUrl, {
         auth: {
             token: opts.token,
             clientType: 'user-scoped' as const,
@@ -36,4 +39,3 @@ export function createUserScopedSocket(opts: { token: string }): Socket<ServerTo
         autoConnect: false,
     });
 }
-

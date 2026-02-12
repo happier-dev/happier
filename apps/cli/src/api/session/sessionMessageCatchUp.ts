@@ -2,6 +2,7 @@ import axios from 'axios';
 
 import { configuration } from '@/configuration';
 import type { Update } from '../types';
+import { resolveLoopbackHttpUrl } from '../client/loopbackUrl';
 
 export async function catchUpSessionMessagesAfterSeq(params: {
     token: string;
@@ -10,8 +11,9 @@ export async function catchUpSessionMessagesAfterSeq(params: {
     onUpdate: (update: Update) => void;
 }): Promise<void> {
     let cursor = Number.isFinite(params.afterSeq) && params.afterSeq >= 0 ? Math.floor(params.afterSeq) : 0;
+    const serverUrl = resolveLoopbackHttpUrl(configuration.serverUrl).replace(/\/+$/, '');
     for (let page = 0; page < 10; page++) {
-        const response = await axios.get(`${configuration.serverUrl}/v1/sessions/${params.sessionId}/messages`, {
+        const response = await axios.get(`${serverUrl}/v1/sessions/${params.sessionId}/messages`, {
             headers: {
                 Authorization: `Bearer ${params.token}`,
                 'Content-Type': 'application/json',
