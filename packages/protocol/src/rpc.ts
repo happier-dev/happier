@@ -25,6 +25,9 @@ export const RPC_METHODS = {
   CAPABILITIES_DESCRIBE: 'capabilities.describe',
   CAPABILITIES_DETECT: 'capabilities.detect',
   CAPABILITIES_INVOKE: 'capabilities.invoke',
+  BUGREPORT_COLLECT_DIAGNOSTICS: 'bugreport.collectDiagnostics',
+  BUGREPORT_GET_LOG_TAIL: 'bugreport.getLogTail',
+  BUGREPORT_UPLOAD_ARTIFACT: 'bugreport.uploadArtifact',
 } as const;
 
 export type RpcMethod = (typeof RPC_METHODS)[keyof typeof RPC_METHODS];
