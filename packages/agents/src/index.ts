@@ -54,6 +54,7 @@ export {
   computeNextMetadataConfigOptionOverrideV1,
 } from './sessionControls/publish.js';
 
-export * as pi from './providers/pi/index.js';
+// Namespaced provider-specific helpers/knobs.
+export * as providers from './providers/index.js';
 
 export * from './providerSettings/index.js';

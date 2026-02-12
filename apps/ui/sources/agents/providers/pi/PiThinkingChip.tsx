@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { pi } from '@happier-dev/agents';
+import { providers } from '@happier-dev/agents';
 import * as React from 'react';
 import { Pressable, Text } from 'react-native';
 
@@ -7,7 +7,7 @@ import { hapticsLight } from '@/components/ui/theme/haptics';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
 import { t } from '@/text';
 
-const THINKING_LEVELS: ReadonlyArray<string> = ['', ...pi.PI_THINKING_LEVELS];
+const THINKING_LEVELS: ReadonlyArray<string> = ['', ...providers.pi.PI_THINKING_LEVELS];
 
 function nextThinkingLevel(current: string): string {
     const idx = THINKING_LEVELS.indexOf(current);

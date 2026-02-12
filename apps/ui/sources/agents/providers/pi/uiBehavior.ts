@@ -1,6 +1,6 @@
 import type { AgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 
-import { pi } from '@happier-dev/agents';
+import { providers } from '@happier-dev/agents';
 
 function getChipFactory(): typeof import('@/agents/providers/pi/PiThinkingChip').createPiThinkingLevelChip {
     // Lazy require so Node-side tests can import `@/agents/catalog` without resolving native icon deps.
@@ -14,24 +14,24 @@ function normalizeThinkingLevelForState(raw: unknown): string {
 export const PI_UI_BEHAVIOR_OVERRIDE: AgentUiBehavior = {
     newSession: {
         buildNewSessionOptions: ({ agentOptionState }) => {
-            const thinkingLevel = normalizeThinkingLevelForState(agentOptionState?.[pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL]);
-            return { [pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL]: thinkingLevel };
+            const thinkingLevel = normalizeThinkingLevelForState(agentOptionState?.[providers.pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL]);
+            return { [providers.pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL]: thinkingLevel };
         },
         getAgentInputExtraActionChips: ({ agentOptionState, setAgentOptionState }) => {
-            const thinkingLevel = normalizeThinkingLevelForState(agentOptionState?.[pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL]);
+            const thinkingLevel = normalizeThinkingLevelForState(agentOptionState?.[providers.pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL]);
             const createPiThinkingLevelChip = getChipFactory();
             return [
                 createPiThinkingLevelChip({
                     thinkingLevel,
-                    setThinkingLevel: (next) => setAgentOptionState(pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL, next),
+                    setThinkingLevel: (next) => setAgentOptionState(providers.pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL, next),
                 }),
             ];
         },
     },
     payload: {
         buildSpawnEnvironmentVariables: ({ environmentVariables, newSessionOptions }) => {
-            const thinkingLevel = newSessionOptions?.[pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL];
-            return pi.applyPiThinkingLevelEnv(environmentVariables, thinkingLevel) ?? environmentVariables;
+            const thinkingLevel = newSessionOptions?.[providers.pi.PI_NEW_SESSION_OPTION_THINKING_LEVEL];
+            return providers.pi.applyPiThinkingLevelEnv(environmentVariables, thinkingLevel) ?? environmentVariables;
         },
     },
 };
