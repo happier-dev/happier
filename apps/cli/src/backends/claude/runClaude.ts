@@ -1,13 +1,11 @@
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 
-import { ApiClient } from '@/api/api';
-import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import { logger } from '@/ui/logger';
 import { loop } from '@/backends/claude/loop';
 import { AgentState, Metadata, Session as ApiSession } from '@/api/types';
 import packageJson from '../../../package.json';
-import { Credentials, readSettings } from '@/persistence';
+import { Credentials } from '@/persistence';
 import { EnhancedMode, PermissionMode } from './loop';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { startCaffeinate, stopCaffeinate } from '@/integrations/caffeinate';
@@ -39,6 +37,7 @@ import { resolveInitialClaudeRemoteMetaState } from '@/backends/claude/remote/re
 import { inferPermissionIntentFromClaudeArgs } from './utils/inferPermissionIntentFromArgs';
 import { adoptModelOverrideFromMetadata } from './utils/adoptModelOverrideFromMetadata';
 import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
+import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -149,27 +148,16 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Set backend for offline warnings (before any API calls)
     connectionState.setBackend('Claude');
 
-    // Create session service
-    const api = await ApiClient.create(credentials);
-
-    // Get machine ID from settings (should already be set up)
-    const settings = await readSettings();
-    let machineId = settings?.machineId
-    if (!machineId) {
-        console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues`);
-        process.exit(1);
-    }
+    const { api, machineId } = await initializeBackendApiContext({
+        credentials,
+        machineMetadata: initialMachineMetadata,
+        missingMachineIdMessage:
+            '[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/happier-dev/happier/issues',
+        // Daemon-spawned sessions must skip registration; terminal sessions should also skip
+        // when a daemon is already alive to avoid duplicate /v1/machines contention.
+        skipMachineRegistration: options.startedBy === 'daemon',
+    });
     logger.debug(`Using machineId: ${machineId}`);
-
-    if (options.startedBy !== 'daemon') {
-        const ensured = await ensureMachineRegistered({
-            api,
-            machineId,
-            metadata: initialMachineMetadata,
-            caller: 'runClaude',
-        });
-        machineId = ensured.machineId;
-    }
 
     const terminal = buildTerminalMetadataFromRuntimeFlags(options.terminalRuntime ?? null);
     // Resolve initial permission mode for sessions that start in terminal local mode.
