@@ -140,6 +140,12 @@ export {
   type ScmWorkingSnapshot,
 } from './scm.js';
 
+// Backwards-compatible aliases for older "git" naming.
+export {
+  SCM_OPERATION_ERROR_CODES as GIT_OPERATION_ERROR_CODES,
+  type ScmLogEntry as GitLogEntry,
+  type ScmOperationErrorCode as GitOperationErrorCode,
+} from './scm.js';
 export {
   resolveScmScopedChangedPaths,
   scmPathMatchesScopePath,
@@ -158,6 +164,16 @@ export {
   VoiceMediatorStartResponseSchema,
   VoiceMediatorSendTurnRequestSchema,
   VoiceMediatorSendTurnResponseSchema,
+  VoiceMediatorTurnStreamStartRequestSchema,
+  VoiceMediatorTurnStreamStartResponseSchema,
+  VoiceMediatorTurnStreamReadRequestSchema,
+  VoiceMediatorTurnStreamReadResponseSchema,
+  VoiceMediatorTurnStreamCancelRequestSchema,
+  VoiceMediatorTurnStreamCancelResponseSchema,
+  VoiceMediatorTurnStreamEventSchema,
+  VoiceMediatorTurnStreamEventDeltaSchema,
+  VoiceMediatorTurnStreamEventDoneSchema,
+  VoiceMediatorTurnStreamEventErrorSchema,
   VoiceMediatorCommitRequestSchema,
   VoiceMediatorCommitResponseSchema,
   VoiceMediatorStopRequestSchema,
@@ -173,6 +189,16 @@ export {
   type VoiceMediatorStartResponse,
   type VoiceMediatorSendTurnRequest,
   type VoiceMediatorSendTurnResponse,
+  type VoiceMediatorTurnStreamStartRequest,
+  type VoiceMediatorTurnStreamStartResponse,
+  type VoiceMediatorTurnStreamReadRequest,
+  type VoiceMediatorTurnStreamReadResponse,
+  type VoiceMediatorTurnStreamCancelRequest,
+  type VoiceMediatorTurnStreamCancelResponse,
+  type VoiceMediatorTurnStreamEvent,
+  type VoiceMediatorTurnStreamEventDelta,
+  type VoiceMediatorTurnStreamEventDone,
+  type VoiceMediatorTurnStreamEventError,
   type VoiceMediatorCommitRequest,
   type VoiceMediatorCommitResponse,
   type VoiceMediatorStopRequest,
@@ -181,6 +207,13 @@ export {
   type VoiceMediatorGetModelsResponse,
   type VoiceMediatorModel,
 } from './voiceMediator.js';
+
+export {
+  VOICE_ACTIONS_BLOCK,
+  VoiceAssistantActionSchema,
+  extractVoiceActionsFromAssistantText,
+  type VoiceAssistantAction,
+} from './voiceActions.js';
 
 // Tool normalization (V2)
 export * from './tools/v2/index.js';
@@ -252,7 +285,6 @@ export {
 } from './auth/externalOAuth.js';
 
 export {
-  BUG_REPORT_DEFAULT_ISSUE_LABELS,
   BUG_REPORT_DEFAULT_ISSUE_OWNER,
   BUG_REPORT_DEFAULT_ISSUE_REPO,
   BUG_REPORT_FALLBACK_BODY_TRUNCATION_SUFFIX,
@@ -276,6 +308,7 @@ export {
   sanitizeBugReportDaemonDiagnosticsPayload,
   sanitizeBugReportStackContextPayload,
   sanitizeBugReportUrl,
+  searchBugReportSimilarIssues,
   submitBugReportToService,
   trimBugReportTextToMaxBytes,
   type BugReportArtifactPayload,
@@ -283,6 +316,7 @@ export {
   type BugReportEnvironmentPayload,
   type BugReportFormPayload,
   type BugReportFrequency,
+  type BugReportSimilarIssue,
   type BugReportMachineDaemonLogLike,
   type BugReportMachineDaemonStateLike,
   type BugReportMachineDiagnosticsLike,
