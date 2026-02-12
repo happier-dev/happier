@@ -215,7 +215,7 @@ describe.sequential('daemon control client PID safety', () => {
       vi.stubGlobal('fetch', fetchSpy as unknown as typeof fetch);
       const result = await spawnDaemonSession('/tmp');
       expect(result).toEqual({ success: true, sessionId: 's-1' });
-      expect(timeoutSpy).toHaveBeenCalledWith(60_000);
+      expect(timeoutSpy).toHaveBeenCalledWith(120_000);
     } finally {
       timeoutSpy.mockRestore();
       vi.unstubAllGlobals();
