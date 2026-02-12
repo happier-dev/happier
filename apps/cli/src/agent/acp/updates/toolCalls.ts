@@ -145,8 +145,11 @@ function emitToolCallRefresh(
   const toolKindStr = typeof toolKind === 'string' ? toolKind : undefined;
 
   const rawInput = extractToolInput(update);
+  const cachedInput = ctx.toolCallIdToInputMap.get(toolCallId) ?? null;
   const rawInputRecord = asRecord(rawInput);
-  const toolNameInferenceInput = buildToolNameInferenceInput(rawInputRecord, update);
+
+  const cachedRecord = asRecord(cachedInput);
+  const toolNameInferenceInput = buildToolNameInferenceInput(rawInputRecord ?? cachedRecord, update);
   if (Object.keys(toolNameInferenceInput).length > 0) {
     ctx.toolCallIdToInputMap.set(toolCallId, toolNameInferenceInput);
   }
@@ -160,15 +163,20 @@ function emitToolCallRefresh(
     ctx.transport.determineToolName?.(baseName, toolCallId, toolNameInferenceInput, {
       recentPromptHadChangeTitle: false,
       toolCallCountSincePrompt: ctx.toolCallCountSincePrompt,
-    }) ?? baseName;
+  }) ?? baseName;
 
-  const parsedArgs = parseArgsFromContent(rawInput);
+  const effectiveRawInput =
+    rawInputRecord && Object.keys(rawInputRecord).length > 0
+      ? rawInput
+      : (cachedRecord && Object.keys(cachedRecord).length > 0 ? cachedRecord : rawInput);
+
+  const parsedArgs = parseArgsFromContent(effectiveRawInput);
   const args = { ...parsedArgs };
 
   if (update.locations && Array.isArray(update.locations)) {
     args.locations = update.locations;
   }
-  attachAcpMetadataToArgs(args, update, toolKindStr || 'unknown', rawInput);
+  attachAcpMetadataToArgs(args, update, toolKindStr || 'unknown', effectiveRawInput);
 
   ctx.emit({
     type: 'tool-call',
@@ -193,8 +201,10 @@ export function startToolCall(
   const isInvestigation = ctx.transport.isInvestigationTool?.(toolCallId, toolKindStr) ?? false;
 
   const rawInput = extractToolInput(update);
+  const cachedInput = ctx.toolCallIdToInputMap.get(toolCallId) ?? null;
   const rawInputRecord = asRecord(rawInput);
-  const toolNameInferenceInput = buildToolNameInferenceInput(rawInputRecord, update);
+  const cachedRecord = asRecord(cachedInput);
+  const toolNameInferenceInput = buildToolNameInferenceInput(rawInputRecord ?? cachedRecord, update);
   if (Object.keys(toolNameInferenceInput).length > 0) {
     ctx.toolCallIdToInputMap.set(toolCallId, toolNameInferenceInput);
   }
@@ -273,7 +283,12 @@ export function startToolCall(
   ctx.emit({ type: 'status', status: 'running' });
 
   // Parse args and emit tool-call event.
-  const parsedArgs = parseArgsFromContent(rawInput);
+  const effectiveRawInput =
+    rawInputRecord && Object.keys(rawInputRecord).length > 0
+      ? rawInput
+      : (cachedRecord && Object.keys(cachedRecord).length > 0 ? cachedRecord : rawInput);
+
+  const parsedArgs = parseArgsFromContent(effectiveRawInput);
   const args = { ...parsedArgs };
 
   // Extract locations if present.
@@ -281,7 +296,7 @@ export function startToolCall(
     args.locations = update.locations;
   }
 
-  attachAcpMetadataToArgs(args, update, toolKindStr || 'unknown', rawInput);
+  attachAcpMetadataToArgs(args, update, toolKindStr || 'unknown', effectiveRawInput);
 
   // Log investigation tool objective.
   if (isInvestigation && args.objective) {

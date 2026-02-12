@@ -95,15 +95,45 @@ test('secret-bearing workflows require release-admin actor guard before privileg
   const { raw: guardRaw, parsed: guardParsed } = await loadWorkflow('release-actor-guard.yml');
 
   assert.ok(guardParsed?.on?.workflow_call, 'release-actor-guard must be reusable via workflow_call');
+  assert.equal(
+    guardParsed?.on?.workflow_call?.inputs?.guard_environment?.default,
+    'release-shared',
+    'release-actor-guard should default to release-shared environment for app credentials'
+  );
+  assert.equal(
+    guardParsed?.jobs?.authorize?.environment,
+    '${{ inputs.guard_environment }}',
+    'release-actor-guard should load app credentials from the configured environment'
+  );
   assert.match(
     guardRaw,
-    /orgs\/\$\{org\}\/teams\/\$\{team_slug\}\/memberships\/\$\{actor\}/,
-    'release-actor-guard should verify actor membership in the configured team'
+    /secrets\.RELEASE_BOT_APP_ID/,
+    'release-actor-guard should use RELEASE_BOT_APP_ID from environment-scoped secrets'
+  );
+  assert.match(
+    guardRaw,
+    /secrets\.RELEASE_BOT_PRIVATE_KEY/,
+    'release-actor-guard should use RELEASE_BOT_PRIVATE_KEY from environment-scoped secrets'
+  );
+  assert.match(
+    guardRaw,
+    /actions\/create-github-app-token@v1/,
+    'release-actor-guard should create a GitHub App token for team membership checks'
+  );
+  assert.match(
+    guardRaw,
+    /orgs\/\$\{ORG\}\/teams\/\$\{TEAM_SLUG\}\/memberships\/\$\{ACTOR\}/,
+    'release-actor-guard should verify actor membership in the configured team via the GitHub API'
   );
   assert.match(
     guardRaw,
     /GITHUB_TRIGGERING_ACTOR/,
     'release-actor-guard should prefer triggering actor for reruns'
+  );
+  assert.match(
+    guardRaw,
+    /401\|403|Unexpected response/,
+    'release-actor-guard should fail closed on authorization or unexpected API responses'
   );
 
   const guardJob = 'release_actor_guard';
@@ -144,6 +174,11 @@ test('secret-bearing workflows require release-admin actor guard before privileg
     assert.ok(
       needsInclude(job?.needs, guardJob),
       `${file} job '${jobName}' should require '${guardJob}'`
+    );
+    assert.equal(
+      guard?.secrets,
+      undefined,
+      `${file} should not pass app secrets directly to release_actor_guard`
     );
   }
 });

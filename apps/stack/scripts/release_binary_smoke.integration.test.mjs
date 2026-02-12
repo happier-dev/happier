@@ -78,7 +78,11 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
   const cliTimedOut = cliVersion.error && cliVersion.error.code === 'ETIMEDOUT';
   const cliExited = (cliVersion.status ?? 1) === 0;
   assert.ok(cliTimedOut || cliExited, cliVersion.stderr || cliVersion.stdout);
-  assert.match(`${cliVersion.stdout || ''}${cliVersion.stderr || ''}`, /version/i);
+  const versionText = `${cliVersion.stdout || ''}${cliVersion.stderr || ''}`.trim();
+  assert.ok(
+    /version/i.test(versionText) || /^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$/.test(versionText),
+    `expected CLI version output, got: ${versionText || '<empty>'}`,
+  );
 
   if (isLinuxTarget(target)) {
     const buildServer = spawnSync(
@@ -102,15 +106,29 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
     t.after(() => {
       spawnSync('bash', ['-lc', `rm -rf "${serverExtract.extractDir.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
     });
+    const serverDataDir = await mkdtemp(join(tmpdir(), 'happier-server-binary-smoke-data-'));
+    t.after(() => {
+      spawnSync('bash', ['-lc', `rm -rf "${serverDataDir.replaceAll('"', '\\"')}"`], { stdio: 'ignore' });
+    });
     const serverBoot = spawnSync(serverExtract.binaryPath, [], {
       cwd: '/tmp',
       encoding: 'utf-8',
-      env: { ...process.env, PORT: '3905', HAPPIER_SERVER_HOST: '127.0.0.1' },
+      env: {
+        ...process.env,
+        PORT: '3905',
+        HAPPIER_SERVER_HOST: '127.0.0.1',
+        HAPPY_DB_PROVIDER: 'sqlite',
+        HAPPIER_DB_PROVIDER: 'sqlite',
+        DATABASE_URL: `file:${serverDataDir}/happier-server-light.sqlite`,
+        HAPPY_SERVER_LIGHT_DATA_DIR: serverDataDir,
+        HAPPIER_SERVER_LIGHT_DATA_DIR: serverDataDir,
+      },
       timeout: 7000,
     });
     const timedOut = serverBoot.error && serverBoot.error.code === 'ETIMEDOUT';
     const cleanExit = (serverBoot.status ?? 1) === 0;
-    assert.ok(timedOut || cleanExit, serverBoot.stderr || serverBoot.stdout);
-    assert.doesNotMatch(`${serverBoot.stderr || ''}\n${serverBoot.stdout || ''}`, /ERR_MODULE_NOT_FOUND|Cannot find module/i);
+    const serverOutput = `${serverBoot.stderr || ''}\n${serverBoot.stdout || ''}`;
+    assert.ok(timedOut || cleanExit, serverOutput);
+    assert.doesNotMatch(serverOutput, /ERR_MODULE_NOT_FOUND|Cannot find module/i);
   }
 });

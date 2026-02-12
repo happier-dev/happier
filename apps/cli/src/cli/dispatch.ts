@@ -6,6 +6,7 @@ import { AGENTS } from '@/backends/catalog';
 import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
 import { applyDaemonAutostartEnvForInvocation, shouldEnsureDaemonForInvocation } from '@/daemon/ensureDaemon';
 import { applyEphemeralServerSelectionFromPrefixArgs } from '@/server/serverSelection';
+import packageJson from '../../package.json';
 
 export async function dispatchCli(params: Readonly<{
   args: string[];
@@ -14,6 +15,12 @@ export async function dispatchCli(params: Readonly<{
 }>): Promise<void> {
   let args = [...params.args];
   const { terminalRuntime, rawArgv } = params;
+
+  // Handle top-level version requests before backend resolution/auth flows.
+  if (args.length === 1 && (args[0] === '--version' || args[0] === '-v')) {
+    console.log(packageJson.version);
+    return;
+  }
 
   // If --version is passed - do not log, its likely daemon inquiring about our version
   if (!args.includes('--version')) {
