@@ -2,9 +2,14 @@ import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import type {
+  Automation,
+  AutomationRun,
+} from '../domains/automations/automationTypes';
+import type {
   DiscardedPendingMessage,
-  GitStatus,
-  GitWorkingSnapshot,
+  ScmStatus,
+  ScmWorkingSnapshot,
+  ScmCommitSelectionPatch,
   Machine,
   PendingMessage,
   Session,
@@ -17,8 +22,8 @@ import type { SessionListViewItem } from '../domains/session/listing/sessionList
 import { computeHasUnreadActivity } from '../domains/messages/unread';
 import { sync } from '../sync';
 
-import { getStorage } from '../domains/state/storage';
-import type { KnownEntitlements } from '../domains/state/storage';
+import { getStorage } from '../domains/state/storageStore';
+import type { KnownEntitlements } from '../domains/state/storageStore';
 
 export function useSessions() {
   return getStorage()(useShallow((state) => (state.isDataReady ? state.sessionsData : null)));
@@ -127,16 +132,26 @@ export function useAllMachines(): Machine[] {
   );
 }
 
+export function useMachineListByServerId(): Record<string, Machine[] | null> {
+  return getStorage()(useShallow((state) => state.machineListByServerId));
+}
+
+export function useMachineListStatusByServerId(): Record<string, 'idle' | 'loading' | 'signedOut' | 'error'> {
+  return getStorage()(useShallow((state) => state.machineListStatusByServerId));
+}
+
 export function useMachine(machineId: string): Machine | null {
   return getStorage()(useShallow((state) => state.machines[machineId] ?? null));
 }
 
 export function useSessionListViewData(): SessionListViewItem[] | null {
-  return getStorage()((state) => (state.isDataReady ? state.sessionListViewData : null));
+  return getStorage()(
+    useShallow((state) => (state.isDataReady ? state.sessionListViewData : null))
+  );
 }
 
 export function useSessionListViewDataByServerId(): Record<string, SessionListViewItem[] | null> {
-  return getStorage()((state) => state.sessionListViewDataByServerId);
+  return getStorage()(useShallow((state) => state.sessionListViewDataByServerId));
 }
 
 export function useAllSessions(): Session[] {
@@ -180,43 +195,67 @@ export function useProjectSessions(projectId: string | null) {
   return getStorage()(useShallow((state) => (projectId ? state.getProjectSessions(projectId) : [])));
 }
 
-export function useProjectGitStatus(projectId: string | null) {
-  return getStorage()(useShallow((state) => (projectId ? state.getProjectGitStatus(projectId) : null)));
+export function useProjectScmStatus(projectId: string | null) {
+  return getStorage()(useShallow((state) => (projectId ? state.getProjectScmStatus(projectId) : null)));
 }
 
-export function useSessionProjectGitStatus(sessionId: string | null) {
+export function useSessionProjectScmStatus(sessionId: string | null) {
   return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectGitStatus(sessionId) : null))
+    useShallow((state) => (sessionId ? state.getSessionProjectScmStatus(sessionId) : null))
   );
 }
 
-export function useProjectGitSnapshot(projectId: string | null): GitWorkingSnapshot | null {
+export function useProjectScmSnapshot(projectId: string | null): ScmWorkingSnapshot | null {
   return getStorage()(
-    useShallow((state) => (projectId ? state.getProjectGitSnapshot(projectId) : null))
+    useShallow((state) => (projectId ? state.getProjectScmSnapshot(projectId) : null))
   );
 }
 
-export function useSessionProjectGitSnapshot(sessionId: string | null): GitWorkingSnapshot | null {
+export function useSessionProjectScmSnapshot(sessionId: string | null): ScmWorkingSnapshot | null {
   return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectGitSnapshot(sessionId) : null))
+    useShallow((state) => (sessionId ? state.getSessionProjectScmSnapshot(sessionId) : null))
   );
 }
 
-export function useSessionProjectGitTouchedPaths(sessionId: string | null): string[] {
+export function useSessionProjectScmSnapshotError(sessionId: string | null): { message: string; at: number } | null {
   return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectGitTouchedPaths(sessionId) : []))
+    useShallow((state) => (sessionId ? state.getSessionProjectScmSnapshotError(sessionId) : null))
   );
 }
 
-export function useSessionProjectGitOperationLog(sessionId: string | null) {
+export function useSessionProjectScmTouchedPaths(sessionId: string | null): string[] {
   return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectGitOperationLog(sessionId) : []))
+    useShallow((state) => (sessionId ? state.getSessionProjectScmTouchedPaths(sessionId) : []))
   );
 }
 
-export function useSessionProjectGitInFlightOperation(sessionId: string | null) {
+export function useSessionProjectScmCommitSelectionPaths(sessionId: string | null): string[] {
   return getStorage()(
-    useShallow((state) => (sessionId ? state.getSessionProjectGitInFlightOperation(sessionId) : null))
+    useShallow((state) => (sessionId ? state.getSessionProjectScmCommitSelectionPaths(sessionId) : []))
+  );
+}
+
+export function useSessionProjectScmCommitSelectionPatches(sessionId: string | null): ScmCommitSelectionPatch[] {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectScmCommitSelectionPatches(sessionId) : []))
+  );
+}
+
+export function useSessionProjectScmOperationLog(sessionId: string | null) {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectScmOperationLog(sessionId) : []))
+  );
+}
+
+export function useSessionProjectScmInFlightOperation(sessionId: string | null) {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionProjectScmInFlightOperation(sessionId) : null))
+  );
+}
+
+export function useSessionRepositoryTreeExpandedPaths(sessionId: string | null): string[] {
+  return getStorage()(
+    useShallow((state) => (sessionId ? state.getSessionRepositoryTreeExpandedPaths(sessionId) : []))
   );
 }
 
@@ -245,6 +284,25 @@ export function useAllArtifacts(): DecryptedArtifact[] {
       return Object.values(state.artifacts).sort((a, b) => b.updatedAt - a.updatedAt);
     })
   );
+}
+
+export function useAutomations(): Automation[] {
+  return getStorage()(
+    useShallow((state) => {
+      if (!state.isDataReady) return [];
+      return Object.values(state.automations).sort((a, b) => b.updatedAt - a.updatedAt);
+    })
+  );
+}
+
+export function useAutomation(automationId: string): Automation | null {
+  return getStorage()(useShallow((state) => state.automations[automationId] ?? null));
+}
+
+export function useAutomationRuns(automationId: string): AutomationRun[] {
+  return getStorage()(
+    useShallow((state) => state.automationRunsByAutomationId[automationId] ?? emptyArray)
+  ) as AutomationRun[];
 }
 
 export function useDraftArtifacts(): DecryptedArtifact[] {
@@ -304,8 +362,8 @@ export function useLastSyncAt() {
   return getStorage()(useShallow((state) => state.lastSyncAt));
 }
 
-export function useSessionGitStatus(sessionId: string): GitStatus | null {
-  return getStorage()(useShallow((state) => state.sessionGitStatus[sessionId] ?? null));
+export function useSessionScmStatus(sessionId: string): ScmStatus | null {
+  return getStorage()(useShallow((state) => state.sessionScmStatus[sessionId] ?? null));
 }
 
 export function useIsDataReady(): boolean {

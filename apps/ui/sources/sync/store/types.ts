@@ -1,10 +1,12 @@
 import type { TodoState } from '@/sync/domains/todos/todoOps';
 
 import type { DecryptedArtifact } from '../domains/artifacts/artifactTypes';
+import type { Automation, AutomationRun } from '../domains/automations/automationTypes';
 import type { FeedItem } from '../domains/social/feedTypes';
 import type { RelationshipUpdatedEvent, UserProfile } from '../domains/social/friendTypes';
 import type { LocalSettings } from '../domains/settings/localSettings';
-import type { PendingMessage, Session, Machine, GitStatus, GitWorkingSnapshot, DiscardedPendingMessage } from '../domains/state/storageTypes';
+import type { PendingMessage, Session, Machine, ScmStatus, ScmWorkingSnapshot, DiscardedPendingMessage } from '../domains/state/storageTypes';
+import type { ScmCommitSelectionPatch } from '../domains/state/storageTypes';
 import type { NormalizedMessage } from '../typesRaw';
 import type { PermissionMode } from '../domains/permissions/permissionTypes';
 import type { Profile } from '../domains/profiles/profile';
@@ -45,11 +47,15 @@ export interface SessionsDomainSlice {
     sessions: Record<string, Session>;
     sessionListViewData: SessionListViewItem[] | null;
     sessionListViewDataByServerId: Record<string, SessionListViewItem[] | null>;
-    sessionGitStatus: Record<string, GitStatus | null>;
+    sessionScmStatus: Record<string, ScmStatus | null>;
     sessionLastViewed: Record<string, number>;
+    sessionRepositoryTreeExpandedPathsBySessionId: Record<string, string[]>;
     applySessions: (sessions: (Omit<Session, 'presence'> & { presence?: 'online' | number })[]) => void;
-    applyGitStatus: (sessionId: string, status: GitStatus | null) => void;
+    applyScmStatus: (sessionId: string, status: ScmStatus | null) => void;
     getActiveSessions: () => Session[];
+    getSessionRepositoryTreeExpandedPaths: (sessionId: string) => string[];
+    setSessionRepositoryTreeExpandedPaths: (sessionId: string, paths: string[]) => void;
+    clearSessionRepositoryTreeExpandedPaths: (sessionId: string) => void;
     updateSessionDraft: (sessionId: string, draft: string | null) => void;
     markSessionOptimisticThinking: (sessionId: string) => void;
     clearSessionOptimisticThinking: (sessionId: string) => void;
@@ -61,6 +67,12 @@ export interface SessionsDomainSlice {
 
 export interface MachinesDomainSlice {
     machines: Record<string, Machine>;
+    /**
+     * Server-scoped machine lists used for multi-server group/picker contexts.
+     * Active server machines still live in `machines` (record) for fast lookup.
+     */
+    machineListByServerId: Record<string, Machine[] | null>;
+    machineListStatusByServerId: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
 }
 
@@ -117,31 +129,54 @@ export interface ArtifactsDomainSlice {
     deleteArtifact: (artifactId: string) => void;
 }
 
+export interface AutomationsDomainSlice {
+    automations: Record<string, Automation>;
+    automationRunsByAutomationId: Record<string, AutomationRun[]>;
+    applyAutomations: (automations: Automation[]) => void;
+    upsertAutomation: (automation: Automation) => void;
+    removeAutomation: (automationId: string) => void;
+    setAutomationRuns: (automationId: string, runs: AutomationRun[]) => void;
+    upsertAutomationRun: (run: AutomationRun) => void;
+}
+
 export interface ProjectDomainSlice {
     getProjects: () => import('../runtime/orchestration/projectManager').Project[];
     getProject: (projectId: string) => import('../runtime/orchestration/projectManager').Project | null;
     getProjectForSession: (sessionId: string) => import('../runtime/orchestration/projectManager').Project | null;
     getProjectSessions: (projectId: string) => string[];
-    getProjectGitStatus: (projectId: string) => GitStatus | null;
-    getSessionProjectGitStatus: (sessionId: string) => GitStatus | null;
-    updateSessionProjectGitStatus: (sessionId: string, status: GitStatus | null) => void;
-    getProjectGitSnapshot: (projectId: string) => GitWorkingSnapshot | null;
-    getSessionProjectGitSnapshot: (sessionId: string) => GitWorkingSnapshot | null;
-    updateSessionProjectGitSnapshot: (sessionId: string, snapshot: GitWorkingSnapshot | null) => void;
-    getSessionProjectGitTouchedPaths: (sessionId: string) => string[];
-    markSessionProjectGitTouchedPaths: (sessionId: string, paths: string[]) => void;
-    pruneSessionProjectGitTouchedPaths: (sessionId: string, activePaths: Set<string>) => void;
-    getSessionProjectGitOperationLog: (sessionId: string) => import('../runtime/orchestration/projectManager').GitProjectOperationLogEntry[];
-    appendSessionProjectGitOperation: (
+    getProjectScmStatus: (projectId: string) => ScmStatus | null;
+    getSessionProjectScmStatus: (sessionId: string) => ScmStatus | null;
+    updateSessionProjectScmStatus: (sessionId: string, status: ScmStatus | null) => void;
+    getProjectScmSnapshot: (projectId: string) => ScmWorkingSnapshot | null;
+    getProjectScmSnapshotError: (projectId: string) => { message: string; at: number } | null;
+    getSessionProjectScmSnapshot: (sessionId: string) => ScmWorkingSnapshot | null;
+    getSessionProjectScmSnapshotError: (sessionId: string) => { message: string; at: number } | null;
+    updateSessionProjectScmSnapshot: (sessionId: string, snapshot: ScmWorkingSnapshot | null) => void;
+    updateSessionProjectScmSnapshotError: (sessionId: string, error: { message: string; at: number } | null) => void;
+    getSessionProjectScmTouchedPaths: (sessionId: string) => string[];
+    markSessionProjectScmTouchedPaths: (sessionId: string, paths: string[]) => void;
+    pruneSessionProjectScmTouchedPaths: (sessionId: string, activePaths: Set<string>) => void;
+    getSessionProjectScmCommitSelectionPaths: (sessionId: string) => string[];
+    markSessionProjectScmCommitSelectionPaths: (sessionId: string, paths: string[]) => void;
+    unmarkSessionProjectScmCommitSelectionPaths: (sessionId: string, paths: string[]) => void;
+    clearSessionProjectScmCommitSelectionPaths: (sessionId: string) => void;
+    pruneSessionProjectScmCommitSelectionPaths: (sessionId: string, activePaths: Set<string>) => void;
+    getSessionProjectScmCommitSelectionPatches: (sessionId: string) => ScmCommitSelectionPatch[];
+    upsertSessionProjectScmCommitSelectionPatch: (sessionId: string, patchSelection: ScmCommitSelectionPatch) => void;
+    removeSessionProjectScmCommitSelectionPatch: (sessionId: string, path: string) => void;
+    clearSessionProjectScmCommitSelectionPatches: (sessionId: string) => void;
+    pruneSessionProjectScmCommitSelectionPatches: (sessionId: string, activePaths: Set<string>) => void;
+    getSessionProjectScmOperationLog: (sessionId: string) => import('../runtime/orchestration/projectManager').ScmProjectOperationLogEntry[];
+    appendSessionProjectScmOperation: (
         sessionId: string,
-        entry: Omit<import('../runtime/orchestration/projectManager').GitProjectOperationLogEntry, 'id' | 'sessionId'>,
+        entry: Omit<import('../runtime/orchestration/projectManager').ScmProjectOperationLogEntry, 'id' | 'sessionId'>,
     ) => void;
-    getSessionProjectGitInFlightOperation: (sessionId: string) => import('../runtime/orchestration/projectManager').GitProjectInFlightOperation | null;
-    beginSessionProjectGitOperation: (
+    getSessionProjectScmInFlightOperation: (sessionId: string) => import('../runtime/orchestration/projectManager').ScmProjectInFlightOperation | null;
+    beginSessionProjectScmOperation: (
         sessionId: string,
-        operation: import('../runtime/orchestration/projectManager').GitProjectOperationKind,
-    ) => import('../runtime/orchestration/projectManager').BeginGitProjectOperationResult;
-    finishSessionProjectGitOperation: (sessionId: string, operationId: string) => boolean;
+        operation: import('../runtime/orchestration/projectManager').ScmProjectOperationKind,
+    ) => import('../runtime/orchestration/projectManager').BeginScmProjectOperationResult;
+    finishSessionProjectScmOperation: (sessionId: string, operationId: string) => boolean;
 }
 
 export interface FriendsDomainSlice {
@@ -182,6 +217,7 @@ export type StorageState = SettingsDomainSlice
     & RealtimeDomainSlice
     & TodosDomainSlice
     & ArtifactsDomainSlice
+    & AutomationsDomainSlice
     & ProjectDomainSlice
     & FriendsDomainSlice
     & FeedDomainSlice

@@ -3,11 +3,14 @@ import type { Settings } from '../../domains/settings/settings';
 import type { SessionListViewItem } from '../../domains/session/listing/sessionListViewData';
 import { buildSessionListViewDataWithServerScope } from '../buildSessionListViewDataWithServerScope';
 import { setActiveServerSessionListCache } from '../sessionListCache';
+import { getActiveServerSnapshot } from '../../domains/server/serverRuntime';
 
 import type { StoreGet, StoreSet } from './_shared';
 
 export type MachinesDomain = {
     machines: Record<string, Machine>;
+    machineListByServerId: Record<string, Machine[] | null>;
+    machineListStatusByServerId: Record<string, 'idle' | 'loading' | 'signedOut' | 'error'>;
     applyMachines: (machines: Machine[], replace?: boolean) => void;
 };
 
@@ -26,6 +29,8 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
 }): MachinesDomain {
     return {
         machines: {},
+        machineListByServerId: {},
+        machineListStatusByServerId: {},
         applyMachines: (machines, replace = false) =>
             set((state) => {
                 let mergedMachines: Record<string, Machine>;
@@ -48,6 +53,7 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                     groupInactiveSessionsByProject: state.settings.groupInactiveSessionsByProject,
                 });
 
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
                 return {
                     ...state,
                     machines: mergedMachines,
@@ -56,6 +62,12 @@ export function createMachinesDomain<S extends MachinesDomain & MachinesDomainDe
                         state.sessionListViewDataByServerId,
                         sessionListViewData,
                     ),
+                    machineListByServerId: activeServerId
+                        ? { ...state.machineListByServerId, [activeServerId]: Object.values(mergedMachines) }
+                        : state.machineListByServerId,
+                    machineListStatusByServerId: activeServerId
+                        ? { ...state.machineListStatusByServerId, [activeServerId]: 'idle' }
+                        : state.machineListStatusByServerId,
                 };
             }),
     };

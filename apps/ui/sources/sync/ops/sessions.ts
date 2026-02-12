@@ -30,6 +30,12 @@ export {
     sessionScmStatusSnapshot,
 } from './sessionScm';
 
+// Backwards-compatible aliases for older "git" naming in UI call-sites.
+export {
+    sessionScmCommitBackout as sessionGitCommitRevert,
+    sessionScmDiffCommit as sessionGitDiffCommit,
+} from './sessionScm';
+
 
 // Permission operation types
 interface SessionPermissionRequest {
