@@ -95,15 +95,46 @@ async function daemonPost(path: string, body?: any, options: DaemonControlReques
       signal: AbortSignal.timeout(timeout)
     });
     
+    const rawBody = await response.text();
+    let parsedBody: unknown = null;
+    if (rawBody.trim().length > 0) {
+      try {
+        parsedBody = JSON.parse(rawBody);
+      } catch {
+        parsedBody = rawBody;
+      }
+    }
+
     if (!response.ok) {
-      const errorMessage = `Request failed: ${path}, HTTP ${response.status}`;
+      const responseObject =
+        parsedBody && typeof parsedBody === 'object' ? (parsedBody as Record<string, unknown>) : null;
+      // If the daemon control server returns a structured payload (e.g. {success:false,...}),
+      // preserve it so callers can act on fields like requiresUserApproval/errorCode.
+      if (responseObject && typeof responseObject.success === 'boolean') {
+        return responseObject;
+      }
+
+      const remoteErrorCode =
+        responseObject && typeof responseObject.errorCode === 'string' ? responseObject.errorCode : undefined;
+
+      const remoteErrorMessage =
+        responseObject && typeof responseObject.error === 'string'
+          ? responseObject.error
+          : responseObject && typeof responseObject.message === 'string'
+            ? responseObject.message
+            : undefined;
+
+      const detailSuffix = [remoteErrorCode, remoteErrorMessage].filter(Boolean).join(': ');
+      const errorMessage = `Request failed: ${path}, HTTP ${response.status}${detailSuffix ? ` (${detailSuffix})` : ''}`;
       logger.debug(`[CONTROL CLIENT] ${errorMessage}`);
       return {
-        error: errorMessage
+        error: errorMessage,
+        errorCode: remoteErrorCode,
+        response: parsedBody,
       };
     }
     
-    return await response.json();
+    return parsedBody ?? {};
   } catch (error) {
     const errorMessage = `Request failed: ${path}, ${error instanceof Error ? error.message : 'Unknown error'}`;
     logger.debug(`[CONTROL CLIENT] ${errorMessage}`);
