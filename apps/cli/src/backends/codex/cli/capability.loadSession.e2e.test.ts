@@ -97,6 +97,7 @@ describe('cli.codex capability (ACP)', () => {
             qwen: makeUnavailableCliEntry(),
             kimi: makeUnavailableCliEntry(),
             kilo: makeUnavailableCliEntry(),
+            pi: makeUnavailableCliEntry(),
           },
           tmux: { available: false },
         },

@@ -89,6 +89,7 @@ describe('cli.kilo capability (ACP)', () => {
             qwen: makeUnavailableCliEntry(),
             kimi: makeUnavailableCliEntry(),
             kilo: { available: true, resolvedPath },
+            pi: makeUnavailableCliEntry(),
           },
           tmux: { available: false },
         },
