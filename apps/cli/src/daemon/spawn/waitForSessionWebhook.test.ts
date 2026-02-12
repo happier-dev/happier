@@ -96,4 +96,27 @@ describe('waitForSessionWebhook', () => {
       else process.env.HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS = previous;
     }
   });
+
+  it('resolves immediately when a canonical session id is already available', async () => {
+    const pidToAwaiter = new Map<number, (session: any) => void>();
+    const pidToSpawnResultResolver = new Map<number, (result: any) => void>();
+    const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
+
+    const promise = waitForSessionWebhook({
+      pid: 5150,
+      pidToAwaiter,
+      pidToSpawnResultResolver,
+      pidToSpawnWebhookTimeout,
+      timeoutErrorMessage: 'timeout',
+      resolveExistingSessionId: () => 'session-ready-5150',
+    });
+
+    expect(pidToAwaiter.size).toBe(0);
+    expect(pidToSpawnResultResolver.size).toBe(0);
+    expect(pidToSpawnWebhookTimeout.size).toBe(0);
+    await expect(promise).resolves.toEqual({
+      type: 'success',
+      sessionId: 'session-ready-5150',
+    });
+  });
 });

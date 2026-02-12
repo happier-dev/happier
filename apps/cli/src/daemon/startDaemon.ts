@@ -157,6 +157,13 @@ export async function startDaemon(): Promise<void> {
 
 	    // Handle webhook from happy session reporting itself
 	    const onHappySessionWebhook = createOnHappySessionWebhook({ pidToTrackedSession, pidToAwaiter });
+	    const resolveCanonicalTrackedSessionId = (pid: number): string => {
+	      const session = pidToTrackedSession.get(pid);
+	      const sessionId = typeof session?.happySessionId === 'string' ? session.happySessionId.trim() : '';
+	      if (!sessionId) return '';
+	      if (/^PID-\d+$/.test(sessionId)) return '';
+	      return sessionId;
+	    };
 
 	    // Spawn a new session (sessionId reserved for future Happy session resume; vendor resume uses options.resume).
 		    const spawnSession = async (options: SpawnSessionOptions): Promise<SpawnSessionResult> => {
@@ -481,6 +488,7 @@ export async function startDaemon(): Promise<void> {
               pidToSpawnResultResolver,
               pidToSpawnWebhookTimeout,
               timeoutErrorMessage: `Session webhook timeout for PID ${tmuxPid} (tmux)`,
+              resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(tmuxPid),
               onTimeout: () => {
                 logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${tmuxPid} (tmux)`);
               },
@@ -605,14 +613,15 @@ export async function startDaemon(): Promise<void> {
 			            // Wait for webhook to populate session with happySessionId
 			            logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${pid} (visible console)`);
 
-			            return waitForVisibleConsoleSessionWebhook({
-			              pid,
-			              pollMs,
-			              pidToAwaiter,
-			              pidToSpawnResultResolver,
-			              pidToSpawnWebhookTimeout,
-			              onChildExited,
-			            }).then((result) => {
+				            return waitForVisibleConsoleSessionWebhook({
+				              pid,
+				              pollMs,
+				              pidToAwaiter,
+				              pidToSpawnResultResolver,
+				              pidToSpawnWebhookTimeout,
+				              onChildExited,
+				              resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(pid),
+				            }).then((result) => {
 			              const resolved = resolveSpawnWebhookResult({
 			                pid,
 			                result,
@@ -735,17 +744,18 @@ export async function startDaemon(): Promise<void> {
 
           // Wait for webhook to populate session with happySessionId
           logger.debug(`[DAEMON RUN] Waiting for session webhook for PID ${happyProcess.pid}`);
-          return waitForSessionWebhook({
-            pid: happyProcess.pid!,
-            pidToAwaiter,
-            pidToSpawnResultResolver,
-            pidToSpawnWebhookTimeout,
-            timeoutErrorMessage: `Session webhook timeout for PID ${happyProcess.pid}`,
-            onTimeout: () => {
-              logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${happyProcess.pid}`);
-            },
-            onSuccess: (completedSession) => {
-              logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
+	          return waitForSessionWebhook({
+	            pid: happyProcess.pid!,
+	            pidToAwaiter,
+	            pidToSpawnResultResolver,
+	            pidToSpawnWebhookTimeout,
+	            timeoutErrorMessage: `Session webhook timeout for PID ${happyProcess.pid}`,
+	            resolveExistingSessionId: () => resolveCanonicalTrackedSessionId(happyProcess.pid!),
+	            onTimeout: () => {
+	              logger.debug(`[DAEMON RUN] Session webhook timeout for PID ${happyProcess.pid}`);
+	            },
+	            onSuccess: (completedSession) => {
+	              logger.debug(`[DAEMON RUN] Session ${completedSession.happySessionId} fully spawned with webhook`);
             },
           }).then((result) =>
             resolveSpawnWebhookResult({

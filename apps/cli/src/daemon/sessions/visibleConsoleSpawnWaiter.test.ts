@@ -109,4 +109,25 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
       signal: null,
     });
   });
+
+  it('resolves immediately when a canonical session id is already available', async () => {
+    const pid = 9876;
+    const { pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout, onChildExited } = createWaiterState();
+
+    const promise = waitForVisibleConsoleSessionWebhook({
+      pid,
+      pollMs: 10,
+      pidToAwaiter,
+      pidToSpawnResultResolver,
+      pidToSpawnWebhookTimeout,
+      onChildExited,
+      resolveExistingSessionId: () => 'session-visible-9876',
+    });
+
+    expect(pidToAwaiter.size).toBe(0);
+    expect(pidToSpawnResultResolver.size).toBe(0);
+    expect(pidToSpawnWebhookTimeout.size).toBe(0);
+    await expect(promise).resolves.toEqual({ type: 'success', sessionId: 'session-visible-9876' });
+    expect(onChildExited).not.toHaveBeenCalled();
+  });
 });

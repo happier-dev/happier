@@ -10,8 +10,19 @@ export function waitForVisibleConsoleSessionWebhook(params: Readonly<{
   pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
   pidToSpawnWebhookTimeout: Map<number, ReturnType<typeof setTimeout>>;
   onChildExited: (pid: number, exit: ChildExit) => void;
+  resolveExistingSessionId?: () => string | null | undefined;
 }>): Promise<SpawnSessionResult> {
   const { pid, pollMs, pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout, onChildExited } = params;
+  const existingSessionId =
+    typeof params.resolveExistingSessionId === 'function'
+      ? String(params.resolveExistingSessionId() ?? '').trim()
+      : '';
+  if (existingSessionId) {
+    return Promise.resolve({
+      type: 'success',
+      sessionId: existingSessionId,
+    });
+  }
   return new Promise((resolve) => {
     pidToSpawnResultResolver.set(pid, resolve);
     const interval = setInterval(() => {
