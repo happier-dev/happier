@@ -35,7 +35,7 @@ describe('startup side effects: daemon session reporting retry', () => {
     expect(calls).toBe(3);
   });
 
-  it('does not retry non-transient daemon report errors', async () => {
+  it('retries daemon report when control auth is temporarily out of sync', async () => {
     let calls = 0;
     let now = 0;
 
@@ -55,6 +55,6 @@ describe('startup side effects: daemon session reporting retry', () => {
       },
     );
 
-    expect(calls).toBe(1);
+    expect(calls).toBeGreaterThan(1);
   });
 });

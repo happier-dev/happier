@@ -17,7 +17,16 @@ type DaemonReportDeps = {
 function isTransientDaemonReportError(error: string): boolean {
     const normalized = error.trim().toLowerCase();
     if (!normalized) return false;
-    return normalized.includes('no daemon running') || normalized.includes('daemon is not running');
+    return (
+        normalized.includes('no daemon running') ||
+        normalized.includes('daemon is not running') ||
+        normalized.includes('request failed') ||
+        normalized.includes('unauthorized') ||
+        normalized.includes('timeout') ||
+        normalized.includes('fetch failed') ||
+        normalized.includes('econn') ||
+        normalized.includes('network')
+    );
 }
 
 function resolveDaemonReportRetryValue(raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number {
