@@ -5,7 +5,10 @@
   },
   "build": {
     "base": {
-      "node": "22.14.0"
+      "node": "22.14.0",
+      "android": {
+        "gradleCommand": ":app:bundleRelease -x lintVitalRelease -x lintVitalAnalyzeRelease"
+      }
     },
     "development": {
       "extends": "base",
