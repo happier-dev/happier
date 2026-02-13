@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ScmWorkingSnapshot as ProtocolScmWorkingSnapshot } from '@happier-dev/protocol';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { sessionScmStatusSnapshot } from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot as UiScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
@@ -181,11 +182,24 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         vi.mocked(sessionScmStatusSnapshot).mockResolvedValue({
             success: false,
             error: 'command failed',
-            errorCode: 'COMMAND_FAILED',
+            errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
         } as any);
 
         const service = new ScmRepositoryService();
-        await expect(service.fetchSnapshotForSession('session_1')).rejects.toThrow('command failed');
+        let thrown: unknown = null;
+        try {
+            await service.fetchSnapshotForSession('session_1');
+        } catch (error) {
+            thrown = error;
+        }
+
+        expect(thrown).toBeInstanceOf(Error);
+        expect((thrown as Error).message).toBe('command failed');
+        expect(
+            typeof thrown === 'object' && thrown !== null && 'scmErrorCode' in thrown
+                ? (thrown as { scmErrorCode?: unknown }).scmErrorCode
+                : undefined
+        ).toBe(SCM_OPERATION_ERROR_CODES.COMMAND_FAILED);
     });
 
     it('throws a descriptive error when rpc snapshot payload is null', async () => {

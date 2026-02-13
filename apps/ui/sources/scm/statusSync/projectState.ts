@@ -8,6 +8,7 @@ import { isSessionPathWithinRepoRoot } from '../sync/paths';
 export type ScmStatusSyncStateMaps = {
     projectSyncMap: Map<string, InvalidateSync>;
     projectPollTimers: Map<string, ReturnType<typeof setTimeout>>;
+    projectPollingSuspended: Set<string>;
     projectFastPollUntil: Map<string, number>;
     projectSnapshotSignature: Map<string, string>;
     projectLastSnapshot: Map<string, ScmWorkingSnapshot | null>;
@@ -101,6 +102,11 @@ export function moveProjectStateKey(input: {
         stateMaps.projectPollTimers.set(toKey, fromTimer);
     }
     stateMaps.projectPollTimers.delete(fromKey);
+
+    if (stateMaps.projectPollingSuspended.has(fromKey) && !stateMaps.projectPollingSuspended.has(toKey)) {
+        stateMaps.projectPollingSuspended.add(toKey);
+    }
+    stateMaps.projectPollingSuspended.delete(fromKey);
 
     const fastUntil = stateMaps.projectFastPollUntil.get(fromKey);
     if (typeof fastUntil === 'number' && !stateMaps.projectFastPollUntil.has(toKey)) {

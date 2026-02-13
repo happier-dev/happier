@@ -115,8 +115,8 @@ vi.mock('@/scm/operations/userFacingErrors', () => ({
     getScmUserFacingError: ({ fallback }: any) => fallback,
 }));
 
-vi.mock('@/scm/operations/featureFlags', () => ({
-    resolveScmWriteEnabled: () => scmWriteEnabled,
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => scmWriteEnabled,
 }));
 
 vi.mock('@/scm/operations/revertFeedback', () => ({

@@ -106,8 +106,8 @@ vi.mock('@/scm/scmLineSelection', () => ({
     canUseLineSelection: () => false,
 }));
 
-vi.mock('@/scm/operations/featureFlags', () => ({
-    resolveScmWriteEnabled: () => true,
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => true,
 }));
 
 vi.mock('@/scm/utils/filePresentation', () => ({

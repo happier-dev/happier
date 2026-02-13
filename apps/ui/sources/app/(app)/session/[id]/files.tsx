@@ -34,16 +34,18 @@ import {
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
 import { layout } from '@/components/ui/layout/layout';
+import { t } from '@/text';
 import { useScmCommitHistory } from '@/hooks/session/files/useScmCommitHistory';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
 import { useFilesScmOperations } from '@/hooks/session/files/useFilesScmOperations';
 import { shouldShowScmOperationsPanel } from '@/hooks/session/files/useScmOperationsVisibility';
-import { resolveScmWriteEnabled } from '@/scm/operations/featureFlags';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
 import type { ChangedFilesPresentation } from '@/scm/scmAttribution';
 import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 export default function FilesScreen() {
     const route = useRoute();
@@ -71,17 +73,12 @@ export default function FilesScreen() {
     const [changedFilesPresentation, setChangedFilesPresentation] = React.useState<ChangedFilesPresentation>('list');
 
     const { theme } = useUnistyles();
-    const experiments = useSetting('experiments');
-    const expScmOperations = useSetting('expScmOperations');
     const scmCommitStrategy = useSetting('scmCommitStrategy');
     const scmRemoteConfirmPolicy = useSetting('scmRemoteConfirmPolicy');
     const scmPushRejectPolicy = useSetting('scmPushRejectPolicy');
     const scmReviewMaxFiles = useSetting('scmReviewMaxFiles');
     const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
-    const scmWriteEnabled = resolveScmWriteEnabled({
-        experiments,
-        expScmOperations,
-    });
+    const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const sessionPath = session?.metadata?.path ?? null;
     const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : '';
     const machine = useMachine(machineId);
@@ -381,7 +378,11 @@ export default function FilesScreen() {
                         />
                     ) : (
                         <SourceControlUnavailableState
-                            details={scmSnapshotError.message}
+                            details={
+                                scmSnapshotError.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED
+                                    ? t('deps.installNotSupported')
+                                    : scmSnapshotError.message
+                            }
                             onRetry={() => {
                                 void refreshScmData();
                             }}

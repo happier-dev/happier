@@ -75,6 +75,12 @@ export type BeginScmProjectOperationResult =
     | { started: true; operation: ScmProjectInFlightOperation }
     | { started: false; reason: 'missing_project' | 'operation_in_flight'; inFlight: ScmProjectInFlightOperation | null };
 
+export type ProjectScmSnapshotError = Readonly<{
+    message: string;
+    at: number;
+    errorCode?: string;
+}>;
+
 /**
  * Project entity that groups sessions by location
  */
@@ -92,7 +98,7 @@ export interface Project {
     /** Canonical source-control working snapshot for this project */
     scmSnapshot?: ScmWorkingSnapshot | null;
     /** Last error encountered while refreshing source-control snapshot for this project */
-    scmSnapshotError?: { message: string; at: number } | null;
+    scmSnapshotError?: ProjectScmSnapshotError | null;
     /** Paths touched by each session (sessionId -> path -> timestamp) */
     scmTouchedPathsBySession?: Record<string, Record<string, number>>;
     /** Virtual commit selection paths by session (sessionId -> path -> timestamp) */
@@ -434,7 +440,7 @@ class ProjectManager {
     /**
      * Get last source-control snapshot refresh error for a project.
      */
-    getProjectScmSnapshotError(projectId: string): { message: string; at: number } | null {
+    getProjectScmSnapshotError(projectId: string): ProjectScmSnapshotError | null {
         const project = this.projects.get(projectId);
         return project?.scmSnapshotError || null;
     }
@@ -471,7 +477,7 @@ class ProjectManager {
     /**
      * Get last source-control snapshot refresh error for a session via its project.
      */
-    getSessionProjectScmSnapshotError(sessionId: string): { message: string; at: number } | null {
+    getSessionProjectScmSnapshotError(sessionId: string): ProjectScmSnapshotError | null {
         const project = this.getProjectForSession(sessionId);
         return project?.scmSnapshotError || null;
     }
@@ -501,7 +507,7 @@ class ProjectManager {
      */
     updateSessionProjectScmSnapshotError(
         sessionId: string,
-        error: { message: string; at: number } | null
+        error: ProjectScmSnapshotError | null
     ): void {
         const project = this.getProjectForSession(sessionId);
         if (!project) return;

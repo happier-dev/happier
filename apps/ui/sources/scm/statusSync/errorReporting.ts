@@ -14,6 +14,17 @@ function normalizeErrorMessage(error: unknown): string {
     return 'Unknown source-control status sync error';
 }
 
+function readScmErrorCode(error: unknown): string | undefined {
+    if (!error || typeof error !== 'object') {
+        return undefined;
+    }
+    if (!('scmErrorCode' in error)) {
+        return undefined;
+    }
+    const code = (error as { scmErrorCode?: unknown }).scmErrorCode;
+    return typeof code === 'string' && code.length > 0 ? code : undefined;
+}
+
 function hashProjectKey(projectKey: string): string {
     // FNV-1a 32-bit hash is sufficient for local telemetry bucketing.
     let hash = 0x811c9dc5;
@@ -52,6 +63,7 @@ export function reportScmStatusSyncError(input: {
     error: unknown;
 }): void {
     const message = normalizeErrorMessage(input.error);
+    const errorCode = readScmErrorCode(input.error);
     const projectFingerprint = hashProjectKey(input.projectKey);
     const bucketKey = `${projectFingerprint}:${message}`;
     const now = Date.now();
@@ -62,6 +74,7 @@ export function reportScmStatusSyncError(input: {
         projectScope: getProjectScope(input.projectKey),
         projectFingerprint,
         message,
+        ...(errorCode ? { errorCode } : {}),
     });
 }
 

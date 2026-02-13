@@ -24,7 +24,6 @@ import { layout } from '@/components/ui/layout/layout';
 import { t } from '@/text';
 import { decodeBase64 } from '@/encryption/base64';
 import { buildFileLineSelectionFingerprint, canUseLineSelection } from '@/scm/scmLineSelection';
-import { resolveScmWriteEnabled } from '@/scm/operations/featureFlags';
 import { getFileLanguageFromPath, isBinaryContent, isKnownBinaryPath } from '@/scm/utils/filePresentation';
 import { decodeSessionFilePathParam } from '@/scm/utils/filePathParam';
 import { allowsLiveStaging, isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
@@ -32,6 +31,7 @@ import { resolveDefaultDiffModeForFile } from '@/scm/diff/defaultMode';
 import { useFileScmStageActions } from '@/hooks/session/files/useFileScmStageActions';
 import { resolveSessionPathState } from '@/hooks/session/files/sessionPathState';
 import type { ScmDiffArea } from '@happier-dev/protocol';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 interface FileContent {
     content: string;
@@ -55,14 +55,9 @@ export default function FileScreen() {
     const sessionId = sessionIdParam || '';
     const searchParams = useLocalSearchParams();
 
-    const experiments = useSetting('experiments');
-    const expScmOperations = useSetting('expScmOperations');
     const scmCommitStrategy = useSetting('scmCommitStrategy');
     const scmDefaultDiffModeByBackend = useSetting('scmDefaultDiffModeByBackend');
-    const scmWriteEnabled = resolveScmWriteEnabled({
-        experiments,
-        expScmOperations,
-    });
+    const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const session = useSession(sessionId);
     const sessionsReady = useSessions() !== null;
     const sessionPath = session?.metadata?.path ?? null;

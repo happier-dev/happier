@@ -20,6 +20,7 @@ let mockSessionPath: string | null = '/repo';
 let mockSessionActive = true;
 let mockShouldShowAllFiles = false;
 const invalidateAndAwaitSpy = vi.fn(async () => {});
+let sourceControlUnavailableStateProps: any = null;
 
 vi.mock('react-native', () => ({
     View: 'View',
@@ -136,8 +137,8 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: () => true,
 }));
 
-vi.mock('@/scm/operations/featureFlags', () => ({
-    resolveScmWriteEnabled: () => true,
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => true,
 }));
 
 vi.mock('@/hooks/session/files/useChangedFilesData', () => ({
@@ -230,7 +231,10 @@ vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
 
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
-    SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
+    SourceControlUnavailableState: (props: any) => {
+        sourceControlUnavailableStateProps = props;
+        return React.createElement('SourceControlUnavailableState', props);
+    },
     SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
 }));
 
@@ -256,6 +260,7 @@ describe('FilesScreen', () => {
             capabilities: {},
         };
         mockScmSnapshotError = null;
+        sourceControlUnavailableStateProps = null;
         mockShouldShowAllFiles = false;
     });
 
@@ -412,6 +417,26 @@ describe('FilesScreen', () => {
         await act(async () => {});
 
         expect(tree!.root.findAllByType('SourceControlSessionInactiveState').length).toBe(1);
+    });
+
+    it('renders a cli-update hint when scm is unsupported (method not available)', async () => {
+        const { SCM_OPERATION_ERROR_CODES } = await import('@happier-dev/protocol');
+        mockScmSnapshot = null;
+        mockScmSnapshotError = {
+            message: 'RPC method not available',
+            at: 1,
+            errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+        };
+
+        const Screen = (await import('./files')).default;
+
+        await act(async () => {
+            renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(sourceControlUnavailableStateProps?.details).toBe('deps.installNotSupported');
+        expect(typeof sourceControlUnavailableStateProps?.onRetry).toBe('function');
     });
 
     it('refreshes scm snapshot once session path becomes available after first render', async () => {

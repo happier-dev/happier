@@ -131,7 +131,12 @@ export class ScmRepositoryService {
             throw new Error('Invalid source-control status snapshot response');
         }
         if (!response.success) {
-            throw new Error(response.error || 'Failed to fetch source-control status snapshot');
+            const message = response.error || 'Failed to fetch source-control status snapshot';
+            const err = new Error(message) as Error & { scmErrorCode?: string };
+            if (typeof (response as { errorCode?: unknown }).errorCode === 'string') {
+                err.scmErrorCode = (response as { errorCode?: string }).errorCode;
+            }
+            throw err;
         }
 
         if (!response.snapshot) {

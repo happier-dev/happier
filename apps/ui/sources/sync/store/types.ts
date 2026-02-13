@@ -148,11 +148,14 @@ export interface ProjectDomainSlice {
     getSessionProjectScmStatus: (sessionId: string) => ScmStatus | null;
     updateSessionProjectScmStatus: (sessionId: string, status: ScmStatus | null) => void;
     getProjectScmSnapshot: (projectId: string) => ScmWorkingSnapshot | null;
-    getProjectScmSnapshotError: (projectId: string) => { message: string; at: number } | null;
+    getProjectScmSnapshotError: (projectId: string) => import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null;
     getSessionProjectScmSnapshot: (sessionId: string) => ScmWorkingSnapshot | null;
-    getSessionProjectScmSnapshotError: (sessionId: string) => { message: string; at: number } | null;
+    getSessionProjectScmSnapshotError: (sessionId: string) => import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null;
     updateSessionProjectScmSnapshot: (sessionId: string, snapshot: ScmWorkingSnapshot | null) => void;
-    updateSessionProjectScmSnapshotError: (sessionId: string, error: { message: string; at: number } | null) => void;
+    updateSessionProjectScmSnapshotError: (
+        sessionId: string,
+        error: import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null
+    ) => void;
     getSessionProjectScmTouchedPaths: (sessionId: string) => string[];
     markSessionProjectScmTouchedPaths: (sessionId: string, paths: string[]) => void;
     pruneSessionProjectScmTouchedPaths: (sessionId: string, activePaths: Set<string>) => void;

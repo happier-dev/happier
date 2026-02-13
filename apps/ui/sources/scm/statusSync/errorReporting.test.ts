@@ -25,7 +25,7 @@ describe('reportScmStatusSyncError', () => {
     it('tracks normalized source-control status sync failures without exposing raw project paths', () => {
         reportScmStatusSyncError({
             projectKey: 'machine:/repo',
-            error: new Error('snapshot failed'),
+            error: Object.assign(new Error('snapshot failed'), { scmErrorCode: 'COMMAND_FAILED' }),
         });
 
         expect(capture).toHaveBeenCalledTimes(1);
@@ -34,6 +34,7 @@ describe('reportScmStatusSyncError', () => {
         expect(payload).toMatchObject({
             projectScope: 'machine',
             message: 'snapshot failed',
+            errorCode: 'COMMAND_FAILED',
         });
         expect(payload.projectFingerprint).toMatch(/^[0-9a-f]{8}$/);
         expect(payload.projectFingerprint).not.toContain('/repo');

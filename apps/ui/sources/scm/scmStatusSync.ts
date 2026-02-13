@@ -8,6 +8,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { InvalidateSync } from '@/utils/sessions/sync';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
 import { scmRepositoryService, snapshotToScmStatus } from './scmRepositoryService';
 import {
@@ -39,8 +40,10 @@ export class ScmStatusSync {
     private projectSyncMap = new Map<string, InvalidateSync>();
     // Map session IDs to project keys for cleanup
     private sessionToProjectKey = new Map<string, string>();
-    // Poll timers per project
-    private projectPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
+	    // Poll timers per project
+	    private projectPollTimers = new Map<string, ReturnType<typeof setTimeout>>();
+        // Projects that should not schedule background polls (for example: daemon capability missing)
+        private projectPollingSuspended = new Set<string>();
     // Fast poll window per project
     private projectFastPollUntil = new Map<string, number>();
     // Snapshot signatures per project to detect file tree changes
@@ -60,18 +63,19 @@ export class ScmStatusSync {
         AppState.addEventListener('change', this.handleAppStateChange);
     }
 
-    private get stateMaps(): ScmStatusSyncStateMaps {
-        return {
-            projectSyncMap: this.projectSyncMap,
-            projectPollTimers: this.projectPollTimers,
-            projectFastPollUntil: this.projectFastPollUntil,
-            projectSnapshotSignature: this.projectSnapshotSignature,
-            projectLastSnapshot: this.projectLastSnapshot,
-            projectLastInvalidatedBySession: this.projectLastInvalidatedBySession,
-            projectLastInvalidationSource: this.projectLastInvalidationSource,
-            projectLastInvalidatedBySessionAt: this.projectLastInvalidatedBySessionAt,
-        };
-    }
+	    private get stateMaps(): ScmStatusSyncStateMaps {
+	        return {
+	            projectSyncMap: this.projectSyncMap,
+	            projectPollTimers: this.projectPollTimers,
+                projectPollingSuspended: this.projectPollingSuspended,
+	            projectFastPollUntil: this.projectFastPollUntil,
+	            projectSnapshotSignature: this.projectSnapshotSignature,
+	            projectLastSnapshot: this.projectLastSnapshot,
+	            projectLastInvalidatedBySession: this.projectLastInvalidatedBySession,
+	            projectLastInvalidationSource: this.projectLastInvalidationSource,
+	            projectLastInvalidatedBySessionAt: this.projectLastInvalidatedBySessionAt,
+	        };
+	    }
 
     /**
      * Get project key string for a session
@@ -184,21 +188,22 @@ export class ScmStatusSync {
         state.updateSessionProjectScmSnapshotError(sessionId, null);
     }
 
-    private cleanupProjectState(projectKey: string): void {
+	    private cleanupProjectState(projectKey: string): void {
         const sync = this.projectSyncMap.get(projectKey);
         if (sync) {
             sync.stop();
             this.projectSyncMap.delete(projectKey);
         }
 
-        this.clearProjectPollTimer(projectKey);
-        this.projectFastPollUntil.delete(projectKey);
-        this.projectSnapshotSignature.delete(projectKey);
-        this.projectLastSnapshot.delete(projectKey);
-        this.projectLastInvalidatedBySession.delete(projectKey);
-        this.projectLastInvalidationSource.delete(projectKey);
-        this.projectLastInvalidatedBySessionAt.delete(projectKey);
-    }
+	        this.clearProjectPollTimer(projectKey);
+            this.projectPollingSuspended.delete(projectKey);
+	        this.projectFastPollUntil.delete(projectKey);
+	        this.projectSnapshotSignature.delete(projectKey);
+	        this.projectLastSnapshot.delete(projectKey);
+	        this.projectLastInvalidatedBySession.delete(projectKey);
+	        this.projectLastInvalidationSource.delete(projectKey);
+	        this.projectLastInvalidatedBySessionAt.delete(projectKey);
+	    }
 
     private invalidateProject(projectKey: string): void {
         const sync = this.projectSyncMap.get(projectKey);
@@ -215,15 +220,19 @@ export class ScmStatusSync {
         }
     }
 
-    private scheduleProjectPoll(projectKey: string): void {
-        this.clearProjectPollTimer(projectKey);
+	    private scheduleProjectPoll(projectKey: string): void {
+	        this.clearProjectPollTimer(projectKey);
 
-        if (this.appState !== 'active') {
-            return;
-        }
+	        if (this.appState !== 'active') {
+	            return;
+	        }
 
-        const fastUntil = this.projectFastPollUntil.get(projectKey) ?? 0;
-        const delay = Date.now() < fastUntil ? ScmStatusSync.FAST_POLL_MS : ScmStatusSync.IDLE_POLL_MS;
+            if (this.projectPollingSuspended.has(projectKey)) {
+                return;
+            }
+
+	        const fastUntil = this.projectFastPollUntil.get(projectKey) ?? 0;
+	        const delay = Date.now() < fastUntil ? ScmStatusSync.FAST_POLL_MS : ScmStatusSync.IDLE_POLL_MS;
 
         const timer = setTimeout(() => {
             if (!this.projectSyncMap.has(projectKey)) {
@@ -250,16 +259,17 @@ export class ScmStatusSync {
     /**
      * Fetch source-control status for a project using any session in that project.
      */
-    private async fetchScmStatusForProject(projectKey: string): Promise<void> {
-        const sessionId = this.getAnySessionForProject(projectKey);
-        if (!sessionId) return;
+	    private async fetchScmStatusForProject(projectKey: string): Promise<void> {
+	        const sessionId = this.getAnySessionForProject(projectKey);
+	        if (!sessionId) return;
 
-        let scheduledProjectKey = projectKey;
-        try {
-            const state = storage.getState();
-            const snapshot = await scmRepositoryService.fetchSnapshotForSession(sessionId);
-            let activeProjectKey = projectKey;
-            let scopeSessionIds = [sessionId];
+	        let scheduledProjectKey = projectKey;
+            let suspendAfterFetch = false;
+	        try {
+	            const state = storage.getState();
+	            const snapshot = await scmRepositoryService.fetchSnapshotForSession(sessionId);
+	            let activeProjectKey = projectKey;
+	            let scopeSessionIds = [sessionId];
 
             if (!snapshot) {
                 state.applyScmStatus(sessionId, null);
@@ -290,7 +300,8 @@ export class ScmStatusSync {
                     this.cleanupProjectState(staleKey);
                 }
             }
-            scheduledProjectKey = activeProjectKey;
+	            scheduledProjectKey = activeProjectKey;
+                this.projectPollingSuspended.delete(activeProjectKey);
 
             const previousSnapshot = this.projectLastSnapshot.get(activeProjectKey) ?? null;
             const changedPaths = collectChangedPaths(previousSnapshot, snapshot);
@@ -354,18 +365,29 @@ export class ScmStatusSync {
                 this.projectSnapshotSignature.set(activeProjectKey, signature);
                 await clearSearchCacheForProject(this.sessionToProjectKey, activeProjectKey);
             }
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error ?? 'Unknown source-control status error');
-            const now = Date.now();
-            storage.getState().updateSessionProjectScmSnapshotError(sessionId, {
-                message,
-                at: now,
-            });
-            reportScmStatusSyncError({ projectKey, error });
-        } finally {
-            this.scheduleProjectPoll(scheduledProjectKey);
-        }
-    }
+	        } catch (error) {
+	            const message = error instanceof Error ? error.message : String(error ?? 'Unknown source-control status error');
+                const scmErrorCode =
+                    typeof error === 'object' && error !== null && 'scmErrorCode' in error && typeof (error as { scmErrorCode?: unknown }).scmErrorCode === 'string'
+                        ? (error as { scmErrorCode: string }).scmErrorCode
+                        : undefined;
+	            const now = Date.now();
+	            storage.getState().updateSessionProjectScmSnapshotError(sessionId, {
+	                message,
+	                at: now,
+                    ...(scmErrorCode ? { errorCode: scmErrorCode } : {}),
+	            });
+                if (scmErrorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
+                    this.projectPollingSuspended.add(scheduledProjectKey);
+                    suspendAfterFetch = true;
+                }
+	            reportScmStatusSyncError({ projectKey, error });
+	        } finally {
+                if (!suspendAfterFetch) {
+	                this.scheduleProjectPoll(scheduledProjectKey);
+                }
+	        }
+	    }
 
     private invalidateWithSource(sessionId: string, source: InvalidationSource): void {
         const projectKey = this.getProjectKeyForSession(sessionId);

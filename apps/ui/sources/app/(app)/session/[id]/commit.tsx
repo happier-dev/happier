@@ -11,7 +11,6 @@ import {
     useSessions,
     useSessionProjectScmInFlightOperation,
     useSessionProjectScmSnapshot,
-    useSetting,
 } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
@@ -21,11 +20,11 @@ import { scmStatusSync } from '@/scm/scmStatusSync';
 import { canRevertFromSnapshot } from '@/scm/operations/safety';
 import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
-import { resolveScmWriteEnabled } from '@/scm/operations/featureFlags';
 import { buildRevertConfirmBody } from '@/scm/operations/revertFeedback';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
+import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 
 function decodeSha(value: string): string {
     try {
@@ -45,12 +44,7 @@ export default function CommitScreen() {
     const shaRaw = decodeSha(shaParam || '').trim();
     const sha = shaRaw.split(/\s+/)[0] ?? '';
 
-    const experiments = useSetting('experiments');
-    const expScmOperations = useSetting('expScmOperations');
-    const scmWriteEnabled = resolveScmWriteEnabled({
-        experiments,
-        expScmOperations,
-    });
+    const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
     const scmSnapshot = useSessionProjectScmSnapshot(sessionId);
     const inFlightScmOperation = useSessionProjectScmInFlightOperation(sessionId);
     const canRevert = canRevertFromSnapshot(scmSnapshot);

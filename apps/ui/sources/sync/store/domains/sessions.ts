@@ -654,7 +654,10 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             // Trigger a state update to notify hooks
             set((state) => ({ ...state }));
         },
-        updateSessionProjectScmSnapshotError: (sessionId: string, error: { message: string; at: number } | null) => {
+        updateSessionProjectScmSnapshotError: (
+            sessionId: string,
+            error: import('../../runtime/orchestration/projectManager').ProjectScmSnapshotError | null
+        ) => {
             projectManager.updateSessionProjectScmSnapshotError(sessionId, error);
             set((state) => ({ ...state }));
         },
