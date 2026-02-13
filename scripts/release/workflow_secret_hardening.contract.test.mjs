@@ -94,10 +94,18 @@ test('secret-bearing workflows require release-admin actor guard before privileg
   const { raw: guardRaw, parsed: guardParsed } = await loadWorkflow('release-actor-guard.yml');
 
   assert.ok(guardParsed?.on?.workflow_call, 'release-actor-guard must be reusable via workflow_call');
+  assert.ok(
+    guardParsed?.on?.workflow_call?.secrets?.RELEASE_BOT_APP_ID,
+    'release-actor-guard must explicitly declare RELEASE_BOT_APP_ID as a workflow_call secret'
+  );
+  assert.ok(
+    guardParsed?.on?.workflow_call?.secrets?.RELEASE_BOT_PRIVATE_KEY,
+    'release-actor-guard must explicitly declare RELEASE_BOT_PRIVATE_KEY as a workflow_call secret'
+  );
   assert.equal(
     guardParsed?.jobs?.authorize?.environment,
-    'release-shared',
-    'release-actor-guard should load app credentials from the release-shared environment'
+    undefined,
+    'release-actor-guard should not directly request a GitHub Environment; callers should gate env secrets'
   );
   assert.match(
     guardRaw,

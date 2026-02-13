@@ -13,6 +13,11 @@ on:
         required: false
         type: string
         default: ""
+    secrets:
+      RELEASE_BOT_APP_ID:
+        required: false
+      RELEASE_BOT_PRIVATE_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -20,7 +25,6 @@ permissions:
 jobs:
   authorize:
     runs-on: ubuntu-latest
-    environment: release-shared
     steps:
       - name: Resolve guard inputs
         id: params
