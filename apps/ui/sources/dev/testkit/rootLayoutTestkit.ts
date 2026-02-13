@@ -11,6 +11,10 @@ const BASE_ROOT_LAYOUT_FEATURES: RootLayoutFeatures = {
             uploadTimeoutMs: 20_000,
             contextWindowMs: 30 * 60 * 1_000,
         },
+        automations: {
+            enabled: true,
+            existingSessionTarget: false,
+        },
         sharing: {
             session: { enabled: true },
             public: { enabled: true },
@@ -66,6 +70,10 @@ export function createRootLayoutFeaturesResponse(overrides?: Partial<RootLayoutF
             voice: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.voice,
                 ...(nextFeatures.voice ?? {}),
+            },
+            automations: {
+                ...BASE_ROOT_LAYOUT_FEATURES.features.automations,
+                ...(nextFeatures.automations ?? {}),
             },
             social: {
                 ...BASE_ROOT_LAYOUT_FEATURES.features.social,

@@ -149,7 +149,7 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
       repo: BUG_REPORT_DEFAULT_ISSUE_REPO,
       title: title.trim() || 'Bug report',
       body: fallbackBody,
-      labels: BUG_REPORT_DEFAULT_ISSUE_LABELS,
+      labels: [...BUG_REPORT_DEFAULT_ISSUE_LABELS],
     });
 
     const opened = await openBugReportFallbackIssueUrl(fallbackUrl);
@@ -220,7 +220,7 @@ export const BugReportComposerView = React.memo(function BugReportComposerView()
         input: draftInput,
         issueOwner: BUG_REPORT_DEFAULT_ISSUE_OWNER,
         issueRepo: BUG_REPORT_DEFAULT_ISSUE_REPO,
-        labels: BUG_REPORT_DEFAULT_ISSUE_LABELS,
+        labels: [...BUG_REPORT_DEFAULT_ISSUE_LABELS],
         openFallbackIssue,
         collectDiagnosticsArtifacts: collectBugReportDiagnosticsArtifacts,
         submitBugReport: submitBugReportToService,

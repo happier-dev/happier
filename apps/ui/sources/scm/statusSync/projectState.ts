@@ -43,7 +43,7 @@ export function buildSnapshotSignature(snapshot: ScmWorkingSnapshot): string {
         String(snapshot.branch.ahead),
         String(snapshot.branch.behind),
         String(snapshot.branch.detached),
-        String(snapshot.stashCount),
+        String(snapshot.stashCount ?? 0),
         String(snapshot.hasConflicts),
         filesSig,
     ].join('\n');

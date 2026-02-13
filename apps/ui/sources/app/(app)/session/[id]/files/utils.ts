@@ -6,11 +6,11 @@ export function normalizeFilePath(path: string): string {
 }
 
 export function buildAllRepositoryChangedFiles(
-    gitStatusFiles: Pick<GitStatusFiles, 'unstagedFiles' | 'stagedFiles'> | null
+    gitStatusFiles: Pick<GitStatusFiles, 'pendingFiles' | 'includedFiles'> | null
 ): GitFileStatus[] {
     if (!gitStatusFiles) return [];
     const mergedByPath = new Map<string, GitFileStatus>();
-    for (const file of [...gitStatusFiles.unstagedFiles, ...gitStatusFiles.stagedFiles]) {
+    for (const file of [...gitStatusFiles.pendingFiles, ...gitStatusFiles.includedFiles]) {
         if (!mergedByPath.has(file.fullPath)) {
             mergedByPath.set(file.fullPath, file);
         }

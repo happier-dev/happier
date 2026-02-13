@@ -7,6 +7,8 @@ type FixtureOverrides = {
     friendsAllowUsername?: boolean;
     friendsRequiredIdentityProviderId?: string | null;
     voiceEnabled?: boolean;
+    automationsEnabled?: boolean;
+    automationsExistingSessionTarget?: boolean;
     oauthProviders?: Record<string, { enabled: boolean; configured: boolean }>;
     authProviders?: Record<string, { enabled: boolean; configured: boolean }>;
 };
@@ -47,6 +49,10 @@ export function buildServerFeaturesResponse(overrides: FixtureOverrides = {}): F
                 acceptedArtifactKinds: ['ui-mobile', 'daemon', 'server', 'cli'],
                 uploadTimeoutMs: 20_000,
                 contextWindowMs: 30 * 60 * 1_000,
+            },
+            automations: {
+                enabled: overrides.automationsEnabled ?? true,
+                existingSessionTarget: overrides.automationsExistingSessionTarget ?? false,
             },
             sharing: {
                 session: { enabled: true },

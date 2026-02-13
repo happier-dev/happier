@@ -8,7 +8,7 @@ function buildSnapshot(overrides?: Partial<GitWorkingSnapshot>): GitWorkingSnaps
         projectKey: 'machine:/repo',
         fetchedAt: Date.now(),
         repo: {
-            isGitRepo: true,
+            isRepo: true,
             rootPath: '/repo',
         },
         branch: {
@@ -22,13 +22,13 @@ function buildSnapshot(overrides?: Partial<GitWorkingSnapshot>): GitWorkingSnaps
         hasConflicts: false,
         entries: [],
         totals: {
-            stagedFiles: 0,
-            unstagedFiles: 0,
+            includedFiles: 0,
+            pendingFiles: 0,
             untrackedFiles: 0,
-            stagedAdded: 0,
-            stagedRemoved: 0,
-            unstagedAdded: 0,
-            unstagedRemoved: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 0,
+            pendingRemoved: 0,
         },
         ...overrides,
     };
@@ -40,7 +40,7 @@ describe('buildGitStatusSummaryFromSnapshot', () => {
         expect(
             buildGitStatusSummaryFromSnapshot(
                 buildSnapshot({
-                    repo: { isGitRepo: false, rootPath: null },
+                    repo: { isRepo: false, rootPath: null },
                 })
             )
         ).toBeNull();
@@ -57,13 +57,13 @@ describe('buildGitStatusSummaryFromSnapshot', () => {
                     detached: false,
                 },
                 totals: {
-                    stagedFiles: 3,
-                    unstagedFiles: 4,
+                    includedFiles: 3,
+                    pendingFiles: 4,
                     untrackedFiles: 2,
-                    stagedAdded: 10,
-                    stagedRemoved: 5,
-                    unstagedAdded: 8,
-                    unstagedRemoved: 7,
+                    includedAdded: 10,
+                    includedRemoved: 5,
+                    pendingAdded: 8,
+                    pendingRemoved: 7,
                 },
             })
         );

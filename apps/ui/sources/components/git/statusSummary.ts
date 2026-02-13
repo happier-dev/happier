@@ -13,13 +13,13 @@ export type GitStatusSummary = {
 };
 
 export function buildGitStatusSummaryFromSnapshot(snapshot: GitWorkingSnapshot | null): GitStatusSummary | null {
-    if (!snapshot?.repo.isGitRepo) {
+    if (!snapshot?.repo.isRepo) {
         return null;
     }
 
-    const linesAdded = snapshot.totals.stagedAdded + snapshot.totals.unstagedAdded;
-    const linesRemoved = snapshot.totals.stagedRemoved + snapshot.totals.unstagedRemoved;
-    const changedFiles = snapshot.totals.stagedFiles + snapshot.totals.unstagedFiles + snapshot.totals.untrackedFiles;
+    const linesAdded = snapshot.totals.includedAdded + snapshot.totals.pendingAdded;
+    const linesRemoved = snapshot.totals.includedRemoved + snapshot.totals.pendingRemoved;
+    const changedFiles = snapshot.totals.includedFiles + snapshot.totals.pendingFiles + snapshot.totals.untrackedFiles;
     const hasAnyChanges = changedFiles > 0;
 
     return {

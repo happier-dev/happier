@@ -409,7 +409,7 @@ export interface ScmWorkingSnapshot {
         behind: number;
         detached: boolean;
     };
-    stashCount: number;
+    stashCount?: number;
     hasConflicts: boolean;
     entries: ScmWorkingEntry[];
     totals: {

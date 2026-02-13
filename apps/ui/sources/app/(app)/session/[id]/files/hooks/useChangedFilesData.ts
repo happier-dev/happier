@@ -61,13 +61,13 @@ export function useChangedFilesData(input: UseChangedFilesDataInput): UseChanged
     const includeInferredAttribution = attributionReliability === 'high';
 
     const gitStatusFiles = React.useMemo(() => {
-        if (!gitSnapshot?.repo.isGitRepo) {
+        if (!gitSnapshot?.repo.isRepo) {
             return null;
         }
         return snapshotToGitStatusFiles(gitSnapshot);
     }, [gitSnapshot]);
 
-    const changedFilesCount = (gitStatusFiles?.totalStaged ?? 0) + (gitStatusFiles?.totalUnstaged ?? 0);
+    const changedFilesCount = (gitStatusFiles?.totalIncluded ?? 0) + (gitStatusFiles?.totalPending ?? 0);
     const shouldShowAllFiles = Boolean(searchQuery) || showAllRepositoryFiles || changedFilesCount === 0;
 
     const allRepositoryChangedFiles = React.useMemo(

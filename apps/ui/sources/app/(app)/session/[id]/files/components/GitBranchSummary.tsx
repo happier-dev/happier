@@ -16,8 +16,8 @@ export function GitBranchSummary({ theme, gitStatusFiles }: GitBranchSummaryProp
     const ahead = Number(gitStatusFiles.ahead ?? 0);
     const behind = Number(gitStatusFiles.behind ?? 0);
     const showTracking = Boolean(gitStatusFiles.upstream) || ahead > 0 || behind > 0;
-    const staged = Number(gitStatusFiles.totalStaged ?? 0);
-    const unstaged = Number(gitStatusFiles.totalUnstaged ?? 0);
+    const staged = Number(gitStatusFiles.totalIncluded ?? 0);
+    const unstaged = Number(gitStatusFiles.totalPending ?? 0);
 
     const StatPill = ({ label, value, iconName }: { label: string; value: number; iconName: string }) => {
         return (

@@ -9,7 +9,7 @@ function makeFile(path: string, input?: Partial<GitFileStatus>): GitFileStatus {
         filePath: path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '',
         fullPath: path,
         status: 'modified',
-        isStaged: false,
+        isIncluded: false,
         linesAdded: 0,
         linesRemoved: 0,
         ...input,
@@ -26,10 +26,10 @@ describe('normalizeFilePath', () => {
 
 describe('buildAllRepositoryChangedFiles', () => {
     it('merges staged and unstaged lists, deduplicates by path, and sorts', () => {
-        const unstaged = [makeFile('b.ts'), makeFile('a.ts')];
-        const staged = [makeFile('a.ts', { isStaged: true }), makeFile('c.ts', { isStaged: true })];
+        const pending = [makeFile('b.ts'), makeFile('a.ts')];
+        const included = [makeFile('a.ts', { isIncluded: true }), makeFile('c.ts', { isIncluded: true })];
 
-        const result = buildAllRepositoryChangedFiles({ stagedFiles: staged, unstagedFiles: unstaged });
+        const result = buildAllRepositoryChangedFiles({ includedFiles: included, pendingFiles: pending });
         expect(result.map((file) => file.fullPath)).toEqual(['a.ts', 'b.ts', 'c.ts']);
     });
 });
