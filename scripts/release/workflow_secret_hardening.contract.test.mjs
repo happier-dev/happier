@@ -151,7 +151,7 @@ test('secret-bearing workflows require release-admin actor guard before privileg
   );
   assert.match(
     deployRaw,
-    /happier-release-bot\[bot\]/,
+    /happier-release-bot\[\[\]bot\[\]\]/,
     'deploy workflow must explicitly allow the release bot actor for push-triggered deploys'
   );
 
