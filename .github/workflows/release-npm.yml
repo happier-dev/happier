@@ -429,17 +429,19 @@ jobs:
           cd apps/cli
           # npm lifecycle scripts can exceed Linux argv/env limits for large workspaces.
           # pack after publish using the already-prepacked working tree to avoid re-running prepack.
-          pack_json="$(npm pack --ignore-scripts --json)"
-          tgz="$(
-            PACK_JSON="${pack_json}" node -e '
-              const raw = (process.env.PACK_JSON ?? "").trim();
-              const parsed = raw ? JSON.parse(raw) : [];
-              const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-              const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
-              if (!filename) process.exit(1);
-              process.stdout.write(filename);
-            '
-          )" || {
+          pack_json_path="$(mktemp)"
+          # Suppress npm "notice" output so JSON parsing is reliable.
+          npm pack --ignore-scripts --json --loglevel=error > "${pack_json_path}"
+          tgz="$(node -e '
+            const fs = require("node:fs");
+            const path = process.argv[1];
+            const raw = fs.readFileSync(path, "utf8").trim();
+            const parsed = raw ? JSON.parse(raw) : [];
+            const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+            const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
+            if (!filename) process.exit(1);
+            process.stdout.write(filename);
+          ' "${pack_json_path}")" || {
             echo "npm pack --json did not return a valid filename" >&2
             exit 1
           }
@@ -500,17 +502,19 @@ jobs:
           cd apps/stack
           # npm lifecycle scripts can exceed Linux argv/env limits for large workspaces.
           # pack after publish using the already-prepacked working tree to avoid re-running prepack.
-          pack_json="$(npm pack --ignore-scripts --json)"
-          tgz="$(
-            PACK_JSON="${pack_json}" node -e '
-              const raw = (process.env.PACK_JSON ?? "").trim();
-              const parsed = raw ? JSON.parse(raw) : [];
-              const entry = Array.isArray(parsed) ? parsed[0] : parsed;
-              const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
-              if (!filename) process.exit(1);
-              process.stdout.write(filename);
-            '
-          )" || {
+          pack_json_path="$(mktemp)"
+          # Suppress npm "notice" output so JSON parsing is reliable.
+          npm pack --ignore-scripts --json --loglevel=error > "${pack_json_path}"
+          tgz="$(node -e '
+            const fs = require("node:fs");
+            const path = process.argv[1];
+            const raw = fs.readFileSync(path, "utf8").trim();
+            const parsed = raw ? JSON.parse(raw) : [];
+            const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+            const filename = typeof entry?.filename === "string" ? entry.filename.trim() : "";
+            if (!filename) process.exit(1);
+            process.stdout.write(filename);
+          ' "${pack_json_path}")" || {
             echo "npm pack --json did not return a valid filename" >&2
             exit 1
           }

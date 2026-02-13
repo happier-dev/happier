@@ -357,7 +357,7 @@ jobs:
             exit 1
           fi
           cd apps/ui
-          npx --yes eas-cli@14.2.0 build --platform "${{ inputs.expo_platform }}" --profile "${{ steps.expo_profile.outputs.profile }}" --non-interactive --json > /tmp/eas_build.json
+          npx --yes eas-cli@18.0.1 build --platform "${{ inputs.expo_platform }}" --profile "${{ steps.expo_profile.outputs.profile }}" --non-interactive --json > /tmp/eas_build.json
 
       - name: Dump EAS build details (always)
         if: ${{ always() && (inputs.expo_action == 'native' || inputs.expo_action == 'native_submit') }}
@@ -415,7 +415,7 @@ jobs:
           for build_id in ${build_ids}; do
             echo "::group::eas build:view ${build_id}"
             view_path="/tmp/eas_build_view_${build_id}.json"
-            if npx --yes eas-cli@14.2.0 build:view "${build_id}" --json > "${view_path}"; then
+            if npx --yes eas-cli@18.0.1 build:view "${build_id}" --json > "${view_path}"; then
               VIEW_PATH="${view_path}" node -e '
                 const fs = require("node:fs");
                 const path = process.env.VIEW_PATH;
@@ -438,6 +438,9 @@ jobs:
                 };
                 console.log(JSON.stringify(out, null, 2));
               '
+              echo ""
+              echo "eas build:view (human output):"
+              npx --yes eas-cli@18.0.1 build:view "${build_id}" || true
             else
               echo "eas build:view failed for ${build_id}" >&2
             fi
@@ -500,7 +503,7 @@ jobs:
           if [ -z "${artifact_url:-}" ]; then
             build_view_json="$(
               cd apps/ui
-                  npx --yes eas-cli@14.2.0 build:view "${build_id}" --json
+                  npx --yes eas-cli@18.0.1 build:view "${build_id}" --json
             )"
             artifact_url="$(
               BUILD_VIEW_JSON="${build_view_json}" node - <<'NODE'
@@ -629,7 +632,7 @@ jobs:
             exit 1
           fi
           cd apps/ui
-          npx --yes eas-cli@14.2.0 submit --platform "${{ inputs.expo_platform }}" --latest --non-interactive
+          npx --yes eas-cli@18.0.1 submit --platform "${{ inputs.expo_platform }}" --latest --non-interactive
 
       - name: Promote source ref to deploy branch (web)
         if: inputs.deploy_web
