@@ -157,6 +157,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: release-unified
