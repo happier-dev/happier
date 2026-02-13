@@ -813,6 +813,7 @@ jobs:
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: write
+      actions: read
     uses: ./.github/workflows/promote-ui.yml
     secrets: inherit
     with:
@@ -834,6 +835,7 @@ jobs:
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: write
+      actions: read
     uses: ./.github/workflows/promote-server.yml
     secrets: inherit
     with:
