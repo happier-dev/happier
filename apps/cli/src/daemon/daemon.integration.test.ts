@@ -310,6 +310,7 @@ async function waitForDaemonReadyState(): Promise<void> {
 async function ensureDaemonFullyStoppedBeforeRestart(): Promise<void> {
   const stateBeforeStop = await readDaemonState();
   const previousPid = stateBeforeStop?.pid;
+  const lockPidBeforeStop = readDaemonLockPid();
 
   await stopDaemon();
 
@@ -320,6 +321,28 @@ async function ensureDaemonFullyStoppedBeforeRestart(): Promise<void> {
       label: `previous daemon pid ${previousPid} to exit`,
     });
   }
+
+  if (
+    typeof lockPidBeforeStop === 'number' &&
+    Number.isFinite(lockPidBeforeStop) &&
+    lockPidBeforeStop > 0 &&
+    lockPidBeforeStop !== previousPid
+  ) {
+    await waitFor(async () => !isProcessAlive(lockPidBeforeStop), {
+      timeoutMs: 30_000,
+      intervalMs: 250,
+      label: `daemon lock pid ${lockPidBeforeStop} to exit`,
+    });
+  }
+
+  await waitFor(
+    async () => !existsSync(configuration.daemonLockFile),
+    {
+      timeoutMs: 30_000,
+      intervalMs: 250,
+      label: 'daemon lock file cleanup before restart',
+    },
+  );
 
   await waitFor(
     async () => {
@@ -384,6 +407,18 @@ function isProcessAlive(pid: number): boolean {
     return !stat.includes('Z');
   } catch {
     return false;
+  }
+}
+
+function readDaemonLockPid(): number | null {
+  try {
+    if (!existsSync(configuration.daemonLockFile)) return null;
+    const raw = readFileSync(configuration.daemonLockFile, 'utf-8').trim();
+    const pid = Number.parseInt(raw, 10);
+    if (!Number.isFinite(pid) || pid <= 0) return null;
+    return pid;
+  } catch {
+    return null;
   }
 }
 
