@@ -1117,7 +1117,7 @@ jobs:
   e2e-core:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_e2e_core }}
     name: Core E2E (packages/tests, server-light, ${{ matrix.db }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -1145,6 +1145,13 @@ jobs:
         run: |
           corepack enable
           corepack prepare yarn@1.22.22 --activate
+
+      - name: Install Sapling
+        run: |
+          bash scripts/ci/install_sapling_ubuntu22.sh
+
+      - name: Verify Sapling CLI
+        run: sl --version
 
       - name: Install dependencies
         env:
