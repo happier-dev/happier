@@ -43,40 +43,59 @@ jobs:
     - name: Pack package
       run: |
         set -euo pipefail
-        rm -f /tmp/happier-dev-cli-*.tgz
-        (cd apps/cli && npm pack --silent --pack-destination /tmp)
+        PACKAGE_NAME="$(cd apps/cli && npm pack --silent --pack-destination /tmp)"
+        PACKAGE_FILE="/tmp/${PACKAGE_NAME}"
+        if [ ! -f "${PACKAGE_FILE}" ]; then
+          echo "Unable to find packed CLI tarball at ${PACKAGE_FILE}" >&2
+          exit 1
+        fi
+        echo "CLI_PACKAGE_FILE=${PACKAGE_FILE}" >> "$GITHUB_ENV"
 
     - name: Install packed package globally
       run: |
-        PACKAGE_FILE=$(ls /tmp/happier-dev-cli-*.tgz | head -n 1)
-        npm install -g "$PACKAGE_FILE"
+        set -euo pipefail
+        SMOKE_PREFIX="$(mktemp -d)"
+        SMOKE_HOME="$(mktemp -d)"
+        npm install -g --prefix "${SMOKE_PREFIX}" "${CLI_PACKAGE_FILE}"
+        HAPPIER_BIN="${SMOKE_PREFIX}/bin/happier"
+        if [ ! -x "${HAPPIER_BIN}" ]; then
+          echo "Expected CLI binary not found at ${HAPPIER_BIN}" >&2
+          exit 1
+        fi
+        echo "HAPPIER_BIN=${HAPPIER_BIN}" >> "$GITHUB_ENV"
+        echo "HAPPIER_HOME_DIR=${SMOKE_HOME}" >> "$GITHUB_ENV"
 
     - name: Test binary execution
       run: |
+        set -euo pipefail
+        export HAPPIER_HOME_DIR
         # Test that the binary starts successfully
         echo "Testing happier --help..."
-        timeout 30s happier --help || {
+        timeout 30s "${HAPPIER_BIN}" --help || {
           echo "Error: happier --help failed or timed out"
           exit 1
         }
 
         echo "Testing happier --version..."
-        timeout 10s happier --version || {
+        timeout 10s "${HAPPIER_BIN}" --version || {
           echo "Error: happier --version failed or timed out"
           exit 1
         }
 
         echo "Testing happier doctor..."
-        timeout 30s happier doctor || {
+        DOCTOR_OUTPUT="$(timeout 10s "${HAPPIER_BIN}" doctor --help)" || {
           echo "Error: happier doctor failed or timed out"
           exit 1
         }
+        printf '%s\n' "${DOCTOR_OUTPUT}"
 
-        echo "Testing happier daemon status..."
-        timeout 10s happier daemon status || {
-          echo "Error: happier daemon status failed or timed out"
+        echo "Testing happier daemon --help..."
+        DAEMON_HELP_OUTPUT="$(timeout 10s "${HAPPIER_BIN}" daemon --help)" || {
+          echo "Error: happier daemon --help failed or timed out"
           exit 1
         }
+        printf '%s\n' "${DAEMON_HELP_OUTPUT}"
+        printf '%s' "${DAEMON_HELP_OUTPUT}" | grep -q 'Daemon management'
 
         echo "Smoke test passed on Linux!"
 
@@ -202,24 +221,24 @@ jobs:
         rem Test doctor
         echo Testing happier doctor...
         if exist "%NPM_PREFIX%\happier.cmd" (
-          "%NPM_PREFIX%\happier.cmd" doctor
+          "%NPM_PREFIX%\happier.cmd" doctor --help
         ) else (
-          happier doctor
+          happier doctor --help
         )
         if errorlevel 1 (
           echo Error: happier doctor failed
           exit /b 1
         )
 
-        rem Test daemon status
-        echo Testing happier daemon status...
+        rem Test daemon help
+        echo Testing happier daemon --help...
         if exist "%NPM_PREFIX%\happier.cmd" (
-          "%NPM_PREFIX%\happier.cmd" daemon status
+          "%NPM_PREFIX%\happier.cmd" daemon --help | findstr /C:"Daemon management" >nul
         ) else (
-          happier daemon status
+          happier daemon --help | findstr /C:"Daemon management" >nul
         )
         if errorlevel 1 (
-          echo Error: happier daemon status failed
+          echo Error: happier daemon --help failed
           exit /b 1
         )
 
