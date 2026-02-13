@@ -25,6 +25,9 @@ permissions:
 jobs:
   authorize:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
+      RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
     steps:
       - name: Resolve guard inputs
         id: params
@@ -56,15 +59,15 @@ jobs:
 
       - name: Create GitHub App token for guard checks
         id: app_token
-        if: ${{ secrets.RELEASE_BOT_APP_ID != '' && secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
+        if: ${{ env.RELEASE_BOT_APP_ID != '' && env.RELEASE_BOT_PRIVATE_KEY != '' }}
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          app-id: ${{ env.RELEASE_BOT_APP_ID }}
+          private-key: ${{ env.RELEASE_BOT_PRIVATE_KEY }}
           owner: ${{ steps.params.outputs.org }}
 
       - name: Verify triggering actor is in release admin team
-        if: ${{ secrets.RELEASE_BOT_APP_ID != '' && secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
+        if: ${{ env.RELEASE_BOT_APP_ID != '' && env.RELEASE_BOT_PRIVATE_KEY != '' }}
         env:
           ACTOR: ${{ steps.params.outputs.actor }}
           ORG: ${{ steps.params.outputs.org }}
@@ -116,7 +119,7 @@ jobs:
           rm -f "$resp_file"
 
       - name: Verify triggering actor is a repo admin (fallback)
-        if: ${{ secrets.RELEASE_BOT_APP_ID == '' || secrets.RELEASE_BOT_PRIVATE_KEY == '' }}
+        if: ${{ env.RELEASE_BOT_APP_ID == '' || env.RELEASE_BOT_PRIVATE_KEY == '' }}
         env:
           ACTOR: ${{ steps.params.outputs.actor }}
           REPO: ${{ github.repository }}
