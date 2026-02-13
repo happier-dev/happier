@@ -127,14 +127,44 @@ class ApiSocket {
         if (!sessionEncryption) {
             throw new Error(`Session encryption not found for ${sessionId}`);
         }
+        const scmDebug = __DEV__ && method.startsWith('scm.');
+        if (scmDebug) {
+            console.log('[SCM_RPC][call]', { sessionId, method });
+        }
         
         const result: any = await this.socket!.emitWithAck(SOCKET_RPC_EVENTS.CALL, {
             method: `${sessionId}:${method}`,
             params: await sessionEncryption.encryptRaw(params)
         });
+        if (scmDebug) {
+            const rawResult = result?.result;
+            console.log('[SCM_RPC][ack]', {
+                method,
+                ok: Boolean(result?.ok),
+                error: typeof result?.error === 'string' ? result.error : null,
+                errorCode: typeof result?.errorCode === 'string' ? result.errorCode : null,
+                resultType: typeof rawResult,
+                resultIsArray: Array.isArray(rawResult),
+                resultLength: typeof rawResult === 'string' ? rawResult.length : null,
+            });
+        }
         
         if (result.ok) {
-            return await sessionEncryption.decryptRaw(result.result) as R;
+            const decrypted = await sessionEncryption.decryptRaw(result.result);
+            if (scmDebug) {
+                console.log('[SCM_RPC][decrypt]', {
+                    method,
+                    decryptedType: decrypted === null ? 'null' : typeof decrypted,
+                    hasSuccessField: Boolean(decrypted && typeof decrypted === 'object' && 'success' in decrypted),
+                    success: Boolean(
+                        decrypted
+                        && typeof decrypted === 'object'
+                        && typeof (decrypted as { success?: unknown }).success === 'boolean'
+                        && (decrypted as { success: boolean }).success
+                    ),
+                });
+            }
+            return decrypted as R;
         }
         throw createRpcCallError({
             error: typeof result.error === 'string' ? result.error : 'RPC call failed',
