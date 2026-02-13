@@ -7,6 +7,7 @@ import {
     sessionFindFirst,
     sessionFindMany,
     sessionShareFindMany,
+    txSessionFindFirst,
     txSessionCreate,
 } from "./sessionRoutes.testkit";
 
@@ -16,6 +17,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         sessionFindMany.mockReset();
         sessionShareFindMany.mockReset();
         sessionFindFirst.mockReset();
+        txSessionFindFirst.mockReset();
         txSessionCreate.mockReset();
     });
 
@@ -111,7 +113,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
 
     it("POST /v1/sessions returns pendingCount + pendingVersion when loading an existing session", async () => {
         const now = new Date(1);
-        sessionFindFirst.mockResolvedValue({
+        txSessionFindFirst.mockResolvedValue({
             id: "s1",
             seq: 1,
             createdAt: now,
@@ -138,6 +140,8 @@ describe("sessionRoutes v1 sessions snapshot", () => {
             reply,
         );
 
+        expect(sessionFindFirst).not.toHaveBeenCalled();
+        expect(txSessionFindFirst).toHaveBeenCalled();
         expect(res).toEqual({
             session: expect.objectContaining({
                 id: "s1",
@@ -149,7 +153,7 @@ describe("sessionRoutes v1 sessions snapshot", () => {
 
     it("POST /v1/sessions returns pendingCount + pendingVersion when creating a new session", async () => {
         const now = new Date(1);
-        sessionFindFirst.mockResolvedValue(null);
+        txSessionFindFirst.mockResolvedValue(null);
         txSessionCreate.mockResolvedValue({
             id: "s2",
             seq: 2,
@@ -177,6 +181,8 @@ describe("sessionRoutes v1 sessions snapshot", () => {
             reply,
         );
 
+        expect(sessionFindFirst).not.toHaveBeenCalled();
+        expect(txSessionFindFirst).toHaveBeenCalled();
         expect(res).toEqual({
             session: expect.objectContaining({
                 id: "s2",
@@ -186,4 +192,3 @@ describe("sessionRoutes v1 sessions snapshot", () => {
         });
     });
 });
-

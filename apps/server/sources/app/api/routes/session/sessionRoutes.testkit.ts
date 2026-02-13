@@ -33,6 +33,7 @@ export const sessionFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(a
 export const sessionMessageFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
 export const sessionShareFindMany = vi.fn<(...args: any[]) => Promise<any[]>>(async () => []);
 
+export const txSessionFindFirst = vi.fn<(...args: any[]) => Promise<any | null>>(async () => null);
 export const txSessionCreate = vi.fn<(...args: any[]) => Promise<any>>(async () => {
     throw new Error("txSessionCreate not configured for test");
 });
@@ -83,7 +84,9 @@ vi.mock("@/app/session/sessionDelete", () => ({ sessionDelete: vi.fn(async () =>
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged: vi.fn(async () => 1) }));
 vi.mock("@/app/share/types", () => ({ PROFILE_SELECT: {}, toShareUserProfile: vi.fn() }));
 vi.mock("@/storage/inTx", () => ({
-    inTx: vi.fn(async (fn: any) => await fn({ session: { create: txSessionCreate } })),
+    inTx: vi.fn(async (fn: any) =>
+        await fn({ session: { create: txSessionCreate, findFirst: txSessionFindFirst } }),
+    ),
     afterTx: vi.fn(),
 }));
 
@@ -95,6 +98,7 @@ export function resetSessionRouteMocks(): void {
     sessionFindFirst.mockResolvedValue(null);
     sessionMessageFindMany.mockResolvedValue([]);
     sessionShareFindMany.mockResolvedValue([]);
+    txSessionFindFirst.mockResolvedValue(null);
     txSessionCreate.mockImplementation(async () => {
         throw new Error("txSessionCreate not configured for test");
     });
