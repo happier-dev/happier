@@ -105,6 +105,7 @@ jobs:
 
       - name: Move rolling tag
         if: inputs.rolling_tag
+        id: move_rolling_tag
         env:
           TAG: ${{ inputs.tag }}
           SHA: ${{ inputs.target_sha }}
@@ -119,9 +120,25 @@ jobs:
             exit 1
           fi
           git tag -f "${TAG}" "${SHA}"
-          git push origin "refs/tags/${TAG}" --force
+          set +e
+          out="$(git push origin "refs/tags/${TAG}" --force 2>&1)"
+          code="$?"
+          set -e
+          if [ "${code}" != "0" ]; then
+            echo "${out}" >&2
+            # Some repositories restrict tag creation/updates via rulesets.
+            # For rolling tags, treat that as non-fatal so release pipelines can still complete.
+            if echo "${out}" | grep -q "GH013"; then
+              echo "::warning::Rolling tag push blocked by repository rules (GH013). Skipping rolling tag update for '${TAG}'."
+              echo "pushed=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            exit "${code}"
+          fi
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
 
       - name: Ensure release exists
+        if: ${{ !inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true' }}
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           TAG: ${{ inputs.tag }}
