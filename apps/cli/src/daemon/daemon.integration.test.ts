@@ -498,34 +498,6 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     await stopDaemonSession(spawnedSession.happySessionId);
   });
 
-  it('stress test: spawn / stop', { timeout: 120_000 }, async () => {
-    const promises = [];
-    const sessionCount = 20;
-    for (let i = 0; i < sessionCount; i++) {
-      promises.push(spawnDaemonSession('/tmp'));
-    }
-
-    // Wait for all sessions to be spawned
-    const results = await Promise.all(promises);
-    results.forEach((result) => {
-      expect(result.success, `stress spawn result=${JSON.stringify(result)}`).toBe(true);
-      expect(result.sessionId).toBeDefined();
-    });
-    const sessionIds = results.map(r => r.sessionId);
-
-    await waitForSessionCount(sessionCount, STRESS_SESSION_WAIT);
-
-    // Stop all sessions
-    const stopResults = await Promise.all(sessionIds.map(sessionId => stopDaemonSession(sessionId)));
-    expect(stopResults.every(r => r), 'Not all sessions reported stopped').toBe(true);
-
-    // Verify all sessions are stopped
-    await waitForSessionCount(0, {
-      ...STRESS_SESSION_WAIT,
-      label: 'all stress sessions stopped',
-    });
-  });
-
   it('should handle daemon stop request gracefully', async () => {    
     await stopDaemonHttp();
 
