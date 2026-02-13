@@ -807,6 +807,9 @@ export function createGitSessionRpcHarness(workspace: string) {
 
 export function initRepo(cwd: string): void {
     git(cwd, ['init']);
+    // Enforce a deterministic initial branch name in test repos.
+    // CI images may still default `git init` to "master" unless configured otherwise.
+    git(cwd, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
     git(cwd, ['config', 'user.email', 'test@example.com']);
     git(cwd, ['config', 'user.name', 'Test User']);
 }
