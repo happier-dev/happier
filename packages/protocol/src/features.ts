@@ -102,7 +102,21 @@ export function coerceBugReportsFeatureFromFeaturesPayload(payload: unknown): Bu
   return parsed.success ? parsed.data : DEFAULT_BUG_REPORTS_FEATURE;
 }
 
-export const FeaturesResponseSchema = z.object({
+function coerceFeaturesResponsePayload(raw: unknown): unknown {
+  if (!isRecord(raw) || !isRecord(raw.features)) return raw;
+
+  // Robustness: a malformed bugReports payload should not invalidate unrelated features.
+  // Coerce it to a safe default while preserving the rest of the payload.
+  return {
+    ...raw,
+    features: {
+      ...raw.features,
+      bugReports: coerceBugReportsFeatureFromFeaturesPayload(raw),
+    },
+  };
+}
+
+export const FeaturesResponseSchema = z.preprocess(coerceFeaturesResponsePayload, z.object({
   features: z.object({
     bugReports: BugReportsFeatureSchema.optional().default(DEFAULT_BUG_REPORTS_FEATURE),
     automations: AutomationsFeatureSchema.optional().default(DEFAULT_AUTOMATIONS_FEATURE),
@@ -186,6 +200,6 @@ export const FeaturesResponseSchema = z.object({
       ),
     }),
   }),
-});
+}));
 
 export type FeaturesResponse = z.infer<typeof FeaturesResponseSchema>;
