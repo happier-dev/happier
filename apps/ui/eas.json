@@ -4,7 +4,9 @@
     "appVersionSource": "remote"
   },
   "build": {
-    "base": {},
+    "base": {
+      "node": "22.14.0"
+    },
     "development": {
       "extends": "base",
       "environment": "development",
