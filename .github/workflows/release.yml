@@ -167,7 +167,17 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
-    uses: ./.github/workflows/release-actor-guard.yml
+    runs-on: ubuntu-latest
+    environment: release-shared
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Authorize release actor
+        uses: ./.github/actions/release-actor-guard
+        with:
+          team_slug: release-admins
+          app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   gate:
     name: CI Gate (dev)

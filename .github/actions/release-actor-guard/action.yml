@@ -1,0 +1,110 @@
+name: Release Actor Guard
+description: Verify the triggering actor is authorized to run release/deploy workflows (team membership via GitHub App token).
+
+inputs:
+  team_slug:
+    description: GitHub team slug allowed to run the workflow
+    required: false
+    default: release-admins
+  org:
+    description: GitHub organization that owns the team (defaults to repository owner)
+    required: false
+    default: ""
+  app_id:
+    description: GitHub App ID used to check team membership
+    required: true
+  private_key:
+    description: GitHub App private key used to check team membership
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve guard inputs
+      id: params
+      shell: bash
+      env:
+        INPUT_ORG: ${{ inputs.org }}
+        INPUT_TEAM_SLUG: ${{ inputs.team_slug }}
+      run: |
+        set -euo pipefail
+
+        actor="${GITHUB_TRIGGERING_ACTOR:-${GITHUB_ACTOR:-}}"
+        if [ -z "${actor}" ]; then
+          echo "Unable to resolve triggering actor." >&2
+          exit 1
+        fi
+
+        team_slug="${INPUT_TEAM_SLUG:-release-admins}"
+        org="${INPUT_ORG:-${GITHUB_REPOSITORY_OWNER}}"
+        if [ -z "${org}" ]; then
+          echo "Unable to resolve organization owner." >&2
+          exit 1
+        fi
+
+        echo "actor=${actor}" >> "$GITHUB_OUTPUT"
+        echo "org=${org}" >> "$GITHUB_OUTPUT"
+        echo "team_slug=${team_slug}" >> "$GITHUB_OUTPUT"
+
+        echo "Authorizing actor '${actor}' against team '${org}/${team_slug}'."
+
+    - name: Create GitHub App token for guard checks
+      id: app_token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ inputs.app_id }}
+        private-key: ${{ inputs.private_key }}
+        owner: ${{ steps.params.outputs.org }}
+
+    - name: Verify triggering actor is in release admin team
+      shell: bash
+      env:
+        ACTOR: ${{ steps.params.outputs.actor }}
+        ORG: ${{ steps.params.outputs.org }}
+        TEAM_SLUG: ${{ steps.params.outputs.team_slug }}
+        APP_TOKEN: ${{ steps.app_token.outputs.token }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${APP_TOKEN:-}" ]; then
+          echo "Missing GitHub App token for release actor guard." >&2
+          exit 1
+        fi
+
+        endpoint="https://api.github.com/orgs/${ORG}/teams/${TEAM_SLUG}/memberships/${ACTOR}"
+        resp_file="$(mktemp)"
+        status="$(curl -sS \
+          --connect-timeout 10 \
+          --max-time 30 \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${APP_TOKEN}" \
+          "$endpoint" \
+          -o "$resp_file" \
+          -w "%{http_code}")"
+
+        case "$status" in
+          200)
+            echo "Actor '${ACTOR}' is a member of '${ORG}/${TEAM_SLUG}'."
+            ;;
+          404)
+            echo "Actor '${ACTOR}' is not a member of '${ORG}/${TEAM_SLUG}' (or team is not visible to the app)." >&2
+            cat "$resp_file" >&2 || true
+            rm -f "$resp_file"
+            exit 1
+            ;;
+          401|403)
+            echo "Release actor guard app token is not authorized to read team memberships for '${ORG}/${TEAM_SLUG}'." >&2
+            cat "$resp_file" >&2 || true
+            rm -f "$resp_file"
+            exit 1
+            ;;
+          *)
+            echo "Unexpected response from team membership check (HTTP ${status})." >&2
+            cat "$resp_file" >&2 || true
+            rm -f "$resp_file"
+            exit 1
+            ;;
+        esac
+
+        rm -f "$resp_file"
+
