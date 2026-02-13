@@ -101,7 +101,7 @@ runs:
             exit 1
           fi
 
-          perm="$(node -e 'const fs=require(\"fs\"); const body=JSON.parse(fs.readFileSync(process.argv[1],\"utf8\")); process.stdout.write(String(body.permission||\"\"))' "$resp_file")"
+          perm="$(jq -r '.permission // ""' "$resp_file" 2>/dev/null || true)"
           rm -f "$resp_file"
 
           if [ "$perm" != "admin" ]; then
