@@ -337,21 +337,31 @@ jobs:
         run: |
           set -euo pipefail
           yarn workspace @happier-dev/cli build
-          rm -f /tmp/happier-dev-cli-*.tgz
-          (cd apps/cli && npm pack --silent --pack-destination /tmp)
-
-          PACKAGE_FILE="$(ls /tmp/happier-dev-cli-*.tgz 2>/dev/null | head -n 1)"
-          if [ -z "${PACKAGE_FILE:-}" ]; then
-            echo "Unable to find packed CLI tarball in /tmp/happier-dev-cli-*.tgz" >&2
+          PACKAGE_NAME="$(cd apps/cli && npm pack --silent --pack-destination /tmp)"
+          PACKAGE_FILE="/tmp/${PACKAGE_NAME}"
+          if [ ! -f "${PACKAGE_FILE}" ]; then
+            echo "Unable to find packed CLI tarball at ${PACKAGE_FILE}" >&2
             exit 1
           fi
 
-          npm install -g "$PACKAGE_FILE"
+          SMOKE_PREFIX="$(mktemp -d)"
+          SMOKE_HOME="$(mktemp -d)"
+          npm install -g --prefix "${SMOKE_PREFIX}" "${PACKAGE_FILE}"
 
-          timeout 30s happier --help
-          timeout 10s happier --version
-          timeout 30s happier doctor
-          timeout 10s happier daemon status
+          HAPPIER_BIN="${SMOKE_PREFIX}/bin/happier"
+          if [ ! -x "${HAPPIER_BIN}" ]; then
+            echo "Expected CLI binary not found at ${HAPPIER_BIN}" >&2
+            exit 1
+          fi
+
+          HAPPIER_HOME_DIR="${SMOKE_HOME}" timeout 30s "${HAPPIER_BIN}" --help
+          HAPPIER_HOME_DIR="${SMOKE_HOME}" timeout 10s "${HAPPIER_BIN}" --version
+          DOCTOR_OUTPUT="$(HAPPIER_HOME_DIR="${SMOKE_HOME}" timeout 10s "${HAPPIER_BIN}" doctor --help)"
+          printf '%s\n' "${DOCTOR_OUTPUT}"
+
+          DAEMON_HELP_OUTPUT="$(HAPPIER_HOME_DIR="${SMOKE_HOME}" timeout 10s "${HAPPIER_BIN}" daemon --help)"
+          printf '%s\n' "${DAEMON_HELP_OUTPUT}"
+          printf '%s' "${DAEMON_HELP_OUTPUT}" | grep -q 'Daemon management'
 
       - name: Compute changed components (main..dev)
         id: plan
@@ -847,6 +857,8 @@ jobs:
   deploy_website:
     if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.checks.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
+    permissions:
+      actions: read
     uses: ./.github/workflows/promote-website.yml
     secrets: inherit
     with:
@@ -860,6 +872,8 @@ jobs:
   deploy_docs:
     if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
+    permissions:
+      actions: read
     uses: ./.github/workflows/promote-docs.yml
     secrets: inherit
     with:
