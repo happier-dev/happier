@@ -11,11 +11,13 @@ inputs:
     required: false
     default: ""
   app_id:
-    description: GitHub App ID used to check team membership
-    required: true
+    description: GitHub App ID used to check team membership (optional; when omitted, guard falls back to repo-admin check)
+    required: false
+    default: ""
   private_key:
-    description: GitHub App private key used to check team membership
-    required: true
+    description: GitHub App private key used to check team membership (optional; when omitted, guard falls back to repo-admin check)
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -51,6 +53,7 @@ runs:
     - name: Create GitHub App token for guard checks
       id: app_token
       uses: actions/create-github-app-token@v1
+      if: ${{ inputs.app_id != '' && inputs.private_key != '' }}
       with:
         app-id: ${{ inputs.app_id }}
         private-key: ${{ inputs.private_key }}
@@ -67,11 +70,6 @@ runs:
         REPO_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-
-        if [ -z "${APP_TOKEN:-}" ]; then
-          echo "Missing GitHub App token for release actor guard." >&2
-          exit 1
-        fi
 
         fallback_repo_admin() {
           if [ -z "${REPO_TOKEN:-}" ]; then
@@ -111,6 +109,12 @@ runs:
 
           echo "Actor '${ACTOR}' is a repo admin; allowing release workflow."
         }
+
+        if [ -z "${APP_TOKEN:-}" ]; then
+          echo "No GitHub App credentials provided; authorizing via repo-admin check."
+          fallback_repo_admin
+          exit 0
+        fi
 
         endpoint="https://api.github.com/orgs/${ORG}/teams/${TEAM_SLUG}/memberships/${ACTOR}"
         resp_file="$(mktemp)"

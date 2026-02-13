@@ -23,7 +23,6 @@ test('release workflows scope shared signing/publishing secrets to release-share
     ['promote-branch.yml', 'promote', 'release-shared'],
     ['build-tauri.yml', 'build', 'release-shared'],
     ['publish-github-release.yml', 'publish', 'release-shared'],
-    ['release.yml', 'checks', 'release-shared'],
     ['release.yml', 'deploy_plan', 'release-shared'],
   ];
 
@@ -118,12 +117,17 @@ test('secret-bearing workflows require release-admin actor guard before privileg
   assert.match(
     guardRaw,
     /actions\/create-github-app-token@v1/,
-    'release-actor-guard should create a GitHub App token for team membership checks'
+    'release-actor-guard should support GitHub App token checks for team membership'
   );
   assert.match(
     guardRaw,
     /orgs\/\$\{ORG\}\/teams\/\$\{TEAM_SLUG\}\/memberships\/\$\{ACTOR\}/,
     'release-actor-guard should verify actor membership in the configured team via the GitHub API'
+  );
+  assert.match(
+    guardRaw,
+    /collaborators\/\$\{ACTOR\}\/permission/,
+    'release-actor-guard should support repo-admin fallback authorization checks'
   );
   assert.match(
     guardRaw,
@@ -163,11 +167,40 @@ test('secret-bearing workflows require release-admin actor guard before privileg
     const { parsed } = await loadWorkflow(file);
     const guard = parsed?.jobs?.[guardJob];
     assert.ok(guard, `${file} should define '${guardJob}'`);
-    assert.equal(
-      guard?.uses,
-      './.github/workflows/release-actor-guard.yml',
-      `${file} should reuse release-actor-guard workflow`
-    );
+    if (guard?.uses) {
+      assert.equal(
+        guard?.uses,
+        './.github/workflows/release-actor-guard.yml',
+        `${file} should use the canonical release-actor-guard reusable workflow`
+      );
+    } else {
+      assert.equal(
+        guard?.environment,
+        undefined,
+        `${file} '${guardJob}' should not request release-shared environment secrets`
+      );
+      assert.ok(
+        Array.isArray(guard?.steps),
+        `${file} '${guardJob}' should be implemented as a normal job with steps`
+      );
+      const guardStep = guard.steps.find(
+        (step) => step?.uses === './.github/actions/release-actor-guard'
+      );
+      assert.ok(
+        guardStep,
+        `${file} '${guardJob}' should use the composite release-actor-guard action`
+      );
+      assert.equal(
+        guardStep?.with?.app_id,
+        undefined,
+        `${file} '${guardJob}' should not pass app_id secrets to the guard action`
+      );
+      assert.equal(
+        guardStep?.with?.private_key,
+        undefined,
+        `${file} '${guardJob}' should not pass private_key secrets to the guard action`
+      );
+    }
 
     const job = parsed?.jobs?.[jobName];
     assert.ok(job, `${file} should define job '${jobName}'`);

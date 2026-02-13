@@ -168,7 +168,6 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    environment: release-shared
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -221,7 +220,6 @@ jobs:
     needs: [release_actor_guard, gate, providers_gate]
     if: ${{ always() && needs.release_actor_guard.result == 'success' && (needs.gate.result == 'success' || needs.gate.result == 'skipped') && (needs.providers_gate.result == 'success' || needs.providers_gate.result == 'skipped') }}
     runs-on: ubuntu-latest
-    environment: release-shared
     outputs:
       changed_ui: ${{ steps.plan.outputs.changed_ui }}
       changed_cli: ${{ steps.plan.outputs.changed_cli }}
@@ -295,19 +293,11 @@ jobs:
               ;;
           esac
 
-      - name: Create GitHub App token
-        id: app_token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-
       - name: Checkout dev
         uses: actions/checkout@v4
         with:
           ref: dev
           fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
 
       - name: Setup Node
         uses: actions/setup-node@v4

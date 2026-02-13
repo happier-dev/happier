@@ -83,7 +83,6 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    environment: release-shared
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -91,8 +90,6 @@ jobs:
         uses: ./.github/actions/release-actor-guard
         with:
           team_slug: release-admins
-          app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
-          private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   trusted_ref_guard:
     needs: [release_actor_guard]
