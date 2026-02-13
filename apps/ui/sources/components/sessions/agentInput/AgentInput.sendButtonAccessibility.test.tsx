@@ -184,9 +184,9 @@ vi.mock('@/components/ui/scroll/ScrollEdgeIndicators', () => ({
     ScrollEdgeIndicators: () => null,
 }));
 
-vi.mock('@/components/git', () => ({
-    GitStatusBadge: () => null,
-    useHasMeaningfulGitStatus: () => false,
+vi.mock('@/components/sessions/sourceControl/status', () => ({
+    SourceControlStatusBadge: () => null,
+    useHasMeaningfulScmStatus: () => false,
 }));
 
 vi.mock('@/components/model/ModelPickerOverlay', () => ({

@@ -92,20 +92,13 @@ vi.mock('@/sync/domains/state/storage', () => ({
             }
             : null,
     useSessions: () => (sessionsReady ? [] : null),
-    useSessionProjectScmCommitSelectionPaths: () => [],
     useSessionProjectScmInFlightOperation: () => null,
     useSessionProjectScmSnapshot: () => ({
-        repo: { isRepo: true, rootPath: '/repo' },
         entries: [],
         hasConflicts: false,
     }),
-    useSetting: (key: string) => {
-        if (key === 'experiments') return false;
-        if (key === 'expScmOperations') return false;
-        if (key === 'scmCommitStrategy') return 'atomic';
-        if (key === 'scmDefaultDiffModeByBackend') return {};
-        return null;
-    },
+    useSessionProjectScmCommitSelectionPaths: () => [],
+    useSetting: () => null,
 }));
 
 vi.mock('@/scm/scmLineSelection', () => ({
@@ -127,13 +120,10 @@ vi.mock('@/scm/utils/filePathParam', () => ({
     decodeSessionFilePathParam: (value: string) => value,
 }));
 
-vi.mock('@/scm/settings/commitStrategy', () => ({
-    allowsLiveStaging: () => true,
-    isAtomicCommitStrategy: () => true,
-}));
-
-vi.mock('@/scm/diff/defaultMode', () => ({
-    resolveDefaultDiffModeForFile: () => 'pending',
+vi.mock('@/scm/scmStatusSync', () => ({
+    scmStatusSync: {
+        invalidateFromMutationAndAwait: vi.fn(async () => {}),
+    },
 }));
 
 vi.mock('@/modal', () => ({

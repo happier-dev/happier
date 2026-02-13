@@ -19,7 +19,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useIsTablet } from '@/utils/platform/responsive';
-import { ProjectGitStatus } from '@/components/git';
+import { ProjectSourceControlStatus } from '@/components/sessions/sourceControl/status';
 import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { HappyError } from '@/utils/errors/errors';
 
@@ -265,7 +265,7 @@ export function ActiveSessionsGroupCompact({ sessions, selectedSessionId, server
                             </View>
                             {/* Show git status instead of machine name */}
                             {firstSession ? (
-                                <ProjectGitStatus sessionId={firstSession.id} />
+                                <ProjectSourceControlStatus sessionId={firstSession.id} />
                             ) : null}
                         </View>
 

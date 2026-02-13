@@ -15,7 +15,7 @@ import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { machineSpawnNewSession, sessionArchive } from '@/sync/ops';
 import { storage } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
-import { CompactGitStatus, ProjectGitStatus } from '@/components/git';
+import { CompactSourceControlStatus, ProjectSourceControlStatus } from '@/components/sessions/sourceControl/status';
 import { t } from '@/text';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useIsTablet } from '@/utils/platform/responsive';
@@ -317,7 +317,7 @@ export function ActiveSessionsGroup({ sessions, selectedSessionId, serverId }: A
                                 // Get the first session from any machine in this project
                                 const firstSession = Array.from(projectGroup.machines.values())[0]?.sessions[0];
                                 return firstSession ? (
-                                    <ProjectGitStatus sessionId={firstSession.id} />
+                                    <ProjectSourceControlStatus sessionId={firstSession.id} />
                                 ) : (
                                     <Text style={styles.sectionHeaderMachine} numberOfLines={1}>
                                         {machineName}

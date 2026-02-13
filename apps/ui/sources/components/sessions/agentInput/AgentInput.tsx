@@ -30,7 +30,7 @@ import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicator
 import { ActionListSection } from '@/components/ui/lists/ActionListSection';
 import { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { applySuggestion } from '@/components/autocomplete/applySuggestion';
-import { GitStatusBadge, useHasMeaningfulGitStatus } from '@/components/git';
+import { SourceControlStatusBadge, useHasMeaningfulScmStatus } from '@/components/sessions/sourceControl/status';
 import { ModelPickerOverlay } from '@/components/model/ModelPickerOverlay';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -1289,7 +1289,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     {/* Action buttons below input */}
                     <View style={styles.actionButtonsContainer}>
                         <View style={screenWidth < 420 ? styles.actionButtonsColumnNarrow : styles.actionButtonsColumn}>{[
-                            // Row 1: Settings, Profile (FIRST), Agent, Abort, Git Status
+                            // Row 1: Settings, Profile (FIRST), Agent, Abort, Source control status
                             <View
                                 key="row1"
                                 style={[styles.actionButtonsRow, showPathAndResumeRow ? styles.actionButtonsRowWithBelow : null]}
@@ -1536,8 +1536,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                         </Shaker>
                                     ) : null;
 
-                                    const gitStatusChip = !actionBarIsCollapsed ? (
-                                        <GitStatusButton
+                                    const sourceControlStatusChip = !actionBarIsCollapsed ? (
+                                        <SourceControlStatusButton
                                             key="git"
                                             sessionId={props.sessionId}
                                             onPress={props.onFileViewerPress}
@@ -1557,7 +1557,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                             machineChip,
                                             ...(actionBarShouldScroll ? [pathChip, resumeChip] : []),
                                             abortButton,
-                                            gitStatusChip,
+                                            sourceControlStatusChip,
                                         ].filter(Boolean);
 
                                     // IMPORTANT: We must always render the ScrollView in "scroll layout" mode,
@@ -1722,9 +1722,9 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     );
 }));
 
-// Git Status Button Component
-function GitStatusButton({ sessionId, onPress, compact }: { sessionId?: string, onPress?: () => void, compact?: boolean }) {
-    const hasMeaningfulGitStatus = useHasMeaningfulGitStatus(sessionId || '');
+// Source Control Status Button Component
+function SourceControlStatusButton({ sessionId, onPress, compact }: { sessionId?: string, onPress?: () => void, compact?: boolean }) {
+    const hasMeaningfulScmStatus = useHasMeaningfulScmStatus(sessionId || '');
     const styles = stylesheet;
     const { theme } = useUnistyles();
 
@@ -1751,8 +1751,8 @@ function GitStatusButton({ sessionId, onPress, compact }: { sessionId?: string, 
                 onPress?.();
             }}
         >
-            {hasMeaningfulGitStatus ? (
-                <GitStatusBadge sessionId={sessionId} />
+            {hasMeaningfulScmStatus ? (
+                <SourceControlStatusBadge sessionId={sessionId} />
             ) : (
                 <Octicons
                     name="git-branch"

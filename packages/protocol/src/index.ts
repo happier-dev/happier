@@ -139,13 +139,6 @@ export {
   type ScmWorkingEntry,
   type ScmWorkingSnapshot,
 } from './scm.js';
-
-// Backwards-compatible aliases for older "git" naming.
-export {
-  SCM_OPERATION_ERROR_CODES as GIT_OPERATION_ERROR_CODES,
-  type ScmLogEntry as GitLogEntry,
-  type ScmOperationErrorCode as GitOperationErrorCode,
-} from './scm.js';
 export {
   resolveScmScopedChangedPaths,
   scmPathMatchesScopePath,

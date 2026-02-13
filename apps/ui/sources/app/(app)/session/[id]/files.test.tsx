@@ -6,18 +6,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const filesToolbarSpy = vi.fn();
 const routerPushSpy = vi.fn();
-let gitOperationsPanelProps: any = null;
+let sourceControlOperationsPanelProps: any = null;
 let changedFilesListProps: any = null;
+let changedFilesReviewProps: any = null;
+let repositoryTreeListProps: any = null;
 let focusEffectHasRun = false;
+const clearCommitSelectionPathsSpy = vi.fn();
+const clearCommitSelectionPatchesSpy = vi.fn();
+const setRepositoryTreeExpandedPathsSpy = vi.fn();
+let mockScmSnapshot: any = null;
+let mockScmSnapshotError: any = null;
+let mockSessionPath: string | null = '/repo';
+let mockShouldShowAllFiles = false;
+const invalidateAndAwaitSpy = vi.fn(async () => {});
 
-vi.mock('react-native', async () => {
-    const actual = await vi.importActual<typeof import('react-native')>('react-native');
-    return {
-        ...actual,
-        View: 'View',
-        ActivityIndicator: 'ActivityIndicator',
-    };
-});
+vi.mock('react-native', () => ({
+    View: 'View',
+    ActivityIndicator: 'ActivityIndicator',
+}));
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -59,12 +65,6 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-vi.mock('react-native-typography', () => ({
-    iOSUIKit: {
-        title3: {},
-    },
-}));
-
 vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
@@ -94,7 +94,7 @@ vi.mock('@/scm/scmAttribution', () => ({
 vi.mock('@/scm/scmStatusSync', () => ({
     scmStatusSync: {
         getSync: () => ({
-            invalidateAndAwait: vi.fn(async () => {}),
+            invalidateAndAwait: invalidateAndAwaitSpy,
         }),
     },
 }));
@@ -109,54 +109,27 @@ vi.mock('@/sync/domains/state/storage', () => ({
             sessions: {
                 'session-1': {
                     metadata: {
-                        path: '/repo',
+                        path: mockSessionPath,
                     },
                 },
             },
-            setSessionRepositoryTreeExpandedPaths: vi.fn(),
-            clearSessionProjectScmCommitSelectionPaths: vi.fn(),
-            clearSessionProjectScmCommitSelectionPatches: vi.fn(),
+            clearSessionProjectScmCommitSelectionPaths: clearCommitSelectionPathsSpy,
+            clearSessionProjectScmCommitSelectionPatches: clearCommitSelectionPatchesSpy,
+            setSessionRepositoryTreeExpandedPaths: setRepositoryTreeExpandedPathsSpy,
         }),
     },
-    useSession: () => ({
-        metadata: {
-            path: '/repo',
-        },
-    }),
+    useSession: () => (mockSessionPath ? ({ metadata: { path: mockSessionPath } } as any) : null),
     useSessionProjectScmOperationLog: () => [],
     useSessionProjectScmInFlightOperation: () => null,
-    useSessionProjectScmSnapshot: () => ({
-        repo: { isRepo: true, rootPath: '/repo' },
-        branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
-        hasConflicts: false,
-        entries: [],
-        totals: {
-            includedFiles: 0,
-            pendingFiles: 0,
-            untrackedFiles: 0,
-            includedAdded: 0,
-            includedRemoved: 0,
-            pendingAdded: 0,
-            pendingRemoved: 0,
-        },
-    }),
-    useSessionProjectScmSnapshotError: () => null,
+    useSessionProjectScmSnapshot: () => mockScmSnapshot,
+    useSessionProjectScmSnapshotError: () => mockScmSnapshotError,
     useSessionProjectScmCommitSelectionPaths: () => [],
-    useSessionProjectScmCommitSelectionPatches: () => [],
+    useSessionProjectScmCommitSelectionPatches: () => [{ path: 'a.txt', patch: 'diff --git a/a.txt b/a.txt\n' }],
     useSessionProjectScmTouchedPaths: () => [],
     useSessionRepositoryTreeExpandedPaths: () => [],
     useProjectForSession: () => ({ id: 'project-1' }),
     useProjectSessions: () => ['session-1', 'session-2'],
-    useSetting: (key: string) => {
-        if (key === 'experiments') return false;
-        if (key === 'expScmOperations') return true;
-        if (key === 'scmCommitStrategy') return 'atomic';
-        if (key === 'scmRemoteConfirmPolicy') return 'always';
-        if (key === 'scmPushRejectPolicy') return 'prompt_fetch';
-        if (key === 'scmReviewMaxFiles') return 25;
-        if (key === 'scmReviewMaxChangedLines') return 2000;
-        return true;
-    },
+    useSetting: () => true,
 }));
 
 vi.mock('@/scm/operations/featureFlags', () => ({
@@ -170,12 +143,12 @@ vi.mock('@/hooks/session/files/useChangedFilesData', () => ({
         scmStatusFiles: {
             branch: 'main',
             hasChanges: true,
-            totalStaged: 0,
-            totalUnstaged: 1,
+            totalIncluded: 0,
+            totalPending: 1,
             files: [],
         },
         changedFilesCount: 1,
-        shouldShowAllFiles: false,
+        shouldShowAllFiles: mockShouldShowAllFiles,
         allRepositoryChangedFiles: [],
         sessionAttributedFiles: [],
         repositoryOnlyFiles: [],
@@ -221,13 +194,20 @@ vi.mock('@/components/sessions/files/SourceControlBranchSummary', () => ({
 
 vi.mock('@/components/sessions/files/SourceControlOperationsPanel', () => ({
     SourceControlOperationsPanel: (props: any) => {
-        gitOperationsPanelProps = props;
+        sourceControlOperationsPanelProps = props;
         return React.createElement('SourceControlOperationsPanel', props);
     },
 }));
 
 vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
     SearchResultsList: () => null,
+}));
+
+vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
+    RepositoryTreeList: (props: any) => {
+        repositoryTreeListProps = props;
+        return React.createElement('RepositoryTreeList', props);
+    },
 }));
 
 vi.mock('@/components/sessions/files/content/ChangedFilesList', () => ({
@@ -238,29 +218,39 @@ vi.mock('@/components/sessions/files/content/ChangedFilesList', () => ({
 }));
 
 vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
-    ChangedFilesReview: () => null,
-}));
-
-vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
-    RepositoryTreeList: () => null,
-}));
-
-vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
-    scmUiBackendRegistry: {
-        getPluginForSnapshot: () => ({
-            displayName: 'Git',
-            commitActionConfig: () => ({ label: 'Commit' }),
-        }),
+    ChangedFilesReview: (props: any) => {
+        changedFilesReviewProps = props;
+        return React.createElement('ChangedFilesReview', props);
     },
+}));
+
+vi.mock('@/components/sessions/sourceControl/states', () => ({
+    NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
+    SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
 }));
 
 describe('FilesScreen', () => {
     beforeEach(() => {
         filesToolbarSpy.mockClear();
         routerPushSpy.mockClear();
-        gitOperationsPanelProps = null;
+        clearCommitSelectionPathsSpy.mockClear();
+        clearCommitSelectionPatchesSpy.mockClear();
+        setRepositoryTreeExpandedPathsSpy.mockClear();
+        sourceControlOperationsPanelProps = null;
         changedFilesListProps = null;
+        changedFilesReviewProps = null;
+        repositoryTreeListProps = null;
         focusEffectHasRun = false;
+        mockSessionPath = '/repo';
+        invalidateAndAwaitSpy.mockClear();
+        mockScmSnapshot = {
+            repo: { isRepo: true, rootPath: '/repo' },
+            branch: { head: 'main', detached: false },
+            hasConflicts: false,
+            capabilities: {},
+        };
+        mockScmSnapshotError = null;
+        mockShouldShowAllFiles = false;
     });
 
     it('falls back to repository mode when session view is not available', async () => {
@@ -286,9 +276,9 @@ describe('FilesScreen', () => {
         });
         await act(async () => {});
 
-        expect(gitOperationsPanelProps).toBeTruthy();
+        expect(sourceControlOperationsPanelProps).toBeTruthy();
 
-        gitOperationsPanelProps.onOpenCommit('\n32a2a2aba05750117ad36d9386b396fdd5416a2e');
+        sourceControlOperationsPanelProps.onOpenCommit('\n32a2a2aba05750117ad36d9386b396fdd5416a2e');
 
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/session/[id]/commit',
@@ -307,10 +297,10 @@ describe('FilesScreen', () => {
         });
         await act(async () => {});
 
-        expect(gitOperationsPanelProps).toBeTruthy();
+        expect(sourceControlOperationsPanelProps).toBeTruthy();
 
         // Defensive: Some UIs may pass "oneline" strings by accident; only the first token is a valid ref.
-        gitOperationsPanelProps.onOpenCommit('0338a0f chore: stage b.txt');
+        sourceControlOperationsPanelProps.onOpenCommit('0338a0f chore: stage b.txt');
 
         expect(routerPushSpy).toHaveBeenCalledWith({
             pathname: '/session/[id]/commit',
@@ -344,5 +334,109 @@ describe('FilesScreen', () => {
                 path: 'dir/hello world.txt',
             },
         });
+    });
+
+    it('switches to review mode when the toolbar requests it', async () => {
+        const Screen = (await import('./files')).default;
+
+        await act(async () => {
+            renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(changedFilesListProps).toBeTruthy();
+        expect(changedFilesReviewProps).toBeNull();
+
+        const toolbarProps = filesToolbarSpy.mock.calls
+            .map((call) => call[0])
+            .find((props) => typeof props?.onChangedFilesPresentationChange === 'function');
+        expect(typeof toolbarProps?.onChangedFilesPresentationChange).toBe('function');
+
+        await act(async () => {
+            toolbarProps.onChangedFilesPresentationChange('review');
+        });
+        await act(async () => {});
+
+        expect(changedFilesReviewProps).toBeTruthy();
+    });
+
+    it('shows commit selection state when only patch selection exists and clears both stores', async () => {
+        const Screen = (await import('./files')).default;
+
+        await act(async () => {
+            renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(sourceControlOperationsPanelProps).toBeTruthy();
+        expect(sourceControlOperationsPanelProps.commitSelectionCount).toBe(1);
+        expect(typeof sourceControlOperationsPanelProps.onClearCommitSelection).toBe('function');
+
+        sourceControlOperationsPanelProps.onClearCommitSelection();
+        expect(clearCommitSelectionPathsSpy).toHaveBeenCalledWith('session-1');
+        expect(clearCommitSelectionPatchesSpy).toHaveBeenCalledWith('session-1');
+    });
+
+    it('renders a source-control unavailable state when snapshot refresh errors and no snapshot is available', async () => {
+        mockScmSnapshot = null;
+        mockScmSnapshotError = { message: 'Session RPC unavailable', at: 1 };
+
+        const Screen = (await import('./files')).default;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(tree!.root.findAllByType('SourceControlUnavailableState').length).toBe(1);
+    });
+
+    it('refreshes scm snapshot once session path becomes available after first render', async () => {
+        mockSessionPath = null;
+
+        const Screen = (await import('./files')).default;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(invalidateAndAwaitSpy).toHaveBeenCalledTimes(0);
+
+        mockSessionPath = '/repo';
+        await act(async () => {
+            tree!.update(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(invalidateAndAwaitSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders repository tree in all-files view when search query is empty', async () => {
+        const Screen = (await import('./files')).default;
+
+        mockShouldShowAllFiles = true;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        // Switch to "All repository files" (search query stays empty).
+        const toolbarProps = filesToolbarSpy.mock.calls.at(-1)?.[0];
+        expect(toolbarProps).toBeTruthy();
+        await act(async () => {
+            toolbarProps.onShowAllRepositoryFiles();
+        });
+        await act(async () => {
+            tree!.update(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(repositoryTreeListProps).toBeTruthy();
+        expect(repositoryTreeListProps.sessionId).toBe('session-1');
     });
 });

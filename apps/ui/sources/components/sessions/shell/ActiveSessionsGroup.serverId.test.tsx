@@ -48,9 +48,9 @@ vi.mock('@/components/ui/status/StatusDot', () => ({
     StatusDot: 'StatusDot',
 }));
 
-vi.mock('@/components/git', () => ({
-    CompactGitStatus: 'CompactGitStatus',
-    ProjectGitStatus: 'ProjectGitStatus',
+vi.mock('@/components/sessions/sourceControl/status', () => ({
+    CompactSourceControlStatus: 'CompactSourceControlStatus',
+    ProjectSourceControlStatus: 'ProjectSourceControlStatus',
 }));
 
 vi.mock('@/hooks/session/useNavigateToSession', () => ({

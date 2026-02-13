@@ -13,12 +13,6 @@ describe('protocol package root exports', () => {
         expect(typeof protocol.normalizeScmRemoteRequest).toBe('function');
     });
 
-    it('exposes git operation codes as aliases of SCM operation codes for compatibility', () => {
-        expect('GIT_COMMIT_MESSAGE_MAX_LENGTH' in protocol).toBe(false);
-        expect('GIT_OPERATION_ERROR_CODES' in protocol).toBe(true);
-        expect(protocol.GIT_OPERATION_ERROR_CODES).toBe(protocol.SCM_OPERATION_ERROR_CODES);
-    });
-
     it('exports automation change/update schemas through root exports', () => {
         expect(protocol.ChangeKindSchema.parse('automation')).toBe('automation');
         const parsed = protocol.UpdateBodySchema.parse({
