@@ -57,6 +57,7 @@ jobs:
 
       - name: Create GitHub App token for guard checks
         id: app_token
+        if: ${{ secrets.RELEASE_BOT_APP_ID != '' && secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
@@ -64,6 +65,7 @@ jobs:
           owner: ${{ steps.params.outputs.org }}
 
       - name: Verify triggering actor is in release admin team
+        if: ${{ secrets.RELEASE_BOT_APP_ID != '' && secrets.RELEASE_BOT_PRIVATE_KEY != '' }}
         env:
           ACTOR: ${{ steps.params.outputs.actor }}
           ORG: ${{ steps.params.outputs.org }}
@@ -113,3 +115,42 @@ jobs:
           esac
 
           rm -f "$resp_file"
+
+      - name: Verify triggering actor is a repo admin (fallback)
+        if: ${{ secrets.RELEASE_BOT_APP_ID == '' || secrets.RELEASE_BOT_PRIVATE_KEY == '' }}
+        env:
+          ACTOR: ${{ steps.params.outputs.actor }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          echo "Release guard GitHub App credentials are not configured; falling back to repo admin check for '${ACTOR}'."
+
+          endpoint="https://api.github.com/repos/${REPO}/collaborators/${ACTOR}/permission"
+          resp_file="$(mktemp)"
+          status="$(curl -sS \
+            --connect-timeout 10 \
+            --max-time 30 \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            "$endpoint" \
+            -o "$resp_file" \
+            -w "%{http_code}")"
+
+          if [ "$status" != "200" ]; then
+            echo "Unable to determine repo permission for '${ACTOR}' (HTTP ${status})." >&2
+            cat "$resp_file" >&2 || true
+            rm -f "$resp_file"
+            exit 1
+          fi
+
+          perm="$(node -e 'const fs=require("fs"); const body=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); process.stdout.write(String(body.permission||""))' "$resp_file")"
+          rm -f "$resp_file"
+
+          if [ "$perm" != "admin" ]; then
+            echo "Actor '${ACTOR}' is not a repo admin (permission='${perm}')." >&2
+            exit 1
+          fi
+
+          echo "Actor '${ACTOR}' is a repo admin; allowing release workflow."
