@@ -8,6 +8,7 @@ describe.sequential('daemon control client PID safety', () => {
   const previousHomeDir = process.env.HAPPIER_HOME_DIR;
   const previousTimeout = process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
   const previousSpawnTimeout = process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
+  const previousPingTimeout = process.env.HAPPIER_DAEMON_PING_TIMEOUT_MS;
   const spawnedChildren: Array<ReturnType<typeof spawn>> = [];
 
   function killTrackedChildren(): void {
@@ -32,6 +33,9 @@ describe.sequential('daemon control client PID safety', () => {
 
     if (previousSpawnTimeout === undefined) delete process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT;
     else process.env.HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT = previousSpawnTimeout;
+
+    if (previousPingTimeout === undefined) delete process.env.HAPPIER_DAEMON_PING_TIMEOUT_MS;
+    else process.env.HAPPIER_DAEMON_PING_TIMEOUT_MS = previousPingTimeout;
   });
 
   it('stopDaemon refuses to kill an unrelated PID when HTTP stop fails', async () => {
@@ -170,6 +174,92 @@ describe.sequential('daemon control client PID safety', () => {
     } finally {
       vi.unstubAllGlobals();
       await app.close();
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('checkIfDaemonRunningAndCleanupStaleState uses a configurable ping timeout budget', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-ping-timeout-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = '500';
+
+    const daemonPort = 43210;
+    const realFetch = globalThis.fetch;
+
+    try {
+      // Override ping timeout and verify it is used (instead of a hardcoded value).
+      process.env.HAPPIER_DAEMON_PING_TIMEOUT_MS = '5000';
+
+      vi.resetModules();
+      const [
+        { configuration },
+        { createDaemonControlApp },
+        { checkIfDaemonRunningAndCleanupStaleState },
+      ] = await Promise.all([
+        import('@/configuration'),
+        import('./controlServer'),
+        import('./controlClient'),
+      ]);
+
+      const app = createDaemonControlApp({
+        getChildren: () => [],
+        stopSession: async () => false,
+        spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
+        requestShutdown: () => {},
+        onHappySessionWebhook: () => {},
+        controlToken: 'test-token',
+      });
+
+      const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+
+      await app.ready();
+      vi.stubGlobal('fetch', async (input: any, init?: any) => {
+        const url = new URL(typeof input === 'string' ? input : input.url);
+        if (url.hostname !== '127.0.0.1' || Number(url.port) !== daemonPort) {
+          return await realFetch(input, init);
+        }
+
+        const method = (init?.method ?? 'GET').toUpperCase();
+        const payload =
+          typeof init?.body === 'string' ? init.body : init?.body != null ? String(init.body) : undefined;
+        const headers = new Headers(init?.headers ?? {});
+
+        const injectRes = await app.inject({
+          method,
+          url: `${url.pathname}${url.search}`,
+          headers: Object.fromEntries(headers.entries()),
+          payload,
+        });
+
+        return new Response(injectRes.payload, {
+          status: injectRes.statusCode,
+          headers: injectRes.headers as any,
+        });
+      });
+
+      writeFileSync(
+        configuration.daemonStateFile,
+        JSON.stringify(
+          {
+            pid: process.pid,
+            httpPort: daemonPort,
+            startedAt: Date.now(),
+            startedWithCliVersion: '0.0.0-test',
+            controlToken: 'test-token',
+          },
+          null,
+          2,
+        ),
+        'utf-8',
+      );
+
+      expect(await checkIfDaemonRunningAndCleanupStaleState()).toBe(true);
+      expect(timeoutSpy).toHaveBeenCalledWith(5000);
+
+      timeoutSpy.mockRestore();
+      await app.close();
+    } finally {
+      vi.unstubAllGlobals();
       rmSync(homeDir, { recursive: true, force: true });
     }
   }, 30_000);

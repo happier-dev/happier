@@ -17,10 +17,11 @@ export type DaemonControlRequestOptions = {
 
 const DEFAULT_DAEMON_HTTP_TIMEOUT_MS = 10_000;
 const DEFAULT_DAEMON_SPAWN_HTTP_TIMEOUT_MS = 120_000;
-const DAEMON_PING_TIMEOUT_MS = 1_000;
+const DEFAULT_DAEMON_PING_TIMEOUT_MS = 3_000;
 const DAEMON_PING_UNREACHABLE_STARTUP_GRACE_MS = 60_000;
 const DAEMON_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_HTTP_TIMEOUT';
 const DAEMON_SPAWN_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT';
+const DAEMON_PING_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_PING_TIMEOUT_MS';
 
 function resolveDaemonStateAgeMs(state: unknown): number | null {
   if (state && typeof state === 'object') {
@@ -79,6 +80,13 @@ function resolveDaemonControlTimeoutMs(path: string, options: DaemonControlReque
   }
 
   return resolvePositiveIntValue(process.env[DAEMON_HTTP_TIMEOUT_ENV_KEY], DEFAULT_DAEMON_HTTP_TIMEOUT_MS, {
+    min: 100,
+    max: 300_000,
+  });
+}
+
+function resolveDaemonPingTimeoutMs(): number {
+  return resolvePositiveIntValue(process.env[DAEMON_PING_TIMEOUT_ENV_KEY], DEFAULT_DAEMON_PING_TIMEOUT_MS, {
     min: 100,
     max: 300_000,
   });
@@ -222,7 +230,7 @@ export async function checkIfDaemonRunningAndCleanupStaleState(): Promise<boolea
     // If the daemon state includes a control token, also verify that the control server responds.
     // This prevents PID reuse + stale port files from being treated as a healthy daemon.
     if (state.controlToken) {
-      const ping = await daemonPost('/ping', undefined, { timeoutMs: DAEMON_PING_TIMEOUT_MS });
+      const ping = await daemonPost('/ping', undefined, { timeoutMs: resolveDaemonPingTimeoutMs() });
 
       // If we can conclusively authenticate and still fail, the token/state is stale and must be removed.
       if (ping && typeof ping === 'object' && (ping as any).success === false) {
