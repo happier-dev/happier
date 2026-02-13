@@ -56,7 +56,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "postinstall:real": "yarn --cwd ../agents -s build && yarn -s build",
-    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');const has=(p)=>{try{return fs.existsSync(p)}catch{return false}};if(!has('tsconfig.json')||!has('../agents/tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
+    "postinstall": "node -e \"const fs=require('fs');const cp=require('child_process');if(/(^|[\\\\\\\\/])node_modules([\\\\\\\\/]|$)/i.test(process.cwd()))process.exit(0);const has=(p)=>{try{return fs.existsSync(p)}catch{return false}};if(!has('tsconfig.json')||!has('../agents/tsconfig.json'))process.exit(0);const run=(cmd,args)=>cp.spawnSync(cmd,args,{stdio:'inherit'});const npmExec=process.env.npm_execpath;let r;if(npmExec){r=run(process.execPath,[npmExec,'run','-s','postinstall:real']);}else{r=run(process.platform==='win32'?'yarn.cmd':'yarn',['-s','postinstall:real']);if(r.error&&process.platform==='win32'){r=run('yarn',['-s','postinstall:real']);}}if(r.error){console.error(r.error.message);process.exit(1);}process.exit(r.status??1);\"",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

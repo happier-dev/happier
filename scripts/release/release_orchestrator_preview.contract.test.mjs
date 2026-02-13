@@ -105,3 +105,12 @@ test('release-npm does not manage deploy/* branches (deploy is for server/web ap
   assert.doesNotMatch(raw, /deploy\/\$\{\{\s*inputs\.channel\s*\}\}\/cli/, 'release-npm should not promote deploy/<channel>/cli');
   assert.doesNotMatch(raw, /deploy\/\$\{\{\s*inputs\.channel\s*\}\}\/stack/, 'release-npm should not promote deploy/<channel>/stack');
 });
+
+test('publish-github-release skips asset upload when rolling tag move is blocked', async () => {
+  const raw = await loadWorkflow('publish-github-release.yml');
+  assert.match(
+    raw,
+    /- name: Upload assets[\s\S]*?if:\s*\$\{\{\s*\(!inputs\.rolling_tag \|\| steps\.move_rolling_tag\.outputs\.pushed == 'true'\)\s*&&\s*\(inputs\.assets != '' \|\| inputs\.assets_dir != ''\)\s*\}\}/,
+    'asset upload must be gated by rolling tag success when using rolling releases',
+  );
+});

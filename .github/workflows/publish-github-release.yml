@@ -174,7 +174,7 @@ jobs:
           gh release create "${TAG}" ${prerelease_flag} --title "${TITLE}" --target "${SHA}" --notes "${NOTES}"
 
       - name: Upload assets
-        if: ${{ inputs.assets != '' || inputs.assets_dir != '' }}
+        if: ${{ (!inputs.rolling_tag || steps.move_rolling_tag.outputs.pushed == 'true') && (inputs.assets != '' || inputs.assets_dir != '') }}
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           TAG: ${{ inputs.tag }}

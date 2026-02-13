@@ -5,8 +5,8 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
-import { gitStatusSync } from '@/sync/git/gitStatusSync';
-import { voiceHooks } from '@/realtime/hooks/voiceHooks';
+import { scmStatusSync } from '@/scm/scmStatusSync';
+import { voiceHooks } from '@/voice/context/voiceHooks';
 import { didControlReturnToMobile } from '@/sync/domains/session/control/controlledByUserTransitions';
 import {
     buildUpdatedSessionFromSocketUpdate,
@@ -167,7 +167,7 @@ export async function handleUpdateContainer(params: {
             fetchSessions,
             applyMessages,
             isMutableToolCall: (sessionId, toolUseId) => storage.getState().isMutableToolCall(sessionId, toolUseId),
-            invalidateGitStatus: (sessionId) => gitStatusSync.invalidate(sessionId),
+            invalidateGitStatus: (sessionId) => scmStatusSync.invalidate(sessionId),
             isSessionMessagesLoaded,
             getSessionMaterializedMaxSeq,
             markSessionMaterializedMaxSeq,
@@ -184,7 +184,7 @@ export async function handleUpdateContainer(params: {
             deleteSession: (sessionId) => storage.getState().deleteSession(sessionId),
             removeSessionEncryption: (sessionId) => encryption.removeSessionEncryption(sessionId),
             removeProjectManagerSession: (sessionId) => projectManager.removeSession(sessionId),
-            clearGitStatusForSession: (sessionId) => gitStatusSync.clearForSession(sessionId),
+            clearGitStatusForSession: (sessionId) => scmStatusSync.clearForSession(sessionId),
             log,
         });
     } else if (updateData.body.t === 'pending-changed') {
@@ -223,7 +223,7 @@ export async function handleUpdateContainer(params: {
 
             // Invalidate git status when agent state changes (files may have been modified)
             if (updateData.body.agentState) {
-                gitStatusSync.invalidate(updateData.body.id);
+                scmStatusSync.invalidate(updateData.body.id);
 
                 // Check for new permission requests and notify voice assistant
                 if (agentState?.requests && Object.keys(agentState.requests).length > 0) {

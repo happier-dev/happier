@@ -33,9 +33,9 @@ import { getActiveServerSnapshot } from './domains/server/serverRuntime';
 import { setActiveServerSessionListCache } from './store/sessionListCache';
 import { config } from '@/config';
 import { log } from '@/log';
-import { gitStatusSync } from './git/gitStatusSync';
+import { scmStatusSync } from '@/scm/scmStatusSync';
 import { projectManager } from './runtime/orchestration/projectManager';
-import { voiceHooks } from '@/realtime/hooks/voiceHooks';
+import { voiceHooks } from '@/voice/context/voiceHooks';
 import { Message } from './domains/messages/messageTypes';
 import { EncryptionCache } from './encryption/encryptionCache';
 import { systemPrompt } from '../agents/prompt/systemPrompt';
@@ -514,7 +514,7 @@ class Sync {
         ex.invalidate();
 
         // Also invalidate git status sync for this session
-        gitStatusSync.getSync(sessionId).invalidate();
+        scmStatusSync.getSync(sessionId).invalidate();
 
         // Notify voice assistant about session visibility
         const session = storage.getState().sessions[sessionId];
@@ -1691,7 +1691,7 @@ class Sync {
                             return loadedSessionIds
                         },
                         invalidateMessagesForSession: (sessionId) => this.messagesSync.get(sessionId)?.invalidate(),
-                        invalidateGitStatusForSession: (sessionId) => gitStatusSync.invalidate(sessionId),
+                        invalidateGitStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
                     });
                 },
             });
@@ -1772,7 +1772,7 @@ class Sync {
                     const sessionIdsToCatchUp = Array.from(this.messagesSync.keys());
                     for (const sessionId of sessionIdsToCatchUp) {
                         await this.getOrCreateMessagesSync(sessionId).invalidateAndAwait();
-                        gitStatusSync.invalidate(sessionId);
+                        scmStatusSync.invalidate(sessionId);
                     }
 
                     // Refresh artifacts/machines after sessions.
@@ -1808,7 +1808,7 @@ class Sync {
                             todos: () => this.todosSync.invalidateAndAwait(),
                         },
                         invalidateMessagesForSession: (sessionId) => this.getOrCreateMessagesSync(sessionId).invalidateAndAwait(),
-                        invalidateGitStatusForSession: (sessionId) => gitStatusSync.invalidate(sessionId),
+                        invalidateGitStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
                         applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
                         kvBulkGet,
                     });

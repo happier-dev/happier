@@ -20,7 +20,7 @@ import {
 import { toggleLocalVoiceTurnWithTracking } from '@/voice/local/localVoiceTelemetry';
 import { runVoiceMediatorCommitFlow } from '@/voice/mediator/commitFlow';
 import { getVoiceMediatorExtraActionChips } from '@/voice/mediator/extraActionChips';
-import { gitStatusSync } from '@/sync/git/gitStatusSync';
+import { scmStatusSync } from '@/scm/scmStatusSync';
 import { sessionAbort, resumeSession } from '@/sync/ops';
 import { storage, useIsDataReady, useLocalSetting, useMachine, useRealtimeStatus, useSessionMessages, useSessionPendingMessages, useSessionUsage, useSetting, useSettings } from '@/sync/domains/state/storage';
 import { canResumeSessionWithOptions, getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
@@ -595,7 +595,7 @@ function SessionViewLoaded({ sessionId, session }: { sessionId: string, session:
 
 
         // Initialize git status sync for this session
-        gitStatusSync.getSync(sessionId);
+        scmStatusSync.getSync(sessionId);
     }, [sessionId, realtimeStatus]);
 
     const showInactiveNotResumableNotice = inactiveUi.noticeKind === 'not-resumable';
