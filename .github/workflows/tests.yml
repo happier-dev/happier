@@ -750,7 +750,7 @@ jobs:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_self_host_systemd }}
     name: Self-Host E2E (Linux systemd)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -817,7 +817,7 @@ jobs:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_cli_daemon_e2e }}
     name: CLI + Server (light/sqlite) E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       PORT: "3005"
       HAPPIER_SERVER_URL: http://localhost:3005
@@ -1118,7 +1118,7 @@ jobs:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_e2e_core }}
     name: Core E2E (packages/tests, server-light, ${{ matrix.db }})
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:

@@ -13,11 +13,6 @@ on:
         required: false
         type: string
         default: ""
-      guard_environment:
-        description: Environment that stores RELEASE_BOT_APP_ID/RELEASE_BOT_PRIVATE_KEY
-        required: false
-        type: string
-        default: release-shared
 
 permissions:
   contents: read
@@ -25,7 +20,7 @@ permissions:
 jobs:
   authorize:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.guard_environment }}
+    environment: release-shared
     steps:
       - name: Resolve guard inputs
         id: params

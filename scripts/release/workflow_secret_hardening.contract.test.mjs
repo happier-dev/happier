@@ -95,14 +95,9 @@ test('secret-bearing workflows require release-admin actor guard before privileg
 
   assert.ok(guardParsed?.on?.workflow_call, 'release-actor-guard must be reusable via workflow_call');
   assert.equal(
-    guardParsed?.on?.workflow_call?.inputs?.guard_environment?.default,
-    'release-shared',
-    'release-actor-guard should default to release-shared environment for app credentials'
-  );
-  assert.equal(
     guardParsed?.jobs?.authorize?.environment,
-    '${{ inputs.guard_environment }}',
-    'release-actor-guard should load app credentials from the configured environment'
+    'release-shared',
+    'release-actor-guard should load app credentials from the release-shared environment'
   );
   assert.match(
     guardRaw,
