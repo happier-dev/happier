@@ -378,37 +378,34 @@ jobs:
 
           cd apps/ui
 
-	          echo "EAS builds created by this job:"
-	          node - <<'NODE'
-	          const fs = require('node:fs');
-	          const raw = fs.readFileSync('/tmp/eas_build.json', 'utf8').trim();
-	          const parsed = JSON.parse(raw);
-	          const builds = Array.isArray(parsed) ? parsed : [parsed];
-	          for (const build of builds) {
-	            const id = build?.id ?? build?.buildId ?? null;
-	            const platform = build?.platform ?? null;
-	            const status = build?.status ?? null;
-	            const detailsUrl =
-	              build?.buildDetailsPageUrl ||
-	              build?.buildDetailsUrl ||
-	              build?.detailsUrl ||
-	              build?.url ||
-	              null;
-	            console.log(`- ${platform ?? 'unknown'}: ${status ?? 'unknown'}${id ? ` (${id})` : ''}${detailsUrl ? ` ${detailsUrl}` : ''}`);
-	          }
-	          NODE
+          echo "EAS builds created by this job:"
+          node -e '
+            const fs = require("node:fs");
+            const raw = fs.readFileSync("/tmp/eas_build.json", "utf8").trim();
+            const parsed = JSON.parse(raw);
+            const builds = Array.isArray(parsed) ? parsed : [parsed];
+            for (const build of builds) {
+              const id = build?.id ?? build?.buildId ?? null;
+              const platform = build?.platform ?? null;
+              const status = build?.status ?? null;
+              const detailsUrl =
+                build?.buildDetailsPageUrl ||
+                build?.buildDetailsUrl ||
+                build?.detailsUrl ||
+                build?.url ||
+                null;
+              console.log(`- ${platform ?? "unknown"}: ${status ?? "unknown"}${id ? ` (${id})` : ""}${detailsUrl ? ` ${detailsUrl}` : ""}`);
+            }
+          '
 
-	          build_ids="$(node - <<'NODE'
-	          const fs = require('node:fs');
-	          const raw = fs.readFileSync('/tmp/eas_build.json', 'utf8').trim();
-	          const parsed = JSON.parse(raw);
-	          const builds = Array.isArray(parsed) ? parsed : [parsed];
-	          const ids = builds
-	            .map((b) => b?.id ?? b?.buildId ?? null)
-	            .filter(Boolean);
-	          process.stdout.write(ids.join(' '));
-	          NODE
-	          )"
+          build_ids="$(node -e '
+            const fs = require("node:fs");
+            const raw = fs.readFileSync("/tmp/eas_build.json", "utf8").trim();
+            const parsed = JSON.parse(raw);
+            const builds = Array.isArray(parsed) ? parsed : [parsed];
+            const ids = builds.map((b) => b?.id ?? b?.buildId ?? null).filter(Boolean);
+            process.stdout.write(ids.join(" "));
+          ')"
 
           if [ -z "${build_ids:-}" ]; then
             echo "No build IDs found in /tmp/eas_build.json; skipping EAS build:view diagnostics." >&2
@@ -417,33 +414,33 @@ jobs:
 
           for build_id in ${build_ids}; do
             echo "::group::eas build:view ${build_id}"
-	            view_path="/tmp/eas_build_view_${build_id}.json"
-	            if npx --yes eas-cli@14.2.0 build:view "${build_id}" --json > "${view_path}"; then
-	              VIEW_PATH="${view_path}" node - <<'NODE'
-	              const fs = require('node:fs');
-	              const path = process.env.VIEW_PATH;
-	              const raw = fs.readFileSync(path, 'utf8').trim();
-	              const parsed = JSON.parse(raw);
-	              const build = Array.isArray(parsed) ? parsed[0] : parsed;
-	              const error =
-	                build?.error?.message ||
-	                build?.error?.errors?.[0]?.message ||
-	                (typeof build?.error === 'string' ? build.error : null) ||
-	                null;
-	              const out = {
-	                id: build?.id ?? null,
-	                platform: build?.platform ?? null,
-	                status: build?.status ?? null,
-	                detailsUrl: build?.buildDetailsPageUrl || build?.buildDetailsUrl || build?.detailsUrl || null,
-	                error,
-	                logs: build?.logs?.url || build?.logUrl || null,
-	                artifacts: build?.artifacts ?? null,
-	              };
-	              console.log(JSON.stringify(out, null, 2));
-	              NODE
-	            else
-	              echo "eas build:view failed for ${build_id}" >&2
-	            fi
+            view_path="/tmp/eas_build_view_${build_id}.json"
+            if npx --yes eas-cli@14.2.0 build:view "${build_id}" --json > "${view_path}"; then
+              VIEW_PATH="${view_path}" node -e '
+                const fs = require("node:fs");
+                const path = process.env.VIEW_PATH;
+                const raw = fs.readFileSync(path, "utf8").trim();
+                const parsed = JSON.parse(raw);
+                const build = Array.isArray(parsed) ? parsed[0] : parsed;
+                const error =
+                  build?.error?.message ||
+                  build?.error?.errors?.[0]?.message ||
+                  (typeof build?.error === "string" ? build.error : null) ||
+                  null;
+                const out = {
+                  id: build?.id ?? null,
+                  platform: build?.platform ?? null,
+                  status: build?.status ?? null,
+                  detailsUrl: build?.buildDetailsPageUrl || build?.buildDetailsUrl || build?.detailsUrl || null,
+                  error,
+                  logs: build?.logs?.url || build?.logUrl || null,
+                  artifacts: build?.artifacts ?? null,
+                };
+                console.log(JSON.stringify(out, null, 2));
+              '
+            else
+              echo "eas build:view failed for ${build_id}" >&2
+            fi
             echo "::endgroup::"
           done
 
