@@ -6,6 +6,23 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+function formatSpawnSyncResult(result) {
+  const stdout = String(result.stdout || '').trim();
+  const stderr = String(result.stderr || '').trim();
+  const error = result.error ? String(result.error.stack || result.error.message || result.error) : '';
+  const status = typeof result.status === 'number' ? String(result.status) : '<null>';
+  const signal = result.signal ? String(result.signal) : '<null>';
+  return [
+    `status=${status}`,
+    `signal=${signal}`,
+    error ? `error=${error}` : '',
+    stdout ? `stdout:\n${stdout}` : '',
+    stderr ? `stderr:\n${stderr}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 function commandExists(cmd) {
   return spawnSync('bash', ['-lc', `command -v ${cmd} >/dev/null 2>&1`], { stdio: 'ignore' }).status === 0;
 }
@@ -63,9 +80,11 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
       // `inherit` makes it easier to read interactively, but on CI failures we need the full output.
       // Increase buffer because build logs can be large.
       maxBuffer: 50 * 1024 * 1024,
+      // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
+      timeout: 15 * 60 * 1000,
     }
   );
-  assert.equal(buildCli.status, 0, `${buildCli.stderr || ''}\n${buildCli.stdout || ''}`.trim());
+  assert.equal(buildCli.status, 0, formatSpawnSyncResult(buildCli));
 
   const cliArtifactPath = join(repoRoot, 'dist', 'release-assets', 'cli', `happier-v${version}-${target}.tar.gz`);
   const cliExtract = await extractBinaryFromArtifact({ artifactPath: cliArtifactPath, binaryName: 'happier' });
@@ -101,9 +120,11 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
         encoding: 'utf-8',
         env: { ...process.env },
         maxBuffer: 50 * 1024 * 1024,
+        // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
+        timeout: 15 * 60 * 1000,
       }
     );
-    assert.equal(buildServer.status, 0, `${buildServer.stderr || ''}\n${buildServer.stdout || ''}`.trim());
+    assert.equal(buildServer.status, 0, formatSpawnSyncResult(buildServer));
 
     const serverArtifactPath = join(repoRoot, 'dist', 'release-assets', 'server', `happier-server-v${version}-${target}.tar.gz`);
     const serverExtract = await extractBinaryFromArtifact({ artifactPath: serverArtifactPath, binaryName: 'happier-server' });

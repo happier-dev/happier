@@ -6,6 +6,23 @@ import { join, resolve } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+function formatSpawnSyncResult(result) {
+  const stdout = String(result.stdout || '').trim();
+  const stderr = String(result.stderr || '').trim();
+  const error = result.error ? String(result.error.stack || result.error.message || result.error) : '';
+  const status = typeof result.status === 'number' ? String(result.status) : '<null>';
+  const signal = result.signal ? String(result.signal) : '<null>';
+  return [
+    `status=${status}`,
+    `signal=${signal}`,
+    error ? `error=${error}` : '',
+    stdout ? `stdout:\n${stdout}` : '',
+    stderr ? `stderr:\n${stderr}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 function commandExists(cmd) {
   return spawnSync('bash', ['-lc', `command -v ${cmd} >/dev/null 2>&1`], { stdio: 'ignore' }).status === 0;
 }
@@ -44,9 +61,12 @@ test('compiled hstack binary runs self-host help outside repo checkout', async (
       env: {
         ...process.env,
       },
+      // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
+      timeout: 15 * 60 * 1000,
+      maxBuffer: 50 * 1024 * 1024,
     }
   );
-  assert.equal(build.status, 0, build.stderr || build.stdout);
+  assert.equal(build.status, 0, formatSpawnSyncResult(build));
 
   const artifact = join(repoRoot, 'dist', 'release-assets', 'stack', `hstack-v${version}-${target}.tar.gz`);
   const extractDir = await mkdtemp(join(tmpdir(), 'hstack-binary-smoke-'));
