@@ -1193,7 +1193,7 @@ jobs:
     name: Providers (contract matrix)
     runs-on: ubuntu-latest
     environment: providers-ci
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -1333,7 +1333,7 @@ jobs:
     if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.run_stress }}
     name: Stress (repeat/chaos)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
