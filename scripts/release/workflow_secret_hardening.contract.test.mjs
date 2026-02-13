@@ -143,6 +143,18 @@ test('secret-bearing workflows require release-admin actor guard before privileg
     'release-actor-guard should fail closed on authorization or unexpected API responses'
   );
 
+  const { raw: deployRaw } = await loadWorkflow('deploy.yml');
+  assert.match(
+    deployRaw,
+    /Refusing push-triggered deploy from unauthorized actor/,
+    'deploy workflow must reject unauthorized push-triggered deploys before secrets are accessible'
+  );
+  assert.match(
+    deployRaw,
+    /happier-release-bot\[bot\]/,
+    'deploy workflow must explicitly allow the release bot actor for push-triggered deploys'
+  );
+
   const guardJob = 'release_actor_guard';
   const expectedWiring = [
     ['release.yml', 'gate'],

@@ -65,11 +65,20 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Skip actor guard for deploy/* push events
+      - name: Authorize deploy/* push actor
         if: github.event_name == 'push'
         run: |
           set -euo pipefail
-          echo "Push-triggered deploy; relying on environment protection rules + branch protection."
+          actor="${GITHUB_ACTOR:-}"
+          # Deploy branches are promoted by the release GitHub App. We only allow
+          # push-triggered deploys from that bot actor (and the repo owner as an escape hatch).
+          case "$actor" in
+            happier-release-bot[bot]|leeroybrun) ;;
+            *)
+              echo "Refusing push-triggered deploy from unauthorized actor: '${actor}'." >&2
+              exit 1
+              ;;
+          esac
 
       - name: Checkout
         if: github.event_name != 'push'
