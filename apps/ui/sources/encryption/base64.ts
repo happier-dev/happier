@@ -1,3 +1,5 @@
+const BASE64_ENCODE_CHUNK_SIZE = 0x8000;
+
 export function decodeBase64(base64: string, encoding: 'base64' | 'base64url' = 'base64'): Uint8Array {
     let normalizedBase64 = base64;
     
@@ -25,12 +27,13 @@ export function decodeBase64(base64: string, encoding: 'base64' | 'base64url' = 
 
 export function encodeBase64(buffer: Uint8Array, encoding: 'base64' | 'base64url' = 'base64'): string {
     // Avoid call-stack overflows on large payloads (e.g. SCM snapshots).
-    const chunkSize = 0x8000;
-    let binaryString = '';
-    for (let i = 0; i < buffer.length; i += chunkSize) {
-        const chunk = buffer.subarray(i, i + chunkSize);
-        binaryString += String.fromCharCode(...chunk);
+    // Use chunk array + join to keep memory growth linear for multi-MB payloads.
+    const chunks: string[] = [];
+    for (let i = 0; i < buffer.length; i += BASE64_ENCODE_CHUNK_SIZE) {
+        const chunk = buffer.subarray(i, i + BASE64_ENCODE_CHUNK_SIZE);
+        chunks.push(String.fromCharCode(...chunk));
     }
+    const binaryString = chunks.join('');
     const base64 = btoa(binaryString);
     
     if (encoding === 'base64url') {
