@@ -41,6 +41,19 @@ export const DEFAULT_BUG_REPORTS_FEATURE: BugReportsFeature = {
   uploadTimeoutMs: 120000,
   contextWindowMs: BUG_REPORT_DEFAULT_CONTEXT_WINDOW_MS,
 };
+
+export const AutomationsFeatureSchema = z.object({
+  enabled: z.boolean(),
+  existingSessionTarget: z.boolean(),
+});
+
+export type AutomationsFeature = z.infer<typeof AutomationsFeatureSchema>;
+
+export const DEFAULT_AUTOMATIONS_FEATURE: AutomationsFeature = {
+  enabled: false,
+  existingSessionTarget: false,
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
 }
@@ -92,6 +105,7 @@ export function coerceBugReportsFeatureFromFeaturesPayload(payload: unknown): Bu
 export const FeaturesResponseSchema = z.object({
   features: z.object({
     bugReports: BugReportsFeatureSchema.optional().default(DEFAULT_BUG_REPORTS_FEATURE),
+    automations: AutomationsFeatureSchema.optional().default(DEFAULT_AUTOMATIONS_FEATURE),
     sharing: z.object({
       session: z.object({ enabled: z.boolean() }),
       public: z.object({ enabled: z.boolean() }),

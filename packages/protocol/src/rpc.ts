@@ -48,6 +48,9 @@ export const RPC_ERROR_MESSAGES = {
 export const SESSION_RPC_METHODS = {
   VOICE_MEDIATOR_START: 'voice.mediator.start',
   VOICE_MEDIATOR_SEND_TURN: 'voice.mediator.sendTurn',
+  VOICE_MEDIATOR_SEND_TURN_STREAM_START: 'voice.mediator.sendTurnStream.start',
+  VOICE_MEDIATOR_SEND_TURN_STREAM_READ: 'voice.mediator.sendTurnStream.read',
+  VOICE_MEDIATOR_SEND_TURN_STREAM_CANCEL: 'voice.mediator.sendTurnStream.cancel',
   VOICE_MEDIATOR_COMMIT: 'voice.mediator.commit',
   VOICE_MEDIATOR_STOP: 'voice.mediator.stop',
   VOICE_MEDIATOR_GET_MODELS: 'voice.mediator.getModels',

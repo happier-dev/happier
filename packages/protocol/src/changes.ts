@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const ChangeKindSchema = z.enum([
   'account',
+  'automation',
   'artifact',
   'feed',
   'friends',
@@ -38,4 +39,3 @@ export const CursorGoneErrorSchema = z.object({
 }).strict();
 
 export type CursorGoneError = z.infer<typeof CursorGoneErrorSchema>;
-
