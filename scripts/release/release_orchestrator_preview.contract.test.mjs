@@ -114,3 +114,11 @@ test('publish-github-release skips asset upload when rolling tag move is blocked
     'asset upload must be gated by rolling tag success when using rolling releases',
   );
 });
+
+test('promote-ui native_submit handles preview platform credential gaps without aborting all submissions', async () => {
+  const raw = await loadWorkflow('promote-ui.yml');
+  assert.match(raw, /- name: Expo submit[\s\S]*?submit_platform\(\) \{/);
+  assert.match(raw, /for submit_platform_name in ios android; do/);
+  assert.match(raw, /if \[ "\$\{\{ inputs\.environment \}\}" = "preview" \]; then/);
+  assert.match(raw, /::warning::Expo submit failed for/);
+});

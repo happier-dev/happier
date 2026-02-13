@@ -632,7 +632,32 @@ jobs:
             exit 1
           fi
           cd apps/ui
-          npx --yes eas-cli@18.0.1 submit --platform "${{ inputs.expo_platform }}" --latest --non-interactive
+          submit_platform() {
+            local platform="$1"
+            npx --yes eas-cli@18.0.1 submit --platform "${platform}" --latest --non-interactive
+          }
+
+          if [ "${{ inputs.expo_platform }}" = "all" ]; then
+            submit_failures=0
+            for submit_platform_name in ios android; do
+              if ! submit_platform "${submit_platform_name}"; then
+                if [ "${{ inputs.environment }}" = "preview" ]; then
+                  echo "::warning::Expo submit failed for \${submit_platform_name} in preview; continuing so successful platform submissions are preserved."
+                  submit_failures=1
+                  continue
+                fi
+                echo "Expo submit failed for platform '\${submit_platform_name}' in production." >&2
+                exit 1
+              fi
+            done
+
+            if [ "${submit_failures}" -eq 1 ]; then
+              echo "Preview submission completed with one or more platform failures." >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+
+          submit_platform "${{ inputs.expo_platform }}"
 
       - name: Promote source ref to deploy branch (web)
         if: inputs.deploy_web
