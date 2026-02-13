@@ -60,17 +60,22 @@ concurrency:
 
 jobs:
   release_actor_guard:
-    # On push to deploy/* branches, we rely on environment branch policies + branch protection.
-    # Manual/workflow_call triggers must pass the actor guard before deploying.
-    if: ${{ github.event_name != 'push' && (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') }}
     name: Release actor guard
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
+      - name: Skip actor guard for deploy/* push events
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          echo "Push-triggered deploy; relying on environment protection rules + branch protection."
+
       - name: Checkout
+        if: github.event_name != 'push'
         uses: actions/checkout@v4
       - name: Authorize release actor
+        if: github.event_name != 'push'
         uses: ./.github/actions/release-actor-guard
         with:
           team_slug: release-admins
@@ -80,7 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     # Deploy branches are promoted from release workflows. Those pushes may be authored by bots,
     # and we prefer deploying via explicit workflow_call (to avoid relying on push-trigger semantics).
-    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || startsWith(github.ref_name, 'deploy/production/') || startsWith(github.ref_name, 'deploy/preview/')) && (github.event_name == 'push' || needs.release_actor_guard.result == 'success') }}
+    if: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || startsWith(github.ref_name, 'deploy/production/') || startsWith(github.ref_name, 'deploy/preview/')) && needs.release_actor_guard.result == 'success' }}
     environment: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.environment || (startsWith(github.ref_name, 'deploy/production/') && 'production' || 'preview') }}
     steps:
       - name: Enforce trusted refs for manual dispatch
