@@ -10,6 +10,7 @@ import { Credentials } from '@/persistence';
 
 import { resolveMachineEncryptionContext, resolveSessionEncryptionContext } from './client/encryptionKey';
 import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
+import { openSessionDataEncryptionKey } from './client/openSessionDataEncryptionKey';
 import {
   shouldReturnMinimalMachineForGetOrCreateMachineError,
   shouldReturnNullForGetOrCreateSessionError,
@@ -94,48 +95,99 @@ export class ApiClient {
     const { encryptionKey, encryptionVariant, dataEncryptionKey } = resolveSessionEncryptionContext(this.credential);
     const sessionsUrl = `${resolveServerHttpBaseUrl()}/v1/sessions`;
 
-    // Create session
-    try {
-      const response = await axios.post<CreateSessionResponse>(
-        sessionsUrl,
-        {
-          tag: opts.tag,
-          metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
-          agentState: opts.state ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.state)) : null,
-          dataEncryptionKey: dataEncryptionKey ? encodeBase64(dataEncryptionKey) : null,
-        },
-        {
-          headers: {
-            'Authorization': `Bearer ${this.credential.token}`,
-            'Content-Type': 'application/json'
-          },
-          timeout: 60000 // 1 minute timeout for very bad network connections
-        }
-      )
+    const resolvePositiveIntEnv = (raw: string | undefined, fallback: number, bounds: { min: number; max: number }): number => {
+      const value = (raw ?? '').trim();
+      if (!value) return fallback;
+      const parsed = Number.parseInt(value, 10);
+      if (!Number.isFinite(parsed)) return fallback;
+      return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(parsed)));
+    };
 
-      logger.debug(`Session created/loaded: ${response.data.session.id} (tag: ${opts.tag})`)
-      let raw = response.data.session;
+    const retryMaxAttempts = resolvePositiveIntEnv(process.env.HAPPIER_API_CREATE_SESSION_RETRY_MAX_ATTEMPTS, 10, { min: 1, max: 50 });
+    const retryBaseDelayMs = resolvePositiveIntEnv(process.env.HAPPIER_API_CREATE_SESSION_RETRY_BASE_DELAY_MS, 250, { min: 0, max: 30_000 });
+    const retryMaxDelayMs = resolvePositiveIntEnv(process.env.HAPPIER_API_CREATE_SESSION_RETRY_MAX_DELAY_MS, 2_000, { min: 0, max: 30_000 });
+
+    const sleep = async (ms: number): Promise<void> => {
+      if (ms <= 0) return;
+      await new Promise<void>((resolve) => setTimeout(resolve, ms));
+    };
+
+    // Create session (retry transient 5xx, but do not enter offline mode for 5xx).
+    for (let attempt = 1; attempt <= retryMaxAttempts; attempt += 1) {
+      try {
+        const response = await axios.post<CreateSessionResponse>(
+          sessionsUrl,
+          {
+            tag: opts.tag,
+            metadata: encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.metadata)),
+            agentState: opts.state ? encodeBase64(encrypt(encryptionKey, encryptionVariant, opts.state)) : null,
+            dataEncryptionKey: dataEncryptionKey ? encodeBase64(dataEncryptionKey) : null,
+          },
+          {
+            headers: {
+              'Authorization': `Bearer ${this.credential.token}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 60000 // 1 minute timeout for very bad network connections
+          }
+        )
+
+        logger.debug(`Session created/loaded: ${response.data.session.id} (tag: ${opts.tag})`)
+        let raw = response.data.session;
+
+      // Prefer the session's published data key, but keep backward compatibility with
+      // older sessions that have no dataEncryptionKey (machineKey-as-session-key fallback).
+      let sessionEncryptionKey = encryptionKey;
+      if (this.credential.encryption.type === 'dataKey') {
+        const serverEncryptedDataKeyRaw = (raw as any).dataEncryptionKey;
+        const opened = openSessionDataEncryptionKey({
+          credential: this.credential,
+          encryptedDataEncryptionKeyBase64: serverEncryptedDataKeyRaw,
+        });
+        if (typeof serverEncryptedDataKeyRaw === 'string' && serverEncryptedDataKeyRaw.trim().length > 0 && !opened) {
+          logger.debug('[API] Failed to open session dataEncryptionKey (dataKey account)', {
+            sessionId: raw.id,
+          });
+          throw new Error('Failed to open session dataEncryptionKey');
+        }
+        sessionEncryptionKey = opened ?? this.credential.encryption.machineKey;
+      }
+
       let session: Session = {
         id: raw.id,
         seq: raw.seq,
-        metadata: decrypt(encryptionKey, encryptionVariant, decodeBase64(raw.metadata)),
+        metadata: decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.metadata)),
         metadataVersion: raw.metadataVersion,
-        agentState: raw.agentState ? decrypt(encryptionKey, encryptionVariant, decodeBase64(raw.agentState)) : null,
+        agentState: raw.agentState ? decrypt(sessionEncryptionKey, encryptionVariant, decodeBase64(raw.agentState)) : null,
         agentStateVersion: raw.agentStateVersion,
-        encryptionKey: encryptionKey,
+        encryptionKey: sessionEncryptionKey,
         encryptionVariant: encryptionVariant
       }
       return session;
-    } catch (error) {
-      // Never log raw Axios errors: they can contain bearer tokens or vendor keys.
-      logger.debug('[API] [ERROR] Failed to get or create session:', serializeAxiosErrorForLog(error));
+      } catch (error) {
+        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+        const isRetryable5xx = typeof status === 'number' && status >= 500 && status < 600;
+        if (isRetryable5xx && attempt < retryMaxAttempts) {
+          // Do not log raw Axios errors: they can contain bearer tokens or vendor keys.
+          logger.debug('[API] [WARN] getOrCreateSession transient server error, retrying:', serializeAxiosErrorForLog(error));
+          const delayMs = Math.min(retryMaxDelayMs, retryBaseDelayMs * Math.pow(2, attempt - 1));
+          await sleep(delayMs);
+          continue;
+        }
 
-      if (shouldReturnNullForGetOrCreateSessionError(error, { url: sessionsUrl })) {
-        return null;
+        // Never log raw Axios errors: they can contain bearer tokens or vendor keys.
+        logger.debug('[API] [ERROR] Failed to get or create session:', serializeAxiosErrorForLog(error));
+
+        if (shouldReturnNullForGetOrCreateSessionError(error, { url: sessionsUrl })) {
+          return null;
+        }
+
+        throw new Error(`Failed to get or create session: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
-
-      throw new Error(`Failed to get or create session: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+
+    // Unreachable (retryMaxAttempts is min 1); keep TS happy.
+    return null;
   }
 
   /**

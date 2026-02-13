@@ -33,20 +33,6 @@ export function shouldReturnNullForGetOrCreateSessionError(
     return true;
   }
 
-  // Handle 5xx server errors - use offline mode with auto-reconnect
-  if (axios.isAxiosError(error) && error.response?.status) {
-    const status = error.response.status;
-    if (status >= 500) {
-      connectionState.fail({
-        operation: 'Session creation',
-        errorCode: String(status),
-        url: params.url,
-        details: ['Server encountered an error, will retry automatically'],
-      });
-      return true;
-    }
-  }
-
   return false;
 }
 

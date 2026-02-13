@@ -65,10 +65,23 @@ const testMachineMetadata = {
 
 describe('Api server error handling', () => {
     let api: ApiClient;
+    const previousRetryEnv: Record<string, string | undefined> = {};
 
     beforeEach(async () => {
         vi.clearAllMocks();
         connectionState.reset(); // Reset offline state between tests
+
+        // Keep retry loops fast and deterministic in unit tests.
+        for (const [key, value] of [
+            ['HAPPIER_API_CREATE_SESSION_RETRY_MAX_ATTEMPTS', '3'],
+            ['HAPPIER_API_CREATE_SESSION_RETRY_BASE_DELAY_MS', '0'],
+            ['HAPPIER_API_CREATE_SESSION_RETRY_MAX_DELAY_MS', '0'],
+        ] as const) {
+            if (!Object.prototype.hasOwnProperty.call(previousRetryEnv, key)) {
+                previousRetryEnv[key] = process.env[key];
+            }
+            process.env[key] = value;
+        }
 
         // Create a mock credential
         const mockCredential = {
@@ -80,6 +93,19 @@ describe('Api server error handling', () => {
         };
 
         api = await ApiClient.create(mockCredential);
+    });
+
+    afterEach(() => {
+        for (const [key, value] of Object.entries(previousRetryEnv)) {
+            if (value === undefined) {
+                delete process.env[key];
+            } else {
+                process.env[key] = value;
+            }
+        }
+        for (const key of Object.keys(previousRetryEnv)) {
+            delete previousRetryEnv[key];
+        }
     });
 
     describe('getOrCreateSession', () => {
@@ -102,20 +128,14 @@ describe('Api server error handling', () => {
                 response: { status: 500 }
             });
 
-            const result = await api.getOrCreateSession({
+            await expect(api.getOrCreateSession({
                 tag: 'test-tag',
                 metadata: testMetadata,
                 state: null
-            });
-
-            expect(result).toBeNull();
+            })).rejects.toThrow(/Failed to get or create session/i);
 
             const debugMock = (logger as any).debug as any;
-            const call = debugMock.mock.calls.find((c: any[]) =>
-                typeof c?.[0] === 'string' && c[0].includes('Failed to get or create session')
-            );
-            expect(call).toBeTruthy();
-            const serialized = JSON.stringify(call);
+            const serialized = JSON.stringify(debugMock.mock.calls);
             expect(serialized).not.toContain(leakedBearer);
             expect(serialized).not.toContain(leakedVendorKey);
             expect(serialized).not.toContain('token=sekret');
@@ -217,7 +237,7 @@ describe('Api server error handling', () => {
             consoleSpy.mockRestore();
         });
 
-        it('should return null when server returns 500 Internal Server Error', async () => {
+        it('throws when server returns 500 Internal Server Error (do not enter offline mode)', async () => {
             connectionState.reset();
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -228,23 +248,21 @@ describe('Api server error handling', () => {
                     isAxiosError: true
                 });
 
-                const result = await api.getOrCreateSession({
-                    tag: 'test-tag',
-                    metadata: testMetadata,
-                    state: null
-                });
+                await expect(
+                    api.getOrCreateSession({
+                        tag: 'test-tag',
+                        metadata: testMetadata,
+                        state: null
+                    })
+                ).rejects.toThrow(/Failed to get or create session/i);
 
-                expect(result).toBeNull();
-                expect(connectionState.isOffline()).toBe(true);
-                expect(consoleSpy).toHaveBeenCalledWith(
-                    expect.stringContaining('server unreachable')
-                );
+                expect(connectionState.isOffline()).toBe(false);
             } finally {
                 consoleSpy.mockRestore();
             }
         });
 
-        it('should return null when server returns 503 Service Unavailable', async () => {
+        it('throws when server returns 503 Service Unavailable (do not enter offline mode)', async () => {
             connectionState.reset();
             const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
@@ -255,17 +273,15 @@ describe('Api server error handling', () => {
                     isAxiosError: true
                 });
 
-                const result = await api.getOrCreateSession({
-                    tag: 'test-tag',
-                    metadata: testMetadata,
-                    state: null
-                });
+                await expect(
+                    api.getOrCreateSession({
+                        tag: 'test-tag',
+                        metadata: testMetadata,
+                        state: null
+                    })
+                ).rejects.toThrow(/Failed to get or create session/i);
 
-                expect(result).toBeNull();
-                expect(connectionState.isOffline()).toBe(true);
-                expect(consoleSpy).toHaveBeenCalledWith(
-                    expect.stringContaining('server unreachable')
-                );
+                expect(connectionState.isOffline()).toBe(false);
             } finally {
                 consoleSpy.mockRestore();
             }
