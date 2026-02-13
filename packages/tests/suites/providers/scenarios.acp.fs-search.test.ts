@@ -12,6 +12,36 @@ import {
   makeAcpReadMissingFileScenario,
   makeAcpSearchLsEquivalenceScenario,
 } from '../../src/testkit/providers/scenarios/scenarios.acp';
+import type { ProviderFixtureExamples, ProviderTraceEvent } from '../../src/testkit/providers/types';
+
+function buildVerifyContext(input: {
+  workspaceDir: string;
+  fixtures?: ProviderFixtureExamples;
+  traceEvents?: ProviderTraceEvent[];
+}) {
+  return {
+    workspaceDir: input.workspaceDir,
+    fixtures: { examples: input.fixtures ?? {} },
+    traceEvents: input.traceEvents ?? [],
+    baseUrl: 'http://127.0.0.1:1',
+    token: 'token',
+    sessionId: 'session',
+    resumeSessionId: null,
+    secret: new Uint8Array(32),
+    resumeId: null,
+  };
+}
+
+function traceEvent(payload: unknown): ProviderTraceEvent {
+  return {
+    v: 1,
+    sessionId: 'session',
+    protocol: 'acp',
+    provider: 'opencode',
+    kind: 'tool-call',
+    payload,
+  };
+}
 
 describe('providers: ACP scenario builders (fs/search)', () => {
   it('builds a multi-file edit scenario that requires two file paths to be present in tool-call fixtures', () => {
@@ -27,11 +57,12 @@ describe('providers: ACP scenario builders (fs/search)', () => {
 
     expect(scenario.id).toBe('multi_file_edit_in_workspace');
     expect(Array.isArray(scenario.requiredAnyFixtureKeys)).toBe(true);
+    const steps = scenario.steps ?? [];
     expect(Array.isArray(scenario.steps)).toBe(true);
-    expect(scenario.steps).toHaveLength(files.length);
+    expect(steps).toHaveLength(files.length);
 
     for (const file of files) {
-      const step = scenario.steps.find((item) => typeof item?.id === 'string' && item.id.includes(file.filename));
+      const step = steps.find((item) => typeof item?.id === 'string' && item.id.includes(file.filename));
       expect(step).toBeTruthy();
       const needles = step?.satisfaction?.requiredTraceSubstrings ?? [];
       expect(needles.some((needle) => needle.includes(file.filename))).toBe(true);
@@ -52,17 +83,19 @@ describe('providers: ACP scenario builders (fs/search)', () => {
         ],
       });
 
-      await scenario.verify({
-        workspaceDir,
-        fixtures: {
-          examples: {
+      const verify = scenario.verify;
+      if (!verify) throw new Error('Scenario verify is required');
+      await verify(
+        buildVerifyContext({
+          workspaceDir,
+          fixtures: {
             'acp/opencode/tool-call/Patch': [
               { payload: { input: { file_paths: [join(workspaceDir, 'a.txt')] } } },
               { payload: { input: { file_paths: [join(workspaceDir, 'b.txt')] } } },
             ],
           },
-        },
-      });
+        }),
+      );
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
     }
@@ -88,10 +121,11 @@ describe('providers: ACP scenario builders (fs/search)', () => {
       token: 'SEARCH_LS_TOKEN',
     });
 
+    const steps = scenario.steps ?? [];
     expect(Array.isArray(scenario.steps)).toBe(true);
-    expect(scenario.steps).toHaveLength(2);
-    expect(scenario.steps[0]?.id).toBe('ls');
-    expect(scenario.steps[1]?.id).toBe('search');
+    expect(steps).toHaveLength(2);
+    expect(steps[0]?.id).toBe('ls');
+    expect(steps[1]?.id).toBe('search');
 
     const flat = (scenario.requiredAnyFixtureKeys ?? []).flat();
     expect(flat.some((key) => key.includes('/tool-call/Bash'))).toBe(true);
@@ -167,12 +201,16 @@ describe('providers: ACP scenario builders (fs/search)', () => {
         after: 'AFTER',
       });
 
-      await scenario.verify({
-        workspaceDir,
-        traceEvents: [
-          { payload: { type: 'tool-call', name: 'Patch', input: { changes: { one: { before: 'BEFORE', after: 'AFTER' } } } } },
-        ],
-      });
+      const verify = scenario.verify;
+      if (!verify) throw new Error('Scenario verify is required');
+      await verify(
+        buildVerifyContext({
+          workspaceDir,
+          traceEvents: [
+            traceEvent({ type: 'tool-call', name: 'Patch', input: { changes: { one: { before: 'BEFORE', after: 'AFTER' } } } }),
+          ],
+        }),
+      );
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
     }
@@ -201,12 +239,18 @@ describe('providers: ACP scenario builders (fs/search)', () => {
       await writeFile(join(workspaceDir, 'a.txt'), 'A_AFTER\n', 'utf8');
       await writeFile(join(workspaceDir, 'b.txt'), 'B_AFTER\n', 'utf8');
 
-      await scenario.verify?.({
-        workspaceDir,
-        traceEvents: [
-          { payload: { type: 'tool-call', name: 'Patch', input: { changes: { 'a.txt': { before: 'A_BEFORE', after: 'A_AFTER' } } } } },
-        ],
-      });
+      await scenario.verify?.(
+        buildVerifyContext({
+          workspaceDir,
+          traceEvents: [
+            traceEvent({
+              type: 'tool-call',
+              name: 'Patch',
+              input: { changes: { 'a.txt': { before: 'A_BEFORE', after: 'A_AFTER' } } },
+            }),
+          ],
+        }),
+      );
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
     }
@@ -225,7 +269,9 @@ describe('providers: ACP scenario builders (fs/search)', () => {
 
     const workspaceDir = await mkdtemp(join(tmpdir(), 'happier-acp-missing-'));
     try {
-      await scenario.verify({ workspaceDir });
+      const verify = scenario.verify;
+      if (!verify) throw new Error('Scenario verify is required');
+      await verify(buildVerifyContext({ workspaceDir }));
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
     }

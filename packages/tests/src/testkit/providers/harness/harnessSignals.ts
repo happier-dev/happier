@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { envFlag } from '../../env';
 import { parsePositiveInt } from '../../numbers';
 
-import type { ProviderScenario } from './types';
+import type { ProviderScenario } from '../types';
 
 const fatalAssistantErrorSubstrings = [
   'authentication required',
@@ -19,6 +19,9 @@ const fatalAssistantErrorSubstrings = [
 
 const fatalCliLogSubstrings = [
   'out of credits',
+  'usage_limit_exceeded',
+  'hit your usage limit',
+  'usage limit',
   'failed to connect mcp servers',
   'client failed to connect',
   'authentication required',
@@ -41,6 +44,8 @@ const providerUnavailabilityErrorSubstrings = [
   'failed to connect mcp servers',
   'client failed to connect',
   'out of credits',
+  'usage_limit_exceeded',
+  'usage limit',
   'unauthorized',
   'api key',
   'verify your account',
@@ -53,6 +58,69 @@ const providerUnavailabilityErrorSubstrings = [
 
 export function resolveResumeSessionMode(resume: ProviderScenario['resume'] | undefined): 'same' | 'fresh' {
   return resume && resume.freshSession === true ? 'fresh' : 'same';
+}
+
+export function shouldStartProviderDaemon(params: {
+  providerProtocol: string;
+  hasPostSatisfyRunHook: boolean;
+}): boolean {
+  return params.providerProtocol === 'acp';
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as UnknownRecord;
+}
+
+export function countTaskCompleteMessages(messages: unknown[]): number {
+  let count = 0;
+  for (const msg of messages) {
+    const record = asRecord(msg);
+    if (record?.type === 'task_complete') count++;
+  }
+  return count;
+}
+
+export function countTaskCompleteTraceEvents(events: unknown[]): number {
+  let count = 0;
+  for (const event of events) {
+    const record = asRecord(event);
+    if (record?.kind === 'task_complete') count++;
+  }
+  return count;
+}
+
+export function resolveTaskCompleteBaselineAtStepStart(params: {
+  providerProtocol: string;
+  allowInFlightSteer?: boolean;
+  traceEvents: unknown[];
+  decodedMessagesSeen: unknown[];
+}): number | null {
+  if (params.allowInFlightSteer) return null;
+  if (params.providerProtocol !== 'acp') return null;
+  return Math.max(
+    countTaskCompleteMessages(params.decodedMessagesSeen),
+    countTaskCompleteTraceEvents(params.traceEvents),
+  );
+}
+
+export function shouldEnqueueNextStepAfterSatisfaction(params: {
+  providerProtocol: string;
+  allowInFlightSteer?: boolean;
+  traceEvents: unknown[];
+  decodedMessagesSeen: unknown[];
+  taskCompleteCountAtStepSatisfaction: number | null;
+}): boolean {
+  if (params.allowInFlightSteer) return true;
+  if (params.providerProtocol !== 'acp') return true;
+  if (params.taskCompleteCountAtStepSatisfaction == null) return false;
+  const taskCompleteCount = Math.max(
+    countTaskCompleteMessages(params.decodedMessagesSeen),
+    countTaskCompleteTraceEvents(params.traceEvents),
+  );
+  return taskCompleteCount > params.taskCompleteCountAtStepSatisfaction;
 }
 
 export function isSkippableProviderUnavailabilityError(error: unknown): boolean {
@@ -96,19 +164,33 @@ export function extractFatalAgentErrorMessage(messages: unknown[]): string | nul
   return null;
 }
 
-export async function readFatalProviderErrorFromCliLogs(params: { cliHome: string }): Promise<string | null> {
+export async function readFatalProviderErrorFromCliLogs(params: {
+  cliHome: string;
+  extraLogPaths?: string[];
+}): Promise<string | null> {
   const logsDir = join(params.cliHome, 'logs');
-  if (!existsSync(logsDir)) return null;
+  const candidateSet = new Set<string>();
+  if (existsSync(logsDir)) {
+    const entries = await readdir(logsDir, { withFileTypes: true }).catch(() => []);
+    for (const filePath of entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.log'))
+      .map((entry) => join(logsDir, entry.name))
+      .sort()
+      .slice(-4)
+      .reverse()) {
+      candidateSet.add(filePath);
+    }
+  }
 
-  const entries = await readdir(logsDir, { withFileTypes: true }).catch(() => []);
-  const logFiles = entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith('.log'))
-    .map((entry) => join(logsDir, entry.name))
-    .sort()
-    .slice(-4)
-    .reverse();
+  for (const extraPath of params.extraLogPaths ?? []) {
+    const normalized = String(extraPath ?? '').trim();
+    if (!normalized || !normalized.endsWith('.log')) continue;
+    candidateSet.add(normalized);
+  }
 
-  for (const filePath of logFiles) {
+  const candidates = [...candidateSet];
+
+  for (const filePath of candidates) {
     const raw = await readFile(filePath, 'utf8').catch(() => '');
     if (!raw) continue;
 
@@ -126,6 +208,9 @@ export async function readFatalProviderErrorFromCliLogs(params: { cliHome: strin
     }
 
     if (fatal === 'out of credits') return 'Out of credits';
+    if (fatal === 'usage_limit_exceeded' || fatal === 'hit your usage limit' || fatal === 'usage limit') {
+      return 'Usage limit exceeded';
+    }
     if (fatal === 'failed to connect mcp servers' || fatal === 'client failed to connect') {
       return 'Failed to connect MCP servers';
     }
@@ -164,9 +249,14 @@ export function resolveProviderInactivityTimeoutMs(
   raw: string | undefined,
   maxWaitMs: number,
   providerId?: string,
+  scenarioInactivityTimeoutMs?: number,
 ): number {
   const defaultTimeoutMs = providerId === 'kimi' ? 240_000 : 120_000;
-  const parsed = parsePositiveInt(raw, defaultTimeoutMs);
+  const scenarioDefaultTimeoutMs =
+    typeof scenarioInactivityTimeoutMs === 'number' && Number.isFinite(scenarioInactivityTimeoutMs)
+      ? Math.max(30_000, Math.floor(scenarioInactivityTimeoutMs))
+      : defaultTimeoutMs;
+  const parsed = parsePositiveInt(raw, scenarioDefaultTimeoutMs);
   return Math.max(30_000, Math.min(parsed, maxWaitMs));
 }
 

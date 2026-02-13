@@ -50,8 +50,10 @@ export async function terminateProcessTreeByPid(
   if (!Number.isInteger(pid) || pid <= 0) return;
   if (!isProcessAlive(pid)) return;
 
-  const graceMs = Number.isInteger(options.graceMs) && options.graceMs >= 0 ? options.graceMs : 10_000;
-  const pollMs = Number.isInteger(options.pollMs) && options.pollMs > 0 ? options.pollMs : 100;
+  const graceMsRaw = options.graceMs;
+  const pollMsRaw = options.pollMs;
+  const graceMs = typeof graceMsRaw === 'number' && Number.isInteger(graceMsRaw) && graceMsRaw >= 0 ? graceMsRaw : 10_000;
+  const pollMs = typeof pollMsRaw === 'number' && Number.isInteger(pollMsRaw) && pollMsRaw > 0 ? pollMsRaw : 100;
 
   if (process.platform === 'win32') {
     taskkillTree(pid);

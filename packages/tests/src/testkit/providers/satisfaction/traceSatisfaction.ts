@@ -1,4 +1,4 @@
-import type { ProviderTraceEvent } from './types';
+import type { ProviderTraceEvent } from '../types';
 
 import { payloadContainsSubstring } from './payloadContainsSubstring';
 

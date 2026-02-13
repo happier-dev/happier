@@ -43,6 +43,7 @@ const isStreamJson = outputFormat === 'stream-json';
 const isSdkStreamJson = isStreamJson && inputFormat === 'stream-json';
 const hasPrint = argv.includes('--print');
 const mode = isSdkStreamJson ? 'sdk' : 'local';
+const scenario = process.env.HAPPIER_E2E_FAKE_CLAUDE_SCENARIO || process.env.HAPPY_E2E_FAKE_CLAUDE_SCENARIO || '';
 
 safeAppendJsonl(logPath, {
   type: 'invocation',
@@ -100,6 +101,110 @@ async function runSdkStreamUntilEof() {
 
     const now = Date.now();
     turn += 1;
+
+    if (scenario === 'taskoutput-sidechain') {
+      const agentId = `agent_${turn}`;
+      const taskToolUseId = `tool_task_${turn}`;
+      const taskOutputToolUseId = `tool_taskoutput_${turn}`;
+
+      const assistant = {
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              id: taskToolUseId,
+              name: 'Task',
+              input: {
+                description: `fake task ${turn}`,
+                prompt: `do side work ${turn}`,
+                subagent_type: 'general',
+                run_in_background: true,
+              },
+            },
+            {
+              type: 'tool_use',
+              id: taskOutputToolUseId,
+              name: 'TaskOutput',
+              input: { task_id: agentId, block: true, timeout: 2000 },
+            },
+          ],
+        },
+      };
+
+      const taskToolResult = {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: taskToolUseId, content: `agentId: ${agentId}` }],
+        },
+      };
+
+      const jsonl = [
+        // Prompt root (string content) should be filtered out by Happier to avoid duplicate synthetic roots.
+        {
+          type: 'user',
+          uuid: `u_prompt_${turn}`,
+          parentUuid: null,
+          timestamp: new Date().toISOString(),
+          sessionId,
+          userType: 'external',
+          cwd: process.cwd(),
+          version: '0.0.0',
+          gitBranch: 'main',
+          isSidechain: true,
+          agentId,
+          message: { role: 'user', content: `do side work ${turn}` },
+        },
+        {
+          type: 'assistant',
+          uuid: `u_assistant_${turn}`,
+          parentUuid: null,
+          timestamp: new Date().toISOString(),
+          sessionId,
+          userType: 'external',
+          cwd: process.cwd(),
+          version: '0.0.0',
+          gitBranch: 'main',
+          isSidechain: true,
+          agentId,
+          message: { role: 'assistant', content: [{ type: 'text', text: `FAKE_TASKOUTPUT_SIDECHAIN_OK_${turn}` }] },
+        },
+      ]
+        .map((l) => JSON.stringify(l))
+        .join('\n')
+        .concat('\n');
+
+      const taskOutputToolResult = {
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: taskOutputToolUseId, content: jsonl }],
+        },
+      };
+
+      const result = {
+        type: 'result',
+        subtype: 'success',
+        result: `FAKE_CLAUDE_DONE_${turn}`,
+        num_turns: turn,
+        usage: { input_tokens: 1, output_tokens: 1 },
+        total_cost_usd: 0,
+        duration_ms: Math.max(1, Date.now() - now),
+        duration_api_ms: 1,
+        is_error: false,
+        session_id: sessionId,
+      };
+
+      process.stdout.write(`${JSON.stringify(assistant)}\n`);
+      process.stdout.write(`${JSON.stringify(taskToolResult)}\n`);
+      process.stdout.write(`${JSON.stringify(taskOutputToolResult)}\n`);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      continue;
+    }
+
     const assistant = {
       type: 'assistant',
       message: { role: 'assistant', content: [{ type: 'text', text: `FAKE_CLAUDE_OK_${turn}` }] },

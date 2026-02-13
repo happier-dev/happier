@@ -4,8 +4,9 @@ import { runProviderContractMatrix } from '../../src/testkit/providers/harness';
 
 describe('providers harness: in-flight steer (codex ACP)', () => {
   const providersEnabled = (process.env.HAPPIER_E2E_PROVIDERS ?? '').toString().trim() === '1';
+  const codexEnabled = (process.env.HAPPIER_E2E_PROVIDER_CODEX ?? '').toString().trim() === '1';
 
-  it.skipIf(!providersEnabled)(
+  it.skipIf(!(providersEnabled && codexEnabled))(
     'routes a second message as in-flight steer (no interrupt) using real Codex ACP',
     async () => {
       const envVars = [
@@ -18,6 +19,7 @@ describe('providers harness: in-flight steer (codex ACP)', () => {
         'HAPPIER_E2E_PROVIDER_QWEN',
         'HAPPIER_E2E_PROVIDER_KIMI',
         'HAPPIER_E2E_PROVIDER_AUGGIE',
+        'HAPPIER_E2E_PROVIDER_PI',
         'HAPPIER_E2E_PROVIDER_SCENARIOS',
       ] as const;
 
@@ -34,6 +36,7 @@ describe('providers harness: in-flight steer (codex ACP)', () => {
         process.env.HAPPIER_E2E_PROVIDER_QWEN = '0';
         process.env.HAPPIER_E2E_PROVIDER_KIMI = '0';
         process.env.HAPPIER_E2E_PROVIDER_AUGGIE = '0';
+        process.env.HAPPIER_E2E_PROVIDER_PI = '0';
 
         process.env.HAPPIER_E2E_PROVIDER_SCENARIOS = 'acp_in_flight_steer';
 
@@ -51,4 +54,3 @@ describe('providers harness: in-flight steer (codex ACP)', () => {
     900_000,
   );
 });
-

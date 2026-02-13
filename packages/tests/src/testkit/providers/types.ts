@@ -1,4 +1,4 @@
-export type KnownProviderId = 'opencode' | 'codex' | 'claude' | 'kilo' | 'qwen' | 'kimi' | 'gemini' | 'auggie';
+export type KnownProviderId = 'opencode' | 'codex' | 'claude' | 'kilo' | 'qwen' | 'kimi' | 'gemini' | 'auggie' | 'pi';
 export type ProviderId = KnownProviderId | (string & { readonly __providerIdBrand?: unique symbol });
 
 export type ProviderProtocol = 'acp' | 'codex' | 'claude';
@@ -106,6 +106,9 @@ export type ProviderScenario = {
   // Optional per-scenario max wait for trace satisfaction loop.
   // Falls back to global HAPPIER_E2E_PROVIDER_WAIT_MS when undefined.
   waitMs?: number;
+  // Optional per-scenario inactivity timeout for provider activity polling.
+  // Falls back to resolveProviderInactivityTimeoutMs defaults when undefined.
+  inactivityTimeoutMs?: number;
   // Prompt text that will be sent as a user message (single-step scenarios).
   // For multi-step scenarios, use `steps` instead.
   prompt?: (ctx: { workspaceDir: string }) => string;
@@ -115,6 +118,12 @@ export type ProviderScenario = {
   // Optional multi-step prompt flow (sent within a single running CLI session).
   steps?: Array<{
     id: string;
+    /**
+     * When true, the harness is allowed to enqueue the *next* step while the current turn is still running.
+     *
+     * Default is false to avoid accidental "in-flight steer" routing in normal multi-step scenarios.
+     */
+    allowInFlightSteer?: boolean;
     prompt: (ctx: { workspaceDir: string }) => string;
     messageMeta?: Record<string, unknown> | ((ctx: { workspaceDir: string }) => Record<string, unknown>);
     satisfaction?: {

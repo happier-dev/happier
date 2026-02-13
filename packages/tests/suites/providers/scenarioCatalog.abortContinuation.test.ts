@@ -18,6 +18,8 @@ describe('scenarioCatalog: abort continuation contract', () => {
   it('maps ACP follow-up assertions by provider reliability profile', () => {
     expect(abortContinuationFollowupSubstrings('auggie', 'FOLLOWUP', 'MEMORY')).toEqual(['FOLLOWUP']);
     expect(abortContinuationFollowupSubstrings('kimi', 'FOLLOWUP', 'MEMORY')).toEqual(['FOLLOWUP']);
+    expect(abortContinuationFollowupSubstrings('kilo', 'FOLLOWUP', 'MEMORY')).toEqual(['FOLLOWUP']);
+    expect(abortContinuationFollowupSubstrings('pi', 'FOLLOWUP', 'MEMORY')).toEqual(['FOLLOWUP']);
     expect(abortContinuationFollowupSubstrings('opencode', 'FOLLOWUP', 'MEMORY')).toEqual(['FOLLOWUP', 'MEMORY']);
   });
 
@@ -37,7 +39,13 @@ describe('scenarioCatalog: abort continuation contract', () => {
     expect(scenario.requiredFixtureKeys).toEqual([]);
     expect(scenario.requiredAnyFixtureKeys).toBeUndefined();
     expect(scenario.allowPermissionAutoApproveInYolo).toBe(true);
+    expect(scenario.postSatisfy?.timeoutMs).toBe(300_000);
     expect(typeof scenario.postSatisfy?.run).toBe('function');
+  });
+
+  it('uses extended post-satisfaction timeout for kilo abort-continue', () => {
+    const scenario = scenarioCatalog.abort_turn_then_continue(providerStub('kilo', 'acp', 'kilo'));
+    expect(scenario.postSatisfy?.timeoutMs).toBe(300_000);
   });
 
   it('builds ACP abort-continue scenarios for qwen and auggie', () => {

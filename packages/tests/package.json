@@ -28,6 +28,8 @@
     "providers:kimi:extended": "yarn -s providers:run kimi extended",
     "providers:auggie:smoke": "yarn -s providers:run auggie smoke",
     "providers:auggie:extended": "yarn -s providers:run auggie extended",
+    "providers:pi:smoke": "yarn -s providers:run pi smoke",
+    "providers:pi:extended": "yarn -s providers:run pi extended",
     "providers:all:smoke": "yarn -s providers:run all smoke",
     "providers:all:extended": "yarn -s providers:run all extended",
     "providers:all:smoke:parallel": "yarn -s providers:run:parallel all smoke",
@@ -40,7 +42,8 @@
     "providers:gemini:smoke:update-baselines": "yarn -s providers:run gemini smoke --update-baselines",
     "providers:qwen:smoke:update-baselines": "yarn -s providers:run qwen smoke --update-baselines",
     "providers:kimi:smoke:update-baselines": "yarn -s providers:run kimi smoke --update-baselines",
-    "providers:auggie:smoke:update-baselines": "yarn -s providers:run auggie smoke --update-baselines"
+    "providers:auggie:smoke:update-baselines": "yarn -s providers:run auggie smoke --update-baselines",
+    "providers:pi:smoke:update-baselines": "yarn -s providers:run pi smoke --update-baselines"
   },
   "dependencies": {
     "@happier-dev/protocol": "0.0.0",

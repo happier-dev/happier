@@ -10,6 +10,36 @@ import {
   makeAcpPermissionOutsideWorkspaceScenario,
   makeAcpPermissionPatchApplyScenario,
 } from '../../src/testkit/providers/scenarios/scenarios.acp';
+import type { ProviderFixtureExamples, ProviderTraceEvent } from '../../src/testkit/providers/types';
+
+function buildVerifyContext(input: {
+  workspaceDir: string;
+  fixtures?: ProviderFixtureExamples;
+  traceEvents?: ProviderTraceEvent[];
+}) {
+  return {
+    workspaceDir: input.workspaceDir,
+    fixtures: { examples: input.fixtures ?? {} },
+    traceEvents: input.traceEvents ?? [],
+    baseUrl: 'http://127.0.0.1:1',
+    token: 'token',
+    sessionId: 'session',
+    resumeSessionId: null,
+    secret: new Uint8Array(32),
+    resumeId: null,
+  };
+}
+
+function tracePermissionRequestEvent(): ProviderTraceEvent {
+  return {
+    v: 1,
+    sessionId: 'session',
+    protocol: 'acp',
+    provider: 'codex',
+    kind: 'permission-request',
+    payload: { type: 'permission-request' },
+  };
+}
 
 describe('providers: ACP scenario builders (permissions)', () => {
   it('can disable permission-request fixture requirements for providers that auto-approve edits', () => {
@@ -98,10 +128,10 @@ describe('providers: ACP scenario builders (permissions)', () => {
 
       await writeFile(outsidePath, 'KIMI_OUTSIDE_OK\n', 'utf8');
 
-      await scenario.verify?.({
-        workspaceDir,
-        fixtures: {
-          examples: {
+      await scenario.verify?.(
+        buildVerifyContext({
+          workspaceDir,
+          fixtures: {
             'acp/kimi/permission-request/unknown': [
               {
                 payload: {
@@ -114,8 +144,8 @@ describe('providers: ACP scenario builders (permissions)', () => {
               },
             ],
           },
-        } as any,
-      });
+        }),
+      );
     } finally {
       await rm(outsidePath, { force: true });
       await rm(workspaceDir, { recursive: true, force: true });
@@ -149,10 +179,7 @@ describe('providers: ACP scenario builders (permissions)', () => {
       expect(scenario.permissionAutoDecision).toBe('approved');
       await writeFile(join(workspaceDir, 'e2e-exec-perm.txt'), 'EXEC_PERM_OK\n', 'utf8');
 
-      await scenario.verify?.({
-        workspaceDir,
-        traceEvents: [{ payload: { type: 'permission-request' } }],
-      });
+      await scenario.verify?.(buildVerifyContext({ workspaceDir, traceEvents: [tracePermissionRequestEvent()] }));
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
     }
@@ -171,10 +198,7 @@ describe('providers: ACP scenario builders (permissions)', () => {
       expect(scenario.yolo).toBe(false);
       expect(scenario.permissionAutoDecision).toBe('denied');
 
-      await scenario.verify?.({
-        workspaceDir,
-        traceEvents: [{ payload: { type: 'permission-request' } }],
-      });
+      await scenario.verify?.(buildVerifyContext({ workspaceDir, traceEvents: [tracePermissionRequestEvent()] }));
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
     }
@@ -194,10 +218,7 @@ describe('providers: ACP scenario builders (permissions)', () => {
       await scenario.setup?.({ workspaceDir });
       await writeFile(join(workspaceDir, 'e2e-patch-perm.txt'), 'PATCH_AFTER\n', 'utf8');
 
-      await scenario.verify?.({
-        workspaceDir,
-        traceEvents: [{ payload: { type: 'permission-request' } }],
-      });
+      await scenario.verify?.(buildVerifyContext({ workspaceDir, traceEvents: [tracePermissionRequestEvent()] }));
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
     }
@@ -215,10 +236,7 @@ describe('providers: ACP scenario builders (permissions)', () => {
       });
 
       await scenario.setup?.({ workspaceDir });
-      await scenario.verify?.({
-        workspaceDir,
-        traceEvents: [{ payload: { type: 'permission-request' } }],
-      });
+      await scenario.verify?.(buildVerifyContext({ workspaceDir, traceEvents: [tracePermissionRequestEvent()] }));
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
     }
@@ -240,10 +258,7 @@ describe('providers: ACP scenario builders (permissions)', () => {
       await writeFile(join(workspaceDir, 'e2e-patch-perm.txt'), 'PATCH_AFTER\n', 'utf8');
       expect((scenario.requiredTraceSubstrings ?? []).some((value) => value.includes('permission-request'))).toBe(false);
 
-      await scenario.verify?.({
-        workspaceDir,
-        traceEvents: [],
-      });
+      await scenario.verify?.(buildVerifyContext({ workspaceDir, traceEvents: [] }));
     } finally {
       await rm(workspaceDir, { recursive: true, force: true });
     }

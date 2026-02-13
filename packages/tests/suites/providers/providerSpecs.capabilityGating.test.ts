@@ -46,6 +46,17 @@ describe('providers: scenario capability gating', () => {
     expect(auggie!.scenarioRegistry.tiers.extended).not.toContain('acp_resume_fresh_session_imports_history');
   });
 
+  it('models auggie safe-yolo outside-workspace behavior as write-allowed/no-prompt', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const auggie = providers.find((provider) => provider.id === 'auggie');
+    expect(auggie).toBeTruthy();
+
+    const acpPermissions = (auggie!.permissions as any)?.acp;
+    expect(acpPermissions?.toolPermissionPromptsByMode?.['safe-yolo']).toBe(false);
+    expect(acpPermissions?.outsideWorkspaceWriteAllowedByMode?.['safe-yolo']).toBe(true);
+    expect(acpPermissions?.outsideWorkspaceWriteMustCompleteByMode?.['safe-yolo']).toBe(true);
+  });
+
   it('allows kimi host-auth fallback by default', async () => {
     const providers = await loadProvidersFromCliSpecs();
     const kimi = providers.find((provider) => provider.id === 'kimi');

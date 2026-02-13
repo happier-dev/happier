@@ -14,6 +14,7 @@ import {
   parseArgs,
   parseCsv,
   readVersionFromPackageJson,
+  resolveYarnCommand,
   resolveRepoRoot,
   resolveTargets,
   maybeSignFile,
@@ -40,7 +41,8 @@ async function main() {
     requested: kv.get('--targets'),
   });
 
-  execOrThrow('yarn', ['--cwd', 'apps/cli', 'build'], { cwd: repoRoot });
+  const yarn = resolveYarnCommand();
+  execOrThrow(yarn.cmd, [...yarn.args, '--cwd', 'apps/cli', 'build'], { cwd: repoRoot });
   await ensureFileExists(entrypoint);
   await rm(tempDir, { recursive: true, force: true });
   await mkdir(tempDir, { recursive: true });

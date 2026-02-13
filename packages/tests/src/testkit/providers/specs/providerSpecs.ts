@@ -2,7 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ProviderUnderTest } from './types';
+import type { ProviderUnderTest } from '../types';
 import { repoRootDir } from '../../paths';
 import {
   E2eCliProviderScenarioRegistryV1Schema,

@@ -7,6 +7,9 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
   VoiceMediatorCommitResponseSchema,
   VoiceMediatorSendTurnResponseSchema,
+  VoiceMediatorTurnStreamCancelResponseSchema,
+  VoiceMediatorTurnStreamReadResponseSchema,
+  VoiceMediatorTurnStreamStartResponseSchema,
   VoiceMediatorStartResponseSchema,
   VoiceMediatorStopResponseSchema,
 } from '@happier-dev/protocol';
@@ -171,6 +174,63 @@ describe('core e2e: voice mediator daemon sessionRPC', () => {
       timeoutMs: 45_000,
     });
     expect(t2.assistantText).toContain('FAKE_CLAUDE_OK_2');
+
+    const streamStart = await callSessionRpc({
+      ui,
+      sessionId,
+      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN_STREAM_START,
+      req: { mediatorId: start.mediatorId, userText: 'turn-stream-1' },
+      secret,
+      schema: VoiceMediatorTurnStreamStartResponseSchema,
+      timeoutMs: 45_000,
+    });
+    expect(typeof streamStart.streamId).toBe('string');
+
+    let streamCursor = 0;
+    let streamDone = false;
+    let streamedAssistantText = '';
+    for (let i = 0; i < 16 && !streamDone; i += 1) {
+      const streamRead = await callSessionRpc({
+        ui,
+        sessionId,
+        method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN_STREAM_READ,
+        req: { mediatorId: start.mediatorId, streamId: streamStart.streamId, cursor: streamCursor, maxEvents: 64 },
+        secret,
+        schema: VoiceMediatorTurnStreamReadResponseSchema,
+        timeoutMs: 45_000,
+      });
+      streamCursor = streamRead.nextCursor;
+      for (const event of streamRead.events) {
+        if (event.t === 'delta') streamedAssistantText += event.textDelta;
+        if (event.t === 'done') streamedAssistantText = event.assistantText;
+      }
+      streamDone = streamRead.done;
+      if (!streamDone) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    expect(streamDone).toBe(true);
+    expect(streamedAssistantText).toContain('FAKE_CLAUDE_OK_3');
+
+    const streamCancelStart = await callSessionRpc({
+      ui,
+      sessionId,
+      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN_STREAM_START,
+      req: { mediatorId: start.mediatorId, userText: 'turn-stream-cancel' },
+      secret,
+      schema: VoiceMediatorTurnStreamStartResponseSchema,
+      timeoutMs: 45_000,
+    });
+    const streamCancelled = await callSessionRpc({
+      ui,
+      sessionId,
+      method: SESSION_RPC_METHODS.VOICE_MEDIATOR_SEND_TURN_STREAM_CANCEL,
+      req: { mediatorId: start.mediatorId, streamId: streamCancelStart.streamId },
+      secret,
+      schema: VoiceMediatorTurnStreamCancelResponseSchema,
+      timeoutMs: 45_000,
+    });
+    expect(streamCancelled.ok).toBe(true);
 
     const commit = await callSessionRpc({
       ui,

@@ -21,7 +21,10 @@ describe('provider scenarios outside-workspace policy', () => {
   it('uses workspace-parent path policy for claude outside-workspace prompts', () => {
     const workspaceDir = '/tmp/workspace-root';
     const scenario = scenarioCatalog.permission_surface_outside_workspace(claudeProviderStub());
-    const prompt = scenario.prompt({ workspaceDir });
+    const promptBuilder = scenario.prompt;
+    expect(typeof promptBuilder).toBe('function');
+    if (!promptBuilder) throw new Error('Scenario prompt builder is required');
+    const prompt = promptBuilder({ workspaceDir });
 
     const match = prompt.match(/- Absolute path: (.+)/);
     expect(match).toBeTruthy();

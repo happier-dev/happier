@@ -1,7 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
 import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
-import type { ProviderUnderTest } from '../../src/testkit/providers/types';
+import type { ProviderFixtures, ProviderUnderTest } from '../../src/testkit/providers/types';
+
+function baseVerifyContext(overrides: Partial<{
+  workspaceDir: string;
+  fixtures: ProviderFixtures;
+}>) {
+  return {
+    workspaceDir: overrides.workspaceDir ?? '/tmp',
+    fixtures: overrides.fixtures ?? { examples: {} },
+    traceEvents: [],
+    baseUrl: 'http://127.0.0.1:1',
+    token: 'token',
+    sessionId: 'session',
+    resumeSessionId: null,
+    secret: new Uint8Array(32),
+    resumeId: null,
+  };
+}
 
 function acpProvider(id: string): ProviderUnderTest {
   return {
@@ -20,25 +37,22 @@ describe('scenarioCatalog: search_known_token (opencode)', () => {
     expect(typeof scenario.verify).toBe('function');
 
     await expect(
-      scenario.verify?.({
-        workspaceDir: '/tmp',
-        fixtures: {
-          examples: {
-            'acp/opencode/tool-result/Bash': [
-              {
-                payload: {
-                  output: 'SEARCH_TOKEN_XYZ',
+      scenario.verify?.(
+        baseVerifyContext({
+          workspaceDir: '/tmp',
+          fixtures: {
+            examples: {
+              'acp/opencode/tool-result/Bash': [
+                {
+                  payload: {
+                    output: 'SEARCH_TOKEN_XYZ',
+                  },
                 },
-              },
-            ],
+              ],
+            },
           },
-        },
-        traceEvents: [],
-        baseUrl: 'http://127.0.0.1:1',
-        token: 'token',
-        sessionId: 'session',
-        secret: 'secret',
-      }),
+        }),
+      ),
     ).resolves.toBeUndefined();
   });
 });

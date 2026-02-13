@@ -96,5 +96,9 @@ describe('scenarioCatalog: ACP permission mode matrix scenarios', () => {
     expect(readonlyScenario.yolo).toBe(false);
     expect(yoloScenario.yolo).toBe(true);
     expect(yoloScenario.allowPermissionAutoApproveInYolo).toBe(true);
+
+    const yoloPrompt = yoloScenario.prompt?.({ workspaceDir: '/tmp/happier-workspace' }) ?? '';
+    expect(yoloPrompt).toContain('Use the execute tool to run');
+    expect(yoloPrompt).toContain('outside-workspace file');
   });
 });

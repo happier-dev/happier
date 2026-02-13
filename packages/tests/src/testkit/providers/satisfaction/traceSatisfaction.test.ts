@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ProviderTraceEvent } from './types';
+import type { ProviderTraceEvent } from '../types';
 import { checkMaxTraceEvents, hasTraceForKey } from './traceSatisfaction';
 
 describe('providers: traceSatisfaction.checkMaxTraceEvents', () => {

@@ -35,7 +35,8 @@ describe('core e2e: Codex local-control mirroring emits tool trace + session id'
     const startedAt = new Date().toISOString();
 
     server = await startServerLight({ testDir });
-    const auth = await createTestAuth(server.baseUrl);
+    const serverBaseUrl = server.baseUrl;
+    const auth = await createTestAuth(serverBaseUrl);
 
     const cliHome = resolve(join(testDir, 'cli-home'));
     const workspaceDir = resolve(join(testDir, 'workspace'));
@@ -45,7 +46,7 @@ describe('core e2e: Codex local-control mirroring emits tool trace + session id'
     await mkdir(codexSessionsDir, { recursive: true });
 
     const secret = Uint8Array.from(randomBytes(32));
-    await seedCliAuthForServer({ cliHome, serverUrl: server.baseUrl, token: auth.token, secret });
+    await seedCliAuthForServer({ cliHome, serverUrl: serverBaseUrl, token: auth.token, secret });
 
     const metadataCiphertextBase64 = encryptLegacyBase64(
       { path: workspaceDir, host: 'e2e', name: 'codex-local-control', createdAt: Date.now() },
@@ -123,8 +124,8 @@ setInterval(() => {}, 1000);
       CI: '1',
       HAPPIER_VARIANT: 'dev',
       HAPPIER_HOME_DIR: cliHome,
-      HAPPIER_SERVER_URL: server.baseUrl,
-      HAPPIER_WEBAPP_URL: server.baseUrl,
+      HAPPIER_SERVER_URL: serverBaseUrl,
+      HAPPIER_WEBAPP_URL: serverBaseUrl,
       HAPPIER_SESSION_ATTACH_FILE: attachFile,
       HAPPIER_STACK_TOOL_TRACE: '1',
       HAPPIER_STACK_TOOL_TRACE_FILE: toolTraceFile,
@@ -174,12 +175,12 @@ setInterval(() => {}, 1000);
       }, { timeoutMs: 30_000 });
 
       await waitFor(async () => {
-        const snap = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
+        const snap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
         const metadata = decryptLegacyBase64(snap.metadata, secret) as any;
         return metadata?.codexSessionId === codexSessionId;
       }, { timeoutMs: 60_000 });
 
-      const finalSnap = await fetchSessionV2(server.baseUrl, auth.token, sessionId);
+      const finalSnap = await fetchSessionV2(serverBaseUrl, auth.token, sessionId);
       const finalMetadata = decryptLegacyBase64(finalSnap.metadata, secret) as any;
       expect(finalMetadata.codexSessionId).toBe(codexSessionId);
     } finally {

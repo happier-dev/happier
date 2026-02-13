@@ -7,6 +7,19 @@ import { describe, expect, it } from 'vitest';
 import { ensureCliDistBuilt, ensureCliSharedDepsBuilt, resolveCliDistBuildInvocation, withCliDistBuildLock } from '../../src/testkit/process/cliDist';
 import { sleep } from '../../src/testkit/timing';
 
+function writeSharedDepsOutputs(repoRoot: string) {
+  const outputs = [
+    resolve(repoRoot, 'packages', 'agents', 'dist', 'index.js'),
+    resolve(repoRoot, 'packages', 'cli-common', 'dist', 'index.js'),
+    resolve(repoRoot, 'packages', 'protocol', 'dist', 'index.js'),
+  ];
+
+  for (const output of outputs) {
+    mkdirSync(dirname(output), { recursive: true });
+    writeFileSync(output, 'export {};\n', 'utf8');
+  }
+}
+
 describe('providers: CLI dist build invocation', () => {
   it('prefers local pkgroll binary over yarn workspace build', () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-dist-cmd-'));
@@ -77,6 +90,7 @@ describe('providers: CLI dist build lock discipline', () => {
 
     mkdirSync(dirname(entrypoint), { recursive: true });
     writeFileSync(entrypoint, 'export {};\n', 'utf8');
+    writeSharedDepsOutputs(repoRoot);
     mkdirSync(testDir, { recursive: true });
 
     const holdLock = withCliDistBuildLock(
@@ -113,6 +127,7 @@ describe('providers: CLI dist build lock discipline', () => {
     mkdirSync(distDir, { recursive: true });
     mkdirSync(testDir, { recursive: true });
     writeFileSync(entrypoint, 'export {};\n', 'utf8');
+    writeSharedDepsOutputs(repoRoot);
     writeFileSync(apiChunk, "export const x = () => import('./capability-missing.mjs');\n", 'utf8');
 
     let buildCalls = 0;
@@ -144,6 +159,7 @@ describe('providers: CLI dist build lock discipline', () => {
     mkdirSync(distDir, { recursive: true });
     mkdirSync(testDir, { recursive: true });
     writeFileSync(entrypoint, "export async function run(){ await import('./doctor-missing.mjs'); }\n", 'utf8');
+    writeSharedDepsOutputs(repoRoot);
 
     let buildCalls = 0;
     await expect(
@@ -173,6 +189,7 @@ describe('providers: CLI dist build lock discipline', () => {
 
     mkdirSync(distDir, { recursive: true });
     mkdirSync(testDir, { recursive: true });
+    writeSharedDepsOutputs(repoRoot);
 
     let buildCalls = 0;
     setTimeout(() => {
@@ -205,6 +222,7 @@ describe('providers: CLI dist build lock discipline', () => {
 
     mkdirSync(distDir, { recursive: true });
     mkdirSync(testDir, { recursive: true });
+    writeSharedDepsOutputs(repoRoot);
 
     let buildCalls = 0;
     const resolved = await ensureCliDistBuilt(

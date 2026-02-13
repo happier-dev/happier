@@ -9,6 +9,16 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "src/**/*.d.mts", "suites/**/*.ts", "scripts/**/*.d.ts", "scripts/**/*.d.mts", "vitest.*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "src/**/*.d.mts",
+    "src/**/*.d.cts",
+    "suites/**/*.ts",
+    "scripts/**/*.d.ts",
+    "scripts/**/*.d.mts",
+    "scripts/**/*.d.cts",
+    "vitest.*.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

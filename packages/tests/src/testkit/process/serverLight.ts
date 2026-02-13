@@ -109,6 +109,8 @@ export type StartedServer = {
 };
 
 export type TestDbProvider = 'pglite' | 'sqlite' | 'postgres' | 'mysql';
+let sharedDepsReady = false;
+let sharedDepsBuildPromise: Promise<void> | null = null;
 
 export function resolveTestDbProvider(env: NodeJS.ProcessEnv): TestDbProvider {
   const raw = (env.HAPPIER_E2E_DB_PROVIDER ?? env.HAPPY_E2E_DB_PROVIDER ?? '').toString().trim().toLowerCase();
@@ -123,6 +125,10 @@ export function resolveStartCommandArgs(provider: TestDbProvider): string[] {
   return ['-s', 'workspace', resolveServerAppWorkspaceName(), script];
 }
 
+export function resolveSharedDepsBuildArgs(): string[] {
+  return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'build:shared'];
+}
+
 export function resolveMigrateCommandArgs(provider: TestDbProvider): string[] {
   if (provider === 'sqlite') {
     return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:sqlite:deploy'];
@@ -134,6 +140,32 @@ export function resolveMigrateCommandArgs(provider: TestDbProvider): string[] {
     return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'migrate:mysql:deploy'];
   }
   return ['-s', 'workspace', resolveServerAppWorkspaceName(), 'prisma', 'migrate', 'deploy'];
+}
+
+async function ensureServerSharedDepsBuilt(params: { testDir: string; env: NodeJS.ProcessEnv }): Promise<void> {
+  if (sharedDepsReady) return;
+  if (sharedDepsBuildPromise) {
+    await sharedDepsBuildPromise;
+    return;
+  }
+
+  sharedDepsBuildPromise = runLoggedCommand({
+    command: yarnCommand(),
+    args: resolveSharedDepsBuildArgs(),
+    cwd: repoRootDir(),
+    env: { ...params.env, CI: '1' },
+    stdoutPath: resolve(params.testDir, 'server.sharedDeps.stdout.log'),
+    stderrPath: resolve(params.testDir, 'server.sharedDeps.stderr.log'),
+    timeoutMs: 240_000,
+  }).then(() => {
+    sharedDepsReady = true;
+  });
+
+  try {
+    await sharedDepsBuildPromise;
+  } finally {
+    sharedDepsBuildPromise = null;
+  }
 }
 
 export function shouldSkipServerGenerateProviders(env: NodeJS.ProcessEnv): boolean {
@@ -187,6 +219,9 @@ export async function startServerLight(params: {
     HAPPIER_SERVER_HOST: '127.0.0.1',
     HAPPY_SERVER_HOST: '127.0.0.1',
   };
+
+  // Keep workspace package ESM exports current before booting server processes.
+  await ensureServerSharedDepsBuilt({ testDir: params.testDir, env: baseEnv });
 
   const sqliteUrl = `file:${join(dataDir, 'happier-server-light.sqlite')}`;
   const databaseUrlForExternalProvider = mergedEnv.DATABASE_URL?.toString().trim();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   shouldRetryServerStartFromFailureContext,
+  resolveSharedDepsBuildArgs,
   resolveTestDbProvider,
   resolveMigrateCommandArgs,
   resolveStartCommandArgs,
@@ -43,6 +44,10 @@ describe("startServerLight planning helpers", () => {
   ])("uses the expected migration command for %s", (provider, expected) => {
     const args = resolveMigrateCommandArgs(provider).join(" ");
     expect(args).toContain(expected);
+  });
+
+  it("builds shared server dependencies before startup", () => {
+    expect(resolveSharedDepsBuildArgs()).toEqual(["-s", "workspace", resolveServerAppWorkspaceName(), "build:shared"]);
   });
 
   it("retries server start when startup failure tail contains EADDRINUSE", () => {

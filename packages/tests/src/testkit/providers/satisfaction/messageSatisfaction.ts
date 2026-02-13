@@ -1,4 +1,4 @@
-import type { CapturedEvent } from '../socketClient';
+import type { CapturedEvent } from '../../socketClient';
 
 import { payloadContainsSubstring } from './payloadContainsSubstring';
 

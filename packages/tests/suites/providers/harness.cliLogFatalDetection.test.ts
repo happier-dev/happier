@@ -68,6 +68,36 @@ describe('providers harness: cli log fatal error detection', () => {
     await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toContain('Prompt request failed');
   });
 
+  it('detects usage-limit runtime failures from cli logs', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const logsDir = join(cliHome, 'logs');
+    await mkdir(logsDir, { recursive: true });
+    await writeFile(
+      join(logsDir, '2026-02-13-09-17-38-pid-1234.log'),
+      '[Codex] Error in codex session: {"code":-32603,"message":"Internal error","data":{"codex_error_info":"usage_limit_exceeded","message":"You hit your usage limit"}}\n',
+      'utf8',
+    );
+
+    await expect(readFatalProviderErrorFromCliLogs({ cliHome })).resolves.toContain('Usage limit exceeded');
+  });
+
+  it('detects fatal runtime failures from explicit phase log paths', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
+    const phaseStdoutPath = join(cliHome, 'cli.phase1.stdout.log');
+    await writeFile(
+      phaseStdoutPath,
+      'Error in codex session: {"code":-32603,"message":"Internal error","data":{"codex_error_info":"usage_limit_exceeded"}}\n',
+      'utf8',
+    );
+
+    await expect(
+      readFatalProviderErrorFromCliLogs({
+        cliHome,
+        extraLogPaths: [phaseStdoutPath],
+      }),
+    ).resolves.toContain('Usage limit exceeded');
+  });
+
   it('does not treat "No API key found" warnings as fatal', async () => {
     const cliHome = await mkdtemp(join(tmpdir(), 'happier-cli-home-'));
     const logsDir = join(cliHome, 'logs');

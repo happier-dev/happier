@@ -23,7 +23,14 @@ import { fetchJson } from '../../http';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../pendingQueueV2';
 import { seedCliAuthForServer } from '../../cliAuth';
 
-import type { ProviderContractMatrixResult, ProviderFixtureExamples, ProviderFixtures, ProviderScenario, ProviderUnderTest } from '../types';
+import type {
+  ProviderContractMatrixResult,
+  ProviderFixtureExamples,
+  ProviderFixtures,
+  ProviderScenario,
+  ProviderTraceEvent,
+  ProviderUnderTest,
+} from '../types';
 import {
   diffProviderBaseline,
   loadProviderBaseline,
@@ -44,6 +51,7 @@ import {
   extractFatalAgentErrorMessage,
   isSkippableProviderUnavailabilityError,
   readFatalProviderErrorFromCliLogs,
+  resolveTaskCompleteBaselineAtStepStart,
   resolveCliDistPreflightAllowRebuild,
   resolveCliDistAvailabilityWaitMs,
   resolveScenarioWaitMs,
@@ -52,6 +60,8 @@ import {
   resolvePendingDrainTimeoutMs,
   resolveResumeSessionMode,
   resolveSessionActiveWaitMs,
+  shouldEnqueueNextStepAfterSatisfaction,
+  shouldStartProviderDaemon,
   shouldAssertPendingDrain,
   shouldAutoApprovePermissionRequest,
   waitForSessionActiveBestEffort,
@@ -74,17 +84,7 @@ export {
   waitForSessionActiveBestEffort,
 } from './harnessSignals';
 
-type ToolTraceEventV1 = {
-  v: number;
-  ts: number;
-  direction: string;
-  sessionId: string;
-  protocol: string;
-  provider?: string;
-  kind: string;
-  payload: any;
-  localId?: string;
-};
+type ToolTraceEventV1 = ProviderTraceEvent;
 
 export type ProviderTokenTelemetryEntryV1 = {
   v: 1;
@@ -455,9 +455,10 @@ async function appendProviderTokenTelemetryEntries(entries: ProviderTokenTelemet
 export function findFirstToolCallIdByName(events: Array<Pick<ToolTraceEventV1, 'kind' | 'payload'>>, toolName: string): string | null {
   for (const e of events) {
     if (e.kind !== 'tool-call') continue;
-    const name = e.payload?.name;
+    const payload = e.payload && typeof e.payload === 'object' ? (e.payload as Record<string, unknown>) : null;
+    const name = payload?.name;
     if (typeof name !== 'string' || name !== toolName) continue;
-    const callId = e.payload?.callId ?? e.payload?.id ?? e.payload?.toolCallId;
+    const callId = payload?.callId ?? payload?.id ?? payload?.toolCallId;
     if (typeof callId === 'string' && callId.length > 0) return callId;
   }
   return null;
@@ -625,10 +626,7 @@ export function resolveYoloCliArgs(params: {
   hasExplicitPermissionModeArgs: boolean;
 }): string[] {
   if (!params.yolo) return [];
-  if (
-    params.hasExplicitPermissionModeArgs &&
-    ['codex', 'opencode', 'kilo', 'gemini', 'qwen', 'kimi', 'auggie'].includes(params.providerSubcommand)
-  ) {
+  if (params.hasExplicitPermissionModeArgs && params.providerSubcommand === 'codex') {
     return [];
   }
   return ['--yolo'];
@@ -1071,9 +1069,7 @@ async function runOneScenario(params: {
       const yoloCliArgs = resolveYoloCliArgs({
         providerSubcommand: provider.cli.subcommand,
         yolo,
-        hasExplicitPermissionModeArgs:
-          cliPermissionArgs.length > 0 ||
-          (typeof scenarioMeta.permissionMode === 'string' && scenarioMeta.permissionMode.trim().length > 0),
+        hasExplicitPermissionModeArgs: cliPermissionArgs.length > 0,
       });
       const modelCliArgs = resolveProviderModelCliArgs({
         providerId: provider.id,
@@ -1107,11 +1103,16 @@ async function runOneScenario(params: {
       );
 
       let daemon: StartedDaemon | null = null;
-      if (provider.protocol === 'acp' && scenario.postSatisfy?.run) {
-        const daemonDir = resolve(join(testDir, 'daemon'));
-        await mkdir(daemonDir, { recursive: true });
-        daemon = await startTestDaemon({ testDir: daemonDir, happyHomeDir: cliHome, env: cliEnv });
-      }
+	      if (
+	        shouldStartProviderDaemon({
+	          providerProtocol: provider.protocol,
+	          hasPostSatisfyRunHook: typeof scenario.postSatisfy?.run === 'function',
+	        })
+	      ) {
+	        const daemonDir = resolve(join(testDir, 'daemon'));
+	        await mkdir(daemonDir, { recursive: true });
+	        daemon = await startTestDaemon({ testDir: daemonDir, happyHomeDir: cliHome, env: cliEnv });
+	      }
 
       const proc: SpawnedProcess = spawnLoggedProcess({
         command: yarnCommand(),
@@ -1303,9 +1304,15 @@ async function runOneScenario(params: {
       let lastProviderActivityAt = Date.now();
       let lastTraceRawLength = -1;
       let lastRelevantTraceCount = -1;
-      let blockedPermissionSinceAt: number | null = null;
-      let blockedPermissionSnapshot = '';
-      const decodedMessagesSeen: unknown[] = [];
+	      let blockedPermissionSinceAt: number | null = null;
+	      let blockedPermissionSnapshot = '';
+	      const decodedMessagesSeen: unknown[] = [];
+	      let taskCompleteCountAtCurrentStepStart: number | null = resolveTaskCompleteBaselineAtStepStart({
+	        providerProtocol: provider.protocol,
+	        allowInFlightSteer: steps[0]?.allowInFlightSteer,
+	        traceEvents: [],
+	        decodedMessagesSeen: [],
+	      });
 
       let traceRaw = '';
       let traceEvents: ToolTraceEventV1[] = [];
@@ -1319,6 +1326,7 @@ async function runOneScenario(params: {
         process.env.HAPPIER_E2E_PROVIDER_NO_ACTIVITY_TIMEOUT_MS ?? process.env.HAPPY_E2E_PROVIDER_NO_ACTIVITY_TIMEOUT_MS,
         maxWaitMs,
         provider.id,
+        scenario.inactivityTimeoutMs,
       );
       const permissionBlockTimeoutMs = resolveProviderPermissionBlockTimeoutMs(
         process.env.HAPPIER_E2E_PROVIDER_PERMISSION_BLOCK_TIMEOUT_MS ??
@@ -1328,7 +1336,10 @@ async function runOneScenario(params: {
 
       let satisfied = false;
       while (Date.now() - startedWaitAt < maxWaitMs) {
-        const fatalFromLogs = await readFatalProviderErrorFromCliLogs({ cliHome });
+	        const fatalFromLogs = await readFatalProviderErrorFromCliLogs({
+	          cliHome,
+	          extraLogPaths: [params.stdoutPath, params.stderrPath],
+	        });
         if (fatalFromLogs) {
           throw new Error(`Fatal provider runtime error (${provider.id}.${scenario.id}): ${fatalFromLogs}`);
         }
@@ -1397,31 +1408,47 @@ async function runOneScenario(params: {
             blockedPermissionSnapshot = '';
           }
 
-          // Multi-step scenarios: enqueue the next step once the current step's satisfaction criteria are met.
-          if (steps.length > 1 && stepIndex < steps.length - 1) {
-            const step = steps[stepIndex];
-            const satisfaction = step?.satisfaction ?? null;
-            if (!satisfaction) {
-              throw new Error(`Scenario ${provider.id}.${scenario.id} step ${step?.id ?? String(stepIndex)} is missing satisfaction criteria`);
-            }
-            if (
-              scenarioSatisfiedByTrace(relevant as any, satisfaction) &&
-              scenarioSatisfiedByMessages({ decodedMessages: decodedMessagesSeen, socketEvents: uiSocket?.getEvents() ?? [] }, satisfaction)
-            ) {
-              stepIndex++;
-              const nextStep = steps[stepIndex]!;
-              await enqueuePrompt(nextStep.prompt({ workspaceDir }), resolveMeta(nextStep.messageMeta));
-            }
-          }
+	          // Multi-step scenarios: enqueue the next step once the current step's satisfaction criteria are met.
+	          if (steps.length > 1 && stepIndex < steps.length - 1) {
+	            const step = steps[stepIndex];
+	            const satisfaction = step?.satisfaction ?? null;
+	            if (!satisfaction) {
+	              throw new Error(`Scenario ${provider.id}.${scenario.id} step ${step?.id ?? String(stepIndex)} is missing satisfaction criteria`);
+	            }
+	            if (
+	              scenarioSatisfiedByTrace(relevant as any, satisfaction) &&
+	              scenarioSatisfiedByMessages({ decodedMessages: decodedMessagesSeen, socketEvents: uiSocket?.getEvents() ?? [] }, satisfaction)
+	            ) {
+	              const okToEnqueueNext = shouldEnqueueNextStepAfterSatisfaction({
+	                providerProtocol: provider.protocol,
+	                allowInFlightSteer: step?.allowInFlightSteer,
+	                traceEvents: relevant,
+	                decodedMessagesSeen,
+	                taskCompleteCountAtStepSatisfaction: taskCompleteCountAtCurrentStepStart,
+	              });
+	              if (okToEnqueueNext) {
+	                stepIndex++;
+	                const nextStep = steps[stepIndex]!;
+	                await enqueuePrompt(nextStep.prompt({ workspaceDir }), resolveMeta(nextStep.messageMeta));
+	                taskCompleteCountAtCurrentStepStart = resolveTaskCompleteBaselineAtStepStart({
+	                  providerProtocol: provider.protocol,
+	                  allowInFlightSteer: nextStep.allowInFlightSteer,
+	                  traceEvents: relevant,
+	                  decodedMessagesSeen,
+	                });
+	              }
+	            }
+	          }
 
           if (
             scenarioSatisfiedByTrace(relevant as any, satisfactionScenario) &&
             scenarioSatisfiedByMessages({ decodedMessages: decodedMessagesSeen, socketEvents: uiSocket?.getEvents() ?? [] }, satisfactionScenario)
           ) {
-            if (scenario.postSatisfy) {
+            const postSatisfy = scenario.postSatisfy;
+            if (postSatisfy) {
               await runPostSatisfyWithPermissionPump(async () => {
-                if (scenario.postSatisfy?.run) {
-                  await scenario.postSatisfy.run({
+                if (postSatisfy.run) {
+                  await postSatisfy.run({
                     workspaceDir,
                     baseUrl: server.baseUrl,
                     token: auth.token,
@@ -1431,7 +1458,7 @@ async function runOneScenario(params: {
                   });
                 }
 
-                const toolName = scenario.postSatisfy?.waitForAcpSidechainFromToolName;
+                const toolName = postSatisfy.waitForAcpSidechainFromToolName;
                 if (typeof toolName === 'string' && toolName.trim().length > 0) {
                   const sidechainId = findFirstToolCallIdByName(relevant as any, toolName);
                   if (sidechainId) {
@@ -1441,7 +1468,7 @@ async function runOneScenario(params: {
                       sessionId: params.sessionId,
                       secret,
                       sidechainId,
-                      timeoutMs: scenario.postSatisfy.timeoutMs,
+                      timeoutMs: postSatisfy.timeoutMs,
                     });
                   }
                 }

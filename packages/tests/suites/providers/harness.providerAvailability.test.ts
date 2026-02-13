@@ -27,6 +27,11 @@ describe('providers harness: provider availability classification', () => {
         'Fatal provider runtime error (kimi.read_known_file): Prompt request failed',
       ),
     ).toBe(true);
+    expect(
+      isSkippableProviderUnavailabilityError(
+        'Fatal provider runtime error (codex.glob_list_files): Usage limit exceeded',
+      ),
+    ).toBe(true);
   });
 
   it('does not classify regular scenario assertion failures as provider unavailability', () => {

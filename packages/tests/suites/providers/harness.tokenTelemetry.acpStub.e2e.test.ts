@@ -15,8 +15,9 @@ type LedgerEntry = {
 
 describe('providers harness: token telemetry (acp stub provider)', () => {
   const providersEnabled = (process.env.HAPPIER_E2E_PROVIDERS ?? '').toString().trim() === '1';
+  const stubEnabled = (process.env.HAPPIER_E2E_PROVIDER_CODEX_ACP_STUB ?? '').toString().trim() === '1';
 
-  it.skipIf(!providersEnabled)(
+  it.skipIf(!(providersEnabled && stubEnabled))(
     'captures token telemetry entries with tokens for an ACP provider',
     async () => {
       const tempDir = await mkdtemp(join(tmpdir(), 'happier-providers-token-ledger-'));
@@ -33,6 +34,7 @@ describe('providers harness: token telemetry (acp stub provider)', () => {
         'HAPPIER_E2E_PROVIDER_QWEN',
         'HAPPIER_E2E_PROVIDER_KIMI',
         'HAPPIER_E2E_PROVIDER_AUGGIE',
+        'HAPPIER_E2E_PROVIDER_PI',
         'HAPPIER_E2E_PROVIDER_SCENARIOS',
         'HAPPIER_E2E_PROVIDER_TOKEN_LEDGER_PATH',
       ] as const;
@@ -50,6 +52,7 @@ describe('providers harness: token telemetry (acp stub provider)', () => {
         process.env.HAPPIER_E2E_PROVIDER_QWEN = '0';
         process.env.HAPPIER_E2E_PROVIDER_KIMI = '0';
         process.env.HAPPIER_E2E_PROVIDER_AUGGIE = '0';
+        process.env.HAPPIER_E2E_PROVIDER_PI = '0';
         process.env.HAPPIER_E2E_PROVIDER_SCENARIOS = 'acp_stub_usage_update';
         process.env.HAPPIER_E2E_PROVIDER_TOKEN_LEDGER_PATH = ledgerPath;
 

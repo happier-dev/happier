@@ -448,7 +448,7 @@ export function abortContinuationFollowupSubstrings(
   followupSentinel: string,
   memorySentinel: string,
 ): string[] {
-  if (providerId === 'kimi' || providerId === 'auggie') return [followupSentinel];
+  if (providerId === 'kimi' || providerId === 'auggie' || providerId === 'kilo' || providerId === 'pi') return [followupSentinel];
   return [followupSentinel, memorySentinel];
 }
 
@@ -458,6 +458,15 @@ function relaxAuggieResumeScenario(provider: ProviderUnderTest, scenario: Provid
     ...scenario,
     requiredAnyFixtureKeys: undefined,
     requiredTraceSubstrings: undefined,
+  };
+}
+
+function tuneResumeScenarioForProvider(provider: ProviderUnderTest, scenario: ProviderScenario): ProviderScenario {
+  const auggieRelaxed = relaxAuggieResumeScenario(provider, scenario);
+  if (provider.id !== 'codex') return auggieRelaxed;
+  return {
+    ...auggieRelaxed,
+    inactivityTimeoutMs: 240_000,
   };
 }
 
@@ -750,8 +759,24 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       content: provider.id === 'codex' ? 'CODEX_READ_OK' : 'READ_SENTINEL_123',
       id: provider.id === 'codex' ? 'read_in_workspace' : 'read_known_file',
       title: provider.id === 'codex' ? 'read: read a known small file in workspace' : 'read: read a known file in workspace',
-      useExecuteFallbackOnReadFailure: provider.id === 'kimi',
+      useAbsolutePath: provider.id === 'auggie',
+      useExecuteFallbackOnReadFailure: provider.id === 'kimi' || provider.id === 'auggie',
     });
+  },
+
+  pi_read_known_file_smoke: (provider) => {
+    assertProviderId(provider, 'pi');
+    const base = makeAcpReadInWorkspaceScenario({
+      providerId: acpProviderId(provider),
+      content: 'PI_READ_SMOKE_OK',
+      id: 'pi_read_known_file_smoke',
+      title: 'pi smoke: read a known file in workspace',
+    });
+
+    return {
+      ...base,
+      tier: 'smoke',
+    } satisfies ProviderScenario;
   },
 
   // -----------------------------------------
@@ -783,25 +808,27 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
         title: 'acp: codex in-flight steer routes second message without interrupt (requires creds)',
         tier: 'extended',
         yolo: true,
-        steps: [
-          {
-            id: 'start',
-            prompt: () => [
-              'Use the execute tool to run this command exactly (do not shorten it):',
-              command,
-              `Then respond with: PRIMARY_DONE ${id}`,
-            ].join('\n'),
-            satisfaction: {
-              // The runtime emits this trace marker as soon as the backend sends status=running.
-              requiredTraceSubstrings: ['acp_status_running'],
-            },
-          },
+	      steps: [
+	        {
+	          id: 'start',
+	          allowInFlightSteer: true,
+	          prompt: () => [
+	            'Use the execute tool to run this command exactly (do not shorten it):',
+	            command,
+	            `Then respond with: PRIMARY_DONE ${id}`,
+	          ].join('\n'),
+	          satisfaction: {
+	            // Gate step2 on the primary execute call actually starting (not just status=running),
+	            // so the steer prompt is injected while the primary command is truly in-flight.
+	            requiredFixtureKeys: ['acp/codex/tool-call/Bash'],
+	          },
+	        },
           {
             id: 'steer',
             prompt: () => `STEER_NOW ${id}`,
           },
         ],
-        requiredFixtureKeys: ['acp/codex/tool-call/execute', 'acp/codex/tool-result/execute'],
+        requiredFixtureKeys: ['acp/codex/tool-call/Bash', 'acp/codex/tool-result/Bash'],
         requiredTraceSubstrings: ['acp_in_flight_steer'],
       };
     }
@@ -812,18 +839,19 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
     const primary = `ACP_STUB_PRIMARY_${randomUUID()}`;
     const steer = `ACP_STUB_STEER_${randomUUID()}`;
 
-    return {
-      id: 'acp_in_flight_steer',
-      title: 'acp: in-flight steer drains pending while a turn is running (no interrupt)',
-      tier: 'smoke',
-      yolo: true,
-      steps: [
-        {
-          id: 'start',
-          prompt: () => `ACP_STUB_PRIMARY=${primary}`,
-          satisfaction: {
-            // Gate step2 on tool-trace, not session messages. Depending on backend buffering,
-            // the RUNNING marker may not land in persisted messages until the turn completes.
+	    return {
+	      id: 'acp_in_flight_steer',
+	      title: 'acp: in-flight steer drains pending while a turn is running (no interrupt)',
+	      tier: 'smoke',
+	      yolo: true,
+	      steps: [
+	        {
+	          id: 'start',
+	          allowInFlightSteer: true,
+	          prompt: () => `ACP_STUB_PRIMARY=${primary}`,
+	          satisfaction: {
+	            // Gate step2 on tool-trace, not session messages. Depending on backend buffering,
+	            // the RUNNING marker may not land in persisted messages until the turn completes.
             requiredTraceSubstrings: [`ACP_STUB_RUNNING primary=${primary}`],
           },
         },
@@ -1105,7 +1133,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
 
           const models = Array.isArray(probeEnvelope.result.availableModels) ? probeEnvelope.result.availableModels : [];
           const selectedModel =
-            models.find((m: any) => m && typeof m.id === 'string' && m.id.trim() !== '' && m.id !== 'default')?.id ?? null;
+            models.find((m: any) => m && typeof m.id === 'string' && m.id.trim() !== '' && m.id !== 'default')?.id ??
+            models.find((m: any) => m && typeof m.id === 'string' && m.id.trim() !== '')?.id ??
+            null;
           if (!selectedModel) {
             throw new Error(`acp_set_model_dynamic: no dynamic non-default model id found`);
           }
@@ -1562,12 +1592,17 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       acpPermissions,
       mode: 'read-only',
     });
+    const requireTaskCompleteWhenNoToolAttempt = resolveAcpOutsideWorkspaceRequireTaskComplete({
+      acpPermissions,
+      mode: 'read-only',
+    });
 
     const scenario = makeAcpPermissionOutsideWorkspaceScenario({
       providerId: acpProviderId(provider),
       content: provider.id === 'codex' ? 'CODEX_OUTSIDE_DENIED_OK' : 'OUTSIDE_DENIED_E2E',
       decision: 'deny',
       expectPermissionRequest,
+      requireTaskCompleteWhenNoToolAttempt,
     });
     return {
       ...scenario,
@@ -1811,7 +1846,9 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
     if (provider.protocol === 'acp') {
       const pid = acpProviderId(provider);
       const sessionMetadataKey = acpResumeMetadataKey(provider.id);
-      const followupTimeoutMs = provider.id === 'kimi' ? 240_000 : 180_000;
+      const followupTimeoutMs =
+        provider.id === 'opencode' || provider.id === 'kilo' ? 300_000 : provider.id === 'kimi' ? 240_000 : 180_000;
+      const readyAndMemoryTimeoutMs = provider.id === 'kilo' ? 180_000 : 120_000;
       const followupSubstrings = abortContinuationFollowupSubstrings(provider.id, followupSentinel, memorySentinel);
       return {
         id: 'abort_turn_then_continue',
@@ -1832,7 +1869,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
               sessionId,
               secret,
               requiredSubstring: readySentinel,
-              timeoutMs: 120_000,
+              timeoutMs: readyAndMemoryTimeoutMs,
             });
 
             const before = await fetchSessionV2(baseUrl, token, sessionId);
@@ -1854,7 +1891,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
               sessionId,
               secret,
               requiredSubstring: memorySentinel,
-              timeoutMs: 120_000,
+              timeoutMs: readyAndMemoryTimeoutMs,
             });
 
             await enqueueSessionPromptForScenario({
@@ -2378,6 +2415,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
       filename: 'e2e-edit-diff.txt',
       before: provider.id === 'codex' ? 'CODEX_EDIT_DIFF_BEFORE_OK' : 'BEFORE_EDIT_DIFF_E2E',
       after: provider.id === 'codex' ? 'CODEX_EDIT_DIFF_AFTER_OK' : 'AFTER_EDIT_DIFF_E2E',
+      useAbsolutePath: provider.id === 'auggie',
     }),
 
   multi_file_edit_in_workspace: (provider) =>
@@ -2393,6 +2431,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
               { filename: 'e2e-multi-a.txt', content: 'MULTI_A_E2E' },
               { filename: 'e2e-multi-b.txt', content: 'MULTI_B_E2E' },
             ],
+      useAbsolutePath: provider.id === 'auggie',
     }),
 
   multi_file_edit_in_workspace_includes_diff: (provider) =>
@@ -2408,6 +2447,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
               { filename: 'e2e-multi-diff-a.txt', before: 'MULTI_DIFF_A_BEFORE', after: 'MULTI_DIFF_A_AFTER' },
               { filename: 'e2e-multi-diff-b.txt', before: 'MULTI_DIFF_B_BEFORE', after: 'MULTI_DIFF_B_AFTER' },
             ],
+      useAbsolutePath: provider.id === 'auggie',
     }),
 
   mcp_change_title: (provider) => {
@@ -2588,7 +2628,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
   },
 
   acp_resume_load_session: (provider) =>
-    relaxAuggieResumeScenario(provider, makeAcpResumeLoadSessionScenario({
+    tuneResumeScenarioForProvider(provider, makeAcpResumeLoadSessionScenario({
       providerId: acpProviderId(provider),
       metadataKey: acpResumeMetadataKey(provider.id),
       phase1TraceSentinel: provider.id === 'codex' ? 'CODEX_RESUME_PHASE1_OK' : 'RESUME_PHASE1_OK',
@@ -2600,7 +2640,7 @@ export const scenarioCatalog: Record<string, ScenarioFactory> = {
     })),
 
   acp_resume_fresh_session_imports_history: (provider) =>
-    relaxAuggieResumeScenario(provider, makeAcpResumeFreshSessionImportsHistoryScenario({
+    tuneResumeScenarioForProvider(provider, makeAcpResumeFreshSessionImportsHistoryScenario({
       providerId: acpProviderId(provider),
       metadataKey: acpResumeMetadataKey(provider.id),
       phase1TraceSentinel: provider.id === 'codex' ? 'CODEX_IMPORT_PHASE1_TRACE_OK' : 'IMPORT_PHASE1_TRACE_OK',

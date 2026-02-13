@@ -52,13 +52,13 @@ describe('providers harness: codex permission startup args', () => {
     ).toEqual(['--yolo']);
   });
 
-  it('does not pass --yolo for ACP providers when permission mode is explicit', () => {
+  it('passes --yolo for non-codex ACP providers even when permission mode metadata is explicit', () => {
     expect(
       resolveYoloCliArgs({
         providerSubcommand: 'kilo',
         yolo: true,
         hasExplicitPermissionModeArgs: true,
       }),
-    ).toEqual([]);
+    ).toEqual(['--yolo']);
   });
 });

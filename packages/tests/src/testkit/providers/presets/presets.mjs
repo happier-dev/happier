@@ -7,6 +7,7 @@ export const PROVIDER_ENV_FLAG_BY_PRESET_ID = Object.freeze({
   qwen: 'HAPPIER_E2E_PROVIDER_QWEN',
   kimi: 'HAPPIER_E2E_PROVIDER_KIMI',
   auggie: 'HAPPIER_E2E_PROVIDER_AUGGIE',
+  pi: 'HAPPIER_E2E_PROVIDER_PI',
 });
 
 export const PROVIDER_PRESET_IDS = Object.freeze(Object.keys(PROVIDER_ENV_FLAG_BY_PRESET_ID));
@@ -59,9 +60,15 @@ export function resolveProviderRunPreset(id, tier) {
     HAPPIER_E2E_PROVIDER_SCENARIO_TIER: tier,
   };
 
+  for (const envVar of Object.values(PROVIDER_ENV_FLAG_BY_PRESET_ID)) {
+    env[envVar] = '0';
+  }
+
   for (const providerId of providerIds) {
     const envVar = PROVIDER_ENV_FLAG_BY_PRESET_ID[providerId];
-    if (envVar) env[envVar] = '1';
+    if (envVar) {
+      env[envVar] = '1';
+    }
   }
 
   return {

@@ -59,7 +59,7 @@ describe('providers: run presets', () => {
         if (testCase.enabledFlags.includes(flag)) {
           expect(preset.env[flag]).toBe('1');
         } else {
-          expect(preset.env[flag]).toBeUndefined();
+          expect(preset.env[flag]).toBe('0');
         }
       }
     }

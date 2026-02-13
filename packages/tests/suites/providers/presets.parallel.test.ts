@@ -17,6 +17,7 @@ describe('providers: parallel preset helpers', () => {
       'qwen',
       'kimi',
       'auggie',
+      'pi',
     ]);
   });
 
@@ -52,6 +53,7 @@ describe('providers: parallel preset helpers', () => {
       'qwen',
       'kimi',
       'auggie',
+      'pi',
     ]);
   });
 

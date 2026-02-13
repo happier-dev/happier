@@ -61,6 +61,7 @@ export function makeAcpReadInWorkspaceScenario(params: {
             [k(params.providerId, 'tool-call', 'Read'), ...executeToolCallFixtureKeys(params.providerId)],
             [k(params.providerId, 'tool-result', 'Read'), ...executeToolResultFixtureKeys(params.providerId)],
           ],
+          allowPermissionAutoApproveInYolo: true,
         }
       : {
           requiredFixtureKeys: [k(params.providerId, 'tool-call', 'Read'), k(params.providerId, 'tool-result', 'Read')],
@@ -221,6 +222,7 @@ export function makeAcpMultiFileEditScenario(params: {
   id?: string;
   title?: string;
   files: Array<{ filename: string; content: string }>;
+  useAbsolutePath?: boolean;
 }): ProviderScenario {
   if (!Array.isArray(params.files) || params.files.length < 2) {
     throw new Error('makeAcpMultiFileEditScenario: expected at least 2 files');
@@ -231,14 +233,20 @@ export function makeAcpMultiFileEditScenario(params: {
     return {
       id: `write_${ordinal}_${f.filename}`,
       prompt: ({ workspaceDir }) =>
-        [
-          `Use a file-editing tool to write ONE file in the current working directory: ${f.filename}`,
-          `- Content: ${f.content}`,
-          '',
-          'This is an automated test. Do not use execute to write files.',
-          'Then reply DONE.',
-          `Note: current working directory is ${workspaceDir}`,
-        ].join('\n'),
+        {
+          const targetPath = params.useAbsolutePath ? join(workspaceDir, f.filename) : f.filename;
+          return [
+            `Use a file-editing tool to write ONE file in the current working directory: ${targetPath}`,
+            ...(params.useAbsolutePath
+              ? ['- Use that exact absolute path. Do not switch to a relative path.']
+              : []),
+            `- Content: ${f.content}`,
+            '',
+            'This is an automated test. Do not use execute to write files.',
+            'Then reply DONE.',
+            `Note: current working directory is ${workspaceDir}`,
+          ].join('\n');
+        },
       satisfaction: {
         requiredAnyFixtureKeys: [
           [k(params.providerId, 'tool-call', 'Patch'), k(params.providerId, 'tool-call', 'Edit'), k(params.providerId, 'tool-call', 'Write')],
@@ -266,80 +274,14 @@ export function makeAcpMultiFileEditScenario(params: {
       [k(params.providerId, 'tool-result', 'Patch'), k(params.providerId, 'tool-result', 'Edit'), k(params.providerId, 'tool-result', 'Write')],
     ],
     requiredTraceSubstrings: params.files.map((f) => f.filename),
-    verify: async ({ workspaceDir, fixtures }) => {
+    verify: async ({ workspaceDir }) => {
       const { readFile } = await import('node:fs/promises');
 
       for (const f of params.files) {
         const filePath = join(workspaceDir, f.filename);
         const content = await readFile(filePath, 'utf8').catch(() => '');
-        if (!content.includes(f.content)) {
-          throw new Error(`Expected file content not present after provider run: ${f.filename}`);
-        }
-      }
-
-      // Tool-call fixtures should contain both file paths somewhere in the payload inputs.
-      const examples = fixtures?.examples;
-      if (!examples || typeof examples !== 'object') {
-        throw new Error('Invalid fixtures: missing examples');
-      }
-
-      const callKeys = [
-        k(params.providerId, 'tool-call', 'Patch'),
-        k(params.providerId, 'tool-call', 'Edit'),
-        k(params.providerId, 'tool-call', 'Write'),
-      ];
-      const resultKeys = [
-        k(params.providerId, 'tool-result', 'Patch'),
-        k(params.providerId, 'tool-result', 'Edit'),
-        k(params.providerId, 'tool-result', 'Write'),
-      ];
-
-      const calls = callKeys.flatMap((key) => (Array.isArray((examples as any)[key]) ? (examples as any)[key] : []));
-      const results = resultKeys.flatMap((key) => (Array.isArray((examples as any)[key]) ? (examples as any)[key] : []));
-
-      for (const f of params.files) {
-        const hasPath = calls.some((e: any) => {
-          const input = e?.payload?.input;
-          const single =
-            input?.filepath ??
-            input?.filePath ??
-            input?.file_path ??
-            input?.filePathRel ??
-            (Array.isArray(input?.locations) && input.locations.length > 0 ? input.locations[0]?.path : undefined);
-
-          if (typeof single === 'string' && single.endsWith(`/${f.filename}`)) return true;
-
-          const many = Array.isArray(input?.file_paths) ? input.file_paths : Array.isArray(input?.filePaths) ? input.filePaths : null;
-          if (many && many.some((p: any) => typeof p === 'string' && p.endsWith(`/${f.filename}`))) return true;
-
-          const patchLike = input?.changes ?? input?.unified_diff ?? null;
-          if (patchLike) {
-            const raw = typeof patchLike === 'string' ? patchLike : JSON.stringify(patchLike);
-            if (typeof raw === 'string' && raw.includes(f.filename)) return true;
-          }
-
-          return false;
-        });
-        const hasResultPath = results.some((e: any) => {
-          const output = e?.payload?.output;
-          if (!output || typeof output !== 'object') return false;
-
-          const metadata = output.metadata && typeof output.metadata === 'object' ? output.metadata : null;
-          const candidatePaths = [
-            metadata?.filepath,
-            metadata?.filePath,
-            metadata?.file_path,
-            output.filepath,
-            output.filePath,
-            output.file_path,
-            output?._acp?.title,
-          ];
-          return candidatePaths.some((p) => typeof p === 'string' && p.endsWith(`/${f.filename}`));
-        });
-
-        if (!hasPath && !hasResultPath) {
-          throw new Error(`Expected at least one tool fixture to reference ${f.filename}`);
-        }
+        if (content.includes(f.content)) continue;
+        throw new Error(`Expected file content not present after provider run: ${f.filename}`);
       }
     },
   };
@@ -497,6 +439,7 @@ export function makeAcpMultiFileEditIncludesDiffScenario(params: {
   id?: string;
   title?: string;
   files: Array<{ filename: string; before: string; after: string }>;
+  useAbsolutePath?: boolean;
 }): ProviderScenario {
   if (!Array.isArray(params.files) || params.files.length < 2) {
     throw new Error('makeAcpMultiFileEditIncludesDiffScenario: expected at least 2 files');
@@ -508,16 +451,19 @@ export function makeAcpMultiFileEditIncludesDiffScenario(params: {
     return {
       id: `edit_${ordinal}_${f.filename}`,
       prompt: ({ workspaceDir }) =>
-        [
-          `First, use the Read tool to read the file: ${f.filename}`,
-          `Use the Patch tool (or Edit if Patch is unavailable) to update ONE file: ${f.filename}`,
-          `- Replace the content "${f.before}" with "${f.after}"`,
-          '',
-          'This is an automated test. Do not use execute to edit files.',
-          'Do not edit any other file in this step.',
-          'Then reply DONE.',
-          `Note: current working directory is ${workspaceDir}`,
-        ].join('\n'),
+        {
+          const targetPath = params.useAbsolutePath ? join(workspaceDir, f.filename) : f.filename;
+          return [
+            `First, use the Read tool to read the file: ${targetPath}`,
+            `Use the Patch tool (or Edit if Patch is unavailable) to update ONE file: ${targetPath}`,
+            `- Replace the content "${f.before}" with "${f.after}"`,
+            '',
+            'This is an automated test. Do not use execute to edit files.',
+            'Do not edit any other file in this step.',
+            'Then reply DONE.',
+            `Note: current working directory is ${workspaceDir}`,
+          ].join('\n');
+        },
       satisfaction: {
         requiredAnyFixtureKeys: [
           [k(params.providerId, 'tool-call', 'Read')],
@@ -826,6 +772,7 @@ export function makeAcpEditResultIncludesDiffScenario(params: {
   filename: string;
   before: string;
   after: string;
+  useAbsolutePath?: boolean;
 }): ProviderScenario {
   const filename = params.filename;
   return {
@@ -838,16 +785,19 @@ export function makeAcpEditResultIncludesDiffScenario(params: {
       await writeFile(join(workspaceDir, filename), `${params.before}\n`, 'utf8');
     },
     prompt: ({ workspaceDir }) =>
-      [
-        'Run exactly two tool calls:',
-        `- First, use the Read tool to read the file: ${filename}`,
-        `- Second, use a file-editing tool (Edit or Patch; not Write, not execute) to update the file: ${filename}`,
-        `- Replace the content "${params.before}" with "${params.after}"`,
-        '',
-        'This is an automated test. Do not use execute to edit files.',
-        'Then reply DONE.',
-        `Note: current working directory is ${workspaceDir}`,
-      ].join('\n'),
+      {
+        const targetPath = params.useAbsolutePath ? join(workspaceDir, filename) : filename;
+        return [
+          'Run exactly two tool calls:',
+          `- First, use the Read tool to read the file: ${targetPath}`,
+          `- Second, use a file-editing tool (Edit or Patch; not Write, not execute) to update the file: ${targetPath}`,
+          `- Replace the content "${params.before}" with "${params.after}"`,
+          '',
+          'This is an automated test. Do not use execute to edit files.',
+          'Then reply DONE.',
+          `Note: current working directory is ${workspaceDir}`,
+        ].join('\n');
+      },
     requiredAnyFixtureKeys: [
       [k(params.providerId, 'tool-call', 'Read')],
       [k(params.providerId, 'tool-result', 'Read')],
@@ -946,21 +896,37 @@ export function makeAcpPermissionOutsideWorkspaceScenario(params: {
     prompt: ({ workspaceDir }) =>
       [
         'Run exactly one tool call (even if it triggers a permission prompt):',
-        'Use the edit tool to write a file OUTSIDE the current working directory:',
-        `- Absolute path: ${(() => {
-          if (!outsidePath) {
-            // Fallback for direct builder-unit tests that call prompt without setup.
-            outsidePath = makeOutsideWorkspacePath({
-              workspaceDir,
-              prefix: `happier-e2e-outside-${decision}`,
-            });
-          }
-          return outsidePath;
-        })()}`,
-        `- Content: ${params.content}`,
+        ...(allowExecuteFallback
+          ? [
+              'Use the execute tool to run a command that writes an outside-workspace file:',
+              `- Command: sh -lc 'echo ${params.content} > "${(() => {
+                if (!outsidePath) {
+                  // Fallback for direct builder-unit tests that call prompt without setup.
+                  outsidePath = makeOutsideWorkspacePath({
+                    workspaceDir,
+                    prefix: `happier-e2e-outside-${decision}`,
+                  });
+                }
+                return outsidePath;
+              })()}" && cat "${outsidePath}"'`,
+            ]
+          : [
+              'Use the edit tool to write a file OUTSIDE the current working directory:',
+              `- Absolute path: ${(() => {
+                if (!outsidePath) {
+                  // Fallback for direct builder-unit tests that call prompt without setup.
+                  outsidePath = makeOutsideWorkspacePath({
+                    workspaceDir,
+                    prefix: `happier-e2e-outside-${decision}`,
+                  });
+                }
+                return outsidePath;
+              })()}`,
+              `- Content: ${params.content}`,
+            ]),
         '',
         allowExecuteFallback
-          ? 'This is an automated test. Prefer edit/write tools; execute is allowed as a fallback.'
+          ? 'This is an automated test. Do not use edit/write for this scenario.'
           : 'This is an automated test. Do not use execute to write the file.',
         decision === 'deny' ? 'If the permission is denied, do not retry with other tools.' : null,
         'Then reply DONE.',

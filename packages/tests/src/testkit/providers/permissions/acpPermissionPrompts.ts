@@ -1,4 +1,4 @@
-import type { AcpPermissionMode, ProviderUnderTest } from './types';
+import type { AcpPermissionMode, ProviderUnderTest } from '../types';
 
 type AcpPermissions = NonNullable<NonNullable<ProviderUnderTest['permissions']>['acp']>;
 

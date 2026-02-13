@@ -49,9 +49,9 @@ describe('providers harness: yolo permission auto-approval guard', () => {
       sessionId: 'sess-1',
       secret: new Uint8Array(32),
       uiSocket: {
-        rpcCall: async (method: string) => {
+        rpcCall: async <T = unknown>(method: string, _payload: string) => {
           rpcCalls.push({ method });
-          return { ok: true };
+          return { ok: true } as T;
         },
       },
     });

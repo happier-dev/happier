@@ -28,6 +28,9 @@ describe('providers: providerSpec permissions passthrough', () => {
     expectModeMapKeys(codex?.permissions?.acp?.outsideWorkspaceWriteMustCompleteByMode);
     expect(codex?.permissions?.acp?.outsideWorkspaceWriteMustCompleteByMode?.default).toBe(false);
     expect(codex?.permissions?.acp?.outsideWorkspaceWriteMustCompleteByMode?.yolo).toBe(false);
+    expectModeMapKeys(codex?.permissions?.acp?.outsideWorkspaceRequireTaskCompleteByMode);
+    expect(codex?.permissions?.acp?.outsideWorkspaceRequireTaskCompleteByMode?.default).toBe(false);
+    expect(codex?.permissions?.acp?.outsideWorkspaceRequireTaskCompleteByMode?.yolo).toBe(false);
 
     const opencode = providers.find((p) => p.id === 'opencode');
     expect(opencode).toBeTruthy();

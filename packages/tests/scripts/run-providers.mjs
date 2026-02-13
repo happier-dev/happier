@@ -72,7 +72,7 @@ function usage(exitCode, message) {
       'Usage:',
       '  yarn providers:run <preset> <tier> [--update-baselines] [--strict-keys] [--flake-retry|--no-flake-retry]',
       '',
-      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | all',
+      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | pi | all',
       'Tiers:   smoke | extended',
       '',
       'Examples:',

@@ -198,12 +198,14 @@ export async function ensureCliSharedDepsBuilt(
   const lockPath = options.lockPath ?? resolve(rootDir, '.project', 'tmp', 'cli-shared-deps-build.lock');
   _ensureSharedPromise = withCliDistBuildLock(
     async () => {
+      if (hasCliSharedDepsOutputs(rootDir)) return;
+
       const runCommand = options.runCommand ?? runLoggedCommand;
       await runCommand({
         command: yarnCommand(),
         args: ['-s', 'workspace', '@happier-dev/cli', 'build:shared'],
         cwd: rootDir,
-        env: { ...params.env, CI: '1' },
+        env: { ...process.env, ...params.env, CI: '1' },
         stdoutPath: resolve(params.testDir, 'cli.buildShared.stdout.log'),
         stderrPath: resolve(params.testDir, 'cli.buildShared.stderr.log'),
         timeoutMs: 240_000,
@@ -277,6 +279,15 @@ export async function ensureCliDistBuilt(
   options: EnsureCliDistBuiltOptions = {},
 ): Promise<string> {
   const rootDir = options.repoRoot ?? repoRootDir();
+  // Daemon processes execute `apps/cli/dist/*` which imports from workspace deps.
+  // Ensure those deps are compiled first so we don't start with a stale/partial protocol build.
+  await ensureCliSharedDepsBuilt(params, {
+    repoRoot: rootDir,
+    runCommand: options.runCommand,
+    timeoutMs: options.timeoutMs,
+    pollIntervalMs: options.pollIntervalMs,
+    staleAfterMs: options.staleAfterMs,
+  });
   const distDir = resolve(rootDir, 'apps/cli/dist');
   const entrypoint = resolve(distDir, 'index.mjs');
   const allowRebuild = options.allowRebuild ?? true;
