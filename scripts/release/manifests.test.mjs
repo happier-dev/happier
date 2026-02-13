@@ -14,6 +14,17 @@ test('parseArtifactFilename parses expected artifact format', () => {
   });
 });
 
+test('parseArtifactFilename accepts prerelease versions containing hyphens', () => {
+  const parsed = parseArtifactFilename('happier-v0.1.0-preview.71.1-linux-x64.tar.gz');
+  assert.deepEqual(parsed, {
+    product: 'happier',
+    version: '0.1.0-preview.71.1',
+    os: 'linux',
+    arch: 'x64',
+    filename: 'happier-v0.1.0-preview.71.1-linux-x64.tar.gz',
+  });
+});
+
 test('parseArtifactFilename rejects invalid names', () => {
   assert.equal(parseArtifactFilename('happier-linux-x64.tar.gz'), null);
   assert.equal(parseArtifactFilename('happier-v1.2.3-linux-ppc.tar.gz'), null);

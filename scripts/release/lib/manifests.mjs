@@ -4,7 +4,7 @@ const PRODUCT_NAMES = new Set(['happier', 'hstack', 'happier-server']);
 
 export function parseArtifactFilename(name) {
   const raw = String(name ?? '').trim();
-  const match = /^(happier|hstack|happier-server)-v([^-\s]+)-([a-z]+)-(x64|arm64)\.tar\.gz$/.exec(raw);
+  const match = /^(happier|hstack|happier-server)-v(.+)-([a-z]+)-(x64|arm64)\.tar\.gz$/.exec(raw);
   if (!match) return null;
   const [, product, version, os, arch] = match;
   return { product, version, os, arch, filename: raw };
