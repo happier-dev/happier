@@ -24,6 +24,7 @@ export type BugReportFormPayload = {
   environment: BugReportEnvironmentPayload;
   consent: {
     includeDiagnostics: boolean;
+    allowMaintainerFollowUp?: boolean;
     acceptedPrivacyNotice: boolean;
   };
 };
@@ -43,6 +44,7 @@ export type BugReportServiceSubmitInput = {
   maxArtifactBytes?: number;
   issueOwner: string;
   issueRepo: string;
+  labels?: string[];
   clientPrefix?: string;
   existingIssueNumber?: number;
 };
@@ -50,5 +52,7 @@ export type BugReportServiceSubmitInput = {
 export const BUG_REPORT_DEFAULT_ISSUE_OWNER = 'happier-dev';
 export const BUG_REPORT_DEFAULT_ISSUE_REPO = 'happier';
 export const BUG_REPORT_DEFAULT_ISSUE_LABELS: readonly string[] = ['bug'];
+export const BUG_REPORT_FALLBACK_MAX_LABELS = 10;
+export const BUG_REPORT_FALLBACK_MAX_LABEL_LENGTH = 50;
 export const BUG_REPORT_FALLBACK_ISSUE_URL_MAX_LENGTH = 7600;
 export const BUG_REPORT_FALLBACK_BODY_TRUNCATION_SUFFIX = '\n\n[bug report content truncated due to URL length limits]';

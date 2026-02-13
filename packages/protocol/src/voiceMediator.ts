@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { VoiceAssistantActionSchema } from './voiceActions.js';
 
 export const VOICE_MEDIATOR_ERROR_CODES = {
   NOT_FOUND: 'VOICE_MEDIATOR_NOT_FOUND',
@@ -49,6 +50,7 @@ export type VoiceMediatorSendTurnRequest = z.infer<typeof VoiceMediatorSendTurnR
 
 export const VoiceMediatorSendTurnResponseSchema = z.object({
   assistantText: z.string(),
+  actions: z.array(VoiceAssistantActionSchema).optional(),
 });
 export type VoiceMediatorSendTurnResponse = z.infer<typeof VoiceMediatorSendTurnResponseSchema>;
 
@@ -80,6 +82,7 @@ export type VoiceMediatorTurnStreamEventDelta = z.infer<typeof VoiceMediatorTurn
 export const VoiceMediatorTurnStreamEventDoneSchema = z.object({
   t: z.literal('done'),
   assistantText: z.string(),
+  actions: z.array(VoiceAssistantActionSchema).optional(),
 });
 export type VoiceMediatorTurnStreamEventDone = z.infer<typeof VoiceMediatorTurnStreamEventDoneSchema>;
 
