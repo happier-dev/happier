@@ -864,6 +864,7 @@ jobs:
     if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.checks.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     permissions:
+      contents: read
       actions: read
     uses: ./.github/workflows/promote-website.yml
     secrets: inherit
@@ -879,6 +880,7 @@ jobs:
     if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     permissions:
+      contents: read
       actions: read
     uses: ./.github/workflows/promote-docs.yml
     secrets: inherit
