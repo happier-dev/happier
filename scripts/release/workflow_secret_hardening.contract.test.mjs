@@ -55,15 +55,15 @@ test('release workflow defaults providers off and isolates provider secret usage
 
   assert.equal(inputs?.run_providers?.default, false, 'run_providers should default to false');
 
-  const gateJob = parsed?.jobs?.gate;
-  assert.ok(gateJob, 'gate job should exist');
-  assert.equal(gateJob.secrets, undefined, 'gate should not inherit secrets');
-  assert.equal(gateJob.with?.run_providers, false, 'gate should never run providers directly');
+  const ciJob = parsed?.jobs?.ci;
+  assert.ok(ciJob, 'ci job should exist');
+  assert.equal(ciJob.secrets, undefined, 'ci should not inherit secrets');
+  assert.equal(ciJob.with?.run_providers, false, 'ci should never run providers directly');
 
-  const providersGate = parsed?.jobs?.providers_gate;
-  assert.ok(providersGate, 'providers_gate job should exist');
-  assert.equal(providersGate.uses, './.github/workflows/providers-contracts.yml', 'providers_gate should use providers-contracts workflow');
-  assert.equal(providersGate.secrets, 'inherit', 'providers_gate should inherit secrets for provider checks');
+  const providersJob = parsed?.jobs?.providers;
+  assert.ok(providersJob, 'providers job should exist');
+  assert.equal(providersJob.uses, './.github/workflows/providers-contracts.yml', 'providers should use providers-contracts workflow');
+  assert.equal(providersJob.secrets, 'inherit', 'providers should inherit secrets for provider checks');
 });
 
 test('manual secret-bearing workflows enforce trusted refs', async () => {
@@ -157,8 +157,8 @@ test('secret-bearing workflows require release-admin actor guard before privileg
 
   const guardJob = 'release_actor_guard';
   const expectedWiring = [
-    ['release.yml', 'gate'],
-    ['release.yml', 'providers_gate'],
+    ['release.yml', 'ci'],
+    ['release.yml', 'providers'],
     ['release-npm.yml', 'release'],
     ['promote-ui.yml', 'promote'],
     ['promote-server.yml', 'promote'],

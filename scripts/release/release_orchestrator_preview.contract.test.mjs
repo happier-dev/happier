@@ -17,16 +17,16 @@ test('release workflow only promotes/bumps on production and routes source_ref b
   // If CI gate fails, checks is skipped; downstream must not treat that as OK to promote/deploy.
   assert.doesNotMatch(
     raw,
-    /needs\.checks\.result == 'success' \|\| needs\.checks\.result == 'skipped'/,
+    /needs\.plan\.result == 'success' \|\| needs\.plan\.result == 'skipped'/,
     'release orchestrator must not treat skipped checks as eligible for promotion/deploy',
   );
 
   // promote_main must not be skipped when bump_versions_dev is skipped (GitHub skips dependent jobs by default).
   assert.match(
     raw,
-    /promote_main:[\s\S]*?if:\s*always\(\)\s*&&[\s\S]*?inputs\.dry_run != true && inputs\.environment == 'production'[\s\S]*?needs\.checks\.result == 'success'[\s\S]*?\(needs\.bump_versions_dev\.result == 'success' \|\| needs\.bump_versions_dev\.result == 'skipped'\)/,
+    /promote_main:[\s\S]*?if:\s*always\(\)\s*&&[\s\S]*?inputs\.dry_run != true && inputs\.environment == 'production'[\s\S]*?needs\.plan\.result == 'success'[\s\S]*?\(needs\.bump_versions_dev\.result == 'success' \|\| needs\.bump_versions_dev\.result == 'skipped'\)/,
   );
-  assert.match(raw, /bump_versions_dev:[\s\S]*?if:\s*inputs\.dry_run != true && needs\.checks\.outputs\.should_bump == 'true'/);
+  assert.match(raw, /bump_versions_dev:[\s\S]*?if:\s*inputs\.dry_run != true && needs\.plan\.outputs\.should_bump == 'true'/);
   assert.match(raw, /if \[ "\$env_name" = "preview" \]; then[\s\S]*?if \[ "\$confirm" != "release preview from dev" \]; then/);
   assert.doesNotMatch(raw, /\[ "\$confirm" != "release preview from dev" \] && \[ "\$confirm" != "release dev to main" \]/);
 
@@ -89,8 +89,8 @@ test('stack version bumps use shared bump-version script across release workflow
   const orchestrator = await loadWorkflow('release.yml');
   const releaseNpm = await loadWorkflow('release-npm.yml');
 
-  assert.match(orchestrator, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ needs\.checks\.outputs\.bump_stack \}\}"/);
-  assert.doesNotMatch(orchestrator, /BUMP="\$\{\{ needs\.checks\.outputs\.bump_stack \}\}" node - <<'NODE'/);
+  assert.match(orchestrator, /node scripts\/release\/bump-version\.mjs --component stack --bump "\$\{\{ needs\.plan\.outputs\.bump_stack \}\}"/);
+  assert.doesNotMatch(orchestrator, /BUMP="\$\{\{ needs\.plan\.outputs\.bump_stack \}\}" node - <<'NODE'/);
 
   // Version bumps are centralized in the release orchestrator (dev commit),
   // so release-npm must not bump versions on main for production.

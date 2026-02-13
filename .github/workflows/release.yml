@@ -177,8 +177,8 @@ jobs:
         with:
           team_slug: release-admins
 
-  gate:
-    name: CI Gate (dev)
+  ci:
+    name: CI Checks (tests.yml)
     needs: [release_actor_guard]
     if: inputs.checks_profile != 'none'
     uses: ./.github/workflows/tests.yml
@@ -203,8 +203,8 @@ jobs:
       stress_repeat: "5"
       stress_seed: ""
 
-  providers_gate:
-    name: Providers Gate (dev)
+  providers:
+    name: Providers Checks (providers-contracts.yml)
     needs: [release_actor_guard]
     if: inputs.checks_profile != 'none' && inputs.run_providers == true
     uses: ./.github/workflows/providers-contracts.yml
@@ -215,9 +215,10 @@ jobs:
       strict_keys: false
       flake_retry: true
 
-  checks:
-    needs: [release_actor_guard, gate, providers_gate]
-    if: ${{ always() && needs.release_actor_guard.result == 'success' && (needs.gate.result == 'success' || needs.gate.result == 'skipped') && (needs.providers_gate.result == 'success' || needs.providers_gate.result == 'skipped') }}
+  plan:
+    name: Release Plan (inputs + changes + bump/publish decisions)
+    needs: [release_actor_guard, ci, providers]
+    if: ${{ always() && needs.release_actor_guard.result == 'success' && (needs.ci.result == 'success' || needs.ci.result == 'skipped') && (needs.providers.result == 'success' || needs.providers.result == 'skipped') }}
     runs-on: ubuntu-latest
     outputs:
       changed_ui: ${{ steps.plan.outputs.changed_ui }}
@@ -322,7 +323,7 @@ jobs:
         if: inputs.checks_profile != 'none'
         run: |
           set -euo pipefail
-          echo "CI gate ran in job 'gate' (tests/typecheck/e2e/providers/stress as configured)."
+          echo "CI checks ran in job 'ci' (tests/typecheck/e2e/providers/stress as configured)."
 
       - name: Build website
         if: ${{ (inputs.checks_profile == 'full') || (inputs.checks_profile == 'custom' && contains(format(',{0},', inputs.custom_checks), ',build_website,')) }}
@@ -573,13 +574,13 @@ jobs:
     runs-on: ubuntu-latest
     environment: release-shared
     if: >-
-      always() && needs.checks.result == 'success' && (
+      always() && needs.plan.result == 'success' && (
         contains(format(',{0},', inputs.deploy_targets), ',server,') ||
         contains(format(',{0},', inputs.deploy_targets), ',website,') ||
         contains(format(',{0},', inputs.deploy_targets), ',docs,') ||
         (inputs.environment == 'production' && contains(format(',{0},', inputs.deploy_targets), ',ui,'))
       )
-    needs: [checks, bump_versions_dev, promote_main]
+    needs: [plan, bump_versions_dev, promote_main]
     outputs:
       deploy_ui_needed: ${{ steps.plan.outputs.deploy_ui_needed }}
       deploy_server_needed: ${{ steps.plan.outputs.deploy_server_needed }}
@@ -719,8 +720,8 @@ jobs:
     # GitHub skips dependent jobs when a needed job is skipped unless we use always().
     # In production, bump_versions_dev is frequently skipped (bump=none), but we still
     # must promote dev -> main so downstream deploy/publish jobs can run.
-    if: always() && needs.checks.result == 'success' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && inputs.dry_run != true && inputs.environment == 'production'
-    needs: [checks, bump_versions_dev]
+    if: always() && needs.plan.result == 'success' && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && inputs.dry_run != true && inputs.environment == 'production'
+    needs: [plan, bump_versions_dev]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:
@@ -732,8 +733,8 @@ jobs:
       confirm: ${{ inputs.confirm == 'reset main from dev' && 'reset main from dev' || 'promote main from dev' }}
 
   bump_versions_dev:
-    if: inputs.dry_run != true && needs.checks.outputs.should_bump == 'true'
-    needs: [checks]
+    if: inputs.dry_run != true && needs.plan.outputs.should_bump == 'true'
+    needs: [plan]
     runs-on: ubuntu-latest
     environment: release-shared
     steps:
@@ -776,28 +777,28 @@ jobs:
 
           bumped=()
 
-          if [ "${{ needs.checks.outputs.bump_app }}" != "none" ]; then
-            node scripts/release/bump-version.mjs --component app --bump "${{ needs.checks.outputs.bump_app }}" >/tmp/bump_app.txt
+          if [ "${{ needs.plan.outputs.bump_app }}" != "none" ]; then
+            node scripts/release/bump-version.mjs --component app --bump "${{ needs.plan.outputs.bump_app }}" >/tmp/bump_app.txt
             bumped+=("app")
           fi
 
-          if [ "${{ needs.checks.outputs.bump_server }}" != "none" ]; then
-            node scripts/release/bump-version.mjs --component server --bump "${{ needs.checks.outputs.bump_server }}" >/tmp/bump_server.txt
+          if [ "${{ needs.plan.outputs.bump_server }}" != "none" ]; then
+            node scripts/release/bump-version.mjs --component server --bump "${{ needs.plan.outputs.bump_server }}" >/tmp/bump_server.txt
             bumped+=("server")
           fi
 
-          if [ "${{ needs.checks.outputs.bump_website }}" != "none" ]; then
-            node scripts/release/bump-version.mjs --component website --bump "${{ needs.checks.outputs.bump_website }}" >/tmp/bump_website.txt
+          if [ "${{ needs.plan.outputs.bump_website }}" != "none" ]; then
+            node scripts/release/bump-version.mjs --component website --bump "${{ needs.plan.outputs.bump_website }}" >/tmp/bump_website.txt
             bumped+=("website")
           fi
 
-          if [ "${{ needs.checks.outputs.bump_cli }}" != "none" ]; then
-            node scripts/release/bump-version.mjs --component cli --bump "${{ needs.checks.outputs.bump_cli }}" >/tmp/bump_cli.txt
+          if [ "${{ needs.plan.outputs.bump_cli }}" != "none" ]; then
+            node scripts/release/bump-version.mjs --component cli --bump "${{ needs.plan.outputs.bump_cli }}" >/tmp/bump_cli.txt
             bumped+=("cli")
           fi
 
-          if [ "${{ needs.checks.outputs.bump_stack }}" != "none" ]; then
-            node scripts/release/bump-version.mjs --component stack --bump "${{ needs.checks.outputs.bump_stack }}" >/tmp/bump_stack.txt
+          if [ "${{ needs.plan.outputs.bump_stack }}" != "none" ]; then
+            node scripts/release/bump-version.mjs --component stack --bump "${{ needs.plan.outputs.bump_stack }}" >/tmp/bump_stack.txt
             bumped+=("stack")
           fi
 
@@ -823,8 +824,8 @@ jobs:
           git push origin HEAD:dev
 
   deploy_ui:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.checks.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [checks, bump_versions_dev, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.plan.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    needs: [plan, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: write
       actions: read
@@ -845,8 +846,8 @@ jobs:
       run_tests: false
 
   deploy_server:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.checks.outputs.bump_server != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [checks, bump_versions_dev, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    needs: [plan, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: write
       actions: read
@@ -861,8 +862,8 @@ jobs:
       run_tests: false
 
   deploy_website:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.checks.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [checks, bump_versions_dev, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',website,') && (needs.deploy_plan.outputs.deploy_website_needed == 'true' || needs.plan.outputs.bump_website != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    needs: [plan, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: read
       actions: read
@@ -877,8 +878,8 @@ jobs:
       run_build: true
 
   deploy_docs:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [checks, bump_versions_dev, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',docs,') && (needs.deploy_plan.outputs.deploy_docs_needed == 'true' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    needs: [plan, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: read
       actions: read
@@ -892,17 +893,17 @@ jobs:
       run_build: true
 
   publish_npm:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && (needs.checks.outputs.publish_cli == 'true' || needs.checks.outputs.publish_stack == 'true' || needs.checks.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
-    needs: [checks, bump_versions_dev, promote_main]
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    needs: [plan, bump_versions_dev, promote_main]
     permissions:
       contents: write
       id-token: write
     uses: ./.github/workflows/release-npm.yml
     secrets: inherit
     with:
-      publish_cli: ${{ needs.checks.outputs.publish_cli == 'true' }}
-      publish_stack: ${{ needs.checks.outputs.publish_stack == 'true' }}
-      publish_server: ${{ needs.checks.outputs.publish_server == 'true' }}
+      publish_cli: ${{ needs.plan.outputs.publish_cli == 'true' }}
+      publish_stack: ${{ needs.plan.outputs.publish_stack == 'true' }}
+      publish_server: ${{ needs.plan.outputs.publish_server == 'true' }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       npm_tag: ${{ inputs.environment == 'production' && 'latest' || 'next' }}
@@ -910,7 +911,7 @@ jobs:
 
   sync_dev:
     if: inputs.dry_run != true && inputs.environment == 'production' && (vars.RELEASE_SYNC_DEV_FROM_MAIN == '' || vars.RELEASE_SYNC_DEV_FROM_MAIN == 'true')
-    needs: [checks, bump_versions_dev, promote_main]
+    needs: [plan, bump_versions_dev, promote_main]
     uses: ./.github/workflows/promote-branch.yml
     secrets: inherit
     with:
