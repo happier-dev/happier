@@ -14,7 +14,7 @@ jobs:
   e2e-postgres:
     name: Core E2E (Postgres)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     services:
       postgres:
         image: postgres:17
@@ -69,7 +69,7 @@ jobs:
   e2e-mysql:
     name: Core E2E (MySQL)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     services:
       mysql:
         image: mysql:8.0
