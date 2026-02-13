@@ -36,6 +36,23 @@ test('release workflow only promotes/bumps on production and routes source_ref b
   assert.match(raw, /sync_dev:[\s\S]*?if:\s*inputs\.dry_run != true && inputs\.environment == 'production'/);
 });
 
+test('release workflow publishes server runner only when explicitly requested', async () => {
+  const raw = await loadWorkflow('release.yml');
+
+  // Production deploys should not be blocked on npm publishing the server runner by default.
+  // Publishing must be an explicit target so server deploy remains independent.
+  assert.doesNotMatch(
+    raw,
+    /if\s+\[\s*"\$p"\s*=\s*"server"\s*\];\s+then\s+publish_server="true";\s+fi/,
+    'server deploy target must not imply server runner npm publishing',
+  );
+  assert.match(
+    raw,
+    /if\s+\[\s*"\$p"\s*=\s*"server_runner"\s*\];\s+then\s+publish_server="true";\s+fi/,
+    'server runner npm publishing should be controlled via server_runner deploy target',
+  );
+});
+
 test('release workflows do not embed invalid JS escaping in node -p/-e snippets', async () => {
   const release = await loadWorkflow('release.yml');
   const releaseNpm = await loadWorkflow('release-npm.yml');

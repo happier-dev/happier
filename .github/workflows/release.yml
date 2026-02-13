@@ -55,7 +55,7 @@ on:
           - preview
           - production
       deploy_targets:
-        description: "Deploy — Comma-separated targets: ui,server,website,docs,cli,stack"
+        description: "Deploy — Comma-separated targets: ui,server,website,docs,cli,stack,server_runner"
         required: true
         default: ui,server,website,docs
         type: string
@@ -270,9 +270,9 @@ jobs:
             for p in "${parts[@]}"; do
               [ -z "${p:-}" ] && continue
               case "${p}" in
-                ui|server|website|docs|cli|stack) ;;
+                ui|server|website|docs|cli|stack|server_runner) ;;
                 *)
-                  echo "Unknown deploy_targets entry: '${p}'. Expected: ui,server,website,docs,cli,stack" >&2
+                  echo "Unknown deploy_targets entry: '${p}'. Expected: ui,server,website,docs,cli,stack,server_runner" >&2
                   exit 1
                   ;;
               esac
@@ -465,7 +465,7 @@ jobs:
               [ -z "${p:-}" ] && continue
               if [ "$p" = "cli" ]; then publish_cli="true"; fi
               if [ "$p" = "stack" ]; then publish_stack="true"; fi
-              if [ "$p" = "server" ]; then publish_server="true"; fi
+              if [ "$p" = "server_runner" ]; then publish_server="true"; fi
             done
           fi
 
