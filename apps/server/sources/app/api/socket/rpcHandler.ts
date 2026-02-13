@@ -1,6 +1,6 @@
 import { log } from "@/utils/logging/log";
 import { Server, Socket } from "socket.io";
-import { RPC_ERROR_CODES } from "@happier-dev/protocol/rpc";
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from "@happier-dev/protocol/rpc";
 import { SOCKET_RPC_EVENTS } from "@happier-dev/protocol/socketRpc";
 import { resolveRpcForwardTimeoutMs } from "./rpcForwardTimeout";
 import { createRpcRedisRegistryCoordinator, type RpcRedisRegistryConfig } from "./rpcRedisRegistryCoordinator";
@@ -114,7 +114,7 @@ export function rpcHandler(
                         if (callback) {
                             callback({
                                 ok: false,
-                                error: 'RPC method not available',
+                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
                                 errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
                             });
                         }
@@ -145,7 +145,7 @@ export function rpcHandler(
                         if (callback) {
                             callback({
                                 ok: false,
-                                error: 'RPC method not available',
+                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
                                 errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
                             });
                         }
@@ -165,16 +165,16 @@ export function rpcHandler(
                 if (!targetSocket) {
                     targetSocket = userRpcListeners.get(method);
                 }
-                if (!targetSocket || !targetSocket.connected) {
-                    if (callback) {
-                        callback({
-                            ok: false,
-                            error: 'RPC method not available',
-                            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
-                        });
+                    if (!targetSocket || !targetSocket.connected) {
+                        if (callback) {
+                            callback({
+                                ok: false,
+                                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+                                errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                            });
+                        }
+                        return;
                     }
-                    return;
-                }
                 if (targetSocket === socket) {
                     if (callback) {
                         callback({

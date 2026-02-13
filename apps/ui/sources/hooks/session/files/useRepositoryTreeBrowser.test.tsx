@@ -78,4 +78,93 @@ describe('useRepositoryTreeBrowser', () => {
         expect(api.nodes.map((n: any) => n.path)).toEqual(['src', 'README.md']);
         expect(api.expandedCount).toBe(0);
     });
+
+    it('does not apply stale directory results after switching sessions', async () => {
+        let resolveSession1Src: ((value: any) => void) | null = null;
+
+        listRepositoryDirectoryEntriesSpy.mockImplementation(async ({ sessionId, directoryPath }) => {
+            if (!directoryPath) {
+                return {
+                    ok: true,
+                    entries: [
+                        { name: 'src', type: 'directory' },
+                        { name: 'README.md', type: 'file' },
+                    ],
+                };
+            }
+            if (directoryPath === 'src') {
+                if (sessionId === 'session-1') {
+                    return await new Promise((resolve) => {
+                        resolveSession1Src = resolve;
+                    });
+                }
+                return { ok: true, entries: [{ name: 'b.ts', type: 'file' }] };
+            }
+            return { ok: true, entries: [] };
+        });
+
+        const { useRepositoryTreeBrowser } = await import('./useRepositoryTreeBrowser');
+
+        const apiRef: { current: any } = { current: null };
+        let setSessionId: ((value: string) => void) | null = null;
+
+        function Test() {
+            const [sessionId, setSession] = React.useState('session-1');
+            const [expandedPaths, setExpandedPaths] = React.useState<string[]>([]);
+            setSessionId = setSession;
+
+            React.useEffect(() => {
+                setExpandedPaths([]);
+            }, [sessionId]);
+
+            const api = useRepositoryTreeBrowser({
+                sessionId,
+                enabled: true,
+                expandedPaths,
+                onExpandedPathsChange: setExpandedPaths,
+            });
+            apiRef.current = api;
+            return null;
+        }
+
+        await act(async () => {
+            renderer.create(<Test />);
+        });
+        await act(async () => {});
+
+        expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-1', directoryPath: '' });
+
+        // Expand src for session-1, leaving the load in flight.
+        act(() => {
+            apiRef.current.toggleDirectory('src');
+        });
+
+        // Switch sessions while the session-1 directory load is still pending.
+        await act(async () => {
+            setSessionId!('session-2');
+        });
+        await act(async () => {});
+
+        expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-2', directoryPath: '' });
+
+        // Resolve the stale session-1 directory request.
+        resolveSession1Src?.({ ok: true, entries: [{ name: 'a.ts', type: 'file' }] });
+        resolveSession1Src = null;
+
+        // Flush microtasks.
+        for (let i = 0; i < 5; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+        }
+
+        // Now expand src in session-2. This must fetch session-2 entries, not reuse stale session-1 results.
+        await act(async () => {
+            await apiRef.current.toggleDirectory('src');
+        });
+
+        expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-2', directoryPath: 'src' });
+        expect(apiRef.current.nodes.some((n: any) => n.path === 'src/b.ts')).toBe(true);
+        expect(apiRef.current.nodes.some((n: any) => n.path === 'src/a.ts')).toBe(false);
+    });
 });

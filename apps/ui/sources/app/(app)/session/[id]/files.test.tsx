@@ -17,6 +17,7 @@ const setRepositoryTreeExpandedPathsSpy = vi.fn();
 let mockScmSnapshot: any = null;
 let mockScmSnapshotError: any = null;
 let mockSessionPath: string | null = '/repo';
+let mockSessionActive = true;
 let mockShouldShowAllFiles = false;
 const invalidateAndAwaitSpy = vi.fn(async () => {});
 
@@ -118,7 +119,10 @@ vi.mock('@/sync/domains/state/storage', () => ({
             setSessionRepositoryTreeExpandedPaths: setRepositoryTreeExpandedPathsSpy,
         }),
     },
-    useSession: () => (mockSessionPath ? ({ metadata: { path: mockSessionPath } } as any) : null),
+    useSession: () => (mockSessionPath
+        ? ({ metadata: { path: mockSessionPath }, active: mockSessionActive } as any)
+        : null),
+    useMachine: () => null,
     useSessionProjectScmOperationLog: () => [],
     useSessionProjectScmInFlightOperation: () => null,
     useSessionProjectScmSnapshot: () => mockScmSnapshot,
@@ -227,6 +231,7 @@ vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
 vi.mock('@/components/sessions/sourceControl/states', () => ({
     NotSourceControlRepositoryState: () => React.createElement('NotSourceControlRepositoryState'),
     SourceControlUnavailableState: () => React.createElement('SourceControlUnavailableState'),
+    SourceControlSessionInactiveState: () => React.createElement('SourceControlSessionInactiveState'),
 }));
 
 describe('FilesScreen', () => {
@@ -242,6 +247,7 @@ describe('FilesScreen', () => {
         repositoryTreeListProps = null;
         focusEffectHasRun = false;
         mockSessionPath = '/repo';
+        mockSessionActive = true;
         invalidateAndAwaitSpy.mockClear();
         mockScmSnapshot = {
             repo: { isRepo: true, rootPath: '/repo' },
@@ -390,6 +396,22 @@ describe('FilesScreen', () => {
         await act(async () => {});
 
         expect(tree!.root.findAllByType('SourceControlUnavailableState').length).toBe(1);
+    });
+
+    it('renders a session-inactive state when session is inactive and snapshot fetch fails', async () => {
+        mockScmSnapshot = null;
+        mockScmSnapshotError = { message: 'RPC method not available', at: 1 };
+        mockSessionActive = false;
+
+        const Screen = (await import('./files')).default;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        expect(tree!.root.findAllByType('SourceControlSessionInactiveState').length).toBe(1);
     });
 
     it('refreshes scm snapshot once session path becomes available after first render', async () => {

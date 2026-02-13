@@ -9,6 +9,13 @@ export {
   type RpcErrorCode,
   type RpcMethod,
 } from './rpc.js';
+export {
+  createRpcCallError,
+  isRpcMethodNotAvailableError,
+  isRpcMethodNotFoundError,
+  readRpcErrorCode,
+  type RpcErrorCarrier,
+} from './rpcErrors.js';
 export { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklists.js';
 export { SOCKET_RPC_EVENTS, type SocketRpcEvent } from './socketRpc.js';
 export {
@@ -233,6 +240,33 @@ export {
   type FeaturesResponse,
   type OAuthProviderStatus,
 } from './features.js';
+export {
+  FEATURE_CATALOG,
+  FEATURE_IDS,
+  isFeatureId,
+  type FeatureCatalogEntry,
+  type FeatureFailMode,
+  type FeatureId,
+} from './features/catalog.js';
+export {
+  FeatureAxisSchema,
+  FeatureBlockerCodeSchema,
+  FeatureDecisionSchema,
+  FeatureDecisionScopeSchema,
+  FeatureStateSchema,
+  createFeatureDecision,
+  type FeatureAxis,
+  type FeatureBlockerCode,
+  type FeatureDecision,
+  type FeatureDecisionScope,
+  type FeatureState,
+} from './features/decision.js';
+export {
+  evaluateFeatureBuildPolicy,
+  parseFeatureBuildPolicy,
+  type FeatureBuildPolicy,
+  type FeatureBuildPolicyEvaluation,
+} from './features/buildPolicy.js';
 export {
   RelationshipStatusSchema,
   type RelationshipStatus,

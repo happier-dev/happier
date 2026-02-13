@@ -22,6 +22,10 @@
       "types": "./dist/rpc.d.ts",
       "default": "./dist/rpc.js"
     },
+    "./rpcErrors": {
+      "types": "./dist/rpcErrors.d.ts",
+      "default": "./dist/rpcErrors.js"
+    },
     "./checklists": {
       "types": "./dist/checklists.d.ts",
       "default": "./dist/checklists.js"

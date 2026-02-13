@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createRpcCallError, isRpcMethodNotAvailableError } from './rpcErrors';
+import { createRpcCallError, isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from './rpcErrors';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 describe('rpcErrors', () => {
@@ -22,5 +22,14 @@ describe('rpcErrors', () => {
   it('detects RPC method unavailable by legacy message (case-insensitive)', () => {
     expect(isRpcMethodNotAvailableError({ message: 'RPC method not available' })).toBe(true);
     expect(isRpcMethodNotAvailableError({ message: 'rpc METHOD NOT available ' })).toBe(true);
+  });
+
+  it('detects RPC method not found by explicit errorCode', () => {
+    expect(isRpcMethodNotFoundError({ rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, message: 'anything' })).toBe(true);
+  });
+
+  it('detects RPC method not found by legacy message (case-insensitive)', () => {
+    expect(isRpcMethodNotFoundError({ message: 'Method not found' })).toBe(true);
+    expect(isRpcMethodNotFoundError({ message: 'rpc method not found ' })).toBe(true);
   });
 });

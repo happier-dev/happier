@@ -114,6 +114,10 @@ export function useRepositoryTreeBrowser(input: {
     onExpandedPathsChange?: (paths: string[]) => void;
 }) {
     const { sessionId, enabled, expandedPaths, onExpandedPathsChange } = input;
+    const sessionIdRef = React.useRef(sessionId);
+    React.useEffect(() => {
+        sessionIdRef.current = sessionId;
+    }, [sessionId]);
     const useExternalExpanded = Array.isArray(expandedPaths) && typeof onExpandedPathsChange === 'function';
 
     const [rootLoading, setRootLoading] = React.useState(false);
@@ -220,6 +224,7 @@ export function useRepositoryTreeBrowser(input: {
             return;
         }
 
+        const requestSessionId = sessionId;
         loadingRef.current.add(clean);
         setLoadingDirectories((prev) => {
             const next = new Set(prev);
@@ -228,7 +233,10 @@ export function useRepositoryTreeBrowser(input: {
         });
 
         try {
-            const result = await listRepositoryDirectoryEntries({ sessionId, directoryPath: clean });
+            const result = await listRepositoryDirectoryEntries({ sessionId: requestSessionId, directoryPath: clean });
+            if (sessionIdRef.current !== requestSessionId) {
+                return;
+            }
             applyDirectoryLoadResult(clean, result);
         } finally {
             loadingRef.current.delete(clean);

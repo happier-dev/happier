@@ -17,7 +17,8 @@ import type {
     ScmStatusSnapshotResponse,
 } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { storage } from '../domains/state/storage';
 import { apiSocket } from '../api/session/apiSocket';
@@ -28,7 +29,21 @@ function scmFallbackError<T extends { success: boolean; error?: string; errorCod
     if (error instanceof Error && error.message === SCM_UNSUPPORTED_RESPONSE_ERROR) {
         return {
             success: false,
-            error: 'RPC method not available',
+            error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+            errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+        } as T;
+    }
+    if (
+        error
+        && typeof error === 'object'
+        && (
+            isRpcMethodNotAvailableError(error as { rpcErrorCode?: unknown; message?: unknown })
+            || isRpcMethodNotFoundError(error as { rpcErrorCode?: unknown; message?: unknown })
+        )
+    ) {
+        return {
+            success: false,
+            error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
             errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
         } as T;
     }

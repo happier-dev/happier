@@ -29,6 +29,7 @@ import {
     useProjectForSession,
     useProjectSessions,
     useSetting,
+    useMachine,
 } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useUnistyles, StyleSheet } from 'react-native-unistyles';
@@ -39,8 +40,10 @@ import { useFilesScmOperations } from '@/hooks/session/files/useFilesScmOperatio
 import { shouldShowScmOperationsPanel } from '@/hooks/session/files/useScmOperationsVisibility';
 import { resolveScmWriteEnabled } from '@/scm/operations/featureFlags';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
-import { NotSourceControlRepositoryState, SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
+import { NotSourceControlRepositoryState, SourceControlSessionInactiveState, SourceControlUnavailableState } from '@/components/sessions/sourceControl/states';
 import type { ChangedFilesPresentation } from '@/scm/scmAttribution';
+import { resolveSessionMachineReachability } from '@/components/sessions/model/resolveSessionMachineReachability';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
 
 export default function FilesScreen() {
     const route = useRoute();
@@ -80,6 +83,13 @@ export default function FilesScreen() {
         expScmOperations,
     });
     const sessionPath = session?.metadata?.path ?? null;
+    const machineId = typeof session?.metadata?.machineId === 'string' ? session.metadata.machineId : '';
+    const machine = useMachine(machineId);
+    const isSessionInactive = session?.active === false;
+    const machineReachable = resolveSessionMachineReachability({
+        machineIsKnown: Boolean(machine),
+        machineIsOnline: machine ? isMachineOnline(machine) : false,
+    });
     const hasConflicts = scmSnapshot?.hasConflicts === true;
     const hasGlobalOperationInFlight = Boolean(inFlightScmOperation);
     const showScmOperationsPanel = shouldShowScmOperationsPanel({
@@ -362,12 +372,21 @@ export default function FilesScreen() {
                 ) : scmSnapshot && !scmSnapshot.repo.isRepo ? (
                     <NotSourceControlRepositoryState />
                 ) : !scmSnapshot && scmSnapshotError ? (
-                    <SourceControlUnavailableState
-                        details={scmSnapshotError.message}
-                        onRetry={() => {
-                            void refreshScmData();
-                        }}
-                    />
+                    isSessionInactive ? (
+                        <SourceControlSessionInactiveState
+                            machineReachable={machineReachable}
+                            onOpenSession={() => {
+                                router.push({ pathname: '/session/[id]', params: { id: sessionId } } as any);
+                            }}
+                        />
+                    ) : (
+                        <SourceControlUnavailableState
+                            details={scmSnapshotError.message}
+                            onRetry={() => {
+                                void refreshScmData();
+                            }}
+                        />
+                    )
                 ) : shouldShowAllFiles && !searchQuery.trim() ? (
                     <RepositoryTreeList
                         theme={theme}

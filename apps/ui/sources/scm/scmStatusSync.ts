@@ -268,10 +268,10 @@ export class ScmStatusSync {
                 return;
             }
 
-            const machineId = state.sessions[sessionId]?.metadata?.machineId ?? null;
+            const scopeId = resolveProjectMachineScopeId(state.sessions[sessionId]?.metadata ?? {});
             const repoRoot = snapshot.repo.rootPath;
-            if (snapshot.repo.isRepo && machineId && repoRoot) {
-                activeProjectKey = `${machineId}:${repoRoot}`;
+            if (snapshot.repo.isRepo && scopeId !== 'unknown' && repoRoot) {
+                activeProjectKey = `${scopeId}:${repoRoot}`;
                 scopeSessionIds = getRepoScopeSessionIds(sessionId, repoRoot);
                 if (activeProjectKey !== projectKey) {
                     moveProjectStateKey({

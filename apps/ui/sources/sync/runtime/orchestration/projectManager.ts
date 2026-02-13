@@ -75,13 +75,6 @@ export type BeginScmProjectOperationResult =
     | { started: true; operation: ScmProjectInFlightOperation }
     | { started: false; reason: 'missing_project' | 'operation_in_flight'; inFlight: ScmProjectInFlightOperation | null };
 
-// Backwards-compatible aliases for older "git" naming in UI code.
-export type GitProjectOperationKind = ScmProjectOperationKind;
-export type GitProjectOperationStatus = ScmProjectOperationStatus;
-export type GitProjectOperationLogEntry = ScmProjectOperationLogEntry;
-export type GitProjectInFlightOperation = ScmProjectInFlightOperation;
-export type BeginGitProjectOperationResult = BeginScmProjectOperationResult;
-
 /**
  * Project entity that groups sessions by location
  */

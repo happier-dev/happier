@@ -41,6 +41,7 @@ export const RPC_ERROR_CODES = {
 export type RpcErrorCode = (typeof RPC_ERROR_CODES)[keyof typeof RPC_ERROR_CODES];
 
 export const RPC_ERROR_MESSAGES = {
+  METHOD_NOT_AVAILABLE: 'RPC method not available',
   METHOD_NOT_FOUND: 'Method not found',
 } as const;
 

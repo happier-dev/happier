@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-let gitWriteEnabled = true;
+let scmWriteEnabled = true;
 let searchParams: { id: string; sha: string } = { id: 'session-1', sha: 'abc123' };
 let routerBack: ReturnType<typeof vi.fn> = vi.fn();
 let isStorageDataReady = true;
@@ -16,25 +16,13 @@ let sessionById: Record<string, any> = {
     },
 };
 
-vi.mock('react-native', async () => {
-    const actual = await vi.importActual<typeof import('react-native')>('react-native');
-    return {
-        ...actual,
-        View: 'View',
-        ScrollView: ({ children }: any) => React.createElement('ScrollView', null, children),
-        ActivityIndicator: 'ActivityIndicator',
-        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-        Platform: {
-            ...actual.Platform,
-            select: (value: any) => value?.default ?? null,
-        },
-        AppState: {
-            ...((actual as any).AppState ?? {}),
-            currentState: 'active',
-            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
-        },
-    };
-});
+vi.mock('react-native', () => ({
+    View: 'View',
+    ScrollView: ({ children }: any) => React.createElement('ScrollView', null, children),
+    ActivityIndicator: 'ActivityIndicator',
+    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+    Platform: { select: (value: any) => value?.default ?? null },
+}));
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -108,17 +96,9 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSessionProjectScmInFlightOperation: () => null,
     useSessionProjectScmSnapshot: () => ({
         repo: { isRepo: true, rootPath: '/repo' },
-        branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
+        branch: { head: 'main', detached: false },
         hasConflicts: false,
-        totals: {
-            includedFiles: 0,
-            pendingFiles: 0,
-            untrackedFiles: 0,
-            includedAdded: 0,
-            includedRemoved: 0,
-            pendingAdded: 0,
-            pendingRemoved: 0,
-        },
+        totals: { includedFiles: 0, pendingFiles: 0 },
     }),
     useSetting: () => true,
 }));
@@ -136,7 +116,7 @@ vi.mock('@/scm/operations/userFacingErrors', () => ({
 }));
 
 vi.mock('@/scm/operations/featureFlags', () => ({
-    resolveScmWriteEnabled: () => gitWriteEnabled,
+    resolveScmWriteEnabled: () => scmWriteEnabled,
 }));
 
 vi.mock('@/scm/operations/revertFeedback', () => ({
@@ -174,7 +154,7 @@ vi.mock('@/scm/scmStatusSync', () => ({
 
 describe('CommitScreen', () => {
     beforeEach(() => {
-        gitWriteEnabled = true;
+        scmWriteEnabled = true;
         searchParams = { id: 'session-1', sha: 'abc123' };
         routerBack = vi.fn();
         isStorageDataReady = true;
@@ -222,8 +202,8 @@ describe('CommitScreen', () => {
         await act(async () => {});
 
         expect(vi.mocked(sessionScmDiffCommit)).toHaveBeenCalled();
-        const [sessionId, request] = vi.mocked(sessionScmDiffCommit).mock.calls.at(-1)!;
-        expect(sessionId).toBe('session-1');
+        const [, request] = vi.mocked(sessionScmDiffCommit).mock.calls.at(-1)!;
+        expect(request.cwd).toBeUndefined();
         expect(request.commit).toBe('abc123');
     });
 
@@ -263,7 +243,7 @@ describe('CommitScreen', () => {
     });
 
     it('hides revert action when git write operations are disabled', async () => {
-        gitWriteEnabled = false;
+        scmWriteEnabled = false;
         const Screen = (await import('./commit')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -280,7 +260,7 @@ describe('CommitScreen', () => {
     });
 
     it('shows revert action when git write operations are enabled', async () => {
-        gitWriteEnabled = true;
+        scmWriteEnabled = true;
         const Screen = (await import('./commit')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;

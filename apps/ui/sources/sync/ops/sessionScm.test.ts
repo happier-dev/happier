@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 
 const sessionRpcMock = vi.hoisted(() => vi.fn());
 const getStateMock = vi.hoisted(() => vi.fn());
@@ -64,5 +65,45 @@ describe('sessionScm', () => {
                 },
             }
         );
+    });
+
+    it('returns unsupported fallback when rpc reports method not available', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+        });
+        sessionRpcMock.mockRejectedValue(
+            Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE), {
+                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            })
+        );
+
+        const { sessionScmStatusSnapshot } = await import('./sessionScm');
+        const response = await sessionScmStatusSnapshot('session-1', {});
+
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
+        expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE);
+    });
+
+    it('returns unsupported fallback when rpc reports method not found', async () => {
+        getStateMock.mockReturnValue({
+            settings: {
+                scmGitRepoPreferredBackend: 'git',
+            },
+        });
+        sessionRpcMock.mockRejectedValue(
+            Object.assign(new Error(RPC_ERROR_MESSAGES.METHOD_NOT_FOUND), {
+                rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND,
+            })
+        );
+
+        const { sessionScmStatusSnapshot } = await import('./sessionScm');
+        const response = await sessionScmStatusSnapshot('session-1', {});
+
+        expect(response.success).toBe(false);
+        expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED);
+        expect(response.error).toBe(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE);
     });
 });

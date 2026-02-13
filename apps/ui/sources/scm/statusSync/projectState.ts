@@ -1,6 +1,7 @@
 import type { InvalidateSync } from '@/utils/sessions/sync';
 import { storage } from '@/sync/domains/state/storage';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { resolveProjectMachineScopeId } from '@/sync/runtime/orchestration/projectManager';
 
 import { isSessionPathWithinRepoRoot } from '../sync/paths';
 
@@ -64,15 +65,15 @@ export async function clearSearchCacheForProject(
 export function getRepoScopeSessionIds(referenceSessionId: string, repoRoot: string): string[] {
     const state = storage.getState();
     const reference = state.sessions[referenceSessionId];
-    const machineId = reference?.metadata?.machineId;
-    if (!machineId) return [referenceSessionId];
+    const scopeId = resolveProjectMachineScopeId(reference?.metadata ?? {});
+    if (!scopeId || scopeId === 'unknown') return [referenceSessionId];
 
     const inScope = new Set<string>();
     for (const session of Object.values(state.sessions)) {
-        const sessionMachineId = session.metadata?.machineId;
         const sessionPath = session.metadata?.path;
-        if (!sessionMachineId || !sessionPath) continue;
-        if (sessionMachineId !== machineId) continue;
+        if (!sessionPath) continue;
+        const sessionScopeId = resolveProjectMachineScopeId(session.metadata ?? {});
+        if (sessionScopeId !== scopeId) continue;
         if (!isSessionPathWithinRepoRoot(sessionPath, repoRoot)) continue;
         inScope.add(session.id);
     }

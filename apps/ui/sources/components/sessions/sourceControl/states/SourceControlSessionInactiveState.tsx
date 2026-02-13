@@ -7,30 +7,14 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/StyledText';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 
-function sanitizeDetails(details: string | null): string | null {
-    if (!details) return null;
-    const trimmed = details.trim();
-    if (!trimmed) return null;
-    if (trimmed === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE || trimmed === RPC_ERROR_MESSAGES.METHOD_NOT_FOUND) {
-        return null;
-    }
-    if (trimmed.includes('\n')) {
-        return null;
-    }
-    if (/(^|\s)(fatal:|error:|remote:|hint:|usage:)/i.test(trimmed)) {
-        return null;
-    }
-    return trimmed.length > 220 ? `${trimmed.slice(0, 220)}…` : trimmed;
-}
-
-export function SourceControlUnavailableState(props: {
-    details?: string | null;
-    onRetry?: () => void;
+export function SourceControlSessionInactiveState(props: {
+    machineReachable: boolean;
+    onOpenSession?: () => void;
 }): React.ReactElement {
     const { theme } = useUnistyles();
-    const details = sanitizeDetails(props.details ?? null);
+    const titleKey = props.machineReachable ? 'session.inactiveResumable' : 'session.inactiveMachineOffline';
+    const subtitleKey = props.machineReachable ? 'errors.tryAgain' : 'session.machineOfflineCannotResume';
 
     return (
         <View
@@ -53,7 +37,7 @@ export function SourceControlUnavailableState(props: {
                     ...Typography.default(),
                 }}
             >
-                {t('common.error')}
+                {t(titleKey)}
             </Text>
 
             <Text
@@ -64,26 +48,12 @@ export function SourceControlUnavailableState(props: {
                     ...Typography.default(),
                 }}
             >
-                {t('errors.tryAgain')}
+                {t(subtitleKey)}
             </Text>
 
-            {details && (
-                <Text
-                    style={{
-                        fontSize: 12,
-                        color: theme.colors.textSecondary,
-                        textAlign: 'center',
-                        opacity: 0.9,
-                        ...Typography.default(),
-                    }}
-                >
-                    {details}
-                </Text>
-            )}
-
-            {props.onRetry && (
+            {props.onOpenSession && (
                 <View style={{ marginTop: 6 }}>
-                    <RoundButton size="normal" title={t('common.retry')} onPress={props.onRetry} />
+                    <RoundButton size="normal" title={t('common.continue')} onPress={props.onOpenSession} />
                 </View>
             )}
         </View>
