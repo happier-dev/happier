@@ -41,10 +41,10 @@ describe('GitBranchSummary', () => {
                     }}
                     gitStatusFiles={{
                         branch: 'main',
-                        stagedFiles: [],
-                        unstagedFiles: [],
-                        totalStaged: 2,
-                        totalUnstaged: 3,
+                        includedFiles: [],
+                        pendingFiles: [],
+                        totalIncluded: 2,
+                        totalPending: 3,
                     }}
                 />
             );
@@ -77,10 +77,10 @@ describe('GitBranchSummary', () => {
                         upstream: 'origin/feature/refactor',
                         ahead: 3,
                         behind: 1,
-                        stagedFiles: [],
-                        unstagedFiles: [],
-                        totalStaged: 0,
-                        totalUnstaged: 1,
+                        includedFiles: [],
+                        pendingFiles: [],
+                        totalIncluded: 0,
+                        totalPending: 1,
                     }}
                 />
             );
