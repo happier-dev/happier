@@ -187,6 +187,69 @@ jobs:
         run: |
           set -euo pipefail
 
+          has_hooks() {
+            local hooks="$1"
+            if [ -z "${hooks:-}" ]; then
+              return 1
+            fi
+            while IFS= read -r line; do
+              line="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+              [ -z "${line}" ] && continue
+              [ "${line#\#}" != "${line}" ] && continue
+              return 0
+            done <<< "${hooks}"
+            return 1
+          }
+
+          require_hooks_or_skip() {
+            local label="$1"
+            local hooks="$2"
+            if has_hooks "${hooks}"; then
+              return 0
+            fi
+
+            if [ "${ENVIRONMENT}" = "production" ]; then
+              echo "Missing deploy webhook list for '${label}' in production; refusing to silently skip." >&2
+              exit 1
+            fi
+
+            echo "::notice::No deploy webhook list configured for '${label}' in environment '${ENVIRONMENT}'. Skipping deploy trigger."
+            echo "No deploy webhook list configured for '${label}' in environment '${ENVIRONMENT}'. Skipping." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          }
+
+          # Decide whether this deploy can do anything before requiring secrets.
+          case "$COMPONENT" in
+            ui)
+              require_hooks_or_skip "ui" "${HAPPIER_UI_DEPLOY_WEBHOOKS:-}"
+              ;;
+            website)
+              require_hooks_or_skip "website" "${HAPPIER_WEBSITE_DEPLOY_WEBHOOKS:-}"
+              ;;
+            docs)
+              require_hooks_or_skip "docs" "${HAPPIER_DOCS_DEPLOY_WEBHOOKS:-}"
+              ;;
+            server)
+              if has_hooks "${HAPPIER_SERVER_API_DEPLOY_WEBHOOKS:-}" && has_hooks "${HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS:-}"; then
+                : # ok
+              else
+                if [ "${ENVIRONMENT}" = "production" ]; then
+                  echo "Missing server deploy webhook list(s) in production; refusing to silently skip." >&2
+                  echo "server api configured: $(has_hooks "${HAPPIER_SERVER_API_DEPLOY_WEBHOOKS:-}" && echo yes || echo no)" >&2
+                  echo "server worker configured: $(has_hooks "${HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS:-}" && echo yes || echo no)" >&2
+                  exit 1
+                fi
+                echo "::notice::No server deploy webhook list(s) configured for environment '${ENVIRONMENT}'. Skipping deploy trigger."
+                echo "No server deploy webhook list(s) configured for environment '${ENVIRONMENT}'. Skipping." >> "$GITHUB_STEP_SUMMARY"
+                exit 0
+              fi
+              ;;
+            *)
+              echo "Unsupported component: $COMPONENT" >&2
+              exit 1
+              ;;
+          esac
+
           if [ -z "${CF_WEBHOOK_DEPLOY_CLIENT_ID:-}" ] || [ -z "${CF_WEBHOOK_DEPLOY_CLIENT_SECRET:-}" ]; then
             echo "Missing Cloudflare Access service token secrets (CF_WEBHOOK_DEPLOY_CLIENT_ID/CF_WEBHOOK_DEPLOY_CLIENT_SECRET)." >&2
             exit 1
@@ -223,7 +286,6 @@ jobs:
 
             if [ -z "${hooks:-}" ]; then
               echo "No webhook URLs configured for '${label}' in environment '${{ steps.target.outputs.environment }}'." >&2
-              echo "Expected an environment variable/secret with newline-separated webhook IDs (or full URLs)." >&2
               return 1
             fi
 
