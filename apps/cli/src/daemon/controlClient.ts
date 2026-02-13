@@ -7,7 +7,7 @@ import { logger } from '@/ui/logger';
 import { clearDaemonState, readDaemonState } from '@/persistence';
 import { Metadata } from '@/api/types';
 import { projectPath } from '@/projectPath';
-import { readFileSync } from 'fs';
+import { readFileSync, statSync } from 'fs';
 import { join } from 'path';
 import { configuration } from '@/configuration';
 
@@ -17,8 +17,31 @@ export type DaemonControlRequestOptions = {
 
 const DEFAULT_DAEMON_HTTP_TIMEOUT_MS = 10_000;
 const DEFAULT_DAEMON_SPAWN_HTTP_TIMEOUT_MS = 120_000;
+const DAEMON_PING_TIMEOUT_MS = 1_000;
+const DAEMON_PING_UNREACHABLE_STARTUP_GRACE_MS = 60_000;
 const DAEMON_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_HTTP_TIMEOUT';
 const DAEMON_SPAWN_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT';
+
+function resolveDaemonStateAgeMs(state: unknown): number | null {
+  if (state && typeof state === 'object') {
+    const startedAt = (state as any).startedAt;
+    if (typeof startedAt === 'number' && Number.isFinite(startedAt)) {
+      return Math.max(0, Date.now() - startedAt);
+    }
+  }
+
+  // Fall back to file mtime if startedAt is missing; helps avoid deleting freshly written state.
+  try {
+    const stat = statSync(configuration.daemonStateFile);
+    if (Number.isFinite(stat.mtimeMs)) {
+      return Math.max(0, Date.now() - stat.mtimeMs);
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
 
 function resolvePositiveIntValue(
   raw: string | number | undefined,
@@ -187,14 +210,36 @@ export async function checkIfDaemonRunningAndCleanupStaleState(): Promise<boolea
     return false;
   }
 
+  if (state.controlToken && (!state.httpPort || typeof state.httpPort !== 'number')) {
+    logger.debug('[DAEMON RUN] Daemon state missing httpPort, cleaning up state');
+    await cleanupDaemonState();
+    return false;
+  }
+
   // Check if the daemon is running
   try {
     process.kill(state.pid, 0);
     // If the daemon state includes a control token, also verify that the control server responds.
     // This prevents PID reuse + stale port files from being treated as a healthy daemon.
     if (state.controlToken) {
-      const ping = await daemonPost('/ping');
+      const ping = await daemonPost('/ping', undefined, { timeoutMs: DAEMON_PING_TIMEOUT_MS });
+
+      // If we can conclusively authenticate and still fail, the token/state is stale and must be removed.
+      if (ping && typeof ping === 'object' && (ping as any).success === false) {
+        logger.debug('[DAEMON RUN] Daemon /ping rejected control token, cleaning up state');
+        await cleanupDaemonState();
+        return false;
+      }
+
       if (ping?.error) {
+        const ageMs = resolveDaemonStateAgeMs(state);
+        if (ageMs !== null && ageMs < DAEMON_PING_UNREACHABLE_STARTUP_GRACE_MS) {
+          // During startup, the daemon may have written state before the control server is accepting connections.
+          // Keeping the state avoids flaking readiness checks that poll /ping in a tight loop.
+          logger.debug('[DAEMON RUN] Daemon /ping unreachable during startup grace window, keeping state');
+          return false;
+        }
+
         logger.debug('[DAEMON RUN] Daemon control server did not respond to /ping, cleaning up state');
         await cleanupDaemonState();
         return false;

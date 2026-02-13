@@ -174,6 +174,99 @@ describe.sequential('daemon control client PID safety', () => {
     }
   }, 30_000);
 
+  it('checkIfDaemonRunningAndCleanupStaleState does not delete recent state when /ping is temporarily unreachable', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-ping-grace-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = '250';
+
+    vi.resetModules();
+    const [{ configuration }, { checkIfDaemonRunningAndCleanupStaleState }] = await Promise.all([
+      import('@/configuration'),
+      import('./controlClient'),
+    ]);
+
+    // Point at a port that we force fetch to fail for.
+    const daemonPort = 43210;
+    const realFetch = globalThis.fetch;
+    try {
+      vi.stubGlobal('fetch', async (input: any, init?: any) => {
+        const url = new URL(typeof input === 'string' ? input : input.url);
+        if (url.hostname === '127.0.0.1' && Number(url.port) === daemonPort) {
+          throw new TypeError('fetch failed');
+        }
+        return await realFetch(input, init);
+      });
+
+      writeFileSync(
+        configuration.daemonStateFile,
+        JSON.stringify(
+          {
+            pid: process.pid,
+            httpPort: daemonPort,
+            startedAt: Date.now(),
+            startedWithCliVersion: '0.0.0-test',
+            controlToken: 'token-123',
+          },
+          null,
+          2,
+        ),
+        'utf-8',
+      );
+
+      expect(await checkIfDaemonRunningAndCleanupStaleState()).toBe(false);
+      expect(existsSync(configuration.daemonStateFile)).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it('checkIfDaemonRunningAndCleanupStaleState deletes old state when /ping remains unreachable', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-ping-stale-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_DAEMON_HTTP_TIMEOUT = '250';
+
+    vi.resetModules();
+    const [{ configuration }, { checkIfDaemonRunningAndCleanupStaleState }] = await Promise.all([
+      import('@/configuration'),
+      import('./controlClient'),
+    ]);
+
+    const daemonPort = 43211;
+    const realFetch = globalThis.fetch;
+    try {
+      vi.stubGlobal('fetch', async (input: any, init?: any) => {
+        const url = new URL(typeof input === 'string' ? input : input.url);
+        if (url.hostname === '127.0.0.1' && Number(url.port) === daemonPort) {
+          throw new TypeError('fetch failed');
+        }
+        return await realFetch(input, init);
+      });
+
+      writeFileSync(
+        configuration.daemonStateFile,
+        JSON.stringify(
+          {
+            pid: process.pid,
+            httpPort: daemonPort,
+            startedAt: Date.now() - 60_000,
+            startedWithCliVersion: '0.0.0-test',
+            controlToken: 'token-123',
+          },
+          null,
+          2,
+        ),
+        'utf-8',
+      );
+
+      expect(await checkIfDaemonRunningAndCleanupStaleState()).toBe(false);
+      expect(existsSync(configuration.daemonStateFile)).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it('spawnDaemonSession uses an extended default timeout budget', async () => {
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-daemon-spawn-timeout-'));
     process.env.HAPPIER_HOME_DIR = homeDir;
