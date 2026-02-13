@@ -60,7 +60,7 @@ vi.mock('@/track', () => ({
 import { sessionScmStatusSnapshot } from '@/sync/ops';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { storage } from '@/sync/domains/state/storage';
-import { createGitSessionRpcHarness, git, initRepo } from '@/sync/ops/__tests__/gitRepoHarness';
+import { createGitSessionRpcHarness, git, initBareRemote, initRepo } from '@/sync/ops/__tests__/gitRepoHarness';
 import { createSaplingSessionRpcHarness, initSaplingRepo, runSapling } from '@/sync/ops/__tests__/saplingRepoHarness';
 import { normalizeWorkingSnapshotForUi } from '@/scm/scmRepositoryService';
 import { useFilesScmOperations } from './useFilesScmOperations';
@@ -143,7 +143,7 @@ describe('useFilesScmOperations integration', () => {
 
     it('creates a commit then pushes successfully against a real remote', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-workspace-'));
         initRepo(workspace);
@@ -648,7 +648,7 @@ describe('useFilesScmOperations integration', () => {
 
     it('fetches remote updates and refreshes repository data', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-fetch-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-fetch-workspace-'));
         initRepo(workspace);
@@ -715,7 +715,7 @@ describe('useFilesScmOperations integration', () => {
 
     it('offers fetch after non-fast-forward push rejection', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-push-rejected-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-push-rejected-workspace-'));
         initRepo(workspace);
@@ -786,7 +786,7 @@ describe('useFilesScmOperations integration', () => {
 
     it('skips pull/push confirmation when remote confirm policy is never', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-confirm-never-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-confirm-never-workspace-'));
         initRepo(workspace);
@@ -836,7 +836,7 @@ describe('useFilesScmOperations integration', () => {
 
     it('auto-fetches after push rejection when push reject policy is auto_fetch', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-auto-fetch-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-auto-fetch-workspace-'));
         initRepo(workspace);

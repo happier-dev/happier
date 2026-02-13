@@ -60,7 +60,7 @@ vi.mock('@/track', () => ({
 import { sessionGitStatusSnapshot } from '@/sync/ops';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { storage } from '@/sync/domains/state/storage';
-import { createGitSessionRpcHarness, git, initRepo } from '@/sync/ops/__tests__/gitRepoHarness';
+import { createGitSessionRpcHarness, git, initBareRemote, initRepo } from '@/sync/ops/__tests__/gitRepoHarness';
 import { useFilesGitOperations } from './useFilesGitOperations';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -138,7 +138,7 @@ describe('useFilesGitOperations integration', () => {
 
     it('creates a commit then pushes successfully against a real remote', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-workspace-'));
         initRepo(workspace);
@@ -206,7 +206,7 @@ describe('useFilesGitOperations integration', () => {
 
     it('fetches remote updates and refreshes repository data', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-fetch-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-fetch-workspace-'));
         initRepo(workspace);
@@ -270,7 +270,7 @@ describe('useFilesGitOperations integration', () => {
 
     it('offers fetch after non-fast-forward push rejection', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-hook-push-rejected-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-hook-push-rejected-workspace-'));
         initRepo(workspace);

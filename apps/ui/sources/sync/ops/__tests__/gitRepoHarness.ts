@@ -813,3 +813,9 @@ export function initRepo(cwd: string): void {
     git(cwd, ['config', 'user.email', 'test@example.com']);
     git(cwd, ['config', 'user.name', 'Test User']);
 }
+
+export function initBareRemote(cwd: string): void {
+    git(cwd, ['init', '--bare']);
+    // Ensure clones check out `main` by default once it exists.
+    git(cwd, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+}

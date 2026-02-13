@@ -35,7 +35,7 @@ import {
     sessionScmChangeInclude,
     sessionScmStatusSnapshot,
 } from './sessions';
-import { createGitSessionRpcHarness, git, initRepo } from './__tests__/gitRepoHarness';
+import { createGitSessionRpcHarness, git, initBareRemote, initRepo } from './__tests__/gitRepoHarness';
 import { storage } from '../domains/state/storage';
 
 describe('session scm ops integration (git backend)', () => {
@@ -164,7 +164,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('fetches remote updates through sessionScmRemoteFetch against a real remote', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -197,7 +197,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('rejects push when local branch is behind upstream', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -232,7 +232,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('rejects pull when worktree is dirty', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -253,7 +253,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('pushes successfully when local branch is ahead of upstream', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -278,7 +278,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('returns REMOTE_FF_ONLY_REQUIRED when pull cannot fast-forward', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -317,7 +317,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('blocks push without upstream when remote/branch are not provided', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -335,7 +335,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('blocks pull without upstream when remote/branch are not provided', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -353,7 +353,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('pushes with explicit remote/branch even when upstream is not configured', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -377,7 +377,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('pulls with explicit remote/branch even when upstream is not configured', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -411,7 +411,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('blocks push while HEAD is detached', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);
@@ -436,7 +436,7 @@ describe('session scm ops integration (git backend)', () => {
 
     it('blocks pull while HEAD is detached', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-git-remote-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-git-workspace-'));
         initRepo(workspace);

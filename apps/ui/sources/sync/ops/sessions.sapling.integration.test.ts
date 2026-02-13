@@ -38,7 +38,7 @@ import {
     sessionScmStatusSnapshot,
 } from './sessions';
 import { createSaplingSessionRpcHarness, initSaplingRepo, runSapling } from './__tests__/saplingRepoHarness';
-import { git } from './__tests__/gitRepoHarness';
+import { git, initBareRemote } from './__tests__/gitRepoHarness';
 
 describe('session scm ops integration (sapling)', () => {
     beforeEach(() => {
@@ -199,7 +199,7 @@ describe('session scm ops integration (sapling)', () => {
 
     it('fetches, pulls, and pushes against git remotes using branch shorthand', async () => {
         const remote = mkdtempSync(join(tmpdir(), 'happier-ui-sapling-remote-ok-'));
-        git(remote, ['init', '--bare']);
+        initBareRemote(remote);
 
         const workspace = mkdtempSync(join(tmpdir(), 'happier-ui-sapling-remote-workspace-'));
         initSaplingRepo(workspace);
