@@ -78,6 +78,47 @@ export function libsodiumEncryptForPublicKey(data: Uint8Array, recipientPublicKe
   return result;
 }
 
+export function libsodiumDecryptForSecretKey(
+  encryptedBundle: Uint8Array,
+  recipientSecretKeyOrSeed: Uint8Array
+): Uint8Array | null {
+  // Bundle format: ephemeral public key (32 bytes) + nonce (24 bytes) + encrypted data
+  if (encryptedBundle.length < tweetnacl.box.publicKeyLength + tweetnacl.box.nonceLength) {
+    return null;
+  }
+
+  const ephemeralPublicKey = encryptedBundle.slice(0, tweetnacl.box.publicKeyLength);
+  const nonce = encryptedBundle.slice(
+    tweetnacl.box.publicKeyLength,
+    tweetnacl.box.publicKeyLength + tweetnacl.box.nonceLength
+  );
+  const encrypted = encryptedBundle.slice(tweetnacl.box.publicKeyLength + tweetnacl.box.nonceLength);
+
+  const tryOpen = (secretKey: Uint8Array): Uint8Array | null => {
+    try {
+      if (secretKey.length !== tweetnacl.box.secretKeyLength) return null;
+      const opened = tweetnacl.box.open(encrypted, nonce, ephemeralPublicKey, secretKey);
+      return opened ? new Uint8Array(opened) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Best-effort: caller might already have a libsodium-style secret key.
+  if (recipientSecretKeyOrSeed.length === tweetnacl.box.secretKeyLength) {
+    const direct = tryOpen(recipientSecretKeyOrSeed);
+    if (direct) {
+      return direct;
+    }
+  }
+
+  // Compatibility path for credentials where machineKey is a seed and public key is
+  // derived from a hashed seed (CLI derivation / UI compat).
+  const hashedSeed = new Uint8Array(createHash('sha512').update(recipientSecretKeyOrSeed).digest());
+  const compatSecretKey = hashedSeed.slice(0, 32);
+  return tryOpen(compatSecretKey);
+}
+
 /**
  * Encrypt data using the secret key
  * @param data - The data to encrypt
