@@ -188,6 +188,26 @@ describe('ScmRepositoryService.fetchSnapshotForSession', () => {
         await expect(service.fetchSnapshotForSession('session_1')).rejects.toThrow('command failed');
     });
 
+    it('throws a descriptive error when rpc snapshot payload is null', async () => {
+        vi.spyOn(storage, 'getState').mockReturnValue({
+            sessions: {
+                session_1: {
+                    id: 'session_1',
+                    metadata: {
+                        machineId: 'machine-a',
+                        path: '/repo',
+                    },
+                },
+            },
+        } as any);
+        vi.mocked(sessionScmStatusSnapshot).mockResolvedValue(null as any);
+
+        const service = new ScmRepositoryService();
+        await expect(service.fetchSnapshotForSession('session_1')).rejects.toThrow(
+            'Invalid source-control status snapshot response'
+        );
+    });
+
     it('throws when rpc invocation throws unexpectedly', async () => {
         vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_001);
         vi.spyOn(storage, 'getState').mockReturnValue({

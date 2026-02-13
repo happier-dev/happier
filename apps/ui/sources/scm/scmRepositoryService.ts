@@ -123,6 +123,13 @@ export class ScmRepositoryService {
         // `cwd` is both redundant and brittle (tilde paths, symlink differences, etc.) because
         // the CLI security layer resolves `cwd` relative to the working directory.
         const response = await sessionScmStatusSnapshot(sessionId, {});
+        if (
+            !response
+            || typeof response !== 'object'
+            || typeof (response as { success?: unknown }).success !== 'boolean'
+        ) {
+            throw new Error('Invalid source-control status snapshot response');
+        }
         if (!response.success) {
             throw new Error(response.error || 'Failed to fetch source-control status snapshot');
         }
