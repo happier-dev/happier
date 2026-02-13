@@ -26,6 +26,7 @@ type SessionModelMode = NonNullable<Session['modelMode']>;
 type ScmOperationLogEntry = import('../../runtime/orchestration/projectManager').ScmProjectOperationLogEntry;
 type ScmInFlightOperation = import('../../runtime/orchestration/projectManager').ScmProjectInFlightOperation;
 type BeginScmOperationResult = import('../../runtime/orchestration/projectManager').BeginScmProjectOperationResult;
+type ProjectScmSnapshotError = import('../../runtime/orchestration/projectManager').ProjectScmSnapshotError;
 
 export type SessionsDomain = {
     sessions: Record<string, Session>;
@@ -62,11 +63,11 @@ export type SessionsDomain = {
     getSessionProjectScmStatus: (sessionId: string) => ScmStatus | null;
     updateSessionProjectScmStatus: (sessionId: string, status: ScmStatus | null) => void;
     getProjectScmSnapshot: (projectId: string) => ScmWorkingSnapshot | null;
-    getProjectScmSnapshotError: (projectId: string) => { message: string; at: number } | null;
+    getProjectScmSnapshotError: (projectId: string) => ProjectScmSnapshotError | null;
     getSessionProjectScmSnapshot: (sessionId: string) => ScmWorkingSnapshot | null;
-    getSessionProjectScmSnapshotError: (sessionId: string) => { message: string; at: number } | null;
+    getSessionProjectScmSnapshotError: (sessionId: string) => ProjectScmSnapshotError | null;
     updateSessionProjectScmSnapshot: (sessionId: string, snapshot: ScmWorkingSnapshot | null) => void;
-    updateSessionProjectScmSnapshotError: (sessionId: string, error: { message: string; at: number } | null) => void;
+    updateSessionProjectScmSnapshotError: (sessionId: string, error: ProjectScmSnapshotError | null) => void;
     getSessionProjectScmTouchedPaths: (sessionId: string) => string[];
     markSessionProjectScmTouchedPaths: (sessionId: string, paths: string[]) => void;
     pruneSessionProjectScmTouchedPaths: (sessionId: string, activePaths: Set<string>) => void;

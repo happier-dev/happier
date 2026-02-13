@@ -72,7 +72,10 @@ describe('serverFeaturesClient', () => {
 
         expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBe(1);
 
-        resolver?.(createResponse(200, payload));
+        if (!resolver) {
+            throw new Error('Expected fetch resolver to be assigned');
+        }
+        resolver(createResponse(200, payload));
         const [a, b] = await Promise.all([first, second]);
 
         expect(a.status).toBe('ready');

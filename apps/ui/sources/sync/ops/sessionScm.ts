@@ -17,7 +17,7 @@ import type {
     ScmStatusSnapshotResponse,
 } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
 import { RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { storage } from '../domains/state/storage';
@@ -37,8 +37,8 @@ function scmFallbackError<T extends { success: boolean; error?: string; errorCod
         error
         && typeof error === 'object'
         && (
-            isRpcMethodNotAvailableError(error as { rpcErrorCode?: unknown; message?: unknown })
-            || isRpcMethodNotFoundError(error as { rpcErrorCode?: unknown; message?: unknown })
+            isRpcMethodNotAvailableError(error as RpcErrorCarrier)
+            || isRpcMethodNotFoundError(error as RpcErrorCarrier)
         )
     ) {
         return {

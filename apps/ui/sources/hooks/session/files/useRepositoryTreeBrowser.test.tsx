@@ -148,7 +148,10 @@ describe('useRepositoryTreeBrowser', () => {
         expect(listRepositoryDirectoryEntriesSpy).toHaveBeenCalledWith({ sessionId: 'session-2', directoryPath: '' });
 
         // Resolve the stale session-1 directory request.
-        resolveSession1Src?.({ ok: true, entries: [{ name: 'a.ts', type: 'file' }] });
+        if (!resolveSession1Src) {
+            throw new Error('Expected session-1 src resolver to be assigned');
+        }
+        resolveSession1Src({ ok: true, entries: [{ name: 'a.ts', type: 'file' }] });
         resolveSession1Src = null;
 
         // Flush microtasks.

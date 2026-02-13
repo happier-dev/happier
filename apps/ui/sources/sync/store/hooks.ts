@@ -217,7 +217,9 @@ export function useSessionProjectScmSnapshot(sessionId: string | null): ScmWorki
   );
 }
 
-export function useSessionProjectScmSnapshotError(sessionId: string | null): { message: string; at: number } | null {
+export function useSessionProjectScmSnapshotError(
+  sessionId: string | null
+): import('../runtime/orchestration/projectManager').ProjectScmSnapshotError | null {
   return getStorage()(
     useShallow((state) => (sessionId ? state.getSessionProjectScmSnapshotError(sessionId) : null))
   );
