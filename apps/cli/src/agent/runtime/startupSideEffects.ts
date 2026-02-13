@@ -96,9 +96,10 @@ export async function reportSessionToDaemonIfRunning(opts: {
             min: 50,
             max: 10_000,
         });
+    const defaultReportAttemptTimeoutMs = startedBy === 'daemon' ? 10_000 : 2_500;
     const reportAttemptTimeoutMs =
         deps.reportAttemptTimeoutMs ??
-        resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS, 2_500, {
+        resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS, defaultReportAttemptTimeoutMs, {
             min: 100,
             max: 30_000,
         });

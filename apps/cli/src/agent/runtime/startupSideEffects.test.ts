@@ -71,7 +71,17 @@ describe('startup side effects: daemon session reporting retry', () => {
       },
     );
 
-    expect(observedTimeouts).toEqual([2_500]);
+    await reportSessionToDaemonIfRunning(
+      { sessionId: 'session-3b', metadata: { startedBy: 'daemon' } as Metadata },
+      {
+        notifyDaemonSessionStartedFn: async (_sessionId, _metadata, options) => {
+          observedTimeouts.push(options?.timeoutMs);
+          return {};
+        },
+      },
+    );
+
+    expect(observedTimeouts).toEqual([2_500, 10_000]);
   });
 
   it('uses a longer default retry window for daemon-started sessions', async () => {
