@@ -307,6 +307,35 @@ async function waitForDaemonReadyState(): Promise<void> {
   );
 }
 
+async function ensureDaemonFullyStoppedBeforeRestart(): Promise<void> {
+  const stateBeforeStop = await readDaemonState();
+  const previousPid = stateBeforeStop?.pid;
+
+  await stopDaemon();
+
+  if (typeof previousPid === 'number' && Number.isFinite(previousPid) && previousPid > 0) {
+    await waitFor(async () => !isProcessAlive(previousPid), {
+      timeoutMs: 30_000,
+      intervalMs: 250,
+      label: `previous daemon pid ${previousPid} to exit`,
+    });
+  }
+
+  await waitFor(
+    async () => {
+      const state = await readDaemonState();
+      if (!state) return true;
+      if (typeof state.pid !== 'number' || !Number.isFinite(state.pid) || state.pid <= 0) return true;
+      return !isProcessAlive(state.pid);
+    },
+    {
+      timeoutMs: 30_000,
+      intervalMs: 250,
+      label: 'daemon state to be quiescent before restart',
+    },
+  );
+}
+
 async function waitForSessionCount(count: number, opts: WaitForOptions): Promise<void> {
   await waitFor(async () => {
     const sessions = await listDaemonSessionsTyped();
@@ -413,8 +442,8 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
   });
 
   beforeEach(async () => {
-    // First ensure no daemon is running by checking PID in metadata file
-    await stopDaemon()
+    // Ensure previous daemon teardown has fully completed before starting another one.
+    await ensureDaemonFullyStoppedBeforeRestart();
     
     // Start fresh daemon for this test
     // This will return and start a background process - we don't need to wait for it
