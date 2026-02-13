@@ -427,7 +427,9 @@ jobs:
           set -euo pipefail
           mkdir -p dist/release-assets/cli
           cd apps/cli
-          pack_json="$(npm pack --json)"
+          # npm lifecycle scripts can exceed Linux argv/env limits for large workspaces.
+          # pack after publish using the already-prepacked working tree to avoid re-running prepack.
+          pack_json="$(npm pack --ignore-scripts --json)"
           tgz="$(
             PACK_JSON="${pack_json}" node -e '
               const raw = (process.env.PACK_JSON ?? "").trim();
@@ -496,7 +498,9 @@ jobs:
           set -euo pipefail
           mkdir -p dist/release-assets/stack
           cd apps/stack
-          pack_json="$(npm pack --json)"
+          # npm lifecycle scripts can exceed Linux argv/env limits for large workspaces.
+          # pack after publish using the already-prepacked working tree to avoid re-running prepack.
+          pack_json="$(npm pack --ignore-scripts --json)"
           tgz="$(
             PACK_JSON="${pack_json}" node -e '
               const raw = (process.env.PACK_JSON ?? "").trim();
