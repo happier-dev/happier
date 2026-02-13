@@ -35,7 +35,7 @@ import { config } from '@/config';
 import { log } from '@/log';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { projectManager } from './runtime/orchestration/projectManager';
-import { voiceHooks } from '@/voice/context/voiceHooks';
+import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { Message } from './domains/messages/messageTypes';
 import { EncryptionCache } from './encryption/encryptionCache';
 import { systemPrompt } from '../agents/prompt/systemPrompt';

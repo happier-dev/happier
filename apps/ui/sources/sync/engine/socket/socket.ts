@@ -6,7 +6,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { scmStatusSync } from '@/scm/scmStatusSync';
-import { voiceHooks } from '@/voice/context/voiceHooks';
+import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { didControlReturnToMobile } from '@/sync/domains/session/control/controlledByUserTransitions';
 import {
     buildUpdatedSessionFromSocketUpdate,
