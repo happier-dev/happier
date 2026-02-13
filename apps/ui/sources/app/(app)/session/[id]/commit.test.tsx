@@ -16,13 +16,25 @@ let sessionById: Record<string, any> = {
     },
 };
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ScrollView: ({ children }: any) => React.createElement('ScrollView', null, children),
-    ActivityIndicator: 'ActivityIndicator',
-    Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
-    Platform: { select: (value: any) => value?.default ?? null },
-}));
+vi.mock('react-native', async () => {
+    const actual = await vi.importActual<typeof import('react-native')>('react-native');
+    return {
+        ...actual,
+        View: 'View',
+        ScrollView: ({ children }: any) => React.createElement('ScrollView', null, children),
+        ActivityIndicator: 'ActivityIndicator',
+        Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        Platform: {
+            ...actual.Platform,
+            select: (value: any) => value?.default ?? null,
+        },
+        AppState: {
+            ...((actual as any).AppState ?? {}),
+            currentState: 'active',
+            addEventListener: vi.fn(() => ({ remove: vi.fn() })),
+        },
+    };
+});
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -65,16 +77,16 @@ vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
 
-vi.mock('@/components/git/diff/GitDiffDisplay', () => ({
-    GitDiffDisplay: ({ diffContent }: any) => React.createElement('GitDiffDisplay', { diffContent }),
+vi.mock('@/components/sessions/files/file/ScmDiffDisplay', () => ({
+    ScmDiffDisplay: ({ diffContent }: any) => React.createElement('ScmDiffDisplay', { diffContent }),
 }));
 
 vi.mock('@/sync/ops', () => ({
-    sessionGitDiffCommit: vi.fn(async () => ({
+    sessionScmDiffCommit: vi.fn(async () => ({
         success: true,
         diff: 'diff --git a/a.ts b/a.ts',
     })),
-    sessionGitCommitRevert: vi.fn(async () => ({
+    sessionScmCommitBackout: vi.fn(async () => ({
         success: true,
     })),
 }));
@@ -93,46 +105,54 @@ vi.mock('@/sync/domains/state/storage', () => ({
     },
     useSessions: () => (isStorageDataReady ? [] : null),
     useSession: (id: string) => sessionById[id] ?? null,
-    useSessionProjectGitInFlightOperation: () => null,
-    useSessionProjectGitSnapshot: () => ({
-        repo: { isGitRepo: true, rootPath: '/repo' },
-        branch: { head: 'main', detached: false },
+    useSessionProjectScmInFlightOperation: () => null,
+    useSessionProjectScmSnapshot: () => ({
+        repo: { isRepo: true, rootPath: '/repo' },
+        branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
         hasConflicts: false,
-        totals: { stagedFiles: 0, unstagedFiles: 0 },
+        totals: {
+            includedFiles: 0,
+            pendingFiles: 0,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 0,
+            pendingRemoved: 0,
+        },
     }),
     useSetting: () => true,
 }));
 
-vi.mock('@/sync/git/operations/safety', () => ({
+vi.mock('@/scm/operations/safety', () => ({
     canRevertFromSnapshot: () => true,
 }));
 
-vi.mock('@/sync/git/operations/policy', () => ({
-    evaluateGitOperationPreflight: () => ({ allowed: true, message: '' }),
+vi.mock('@/scm/core/operationPolicy', () => ({
+    evaluateScmOperationPreflight: () => ({ allowed: true, message: '' }),
 }));
 
-vi.mock('@/sync/git/operations/userFacingErrors', () => ({
-    getGitUserFacingError: ({ fallback }: any) => fallback,
+vi.mock('@/scm/operations/userFacingErrors', () => ({
+    getScmUserFacingError: ({ fallback }: any) => fallback,
 }));
 
-vi.mock('@/sync/git/operations/featureFlags', () => ({
-    resolveGitWriteEnabled: () => gitWriteEnabled,
+vi.mock('@/scm/operations/featureFlags', () => ({
+    resolveScmWriteEnabled: () => gitWriteEnabled,
 }));
 
-vi.mock('@/sync/git/operations/revertFeedback', () => ({
+vi.mock('@/scm/operations/revertFeedback', () => ({
     buildRevertConfirmBody: () => 'confirm',
 }));
 
-vi.mock('@/sync/git/operations/withOperationLock', () => ({
-    withSessionProjectGitOperationLock: async ({ run }: any) => {
+vi.mock('@/scm/operations/withOperationLock', () => ({
+    withSessionProjectScmOperationLock: async ({ run }: any) => {
         await run();
         return { started: true };
     },
 }));
 
-vi.mock('@/sync/git/operations/reporting', () => ({
-    reportSessionGitOperation: vi.fn(),
-    trackBlockedGitOperation: vi.fn(),
+vi.mock('@/scm/operations/reporting', () => ({
+    reportSessionScmOperation: vi.fn(),
+    trackBlockedScmOperation: vi.fn(),
 }));
 
 vi.mock('@/track', () => ({
@@ -146,8 +166,8 @@ vi.mock('@/modal', () => ({
     },
 }));
 
-vi.mock('@/sync/git/gitStatusSync', () => ({
-    gitStatusSync: {
+vi.mock('@/scm/scmStatusSync', () => ({
+    scmStatusSync: {
         invalidateFromMutationAndAwait: vi.fn(async () => {}),
     },
 }));
@@ -173,7 +193,7 @@ describe('CommitScreen', () => {
         isStorageDataReady = false;
         sessionById = {};
 
-        const { sessionGitDiffCommit } = await import('@/sync/ops');
+        const { sessionScmDiffCommit } = await import('@/sync/ops');
         const Screen = (await import('./commit')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -184,7 +204,7 @@ describe('CommitScreen', () => {
 
         // Still loading; no diff call yet.
         expect(tree!.root.findAllByType('ActivityIndicator' as any).length).toBeGreaterThan(0);
-        expect(vi.mocked(sessionGitDiffCommit)).not.toHaveBeenCalled();
+        expect(vi.mocked(sessionScmDiffCommit)).not.toHaveBeenCalled();
 
         // Storage rehydrates.
         isStorageDataReady = true;
@@ -201,9 +221,9 @@ describe('CommitScreen', () => {
         });
         await act(async () => {});
 
-        expect(vi.mocked(sessionGitDiffCommit)).toHaveBeenCalled();
-        const [, request] = vi.mocked(sessionGitDiffCommit).mock.calls.at(-1)!;
-        expect(request.cwd).toBe('/repo');
+        expect(vi.mocked(sessionScmDiffCommit)).toHaveBeenCalled();
+        const [sessionId, request] = vi.mocked(sessionScmDiffCommit).mock.calls.at(-1)!;
+        expect(sessionId).toBe('session-1');
         expect(request.commit).toBe('abc123');
     });
 
@@ -229,7 +249,7 @@ describe('CommitScreen', () => {
         // This mirrors the UI bug where a commit "ref" string included the oneline subject.
         searchParams = { id: 'session-1', sha: '0338a0f chore: stage b.txt' };
 
-        const { sessionGitDiffCommit } = await import('@/sync/ops');
+        const { sessionScmDiffCommit } = await import('@/sync/ops');
         const Screen = (await import('./commit')).default;
 
         await act(async () => {
@@ -237,8 +257,8 @@ describe('CommitScreen', () => {
         });
         await act(async () => {});
 
-        expect(vi.mocked(sessionGitDiffCommit)).toHaveBeenCalled();
-        const [, request] = vi.mocked(sessionGitDiffCommit).mock.calls[0]!;
+        expect(vi.mocked(sessionScmDiffCommit)).toHaveBeenCalled();
+        const [, request] = vi.mocked(sessionScmDiffCommit).mock.calls[0]!;
         expect(request.commit).toBe('0338a0f');
     });
 
@@ -277,8 +297,8 @@ describe('CommitScreen', () => {
     });
 
     it('shows a fallback error when loading commit diff throws', async () => {
-        const { sessionGitDiffCommit } = await import('@/sync/ops');
-        vi.mocked(sessionGitDiffCommit).mockRejectedValueOnce(new Error('network down'));
+        const { sessionScmDiffCommit } = await import('@/sync/ops');
+        vi.mocked(sessionScmDiffCommit).mockRejectedValueOnce(new Error('network down'));
         const Screen = (await import('./commit')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -295,8 +315,8 @@ describe('CommitScreen', () => {
     });
 
     it('shows a back button when commit diff fails to load', async () => {
-        const { sessionGitDiffCommit } = await import('@/sync/ops');
-        vi.mocked(sessionGitDiffCommit).mockResolvedValueOnce({
+        const { sessionScmDiffCommit } = await import('@/sync/ops');
+        vi.mocked(sessionScmDiffCommit).mockResolvedValueOnce({
             success: false,
             error: 'Commit reference must not contain whitespace',
         } as any);
@@ -323,9 +343,9 @@ describe('CommitScreen', () => {
     });
 
     it('shows an error alert when revert throws unexpectedly', async () => {
-        const { sessionGitCommitRevert } = await import('@/sync/ops');
+        const { sessionScmCommitBackout } = await import('@/sync/ops');
         const { Modal } = await import('@/modal');
-        vi.mocked(sessionGitCommitRevert).mockRejectedValueOnce(new Error('rpc unavailable'));
+        vi.mocked(sessionScmCommitBackout).mockRejectedValueOnce(new Error('rpc unavailable'));
         const Screen = (await import('./commit')).default;
 
         let tree: renderer.ReactTestRenderer | null = null;

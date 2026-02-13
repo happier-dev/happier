@@ -7,7 +7,7 @@ import renderer, { act } from 'react-test-renderer';
 let sessionPath: string | null = null;
 let sessionsReady = false;
 
-const sessionGitDiffFileMock = vi.fn(async () => ({ success: true, diff: 'diff --git a/a.txt b/a.txt' }));
+const sessionScmDiffFileMock = vi.fn(async () => ({ success: true, diff: 'diff --git a/a.txt b/a.txt' }));
 const sessionReadFileMock = vi.fn(async () => ({ success: false, error: 'read unavailable' }));
 
 vi.mock('expo-router', () => ({
@@ -38,26 +38,26 @@ vi.mock('react-native-unistyles', () => ({
     },
 }));
 
-vi.mock('./file/components/FileActionToolbar', () => ({
+vi.mock('@/components/sessions/files/file/FileActionToolbar', () => ({
     FileActionToolbar: () => React.createElement('FileActionToolbar'),
 }));
 
-vi.mock('./file/components/FileContentPanel', () => ({
+vi.mock('@/components/sessions/files/file/FileContentPanel', () => ({
     FileContentPanel: () => React.createElement('FileContentPanel'),
 }));
 
-vi.mock('./file/components/FileHeader', () => ({
+vi.mock('@/components/sessions/files/file/FileHeader', () => ({
     FileHeader: () => React.createElement('FileHeader'),
 }));
 
-vi.mock('./file/components/FileScreenState', () => ({
+vi.mock('@/components/sessions/files/file/FileScreenState', () => ({
     FileBinaryState: () => React.createElement('FileBinaryState'),
     FileErrorState: () => React.createElement('FileErrorState'),
     FileLoadingState: () => React.createElement('FileLoadingState'),
 }));
 
-vi.mock('./file/hooks/useFileGitStageActions', () => ({
-    useFileGitStageActions: () => ({
+vi.mock('@/hooks/session/files/useFileScmStageActions', () => ({
+    useFileScmStageActions: () => ({
         isApplyingStage: false,
         handleStage: vi.fn(),
         applySelectedLines: vi.fn(),
@@ -65,7 +65,7 @@ vi.mock('./file/hooks/useFileGitStageActions', () => ({
 }));
 
 vi.mock('@/sync/ops', () => ({
-    sessionGitDiffFile: sessionGitDiffFileMock,
+    sessionScmDiffFile: sessionScmDiffFileMock,
     sessionReadFile: sessionReadFileMock,
 }));
 
@@ -92,37 +92,48 @@ vi.mock('@/sync/domains/state/storage', () => ({
             }
             : null,
     useSessions: () => (sessionsReady ? [] : null),
-    useSessionProjectGitInFlightOperation: () => null,
-    useSessionProjectGitSnapshot: () => ({
+    useSessionProjectScmCommitSelectionPaths: () => [],
+    useSessionProjectScmInFlightOperation: () => null,
+    useSessionProjectScmSnapshot: () => ({
+        repo: { isRepo: true, rootPath: '/repo' },
         entries: [],
         hasConflicts: false,
     }),
-    useSetting: () => null,
+    useSetting: (key: string) => {
+        if (key === 'experiments') return false;
+        if (key === 'expScmOperations') return false;
+        if (key === 'scmCommitStrategy') return 'atomic';
+        if (key === 'scmDefaultDiffModeByBackend') return {};
+        return null;
+    },
 }));
 
-vi.mock('@/sync/git/gitLineSelection', () => ({
+vi.mock('@/scm/scmLineSelection', () => ({
     buildFileLineSelectionFingerprint: () => 'fingerprint',
     canUseLineSelection: () => false,
 }));
 
-vi.mock('@/sync/git/operations/featureFlags', () => ({
-    resolveGitWriteEnabled: () => true,
+vi.mock('@/scm/operations/featureFlags', () => ({
+    resolveScmWriteEnabled: () => true,
 }));
 
-vi.mock('@/sync/git/utils/filePresentation', () => ({
+vi.mock('@/scm/utils/filePresentation', () => ({
     getFileLanguageFromPath: () => 'plaintext',
     isBinaryContent: () => false,
     isKnownBinaryPath: () => false,
 }));
 
-vi.mock('@/sync/git/utils/filePathParam', () => ({
+vi.mock('@/scm/utils/filePathParam', () => ({
     decodeSessionFilePathParam: (value: string) => value,
 }));
 
-vi.mock('@/sync/git/gitStatusSync', () => ({
-    gitStatusSync: {
-        invalidateFromMutationAndAwait: vi.fn(async () => {}),
-    },
+vi.mock('@/scm/settings/commitStrategy', () => ({
+    allowsLiveStaging: () => true,
+    isAtomicCommitStrategy: () => true,
+}));
+
+vi.mock('@/scm/diff/defaultMode', () => ({
+    resolveDefaultDiffModeForFile: () => 'pending',
 }));
 
 vi.mock('@/modal', () => ({
@@ -144,7 +155,7 @@ describe('FileScreen session path hydration', () => {
         const { default: FileScreen } = await import('./file');
         sessionPath = null;
         sessionsReady = false;
-        sessionGitDiffFileMock.mockClear();
+        sessionScmDiffFileMock.mockClear();
         sessionReadFileMock.mockClear();
 
         let tree: renderer.ReactTestRenderer | null = null;
@@ -153,7 +164,7 @@ describe('FileScreen session path hydration', () => {
             tree = renderer.create(React.createElement(FileScreen));
         });
 
-        expect(sessionGitDiffFileMock).not.toHaveBeenCalled();
+        expect(sessionScmDiffFileMock).not.toHaveBeenCalled();
 
         sessionPath = '/tmp/workspace';
         sessionsReady = true;
@@ -161,7 +172,7 @@ describe('FileScreen session path hydration', () => {
             tree!.update(React.createElement(FileScreen));
         });
 
-        expect(sessionGitDiffFileMock).toHaveBeenCalledTimes(1);
+        expect(sessionScmDiffFileMock).toHaveBeenCalledTimes(1);
         expect(sessionReadFileMock).toHaveBeenCalledTimes(1);
     });
 });

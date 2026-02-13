@@ -10,10 +10,14 @@ let gitOperationsPanelProps: any = null;
 let changedFilesListProps: any = null;
 let focusEffectHasRun = false;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ActivityIndicator: 'ActivityIndicator',
-}));
+vi.mock('react-native', async () => {
+    const actual = await vi.importActual<typeof import('react-native')>('react-native');
+    return {
+        ...actual,
+        View: 'View',
+        ActivityIndicator: 'ActivityIndicator',
+    };
+});
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -55,6 +59,12 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
+vi.mock('react-native-typography', () => ({
+    iOSUIKit: {
+        title3: {},
+    },
+}));
+
 vi.mock('@/components/ui/text/StyledText', () => ({
     Text: 'Text',
 }));
@@ -77,12 +87,12 @@ vi.mock('@/text', () => ({
     t: (key: string) => key,
 }));
 
-vi.mock('@/sync/git/gitAttribution', () => ({
+vi.mock('@/scm/scmAttribution', () => ({
     getDefaultChangedFilesViewMode: () => 'session',
 }));
 
-vi.mock('@/sync/git/gitStatusSync', () => ({
-    gitStatusSync: {
+vi.mock('@/scm/scmStatusSync', () => ({
+    scmStatusSync: {
         getSync: () => ({
             invalidateAndAwait: vi.fn(async () => {}),
         }),
@@ -103,30 +113,61 @@ vi.mock('@/sync/domains/state/storage', () => ({
                     },
                 },
             },
+            setSessionRepositoryTreeExpandedPaths: vi.fn(),
+            clearSessionProjectScmCommitSelectionPaths: vi.fn(),
+            clearSessionProjectScmCommitSelectionPatches: vi.fn(),
         }),
     },
-    useSessionProjectGitOperationLog: () => [],
-    useSessionProjectGitInFlightOperation: () => null,
-    useSessionProjectGitSnapshot: () => ({
-        repo: { isGitRepo: true, rootPath: '/repo' },
-        branch: { head: 'main', detached: false },
-        hasConflicts: false,
+    useSession: () => ({
+        metadata: {
+            path: '/repo',
+        },
     }),
-    useSessionProjectGitTouchedPaths: () => [],
+    useSessionProjectScmOperationLog: () => [],
+    useSessionProjectScmInFlightOperation: () => null,
+    useSessionProjectScmSnapshot: () => ({
+        repo: { isRepo: true, rootPath: '/repo' },
+        branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
+        hasConflicts: false,
+        entries: [],
+        totals: {
+            includedFiles: 0,
+            pendingFiles: 0,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 0,
+            pendingRemoved: 0,
+        },
+    }),
+    useSessionProjectScmSnapshotError: () => null,
+    useSessionProjectScmCommitSelectionPaths: () => [],
+    useSessionProjectScmCommitSelectionPatches: () => [],
+    useSessionProjectScmTouchedPaths: () => [],
+    useSessionRepositoryTreeExpandedPaths: () => [],
     useProjectForSession: () => ({ id: 'project-1' }),
     useProjectSessions: () => ['session-1', 'session-2'],
-    useSetting: () => true,
+    useSetting: (key: string) => {
+        if (key === 'experiments') return false;
+        if (key === 'expScmOperations') return true;
+        if (key === 'scmCommitStrategy') return 'atomic';
+        if (key === 'scmRemoteConfirmPolicy') return 'always';
+        if (key === 'scmPushRejectPolicy') return 'prompt_fetch';
+        if (key === 'scmReviewMaxFiles') return 25;
+        if (key === 'scmReviewMaxChangedLines') return 2000;
+        return true;
+    },
 }));
 
-vi.mock('@/sync/git/operations/featureFlags', () => ({
-    resolveGitWriteEnabled: () => true,
+vi.mock('@/scm/operations/featureFlags', () => ({
+    resolveScmWriteEnabled: () => true,
 }));
 
-vi.mock('./files/hooks/useChangedFilesData', () => ({
+vi.mock('@/hooks/session/files/useChangedFilesData', () => ({
     useChangedFilesData: () => ({
         attributionReliability: 'limited',
         showSessionViewToggle: false,
-        gitStatusFiles: {
+        scmStatusFiles: {
             branch: 'main',
             hasChanges: true,
             totalStaged: 0,
@@ -142,8 +183,8 @@ vi.mock('./files/hooks/useChangedFilesData', () => ({
     }),
 }));
 
-vi.mock('./files/hooks/useGitCommitHistory', () => ({
-    useGitCommitHistory: () => ({
+vi.mock('@/hooks/session/files/useScmCommitHistory', () => ({
+    useScmCommitHistory: () => ({
         historyEntries: [],
         historyLoading: false,
         historyHasMore: false,
@@ -151,10 +192,10 @@ vi.mock('./files/hooks/useGitCommitHistory', () => ({
     }),
 }));
 
-vi.mock('./files/hooks/useFilesGitOperations', () => ({
-    useFilesGitOperations: () => ({
-        gitOperationBusy: false,
-        gitOperationStatus: null,
+vi.mock('@/hooks/session/files/useFilesScmOperations', () => ({
+    useFilesScmOperations: () => ({
+        scmOperationBusy: false,
+        scmOperationStatus: null,
         commitPreflight: { allowed: true, message: '' },
         pullPreflight: { allowed: true, message: '' },
         pushPreflight: { allowed: true, message: '' },
@@ -163,36 +204,53 @@ vi.mock('./files/hooks/useFilesGitOperations', () => ({
     }),
 }));
 
-vi.mock('./files/hooks/useGitOperationsVisibility', () => ({
-    shouldShowGitOperationsPanel: () => true,
+vi.mock('@/hooks/session/files/useScmOperationsVisibility', () => ({
+    shouldShowScmOperationsPanel: () => true,
 }));
 
-vi.mock('./files/components/FilesToolbar', () => ({
+vi.mock('@/components/sessions/files/FilesToolbar', () => ({
     FilesToolbar: (props: any) => {
         filesToolbarSpy(props);
         return React.createElement('FilesToolbar', props);
     },
 }));
 
-vi.mock('./files/components/GitBranchSummary', () => ({
-    GitBranchSummary: () => null,
+vi.mock('@/components/sessions/files/SourceControlBranchSummary', () => ({
+    SourceControlBranchSummary: () => null,
 }));
 
-vi.mock('./files/components/GitOperationsPanel', () => ({
-    GitOperationsPanel: (props: any) => {
+vi.mock('@/components/sessions/files/SourceControlOperationsPanel', () => ({
+    SourceControlOperationsPanel: (props: any) => {
         gitOperationsPanelProps = props;
-        return React.createElement('GitOperationsPanel', props);
+        return React.createElement('SourceControlOperationsPanel', props);
     },
 }));
 
-vi.mock('./files/components/content/SearchResultsList', () => ({
+vi.mock('@/components/sessions/files/content/SearchResultsList', () => ({
     SearchResultsList: () => null,
 }));
 
-vi.mock('./files/components/content/ChangedFilesList', () => ({
+vi.mock('@/components/sessions/files/content/ChangedFilesList', () => ({
     ChangedFilesList: (props: any) => {
         changedFilesListProps = props;
         return React.createElement('ChangedFilesList', props);
+    },
+}));
+
+vi.mock('@/components/sessions/files/content/ChangedFilesReview', () => ({
+    ChangedFilesReview: () => null,
+}));
+
+vi.mock('@/components/sessions/files/content/RepositoryTreeList', () => ({
+    RepositoryTreeList: () => null,
+}));
+
+vi.mock('@/scm/registry/scmUiBackendRegistry', () => ({
+    scmUiBackendRegistry: {
+        getPluginForSnapshot: () => ({
+            displayName: 'Git',
+            commitActionConfig: () => ({ label: 'Commit' }),
+        }),
     },
 }));
 

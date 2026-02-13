@@ -38,16 +38,16 @@ describe('ProjectGitStatus', () => {
 
     it('renders changed file count when there are non-line changes', async () => {
         snapshotMock = {
-            repo: { isGitRepo: true, rootPath: '/repo' },
+            repo: { isRepo: true, rootPath: '/repo' },
             branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
             totals: {
-                stagedFiles: 0,
-                unstagedFiles: 0,
                 untrackedFiles: 2,
-                stagedAdded: 0,
-                stagedRemoved: 0,
-                unstagedAdded: 0,
-                unstagedRemoved: 0,
+                includedFiles: 0,
+                pendingFiles: 0,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
             },
         };
         const { ProjectGitStatus } = await import('./ProjectGitStatus');

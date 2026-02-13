@@ -47,16 +47,16 @@ describe('GitStatusBadge', () => {
 
     it('shows combined staged + unstaged line deltas from snapshot totals', async () => {
         snapshotMock = {
-            repo: { isGitRepo: true, rootPath: '/repo' },
+            repo: { isRepo: true, rootPath: '/repo' },
             branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
             totals: {
-                stagedFiles: 1,
-                unstagedFiles: 1,
                 untrackedFiles: 0,
-                stagedAdded: 10,
-                stagedRemoved: 5,
-                unstagedAdded: 8,
-                unstagedRemoved: 7,
+                includedFiles: 1,
+                pendingFiles: 1,
+                includedAdded: 10,
+                includedRemoved: 5,
+                pendingAdded: 8,
+                pendingRemoved: 7,
             },
         };
         const { GitStatusBadge } = await import('./GitStatusBadge');
@@ -75,16 +75,16 @@ describe('GitStatusBadge', () => {
 
     it('shows changed file count when there are changes without line deltas', async () => {
         snapshotMock = {
-            repo: { isGitRepo: true, rootPath: '/repo' },
+            repo: { isRepo: true, rootPath: '/repo' },
             branch: { head: 'main', upstream: 'origin/main', ahead: 0, behind: 0, detached: false },
             totals: {
-                stagedFiles: 0,
-                unstagedFiles: 0,
                 untrackedFiles: 2,
-                stagedAdded: 0,
-                stagedRemoved: 0,
-                unstagedAdded: 0,
-                unstagedRemoved: 0,
+                includedFiles: 0,
+                pendingFiles: 0,
+                includedAdded: 0,
+                includedRemoved: 0,
+                pendingAdded: 0,
+                pendingRemoved: 0,
             },
         };
         const { GitStatusBadge } = await import('./GitStatusBadge');

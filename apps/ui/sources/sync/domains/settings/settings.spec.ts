@@ -155,46 +155,36 @@ describe('settings', () => {
 
         it('defaults voice settings', () => {
             const parsed = settingsParse({} as any);
-            expect((parsed as any).voice.providerId).toBe('realtime_elevenlabs');
+            expect((parsed as any).voiceProviderId).toBe('happier_elevenlabs_agents');
+            expect((parsed as any).voiceMode).toBe('happier');
+            expect((parsed as any).voiceShareSessionSummary).toBe(true);
+            expect((parsed as any).voiceShareRecentMessages).toBe(true);
+            expect((parsed as any).voiceRecentMessagesCount).toBe(10);
+            expect((parsed as any).voiceShareToolNames).toBe(true);
+            expect((parsed as any).voiceSharePermissionRequests).toBe(true);
+            expect((parsed as any).voiceShareFilePaths).toBe(false);
+            // Safety: tool args are never shared with voice providers.
+            expect((parsed as any).voiceShareToolArgs).toBe(false);
 
-            expect((parsed as any).voice.privacy.shareSessionSummary).toBe(true);
-            expect((parsed as any).voice.privacy.shareRecentMessages).toBe(true);
-            expect((parsed as any).voice.privacy.recentMessagesCount).toBe(3);
-            expect((parsed as any).voice.privacy.shareToolNames).toBe(true);
-            expect((parsed as any).voice.privacy.sharePermissionRequests).toBe(true);
-            expect((parsed as any).voice.privacy.shareFilePaths).toBe(false);
-            expect((parsed as any).voice.privacy.shareToolArgs).toBe(false);
-
-            expect((parsed as any).voice.adapters.local_conversation.conversationMode).toBe('direct_session');
-            expect((parsed as any).voice.adapters.local_conversation.mediator.backend).toBe('daemon');
-            expect((parsed as any).voice.adapters.local_conversation.handsFree.enabled).toBe(false);
-            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.silenceMs).toBe(450);
-            expect((parsed as any).voice.adapters.local_conversation.handsFree.endpointing.minSpeechMs).toBe(120);
-            expect((parsed as any).voice.adapters.local_conversation.tts.bargeInEnabled).toBe(true);
-            expect((parsed as any).voice.adapters.local_conversation.mediator.permissionPolicy).toBe('read_only');
-            expect((parsed as any).voice.adapters.local_conversation.mediator.idleTtlSeconds).toBe(300);
-            expect((parsed as any).voice.adapters.local_conversation.mediator.chatModelSource).toBe('custom');
-            expect((parsed as any).voice.adapters.local_conversation.mediator.chatModelId).toBe('default');
-            expect((parsed as any).voice.adapters.local_conversation.mediator.commitModelSource).toBe('chat');
-            expect((parsed as any).voice.adapters.local_conversation.streaming.enabled).toBe(false);
-            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsEnabled).toBe(false);
-            expect((parsed as any).voice.adapters.local_conversation.streaming.ttsChunkChars).toBe(200);
-            expect((parsed as any).voice.adapters.local_conversation.mediator.verbosity).toBe('short');
+            expect((parsed as any).voiceLocalConversationMode).toBe('direct_session');
+            expect((parsed as any).voiceLocalMediatorBackend).toBe('daemon');
+            expect((parsed as any).voiceMediatorPermissionPolicy).toBe('read_only');
+            expect((parsed as any).voiceMediatorIdleTtlSeconds).toBe(300);
+            expect((parsed as any).voiceMediatorChatModelSource).toBe('custom');
+            expect((parsed as any).voiceMediatorChatModelId).toBe('default');
+            expect((parsed as any).voiceMediatorCommitModelSource).toBe('chat');
+            expect((parsed as any).voiceMediatorVerbosity).toBe('short');
         });
 
         it('does not mutate voice defaults while parsing a partial voice config', () => {
             const parsed1 = settingsParse({
-                voice: {
-                    privacy: {
-                        shareFilePaths: true,
-                    },
-                },
+                voiceShareFilePaths: true,
             } as any);
-            expect((parsed1 as any).voice.privacy.shareFilePaths).toBe(true);
+            expect((parsed1 as any).voiceShareFilePaths).toBe(true);
 
             const parsed2 = settingsParse({} as any);
             // Defaults must remain stable across calls.
-            expect((parsed2 as any).voice.privacy.shareFilePaths).toBe(false);
+            expect((parsed2 as any).voiceShareFilePaths).toBe(false);
         });
 
         it('defaults multi-server settings to disabled grouped mode', () => {
@@ -204,8 +194,6 @@ describe('settings', () => {
             expect((parsed as any).multiServerPresentation).toBe('grouped');
             expect((parsed as any).multiServerProfiles).toEqual([]);
             expect((parsed as any).multiServerActiveProfileId).toBeNull();
-            expect((parsed as any).activeServerTargetKind).toBeNull();
-            expect((parsed as any).activeServerTargetId).toBeNull();
         });
 
         it('defaults environment badge visibility to enabled', () => {
@@ -247,33 +235,6 @@ describe('settings', () => {
                 },
             ]);
             expect((parsed as any).multiServerActiveProfileId).toBe('dev-work');
-        });
-
-        it('parses active server target fields when provided', () => {
-            const parsed = settingsParse({
-                activeServerTargetKind: 'group',
-                activeServerTargetId: 'dev-work',
-            } as any);
-
-            expect((parsed as any).activeServerTargetKind).toBe('group');
-            expect((parsed as any).activeServerTargetId).toBe('dev-work');
-        });
-
-        it('migrates legacy active group selection into active target fields when missing', () => {
-            const parsed = settingsParse({
-                multiServerProfiles: [
-                    {
-                        id: 'dev-work',
-                        name: 'Dev Work',
-                        serverIds: ['server-a', 'server-b'],
-                        presentation: 'grouped',
-                    },
-                ],
-                multiServerActiveProfileId: 'dev-work',
-            } as any);
-
-            expect((parsed as any).activeServerTargetKind).toBe('group');
-            expect((parsed as any).activeServerTargetId).toBe('dev-work');
         });
 
         it('migrates legacy sessionBusySteerSendPolicy=queue_for_review to server_pending', () => {
@@ -739,9 +700,9 @@ describe('settings', () => {
     // Voice settings intentionally do not migrate legacy flat voice keys.
 
     describe('voice privacy settings', () => {
-        it('forces voice.privacy.shareToolArgs to false even if persisted true', () => {
-            const parsed = settingsParse({ voice: { privacy: { shareToolArgs: true } } } as any);
-            expect((parsed as any).voice.privacy.shareToolArgs).toBe(false);
+        it('forces voiceShareToolArgs to false even if persisted true', () => {
+            const parsed = settingsParse({ voiceShareToolArgs: true } as any);
+            expect((parsed as any).voiceShareToolArgs).toBe(false);
         });
     });
 
