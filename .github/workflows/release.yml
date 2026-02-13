@@ -572,7 +572,13 @@ jobs:
     name: deploy_plan (source → deploy branches)
     runs-on: ubuntu-latest
     environment: release-shared
-    if: always() && needs.checks.result == 'success'
+    if: >-
+      always() && needs.checks.result == 'success' && (
+        contains(format(',{0},', inputs.deploy_targets), ',server,') ||
+        contains(format(',{0},', inputs.deploy_targets), ',website,') ||
+        contains(format(',{0},', inputs.deploy_targets), ',docs,') ||
+        (inputs.environment == 'production' && contains(format(',{0},', inputs.deploy_targets), ',ui,'))
+      )
     needs: [checks, bump_versions_dev, promote_main]
     outputs:
       deploy_ui_needed: ${{ steps.plan.outputs.deploy_ui_needed }}
@@ -817,7 +823,7 @@ jobs:
           git push origin HEAD:dev
 
   deploy_ui:
-    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.checks.outputs.bump_app != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
+    if: always() && needs.checks.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.checks.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && (inputs.environment != 'production' || needs.promote_main.result == 'success')
     needs: [checks, bump_versions_dev, promote_main, deploy_plan]
     permissions:
       contents: write
@@ -830,7 +836,7 @@ jobs:
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       bump: none
-      deploy_web: true
+      deploy_web: ${{ inputs.environment == 'production' }}
       expo_action: ${{ inputs.ui_expo_action }}
       expo_profile: ${{ inputs.ui_expo_profile }}
       expo_platform: ${{ inputs.ui_expo_platform }}
