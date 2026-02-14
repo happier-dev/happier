@@ -257,6 +257,55 @@ describe('waitForChildExit helper', () => {
   });
 });
 
+describe('ensureDaemonFullyStoppedBeforeRestart helper', () => {
+  it('waits for the previous known daemon PID when state files are already gone', async () => {
+    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
+    const tempHomeDir = await mkdtemp(join(tmpdir(), 'happier-cli-daemon-stop-helper-'));
+    let child: ReturnType<typeof spawn> | null = null;
+
+    try {
+      process.env.HAPPIER_HOME_DIR = tempHomeDir;
+      reloadConfiguration();
+      await clearDaemonState();
+
+      child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+        stdio: 'ignore',
+      });
+      if (!child.pid) {
+        throw new Error('Failed to start helper process');
+      }
+
+      setTimeout(() => {
+        try {
+          process.kill(child!.pid!, 'SIGTERM');
+        } catch {
+          // best-effort
+        }
+      }, 250);
+
+      const startedAt = Date.now();
+      await ensureDaemonFullyStoppedBeforeRestart(child.pid);
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(200);
+      expect(isProcessAlive(child.pid)).toBe(false);
+    } finally {
+      if (child?.pid) {
+        try {
+          process.kill(child.pid, 'SIGKILL');
+        } catch {
+          // process already exited
+        }
+      }
+      if (previousHomeDir === undefined) {
+        delete process.env.HAPPIER_HOME_DIR;
+      } else {
+        process.env.HAPPIER_HOME_DIR = previousHomeDir;
+      }
+      reloadConfiguration();
+      await rm(tempHomeDir, { recursive: true, force: true });
+    }
+  });
+});
+
 async function waitForDaemonStateWithDifferentPid(
   initialPid: number,
   expectedVersion: string,
@@ -307,31 +356,24 @@ async function waitForDaemonReadyState(): Promise<void> {
   );
 }
 
-async function ensureDaemonFullyStoppedBeforeRestart(): Promise<void> {
+async function ensureDaemonFullyStoppedBeforeRestart(previousKnownPid?: number | null): Promise<void> {
   const stateBeforeStop = await readDaemonState();
   const previousPid = stateBeforeStop?.pid;
   const lockPidBeforeStop = readDaemonLockPid();
 
   await stopDaemon();
 
-  if (typeof previousPid === 'number' && Number.isFinite(previousPid) && previousPid > 0) {
-    await waitFor(async () => !isProcessAlive(previousPid), {
-      timeoutMs: 30_000,
-      intervalMs: 250,
-      label: `previous daemon pid ${previousPid} to exit`,
-    });
+  const candidatePids = new Set<number>();
+  for (const pid of [previousPid, lockPidBeforeStop, previousKnownPid]) {
+    if (typeof pid !== 'number' || !Number.isFinite(pid) || pid <= 0) continue;
+    candidatePids.add(pid);
   }
 
-  if (
-    typeof lockPidBeforeStop === 'number' &&
-    Number.isFinite(lockPidBeforeStop) &&
-    lockPidBeforeStop > 0 &&
-    lockPidBeforeStop !== previousPid
-  ) {
-    await waitFor(async () => !isProcessAlive(lockPidBeforeStop), {
+  for (const pid of candidatePids) {
+    await waitFor(async () => !isProcessAlive(pid), {
       timeoutMs: 30_000,
       intervalMs: 250,
-      label: `daemon lock pid ${lockPidBeforeStop} to exit`,
+      label: `daemon pid ${pid} to exit`,
     });
   }
 
@@ -470,7 +512,7 @@ async function isServerHealthy(): Promise<boolean> {
 }
 
 describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout: 60_000 }, () => {
-  let daemonPid: number;
+  let daemonPid: number | null = null;
 
   beforeAll(async () => {
     await prepareIsolatedDaemonIntegrationHome();
@@ -478,7 +520,7 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
 
   beforeEach(async () => {
     // Ensure previous daemon teardown has fully completed before starting another one.
-    await ensureDaemonFullyStoppedBeforeRestart();
+    await ensureDaemonFullyStoppedBeforeRestart(daemonPid);
     
     // Start fresh daemon for this test
     // This will return and start a background process - we don't need to wait for it
@@ -498,7 +540,8 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
 
   afterEach(async () => {
     await stopAllTrackedSessionsBestEffort();
-    await stopDaemon()
+    await stopDaemon();
+    daemonPid = null;
   });
 
   afterAll(async () => {
@@ -725,6 +768,10 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
     // Get initial log files
     const initialLogs = readdirSync(logsDir).filter(f => f.endsWith('-daemon.log'));
     
+    if (daemonPid === null) {
+      throw new Error('Expected daemon PID from beforeEach');
+    }
+
     // Send SIGKILL to daemon (force kill)
     process.kill(daemonPid, 'SIGKILL');
     
@@ -753,6 +800,10 @@ describe.skipIf(!await isServerHealthy())('Daemon Integration Tests', { timeout:
       throw new Error('No log file found');
     }
     
+    if (daemonPid === null) {
+      throw new Error('Expected daemon PID from beforeEach');
+    }
+
     // Send SIGTERM to daemon (graceful shutdown)
     process.kill(daemonPid, 'SIGTERM');
     
