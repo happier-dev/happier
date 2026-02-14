@@ -22,22 +22,23 @@ test('tests workflow bounds binary smoke subtests with hard process time limits'
   );
 });
 
-test('release binary smoke test enforces hard sub-process timeouts for build phases', async () => {
+test('release binary smoke harness hard-kills nested build commands on timeout', async () => {
   const raw = await readFile(join(repoRoot, 'apps', 'stack', 'scripts', 'release_binary_smoke.integration.test.mjs'), 'utf8');
 
+  assert.match(raw, /function runWithHardTimeout\(/, 'binary smoke harness should define a hard-timeout spawn helper');
   assert.match(
     raw,
-    /spawnSync\('timeout',\s*\[\s*'--signal=KILL',\s*'--kill-after=30s'/,
-    'release binary smoke should use coreutils timeout to hard-kill build subprocess trees',
+    /spawnSync\('timeout',\s*\['--signal=KILL',\s*'--kill-after=30s'/,
+    'binary smoke harness should use GNU timeout with SIGKILL fallback',
   );
   assert.match(
     raw,
-    /build-cli-binaries\.mjs[\s\S]*timeoutMs:\s*15\s*\*\s*60\s*\*\s*1000/,
-    'release binary smoke should bound CLI binary build subprocess runtime',
+    /runWithHardTimeout\(\s*process\.execPath,\s*\[\s*'scripts\/release\/build-cli-binaries\.mjs'/,
+    'CLI binary build path should use hard-timeout wrapper',
   );
   assert.match(
     raw,
-    /build-server-binaries\.mjs[\s\S]*timeoutMs:\s*15\s*\*\s*60\s*\*\s*1000/,
-    'release binary smoke should bound server binary build subprocess runtime',
+    /runWithHardTimeout\(\s*process\.execPath,\s*\[\s*'scripts\/release\/build-server-binaries\.mjs'/,
+    'server binary build path should use hard-timeout wrapper',
   );
 });
