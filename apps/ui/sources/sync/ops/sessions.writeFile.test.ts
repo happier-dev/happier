@@ -38,4 +38,17 @@ describe('sessionWriteFile', () => {
         expect(res.success).toBe(false);
         expect(res.errorCode).toBe(RPC_ERROR_CODES.METHOD_NOT_FOUND);
     });
+
+    it('returns a stable failure response when the RPC returns an unsupported shape', async () => {
+        const { sessionWriteFile } = await import('./sessions');
+
+        sessionRPCSpy.mockResolvedValueOnce(null);
+
+        const res = await sessionWriteFile('s1', 'src/a.ts', 'hello');
+        expect(res).toMatchObject({
+            success: false,
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        });
+        expect(typeof res.error).toBe('string');
+    });
 });

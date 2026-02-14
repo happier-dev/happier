@@ -4,18 +4,19 @@
 
 import { apiSocket } from '../api/session/apiSocket';
 import { sync } from '../sync';
-import { isRpcMethodNotAvailableError } from '../runtime/rpcErrors';
+import { createRpcCallError, isRpcMethodNotAvailableError, readRpcErrorCode } from '../runtime/rpcErrors';
 import { buildResumeHappySessionRpcParams, type ResumeHappySessionRpcParams } from '../domains/session/resume/resumeSessionPayload';
 import { storage } from '../domains/state/storage';
 import { nowServerMs } from '../runtime/time';
-import { encodeBase64 } from '@/encryption/base64';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
+import { encodeBase64 } from '@/encryption/base64';
+import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import type {
     SpawnSessionResult
 } from '@happier-dev/protocol';
 import { SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { normalizeSpawnSessionResult } from './_shared';
 export {
     sessionScmChangeExclude,
@@ -31,6 +32,16 @@ export {
     sessionScmStatusSnapshot,
 } from './sessionScm';
 
+function assertRpcResponseWithSuccess<T extends { success: boolean }>(value: unknown): T {
+    if (!value || typeof value !== 'object' || typeof (value as { success?: unknown }).success !== 'boolean') {
+        // Treat as incompatibility with older daemons/CLIs: callers expect a `{ success }` envelope.
+        throw createRpcCallError({
+            error: 'RPC call returned an unsupported response',
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        });
+    }
+    return value as T;
+}
 
 // Permission operation types
 interface SessionPermissionRequest {
@@ -68,14 +79,6 @@ interface SessionBashResponse {
     stderr: string;
     exitCode: number;
     error?: string;
-}
-
-function readRpcErrorCode(error: unknown): string | undefined {
-    if (!error || typeof error !== 'object' || !('rpcErrorCode' in error)) {
-        return undefined;
-    }
-    const rpcErrorCode = (error as { rpcErrorCode?: unknown }).rpcErrorCode;
-    return typeof rpcErrorCode === 'string' ? rpcErrorCode : undefined;
 }
 
 // Read file operation types
@@ -188,6 +191,8 @@ export interface ResumeSessionOptions {
     sessionEncryptionKeyBase64: string;
     /** Session encryption variant (only dataKey supported for resume). */
     sessionEncryptionVariant: 'dataKey';
+    /** Optional explicit server scope for resume spawn routing. */
+    serverId?: string;
     /**
      * Optional: publish an explicit UI-selected permission mode at resume time.
      * Use only when the UI selection is newer than metadata.permissionModeUpdatedAt.
@@ -220,6 +225,7 @@ export interface ResumeSessionOptions {
  */
 export async function resumeSession(options: ResumeSessionOptions): Promise<ResumeSessionResult> {
     const { sessionId, machineId, directory, agent, resume, sessionEncryptionKeyBase64, sessionEncryptionVariant, permissionMode, permissionModeUpdatedAt, modelId, modelUpdatedAt, experimentalCodexResume, experimentalCodexAcp } = options;
+    const serverId = typeof options.serverId === 'string' ? options.serverId.trim() : null;
 
     try {
         const params: ResumeHappySessionRpcParams = buildResumeHappySessionRpcParams({
@@ -237,11 +243,12 @@ export async function resumeSession(options: ResumeSessionOptions): Promise<Resu
             experimentalCodexAcp,
         });
 
-        const result = await apiSocket.machineRPC<unknown, ResumeHappySessionRpcParams>(
+        const result = await machineRpcWithServerScope<unknown, ResumeHappySessionRpcParams>({
             machineId,
-            RPC_METHODS.SPAWN_HAPPY_SESSION,
-            params
-        );
+            method: RPC_METHODS.SPAWN_HAPPY_SESSION,
+            payload: params,
+            serverId,
+        });
         return normalizeSpawnSessionResult(result);
     } catch (error) {
         return {
@@ -352,6 +359,24 @@ export async function sessionSwitch(sessionId: string, to: 'remote' | 'local'): 
 }
 
 /**
+ * Push provider meta updates to the CLI session without sending a user message.
+ *
+ * Used for session-scoped toggles that must take effect in local mode (e.g. Claude local permission bridge).
+ */
+export async function sessionApplyProviderMeta(sessionId: string, payload: Record<string, unknown>): Promise<boolean> {
+    try {
+        const response = await apiSocket.sessionRPC<boolean, Record<string, unknown>>(
+            sessionId,
+            'providerMeta',
+            payload,
+        );
+        return response === true;
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Execute a bash command in the session
  */
 export async function sessionBash(sessionId: string, request: SessionBashRequest): Promise<SessionBashResponse> {
@@ -384,12 +409,11 @@ export async function sessionReadFile(sessionId: string, path: string): Promise<
             'readFile',
             request
         );
-        return response;
+        return assertRpcResponseWithSuccess<SessionReadFileResponse>(response);
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            errorCode: readRpcErrorCode(error)
+            error: error instanceof Error ? error.message : 'Unknown error'
         };
     }
 }
@@ -411,11 +435,12 @@ export async function sessionWriteFile(
             'writeFile',
             request
         );
-        return response;
+        return assertRpcResponseWithSuccess<SessionWriteFileResponse>(response);
     } catch (error) {
         return {
             success: false,
-            error: error instanceof Error ? error.message : 'Unknown error'
+            error: error instanceof Error ? error.message : 'Unknown error',
+            errorCode: readRpcErrorCode(error),
         };
     }
 }
@@ -431,7 +456,7 @@ export async function sessionListDirectory(sessionId: string, path: string): Pro
             'listDirectory',
             request
         );
-        return response;
+        return assertRpcResponseWithSuccess<SessionListDirectoryResponse>(response);
     } catch (error) {
         return {
             success: false,
@@ -455,7 +480,7 @@ export async function sessionGetDirectoryTree(
             'getDirectoryTree',
             request
         );
-        return response;
+        return assertRpcResponseWithSuccess<SessionGetDirectoryTreeResponse>(response);
     } catch (error) {
         return {
             success: false,
@@ -479,7 +504,7 @@ export async function sessionRipgrep(
             'ripgrep',
             request
         );
-        return response;
+        return assertRpcResponseWithSuccess<SessionRipgrepResponse>(response);
     } catch (error) {
         return {
             success: false,
@@ -498,7 +523,7 @@ export async function sessionKill(sessionId: string): Promise<SessionKillRespons
             'killSession',
             {}
         );
-        return response;
+        return assertRpcResponseWithSuccess<SessionKillResponse>(response);
     } catch (error) {
         return {
             success: false,
