@@ -14,34 +14,11 @@ function sourceFiles() {
   return Array.from(new Set(INSTALLER_PUBLISH_SPECS.map((spec) => spec.source)));
 }
 
-function fixtureForSource(name) {
-  if (name.endsWith('.sh')) {
-    return [
-      `fixture:${name}`,
-      'CHANNEL="${HAPPIER_CHANNEL:-stable}"',
-      '',
-    ].join('\n');
-  }
-  if (name.endsWith('.ps1')) {
-    return [
-      `fixture:${name}`,
-      'param([string] $Channel = "stable")',
-      '',
-    ].join('\n');
-  }
-  return `fixture:${name}\n`;
-}
-
 function expectedFixtureForTarget(target) {
   for (const spec of INSTALLER_PUBLISH_SPECS) {
-    if (!spec.targets.includes(target)) continue;
-    const base = fixtureForSource(spec.source);
-    if (spec.transform === 'preview-default-channel') {
-      return base
-        .replace('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview')
-        .replace('$Channel = "stable"', '$Channel = "preview"');
+    if (spec.targets.includes(target)) {
+      return `fixture:${spec.source}\n`;
     }
-    return base;
   }
   throw new Error(`unknown installer target: ${target}`);
 }
@@ -54,7 +31,7 @@ test('syncInstallers copies all installer artifacts to website public directory'
   await mkdir(targetDir, { recursive: true });
 
   for (const name of sourceFiles()) {
-    await writeFile(join(sourceDir, name), fixtureForSource(name), 'utf8');
+    await writeFile(join(sourceDir, name), `fixture:${name}\n`, 'utf8');
   }
 
   const result = await syncInstallers({
@@ -72,13 +49,6 @@ test('syncInstallers copies all installer artifacts to website public directory'
   }
 });
 
-test('syncInstallers publishes preview shortcut endpoints', () => {
-  const targets = publishedTargets();
-  assert.ok(targets.includes('install-preview'), 'expected install-preview to be published');
-  assert.ok(targets.includes('self-host-preview'), 'expected self-host-preview to be published');
-  assert.ok(targets.includes('install-preview.ps1'), 'expected install-preview.ps1 to be published');
-});
-
 test('syncInstallers normalizes target file modes even when contents are already in sync', async () => {
   if (process.platform === 'win32') {
     // Windows doesn't preserve/express POSIX mode bits consistently.
@@ -92,7 +62,7 @@ test('syncInstallers normalizes target file modes even when contents are already
   await mkdir(targetDir, { recursive: true });
 
   for (const file of sourceFiles()) {
-    await writeFile(join(sourceDir, file), fixtureForSource(file), 'utf8');
+    await writeFile(join(sourceDir, file), `fixture:${file}\n`, 'utf8');
   }
   for (const target of publishedTargets()) {
     await writeFile(join(targetDir, target), expectedFixtureForTarget(target), 'utf8');

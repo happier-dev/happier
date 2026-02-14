@@ -25,8 +25,6 @@ Usage:
 
 Preview channel:
   curl -fsSL https://happier.dev/install | bash -s -- --channel preview
-  curl -fsSL https://happier.dev/install | HAPPIER_CHANNEL=preview bash
-  curl -fsSL https://happier.dev/install-preview | bash
 
 Options:
   --channel <stable|preview>
