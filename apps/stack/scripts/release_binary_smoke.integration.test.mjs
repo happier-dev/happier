@@ -27,6 +27,25 @@ function commandExists(cmd) {
   return spawnSync('bash', ['-lc', `command -v ${cmd} >/dev/null 2>&1`], { stdio: 'ignore' }).status === 0;
 }
 
+function runWithHardTimeout({ cmd, args, cwd, env, encoding, maxBuffer, timeoutMs }) {
+  if (commandExists('timeout')) {
+    const seconds = Math.max(1, Math.ceil(timeoutMs / 1000));
+    return spawnSync('timeout', ['--signal=KILL', '--kill-after=30s', `${seconds}s`, cmd, ...args], {
+      cwd,
+      encoding,
+      env,
+      maxBuffer,
+    });
+  }
+  return spawnSync(cmd, args, {
+    cwd,
+    encoding,
+    env,
+    maxBuffer,
+    timeout: timeoutMs,
+  });
+}
+
 function currentTarget() {
   const os = process.platform === 'linux' ? 'linux' : process.platform === 'darwin' ? 'darwin' : '';
   const arch = process.arch === 'x64' ? 'x64' : process.arch === 'arm64' ? 'arm64' : '';
@@ -65,25 +84,20 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
   const repoRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
   const version = `0.0.0-smoke.${Date.now()}`;
 
-  const buildCli = spawnSync(
-    process.execPath,
-    [
+  const buildCli = runWithHardTimeout({
+    cmd: process.execPath,
+    args: [
       'scripts/release/build-cli-binaries.mjs',
       '--channel=preview',
       `--version=${version}`,
       `--targets=${target}`,
     ],
-    {
-      cwd: repoRoot,
-      encoding: 'utf-8',
-      env: { ...process.env },
-      // `inherit` makes it easier to read interactively, but on CI failures we need the full output.
-      // Increase buffer because build logs can be large.
-      maxBuffer: 50 * 1024 * 1024,
-      // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
-      timeout: 15 * 60 * 1000,
-    }
-  );
+    cwd: repoRoot,
+    encoding: 'utf-8',
+    env: { ...process.env },
+    maxBuffer: 50 * 1024 * 1024,
+    timeoutMs: 15 * 60 * 1000,
+  });
   assert.equal(buildCli.status, 0, formatSpawnSyncResult(buildCli));
 
   const cliArtifactPath = join(repoRoot, 'dist', 'release-assets', 'cli', `happier-v${version}-${target}.tar.gz`);
@@ -107,23 +121,20 @@ test('compiled happier and server binaries execute from isolated cwd', async (t)
   );
 
   if (isLinuxTarget(target)) {
-    const buildServer = spawnSync(
-      process.execPath,
-      [
+    const buildServer = runWithHardTimeout({
+      cmd: process.execPath,
+      args: [
         'scripts/release/build-server-binaries.mjs',
         '--channel=preview',
         `--version=${version}`,
         `--targets=${target}`,
       ],
-      {
-        cwd: repoRoot,
-        encoding: 'utf-8',
-        env: { ...process.env },
-        maxBuffer: 50 * 1024 * 1024,
-        // If this ever hangs on CI, fail with a clear timeout rather than blocking the entire suite.
-        timeout: 15 * 60 * 1000,
-      }
-    );
+      cwd: repoRoot,
+      encoding: 'utf-8',
+      env: { ...process.env },
+      maxBuffer: 50 * 1024 * 1024,
+      timeoutMs: 15 * 60 * 1000,
+    });
     assert.equal(buildServer.status, 0, formatSpawnSyncResult(buildServer));
 
     const serverArtifactPath = join(repoRoot, 'dist', 'release-assets', 'server', `happier-server-v${version}-${target}.tar.gz`);
