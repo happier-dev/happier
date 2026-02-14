@@ -6,6 +6,7 @@ describe('featureDecisionEngine', () => {
     it('blocks by build policy before local/server checks', () => {
         const result = evaluateFeatureDecision({
             featureId: 'automations',
+            scope: { scopeKind: 'runtime' },
             supportsClient: true,
             buildPolicy: 'deny',
             localPolicyEnabled: true,
@@ -21,6 +22,7 @@ describe('featureDecisionEngine', () => {
     it('enables only when all required axes pass', () => {
         const result = evaluateFeatureDecision({
             featureId: 'automations',
+            scope: { scopeKind: 'runtime' },
             supportsClient: true,
             buildPolicy: 'neutral',
             localPolicyEnabled: true,
@@ -36,6 +38,7 @@ describe('featureDecisionEngine', () => {
     it('returns unsupported when endpoint is missing', () => {
         const result = evaluateFeatureDecision({
             featureId: 'voice',
+            scope: { scopeKind: 'runtime' },
             supportsClient: true,
             buildPolicy: 'neutral',
             localPolicyEnabled: true,

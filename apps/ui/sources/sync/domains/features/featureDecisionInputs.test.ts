@@ -103,7 +103,7 @@ describe('featureDecisionInputs', () => {
     it('returns a local-policy disabled decision when experiments are off', async () => {
         storage.getState().applySettingsLocal({
             experiments: false,
-            expInboxFriends: false,
+            featureToggles: { 'social.friends': true },
         });
 
         vi.stubGlobal(

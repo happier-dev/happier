@@ -1,7 +1,8 @@
-import { createFeatureDecision, type FeatureDecision, type FeatureId } from '@happier-dev/protocol';
+import { createFeatureDecision, type FeatureDecision, type FeatureDecisionScope, type FeatureId } from '@happier-dev/protocol';
 
 export type FeatureDecisionInput = Readonly<{
     featureId: FeatureId;
+    scope: FeatureDecisionScope;
     supportsClient: boolean;
     buildPolicy: 'allow' | 'deny' | 'neutral';
     localPolicyEnabled: boolean;
@@ -14,7 +15,7 @@ export function evaluateFeatureDecision(input: FeatureDecisionInput): FeatureDec
         featureId: input.featureId,
         diagnostics: [] as string[],
         evaluatedAt: Date.now(),
-        scope: { scopeKind: 'runtime' as const },
+        scope: input.scope,
     };
 
     if (!input.supportsClient) {

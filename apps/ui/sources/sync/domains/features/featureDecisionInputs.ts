@@ -6,9 +6,12 @@ import {
     getServerFeaturesSnapshot,
 } from '@/sync/api/capabilities/serverFeaturesClient';
 import {
-    resolveFeatureDecision,
+    resolveRuntimeFeatureDecisionFromSnapshot,
     type ServerFeaturesRuntimeSnapshot,
 } from './featureDecisionRuntime';
+import { getFeatureBuildPolicyDecision } from './featureBuildPolicy';
+import { resolveLocalFeaturePolicyEnabled } from './featureLocalPolicy';
+import { getUiFeatureDefinition } from './featureRegistry';
 
 export type RuntimeFeatureDecisionInputs = Readonly<{
     featureId: FeatureId;
@@ -28,11 +31,18 @@ export async function loadRuntimeFeatureDecisionInputs(
     params: ResolveRuntimeFeatureDecisionParams,
 ): Promise<RuntimeFeatureDecisionInputs> {
     const settings = params.settings ?? storage.getState().settings;
-    const snapshot = await getServerFeaturesSnapshot({
-        timeoutMs: params.timeoutMs,
-        force: params.force,
-        serverId: params.serverId,
-    });
+    const definition = getUiFeatureDefinition(params.featureId);
+    const buildPolicy = getFeatureBuildPolicyDecision(params.featureId);
+    const localPolicyEnabled = resolveLocalFeaturePolicyEnabled(params.featureId, settings);
+    const probesEnabled = definition.serverRequired && buildPolicy !== 'deny' && localPolicyEnabled;
+
+    const snapshot: ServerFeaturesRuntimeSnapshot = probesEnabled
+        ? await getServerFeaturesSnapshot({
+            timeoutMs: params.timeoutMs,
+            force: params.force,
+            serverId: params.serverId,
+        })
+        : { status: 'loading' };
 
     return {
         featureId: params.featureId,
@@ -45,7 +55,7 @@ export async function resolveRuntimeFeatureDecision(
     params: ResolveRuntimeFeatureDecisionParams,
 ): Promise<FeatureDecision> {
     const inputs = await loadRuntimeFeatureDecisionInputs(params);
-    const decision = resolveFeatureDecision(inputs);
+    const decision = resolveRuntimeFeatureDecisionFromSnapshot(inputs);
     if (decision) {
         return decision;
     }
