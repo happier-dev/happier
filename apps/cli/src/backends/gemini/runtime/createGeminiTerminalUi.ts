@@ -2,6 +2,7 @@ import { render } from 'ink';
 import React from 'react';
 
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { GeminiTerminalDisplay } from '@/backends/gemini/ui/GeminiTerminalDisplay';
 
 export function createGeminiTerminalUi(params: {
@@ -57,6 +58,7 @@ export function createGeminiTerminalUi(params: {
     inkInstance = render(React.createElement(DisplayComponent), {
       exitOnCtrlC: false,
       patchConsole: false,
+      stdout: createNonBlockingStdout(process.stdout as any),
     });
 
     const initialModelName = displayedModel || 'gemini-2.5-pro';

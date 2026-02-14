@@ -3,6 +3,7 @@ import React from 'react';
 
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
+import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { CodexTerminalDisplay } from '@/backends/codex/ui/CodexTerminalDisplay';
 
 export function createCodexRemoteTerminalUi(params: {
@@ -31,6 +32,7 @@ export function createCodexRemoteTerminalUi(params: {
             inkInstance = render(renderRemoteUi(), {
                 exitOnCtrlC: false,
                 patchConsole: false,
+                stdout: createNonBlockingStdout(process.stdout as any),
             });
 
             params.stdin.resume();

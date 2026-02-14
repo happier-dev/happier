@@ -19,6 +19,7 @@ import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
+import { createNonBlockingStdout } from '@/ui/ink/nonBlockingStdout';
 import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
@@ -91,6 +92,7 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
 
     if (hasTTY) {
         console.clear();
+        const inkStdout = createNonBlockingStdout(process.stdout as any);
         inkInstance = render(React.createElement(RemoteModeDisplay, {
             messageBuffer,
             logPath: process.env.DEBUG ? session.logPath : undefined,
@@ -109,7 +111,8 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
             }
         }), {
             exitOnCtrlC: false,
-            patchConsole: false
+            patchConsole: false,
+            stdout: inkStdout,
         });
     }
 
