@@ -4,8 +4,8 @@ import { Octicons } from '@expo/vector-icons';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 
-export function ChangedFileIcon(props: { file: ScmFileStatus }): React.ReactElement {
-    return <FileIcon fileName={props.file.fileName} size={32} />;
+export function ChangedFileIcon(props: { file: ScmFileStatus; size?: number }): React.ReactElement {
+    return <FileIcon fileName={props.file.fileName} size={props.size ?? 32} />;
 }
 
 export function ChangedFileStatusIcon(props: {
@@ -53,4 +53,3 @@ export function ChangedFileStatusIcon(props: {
 
     return <Octicons name={statusIcon as any} size={16} color={statusColor} />;
 }
-

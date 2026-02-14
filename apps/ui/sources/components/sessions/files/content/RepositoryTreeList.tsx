@@ -206,6 +206,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                         style={{
                             paddingLeft,
                             paddingRight: 12,
+                            paddingVertical: 0,
                         }}
                     />
                 );

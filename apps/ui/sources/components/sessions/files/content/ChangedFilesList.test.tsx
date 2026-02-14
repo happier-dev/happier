@@ -28,7 +28,7 @@ vi.mock('@/constants/Typography', () => ({
 }));
 
 vi.mock('@/components/ui/lists/Item', () => ({
-    Item: 'Item',
+    Item: (props: any) => React.createElement('Item', props),
 }));
 
 describe('ChangedFilesList', () => {
@@ -56,6 +56,7 @@ describe('ChangedFilesList', () => {
                     repositoryOnlyFiles={[]}
                     suppressedInferredCount={0}
                     onFilePress={vi.fn()}
+                    rowDensity="compact"
                 />
             );
         });
@@ -71,7 +72,9 @@ describe('ChangedFilesList', () => {
                 return String(value);
             });
         expect(textContent).toContain('Repository changed files (1)');
-        expect(tree!.root.findAllByType('Item' as any)).toHaveLength(1);
+        const items = tree!.root.findAllByType('Item' as any);
+        expect(items).toHaveLength(1);
+        expect(items[0].props.density).toBe('compact');
     });
 
     it('renders session reliability warning when attribution is limited', async () => {

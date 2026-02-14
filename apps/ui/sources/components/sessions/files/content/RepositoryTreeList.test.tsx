@@ -169,6 +169,7 @@ describe('RepositoryTreeList', () => {
 
         const itemsBeforeExpand = (tree! as any).root.findAllByType('Item');
         expect(itemsBeforeExpand.map((item: any) => item.props.title)).toEqual(['src/', 'README.md']);
+        expect(itemsBeforeExpand.every((item: any) => item.props.density === 'compact')).toBe(true);
 
         await act(async () => {
             itemsBeforeExpand[0].props.onPress();

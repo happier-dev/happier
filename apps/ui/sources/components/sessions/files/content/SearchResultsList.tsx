@@ -132,6 +132,7 @@ export function SearchResultsList({
                     title={file.fileName}
                     subtitle={file.filePath || t('files.projectRoot')}
                     icon={renderFileIconForSearch(file)}
+                    density="compact"
                     onPress={file.fileType === 'file' ? () => onFilePress(file) : undefined}
                     showDivider={index < searchResults.length - 1}
                 />

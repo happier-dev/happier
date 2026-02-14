@@ -20,6 +20,7 @@ type ChangedFilesListProps = {
     repositoryOnlyFiles: ScmFileStatus[];
     suppressedInferredCount: number;
     onFilePress: (file: ScmFileStatus) => void;
+    rowDensity?: 'comfortable' | 'compact';
 };
 
 function renderFileSubtitle(file: ScmFileStatus) {
@@ -41,8 +42,10 @@ export function ChangedFilesList({
     repositoryOnlyFiles,
     suppressedInferredCount,
     onFilePress,
+    rowDensity = 'comfortable',
 }: ChangedFilesListProps) {
     const isDarkTheme = theme.dark === true;
+    const iconSize = rowDensity === 'compact' ? 20 : 32;
 
     if (changedFilesViewMode === 'repository') {
         return (
@@ -55,7 +58,8 @@ export function ChangedFilesList({
                         key={`repo-all-${file.fullPath}-${index}`}
                         title={file.fileName}
                         subtitle={renderFileSubtitle(file)}
-                        icon={<ChangedFileIcon file={file} />}
+                        icon={<ChangedFileIcon file={file} size={iconSize} />}
+                        density={rowDensity}
                         rightElement={<ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />}
                         onPress={() => onFilePress(file)}
                         showDivider={index < allRepositoryChangedFiles.length - 1}
@@ -135,7 +139,8 @@ export function ChangedFilesList({
                         key={`session-${entry.file.fullPath}-${index}`}
                         title={entry.file.fileName}
                         subtitle={renderSessionAttributionSubtitle(entry.file, entry.confidence)}
-                        icon={<ChangedFileIcon file={entry.file} />}
+                        icon={<ChangedFileIcon file={entry.file} size={iconSize} />}
+                        density={rowDensity}
                         rightElement={<ChangedFileStatusIcon file={entry.file} theme={theme} isDarkTheme={isDarkTheme} />}
                         onPress={() => onFilePress(entry.file)}
                         showDivider={index < sessionAttributedFiles.length - 1}
@@ -153,7 +158,8 @@ export function ChangedFilesList({
                             key={`repo-${file.fullPath}-${index}`}
                             title={file.fileName}
                             subtitle={renderFileSubtitle(file)}
-                            icon={<ChangedFileIcon file={file} />}
+                            icon={<ChangedFileIcon file={file} size={iconSize} />}
+                            density={rowDensity}
                             rightElement={<ChangedFileStatusIcon file={file} theme={theme} isDarkTheme={isDarkTheme} />}
                             onPress={() => onFilePress(file)}
                             showDivider={index < repositoryOnlyFiles.length - 1}

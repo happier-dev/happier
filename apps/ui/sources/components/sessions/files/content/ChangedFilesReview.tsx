@@ -38,6 +38,7 @@ type ChangedFilesReviewProps = {
     maxChangedLines: number;
     onFilePress: (file: ScmFileStatus) => void;
     focusPath?: string | null;
+    rowDensity?: 'comfortable' | 'compact';
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
@@ -154,9 +155,11 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
         maxFiles,
         maxChangedLines,
         onFilePress,
+        rowDensity = 'comfortable',
     } = props;
 
     const isDarkTheme = theme.dark === true;
+    const iconSize = rowDensity === 'compact' ? 20 : 32;
     const plugin = scmUiBackendRegistry.getPluginForSnapshot(snapshot);
     const diffConfig = plugin.diffModeConfig(snapshot);
     const reviewCommentsEnabled = props.reviewCommentsEnabled === true;
@@ -393,7 +396,8 @@ export function ChangedFilesReview(props: ChangedFilesReviewProps) {
                                     <Item
                                         title={file.fileName}
                                         subtitle={renderFileSubtitle(file)}
-                                        icon={<ChangedFileIcon file={file} />}
+                                        icon={<ChangedFileIcon file={file} size={iconSize} />}
+                                        density={rowDensity}
                                         rightElement={rightElement}
                                         showChevron={false}
                                         onPress={
