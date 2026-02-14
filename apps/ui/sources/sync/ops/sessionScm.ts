@@ -33,19 +33,25 @@ function scmFallbackError<T extends { success: boolean; error?: string; errorCod
             errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
         } as T;
     }
-    if (
-        error
-        && typeof error === 'object'
-        && (
-            isRpcMethodNotAvailableError(error as RpcErrorCarrier)
-            || isRpcMethodNotFoundError(error as RpcErrorCarrier)
-        )
-    ) {
-        return {
-            success: false,
-            error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
-            errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
-        } as T;
+    if (error && typeof error === 'object') {
+        const rpcError: RpcErrorCarrier = {
+            rpcErrorCode:
+                typeof (error as { rpcErrorCode?: unknown }).rpcErrorCode === 'string'
+                    ? (error as { rpcErrorCode: string }).rpcErrorCode
+                    : undefined,
+            message:
+                typeof (error as { message?: unknown }).message === 'string'
+                    ? (error as { message: string }).message
+                    : undefined,
+        };
+
+        if (isRpcMethodNotAvailableError(rpcError) || isRpcMethodNotFoundError(rpcError)) {
+            return {
+                success: false,
+                error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE,
+                errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+            } as T;
+        }
     }
     const message = error instanceof Error ? error.message : 'Unknown error';
     return {
