@@ -24,6 +24,7 @@ import { trackFriendsSearch } from '@/track';
 import { ConnectionStatusControl } from '@/components/navigation/ConnectionStatusControl';
 import { useFriendsEnabled } from '@/hooks/server/useFriendsEnabled';
 import { useFriendsIdentityReadiness } from '@/hooks/server/useFriendsIdentityReadiness';
+import { useTabState } from '@/hooks/ui/useTabState';
 
 interface MainViewProps {
     variant: 'phone' | 'sidebar';
@@ -192,13 +193,13 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
 
     // Tab state management
     // NOTE: Zen tab removed - the feature never got to a useful state
-    const [activeTab, setActiveTab] = React.useState<TabType>('sessions');
+    const { activeTab, setActiveTab } = useTabState();
 
     React.useEffect(() => {
         if (inboxFriendsEnabled) return;
         if (activeTab !== 'inbox') return;
-        setActiveTab('sessions');
-    }, [activeTab, inboxFriendsEnabled]);
+        void setActiveTab('sessions');
+    }, [activeTab, inboxFriendsEnabled, setActiveTab]);
 
     const headerTab: ActiveTabType = React.useMemo(() => {
         const normalized = (activeTab === 'inbox' || activeTab === 'sessions' || activeTab === 'settings')
@@ -213,8 +214,8 @@ export const MainView = React.memo(({ variant }: MainViewProps) => {
     }, [router]);
 
     const handleTabPress = React.useCallback((tab: TabType) => {
-        setActiveTab(tab);
-    }, []);
+        void setActiveTab(tab);
+    }, [setActiveTab]);
 
     // Regular phone mode with tabs - define this before any conditional returns
     const renderTabContent = React.useCallback(() => {
