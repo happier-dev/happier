@@ -52,6 +52,7 @@ import { resolveWindowsRemoteSessionConsoleMode } from './platform/windows/windo
 import { startHappySessionInVisibleWindowsConsole } from './platform/windows/spawnHappyCliVisibleConsole';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import { buildHappySessionControlArgs } from './sessionSpawnArgs';
+import { resolveExistingSessionEncryptionKeyBase64 } from './sessionEncryption/resolveExistingSessionEncryptionKeyBase64';
 import { resolveWaitForAuthConfig } from './startup/waitForAuthConfig';
 	import { ensureSessionDirectory } from './startup/ensureSessionDirectory';
 	import { waitForInitialCredentials } from './startup/waitForInitialCredentials';
@@ -263,24 +264,36 @@ export async function startDaemon(): Promise<void> {
             }
 		      }
 
-		      const normalizedSessionEncryptionKeyBase64 =
-		        typeof sessionEncryptionKeyBase64 === 'string' ? sessionEncryptionKeyBase64.trim() : '';
-		      if (normalizedExistingSessionId) {
-		        if (!normalizedSessionEncryptionKeyBase64) {
-		          return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
-                errorMessage: 'Missing session encryption key for resume',
-              };
-		        }
-		        if (sessionEncryptionVariant !== 'dataKey') {
-		          return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_UNSUPPORTED_ENCRYPTION_VARIANT,
-                errorMessage: 'Unsupported session encryption variant for resume',
-              };
-		        }
-		      }
+			  let normalizedSessionEncryptionKeyBase64 =
+			    typeof sessionEncryptionKeyBase64 === 'string' ? sessionEncryptionKeyBase64.trim() : '';
+			  if (normalizedExistingSessionId) {
+			    if (!normalizedSessionEncryptionKeyBase64) {
+			      const creds = await readCredentials().catch(() => null);
+			      if (creds && creds.encryption.type === 'dataKey') {
+			        const resolved = await resolveExistingSessionEncryptionKeyBase64({
+			          credentials: creds,
+			          sessionId: normalizedExistingSessionId,
+			        }).catch(() => null);
+			        if (typeof resolved === 'string' && resolved.trim().length > 0) {
+			          normalizedSessionEncryptionKeyBase64 = resolved.trim();
+			        }
+			      }
+			    }
+			    if (!normalizedSessionEncryptionKeyBase64) {
+			      return {
+			        type: 'error',
+			        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
+			        errorMessage: 'Missing session encryption key for resume',
+			      };
+			    }
+			    if (sessionEncryptionVariant && sessionEncryptionVariant !== 'dataKey') {
+			      return {
+			        type: 'error',
+			        errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_UNSUPPORTED_ENCRYPTION_VARIANT,
+			        errorMessage: 'Unsupported session encryption variant for resume',
+			      };
+			    }
+			  }
 		      let directoryCreated = false;
 
           const daemonSpawnHooks = AGENTS[catalogAgentId].getDaemonSpawnHooks
@@ -467,6 +480,7 @@ export async function startDaemon(): Promise<void> {
 	              startedBy: 'daemon',
 	              pid: tmuxPid, // Real PID from tmux -P flag
 	              tmuxSessionId: tmuxResult.sessionId,
+			      spawnOptions: options,
 	              vendorResumeId: effectiveResume || undefined,
 	              directoryCreated,
 	              message: directoryCreated
@@ -597,6 +611,7 @@ export async function startDaemon(): Promise<void> {
 		            const trackedSession: TrackedSession = {
 		              startedBy: 'daemon',
 		              pid,
+				      spawnOptions: options,
 		              vendorResumeId: effectiveResume || undefined,
 		              directoryCreated,
 		              message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined,
@@ -696,6 +711,7 @@ export async function startDaemon(): Promise<void> {
 	            startedBy: 'daemon',
 	            pid: happyProcess.pid,
 	            childProcess: happyProcess,
+			        spawnOptions: options,
 	            vendorResumeId: effectiveResume || undefined,
 	            directoryCreated,
 	            message: directoryCreated ? `The path '${directory}' did not exist. We created a new folder and spawned a new session there.` : undefined
@@ -801,12 +817,100 @@ export async function startDaemon(): Promise<void> {
 
 	    const stopSession = createStopSession({ pidToTrackedSession });
 
+			const resolveBoolEnv = (raw: string | undefined, fallback: boolean): boolean => {
+			  const value = (raw ?? '').trim().toLowerCase();
+			  if (!value) return fallback;
+			  if (['1', 'true', 'yes', 'y', 'on'].includes(value)) return true;
+			  if (['0', 'false', 'no', 'n', 'off'].includes(value)) return false;
+			  return fallback;
+			};
+
+			const sessionRespawnEnabled = resolveBoolEnv(process.env.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED, true);
+			const sessionRespawnMaxAttempts = resolvePositiveIntEnv(
+			  process.env.HAPPIER_DAEMON_SESSION_RESPAWN_MAX_ATTEMPTS,
+			  10,
+			  { min: 0, max: 100 },
+			);
+			const sessionRespawnBaseDelayMs = resolvePositiveIntEnv(
+			  process.env.HAPPIER_DAEMON_SESSION_RESPAWN_BASE_DELAY_MS,
+			  1_000,
+			  { min: 50, max: 5 * 60_000 },
+			);
+			const sessionRespawnMaxDelayMs = resolvePositiveIntEnv(
+			  process.env.HAPPIER_DAEMON_SESSION_RESPAWN_MAX_DELAY_MS,
+			  60_000,
+			  { min: 50, max: 30 * 60_000 },
+			);
+			const sessionRespawnJitterMs = resolvePositiveIntEnv(
+			  process.env.HAPPIER_DAEMON_SESSION_RESPAWN_JITTER_MS,
+			  250,
+			  { min: 0, max: 10_000 },
+			);
+
+			const respawnStateBySessionId = new Map<string, { attempt: number; timeout: NodeJS.Timeout | null }>();
+
+			const isSessionAlreadyRunning = (sessionId: string): boolean => {
+			  for (const tracked of pidToTrackedSession.values()) {
+			    if (tracked.happySessionId === sessionId) return true;
+			  }
+			  return false;
+			};
+
+			const scheduleSessionRespawn = (trackedSession: TrackedSession, exit: { reason: string; code: number | null; signal: string | null }) => {
+			  if (!sessionRespawnEnabled) return;
+
+			  const sessionId = typeof trackedSession.happySessionId === 'string' ? trackedSession.happySessionId.trim() : '';
+			  if (!sessionId) return;
+
+			  const spawnOptions = trackedSession.spawnOptions;
+			  if (!spawnOptions || typeof spawnOptions.directory !== 'string' || spawnOptions.directory.trim().length === 0) return;
+
+			  const state = respawnStateBySessionId.get(sessionId) ?? { attempt: 0, timeout: null };
+			  const nextAttempt = state.attempt + 1;
+			  if (sessionRespawnMaxAttempts > 0 && nextAttempt > sessionRespawnMaxAttempts) {
+			    logger.warn(`[DAEMON RUN] Session ${sessionId} crashed; respawn suppressed after ${state.attempt} attempt(s)`);
+			    respawnStateBySessionId.delete(sessionId);
+			    return;
+			  }
+
+			  const exponential = sessionRespawnBaseDelayMs * Math.pow(2, Math.max(0, nextAttempt - 1));
+			  const capped = Math.min(sessionRespawnMaxDelayMs, Math.max(sessionRespawnBaseDelayMs, exponential));
+			  const jitter = sessionRespawnJitterMs > 0 ? Math.floor(Math.random() * (sessionRespawnJitterMs + 1)) : 0;
+			  const delayMs = capped + jitter;
+
+			  if (state.timeout) clearTimeout(state.timeout);
+			  const timeout = setTimeout(() => {
+			    if (isSessionAlreadyRunning(sessionId)) return;
+
+			    const respawnOptions: SpawnSessionOptions = {
+			      ...spawnOptions,
+			      existingSessionId: sessionId,
+			      sessionId: undefined,
+			      resume: undefined,
+			      approvedNewDirectoryCreation: true,
+			    };
+
+			    logger.debug(
+			      `[DAEMON RUN] Respawning runner for session ${sessionId} after ${delayMs}ms (attempt ${nextAttempt})`,
+			      { exitReason: exit.reason, exitCode: exit.code, exitSignal: exit.signal },
+			    );
+
+			    void spawnSession(respawnOptions).catch((e) => {
+			      logger.debug(`[DAEMON RUN] Failed to respawn runner for session ${sessionId}`, e);
+			    });
+			  }, delayMs);
+			  timeout.unref?.();
+
+			  respawnStateBySessionId.set(sessionId, { attempt: nextAttempt, timeout });
+			};
+
 	    // Handle child process exit
 	    const onChildExited = createOnChildExited({
 	      pidToTrackedSession,
 	      spawnResourceCleanupByPid,
 	      sessionAttachCleanupByPid,
 	      getApiMachineForSessions: () => apiMachineForSessions,
+			  onUnexpectedExit: scheduleSessionRespawn,
 	    });
 
     const controlToken = randomBytes(32).toString('base64url');

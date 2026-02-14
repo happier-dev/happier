@@ -39,6 +39,9 @@ import { adoptModelOverrideFromMetadata } from './utils/adoptModelOverrideFromMe
 import { resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { ClaudeLocalPermissionBridge, DEFAULT_LOCAL_PERMISSION_HOOK_RESPONSE } from '@/backends/claude/localPermissions/localPermissionBridge';
+import { formatErrorForUi } from '@/ui/formatErrorForUi';
+import { computeRunnerTerminationOutcome, type RunnerTerminationEvent } from '@/agent/runtime/runnerTerminationOutcome';
+import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -654,20 +657,30 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         logger.debugLargeJson('User message pushed to queue:', message)
     });
 
-    // Setup signal handlers for graceful shutdown
-    const cleanup = async () => {
-        logger.debug('[START] Received termination signal, cleaning up...');
+    // Setup signal handlers for graceful shutdown and crash reporting.
+    const cleanup = async (event: RunnerTerminationEvent, outcome: ReturnType<typeof computeRunnerTerminationOutcome>) => {
+        logger.debug('[START] Cleanup initiated', {
+            kind: event.kind,
+            ...(event.kind === 'signal' ? { signal: event.signal } : {}),
+            exitCode: outcome.exitCode,
+            archive: outcome.archive,
+            archiveReason: outcome.archiveReason,
+            ...(event.kind === 'unhandledRejection' ? { cause: formatErrorForUi(event.reason) } : {}),
+            ...(event.kind === 'uncaughtException' ? { cause: formatErrorForUi(event.error) } : {}),
+        });
 
         try {
-            // Update lifecycle state to archived before closing
             if (session) {
-                session.updateMetadata((currentMetadata) => ({
-                    ...currentMetadata,
-                    lifecycleState: 'archived',
-                    lifecycleStateSince: Date.now(),
-                    archivedBy: 'cli',
-                    archiveReason: 'User terminated'
-                }));
+                if (outcome.archive) {
+                    session.updateMetadata((currentMetadata) => ({
+                        ...currentMetadata,
+                        lifecycleState: 'archived',
+                        lifecycleStateSince: Date.now(),
+                        archivedBy: 'cli',
+                        archiveReason: outcome.archiveReason ?? 'User terminated',
+                    }));
+                }
+
                 // Cleanup session resources (intervals, callbacks)
                 currentSession?.cleanup();
 
@@ -688,30 +701,22 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             hookServer.stop();
             cleanupHookSettingsFile(hookSettingsPath);
 
-            logger.debug('[START] Cleanup complete, exiting');
-            process.exit(0);
+            logger.debug('[START] Cleanup complete');
         } catch (error) {
-            logger.debug('[START] Error during cleanup:', error);
-            process.exit(1);
+            logger.debug('[START] Error during cleanup (non-fatal):', error);
         }
     };
 
-    // Handle termination signals
-    process.on('SIGTERM', cleanup);
-    process.on('SIGINT', cleanup);
-
-    // Handle uncaught exceptions and rejections
-    process.on('uncaughtException', (error) => {
-        logger.debug('[START] Uncaught exception:', error);
-        cleanup();
+    const terminationHandlers = registerRunnerTerminationHandlers({
+        process,
+        exit: (code) => process.exit(code),
+        onTerminate: cleanup,
     });
 
-    process.on('unhandledRejection', (reason) => {
-        logger.debug('[START] Unhandled rejection:', reason);
-        cleanup();
+    registerKillSessionHandler(session.rpcHandlerManager, async () => {
+        terminationHandlers.requestTermination({ kind: 'killSession' });
+        await terminationHandlers.whenTerminated;
     });
-
-    registerKillSessionHandler(session.rpcHandlerManager, cleanup);
 
     // Create claude loop
     const exitCode = await loop({
@@ -756,6 +761,8 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         hookSettingsPath,
         jsRuntime: options.jsRuntime
     });
+
+    terminationHandlers.dispose();
 
     // Cleanup session resources (intervals, callbacks) - prevents memory leak
     // Note: currentSession is set by onSessionReady callback during loop()

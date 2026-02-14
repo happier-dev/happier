@@ -274,7 +274,8 @@ export function query(config: {
             fallbackModel,
             strictMcpConfig,
             canCallTool,
-            settingsPath
+            settingsPath,
+            stderr,
         } = {}
     } = config
 
@@ -364,6 +365,11 @@ export function query(config: {
     // Always drain stderr to avoid deadlocks when Claude (or wrappers) are chatty.
     // Only print when DEBUG is enabled to keep normal output clean.
     child.stderr.on('data', (data) => {
+        try {
+            stderr?.(data.toString())
+        } catch {
+            // ignore
+        }
         if (process.env.DEBUG) {
             console.error('Claude Code stderr:', data.toString())
         }

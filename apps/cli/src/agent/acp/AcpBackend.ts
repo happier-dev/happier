@@ -37,6 +37,7 @@ import type {
 } from '../core';
 import { logger } from '@/ui/logger';
 import { delay } from '@/utils/time';
+import { createSubprocessStderrAppender, type BoundedTextFileAppender } from '@/agent/runtime/subprocessArtifacts';
 import packageJson from '../../../package.json';
 import {
   type TransportHandler,
@@ -467,6 +468,7 @@ async function withRetry<T>(
 export class AcpBackend implements AgentBackend {
   private listeners: AgentMessageHandler[] = [];
   private process: ChildProcess | null = null;
+  private stderrAppender: BoundedTextFileAppender | null = null;
   private connection: ClientSideConnection | null = null;
   private acpSessionId: string | null = null;
   private disposed = false;
@@ -578,10 +580,25 @@ export class AcpBackend implements AgentBackend {
       throw new Error('Failed to create stdio pipes');
     }
 
+    // Best-effort stderr artifact capture for diagnostics.
+    try {
+      this.stderrAppender?.close().catch(() => {});
+      this.stderrAppender = await createSubprocessStderrAppender({
+        agentName: this.options.agentName,
+        pid: typeof this.process.pid === 'number' ? this.process.pid : null,
+        label: 'acp',
+      });
+    } catch (error) {
+      logger.debug('[AcpBackend] Failed to create stderr artifact appender (non-fatal)', error);
+      this.stderrAppender = null;
+    }
+
     // Handle stderr output via transport handler
     this.process.stderr.on('data', (data: Buffer) => {
       const text = data.toString();
       if (!text.trim()) return;
+
+      this.stderrAppender?.append(text);
 
       // Build context for transport handler
       const hasActiveInvestigation = this.transport.isInvestigationTool
@@ -632,6 +649,9 @@ export class AcpBackend implements AgentBackend {
         this.failPendingResponseWait(new Error(detail));
         this.emit({ type: 'status', status: 'error', detail });
       }
+
+      void this.stderrAppender?.close().catch(() => {});
+      this.stderrAppender = null;
     });
 
     // Create Web Streams from Node streams
@@ -2064,6 +2084,14 @@ export class AcpBackend implements AgentBackend {
     
     logger.debug('[AcpBackend] Disposing backend');
     this.disposed = true;
+
+    try {
+      await this.stderrAppender?.close();
+    } catch {
+      // ignore
+    } finally {
+      this.stderrAppender = null;
+    }
 
     // Try graceful shutdown first
     if (this.connection && this.acpSessionId) {

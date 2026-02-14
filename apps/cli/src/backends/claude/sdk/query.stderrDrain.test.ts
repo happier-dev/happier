@@ -69,4 +69,47 @@ describe('claude sdk query', () => {
         else delete process.env.DEBUG;
       }
   });
+
+  it('surfaces Claude Code stderr via options.stderr callback when provided', { timeout: 20_000 }, async () => {
+      const prevDebug = process.env.DEBUG;
+      delete process.env.DEBUG;
+
+      const noisyCli = join(tmpRoot, `stderr-callback-cli-${Date.now()}.cjs`);
+      writeFileSync(
+        noisyCli,
+        `
+          process.stderr.write("boom on stderr\\n");
+          process.stdout.write(JSON.stringify({ type: 'result' }) + '\\n');
+        `,
+        'utf8',
+      );
+
+      const abortController = new AbortController();
+      const seen: string[] = [];
+
+      const q = query({
+        prompt: 'hello',
+        options: {
+          cwd: tmpRoot,
+          executable: 'node',
+          pathToClaudeCodeExecutable: noisyCli,
+          abort: abortController.signal,
+          stderr: (data: string) => {
+            seen.push(data);
+          },
+        } as any,
+      });
+
+      try {
+        const first = await withTimeout(q.next(), 8_000, 'first sdk message');
+        expect(first.done).toBe(false);
+        expect(first.value.type).toBe('result');
+      } finally {
+        abortController.abort();
+        if (typeof prevDebug === 'string') process.env.DEBUG = prevDebug;
+        else delete process.env.DEBUG;
+      }
+
+      expect(seen.join('')).toMatch(/boom on stderr/i);
+  });
 });

@@ -33,6 +33,7 @@ import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMet
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { archiveAndCloseSession } from '@/agent/runtime/archiveAndCloseSession';
+import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { computePendingModelOverrideApplication, resolveModelOverrideFromMetadataSnapshot } from '@/agent/runtime/permission/permissionModeFromMetadata';
 import {
   initializePermissionModeStateSync,
@@ -400,31 +401,7 @@ export async function runGemini(opts: {
     }
   }
 
-  const handleKillSession = async () => {
-    logger.debug('[Gemini] Kill session requested - terminating process');
-    await handleAbort();
-    logger.debug('[Gemini] Abort completed, proceeding with termination');
-
-    try {
-      await archiveAndCloseSession(session);
-
-      stopCaffeinate();
-      happierMcpServer.stop();
-
-      if (geminiBackend) {
-        await geminiBackend.dispose();
-      }
-
-      logger.debug('[Gemini] Session termination complete, exiting');
-      process.exit(0);
-    } catch (error) {
-      logger.debug('[Gemini] Error during session termination:', error);
-      process.exit(1);
-    }
-  };
-
-  session.rpcHandlerManager.registerHandler('abort', handleAbort);
-  registerKillSessionHandler(session.rpcHandlerManager, handleKillSession);
+  let terminationHandlers: ReturnType<typeof registerRunnerTerminationHandlers> | null = null;
 
   //
   // Initialize Ink UI
@@ -461,6 +438,62 @@ export async function runGemini(opts: {
   const { happierMcpServer, mcpServers } = await createHappierMcpBridge(session, {
     commandMode: 'current-process',
   });
+
+  terminationHandlers = registerRunnerTerminationHandlers({
+    process,
+    exit: (code) => process.exit(code),
+    onTerminate: async (_event, outcome) => {
+      shouldExit = true;
+      await handleAbort();
+
+      try {
+        if (outcome.archive) {
+          await archiveAndCloseSession(session);
+        }
+      } catch (e) {
+        logger.debug('[Gemini] Failed to archive session during termination (non-fatal)', e);
+      }
+
+      stopCaffeinate();
+
+      // Best-effort cleanup (mirrors the finally block).
+      logger.debug('[gemini]: Termination cleanup start');
+      try {
+        if (reconnectionHandle) {
+          reconnectionHandle.cancel();
+        }
+
+        try {
+          session.sendSessionDeath();
+          await session.flush();
+          await session.close();
+        } catch (e) {
+          logger.debug('[gemini]: Error while closing session', e);
+        }
+
+        if (geminiBackend) {
+          const backendToDispose = geminiBackend;
+          await backendToDispose.dispose();
+        }
+
+        happierMcpServer.stop();
+        await geminiTerminalUi.unmount();
+        clearInterval(keepAliveInterval);
+        messageBuffer.clear();
+      } catch (e) {
+        logger.debug('[gemini]: Termination cleanup failure (non-fatal)', e);
+      }
+    },
+  });
+
+  const handleKillSession = async () => {
+    logger.debug('[Gemini] Kill session requested - terminating process');
+    terminationHandlers?.requestTermination({ kind: 'killSession' });
+    await terminationHandlers?.whenTerminated;
+  };
+
+  session.rpcHandlerManager.registerHandler('abort', handleAbort);
+  registerKillSessionHandler(session.rpcHandlerManager, handleKillSession);
 
   // Create permission handler for tool approval (variable declared earlier for onSessionSwap)
   permissionHandler = createProviderEnforcedPermissionHandler({
@@ -846,6 +879,7 @@ export async function runGemini(opts: {
     }
 
   } finally {
+    terminationHandlers?.dispose();
     // Clean up resources
     logger.debug('[gemini]: Final cleanup start');
 

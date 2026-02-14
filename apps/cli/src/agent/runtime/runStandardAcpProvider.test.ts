@@ -294,6 +294,6 @@ describe('runStandardAcpProvider', () => {
     }
 
     expect(harness.metrics.archiveCalls).toBe(1);
-    expect(harness.metrics.cleanupCalls).toBeGreaterThanOrEqual(1);
+    expect(harness.metrics.cleanupCalls).toBe(1);
   });
 });

@@ -180,6 +180,11 @@ export interface QueryOptions {
     canCallTool?: CanCallToolCallback
     /** Path to a settings JSON file to pass to Claude via --settings */
     settingsPath?: string
+    /**
+     * Callback for stderr output from the Claude Code process.
+     * Useful for debugging and structured logging (stderr is always drained).
+     */
+    stderr?: (data: string) => void
 }
 
 /**

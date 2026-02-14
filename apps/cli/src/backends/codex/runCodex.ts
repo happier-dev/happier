@@ -21,6 +21,7 @@ import { registerKillSessionHandler } from '@/rpc/handlers/killSession';
 import { delay } from "@/utils/time";
 import { stopCaffeinate } from '@/integrations/caffeinate';
 import { formatErrorForUi } from '@/ui/formatErrorForUi';
+import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
 import { connectionState } from '@/api/offline/serverConnectionErrors';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
@@ -73,6 +74,7 @@ import {
 import { createLocalRemoteModeController } from '@/agent/localControl/createLocalRemoteModeController';
 import { createCodexRemoteTerminalUi } from './runtime/createCodexRemoteTerminalUi';
 import { resolveCodexStartingMode } from './utils/resolveCodexStartingMode';
+import { abortAcpRuntimeTurnIfNeeded } from '@/agent/acp/runtime/createAcpRuntime';
 
 /**
  * Main entry point for the codex command with ink UI
@@ -432,8 +434,10 @@ export async function runCodex(opts: {
     let abortController = new AbortController();
     let shouldExit = false;
     let storedSessionIdForResume: string | null = resumeIdFromLocalControl;
+    let storedSessionIdFromLocalControl = Boolean(resumeIdFromLocalControl);
     if (typeof opts.resume === 'string' && opts.resume.trim()) {
         storedSessionIdForResume = opts.resume.trim();
+        storedSessionIdFromLocalControl = false;
         logger.debug('[Codex] Resume requested via --resume:', storedSessionIdForResume);
     }
 
@@ -444,6 +448,7 @@ export async function runCodex(opts: {
     }
     let happierMcpServer: { url: string; stop: () => void } | null = null;
     let client: CodexMcpClient | null = null;
+    let remoteTerminalUi: ReturnType<typeof createCodexRemoteTerminalUi> | null = null;
     // codexAcpRuntime is declared above to allow the onUserMessage binding to steer mid-turn.
 
     /**
@@ -458,12 +463,22 @@ export async function runCodex(opts: {
             const mcpClient = client;
             if (mcpClient && mcpClient.hasActiveSession()) {
                 storedSessionIdForResume = mcpClient.storeSessionForResume();
+                storedSessionIdFromLocalControl = false;
                 logger.debug('[Codex] Stored session for resume:', storedSessionIdForResume);
             } else if (useCodexAcp) {
                 const currentAcpSessionId = codexAcpRuntime?.getSessionId();
                 if (currentAcpSessionId) {
                     storedSessionIdForResume = currentAcpSessionId;
+                    storedSessionIdFromLocalControl = false;
                     logger.debug('[CodexACP] Stored session for resume:', storedSessionIdForResume);
+                }
+            }
+
+            if (useCodexAcp) {
+                try {
+                    await abortAcpRuntimeTurnIfNeeded(codexAcpRuntime);
+                } catch (error) {
+                    logger.debug('[CodexACP] Failed to cancel in-flight turn on abort (non-fatal)', error);
                 }
             }
 
@@ -483,38 +498,49 @@ export async function runCodex(opts: {
      * Abort stops the current inference but keeps the session alive.
      * Kill terminates the entire process.
      */
-    const handleKillSession = async () => {
-        logger.debug('[Codex] Kill session requested - terminating process');
-        await handleAbort();
-        logger.debug('[Codex] Abort completed, proceeding with termination');
+    const terminationHandlers = registerRunnerTerminationHandlers({
+        process,
+        exit: (code) => process.exit(code),
+        onTerminate: async (_event, outcome) => {
+            shouldExit = true;
+            await handleAbort();
 
-        try {
-            await archiveAndCloseSession(session);
-
-            // Force close Codex transport (best-effort) so we don't leave stray processes
             try {
-                if (client) {
-                    await client.forceCloseSession();
-                } else if (codexAcpRuntime) {
-                    await codexAcpRuntime.reset();
-                    codexAcpRuntime = null;
+                if (outcome.archive) {
+                    await archiveAndCloseSession(session);
                 }
             } catch (e) {
-                logger.debug('[Codex] Error while force closing Codex session during termination', e);
+                logger.debug('[Codex] Failed to archive session during termination (non-fatal)', e);
             }
 
-            // Stop caffeinate
-            stopCaffeinate();
+            try {
+                await cleanupCodexRunResources({
+                    session,
+                    reconnectionHandle,
+                    client,
+                    codexAcpRuntime,
+                    stopHappierMcpServer: () => happierMcpServer?.stop(),
+                    unmountRemoteUi: async () => {
+                        if (!remoteTerminalUi) return;
+                        await remoteTerminalUi.unmount();
+                    },
+                    keepAliveInterval,
+                    messageBuffer,
+                    logDebug: (message, error) => logger.debug(message, error),
+                    logActiveHandles,
+                });
+            } catch (e) {
+                logger.debug('[Codex] Cleanup failure during termination (non-fatal)', e);
+            } finally {
+                stopCaffeinate();
+            }
+        },
+    });
 
-            // Stop Happier MCP server
-            happierMcpServer?.stop();
-
-            logger.debug('[Codex] Session termination complete, exiting');
-            process.exit(0);
-        } catch (error) {
-            logger.debug('[Codex] Error during session termination:', error);
-            process.exit(1);
-        }
+    const handleKillSession = async () => {
+        logger.debug('[Codex] Kill session requested - terminating process');
+        terminationHandlers.requestTermination({ kind: 'killSession' });
+        await terminationHandlers.whenTerminated;
     };
 
     // Register abort handler
@@ -562,7 +588,7 @@ export async function runCodex(opts: {
         return true;
     };
 
-    const remoteTerminalUi = createCodexRemoteTerminalUi({
+    remoteTerminalUi = createCodexRemoteTerminalUi({
         messageBuffer,
         logPath: process.env.DEBUG ? logger.getLogPath() : undefined,
         hasTTY,
@@ -777,9 +803,9 @@ export async function runCodex(opts: {
             getThinking: () => thinking,
             resolveLocalSwitchAvailability,
             requestSwitchToLocalIfSupported,
-            mountRemoteUi: () => remoteTerminalUi.mount(),
-            unmountRemoteUi: () => remoteTerminalUi.unmount(),
-            setRemoteUiAllowsSwitchToLocal: (allowed) => remoteTerminalUi.setAllowSwitchToLocal(allowed),
+            mountRemoteUi: () => remoteTerminalUi!.mount(),
+            unmountRemoteUi: () => remoteTerminalUi!.unmount(),
+            setRemoteUiAllowsSwitchToLocal: (allowed) => remoteTerminalUi!.setAllowSwitchToLocal(allowed),
         });
 
         while (!shouldExit) {
@@ -802,6 +828,7 @@ export async function runCodex(opts: {
                 }
 
                 storedSessionIdForResume = localPass.resumeId;
+                storedSessionIdFromLocalControl = true;
                 mode = 'remote';
                 continue;
             }
@@ -901,11 +928,12 @@ export async function runCodex(opts: {
                         if (resumeId) {
                             messageBuffer.addMessage('Resuming previous context…', 'status');
                             try {
-                                await codexAcp.startOrLoad({ resumeId });
+                                await codexAcp.startOrLoad({ resumeId, importHistory: storedSessionIdFromLocalControl !== true });
                                 storedSessionIdForResume = nextStoredSessionIdForResumeAfterAttempt(storedSessionIdForResume, {
                                     attempted: true,
                                     success: true,
                                 });
+                                storedSessionIdFromLocalControl = false;
                             } catch (e) {
                                 logger.debug('[Codex ACP] Resume failed; starting a new session instead', e);
                                 messageBuffer.addMessage('Resume failed; starting a new session.', 'status');
@@ -915,6 +943,7 @@ export async function runCodex(opts: {
                                     attempted: true,
                                     success: false,
                                 });
+                                storedSessionIdFromLocalControl = false;
                             }
                         } else {
                             await codexAcp.startOrLoad({});
@@ -1102,13 +1131,16 @@ export async function runCodex(opts: {
         }
 
     } finally {
+        terminationHandlers.dispose();
         await cleanupCodexRunResources({
             session,
             reconnectionHandle,
             client,
             codexAcpRuntime,
             stopHappierMcpServer: () => happierMcpServer?.stop(),
-            unmountRemoteUi: () => remoteTerminalUi.unmount(),
+            unmountRemoteUi: async () => {
+                await remoteTerminalUi?.unmount();
+            },
             keepAliveInterval,
             messageBuffer,
             logDebug: (message, error) => logger.debug(message, error),

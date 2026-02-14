@@ -551,7 +551,65 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
 
     it('applies allowlisted advanced options JSON without allowing control-plane overrides', async () => {
         let capturedOptions: any = null;
+        const prevArtifactsDir = process.env.HAPPIER_CLAUDE_DEBUG_ARTIFACTS_DIR;
+        process.env.HAPPIER_CLAUDE_DEBUG_ARTIFACTS_DIR = '/tmp/happier-claude-debug-artifacts';
 
+        try {
+            const createQuery = vi.fn((_params: any) => {
+                capturedOptions = _params.options;
+                return {
+                    async *[Symbol.asyncIterator]() {
+                        yield { type: 'result' } as any;
+                    },
+                    close: vi.fn(),
+                    setPermissionMode: vi.fn(),
+                    setModel: vi.fn(),
+                    setMaxThinkingTokens: vi.fn(),
+                    supportedCommands: vi.fn(async () => []),
+                    supportedModels: vi.fn(async () => []),
+                } as any;
+            });
+
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                allowedTools: [],
+                mcpServers: {},
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage: async () => ({
+                    message: 'hello',
+                    mode: makeMode({
+                        claudeRemoteAgentSdkEnabled: true,
+                        claudeRemoteAdvancedOptionsJson: JSON.stringify({
+                            plugins: [{ type: 'local', path: '/tmp/plugin' }],
+                            hooks: { SessionStart: [] },
+                        }),
+                    }),
+                }),
+                onReady: () => {},
+                onSessionFound: () => {},
+                onMessage: () => {},
+                createQuery,
+            } as any);
+
+            expect(capturedOptions?.plugins).toEqual([{ type: 'local', path: '/tmp/plugin' }]);
+            expect(capturedOptions?.hooks?.SessionStart?.[0]?.hooks?.length).toBe(1);
+            expect(typeof capturedOptions?.debugFile).toBe('string');
+            expect(capturedOptions?.debugFile).toMatch(/^\/tmp\/happier-claude-debug-artifacts\//);
+            expect(typeof capturedOptions?.stderr).toBe('function');
+        } finally {
+            if (typeof prevArtifactsDir === 'string') process.env.HAPPIER_CLAUDE_DEBUG_ARTIFACTS_DIR = prevArtifactsDir;
+            else delete process.env.HAPPIER_CLAUDE_DEBUG_ARTIFACTS_DIR;
+        }
+    });
+
+    it('omits debugFile and stderr when subprocess artifacts are disabled', async () => {
+        const prevEnabled = process.env.HAPPIER_SUBPROCESS_ARTIFACTS_ENABLED;
+
+        let capturedOptions: any = null;
         const createQuery = vi.fn((_params: any) => {
             capturedOptions = _params.options;
             return {
@@ -567,33 +625,40 @@ describe('claudeRemoteAgentSdk options and hooks', () => {
             } as any;
         });
 
-        await claudeRemoteAgentSdk({
-            sessionId: null,
-            transcriptPath: null,
-            path: '/tmp',
-            allowedTools: [],
-            mcpServers: {},
-            claudeExecutablePath: '/tmp/claude',
-            canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
-            isAborted: () => false,
-            nextMessage: async () => ({
-                message: 'hello',
-                mode: makeMode({
-                    claudeRemoteAgentSdkEnabled: true,
-                    claudeRemoteAdvancedOptionsJson: JSON.stringify({
-                        plugins: [{ type: 'local', path: '/tmp/plugin' }],
-                        hooks: { SessionStart: [] },
-                    }),
-                }),
-            }),
-            onReady: () => {},
-            onSessionFound: () => {},
-            onMessage: () => {},
-            createQuery,
-        } as any);
+        try {
+            process.env.HAPPIER_SUBPROCESS_ARTIFACTS_ENABLED = '0';
 
-        expect(capturedOptions?.plugins).toEqual([{ type: 'local', path: '/tmp/plugin' }]);
-        expect(capturedOptions?.hooks?.SessionStart?.[0]?.hooks?.length).toBe(1);
+            let didSendFirst = false;
+            const nextMessage = vi.fn(async () => {
+                if (didSendFirst) return null;
+                didSendFirst = true;
+                return { message: 'hello', mode: makeMode() };
+            });
+
+            await claudeRemoteAgentSdk({
+                sessionId: null,
+                transcriptPath: null,
+                path: '/tmp',
+                allowedTools: [],
+                mcpServers: {},
+                claudeEnvVars: {},
+                claudeArgs: [],
+                claudeExecutablePath: '/tmp/claude',
+                canCallTool: async () => ({ behavior: 'allow', updatedInput: {} }),
+                isAborted: () => false,
+                nextMessage,
+                onReady: () => {},
+                onSessionFound: () => {},
+                onMessage: () => {},
+                createQuery,
+            } as any);
+
+            expect(capturedOptions?.debugFile).toBeUndefined();
+            expect(capturedOptions?.stderr).toBeUndefined();
+        } finally {
+            if (prevEnabled === undefined) delete process.env.HAPPIER_SUBPROCESS_ARTIFACTS_ENABLED;
+            else process.env.HAPPIER_SUBPROCESS_ARTIFACTS_ENABLED = prevEnabled;
+        }
     });
 
 });

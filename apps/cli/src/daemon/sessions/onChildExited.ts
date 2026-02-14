@@ -13,13 +13,25 @@ export function createOnChildExited(params: Readonly<{
   spawnResourceCleanupByPid: Map<number, () => void>;
   sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
   getApiMachineForSessions: () => ApiMachineClient | null;
+  onUnexpectedExit?: (trackedSession: TrackedSession, exit: ChildExit) => void;
 }>): (pid: number, exit: ChildExit) => void {
-  const { pidToTrackedSession, spawnResourceCleanupByPid, sessionAttachCleanupByPid, getApiMachineForSessions } = params;
+  const { pidToTrackedSession, spawnResourceCleanupByPid, sessionAttachCleanupByPid, getApiMachineForSessions, onUnexpectedExit } = params;
 
   return (pid: number, exit: ChildExit) => {
     logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
     const tracked = pidToTrackedSession.get(pid);
     if (tracked) {
+      const isUnexpected =
+        (typeof exit.code === 'number' && exit.code !== 0) ||
+        (typeof exit.signal === 'string' && exit.signal.length > 0 && !['SIGTERM', 'SIGINT'].includes(exit.signal));
+      if (isUnexpected && typeof tracked.happySessionId === 'string' && tracked.happySessionId.trim().length > 0) {
+        try {
+          onUnexpectedExit?.(tracked, exit);
+        } catch (e) {
+          logger.debug('[DAEMON RUN] Failed to run onUnexpectedExit handler', e);
+        }
+      }
+
       const apiMachineForSessions = getApiMachineForSessions();
       if (apiMachineForSessions) {
         reportDaemonObservedSessionExit({

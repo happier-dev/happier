@@ -18,6 +18,7 @@ import { createStartupMetadataOverrides } from '@/agent/runtime/createStartupMet
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
+import { registerRunnerTerminationHandlers } from '@/agent/runtime/runnerTerminationHandlers';
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
 import { sendReadyWithPushNotification } from '@/agent/runtime/sendReadyWithPushNotification';
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
@@ -243,6 +244,19 @@ export async function runStandardAcpProvider(
   });
   runtimeForInFlightSteer = runtime;
 
+  let cleanupRan = false;
+  const cleanupOnce = async () => {
+    if (cleanupRan) return;
+    cleanupRan = true;
+    await cleanupBackendRunResourcesFn({
+      keepAliveInterval,
+      reconnectionHandle,
+      stopMcpServer: () => happierMcpServer.stop(),
+      resetRuntime: () => runtime.reset(),
+      unmountUi: () => inkInstance?.unmount(),
+    });
+  };
+
   const handleAbort = async () => {
     logger.debug(`${config.uiLogPrefix} Abort requested`);
     session.sendAgentMessage(config.agentMessageType, { type: 'turn_aborted', id: randomUUID() });
@@ -258,22 +272,26 @@ export async function runStandardAcpProvider(
   };
   abortRequestedCallback = handleAbort;
 
+  const terminationHandlers = registerRunnerTerminationHandlers({
+    process,
+    exit: (code) => process.exit(code),
+    onTerminate: async (_event, outcome) => {
+      shouldExit = true;
+      await handleAbort();
+      try {
+        if (outcome.archive) {
+          await archiveAndCloseSessionFn(session);
+        }
+      } finally {
+        await cleanupOnce();
+      }
+    },
+  });
+
   const handleKillSession = async () => {
     logger.debug(`${config.uiLogPrefix} Kill session requested`);
-    shouldExit = true;
-    await handleAbort();
-    try {
-      await archiveAndCloseSessionFn(session);
-    } finally {
-      await cleanupBackendRunResourcesFn({
-        keepAliveInterval,
-        reconnectionHandle,
-        stopMcpServer: () => happierMcpServer.stop(),
-        resetRuntime: () => runtime.reset(),
-        unmountUi: () => inkInstance?.unmount(),
-      });
-      process.exit(0);
-    }
+    terminationHandlers.requestTermination({ kind: 'killSession' });
+    await terminationHandlers.whenTerminated;
   };
 
   session.rpcHandlerManager.registerHandler('abort', handleAbort);
@@ -321,12 +339,7 @@ export async function runStandardAcpProvider(
       formatPromptErrorMessage: config.formatPromptErrorMessage,
     });
   } finally {
-    await cleanupBackendRunResourcesFn({
-      keepAliveInterval,
-      reconnectionHandle,
-      stopMcpServer: () => happierMcpServer.stop(),
-      resetRuntime: () => runtime.reset(),
-      unmountUi: () => inkInstance?.unmount(),
-    });
+    terminationHandlers.dispose();
+    await cleanupOnce();
   }
 }

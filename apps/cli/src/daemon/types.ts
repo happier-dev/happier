@@ -3,6 +3,7 @@
  */
 
 import { Metadata } from '@/api/types';
+import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { ChildProcess } from 'child_process';
 
 /**
@@ -12,6 +13,8 @@ export interface TrackedSession {
   startedBy: 'daemon' | string;
   happySessionId?: string;
   happySessionMetadataFromLocalWebhook?: Metadata;
+  /** Spawn options used to start the current runner process (in-memory only). */
+  spawnOptions?: SpawnSessionOptions;
   /** Vendor resume id (e.g. Claude/Codex session id) supplied/derived at spawn time. */
   vendorResumeId?: string;
   pid: number;

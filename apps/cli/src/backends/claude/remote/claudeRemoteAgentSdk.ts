@@ -17,6 +17,7 @@ import { resolveClaudeRemoteSessionStartPlan } from '@/backends/claude/remote/se
 import type { SDKMessage, SDKSystemMessage, SDKUserMessage } from '@/backends/claude/sdk';
 import type { PermissionResult } from '@/backends/claude/sdk/types';
 import type { JsRuntime } from '@/backends/claude/runClaude';
+import { createSubprocessStderrAppender, resolveSubprocessArtifactsDir } from '@/agent/runtime/subprocessArtifacts';
 import { join } from 'node:path';
 
 type AgentSdkQueryFactory = (params: {
@@ -199,6 +200,18 @@ export async function claudeRemoteAgentSdk(opts: {
 
     const createQuery: AgentSdkQueryFactory = opts.createQuery ?? ((params) => agentSdkQuery(params as any) as any);
 
+    const stderrAppender = await createSubprocessStderrAppender({
+        agentName: 'claude',
+        pid: process.pid,
+        label: 'claude-code',
+    });
+    const debugFilePath = stderrAppender
+        ? join(
+            resolveSubprocessArtifactsDir({ agentName: 'claude' }),
+            `claude-code-debug-${Date.now()}-pid-${process.pid}.log`,
+        )
+        : undefined;
+
     const hooks = {
         SessionStart: [
             {
@@ -334,6 +347,15 @@ export async function claudeRemoteAgentSdk(opts: {
         hooks,
     };
 
+    if (debugFilePath) {
+        queryOptions.debugFile = debugFilePath;
+    }
+    if (stderrAppender) {
+        queryOptions.stderr = (data: string) => {
+            stderrAppender.append(data);
+        };
+    }
+
     if (advancedOptions) {
         const allowlistedKeys = [
             'plugins',
@@ -351,7 +373,20 @@ export async function claudeRemoteAgentSdk(opts: {
 
         for (const key of allowlistedKeys) {
             if (Object.prototype.hasOwnProperty.call(advancedOptions, key)) {
-                queryOptions[key] = advancedOptions[key];
+                const value = advancedOptions[key];
+                if (key === 'stderr') {
+                    if (typeof value === 'function') queryOptions[key] = value;
+                    continue;
+                }
+                if (key === 'debugFile') {
+                    if (typeof value === 'string') queryOptions[key] = value;
+                    continue;
+                }
+                if (key === 'debug') {
+                    if (typeof value === 'boolean') queryOptions[key] = value;
+                    continue;
+                }
+                queryOptions[key] = value;
             }
         }
     }
@@ -638,5 +673,6 @@ export async function claudeRemoteAgentSdk(opts: {
         } catch {
             // ignore
         }
+        await stderrAppender?.close().catch(() => {});
     }
 }

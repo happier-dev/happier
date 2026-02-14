@@ -4,6 +4,7 @@ import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId, StartS
 import { PushableAsyncIterable } from '@/utils/PushableAsyncIterable';
 import { query } from '@/backends/claude/sdk/query';
 import type { SDKAssistantMessage, SDKMessage, SDKResultMessage, SDKSystemMessage } from '@/backends/claude/sdk/types';
+import { createSubprocessStderrAppender, type BoundedTextFileAppender } from '@/agent/runtime/subprocessArtifacts';
 
 export type ClaudeSdkPermissionPolicy = 'no_tools' | 'read_only';
 
@@ -31,6 +32,7 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
   private readonly listeners: AgentMessageHandler[] = [];
   private readonly promptStream = new PushableAsyncIterable<SDKMessage>();
   private readonly abortController = new AbortController();
+  private stderrAppender: BoundedTextFileAppender | null = null;
 
   private readonly sessionId: SessionId = `voice-mediator-claude-${randomUUID()}`;
   private started = false;
@@ -74,6 +76,11 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     const canCallTool = this.buildCanCallTool();
 
     this.emit({ type: 'status', status: 'starting' });
+    this.stderrAppender = await createSubprocessStderrAppender({
+      agentName: 'claude',
+      pid: null,
+      label: 'claude-sdk',
+    });
     const q = query({
       prompt: this.promptStream,
       options: {
@@ -82,6 +89,9 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
         canCallTool,
         settingsPath: this.opts.settingsPath,
         abort: this.abortController.signal,
+        stderr: (data) => {
+          this.stderrAppender?.append(data);
+        },
       },
     });
 
@@ -139,6 +149,10 @@ export class ClaudeSdkAgentBackend implements AgentBackend {
     try {
       await this.loopPromise;
     } catch {}
+    try {
+      await this.stderrAppender?.close();
+    } catch {}
+    this.stderrAppender = null;
     this.emit({ type: 'status', status: 'stopped' });
   }
 

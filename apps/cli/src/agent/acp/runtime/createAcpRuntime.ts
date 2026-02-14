@@ -34,7 +34,7 @@ export type AcpRuntime = Readonly<{
   beginTurn: () => void;
   cancel: () => Promise<void>;
   reset: () => Promise<void>;
-  startOrLoad: (opts: { resumeId?: string | null }) => Promise<string>;
+  startOrLoad: (opts: { resumeId?: string | null; importHistory?: boolean }) => Promise<string>;
   /**
    * Request a provider-native ACP session mode change (e.g. "plan" vs "code") when supported.
    * No-op when unsupported or when the session has not been started/loaded.
@@ -82,6 +82,15 @@ export type AcpRuntimeBackend = AgentBackend & {
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+export async function abortAcpRuntimeTurnIfNeeded(
+  runtime: Pick<AcpRuntime, 'isTurnInFlight' | 'cancel'> | null | undefined,
+): Promise<boolean> {
+  if (!runtime) return false;
+  if (runtime.isTurnInFlight() !== true) return false;
+  await runtime.cancel();
+  return true;
 }
 
 export function createAcpRuntime(params: {
@@ -857,10 +866,11 @@ export function createAcpRuntime(params: {
       }
     },
 
-    async startOrLoad(opts: { resumeId?: string | null }): Promise<string> {
+    async startOrLoad(opts: { resumeId?: string | null; importHistory?: boolean } = {}): Promise<string> {
       const b = await ensureBackend();
 
       const resumeId = typeof opts.resumeId === 'string' ? opts.resumeId.trim() : '';
+      const importHistory = opts.importHistory !== false;
       if (resumeId) {
         if (!b.loadSession && !b.loadSessionWithReplayCapture) {
           throw new Error(`${params.provider} ACP backend does not support loading sessions`);
@@ -869,12 +879,15 @@ export function createAcpRuntime(params: {
         loadingSession = true;
         let replay: unknown[] | null = null;
         try {
-          if (b.loadSessionWithReplayCapture) {
+          if (b.loadSessionWithReplayCapture && importHistory) {
             const loaded = await b.loadSessionWithReplayCapture(resumeId);
             sessionId = loaded.sessionId ?? resumeId;
             replay = Array.isArray(loaded.replay) ? loaded.replay : null;
           } else if (b.loadSession) {
             const loaded = await b.loadSession(resumeId);
+            sessionId = loaded.sessionId ?? resumeId;
+          } else if (b.loadSessionWithReplayCapture) {
+            const loaded = await b.loadSessionWithReplayCapture(resumeId);
             sessionId = loaded.sessionId ?? resumeId;
           } else {
             throw new Error(`${params.provider} ACP backend does not support loading sessions`);
@@ -883,7 +896,7 @@ export function createAcpRuntime(params: {
           loadingSession = false;
         }
 
-        if (replay) {
+        if (replay && importHistory) {
           importAcpReplayHistoryV1({
             session: params.session,
             provider: params.provider,
