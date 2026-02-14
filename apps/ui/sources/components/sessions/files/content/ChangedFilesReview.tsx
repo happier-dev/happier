@@ -76,6 +76,29 @@ function ChangedFilesReviewDiffBlock(props: {
     const { theme, sessionId, filePath, state } = props;
     const syntaxHighlighting = useCodeLinesSyntaxHighlighting(filePath);
 
+    const diffLoaded = state.status === 'loaded';
+    const hasDiff = diffLoaded && Boolean(state.diff);
+
+    const lines = React.useMemo(
+        () => (hasDiff ? buildCodeLinesFromUnifiedDiff({ unifiedDiff: state.diff }) : []),
+        [hasDiff, state.diff]
+    );
+    const draftsForFile = React.useMemo(() => {
+        if (!props.reviewCommentsEnabled) return [];
+        return props.reviewCommentDrafts.filter((d) => d.filePath === filePath && d.source === 'diff');
+    }, [filePath, props.reviewCommentDrafts, props.reviewCommentsEnabled]);
+
+    const controls = useCodeLinesReviewComments({
+        enabled: props.reviewCommentsEnabled && hasDiff,
+        filePath,
+        source: 'diff',
+        lines,
+        drafts: draftsForFile,
+        onUpsertDraft: props.onUpsertReviewCommentDraft,
+        onDeleteDraft: props.onDeleteReviewCommentDraft,
+        onError: props.onReviewCommentError,
+    });
+
     if (state.status === 'loading' || state.status === 'idle') {
         return (
             <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
@@ -101,23 +124,6 @@ function ChangedFilesReviewDiffBlock(props: {
             </View>
         );
     }
-
-    const lines = React.useMemo(() => buildCodeLinesFromUnifiedDiff({ unifiedDiff: state.diff }), [state.diff]);
-    const draftsForFile = React.useMemo(() => {
-        if (!props.reviewCommentsEnabled) return [];
-        return props.reviewCommentDrafts.filter((d) => d.filePath === filePath && d.source === 'diff');
-    }, [filePath, props.reviewCommentDrafts, props.reviewCommentsEnabled]);
-
-    const controls = useCodeLinesReviewComments({
-        enabled: props.reviewCommentsEnabled,
-        filePath,
-        source: 'diff',
-        lines,
-        drafts: draftsForFile,
-        onUpsertDraft: props.onUpsertReviewCommentDraft,
-        onDeleteDraft: props.onDeleteReviewCommentDraft,
-        onError: props.onReviewCommentError,
-    });
 
     return (
         <View style={{ paddingHorizontal: 16, paddingBottom: 12 }}>

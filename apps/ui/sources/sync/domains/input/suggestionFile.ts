@@ -45,6 +45,17 @@ function shouldSkipFallbackPath(name: string): boolean {
     return name.startsWith('.') || name === 'node_modules';
 }
 
+function escapeRipgrepGlob(input: string): string {
+    // ripgrep globs follow gitignore-style patterns. Keep this conservative:
+    // escape characters that would change meaning in a glob.
+    return input
+        .replace(/\\/g, '\\\\')
+        .replace(/\*/g, '\\*')
+        .replace(/\?/g, '\\?')
+        .replace(/\[/g, '\\[')
+        .replace(/\]/g, '\\]');
+}
+
 class FileSearchCache {
     private sessions = new Map<string, SessionCache>();
 
@@ -144,6 +155,34 @@ class FileSearchCache {
             .split('\n')
             .filter((path: string) => path.trim().length > 0);
 
+        return this.buildFileItemsFromPaths(filePaths);
+    }
+
+    private async buildFileItemsFromRipgrepGlob(sessionId: string, query: string, limit: number): Promise<FileItem[] | null> {
+        const trimmed = query.trim();
+        if (!trimmed) return null;
+
+        // Allow multi-token queries to match across separators.
+        const needle = escapeRipgrepGlob(trimmed).replace(/\s+/g, '*');
+        const pattern = `*${needle}*`;
+
+        const response = await sessionRipgrep(
+            sessionId,
+            ['--files', '--follow', '--hidden', '--iglob', pattern],
+            undefined
+        ) as SessionRipgrepLikeResponse | null;
+
+        if (!response || response.success !== true || typeof response.stdout !== 'string') {
+            return null;
+        }
+
+        const filePaths: string[] = response.stdout
+            .split('\n')
+            .map((p) => p.trim())
+            .filter(Boolean)
+            .slice(0, Math.max(50, limit * 5));
+
+        if (filePaths.length === 0) return null;
         return this.buildFileItemsFromPaths(filePaths);
     }
 
@@ -258,7 +297,32 @@ class FileSearchCache {
         };
 
         const results = cache.fuse.search(query, searchOptions);
-        return results.map(result => result.item);
+        if (results.length > 0) {
+            return results.map(result => result.item);
+        }
+
+        // If the initial index is incomplete (e.g., truncated transport), try a targeted glob request.
+        // This keeps UX predictable for exact-ish filename queries without having to ship a full file index.
+        const globItems = await this.buildFileItemsFromRipgrepGlob(sessionId, query, limit);
+        if (!globItems || globItems.length === 0) {
+            return [];
+        }
+
+        // Opportunistically merge results into the cache to improve subsequent searches.
+        const known = new Set(cache.files.map((f) => f.fullPath));
+        let changed = false;
+        for (const item of globItems) {
+            if (!known.has(item.fullPath)) {
+                known.add(item.fullPath);
+                cache.files.push(item);
+                changed = true;
+            }
+        }
+        if (changed) {
+            this.initializeFuse(cache);
+        }
+
+        return globItems.slice(0, limit);
     }
 
     getAllFiles(sessionId: string): FileItem[] {

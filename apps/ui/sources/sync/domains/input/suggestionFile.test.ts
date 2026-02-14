@@ -57,4 +57,49 @@ describe('searchFiles', () => {
         expect(results.map((entry) => entry.fullPath)).toContain('src/index.ts');
         expect(results.map((entry) => entry.fullPath)).toContain('src/');
     });
+
+    it('matches hyphenated filenames and extensions', async () => {
+        mockSessionRipgrep.mockResolvedValue({
+            success: true,
+            stdout: [
+                '.github/workflows/publish-github-release.yml',
+                '.github/workflows/tests.yml',
+                'src/index.ts',
+            ].join('\n') + '\n',
+        });
+
+        const { searchFiles } = await import('./suggestionFile');
+
+        const results = await searchFiles('session-1', 'publish-github-release', { limit: 50 });
+        expect(results.some((entry) => entry.fullPath === '.github/workflows/publish-github-release.yml')).toBe(true);
+
+        const resultsWithExt = await searchFiles('session-1', 'publish-github-release.yml', { limit: 50 });
+        expect(resultsWithExt.some((entry) => entry.fullPath === '.github/workflows/publish-github-release.yml')).toBe(true);
+    });
+
+    it('falls back to ripgrep glob search when the initial file index misses a match', async () => {
+        mockSessionRipgrep
+            .mockResolvedValueOnce({
+                success: true,
+                stdout: [
+                    '.github/workflows/tests.yml',
+                    'src/index.ts',
+                ].join('\n') + '\n',
+            })
+            .mockResolvedValueOnce({
+                success: true,
+                stdout: '.github/workflows/publish-github-release.yml\n',
+            });
+
+        const { searchFiles } = await import('./suggestionFile');
+
+        const results = await searchFiles('session-1', 'publish-github-release', { limit: 50 });
+        expect(results.some((entry) => entry.fullPath === '.github/workflows/publish-github-release.yml')).toBe(true);
+
+        // Ensure we actually attempted a targeted ripgrep request.
+        expect(mockSessionRipgrep.mock.calls.length).toBeGreaterThanOrEqual(2);
+        const secondArgs = mockSessionRipgrep.mock.calls[1]?.[1] as string[] | undefined;
+        expect(secondArgs).toContain('--files');
+        expect(secondArgs).toContain('--iglob');
+    });
 });

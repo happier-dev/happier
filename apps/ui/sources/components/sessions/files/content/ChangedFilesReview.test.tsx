@@ -52,13 +52,19 @@ vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
 }));
 
 vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () => ({
-    useCodeLinesSyntaxHighlighting: () => ({
-        mode: 'off',
-        language: null,
-        maxBytes: 1_000_000,
-        maxLines: 10_000,
-        maxLineLength: 10_000,
-    }),
+    // This mock intentionally uses a real React hook so our tests catch hook-order bugs
+    // in components that call syntax-highlighting hooks alongside other hooks.
+    useCodeLinesSyntaxHighlighting: () =>
+        React.useMemo(
+            () => ({
+                mode: 'off',
+                language: null,
+                maxBytes: 1_000_000,
+                maxLines: 10_000,
+                maxLineLength: 10_000,
+            }),
+            []
+        ),
 }));
 
 describe('ChangedFilesReview', () => {

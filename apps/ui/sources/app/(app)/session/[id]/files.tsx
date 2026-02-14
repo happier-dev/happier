@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Platform } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -294,67 +294,66 @@ export default function FilesScreen() {
                 onChangedFilesPresentationChange={setChangedFilesPresentation}
             />
 
-            {!isRefreshing && scmStatusFiles && <SourceControlBranchSummary theme={theme} scmStatusFiles={scmStatusFiles} />}
-
-            {showScmOperationsPanel && (
-                <SourceControlOperationsPanel
-                    theme={theme}
-                    backendLabel={backendLabel}
-                    commitActionLabel={commitActionLabel}
-                    capabilities={scmSnapshot?.capabilities ?? null}
-                    currentSessionId={sessionId}
-                    hasConflicts={hasConflicts}
-                    scmOperationBusy={scmOperationBusy}
-                    hasGlobalOperationInFlight={hasGlobalOperationInFlight}
-                    inFlightScmOperation={inFlightScmOperation}
-                    scmOperationStatus={scmOperationStatus}
-                    commitAllowed={commitAllowed}
-                    commitBlockedMessage={commitAllowed ? null : commitPreflight.message}
-                    pullAllowed={pullAllowed}
-                    pullBlockedMessage={pullAllowed ? null : pullPreflight.message}
-                    pushAllowed={pushAllowed}
-                    pushBlockedMessage={pushAllowed ? null : pushPreflight.message}
-                    onCreateCommit={createCommit}
-                    onFetch={() => {
-                        void runRemoteOperation('fetch');
-                    }}
-                    onPull={() => {
-                        void runRemoteOperation('pull');
-                    }}
-                    onPush={() => {
-                        void runRemoteOperation('push');
-                    }}
-                    historyLoading={historyLoading}
-                    historyEntries={historyEntries}
-                    historyHasMore={historyHasMore}
-                    onLoadMoreHistory={() => {
-                        void loadCommitHistory();
-                    }}
-                    onOpenCommit={(sha) => {
-                        const safeSha = sha.trim().split(/\s+/)[0] ?? '';
-                        router.push({
-                            pathname: '/session/[id]/commit',
-                            params: {
-                                id: sessionId,
-                                // expo-router will encode query params; pre-encoding here can lead to double-encoding.
-                                sha: safeSha,
-                            },
-                        } as any);
-                    }}
-                    operationLog={operationLog}
-                    commitSelectionCount={commitSelectionCount}
-                    onClearCommitSelection={
-                        commitSelectionCount > 0
-                            ? () => {
-                                storage.getState().clearSessionProjectScmCommitSelectionPaths(sessionId);
-                                storage.getState().clearSessionProjectScmCommitSelectionPatches(sessionId);
-                            }
-                            : undefined
-                    }
-                />
-            )}
-
             <ItemList style={{ flex: 1 }}>
+                {!isRefreshing && scmStatusFiles && <SourceControlBranchSummary theme={theme} scmStatusFiles={scmStatusFiles} />}
+
+                {showScmOperationsPanel && (
+                    <SourceControlOperationsPanel
+                        theme={theme}
+                        backendLabel={backendLabel}
+                        commitActionLabel={commitActionLabel}
+                        capabilities={scmSnapshot?.capabilities ?? null}
+                        currentSessionId={sessionId}
+                        hasConflicts={hasConflicts}
+                        scmOperationBusy={scmOperationBusy}
+                        hasGlobalOperationInFlight={hasGlobalOperationInFlight}
+                        inFlightScmOperation={inFlightScmOperation}
+                        scmOperationStatus={scmOperationStatus}
+                        commitAllowed={commitAllowed}
+                        commitBlockedMessage={commitAllowed ? null : commitPreflight.message}
+                        pullAllowed={pullAllowed}
+                        pullBlockedMessage={pullAllowed ? null : pullPreflight.message}
+                        pushAllowed={pushAllowed}
+                        pushBlockedMessage={pushAllowed ? null : pushPreflight.message}
+                        onCreateCommit={createCommit}
+                        onFetch={() => {
+                            void runRemoteOperation('fetch');
+                        }}
+                        onPull={() => {
+                            void runRemoteOperation('pull');
+                        }}
+                        onPush={() => {
+                            void runRemoteOperation('push');
+                        }}
+                        historyLoading={historyLoading}
+                        historyEntries={historyEntries}
+                        historyHasMore={historyHasMore}
+                        onLoadMoreHistory={() => {
+                            void loadCommitHistory();
+                        }}
+                        onOpenCommit={(sha) => {
+                            const safeSha = sha.trim().split(/\s+/)[0] ?? '';
+                            router.push({
+                                pathname: '/session/[id]/commit',
+                                params: {
+                                    id: sessionId,
+                                    // expo-router will encode query params; pre-encoding here can lead to double-encoding.
+                                    sha: safeSha,
+                                },
+                            } as any);
+                        }}
+                        operationLog={operationLog}
+                        commitSelectionCount={commitSelectionCount}
+                        onClearCommitSelection={
+                            commitSelectionCount > 0
+                                ? () => {
+                                    storage.getState().clearSessionProjectScmCommitSelectionPaths(sessionId);
+                                    storage.getState().clearSessionProjectScmCommitSelectionPatches(sessionId);
+                                }
+                                : undefined
+                        }
+                    />
+                )}
                 {isRefreshing ? (
                     <View
                         style={{
@@ -379,7 +378,11 @@ export default function FilesScreen() {
                     ) : (
                         <SourceControlUnavailableState
                             details={
-                                scmSnapshotError.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED
+                                (
+                                    typeof (scmSnapshotError as { errorCode?: unknown }).errorCode === 'string'
+                                        ? (scmSnapshotError as { errorCode: string }).errorCode
+                                        : undefined
+                                ) === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED
                                     ? t('deps.installNotSupported')
                                     : scmSnapshotError.message
                             }
@@ -449,6 +452,10 @@ export default function FilesScreen() {
 const styles = StyleSheet.create(() => ({
     container: {
         flex: 1,
+        ...(Platform.select({
+            web: { minHeight: 0 },
+            default: {},
+        }) as any),
         maxWidth: layout.maxWidth,
         alignSelf: 'center',
         width: '100%',

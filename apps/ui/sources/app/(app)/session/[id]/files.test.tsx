@@ -22,10 +22,18 @@ let mockShouldShowAllFiles = false;
 const invalidateAndAwaitSpy = vi.fn(async () => {});
 let sourceControlUnavailableStateProps: any = null;
 
-vi.mock('react-native', () => ({
-    View: 'View',
-    ActivityIndicator: 'ActivityIndicator',
-}));
+vi.mock('react-native', () => {
+    const platform = {
+        OS: 'node',
+        select: (value: any) => value?.[platform.OS] ?? value?.default ?? value?.web ?? value?.ios ?? value?.android,
+    };
+
+    return {
+        View: 'View',
+        ActivityIndicator: 'ActivityIndicator',
+        Platform: platform,
+    };
+});
 
 vi.mock('react-native-unistyles', () => ({
     useUnistyles: () => ({
@@ -46,7 +54,7 @@ vi.mock('react-native-unistyles', () => ({
             dark: false,
         },
     }),
-    StyleSheet: { create: (value: any) => value },
+    StyleSheet: { create: (value: any) => (typeof value === 'function' ? value() : value) },
 }));
 
 vi.mock('@react-navigation/native', () => ({
@@ -485,5 +493,52 @@ describe('FilesScreen', () => {
 
         expect(repositoryTreeListProps).toBeTruthy();
         expect(repositoryTreeListProps.sessionId).toBe('session-1');
+    });
+
+    it('renders the operations panel inside the scroll container so the screen can scroll naturally', async () => {
+        const Screen = (await import('./files')).default;
+
+        let tree: renderer.ReactTestRenderer;
+        await act(async () => {
+            tree = renderer.create(<Screen />);
+        });
+        await act(async () => {});
+
+        const list = tree!.root.findByType('ItemList');
+        expect(list.findAllByType('SourceControlOperationsPanel').length).toBe(1);
+    });
+
+    it('sets minHeight: 0 on web so the screen can scroll within flex layouts', async () => {
+        vi.resetModules();
+
+        const rn = await import('react-native');
+        const originalPlatformOs = rn.Platform.OS;
+        (rn.Platform as unknown as { OS: string }).OS = 'web';
+
+        const Screen = (await import('./files')).default;
+
+        try {
+            let tree: renderer.ReactTestRenderer;
+            await act(async () => {
+                tree = renderer.create(<Screen />);
+            });
+            await act(async () => {});
+
+            const viewNodes = tree!.root.findAllByType('View');
+            expect(viewNodes.length).toBeGreaterThan(0);
+            const rootView = viewNodes.find((node) => {
+                const styleProp = node.props?.style;
+                const entries = Array.isArray(styleProp) ? styleProp : [styleProp];
+                return entries.some((entry: any) => entry?.maxWidth === 999);
+            });
+            expect(rootView).toBeTruthy();
+
+            const rootStyleProp = rootView!.props?.style;
+            const rootEntries = Array.isArray(rootStyleProp) ? rootStyleProp : [rootStyleProp];
+            expect(rootEntries.some((entry: any) => entry?.minHeight === 0)).toBe(true);
+        } finally {
+            (rn.Platform as unknown as { OS: string }).OS = originalPlatformOs;
+            vi.resetModules();
+        }
     });
 });
