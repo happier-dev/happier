@@ -24,12 +24,13 @@ function isDirectoryNode(node: { type: 'file' | 'directory' | 'error' }): boolea
 
 function renderEntryIcon(node: { type: 'file' | 'directory' | 'error'; name: string }, theme: any) {
     if (node.type === 'directory') {
-        return <Octicons name="file-directory" size={29} color={theme.colors.textLink} />;
+        // Keep icons small so the compact Item density actually stays compact.
+        return <Octicons name="file-directory" size={18} color={theme.colors.textLink} />;
     }
     if (node.type === 'error') {
-        return <Octicons name="alert" size={18} color={theme.colors.textSecondary} />;
+        return <Octicons name="alert" size={16} color={theme.colors.textSecondary} />;
     }
-    return <FileIcon fileName={node.name} size={29} />;
+    return <FileIcon fileName={node.name} size={18} />;
 }
 
 export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactElement {
@@ -139,7 +140,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
             )}
             {nodes.map((node, index) => {
                 const indent = Math.min(6, Math.max(0, node.depth));
-                const paddingLeft = 16 + indent * 14;
+                const paddingLeft = 12 + indent * 12;
                 const showDivider = index < nodes.length - 1;
 
                 if (node.type === 'error') {
@@ -149,6 +150,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                             title={t('files.repositoryFolderLoadFailed')}
                             subtitle={t('errors.tryAgain')}
                             icon={<Octicons name="alert" size={18} color={theme.colors.textSecondary} />}
+                            density="compact"
                             showChevron={false}
                             onPress={() => {
                                 if (node.parentDirectoryPath) {
@@ -169,7 +171,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                         onPress={() => {
                             void toggleDirectory(node.path);
                         }}
-                        style={{ paddingHorizontal: 8, paddingVertical: 6 }}
+                        style={{ paddingHorizontal: 6, paddingVertical: 4 }}
                     >
                         {node.isLoadingChildren ? (
                             <ActivityIndicator size="small" color={theme.colors.textSecondary} />
@@ -190,6 +192,7 @@ export function RepositoryTreeList(props: RepositoryTreeListProps): React.ReactE
                         key={`${node.type}:${node.path}`}
                         title={title}
                         icon={renderEntryIcon(node, theme)}
+                        density="compact"
                         rightElement={right ?? undefined}
                         showChevron={node.type === 'file'}
                         onPress={

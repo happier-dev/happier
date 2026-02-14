@@ -129,6 +129,47 @@ describe('useScmCommitHistory integration', () => {
         });
     });
 
+    it('stops pagination when backend ignores skip (legacy daemon)', async () => {
+        const workspace = createRepoWithCommits(25);
+        const harness = createGitSessionRpcHarness(workspace);
+
+        // Simulate an older daemon that ignores `skip` and always returns the first page.
+        mockSessionRPC.mockImplementation(async (sessionId: string, method: string, request: any) => {
+            if (method === 'scm.log.list' && request && typeof request === 'object') {
+                return harness(sessionId, method, { ...request, skip: 0 });
+            }
+            return harness(sessionId, method, request);
+        });
+
+        const hook = mountHook({
+            sessionId: 'session-history-legacy-skip',
+            readLogEnabled: true,
+            sessionPath: workspace,
+        });
+
+        await act(async () => {
+            await hook.getCurrent().loadCommitHistory({ reset: true });
+        });
+
+        const firstPage = hook.getCurrent();
+        expect(firstPage.historyEntries).toHaveLength(20);
+        expect(firstPage.historyHasMore).toBe(true);
+
+        await act(async () => {
+            await hook.getCurrent().loadCommitHistory();
+        });
+
+        const secondPage = hook.getCurrent();
+        // Still the first page because pagination was ignored.
+        expect(secondPage.historyEntries).toHaveLength(20);
+        // The hook should recognize that pagination made no progress and stop offering "load more".
+        expect(secondPage.historyHasMore).toBe(false);
+
+        act(() => {
+            hook.unmount();
+        });
+    });
+
     it('clears history when log reading is disabled by backend capabilities', async () => {
         const workspace = createRepoWithCommits(3);
         mockSessionRPC.mockImplementation(createGitSessionRpcHarness(workspace));
