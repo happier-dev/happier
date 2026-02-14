@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { View, ScrollView, ActivityIndicator, Platform, Pressable } from 'react-native';
+import { View, ActivityIndicator, Platform, Pressable } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Text } from '@/components/ui/text/StyledText';
-import { ScmDiffDisplay } from '@/components/sessions/files/file/ScmDiffDisplay';
+import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
+import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { Typography } from '@/constants/Typography';
 import { sessionScmCommitBackout, sessionScmDiffCommit } from '@/sync/ops';
 import {
@@ -53,6 +54,7 @@ export default function CommitScreen() {
     const [isReverting, setIsReverting] = React.useState(false);
     const [diff, setDiff] = React.useState<string>('');
     const [error, setError] = React.useState<string | null>(null);
+    const codeLines = React.useMemo(() => buildCodeLinesFromUnifiedDiff({ unifiedDiff: diff }), [diff]);
 
     // Avoid reading sessionPath via storage.getState() because deep-links can render
     // before session metadata is hydrated. We need a subscription so the screen can
@@ -302,9 +304,9 @@ export default function CommitScreen() {
                 )}
             </View>
 
-            <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
-                <ScmDiffDisplay diffContent={diff} />
-            </ScrollView>
+            <View style={{ flex: 1, padding: 16 }}>
+                <CodeLinesView lines={codeLines} />
+            </View>
         </View>
     );
 }
