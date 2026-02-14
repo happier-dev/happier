@@ -92,6 +92,16 @@ test('release-npm installs Sapling before cli integration tests', async () => {
   );
   assert.match(
     raw,
+    /- name: Install minisign \(signing \+ verification\)[\s\S]*?uses:\s*\.\/\.github\/actions\/bootstrap-minisign/,
+    'release-npm should bootstrap minisign via the pinned action instead of apt repositories',
+  );
+  assert.doesNotMatch(
+    raw,
+    /- name: Install minisign \(signing \+ verification\)[\s\S]*?apt-get install -y minisign/,
+    'release-npm should not rely on apt minisign availability',
+  );
+  assert.match(
+    raw,
     /- name: Install Sapling[\s\S]*?if:\s*inputs\.publish_cli && inputs\.run_tests[\s\S]*?bash scripts\/ci\/install_sapling_ubuntu22\.sh/,
     'release-npm should install Sapling in the cli test lane before running sapling integration tests',
   );
