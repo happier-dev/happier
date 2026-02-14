@@ -29,6 +29,8 @@ export class Session {
     readonly hookSettingsPath: string;
     /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
     readonly jsRuntime: JsRuntime;
+    /** How this session was started (affects TTY/UI behavior). */
+    readonly startedBy: 'daemon' | 'terminal';
 
     sessionId: string | null;
     transcriptPath: string | null = null;
@@ -66,6 +68,7 @@ export class Session {
         hookSettingsPath: string,
         /** JavaScript runtime to use for spawning Claude Code (default: 'node') */
         jsRuntime?: JsRuntime,
+        startedBy?: 'daemon' | 'terminal',
     }) {
         this.path = opts.path;
         this.api = opts.api;
@@ -80,6 +83,7 @@ export class Session {
         this._onModeChange = opts.onModeChange;
         this.hookSettingsPath = opts.hookSettingsPath;
         this.jsRuntime = opts.jsRuntime ?? 'node';
+        this.startedBy = opts.startedBy ?? 'terminal';
 
         // Start keep alive
         this.client.keepAlive(this.thinking, this.mode);

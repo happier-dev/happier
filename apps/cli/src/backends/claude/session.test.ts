@@ -33,6 +33,48 @@ function hookWithTranscript(transcriptPath: string): SessionFoundHookData {
 }
 
 describe('Session', () => {
+  it('defaults startedBy to terminal', () => {
+    const client: SessionClientStub = {
+      keepAlive: vi.fn(),
+      updateMetadata: vi.fn(),
+    };
+
+    const session = createSession(client);
+
+    try {
+      expect((session as any).startedBy).toBe('terminal');
+    } finally {
+      session.cleanup();
+    }
+  });
+
+  it('stores startedBy when provided', () => {
+    const client: SessionClientStub = {
+      keepAlive: vi.fn(),
+      updateMetadata: vi.fn(),
+    };
+
+    const session = new Session({
+      api: {} as never,
+      client: client as unknown as ApiSessionClient,
+      path: '/tmp',
+      logPath: '/tmp/log',
+      sessionId: null,
+      claudeArgs: [],
+      mcpServers: {},
+      messageQueue: new MessageQueue2<EnhancedMode>(() => 'mode'),
+      onModeChange: () => {},
+      hookSettingsPath: '/tmp/hooks.json',
+      startedBy: 'daemon',
+    } as any);
+
+    try {
+      expect((session as any).startedBy).toBe('daemon');
+    } finally {
+      session.cleanup();
+    }
+  });
+
   it('adopts permissionMode from metadata without republishing it', () => {
     const metadataUpdates: MetadataMap[] = [];
     const client: SessionClientStub = {

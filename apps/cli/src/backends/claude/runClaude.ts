@@ -726,6 +726,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         model: options.model,
         permissionMode: options.permissionMode,
         startingMode: options.startingMode,
+        startedBy: options.startedBy,
         messageQueue,
         api,
         allowedTools: happyServer.toolNames.map(toolName => `mcp__happy__${toolName}`),

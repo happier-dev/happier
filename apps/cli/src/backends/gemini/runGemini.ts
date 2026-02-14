@@ -11,6 +11,7 @@ import os from 'node:os';
 import { resolve } from 'node:path';
 
 import { logger } from '@/ui/logger';
+import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { Credentials } from '@/persistence';
 import { createSessionMetadata } from '@/agent/runtime/createSessionMetadata';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
@@ -408,7 +409,11 @@ export async function runGemini(opts: {
   //
 
   const messageBuffer = new MessageBuffer();
-  const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
+  const hasTTY = resolveHasTTY({
+    stdoutIsTTY: process.stdout.isTTY,
+    stdinIsTTY: process.stdin.isTTY,
+    startedBy: opts.startedBy,
+  });
   const initialDisplayedModel = getInitialGeminiModel();
   
   // Log initial values

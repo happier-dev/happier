@@ -19,6 +19,7 @@ import { formatErrorForUi } from '@/ui/formatErrorForUi';
 import { waitForMessagesOrPending } from '@/agent/runtime/waitForMessagesOrPending';
 import { cleanupStdinAfterInk } from '@/ui/ink/cleanupStdinAfterInk';
 import { restoreStdinBestEffort } from '@/ui/ink/restoreStdinBestEffort';
+import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { resolveSwitchRequestTarget } from '@/agent/localControl/switchRequestTarget';
 import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSessionInfoBeforeSwitch';
 
@@ -77,7 +78,11 @@ export async function claudeRemoteLauncher(session: Session): Promise<'switch' |
     logger.debug('[claudeRemoteLauncher] Starting remote launcher');
 
     // Check if we have a TTY for UI rendering
-    const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
+    const hasTTY = resolveHasTTY({
+        stdoutIsTTY: process.stdout.isTTY,
+        stdinIsTTY: process.stdin.isTTY,
+        startedBy: session.startedBy,
+    });
     logger.debug(`[claudeRemoteLauncher] TTY available: ${hasTTY}`);
 
     // Configure terminal

@@ -11,6 +11,11 @@ type RemoteDispatchMockOptions = {
   onSessionFound?: (sessionId: string) => void;
 };
 
+const mockInkRender = vi.fn(() => ({ unmount: vi.fn() }));
+vi.mock('ink', () => ({
+  render: mockInkRender,
+}));
+
 const mockClaudeRemoteDispatch = vi.fn<(opts: unknown) => Promise<void>>();
 vi.mock('./remote/claudeRemoteDispatch', () => ({
   claudeRemoteDispatch: mockClaudeRemoteDispatch,
@@ -167,6 +172,41 @@ describe.sequential('claudeRemoteLauncher', () => {
 
     expect(mockClaudeRemoteDispatch).toHaveBeenCalledTimes(2);
     expect(mockResetParentChain).toHaveBeenCalledTimes(1);
+  }, 30_000);
+
+  it('does not mount Ink UI for daemon-started sessions even when a TTY is available', async () => {
+    const originalStdoutIsTTY = process.stdout.isTTY;
+    const originalStdinIsTTY = process.stdin.isTTY;
+
+    process.stdout.isTTY = true;
+    process.stdin.isTTY = true;
+
+    const { session, switchHandlerReady } = createRemoteHarness({ sessionId: 'sess_0' });
+    (session as any).startedBy = 'daemon';
+
+    mockInkRender.mockClear();
+    mockClaudeRemoteDispatch.mockImplementationOnce(async (opts: unknown) => {
+      const dispatchOpts = opts as RemoteDispatchMockOptions;
+      await waitForAbort(dispatchOpts.signal);
+    });
+
+    try {
+      const { claudeRemoteLauncher } = await import('./claudeRemoteLauncher');
+      const launcherPromise = claudeRemoteLauncher(session);
+
+      await vi.waitFor(() => {
+        expect(mockClaudeRemoteDispatch).toHaveBeenCalledTimes(1);
+      });
+
+      expect(mockInkRender).not.toHaveBeenCalled();
+
+      const switchHandler = await switchHandlerReady;
+      expect(await switchHandler({ to: 'local' })).toBe(true);
+      await expect(launcherPromise).resolves.toBe('switch');
+    } finally {
+      process.stdout.isTTY = originalStdoutIsTTY;
+      process.stdin.isTTY = originalStdinIsTTY;
+    }
   }, 30_000);
 
   it('respects switch RPC params and is idempotent', async () => {

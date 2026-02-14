@@ -5,6 +5,7 @@ import { ReasoningProcessor } from './utils/reasoningProcessor';
 import { DiffProcessor } from './utils/diffProcessor';
 import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
+import { resolveHasTTY } from '@/ui/tty/resolveHasTTY';
 import { Credentials } from '@/persistence';
 import { initialMachineMetadata } from '@/daemon/startDaemon';
 import os from 'node:os';
@@ -552,7 +553,11 @@ export async function runCodex(opts: {
     // Initialize Ink UI
     //
 
-    const hasTTY = process.stdout.isTTY && process.stdin.isTTY;
+    const hasTTY = resolveHasTTY({
+        stdoutIsTTY: process.stdout.isTTY,
+        stdinIsTTY: process.stdin.isTTY,
+        startedBy: opts.startedBy,
+    });
     let requestedSwitchToLocal = false;
 
     const resolveLocalSwitchAvailability = async (): Promise<
