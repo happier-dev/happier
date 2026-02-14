@@ -30,6 +30,8 @@ vi.mock('react-native-unistyles', () => ({
                 link: '#06f',
                 surfaceHighest: '#fff',
                 divider: '#ddd',
+                userMessageBackground: '#eef',
+                agentEventText: '#777',
             },
         },
     }),
@@ -43,6 +45,8 @@ vi.mock('react-native-unistyles', () => ({
                     link: '#06f',
                     surfaceHighest: '#fff',
                     divider: '#ddd',
+                    userMessageBackground: '#eef',
+                    agentEventText: '#777',
                 },
             };
             return typeof input === 'function' ? input(theme, {}) : input;
@@ -70,6 +74,14 @@ vi.mock('@/modal', () => ({
     Modal: { alert: vi.fn() },
 }));
 
+const sendMessageSpy = vi.fn(async () => undefined);
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        sendMessage: (...args: any[]) => sendMessageSpy(...args),
+        submitMessage: vi.fn(),
+    },
+}));
+
 vi.mock('expo-clipboard', () => ({
     setStringAsync: vi.fn(),
 }));
@@ -80,10 +92,6 @@ vi.mock('@expo/vector-icons', () => ({
 
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: () => true,
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: { submitMessage: vi.fn() },
 }));
 
 vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
@@ -139,6 +147,86 @@ describe('MessageView (structured meta)', () => {
 
         // This should fail until MessageView wires StructuredMessageBlock into its rendering.
         expect(tree!.root.findAllByType(ReviewCommentsMessageCard as any)).toHaveLength(1);
+    });
+
+    it('does not render the MarkdownView for structured user messages', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: '@happier/review.comments ...',
+            displayText: 'Review comments (1)',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        expect(tree!.root.findAllByType('MarkdownView' as any)).toHaveLength(0);
+    });
+
+    it('does not wrap structured user messages in a user bubble background', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: '@happier/review.comments ...',
+            displayText: 'Review comments (1)',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+
+        const bubbleViews = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'View') return false;
+            const styleProp = (node as any).props?.style;
+            const styles = Array.isArray(styleProp) ? styleProp : [styleProp];
+            return styles.some((s: any) => s && typeof s === 'object' && s.backgroundColor === '#eef');
+        });
+        expect(bubbleViews).toHaveLength(0);
     });
 
     it('navigates to the file screen when clicking Jump in the review-comments card', async () => {
@@ -231,6 +319,9 @@ describe('MessageView (structured meta)', () => {
                                 summary: 'Consider renaming.',
                             },
                         ],
+                        triage: {
+                            findings: [{ id: 'f1', status: 'accept' }],
+                        },
                         generatedAtMs: 1,
                     },
                 },
@@ -249,5 +340,99 @@ describe('MessageView (structured meta)', () => {
         });
 
         expect(tree!.root.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
+    });
+
+    it('can apply accepted findings by sending a structured user message to the parent session', async () => {
+        sendMessageSpy.mockClear();
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'review_findings.v1',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'All good.',
+                        findings: [
+                            {
+                                id: 'f1',
+                                title: 'Nit',
+                                severity: 'nit',
+                                category: 'style',
+                                filePath: 'src/foo.ts',
+                                startLine: 1,
+                                endLine: 1,
+                                summary: 'Consider renaming.',
+                            },
+                        ],
+                        triage: {
+                            findings: [{ id: 'f1', status: 'accept' }],
+                        },
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(<MessageView message={message} metadata={null} sessionId="s1" />);
+        });
+        // Expand the finding and select "accept" so the card has an accepted finding to apply.
+        const findingHeaders = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Pressable') return false;
+            if (typeof (node as any).props?.onPress !== 'function') return false;
+            const textChildren = node.findAllByType('Text' as any);
+            return textChildren.some((t: any) => (t.children || []).join('').includes('Nit'));
+        });
+        expect(findingHeaders.length).toBeGreaterThan(0);
+        await act(async () => {
+            findingHeaders[0]!.props.onPress();
+        });
+
+        const acceptChips = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Pressable') return false;
+            if (typeof (node as any).props?.onPress !== 'function') return false;
+            const textChildren = node.findAllByType('Text' as any);
+            return textChildren.some((t: any) => (t.children || []).join('') === 'accept');
+        });
+        expect(acceptChips.length).toBeGreaterThan(0);
+        await act(async () => {
+            acceptChips[0]!.props.onPress();
+        });
+
+        const applyButtons = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Pressable') return false;
+            if (typeof (node as any).props?.onPress !== 'function') return false;
+            const textChildren = node.findAllByType('Text' as any);
+            return textChildren.some((t: any) => (t.children || []).join('') === 'Apply accepted findings');
+        });
+
+        expect(applyButtons.length).toBe(1);
+        await act(async () => {
+            await applyButtons[0]!.props.onPress();
+        });
+
+        expect(sendMessageSpy).toHaveBeenCalledTimes(1);
+        const [sessionId, text] = sendMessageSpy.mock.calls[0] as any[];
+        expect(sessionId).toBe('s1');
+        expect(String(text)).toContain('@happier/review.apply_accepted_findings');
+        expect(String(text)).toContain('"acceptedFindingIds":["f1"]');
     });
 });

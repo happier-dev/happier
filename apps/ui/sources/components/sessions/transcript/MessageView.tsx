@@ -16,7 +16,7 @@ import { Option } from '@/components/markdown/MarkdownView';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { isCommittedMessageDiscarded } from "@/utils/sessions/discardedCommittedMessages";
 import { shouldShowMessageCopyButton } from '@/components/sessions/transcript/messageCopyVisibility';
-import { StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
+import { renderStructuredMessage, StructuredMessageBlock } from '@/components/sessions/transcript/structured/StructuredMessageBlock';
 import { useRouter } from 'expo-router';
 import { buildSessionFileDeepLink } from '@/utils/url/sessionFileDeepLink';
 
@@ -98,6 +98,21 @@ function UserTextBlock(props: {
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
+
+  const structuredNode = renderStructuredMessage({
+    message: props.message,
+    sessionId: props.sessionId,
+    onJumpToAnchor: (target) => {
+      router.push(buildSessionFileDeepLink({
+        sessionId: props.sessionId,
+        filePath: target.filePath,
+        source: target.source,
+        anchor: target.anchor,
+      }));
+    },
+  });
+  const isStructuredOnly = structuredNode != null;
+
   const handleOptionPress = React.useCallback((option: Option) => {
     void (async () => {
       try {
@@ -113,6 +128,7 @@ function UserTextBlock(props: {
   }, [props.canSendMessages, props.sessionId]);
 
   const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
+  const copyText = isStructuredOnly ? props.message.text : (props.message.displayText || props.message.text);
 
   return (
     <View style={styles.userMessageContainer}>
@@ -121,27 +137,36 @@ function UserTextBlock(props: {
         onHoverIn={isWeb ? () => setIsMessageHovered(true) : undefined}
         onHoverOut={isWeb ? () => setIsMessageHovered(false) : undefined}
       >
-        <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
-          <StructuredMessageBlock
-            message={props.message as any}
-            sessionId={props.sessionId}
-            onJumpToAnchor={(target) => {
-              router.push(buildSessionFileDeepLink({
-                sessionId: props.sessionId,
-                filePath: target.filePath,
-                source: target.source,
-                anchor: target.anchor,
-              }));
-            }}
-          />
-          <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
-          {isDiscarded && (
-            <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
-          )}
-          {/* {__DEV__ && (
-            <Text style={styles.debugText}>{JSON.stringify(props.message.meta)}</Text>
-          )} */}
-        </View>
+        {isStructuredOnly ? (
+          <View style={styles.userStructuredMessageWrapper}>
+            {structuredNode}
+            {isDiscarded ? (
+              <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+            ) : null}
+          </View>
+        ) : (
+          <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
+            <StructuredMessageBlock
+              message={props.message as any}
+              sessionId={props.sessionId}
+              onJumpToAnchor={(target) => {
+                router.push(buildSessionFileDeepLink({
+                  sessionId: props.sessionId,
+                  filePath: target.filePath,
+                  source: target.source,
+                  anchor: target.anchor,
+                }));
+              }}
+            />
+            <MarkdownView markdown={props.message.displayText || props.message.text} onOptionPress={handleOptionPress} />
+            {isDiscarded && (
+              <Text style={styles.discardedCommittedMessageLabel}>{t('message.discarded')}</Text>
+            )}
+            {/* {__DEV__ && (
+              <Text style={styles.debugText}>{JSON.stringify(props.message.meta)}</Text>
+            )} */}
+          </View>
+        )}
         <View
           pointerEvents={showCopyButton ? 'auto' : 'none'}
           accessibilityElementsHidden={!showCopyButton}
@@ -152,7 +177,7 @@ function UserTextBlock(props: {
           ]}
         >
           <CopyMessageButton
-            markdown={props.message.displayText || props.message.text}
+            markdown={copyText}
             onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
             onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
           />
@@ -172,6 +197,22 @@ function AgentTextBlock(props: {
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
   const showThinkingMessages = useFeatureEnabled('messages.thinkingVisibility');
+
+  const structuredNode = renderStructuredMessage({
+    message: props.message,
+    sessionId: props.sessionId,
+    onJumpToAnchor: (target) => {
+      router.push(buildSessionFileDeepLink({
+        sessionId: props.sessionId,
+        filePath: target.filePath,
+        source: target.source,
+        anchor: target.anchor,
+      }));
+    },
+  });
+  const isStructuredOnly = structuredNode != null;
+  const copyText = isStructuredOnly ? props.message.text : props.message.text;
+
   const handleOptionPress = React.useCallback((option: Option) => {
     void (async () => {
       try {
@@ -199,19 +240,8 @@ function AgentTextBlock(props: {
       onHoverIn={isWeb ? () => setIsMessageHovered(true) : undefined}
       onHoverOut={isWeb ? () => setIsMessageHovered(false) : undefined}
     >
-      <StructuredMessageBlock
-        message={props.message as any}
-        sessionId={props.sessionId}
-        onJumpToAnchor={(target) => {
-          router.push(buildSessionFileDeepLink({
-            sessionId: props.sessionId,
-            filePath: target.filePath,
-            source: target.source,
-            anchor: target.anchor,
-          }));
-        }}
-      />
-      <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} />
+      {structuredNode}
+      {isStructuredOnly ? null : <MarkdownView markdown={props.message.text} onOptionPress={handleOptionPress} />}
       <View
         pointerEvents={showCopyButton ? 'auto' : 'none'}
         accessibilityElementsHidden={!showCopyButton}
@@ -222,7 +252,7 @@ function AgentTextBlock(props: {
         ]}
       >
         <CopyMessageButton
-          markdown={props.message.text}
+          markdown={copyText}
           onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
           onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
         />
@@ -406,6 +436,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: 12,
     paddingVertical: 4,
     borderRadius: 12,
+    maxWidth: '100%',
+  },
+  userStructuredMessageWrapper: {
     maxWidth: '100%',
   },
   userMessageBubbleDiscarded: {
