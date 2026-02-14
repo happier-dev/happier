@@ -7,10 +7,13 @@ import { parseArgs, resolveRepoRoot } from './lib/binary_release.mjs';
 
 export const INSTALLER_PUBLISH_SPECS = [
   { source: 'install.sh', targets: ['install.sh', 'install'] },
+  { source: 'install.sh', targets: ['install-preview.sh', 'install-preview'], transform: 'preview-default-channel' },
   { source: 'install-server', targets: ['install-server'] },
   { source: 'install-server.sh', targets: ['install-server.sh'] },
   { source: 'self-host.sh', targets: ['self-host.sh', 'self-host'] },
+  { source: 'self-host.sh', targets: ['self-host-preview.sh', 'self-host-preview'], transform: 'preview-default-channel' },
   { source: 'install.ps1', targets: ['install.ps1'] },
+  { source: 'install.ps1', targets: ['install-preview.ps1'], transform: 'preview-default-channel' },
   { source: 'happier-release.pub', targets: ['happier-release.pub'] },
 ];
 
@@ -31,6 +34,18 @@ function buffersEqual(left, right) {
   if (!left || !right) return false;
   if (left.length !== right.length) return false;
   return left.equals(right);
+}
+
+function applyTransform(contents, transform) {
+  if (!transform) return contents;
+  const raw = contents.toString('utf8');
+  if (transform === 'preview-default-channel') {
+    const updated = raw
+      .replaceAll('HAPPIER_CHANNEL:-stable', 'HAPPIER_CHANNEL:-preview')
+      .replaceAll('$Channel = "stable"', '$Channel = "preview"');
+    return Buffer.from(updated, 'utf8');
+  }
+  throw new Error(`[release] unknown installer transform: ${transform}`);
 }
 
 async function fileExists(path) {
@@ -61,17 +76,18 @@ export async function syncInstallers({
     if (!sourceContents) {
       throw new Error(`[release] missing installer source file: ${sourcePath}`);
     }
+    const publishedContents = applyTransform(sourceContents, spec.transform);
 
     for (const name of spec.targets) {
       const targetPath = join(targetDir, name);
       const targetContents = await readFileOrNull(targetPath);
       checked.push(name);
 
-      const contentInSync = buffersEqual(sourceContents, targetContents);
+      const contentInSync = buffersEqual(publishedContents, targetContents);
       if (!contentInSync) {
         changed.push(name);
         if (!checkOnly) {
-          await writeFile(targetPath, sourceContents);
+          await writeFile(targetPath, publishedContents);
         }
         continue;
       }

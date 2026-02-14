@@ -23,6 +23,8 @@ Usage:
 
 Preview channel:
   curl -fsSL https://happier.dev/self-host | bash -s -- --channel preview
+  curl -fsSL https://happier.dev/self-host | sudo env HAPPIER_CHANNEL=preview bash
+  curl -fsSL https://happier.dev/self-host-preview | sudo bash
 
 Options:
   --channel <stable|preview>
@@ -53,8 +55,15 @@ fi
 
 if [[ "${EUID}" -ne 0 ]]; then
   if command -v sudo >/dev/null 2>&1; then
-    echo "Re-running with sudo for system-level install..."
-    exec sudo -E bash "$0" "$@"
+    if [[ -f "${0}" ]]; then
+      echo "Re-running with sudo for system-level install..."
+      exec sudo -E bash "$0" "$@"
+    fi
+    echo "This installer requires root. Re-run with sudo:" >&2
+    echo "  curl -fsSL https://happier.dev/self-host | sudo bash -s -- $*" >&2
+    echo "Preview:" >&2
+    echo "  curl -fsSL https://happier.dev/self-host | sudo env HAPPIER_CHANNEL=preview bash" >&2
+    exit 1
   fi
   echo "Please run as root (or install sudo)." >&2
   exit 1
