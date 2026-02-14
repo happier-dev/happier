@@ -11,13 +11,18 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { projectPath } from '@/projectPath';
 
+export interface GenerateHookSettingsOptions {
+    enableLocalPermissionBridge?: boolean;
+    permissionHookSecret?: string;
+}
+
 /**
  * Generate a temporary settings file with SessionStart hook configuration
  * 
  * @param port - The port where Happy server is listening
  * @returns Path to the generated settings file
  */
-export function generateHookSettingsFile(port: number): string {
+export function generateHookSettingsFile(port: number, options: GenerateHookSettingsOptions = {}): string {
     const hooksDir = join(configuration.happyHomeDir, 'tmp', 'hooks');
     mkdirSync(hooksDir, { recursive: true });
 
@@ -29,20 +34,43 @@ export function generateHookSettingsFile(port: number): string {
     const forwarderScript = resolve(projectPath(), 'scripts', 'session_hook_forwarder.cjs');
     const hookCommand = `node "${forwarderScript}" ${port}`;
 
+    const hooks: Record<string, unknown> = {
+        SessionStart: [
+            {
+                matcher: "*",
+                hooks: [
+                    {
+                        type: "command",
+                        command: hookCommand
+                    }
+                ]
+            }
+        ]
+    };
+
+    if (options.enableLocalPermissionBridge) {
+        const permissionForwarderScript = resolve(projectPath(), 'scripts', 'permission_hook_forwarder.cjs');
+        const secretPart =
+            typeof options.permissionHookSecret === 'string' && options.permissionHookSecret.length > 0
+                ? ` ${JSON.stringify(options.permissionHookSecret)}`
+                : '';
+        const permissionCommand = `node "${permissionForwarderScript}" ${port}${secretPart}`;
+
+        hooks.PermissionRequest = [
+            {
+                matcher: "*",
+                hooks: [
+                    {
+                        type: "command",
+                        command: permissionCommand
+                    }
+                ]
+            }
+        ];
+    }
+
     const settings = {
-        hooks: {
-            SessionStart: [
-                {
-                    matcher: "*",
-                    hooks: [
-                        {
-                            type: "command",
-                            command: hookCommand
-                        }
-                    ]
-                }
-            ]
-        }
+        hooks
     };
 
     writeFileSync(filepath, JSON.stringify(settings, null, 2));
@@ -66,4 +94,3 @@ export function cleanupHookSettingsFile(filepath: string): void {
         logger.debug(`[generateHookSettings] Failed to cleanup hook settings file: ${error}`);
     }
 }
-

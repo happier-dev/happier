@@ -16,21 +16,9 @@ import { getToolDescriptor } from "./getToolDescriptor";
 import { delay } from "@/utils/time";
 import { isShellCommandAllowed } from '@/agent/permissions/shellCommandAllowlist';
 import { recordToolTraceEvent } from '@/agent/tools/trace/toolTrace';
+import type { PermissionRpcPayload } from './permissionRpc';
 
-interface PermissionResponse {
-    id: string;
-    approved: boolean;
-    reason?: string;
-    mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
-    allowedTools?: string[];
-    allowTools?: string[]; // legacy alias
-    /**
-     * AskUserQuestion: structured answers keyed by question text.
-     * Claude Code may use this to complete the interaction without a TUI.
-     */
-    answers?: Record<string, string>;
-    receivedAt?: number;
-}
+type PermissionResponse = PermissionRpcPayload;
 
 
 interface PendingRequest {
@@ -53,7 +41,10 @@ export class PermissionHandler {
 
     constructor(session: Session) {
         this.session = session;
-        this.setupClientHandler();
+        this.session.getOrCreatePermissionRpcRouter().registerConsumer({
+            name: 'claude-remote-permission-handler',
+            tryHandlePermissionRpc: (payload) => this.tryHandlePermissionRpc(payload),
+        });
         this.advertiseCapabilities();
         this.seedAllowlistFromAgentState();
     }
@@ -141,10 +132,30 @@ export class PermissionHandler {
         this.applyPermissionResponse({ id: toolCallId, approved: true, answers: opts?.answers });
     }
 
-    private applyPermissionResponse(message: PermissionResponse): void {
-        logger.debug(`Permission response: ${JSON.stringify(message)}`);
+    private tryHandlePermissionRpc(message: PermissionResponse): boolean {
+        const id = typeof message?.id === 'string' ? message.id : '';
+        if (!id) {
+            return false;
+        }
+        if (!this.pendingRequests.has(id)) {
+            return false;
+        }
+        this.applyPermissionResponse(message);
+        return true;
+    }
 
+    private applyPermissionResponse(message: PermissionResponse): void {
         const id = message.id;
+        logger.debug('[Claude] Permission response received', {
+            id,
+            approved: message.approved,
+            mode: message.mode,
+            hasReason: typeof message.reason === 'string' && message.reason.length > 0,
+            allowedToolsCount: Array.isArray(message.allowedTools ?? message.allowTools)
+                ? (message.allowedTools ?? message.allowTools)!.length
+                : 0,
+            answersCount: message.answers ? Object.keys(message.answers).length : 0,
+        });
 
         if (this.isToolTraceEnabled()) {
             recordToolTraceEvent({
@@ -553,16 +564,6 @@ export class PermissionHandler {
                 requests: {}, // Clear all pending requests
                 completedRequests
             };
-        });
-    }
-
-    /**
-     * Sets up the client handler for permission responses
-     */
-    private setupClientHandler(): void {
-        this.session.client.rpcHandlerManager.registerHandler<PermissionResponse, { ok: true }>('permission', async (message) => {
-            this.applyPermissionResponse(message);
-            return { ok: true } as const;
         });
     }
 

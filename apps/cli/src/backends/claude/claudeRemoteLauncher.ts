@@ -10,7 +10,7 @@ import { AbortError, SDKAssistantMessage, SDKMessage, SDKUserMessage } from "./s
 import { formatClaudeMessageForInk } from "@/ui/messageFormatterInk";
 import { logger } from "@/ui/logger";
 import { SDKToLogConverter } from "./utils/sdkToLogConverter";
-import { EnhancedMode } from "./loop";
+import type { EnhancedMode, PermissionMode } from "./loop";
 import { RawJSONLines } from "@/backends/claude/types";
 import { OutgoingMessageQueue } from "./utils/OutgoingMessageQueue";
 import { getToolName } from "./utils/getToolName";
@@ -24,7 +24,7 @@ import { ensureSessionInfoBeforeSwitch } from '@/backends/claude/utils/ensureSes
 interface PermissionsField {
     date: number;
     result: 'approved' | 'denied';
-    mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
+    mode?: PermissionMode;
     allowedTools?: string[];
 }
 

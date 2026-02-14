@@ -1,16 +1,8 @@
 import { vi } from 'vitest';
 
 import type { Session } from '../session';
-
-export type PermissionRpcPayload = {
-  id: string;
-  approved: boolean;
-  reason?: string;
-  mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
-  allowedTools?: string[];
-  allowTools?: string[];
-  answers?: Record<string, string>;
-};
+import { ClaudePermissionRpcRouter } from './permissionRpcRouter';
+import type { PermissionRpcPayload } from './permissionRpc';
 
 type AgentState = {
   requests: Record<string, unknown>;
@@ -58,6 +50,7 @@ export function createPermissionHandlerSessionStub(sessionId = 'test-session-id'
   client: FakePermissionClient;
 } {
   const client = new FakePermissionClient(sessionId);
+  let router: ClaudePermissionRpcRouter | null = null;
 
   const session = {
     client,
@@ -67,6 +60,12 @@ export function createPermissionHandlerSessionStub(sessionId = 'test-session-id'
       },
     },
     setLastPermissionMode: vi.fn(),
+    getOrCreatePermissionRpcRouter() {
+      if (!router) {
+        router = new ClaudePermissionRpcRouter(client.rpcHandlerManager);
+      }
+      return router;
+    },
   } as unknown as Session;
 
   return { session, client };

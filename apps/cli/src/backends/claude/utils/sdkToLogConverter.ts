@@ -13,6 +13,7 @@ import type {
     SDKResultMessage
 } from '@/backends/claude/sdk'
 import type { RawJSONLines } from '@/backends/claude/types'
+import type { PermissionMode } from '@/api/types'
 
 /**
  * Context for converting SDK messages to log format
@@ -48,12 +49,12 @@ function getGitBranch(cwd: string): string | undefined {
 export class SDKToLogConverter {
     private lastUuid: string | null = null
     private context: ConversionContext
-    private responses?: Map<string, { approved: boolean, mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan', reason?: string }>
+    private responses?: Map<string, { approved: boolean, mode?: PermissionMode, reason?: string }>
     private sidechainLastUUID = new Map<string, string>();
 
     constructor(
         context: Omit<ConversionContext, 'parentUuid'>,
-        responses?: Map<string, { approved: boolean, mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan', reason?: string }>
+        responses?: Map<string, { approved: boolean, mode?: PermissionMode, reason?: string }>
     ) {
         this.context = {
             ...context,

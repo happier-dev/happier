@@ -7,6 +7,7 @@ import type { SessionHookData } from "./utils/startHookServer";
 import type { PermissionMode } from "@/api/types";
 import { randomUUID } from "node:crypto";
 import { normalizePermissionModeToIntent } from '@/agent/runtime/permission/permissionModeCanonical';
+import { ClaudePermissionRpcRouter } from './utils/permissionRpcRouter';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -34,6 +35,7 @@ export class Session {
     mode: 'local' | 'remote' = 'local';
     thinking: boolean = false;
     private currentTaskId: string | null = null;
+    private permissionRpcRouter: ClaudePermissionRpcRouter | null = null;
 
     /**
      * Last known permission mode for this session, derived from message metadata / permission responses.
@@ -92,7 +94,15 @@ export class Session {
     cleanup = (): void => {
         clearInterval(this.keepAliveInterval);
         this.sessionFoundCallbacks = [];
+        this.permissionRpcRouter = null;
         logger.debug('[Session] Cleaned up resources');
+    }
+
+    getOrCreatePermissionRpcRouter(): ClaudePermissionRpcRouter {
+        if (!this.permissionRpcRouter) {
+            this.permissionRpcRouter = new ClaudePermissionRpcRouter(this.client.rpcHandlerManager);
+        }
+        return this.permissionRpcRouter;
     }
 
     setLastPermissionMode = (mode: PermissionMode, updatedAt: number = Date.now()): void => {
