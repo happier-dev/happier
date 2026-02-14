@@ -1,15 +1,50 @@
 import * as React from 'react';
-import { View, Text, Pressable } from 'react-native';
+import { ScrollView, View, Text, Pressable } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
 import { useSetting } from '@/sync/domains/state/storage';
-import { buildDiffBlocks, buildDiffFileEntries, parseUnifiedDiff, type DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
+import { CodeLinesView } from '@/components/ui/code/view/CodeLinesView';
+import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
+import { buildDiffBlocks, buildDiffFileEntries, type DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { t } from '@/text';
+
+function UnifiedDiffInlineView(props: Readonly<{
+    unifiedDiff: string;
+    wrapLines: boolean;
+    showLineNumbers: boolean;
+    showPrefix: boolean;
+}>) {
+    const lines = React.useMemo(() => buildCodeLinesFromUnifiedDiff({ unifiedDiff: props.unifiedDiff }), [props.unifiedDiff]);
+    const view = (
+        <View style={{ flex: 1 }}>
+            <CodeLinesView
+                lines={lines}
+                wrapLines={props.wrapLines}
+                virtualized={false}
+                showLineNumbers={props.showLineNumbers}
+                showPrefix={props.showPrefix}
+            />
+        </View>
+    );
+
+    if (props.wrapLines) return view;
+
+    return (
+        <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={true}
+            contentContainerStyle={{ flexGrow: 1 }}
+        >
+            {view}
+        </ScrollView>
+    );
+}
 
 export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
+    const wrapLines = useSetting('wrapLinesInDiffs');
     const { input } = tool;
 
     const blocks = React.useMemo(() => buildDiffBlocks(input), [input]);
@@ -97,14 +132,6 @@ export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
 
             {files.map((file) => {
                 const expanded = expandedKeys.has(file.key);
-                const parsed =
-                    expanded
-                        ? file.unifiedDiff
-                            ? parseUnifiedDiff(file.unifiedDiff)
-                            : file.oldText != null && file.newText != null
-                                ? { oldText: file.oldText, newText: file.newText, fileName: file.filePath }
-                                : null
-                        : null;
 
                 return (
                     <React.Fragment key={file.key}>
@@ -149,15 +176,26 @@ export const DiffView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
                             </Text>
                         </Pressable>
 
-                        {canRenderInlineDiffs && expanded && parsed ? (
-                            <ToolSectionView fullWidth>
-                                <ToolDiffView
-                                    oldText={parsed.oldText}
-                                    newText={parsed.newText}
-                                    showLineNumbers={showLineNumbersInToolViews}
-                                    showPlusMinusSymbols={showLineNumbersInToolViews}
-                                />
-                            </ToolSectionView>
+                        {canRenderInlineDiffs && expanded ? (
+                            file.unifiedDiff ? (
+                                <ToolSectionView fullWidth>
+                                    <UnifiedDiffInlineView
+                                        unifiedDiff={file.unifiedDiff}
+                                        wrapLines={wrapLines}
+                                        showLineNumbers={showLineNumbersInToolViews}
+                                        showPrefix={showLineNumbersInToolViews}
+                                    />
+                                </ToolSectionView>
+                            ) : file.oldText != null && file.newText != null ? (
+                                <ToolSectionView fullWidth>
+                                    <ToolDiffView
+                                        oldText={file.oldText}
+                                        newText={file.newText}
+                                        showLineNumbers={showLineNumbersInToolViews}
+                                        showPlusMinusSymbols={showLineNumbersInToolViews}
+                                    />
+                                </ToolSectionView>
+                            ) : null
                         ) : null}
                     </React.Fragment>
                 );

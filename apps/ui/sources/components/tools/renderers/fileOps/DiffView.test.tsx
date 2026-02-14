@@ -7,11 +7,13 @@ import { collectHostText, findPressableByText, makeToolCall, makeToolViewProps }
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const diffSpy = vi.fn();
+const codeLinesSpy = vi.fn();
 
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
     Pressable: 'Pressable',
+    ScrollView: 'ScrollView',
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -29,9 +31,17 @@ vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
     },
 }));
 
+vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
+    CodeLinesView: (props: any) => {
+        codeLinesSpy(props);
+        return React.createElement('CodeLinesView', props);
+    },
+}));
+
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
         if (key === 'showLineNumbersInToolViews') return false;
+        if (key === 'wrapLinesInDiffs') return true;
         return undefined;
     },
 }));
@@ -50,6 +60,7 @@ function makeDiffTool(files: DiffFileInput[]): ToolCall {
 describe('DiffView', () => {
     it('renders per-file diffs from old/new text pairs when unified diffs are unavailable', async () => {
         diffSpy.mockClear();
+        codeLinesSpy.mockClear();
         const { DiffView } = await import('./DiffView');
 
         const tool = makeDiffTool([
@@ -63,6 +74,7 @@ describe('DiffView', () => {
         });
 
         expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(2);
+        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(0);
         expect(diffSpy).toHaveBeenCalledTimes(2);
         expect(diffSpy).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -80,6 +92,7 @@ describe('DiffView', () => {
 
     it('renders a compact per-file summary by default and expands a file inline on tap', async () => {
         diffSpy.mockClear();
+        codeLinesSpy.mockClear();
         const { DiffView } = await import('./DiffView');
 
         const files = [
@@ -101,6 +114,7 @@ describe('DiffView', () => {
         });
 
         expect(diffSpy).toHaveBeenCalledTimes(0);
+        expect(codeLinesSpy).toHaveBeenCalledTimes(0);
 
         const combined = collectHostText(tree).join(' ').replace(/,/g, '');
         expect(combined).toContain('foo.txt');
@@ -115,12 +129,13 @@ describe('DiffView', () => {
             fooRow!.props.onPress();
         });
 
-        expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(1);
-        expect(diffSpy).toHaveBeenCalledTimes(1);
+        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(1);
+        expect(codeLinesSpy).toHaveBeenCalledTimes(1);
     });
 
     it('shows all file diffs by default when detailLevel=full and allows collapsing/expanding', async () => {
         diffSpy.mockClear();
+        codeLinesSpy.mockClear();
         const { DiffView } = await import('./DiffView');
 
         const files = [
@@ -141,7 +156,7 @@ describe('DiffView', () => {
             tree = renderer.create(React.createElement(DiffView, makeToolViewProps(tool, { detailLevel: 'full' })));
         });
 
-        expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(2);
+        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);
 
         const collapseAll = findPressableByText(tree, 'Show less', ['Pressable']);
         expect(collapseAll).toBeTruthy();
@@ -149,7 +164,7 @@ describe('DiffView', () => {
         await act(async () => {
             collapseAll!.props.onPress();
         });
-        expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(0);
+        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(0);
 
         const expandAll = findPressableByText(tree, 'Show all', ['Pressable']);
         expect(expandAll).toBeTruthy();
@@ -157,6 +172,6 @@ describe('DiffView', () => {
         await act(async () => {
             expandAll!.props.onPress();
         });
-        expect(tree.root.findAllByType('ToolDiffView' as any)).toHaveLength(2);
+        expect(tree.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);
     });
 });
