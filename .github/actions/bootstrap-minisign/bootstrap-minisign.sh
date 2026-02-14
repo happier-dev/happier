@@ -82,7 +82,27 @@ case "${asset}" in
     ;;
 esac
 
-bin_path="$(find "${extract_dir}" -type f \( -name minisign -o -name minisign.exe \) 2>/dev/null | head -n 1 || true)"
+bin_path=""
+if [[ "${os}" == "linux" ]]; then
+  linux_arch=""
+  case "${arch}" in
+    x86_64|amd64)
+      linux_arch="x86_64"
+      ;;
+    aarch64|arm64)
+      linux_arch="aarch64"
+      ;;
+  esac
+  if [[ -n "${linux_arch}" ]]; then
+    candidate="${extract_dir}/minisign-linux/${linux_arch}/minisign"
+    if [[ -f "${candidate}" ]]; then
+      bin_path="${candidate}"
+    fi
+  fi
+fi
+if [[ -z "${bin_path}" ]]; then
+  bin_path="$(find "${extract_dir}" -type f \( -name minisign -o -name minisign.exe \) 2>/dev/null | head -n 1 || true)"
+fi
 if [[ -z "${bin_path}" ]]; then
   echo "Failed to locate minisign binary in bootstrap archive." >&2
   exit 1

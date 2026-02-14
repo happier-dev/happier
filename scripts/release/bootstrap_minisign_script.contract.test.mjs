@@ -16,3 +16,14 @@ test('bootstrap-minisign script uses portable find grouping syntax', async () =>
     'bootstrap-minisign should use single-escaped find grouping for minisign binary lookup',
   );
 });
+
+test('bootstrap-minisign script selects linux minisign binary by runner architecture first', async () => {
+  const raw = await readFile(join(repoRoot, '.github', 'actions', 'bootstrap-minisign', 'bootstrap-minisign.sh'), 'utf8');
+  assert.match(raw, /case "\$\{arch\}" in[\s\S]*?x86_64\|amd64\)[\s\S]*?linux_arch="x86_64"/);
+  assert.match(raw, /case "\$\{arch\}" in[\s\S]*?aarch64\|arm64\)[\s\S]*?linux_arch="aarch64"/);
+  assert.match(
+    raw,
+    /candidate="\$\{extract_dir\}\/minisign-linux\/\$\{linux_arch\}\/minisign"/,
+    'bootstrap-minisign should prefer architecture-specific minisign path on linux',
+  );
+});
