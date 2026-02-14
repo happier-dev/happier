@@ -31,12 +31,18 @@ export const CommandView = React.memo<CommandViewProps>(({
     // Use legacy output if new props aren't provided
     const hasNewProps = stdout !== undefined || stderr !== undefined || error !== undefined;
 
+    const promptColor = theme.colors.success ?? theme.colors.text;
+    const stderrColor = theme.colors.warning ?? theme.colors.textSecondary;
+    const errorColor = theme.colors.warningCritical ?? theme.colors.textDestructive ?? theme.colors.text;
+
     const styles = StyleSheet.create({
         container: {
-            backgroundColor: theme.colors.terminal.background,
-            borderRadius: 8,
-            overflow: 'hidden',
-            padding: 16,
+            // Tool cards already provide a container; keep this view visually lightweight so it
+            // matches other tool outputs in light mode.
+            backgroundColor: 'transparent',
+            borderRadius: 0,
+            overflow: 'visible',
+            padding: 0,
             alignItems: 'flex-start',
             justifyContent: 'flex-start',
         },
@@ -49,41 +55,41 @@ export const CommandView = React.memo<CommandViewProps>(({
             fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
             fontSize: 14,
             lineHeight: 20,
-            color: theme.colors.terminal.prompt,
+            color: promptColor,
             fontWeight: '600',
         },
         commandText: {
             fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
             fontSize: 14,
-            color: theme.colors.terminal.command,
+            color: theme.colors.text,
             lineHeight: 20,
             flex: 1,
         },
         stdout: {
             fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
             fontSize: 13,
-            color: theme.colors.terminal.stdout,
+            color: theme.colors.text,
             lineHeight: 18,
             marginTop: 8,
         },
         stderr: {
             fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
             fontSize: 13,
-            color: theme.colors.terminal.stderr,
+            color: stderrColor,
             lineHeight: 18,
             marginTop: 8,
         },
         error: {
             fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
             fontSize: 13,
-            color: theme.colors.terminal.error,
+            color: errorColor,
             lineHeight: 18,
             marginTop: 8,
         },
         emptyOutput: {
             fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
             fontSize: 13,
-            color: theme.colors.terminal.emptyOutput,
+            color: theme.colors.textSecondary,
             lineHeight: 18,
             marginTop: 8,
             fontStyle: 'italic',

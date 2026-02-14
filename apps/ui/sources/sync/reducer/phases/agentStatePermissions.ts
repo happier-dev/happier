@@ -3,6 +3,7 @@ import type { AgentState } from '../../domains/state/storageTypes';
 import type { ToolCall } from '../../domains/messages/messageTypes';
 import { equalOptionalStringArrays } from '../helpers/arrays';
 import type { ReducerState } from '../reducer';
+import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 
 export function runAgentStatePermissionsPhase(params: Readonly<{
     state: ReducerState;
@@ -116,6 +117,12 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     state.toolIdToMessageId.set(permId, mid);
 
                     changed.add(mid);
+                    drainAndApplyOrphanToolResultsToMessage({
+                        state,
+                        toolUseId: permId,
+                        messageId: mid,
+                        changed,
+                    });
                 }
 
                 // Store permission details for quick lookup
@@ -319,6 +326,12 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     });
 
                     changed.add(mid);
+                    drainAndApplyOrphanToolResultsToMessage({
+                        state,
+                        toolUseId: permId,
+                        messageId: mid,
+                        changed,
+                    });
                 }
             }
         }

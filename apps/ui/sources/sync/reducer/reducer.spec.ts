@@ -165,6 +165,59 @@ describe('reducer', () => {
         });
     });
 
+    describe('tool result meta propagation', () => {
+        it('propagates tool-result meta onto the owning tool-call message (shallow merge)', () => {
+            const state = createReducer();
+
+            const toolCallMsg: NormalizedMessage = {
+                id: 'msg-tool-call',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [
+                    {
+                        type: 'tool-call',
+                        id: 'call_1',
+                        name: 'SubAgentRun',
+                        input: {},
+                        description: null,
+                        uuid: 'uuid_tool_call',
+                        parentUUID: null,
+                    } as any,
+                ],
+                meta: { source: 'ui' } as any,
+            };
+
+            reducer(state, [toolCallMsg]);
+
+            const toolResultMsg: NormalizedMessage = {
+                id: 'msg-tool-result',
+                localId: null,
+                createdAt: 2000,
+                role: 'agent',
+                isSidechain: false,
+                content: [
+                    {
+                        type: 'tool-result',
+                        tool_use_id: 'call_1',
+                        content: { ok: true },
+                        is_error: false,
+                        uuid: 'uuid_tool_result',
+                        parentUUID: null,
+                    } as any,
+                ],
+                meta: { happier: { kind: 'review_findings.v1', payload: { runRef: { runId: 'run_1' } } } } as any,
+            };
+
+            const result = reducer(state, [toolResultMsg]);
+            const updatedTool = result.messages.find((m) => m.kind === 'tool-call');
+            expect(updatedTool).toBeTruthy();
+            if (updatedTool?.kind !== 'tool-call') return;
+            expect((updatedTool.meta as any)?.happier?.kind).toBe('review_findings.v1');
+        });
+    });
+
     describe('agent text message handling', () => {
         it('should process agent text messages', () => {
             const state = createReducer();
@@ -226,6 +279,183 @@ describe('reducer', () => {
             if (result.messages[1].kind === 'agent-text') {
                 expect(result.messages[1].text).toBe('Part 2');
             }
+        });
+    });
+
+    describe('thinking timeline', () => {
+        it('does not merge thinking across a tool-call boundary (separate messages)', () => {
+            const state = createReducer();
+
+            reducer(state, [{
+                id: 'think-1',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'thinking',
+                    thinking: 'first',
+                    uuid: 'think-uuid-1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            reducer(state, [{
+                id: 'tool-1-msg',
+                localId: null,
+                createdAt: 1100,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-1',
+                    name: 'CodeSearch',
+                    input: { query: 'foo' },
+                    description: null,
+                    uuid: 'tool-uuid-1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            reducer(state, [{
+                id: 'think-2',
+                localId: null,
+                createdAt: 1200,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'thinking',
+                    thinking: 'second',
+                    uuid: 'think-uuid-2',
+                    parentUUID: null,
+                }],
+            }]);
+
+            const thinkingMessages = [...state.messages.values()].filter((m) => m.role === 'agent' && m.isThinking);
+            expect(thinkingMessages).toHaveLength(2);
+            expect(thinkingMessages.some((m) => typeof m.text === 'string' && m.text.includes('first'))).toBe(true);
+            expect(thinkingMessages.some((m) => typeof m.text === 'string' && m.text.includes('second'))).toBe(true);
+        });
+
+        it('preserves tool/thinking interleaving inside a single agent message', () => {
+            const state = createReducer();
+
+            const result = reducer(state, [{
+                id: 'agent-1',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [
+                    {
+                        type: 'thinking',
+                        thinking: 'before tool',
+                        uuid: 'agent-uuid-1',
+                        parentUUID: null,
+                    },
+                    {
+                        type: 'tool-call',
+                        id: 'tool-1',
+                        name: 'CodeSearch',
+                        input: { query: 'foo' },
+                        description: null,
+                        uuid: 'tool-uuid-1',
+                        parentUUID: null,
+                    },
+                    {
+                        type: 'thinking',
+                        thinking: 'after tool',
+                        uuid: 'agent-uuid-1',
+                        parentUUID: null,
+                    },
+                ],
+            }]);
+
+            expect(result.messages).toHaveLength(3);
+            expect(result.messages[0]?.kind).toBe('agent-text');
+            expect(result.messages[1]?.kind).toBe('tool-call');
+            expect(result.messages[2]?.kind).toBe('agent-text');
+
+            const thinkingMessages = result.messages.filter((m) => m.kind === 'agent-text' && m.isThinking);
+            expect(thinkingMessages).toHaveLength(2);
+        });
+    });
+
+    describe('tool lifecycle cancellation', () => {
+        it('marks running tools as canceled on turn_aborted even when they have no permission object', () => {
+            const state = createReducer();
+
+            reducer(state, [{
+                id: 'tool-call-1',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-1',
+                    name: 'CodeSearch',
+                    input: { query: 'foo' },
+                    description: null,
+                    uuid: 'tool-uuid-1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            reducer(state, [{
+                id: 'event-abort-1',
+                localId: null,
+                createdAt: 2000,
+                role: 'event',
+                isSidechain: false,
+                content: {
+                    type: 'task-lifecycle',
+                    event: 'turn_aborted',
+                    id: 'tool-1',
+                },
+            }]);
+
+            const toolMessageId = state.toolIdToMessageId.get('tool-1');
+            const toolMessage = toolMessageId ? state.messages.get(toolMessageId) : null;
+            expect(toolMessage?.tool?.state).toBe('error');
+            expect(toolMessage?.tool?.completedAt).toBe(2000);
+            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
+        });
+
+        it('marks running tools as canceled on ready events (to avoid endless spinners)', () => {
+            const state = createReducer();
+
+            reducer(state, [{
+                id: 'tool-call-1',
+                localId: null,
+                createdAt: 1000,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'tool-call',
+                    id: 'tool-1',
+                    name: 'CodeSearch',
+                    input: { query: 'foo' },
+                    description: null,
+                    uuid: 'tool-uuid-1',
+                    parentUUID: null,
+                }],
+            }]);
+
+            reducer(state, [{
+                id: 'ready-1',
+                localId: null,
+                createdAt: 1500,
+                role: 'event',
+                isSidechain: false,
+                content: { type: 'ready' },
+            }]);
+
+            const toolMessageId = state.toolIdToMessageId.get('tool-1');
+            const toolMessage = toolMessageId ? state.messages.get(toolMessageId) : null;
+            expect(toolMessage?.tool?.state).toBe('error');
+            expect(toolMessage?.tool?.completedAt).toBe(1500);
+            expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
         });
     });
 
@@ -1542,7 +1772,7 @@ describe('reducer', () => {
             expect(toolMessage?.tool?.result).toEqual({ error: 'Request interrupted' });
         });
 
-        it('should handle tool result arriving before tool call (race condition)', () => {
+        it('should buffer a tool result that arrives before the tool call and apply it when the tool call arrives', () => {
             const state = createReducer();
             
             // Tool result arrives first
@@ -1550,7 +1780,7 @@ describe('reducer', () => {
                 {
                     id: 'msg-1',
                     localId: null,
-                    createdAt: 1000,
+                    createdAt: 1100,
                     role: 'agent',
                     content: [{
                         type: 'tool-result',
@@ -1565,14 +1795,14 @@ describe('reducer', () => {
             ];
             
             const result1 = reducer(state, resultMessages);
-            expect(result1.messages).toHaveLength(0); // Should not create anything
+            expect(result1.messages).toHaveLength(0); // No tool call yet, so nothing to render
             
             // Tool call arrives later
             const toolMessages: NormalizedMessage[] = [
                 {
                     id: 'msg-2',
                     localId: null,
-                    createdAt: 2000,
+                    createdAt: 1000,
                     role: 'agent',
                     content: [{
                         type: 'tool-call',
@@ -1590,16 +1820,17 @@ describe('reducer', () => {
             const result2 = reducer(state, toolMessages);
             expect(result2.messages).toHaveLength(1);
             if (result2.messages[0].kind === 'tool-call') {
-                expect(result2.messages[0].tool.state).toBe('running'); // Result was ignored
-                expect(result2.messages[0].tool.result).toBeUndefined();
+                expect(result2.messages[0].tool.state).toBe('completed');
+                expect(result2.messages[0].tool.result).toBe('Success');
+                expect(result2.messages[0].tool.completedAt).toBe(1100);
             }
             
-            // Result arrives again (with different message ID since it's a new message)
+            // Result arrives again (should be ignored once tool is already completed)
             const resultMessages2: NormalizedMessage[] = [
                 {
                     id: 'msg-3',
                     localId: null,
-                    createdAt: 3000,
+                    createdAt: 1200,
                     role: 'agent',
                     content: [{
                         type: 'tool-result',
@@ -1614,17 +1845,78 @@ describe('reducer', () => {
             ];
             
             const result3 = reducer(state, resultMessages2, null);
-            
-            // Debug: Check if tool was properly registered
-            const toolId = 'tool-1';
-            const msgId = state.toolIdToMessageId.get(toolId);
-            const message = msgId ? state.messages.get(msgId) : null;
-            
-            expect(result3.messages).toHaveLength(1);
-            if (result3.messages[0].kind === 'tool-call') {
-                expect(result3.messages[0].tool.state).toBe('completed');
-                expect(result3.messages[0].tool.result).toBe('Success');
-            }
+            expect(result3.messages).toHaveLength(0);
+        });
+
+        it('should apply buffered streaming tool-result chunks and final results when the tool call arrives later', () => {
+            const state = createReducer();
+
+            const toolResultChunksFirst: NormalizedMessage[] = [
+                {
+                    id: 'msg-1',
+                    localId: null,
+                    createdAt: 1100,
+                    role: 'agent',
+                    content: [{
+                        type: 'tool-result',
+                        tool_use_id: 'tool-1',
+                        content: { _stream: true, stdoutChunk: 'hello\\n' },
+                        is_error: false,
+                        uuid: 'result-uuid-1',
+                        parentUUID: null
+                    }],
+                    isSidechain: false
+                },
+                {
+                    id: 'msg-2',
+                    localId: null,
+                    createdAt: 1200,
+                    role: 'agent',
+                    content: [{
+                        type: 'tool-result',
+                        tool_use_id: 'tool-1',
+                        content: { exit_code: 0 },
+                        is_error: false,
+                        uuid: 'result-uuid-2',
+                        parentUUID: null
+                    }],
+                    isSidechain: false
+                }
+            ];
+
+            const result1 = reducer(state, toolResultChunksFirst);
+            expect(result1.messages).toHaveLength(0);
+
+            const toolCallLater: NormalizedMessage[] = [
+                {
+                    id: 'msg-3',
+                    localId: null,
+                    createdAt: 1000,
+                    role: 'agent',
+                    content: [{
+                        type: 'tool-call',
+                        id: 'tool-1',
+                        name: 'Bash',
+                        input: { command: 'echo hello' },
+                        description: null,
+                        uuid: 'tool-uuid-1',
+                        parentUUID: null
+                    }],
+                    isSidechain: false
+                }
+            ];
+
+            const result2 = reducer(state, toolCallLater);
+            expect(result2.messages).toHaveLength(1);
+            expect(result2.messages[0].kind).toBe('tool-call');
+            if (result2.messages[0].kind !== 'tool-call') return;
+
+            expect(result2.messages[0].tool.state).toBe('completed');
+            expect(result2.messages[0].tool.completedAt).toBe(1200);
+            expect(result2.messages[0].tool.result).toMatchObject({
+                exit_code: 0,
+                stdout: 'hello\\n',
+            });
         });
 
         it('should treat streaming tool results as incremental output without completing', () => {

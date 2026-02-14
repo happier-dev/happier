@@ -1,6 +1,6 @@
 import type { TracedMessage } from '../reducerTracer';
 import type { ReducerState } from '../reducer';
-import { cancelRunningApprovedTools } from '../helpers/cancelRunningApprovedTools';
+import { cancelRunningTools } from '../helpers/cancelRunningApprovedTools';
 
 export function runModeSwitchEventsPhase(params: Readonly<{
     state: ReducerState;
@@ -23,7 +23,7 @@ export function runModeSwitchEventsPhase(params: Readonly<{
 
             if (msg.content.type === 'task-lifecycle') {
                 if (msg.content.event === 'turn_aborted' || msg.content.event === 'task_complete') {
-                    cancelRunningApprovedTools({
+                    cancelRunningTools({
                         state,
                         changed,
                         completedAt: msg.createdAt,

@@ -133,6 +133,22 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
             description = subtitle;
         }
     }
+    // Fallback: if a tool has a provider/normalizer description but no explicit subtitle,
+    // surface it so the timeline card isn't blank (common for search tools).
+    if (!description) {
+        const raw = typeof toolForRendering.description === 'string' ? toolForRendering.description.trim() : '';
+        if (raw) {
+            const rawLower = raw.toLowerCase();
+            // Some providers emit generic markers that are not user-meaningful and can cause tests
+            // (and the UI) to show confusing subtitles (e.g. "execute").
+            if (rawLower !== 'execute') {
+                const title = typeof toolTitle === 'string' ? toolTitle.trim() : '';
+                if (!title || raw !== title) {
+                    description = raw;
+                }
+            }
+        }
+    }
     if (knownTool && knownTool.minimal !== undefined) {
         if (typeof knownTool.minimal === 'function') {
             minimal = knownTool.minimal({ tool: toolForRendering, metadata: props.metadata, messages: props.messages });
@@ -261,7 +277,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                     </View>
                     {tool.state === 'running' && !isWaitingForPermission && (
                         <View style={styles.elapsedContainer}>
-                            <ElapsedView from={tool.createdAt} />
+                            <ElapsedView from={toolForRendering.startedAt ?? toolForRendering.createdAt} />
                         </View>
                     )}
                     {statusIcon}

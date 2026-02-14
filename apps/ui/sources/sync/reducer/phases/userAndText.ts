@@ -1,8 +1,10 @@
 import type { TracedMessage } from '../reducerTracer';
 import type { UsageData } from '../../typesRaw';
 import type { ReducerState } from '../reducer';
+import type { ToolCall } from '../../domains/messages/messageTypes';
 import { normalizeThinkingChunk, unwrapThinkingText, wrapThinkingText } from '../helpers/thinkingText';
-import { cancelRunningApprovedTools } from '../helpers/cancelRunningApprovedTools';
+import { cancelRunningTools } from '../helpers/cancelRunningApprovedTools';
+import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 
 export function runUserAndTextPhase(params: Readonly<{
     state: ReducerState;
@@ -12,6 +14,7 @@ export function runUserAndTextPhase(params: Readonly<{
     processUsageData: (state: ReducerState, usage: UsageData, timestamp: number) => void;
     lastMainThinkingMessageId: string | null;
     lastMainThinkingCreatedAt: number | null;
+    isPermissionRequestToolCall: (toolId: string, input: unknown) => boolean;
 }>): Readonly<{
     lastMainThinkingMessageId: string | null;
     lastMainThinkingCreatedAt: number | null;
@@ -23,6 +26,7 @@ export function runUserAndTextPhase(params: Readonly<{
         allocateId,
         processUsageData,
     } = params;
+    const isPermissionRequestToolCall = params.isPermissionRequestToolCall;
 
     let lastMainThinkingMessageId = params.lastMainThinkingMessageId;
     let lastMainThinkingCreatedAt = params.lastMainThinkingCreatedAt;
@@ -82,7 +86,7 @@ export function runUserAndTextPhase(params: Readonly<{
             for (let c of msg.content) {
                 if (c.type === 'text') {
                     if (c.text.trim() === 'No response requested.') {
-                        cancelRunningApprovedTools({
+                        cancelRunningTools({
                             state,
                             changed,
                             completedAt: msg.createdAt,
@@ -144,6 +148,83 @@ export function runUserAndTextPhase(params: Readonly<{
                         lastMainThinkingMessageId = mid;
                         lastMainThinkingCreatedAt = msg.createdAt;
                     }
+                } else if (c.type === 'tool-call') {
+                    // Tool calls are handled in Phase 2 for permission matching and late-arriving updates,
+                    // but we still materialize the tool-call message here to preserve the intra-message
+                    // timeline ordering (thinking → tool → thinking).
+                    lastMainThinkingMessageId = null;
+                    lastMainThinkingCreatedAt = null;
+
+                    const existingMessageId = state.toolIdToMessageId.get(c.id);
+                    if (existingMessageId) {
+                        continue;
+                    }
+
+                    const permission = state.permissions.get(c.id);
+                    const toolInput = permission ? permission.arguments : c.input;
+                    const toolCreatedAt = permission ? permission.createdAt : msg.createdAt;
+                    const pendingPermission = !permission && isPermissionRequestToolCall(c.id, toolInput);
+
+                    let toolCall: ToolCall = {
+                        id: c.id,
+                        name: c.name,
+                        state: 'running' as const,
+                        input: toolInput,
+                        createdAt: toolCreatedAt,
+                        startedAt: pendingPermission ? null : msg.createdAt,
+                        completedAt: null,
+                        description: c.description,
+                        result: undefined,
+                    };
+
+                    if (permission) {
+                        toolCall.permission = {
+                            id: c.id,
+                            status: permission.status,
+                            reason: permission.reason,
+                            mode: permission.mode,
+                            allowedTools: permission.allowedTools ?? permission.allowTools,
+                            decision: permission.decision,
+                        };
+
+                        if (permission.status !== 'approved') {
+                            toolCall.state = 'error';
+                            toolCall.completedAt = permission.completedAt || msg.createdAt;
+                            if (permission.reason) {
+                                toolCall.result = { error: permission.reason };
+                            }
+                        }
+                    } else if (pendingPermission) {
+                        toolCall.permission = { id: c.id, status: 'pending' };
+                        state.permissions.set(c.id, {
+                            tool: c.name,
+                            arguments: toolInput,
+                            createdAt: msg.createdAt,
+                            status: 'pending',
+                        });
+                    }
+
+                    let mid = allocateId();
+                    state.messages.set(mid, {
+                        id: mid,
+                        realID: msg.id,
+                        role: 'agent',
+                        createdAt: msg.createdAt,
+                        text: null,
+                        isThinking: false,
+                        tool: toolCall,
+                        event: null,
+                        meta: msg.meta,
+                    });
+                    state.toolIdToMessageId.set(c.id, mid);
+                    changed.add(mid);
+
+                    drainAndApplyOrphanToolResultsToMessage({
+                        state,
+                        toolUseId: c.id,
+                        messageId: mid,
+                        changed,
+                    });
                 }
             }
         }

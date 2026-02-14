@@ -2,6 +2,7 @@ import type { TracedMessage } from '../reducerTracer';
 import type { ToolCall } from '../../domains/messages/messageTypes';
 import { compareToolCalls } from '../../../utils/tools/toolComparison';
 import type { ReducerState } from '../reducer';
+import { drainAndApplyOrphanToolResultsToMessage } from '../helpers/drainAndApplyOrphanToolResultsToMessage';
 
 export function runToolCallsPhase(params: Readonly<{
     state: ReducerState;
@@ -46,7 +47,6 @@ export function runToolCallsPhase(params: Readonly<{
                                 message.tool.id = c.id;
                             }
                             message.tool.description = c.description;
-                            message.tool.startedAt = msg.createdAt;
 
                             // Merge updated tool input (ACP providers can send late-arriving titles, locations,
                             // or rawInput in subsequent tool_call updates).
@@ -88,9 +88,14 @@ export function runToolCallsPhase(params: Readonly<{
                                 }
                             }
 
-                            if (!message.tool.permission && isPermissionRequestToolCall(c.id, message.tool.input)) {
-                                message.tool.permission = { id: c.id, status: 'pending' };
+                            const isPendingPermissionRequest = isPermissionRequestToolCall(c.id, message.tool.input);
+                            if (isPendingPermissionRequest) {
+                                if (!message.tool.permission) {
+                                    message.tool.permission = { id: c.id, status: 'pending' };
+                                }
                                 message.tool.startedAt = null;
+                            } else {
+                                message.tool.startedAt = msg.createdAt;
                             }
 
                             // If permission was approved and shown as completed (no tool), now it's running
@@ -182,6 +187,13 @@ export function runToolCallsPhase(params: Readonly<{
 
                         state.toolIdToMessageId.set(c.id, mid);
                         changed.add(mid);
+
+                        drainAndApplyOrphanToolResultsToMessage({
+                            state,
+                            toolUseId: c.id,
+                            messageId: mid,
+                            changed,
+                        });
 
                         // Track TodoWrite tool inputs
                         if (toolCall.name === 'TodoWrite' && toolCall.state === 'running' && toolCall.input?.todos) {

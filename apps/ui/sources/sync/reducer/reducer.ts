@@ -126,6 +126,8 @@ import { runModeSwitchEventsPhase } from "./phases/modeSwitchEvents";
 import { equalOptionalStringArrays } from "./helpers/arrays";
 import { coerceStreamingToolResultChunk, mergeExistingStdStreamsIntoFinalResultIfMissing, mergeStreamingChunkIntoResult } from "./helpers/streamingToolResult";
 import { normalizeThinkingChunk, unwrapThinkingText, wrapThinkingText } from "./helpers/thinkingText";
+import { cancelRunningTools } from "./helpers/cancelRunningApprovedTools";
+import type { OrphanToolResultBucket } from "./helpers/orphanToolResults";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -198,6 +200,7 @@ export type ReducerState = {
     toolIdToMessageId: Map<string, string>; // toolId/permissionId -> messageId (since they're the same now)
     sidechainToolIdToMessageId: Map<string, string>; // toolId -> sidechain messageId (for dual tracking)
     permissions: Map<string, StoredPermission>; // Store permission details by ID for quick lookup
+    orphanToolResults: Map<string, OrphanToolResultBucket>; // Buffer tool results that arrive before their tool call
     localIds: Map<string, string>;
     messageIds: Map<string, string>; // originalId -> internalId
     messages: Map<string, ReducerMessage>;
@@ -227,6 +230,7 @@ export function createReducer(): ReducerState {
         toolIdToMessageId: new Map(),
         sidechainToolIdToMessageId: new Map(),
         permissions: new Map(),
+        orphanToolResults: new Map(),
         messages: new Map(),
         localIds: new Map(),
         messageIds: new Map(),
@@ -275,16 +279,25 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         for (const m of chain) sidechainMessageIds.add(m.id);
     }
 
-    let lastMainThinkingMessageId: string | null = null;
-    let lastMainThinkingCreatedAt: number | null = null;
+    // Only allow streaming thinking chunks to append when the *latest* main-timeline message
+    // is itself a thinking message. This preserves a correct tool/thinking interleaving timeline.
+    let lastMainMessageId: string | null = null;
+    let lastMainMessageCreatedAt: number | null = null;
     for (const [mid, m] of state.messages) {
         if (sidechainMessageIds.has(mid)) continue;
-        if (m.role !== 'agent' || !m.isThinking || typeof m.text !== 'string') continue;
-        if (lastMainThinkingCreatedAt === null || m.createdAt > lastMainThinkingCreatedAt) {
-            lastMainThinkingMessageId = mid;
-            lastMainThinkingCreatedAt = m.createdAt;
+        if (lastMainMessageCreatedAt === null || m.createdAt > lastMainMessageCreatedAt || (m.createdAt === lastMainMessageCreatedAt)) {
+            lastMainMessageId = mid;
+            lastMainMessageCreatedAt = m.createdAt;
         }
     }
+
+    const lastMain = lastMainMessageId ? state.messages.get(lastMainMessageId) : null;
+    const lastMainThinkingMessageId =
+        lastMain && lastMain.role === 'agent' && lastMain.isThinking && typeof lastMain.text === 'string'
+            ? lastMainMessageId
+            : null;
+    const lastMainThinkingCreatedAt =
+        lastMainThinkingMessageId && lastMainMessageCreatedAt !== null ? lastMainMessageCreatedAt : null;
 
 
     // First, trace all messages to identify sidechains
@@ -305,6 +318,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
 	    nonSidechainMessages = conversion.nonSidechainMessages;
 	    const incomingToolIds = conversion.incomingToolIds;
 	    hasReadyEvent = hasReadyEvent || conversion.hasReadyEvent;
+	    const readyAt = conversion.readyAt;
 
 	    runAgentStatePermissionsPhase({
 	        state,
@@ -315,7 +329,7 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
 	        enableLogging: ENABLE_LOGGING,
 	    });
 
-	    const phase1 = runUserAndTextPhase({
+	    runUserAndTextPhase({
 	        state,
 	        nonSidechainMessages,
 	        changed,
@@ -323,9 +337,10 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
 	        processUsageData,
 	        lastMainThinkingMessageId,
 	        lastMainThinkingCreatedAt,
+	        isPermissionRequestToolCall,
 	    });
-	    lastMainThinkingMessageId = phase1.lastMainThinkingMessageId;
-	    lastMainThinkingCreatedAt = phase1.lastMainThinkingCreatedAt;
+	    // Phase 1 controls the only thinking merge state within this reducer call; no other phase should append.
+	    // We intentionally do not carry this across phases, because tool calls/results can interleave.
 
 	    runToolCallsPhase({
 	        state,
@@ -359,6 +374,19 @@ export function reducer(state: ReducerState, messages: NormalizedMessage[], agen
         changed,
         allocateId,
     });
+
+    // Ready events are filtered out of the transcript, but they are a strong signal that
+    // the current turn is done. If any tools are still marked running (often due to
+    // dropped tool-result events during reconnects/aborts), cancel them to avoid
+    // endless spinners and incorrect elapsed timers.
+    if (typeof readyAt === 'number' && Number.isFinite(readyAt)) {
+        cancelRunningTools({
+            state,
+            changed,
+            completedAt: readyAt,
+            reason: 'Request interrupted',
+        });
+    }
 
     //
     // Collect changed messages (only root-level messages)

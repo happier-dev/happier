@@ -18,6 +18,7 @@ export function runMessageToEventConversion({
   nonSidechainMessages: NormalizedMessage[];
   incomingToolIds: Set<string>;
   hasReadyEvent: boolean;
+  readyAt: number | null;
 } {
   //
   // Phase 0.5: Message-to-Event Conversion
@@ -31,6 +32,7 @@ export function runMessageToEventConversion({
   const messagesToProcess: NormalizedMessage[] = [];
   const convertedEvents: { message: NormalizedMessage; event: AgentEvent }[] = [];
   let hasReadyEvent = false;
+  let readyAt: number | null = null;
 
   for (const msg of nonSidechainMessages) {
     // Check if we've already processed this message
@@ -46,6 +48,7 @@ export function runMessageToEventConversion({
       // Mark as processed to prevent duplication but don't add to messages
       state.messageIds.set(msg.id, msg.id);
       hasReadyEvent = true;
+      readyAt = readyAt === null ? msg.createdAt : Math.max(readyAt, msg.createdAt);
       continue;
     }
 
@@ -137,6 +140,5 @@ export function runMessageToEventConversion({
     }
   }
 
-  return { nonSidechainMessages, incomingToolIds, hasReadyEvent };
+  return { nonSidechainMessages, incomingToolIds, hasReadyEvent, readyAt };
 }
-
