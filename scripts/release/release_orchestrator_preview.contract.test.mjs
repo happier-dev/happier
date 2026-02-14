@@ -82,6 +82,17 @@ test('release-npm is compatible with npm trusted publishing (OIDC)', async () =>
   assert.doesNotMatch(raw, /NPM_TOKEN is required for npm publish\./);
 });
 
+test('release-npm installs Sapling before cli integration tests', async () => {
+  const raw = await loadWorkflow('release-npm.yml');
+
+  assert.match(
+    raw,
+    /- name: Install Sapling[\s\S]*?if:\s*inputs\.publish_cli && inputs\.run_tests[\s\S]*?bash scripts\/ci\/install_sapling_ubuntu22\.sh/,
+    'release-npm should install Sapling in the cli test lane before running sapling integration tests',
+  );
+  assert.match(raw, /- name: Run cli tests[\s\S]*?yarn --cwd apps\/cli test:integration/);
+});
+
 test('release-npm derives unique preview prerelease versions from base versions', async () => {
   const raw = await loadWorkflow('release-npm.yml');
 
