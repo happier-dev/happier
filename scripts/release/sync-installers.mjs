@@ -5,14 +5,16 @@ import { join, resolve } from 'node:path';
 
 import { parseArgs, resolveRepoRoot } from './lib/binary_release.mjs';
 
-export const INSTALLER_FILENAMES = [
-  'install.sh',
-  'install-server',
-  'install-server.sh',
-  'self-host.sh',
-  'install.ps1',
-  'happier-release.pub',
+export const INSTALLER_PUBLISH_SPECS = [
+  { source: 'install.sh', targets: ['install.sh', 'install'] },
+  { source: 'install-server', targets: ['install-server'] },
+  { source: 'install-server.sh', targets: ['install-server.sh'] },
+  { source: 'self-host.sh', targets: ['self-host.sh', 'self-host'] },
+  { source: 'install.ps1', targets: ['install.ps1'] },
+  { source: 'happier-release.pub', targets: ['happier-release.pub'] },
 ];
+
+export const INSTALLER_FILENAMES = INSTALLER_PUBLISH_SPECS.flatMap((spec) => spec.targets);
 
 async function readFileOrNull(path) {
   try {
@@ -53,29 +55,32 @@ export async function syncInstallers({
   await mkdir(targetDir, { recursive: true });
 
   const desiredTargetMode = 0o644;
-  for (const name of INSTALLER_FILENAMES) {
-    const sourcePath = join(sourceDir, name);
-    const targetPath = join(targetDir, name);
+  for (const spec of INSTALLER_PUBLISH_SPECS) {
+    const sourcePath = join(sourceDir, spec.source);
     const sourceContents = await readFileOrNull(sourcePath);
     if (!sourceContents) {
       throw new Error(`[release] missing installer source file: ${sourcePath}`);
     }
-    const targetContents = await readFileOrNull(targetPath);
-    checked.push(name);
 
-    const contentInSync = buffersEqual(sourceContents, targetContents);
-    if (!contentInSync) {
-      changed.push(name);
-      if (!checkOnly) {
-        await writeFile(targetPath, sourceContents);
+    for (const name of spec.targets) {
+      const targetPath = join(targetDir, name);
+      const targetContents = await readFileOrNull(targetPath);
+      checked.push(name);
+
+      const contentInSync = buffersEqual(sourceContents, targetContents);
+      if (!contentInSync) {
+        changed.push(name);
+        if (!checkOnly) {
+          await writeFile(targetPath, sourceContents);
+        }
+        continue;
       }
-      continue;
-    }
 
-    // Even when the file contents match, normalize the published copy's mode so
-    // "executable bit" drift doesn't create noisy diffs in the repo.
-    if (!checkOnly && (await fileExists(targetPath))) {
-      await chmod(targetPath, desiredTargetMode);
+      // Even when the file contents match, normalize the published copy's mode so
+      // "executable bit" drift doesn't create noisy diffs in the repo.
+      if (!checkOnly && (await fileExists(targetPath))) {
+        await chmod(targetPath, desiredTargetMode);
+      }
     }
   }
 

@@ -1,9 +1,9 @@
-$ErrorActionPreference = "Stop"
+param(
+  [ValidateSet("stable", "preview")]
+  [string] $Channel = $(if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "stable" })
+)
 
-$Channel = if ($env:HAPPIER_CHANNEL) { $env:HAPPIER_CHANNEL } else { "stable" }
-if ($Channel -ne "stable" -and $Channel -ne "preview") {
-  throw "Invalid HAPPIER_CHANNEL '$Channel'. Expected stable or preview."
-}
+$ErrorActionPreference = "Stop"
 
 $Repo = if ($env:HAPPIER_GITHUB_REPO) { $env:HAPPIER_GITHUB_REPO } else { "happier-dev/happier" }
 $Token = if ($env:HAPPIER_GITHUB_TOKEN) { $env:HAPPIER_GITHUB_TOKEN } elseif ($env:GITHUB_TOKEN) { $env:GITHUB_TOKEN } else { "" }
@@ -74,7 +74,16 @@ function Resolve-MinisignPublicKey {
 }
 
 $tag = if ($Channel -eq "preview") { "cli-preview" } else { "cli-stable" }
-$release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
+Write-Host "Fetching $tag release metadata..."
+try {
+  $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/tags/$tag" -Headers $GitHubHeaders
+}
+catch {
+  if ($Channel -eq "stable") {
+    throw "No stable releases found for Happier CLI."
+  }
+  throw "No preview releases found for Happier CLI."
+}
 $asset = Get-AssetByPattern -Release $release -Pattern '^happier-v.*-windows-x64\.tar\.gz$'
 $checksumsAsset = Get-AssetByPattern -Release $release -Pattern '^checksums-happier-v.*\.txt$'
 $signatureAsset = Get-AssetByPattern -Release $release -Pattern '^checksums-happier-v.*\.txt\.minisig$'

@@ -18,6 +18,66 @@ MINISIGN_PUBKEY="${HAPPIER_MINISIGN_PUBKEY:-${DEFAULT_MINISIGN_PUBKEY}}"
 MINISIGN_PUBKEY_URL="${HAPPIER_MINISIGN_PUBKEY_URL:-https://happier.dev/happier-release.pub}"
 MINISIGN_BIN="minisign"
 
+usage() {
+  cat <<'EOF'
+Usage:
+  curl -fsSL https://happier.dev/install | bash
+
+Preview channel:
+  curl -fsSL https://happier.dev/install | bash -s -- --channel preview
+
+Options:
+  --channel <stable|preview>
+  --stable
+  --preview
+  -h, --help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --channel)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "Missing value for --channel" >&2
+        usage >&2
+        exit 1
+      fi
+      CHANNEL="${2}"
+      shift 2
+      ;;
+    --channel=*)
+      CHANNEL="${1#*=}"
+      if [[ -z "${CHANNEL}" ]]; then
+        echo "Missing value for --channel" >&2
+        usage >&2
+        exit 1
+      fi
+      shift 1
+      ;;
+    --stable)
+      CHANNEL="stable"
+      shift 1
+      ;;
+    --preview)
+      CHANNEL="preview"
+      shift 1
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift 1
+      break
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
 if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
   echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
   exit 1
@@ -231,12 +291,25 @@ fi
 
 API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
 echo "Fetching ${TAG} release metadata..."
-auth_headers=()
-if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  auth_headers+=("-H" "Authorization: Bearer ${GITHUB_TOKEN}")
-  auth_headers+=("-H" "X-GitHub-Api-Version: 2022-11-28")
+curl_auth() {
+  if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    curl -fsSL \
+      -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "$@"
+    return
+  fi
+ curl -fsSL "$@"
+}
+
+if ! RELEASE_JSON="$(curl_auth "${API_URL}")"; then
+  if [[ "${CHANNEL}" == "stable" ]]; then
+    echo "No stable releases found for ${INSTALL_NAME}." >&2
+  else
+    echo "No preview releases found for ${INSTALL_NAME}." >&2
+  fi
+  exit 1
 fi
-RELEASE_JSON="$(curl -fsSL "${auth_headers[@]}" "${API_URL}")"
 
 ASSET_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${ASSET_REGEX}")"
 CHECKSUMS_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "${CHECKSUMS_REGEX}")"
@@ -254,8 +327,8 @@ trap cleanup EXIT
 
 ARCHIVE_PATH="${TMP_DIR}/happier.tar.gz"
 CHECKSUMS_PATH="${TMP_DIR}/checksums.txt"
-curl -fsSL "${auth_headers[@]}" "${ASSET_URL}" -o "${ARCHIVE_PATH}"
-curl -fsSL "${auth_headers[@]}" "${CHECKSUMS_URL}" -o "${CHECKSUMS_PATH}"
+curl_auth -o "${ARCHIVE_PATH}" "${ASSET_URL}"
+curl_auth -o "${CHECKSUMS_PATH}" "${CHECKSUMS_URL}"
 
 EXPECTED_SHA="$(grep -E "  $(basename "${ASSET_URL}")$" "${CHECKSUMS_PATH}" | awk '{print $1}' | head -n 1)"
 if [[ -z "${EXPECTED_SHA}" ]]; then
@@ -278,7 +351,7 @@ fi
 PUBKEY_PATH="${TMP_DIR}/minisign.pub"
 SIG_PATH="${TMP_DIR}/checksums.txt.minisig"
 write_minisign_public_key "${PUBKEY_PATH}"
-curl -fsSL "${auth_headers[@]}" "${SIG_URL}" -o "${SIG_PATH}"
+curl_auth -o "${SIG_PATH}" "${SIG_URL}"
 "${MINISIGN_BIN}" -Vm "${CHECKSUMS_PATH}" -x "${SIG_PATH}" -p "${PUBKEY_PATH}" >/dev/null
 echo "Signature verified."
 

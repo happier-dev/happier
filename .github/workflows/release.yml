@@ -859,6 +859,7 @@ jobs:
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'dev' }}
       allow_cross_promote: false
       bump: none
+      publish_runtime_release: ${{ inputs.environment != 'production' }}
       run_tests: false
 
   deploy_website:

@@ -16,10 +16,30 @@ MINISIGN_PUBKEY="${HAPPIER_MINISIGN_PUBKEY:-${DEFAULT_MINISIGN_PUBKEY}}"
 MINISIGN_PUBKEY_URL="${HAPPIER_MINISIGN_PUBKEY_URL:-https://happier.dev/happier-release.pub}"
 MINISIGN_BIN="minisign"
 
-if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
-  echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
-  exit 1
-fi
+usage() {
+  cat <<'EOF'
+Usage:
+  curl -fsSL https://happier.dev/self-host | bash
+
+Preview channel:
+  curl -fsSL https://happier.dev/self-host | bash -s -- --channel preview
+
+Options:
+  --channel <stable|preview>
+  --stable
+  --preview
+  -h, --help
+EOF
+}
+
+for arg in "$@"; do
+  case "${arg}" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+  esac
+done
 
 if [[ "$(uname -s)" != "Linux" ]]; then
   echo "Happier Self-Host guided installer currently supports Linux only." >&2
@@ -37,6 +57,51 @@ if [[ "${EUID}" -ne 0 ]]; then
     exec sudo -E bash "$0" "$@"
   fi
   echo "Please run as root (or install sudo)." >&2
+  exit 1
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --channel)
+      if [[ $# -lt 2 || -z "${2:-}" ]]; then
+        echo "Missing value for --channel" >&2
+        usage >&2
+        exit 1
+      fi
+      CHANNEL="${2}"
+      shift 2
+      ;;
+    --channel=*)
+      CHANNEL="${1#*=}"
+      if [[ -z "${CHANNEL}" ]]; then
+        echo "Missing value for --channel" >&2
+        usage >&2
+        exit 1
+      fi
+      shift 1
+      ;;
+    --stable)
+      CHANNEL="stable"
+      shift 1
+      ;;
+    --preview)
+      CHANNEL="preview"
+      shift 1
+      ;;
+    --)
+      shift 1
+      break
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "preview" ]]; then
+  echo "Invalid HAPPIER_CHANNEL='${CHANNEL}'. Expected stable or preview." >&2
   exit 1
 fi
 
@@ -147,7 +212,14 @@ write_minisign_public_key() {
 
 API_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
 echo "Fetching ${TAG} release metadata..."
-RELEASE_JSON="$(curl -fsSL "${API_URL}")"
+if ! RELEASE_JSON="$(curl -fsSL "${API_URL}")"; then
+  if [[ "${CHANNEL}" == "stable" ]]; then
+    echo "No stable releases found for Happier Stack." >&2
+  else
+    echo "No preview releases found for Happier Stack." >&2
+  fi
+  exit 1
+fi
 ASSET_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^hstack-v.*-linux-${ARCH}\\.tar\\.gz$")"
 CHECKSUMS_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^checksums-hstack-v.*\\.txt$")"
 SIG_URL="$(json_lookup_asset_url "${RELEASE_JSON}" "^checksums-hstack-v.*\\.txt\\.minisig$")"

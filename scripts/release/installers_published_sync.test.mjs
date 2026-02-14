@@ -8,19 +8,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const sourceRoot = join(repoRoot, 'scripts', 'release', 'installers');
 const websiteRoot = join(repoRoot, 'apps', 'website', 'public');
-const installerFiles = [
-  'install.sh',
-  'install-server',
-  'install-server.sh',
-  'self-host.sh',
-  'install.ps1',
-  'happier-release.pub',
-];
+const { INSTALLER_PUBLISH_SPECS } = await import('./sync-installers.mjs');
 
 test('published website installers stay in sync with release-owned installer sources', async () => {
-  for (const file of installerFiles) {
-    const source = await readFile(join(sourceRoot, file), 'utf8');
-    const published = await readFile(join(websiteRoot, file), 'utf8');
-    assert.equal(published, source, `${file} is out of sync with scripts/release/installers`);
+  for (const spec of INSTALLER_PUBLISH_SPECS) {
+    const source = await readFile(join(sourceRoot, spec.source), 'utf8');
+    for (const target of spec.targets) {
+      const published = await readFile(join(websiteRoot, target), 'utf8');
+      assert.equal(published, source, `${target} is out of sync with scripts/release/installers/${spec.source}`);
+    }
   }
 });

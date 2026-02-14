@@ -4,7 +4,24 @@ import { chmod, mkdtemp, mkdir, readFile, stat, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { INSTALLER_FILENAMES, syncInstallers } from './sync-installers.mjs';
+import { INSTALLER_PUBLISH_SPECS, syncInstallers } from './sync-installers.mjs';
+
+function publishedTargets() {
+  return INSTALLER_PUBLISH_SPECS.flatMap((spec) => spec.targets);
+}
+
+function sourceFiles() {
+  return Array.from(new Set(INSTALLER_PUBLISH_SPECS.map((spec) => spec.source)));
+}
+
+function expectedFixtureForTarget(target) {
+  for (const spec of INSTALLER_PUBLISH_SPECS) {
+    if (spec.targets.includes(target)) {
+      return `fixture:${spec.source}\n`;
+    }
+  }
+  throw new Error(`unknown installer target: ${target}`);
+}
 
 test('syncInstallers copies all installer artifacts to website public directory', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-sync-'));
@@ -13,7 +30,7 @@ test('syncInstallers copies all installer artifacts to website public directory'
   await mkdir(sourceDir, { recursive: true });
   await mkdir(targetDir, { recursive: true });
 
-  for (const name of INSTALLER_FILENAMES) {
+  for (const name of sourceFiles()) {
     await writeFile(join(sourceDir, name), `fixture:${name}\n`, 'utf8');
   }
 
@@ -24,10 +41,11 @@ test('syncInstallers copies all installer artifacts to website public directory'
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.changed.length, INSTALLER_FILENAMES.length);
-  for (const name of INSTALLER_FILENAMES) {
+  const targets = publishedTargets();
+  assert.equal(result.changed.length, targets.length);
+  for (const name of targets) {
     const actual = await readFile(join(targetDir, name), 'utf8');
-    assert.equal(actual, `fixture:${name}\n`);
+    assert.equal(actual, expectedFixtureForTarget(name));
   }
 });
 
@@ -43,12 +61,14 @@ test('syncInstallers normalizes target file modes even when contents are already
   await mkdir(sourceDir, { recursive: true });
   await mkdir(targetDir, { recursive: true });
 
-  for (const file of INSTALLER_FILENAMES) {
+  for (const file of sourceFiles()) {
     await writeFile(join(sourceDir, file), `fixture:${file}\n`, 'utf8');
-    await writeFile(join(targetDir, file), `fixture:${file}\n`, 'utf8');
+  }
+  for (const target of publishedTargets()) {
+    await writeFile(join(targetDir, target), expectedFixtureForTarget(target), 'utf8');
   }
 
-  const name = INSTALLER_FILENAMES[0];
+  const name = publishedTargets()[0];
   const targetPath = join(targetDir, name);
 
   // Simulate executable-bit drift in published artifacts.
@@ -74,8 +94,10 @@ test('syncInstallers checkOnly mode fails when published file drifts', async () 
   await mkdir(sourceDir, { recursive: true });
   await mkdir(targetDir, { recursive: true });
 
-  for (const name of INSTALLER_FILENAMES) {
-    await writeFile(join(sourceDir, name), `expected:${name}\n`, 'utf8');
+  for (const file of sourceFiles()) {
+    await writeFile(join(sourceDir, file), `expected:${file}\n`, 'utf8');
+  }
+  for (const name of publishedTargets()) {
     await writeFile(join(targetDir, name), `stale:${name}\n`, 'utf8');
   }
 
