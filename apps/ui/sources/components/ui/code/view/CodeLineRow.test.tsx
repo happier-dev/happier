@@ -116,6 +116,46 @@ describe('CodeLineRow', () => {
         expect(flattened.some((s: any) => s?.color === '#b00')).toBe(true);
     });
 
+    it('falls back to simple tokenization while advanced tokens are unavailable', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <CodeLineRow
+                    line={{
+                        id: '1',
+                        sourceIndex: 0,
+                        kind: 'context',
+                        oldLine: 1,
+                        newLine: 1,
+                        renderPrefixText: '',
+                        renderCodeText: 'const x = \"hi\";',
+                        renderIsHeaderLine: false,
+                        selectable: false,
+                    }}
+                    selected={false}
+                    // No advancedTokens prop passed yet (e.g. while Shiki is loading / failed).
+                    syntaxHighlighting={{
+                        mode: 'advanced',
+                        language: 'typescript',
+                        maxLineLength: 10_000,
+                    }}
+                />,
+            );
+        });
+
+        const keywordNodes = tree!.root.findAll((node) => {
+            if ((node as any).type !== 'Text') return false;
+            return (node.children || []).join('') === 'const';
+        });
+
+        expect(keywordNodes.length).toBeGreaterThan(0);
+        const keywordStyle = keywordNodes[0]!.props.style;
+        const flattened = Array.isArray(keywordStyle) ? keywordStyle.flat() : [keywordStyle];
+        expect(flattened.some((s: any) => s?.color === '#b00')).toBe(true);
+    });
+
     it('shows a close-comment affordance when the inline comment is active', async () => {
         const { CodeLineRow } = await import('./CodeLineRow');
 

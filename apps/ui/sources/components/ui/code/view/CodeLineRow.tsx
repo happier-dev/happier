@@ -62,7 +62,9 @@ export function CodeLineRow(props: {
         const language = props.syntaxHighlighting?.language ?? null;
         const maxLineLength = props.syntaxHighlighting?.maxLineLength ?? 0;
 
-        if (mode !== 'simple') return null;
+        // When advanced highlighting is requested but advanced tokens are not yet available (e.g. Shiki loading/failure),
+        // fall back to the simple tokenizer so users still get some highlighting.
+        if (mode !== 'simple' && mode !== 'advanced') return null;
         if (!language) return null;
         if (line.renderIsHeaderLine) return null;
         if ((line.renderCodeText ?? '').length > maxLineLength) return null;
