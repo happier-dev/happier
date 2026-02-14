@@ -72,7 +72,10 @@ const ListFooter = React.memo((props: {
     bottomNotice?: ChatListBottomNotice | null;
     onRequestSwitchToRemote?: () => void;
 }) => {
-    const session = useSession(props.sessionId)!;
+    const session = useSession(props.sessionId);
+    if (!session) {
+        return null;
+    }
     const permissionsInUiWhileLocal = getPermissionsInUiWhileLocal(session.agentState?.capabilities);
     return (
         <ChatFooter
