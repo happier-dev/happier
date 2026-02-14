@@ -93,6 +93,17 @@ async function main() {
         targetPath: join('generated', `${provider}-client`),
       });
     }
+    if (deduped.includes('sqlite')) {
+      const migrationsPath = join(repoRoot, 'apps', 'server', 'prisma', 'sqlite', 'migrations');
+      const migrationsInfo = await stat(migrationsPath).catch(() => null);
+      if (!migrationsInfo?.isDirectory()) {
+        throw new Error(`[release] missing sqlite migrations directory: ${migrationsPath}`);
+      }
+      entries.push({
+        sourcePath: migrationsPath,
+        targetPath: join('prisma', 'sqlite', 'migrations'),
+      });
+    }
     return entries;
   };
   const additionalStageEntries = await parseGeneratedProviderDirs();

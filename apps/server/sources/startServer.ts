@@ -11,6 +11,7 @@ import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres, initDbPglite, in
 import { log } from '@/utils/logging/log';
 import { awaitShutdown, onShutdown } from '@/utils/process/shutdown';
 import { applyLightDefaultEnv, ensureHandyMasterSecret } from '@/flavors/light/env';
+import { applySqliteMigrationsIfNeeded } from '@/flavors/light/sqliteMigrations';
 import {
     getFilesBackendFromEnv,
     getSocketAdapterFromEnv,
@@ -82,6 +83,10 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
                 throw new Error('HAPPIER_SERVER_LIGHT_DATA_DIR (or HAPPY_SERVER_LIGHT_DATA_DIR) must be set when using sqlite without DATABASE_URL');
             }
             process.env.DATABASE_URL = pathToFileURL(join(dataDir, 'happier-server-light.sqlite')).href;
+        }
+        const dataDir = (process.env.HAPPY_SERVER_LIGHT_DATA_DIR ?? process.env.HAPPIER_SERVER_LIGHT_DATA_DIR ?? '').trim();
+        if (dataDir) {
+            await applySqliteMigrationsIfNeeded({ env: process.env, dataDir });
         }
         await initDbSqlite();
     } else {
