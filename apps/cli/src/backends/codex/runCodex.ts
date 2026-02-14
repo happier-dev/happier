@@ -338,13 +338,24 @@ export async function runCodex(opts: {
         experimentalCodexResumeEnabled,
     });
 
+    const localControlEnabled = experimentalCodexAcpEnabled || experimentalCodexResumeEnabled;
     let mode: 'local' | 'remote' = resolveCodexStartingMode({
         explicitStartingMode: opts.startingMode,
         startedBy: startedByForLocalControl,
         hasTtyForLocal,
-        localControlEnabled: experimentalCodexAcpEnabled || experimentalCodexResumeEnabled,
+        localControlEnabled,
     });
     let localModeFallbackMessage: string | null = null;
+
+    logger.debug('[codex] Starting mode resolved', {
+        explicitStartingMode: opts.startingMode ?? null,
+        startedBy: startedByForLocalControl,
+        hasTtyForLocal,
+        experimentalCodexAcpEnabled,
+        experimentalCodexResumeEnabled,
+        localControlEnabled,
+        mode,
+    });
 
     if (mode === 'local') {
         const support = await resolveLocalControlSupport({ includeAcpProbe: true });
