@@ -43,6 +43,26 @@ describe('getProjectPath', () => {
     expect(result).toBe(join('/test/home/.claude', 'projects', '-var-www-my-site-com-public'));
   });
 
+  it('should replace all non [a-zA-Z0-9-] characters to match Claude Code parity', () => {
+    process.env.CLAUDE_CONFIG_DIR = '/test/home/.claude';
+
+    expect(getProjectPath('/Users/alice/@work/repo')).toBe(
+      join('/test/home/.claude', 'projects', '-Users-alice--work-repo'),
+    );
+
+    expect(getProjectPath('/Users/alice/projects/repo (v2) [x]')).toBe(
+      join('/test/home/.claude', 'projects', '-Users-alice-projects-repo--v2---x-'),
+    );
+
+    expect(getProjectPath('/Users/alice/projects/repo+test#1')).toBe(
+      join('/test/home/.claude', 'projects', '-Users-alice-projects-repo-test-1'),
+    );
+
+    expect(getProjectPath('/Users/alice/~ scratch/repo')).toBe(
+      join('/test/home/.claude', 'projects', '-Users-alice---scratch-repo'),
+    );
+  });
+
   it('should handle relative paths by resolving them first', () => {
     process.env.CLAUDE_CONFIG_DIR = '/test/home/.claude';
     const workingDir = './my-project';
