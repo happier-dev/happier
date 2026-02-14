@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { CodeLine } from '@/components/ui/code/model/codeLineTypes';
+import type { BundledLanguage, BundledTheme, HighlighterGeneric, TokensResult } from 'shiki';
 
 import { CodeLinesViewCore, type CodeLinesViewProps } from './CodeLinesViewCore';
 import { resolveEffectiveSyntaxHighlighting } from './resolveEffectiveSyntaxHighlighting';
@@ -10,11 +11,22 @@ import { resolveEffectiveSyntaxHighlighting } from './resolveEffectiveSyntaxHigh
 type ShikiInlineToken = Readonly<{ text: string; color: string }>;
 type ShikiToken = Readonly<{ content: string; color?: string }>;
 type ShikiCodeToTokensResult = Readonly<{ tokens: readonly (readonly ShikiToken[])[]; fg?: string }>;
-type ShikiHighlighter = Readonly<{
-    codeToTokens: (code: string, params: { lang: string; theme: string }) => ShikiCodeToTokensResult;
-}>;
+type ShikiHighlighter = HighlighterGeneric<BundledLanguage, BundledTheme>;
 
 const shikiHighlighterCache = new Map<string, Promise<ShikiHighlighter>>();
+
+function resolveShikiLanguageId(language: string): BundledLanguage {
+    const lower = language.trim().toLowerCase();
+    const mapped = lower === 'typescript'
+        ? 'ts'
+        : lower === 'javascript'
+            ? 'js'
+            : lower === 'py'
+                ? 'python'
+                : lower;
+    // Shiki is tolerant at runtime; typing is stricter than our resolver. Fallback to "text" if missing.
+    return (mapped || 'text') as unknown as BundledLanguage;
+}
 
 async function getShikiHighlighter(params: { theme: string; language: string }): Promise<ShikiHighlighter> {
     const key = `${params.theme}:${params.language}`;
@@ -23,14 +35,7 @@ async function getShikiHighlighter(params: { theme: string; language: string }):
 
     const promise = (async () => {
         const shiki = await import('shiki');
-        // Shiki expects language ids like "ts"; our file-language resolver returns human names.
-        const lang = params.language.toLowerCase() === 'typescript'
-            ? 'ts'
-            : params.language.toLowerCase() === 'javascript'
-                ? 'js'
-                : params.language.toLowerCase() === 'py'
-                    ? 'python'
-                    : params.language.toLowerCase();
+        const lang = resolveShikiLanguageId(params.language);
 
         return shiki.createHighlighter({
             themes: [params.theme],
@@ -67,7 +72,8 @@ export function CodeLinesView(props: CodeLinesViewProps) {
             setAdvancedTokensByIndex(null);
             return;
         }
-        if (!effectiveSyntaxHighlighting.language) {
+        const syntaxLanguage = effectiveSyntaxHighlighting.language;
+        if (!syntaxLanguage) {
             setAdvancedTokensByIndex(null);
             return;
         }
@@ -80,24 +86,17 @@ export function CodeLinesView(props: CodeLinesViewProps) {
             try {
                 const highlighter = await getShikiHighlighter({
                     theme: shikiTheme,
-                    language: effectiveSyntaxHighlighting.language,
+                    language: syntaxLanguage,
                 });
 
-                const lang = effectiveSyntaxHighlighting.language.toLowerCase() === 'typescript'
-                    ? 'ts'
-                    : effectiveSyntaxHighlighting.language.toLowerCase() === 'javascript'
-                        ? 'js'
-                        : effectiveSyntaxHighlighting.language.toLowerCase() === 'py'
-                            ? 'python'
-                            : effectiveSyntaxHighlighting.language.toLowerCase();
-
+                const lang = resolveShikiLanguageId(syntaxLanguage);
                 const res = highlighter.codeToTokens(inputLines.join('\n'), {
                     lang,
-                    theme: shikiTheme,
-                });
+                    theme: shikiTheme as unknown as BundledTheme,
+                }) as unknown as TokensResult;
 
-                const fg = typeof res.fg === 'string' ? res.fg : '#000';
-                const tokens2d = res.tokens ?? [];
+                const fg = typeof (res as any).fg === 'string' ? (res as any).fg : '#000';
+                const tokens2d = ((res as any).tokens ?? []) as ShikiCodeToTokensResult['tokens'];
 
                 const out: Array<readonly ShikiInlineToken[] | null> = [];
                 for (let i = 0; i < props.lines.length; i++) {
@@ -146,4 +145,3 @@ export function CodeLinesView(props: CodeLinesViewProps) {
         />
     );
 }
-

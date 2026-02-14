@@ -269,15 +269,15 @@ describe('CodeLinesView', () => {
     it('falls back to setting scrollTop on the nearest scroll container when the target element is not mounted', async () => {
         vi.useFakeTimers();
 
-        const scrollContainer: any = {
-            scrollTop: 0,
-            clientHeight: 100,
-            scrollHeight: 1000,
-            parentElement: null,
-            scrollTo: vi.fn(function ({ top }: { top: number }) {
-                this.scrollTop = top;
-            }),
-        };
+            const scrollContainer: any = {
+                scrollTop: 0,
+                clientHeight: 100,
+                scrollHeight: 1000,
+                parentElement: null,
+                scrollTo: vi.fn(({ top }: { top: number }) => {
+                    scrollContainer.scrollTop = top;
+                }),
+            };
 
         const anchorElement: any = {
             id: 'a',

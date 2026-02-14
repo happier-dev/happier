@@ -34,7 +34,7 @@ vi.mock('./CodeLineRow', () => ({
     },
 }));
 
-const createHighlighterSpy = vi.fn(async () => ({
+const createHighlighterSpy = vi.fn(async (..._args: any[]) => ({
     codeToTokens: () => ({
         fg: '#000',
         tokens: [[{ content: 'const', color: '#f00' }]],
@@ -96,14 +96,16 @@ describe('CodeLinesView (web)', () => {
             );
         });
 
-        await flushReactAsyncWork();
-
-        expect(createHighlighterSpy).toHaveBeenCalled();
-
         // The row will be rendered at least once; after async tokenization, it should receive advancedTokens.
-        const calls = rowSpy.mock.calls.map((c) => c[0]);
-        expect(calls.length).toBeGreaterThan(0);
-        const hasAdvanced = calls.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0);
+        let hasAdvanced = false;
+        for (let i = 0; i < 10; i++) {
+            // eslint-disable-next-line no-await-in-loop
+            await flushReactAsyncWork();
+            const calls = rowSpy.mock.calls.map((c) => c[0]);
+            if (calls.length === 0) continue;
+            hasAdvanced = calls.some((p: any) => Array.isArray(p.advancedTokens) && p.advancedTokens.length > 0);
+            if (hasAdvanced) break;
+        }
         expect(hasAdvanced).toBe(true);
 
         // Keep tree referenced to avoid act warnings about unmounted trees.
