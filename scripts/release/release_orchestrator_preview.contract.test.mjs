@@ -87,6 +87,11 @@ test('release-npm installs Sapling before cli integration tests', async () => {
 
   assert.match(
     raw,
+    /release:[\s\S]*?runs-on:\s*ubuntu-22\.04/,
+    'release-npm should pin ubuntu-22.04 because the Sapling installer is Ubuntu 22.04 specific',
+  );
+  assert.match(
+    raw,
     /- name: Install Sapling[\s\S]*?if:\s*inputs\.publish_cli && inputs\.run_tests[\s\S]*?bash scripts\/ci\/install_sapling_ubuntu22\.sh/,
     'release-npm should install Sapling in the cli test lane before running sapling integration tests',
   );
