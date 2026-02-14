@@ -76,40 +76,45 @@ export function CodeLineRow(props: {
     }, [theme.colors, textColor]);
 
     return (
-        <Pressable
-            onPress={onPress}
-            onLongPress={onLongPress}
-            onHoverIn={isWeb && onPressAddComment ? () => setIsHovered(true) : undefined}
-            onHoverOut={isWeb && onPressAddComment ? () => setIsHovered(false) : undefined}
-            style={[styles(theme).row, { backgroundColor }]}
-        >
-            <CodeGutter line={line} showLineNumbers={showLineNumbers} />
-            <View style={styles(theme).codeContainer}>
-                {showPrefix && line.renderPrefixText ? (
+        <View style={[styles(theme).row, { backgroundColor }]}>
+            <Pressable
+                style={styles(theme).rowPressable}
+                onPress={onPress}
+                onLongPress={onLongPress}
+                onHoverIn={isWeb && onPressAddComment ? () => setIsHovered(true) : undefined}
+                onHoverOut={isWeb && onPressAddComment ? () => setIsHovered(false) : undefined}
+            >
+                <CodeGutter line={line} showLineNumbers={showLineNumbers} />
+                <View style={styles(theme).codeContainer}>
+                    {showPrefix && line.renderPrefixText ? (
+                        <Text
+                            numberOfLines={wrapLines ? undefined : 1}
+                            ellipsizeMode={wrapLines ? undefined : 'clip'}
+                            style={[styles(theme).codeText, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
+                        >
+                            {line.renderPrefixText}
+                        </Text>
+                    ) : null}
                     <Text
                         numberOfLines={wrapLines ? undefined : 1}
                         ellipsizeMode={wrapLines ? undefined : 'clip'}
                         style={[styles(theme).codeText, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
                     >
-                        {line.renderPrefixText}
+                        {tokens
+                            ? tokens.map((token, idx) => (
+                                <Text key={idx} style={{ color: renderTokenColor(token.type) }}>
+                                    {token.text}
+                                </Text>
+                            ))
+                            : (line.renderCodeText || ' ')}
                     </Text>
-                ) : null}
-                <Text
-                    numberOfLines={wrapLines ? undefined : 1}
-                    ellipsizeMode={wrapLines ? undefined : 'clip'}
-                    style={[styles(theme).codeText, { color: textColor }, !wrapLines ? styles(theme).noWrap : null]}
-                >
-                    {tokens
-                        ? tokens.map((token, idx) => (
-                            <Text key={idx} style={{ color: renderTokenColor(token.type) }}>
-                                {token.text}
-                            </Text>
-                        ))
-                        : (line.renderCodeText || ' ')}
-                </Text>
-            </View>
+                </View>
+            </Pressable>
+
             {isWeb && onPressAddComment && isHovered && !line.renderIsHeaderLine ? (
                 <Pressable
+                    onHoverIn={() => setIsHovered(true)}
+                    onHoverOut={() => setIsHovered(false)}
                     onPress={() => onPressAddComment(line)}
                     hitSlop={8}
                     style={styles(theme).commentButton}
@@ -123,7 +128,7 @@ export function CodeLineRow(props: {
                     />
                 </Pressable>
             ) : null}
-        </Pressable>
+        </View>
     );
 }
 
@@ -132,6 +137,11 @@ const styles = (theme: any) => StyleSheet.create({
         flexDirection: 'row',
         paddingVertical: 1,
         paddingHorizontal: 8,
+        alignItems: 'flex-start',
+    },
+    rowPressable: {
+        flexDirection: 'row',
+        flex: 1,
         alignItems: 'flex-start',
     },
     codeContainer: {

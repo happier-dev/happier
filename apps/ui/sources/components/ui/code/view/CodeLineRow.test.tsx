@@ -149,4 +149,48 @@ describe('CodeLineRow', () => {
         const buttons = tree!.root.findAll((node) => (node as any).type === 'Pressable' && (node as any).props.accessibilityRole === 'button');
         expect(buttons.map((b) => b.props.accessibilityLabel)).toContain('Close comment');
     });
+
+    it('invokes onPressAddComment when pressing the comment affordance', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+
+        const onPressAddComment = vi.fn();
+
+        const line = {
+            id: '1',
+            sourceIndex: 0,
+            kind: 'context' as const,
+            oldLine: 1,
+            newLine: 1,
+            renderPrefixText: '',
+            renderCodeText: 'const x = 1;',
+            renderIsHeaderLine: false,
+            selectable: true,
+        };
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <CodeLineRow
+                    line={line}
+                    selected={false}
+                    onPressAddComment={onPressAddComment}
+                />,
+            );
+        });
+
+        const rowPressable = tree!.root.findAllByType('Pressable' as any)[0]!;
+        act(() => {
+            rowPressable.props.onHoverIn();
+        });
+
+        const buttons = tree!.root.findAll((node) => (node as any).type === 'Pressable' && (node as any).props.accessibilityRole === 'button');
+        expect(buttons).toHaveLength(1);
+
+        act(() => {
+            buttons[0]!.props.onPress();
+        });
+
+        expect(onPressAddComment).toHaveBeenCalledTimes(1);
+        expect(onPressAddComment).toHaveBeenCalledWith(line);
+    });
 });
