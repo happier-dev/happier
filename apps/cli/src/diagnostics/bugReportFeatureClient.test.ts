@@ -33,6 +33,77 @@ describe('fetchBugReportsFeatureFromServer', () => {
                 uploadTimeoutMs: 9000,
                 contextWindowMs: 45000,
               },
+              automations: {
+                enabled: false,
+                existingSessionTarget: false,
+              },
+              sharing: {
+                session: { enabled: true },
+                public: { enabled: true },
+                contentKeys: { enabled: true },
+                pendingQueueV2: { enabled: false },
+              },
+              voice: {
+                enabled: false,
+                configured: false,
+                provider: null,
+              },
+              social: {
+                friends: {
+                  enabled: true,
+                  allowUsername: false,
+                  requiredIdentityProviderId: null,
+                },
+              },
+              oauth: {
+                providers: {
+                  github: {
+                    enabled: true,
+                    configured: true,
+                  },
+                },
+              },
+              auth: {
+                signup: {
+                  methods: [{ id: 'anonymous', enabled: true }],
+                },
+                login: {
+                  requiredProviders: [],
+                },
+                recovery: {
+                  providerReset: {
+                    enabled: false,
+                    providers: [],
+                  },
+                },
+                ui: {
+                  autoRedirect: {
+                    enabled: false,
+                    providerId: null,
+                  },
+                  recoveryKeyReminder: {
+                    enabled: true,
+                  },
+                },
+                providers: {
+                  github: {
+                    enabled: true,
+                    configured: true,
+                    restrictions: {
+                      usersAllowlist: false,
+                      orgsAllowlist: false,
+                      orgMatch: 'any',
+                    },
+                    offboarding: {
+                      enabled: false,
+                      intervalSeconds: 600,
+                      mode: 'per-request-cache',
+                      source: 'oauth_user_token',
+                    },
+                  },
+                },
+                misconfig: [],
+              },
             },
           }),
           {
