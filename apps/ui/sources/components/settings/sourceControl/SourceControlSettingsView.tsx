@@ -175,10 +175,12 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [scmDefaultDiffModeByBackend, setScmDefaultDiffModeByBackend] = useSettingMutable('scmDefaultDiffModeByBackend');
     const [filesDiffSyntaxHighlightingMode, setFilesDiffSyntaxHighlightingMode] = useSettingMutable('filesDiffSyntaxHighlightingMode');
     const [filesChangedFilesRowDensity, setFilesChangedFilesRowDensity] = useSettingMutable('filesChangedFilesRowDensity');
+    const [scmIncludeCoAuthoredBy, setScmIncludeCoAuthoredBy] = useSettingMutable('scmIncludeCoAuthoredBy');
     const backendPlugins = scmBackendSettingsRegistry.listPlugins();
     const currentDiffModeByBackend = scmDefaultDiffModeByBackend ?? {};
     const effectiveFilesDiffSyntaxHighlightingMode = (filesDiffSyntaxHighlightingMode ?? 'off') as 'off' | 'simple' | 'advanced';
     const effectiveFilesChangedFilesRowDensity = filesChangedFilesRowDensity === 'compact' ? 'compact' : 'comfortable';
+    const effectiveIncludeCoAuthoredBy = scmIncludeCoAuthoredBy === true;
 
     const renderIcon = React.useCallback((iconName: IoniconName) => (
         <Ionicons name={iconName} size={29} color={theme.colors.textSecondary} />
@@ -252,6 +254,20 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         showChevron={false}
                     />
                 ))}
+            </ItemGroup>
+
+            <ItemGroup
+                title="Commit attribution"
+                footer="When enabled, AI-generated commit messages will include Co-Authored-By credits."
+            >
+                <Item
+                    title="Include Co-Authored-By"
+                    subtitle={effectiveIncludeCoAuthoredBy ? 'Enabled' : 'Disabled'}
+                    icon={renderIcon('people-outline')}
+                    rightElement={effectiveIncludeCoAuthoredBy ? <Ionicons name="checkmark" size={20} color="#007AFF" /> : null}
+                    onPress={() => setScmIncludeCoAuthoredBy(!effectiveIncludeCoAuthoredBy)}
+                    showChevron={false}
+                />
             </ItemGroup>
 
             <ItemGroup

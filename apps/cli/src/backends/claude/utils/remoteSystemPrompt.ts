@@ -6,7 +6,7 @@ const DISABLE_TODOS_APPEND = trimIdent(`
 `);
 
 export function getClaudeRemoteSystemPrompt(args: { disableTodos: boolean }): string {
-    if (!args.disableTodos) return systemPrompt;
-    return `${systemPrompt}\n\n${DISABLE_TODOS_APPEND}`;
+    const base = systemPrompt();
+    if (!args.disableTodos) return base;
+    return `${base}\n\n${DISABLE_TODOS_APPEND}`;
 }
-

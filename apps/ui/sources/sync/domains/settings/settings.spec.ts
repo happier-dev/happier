@@ -169,6 +169,7 @@ describe('settings', () => {
             expect((parsed as any).scmDefaultDiffModeByBackend).toEqual({});
             expect((parsed as any).scmReviewMaxFiles).toBe(25);
             expect((parsed as any).scmReviewMaxChangedLines).toBe(2000);
+            expect((parsed as any).scmIncludeCoAuthoredBy).toBe(false);
         });
 
         it('defaults permission mode apply timing to immediate', () => {

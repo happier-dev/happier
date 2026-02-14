@@ -7,6 +7,7 @@ import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import type { CommandContext } from '@/cli/commandRegistry';
 import { fetchAccountSettingsSnapshot } from '@/settings/accountSettingsClient';
 import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
+import { applyAccountSettingsToProcessEnv } from '@/settings/applyAccountSettingsToProcessEnv';
 import { applyProviderSpawnExtrasToProcessEnv } from '@/settings/providerSettings';
 import {
   applyDeprecatedSessionStartAliasesForAgent,
@@ -52,6 +53,7 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
         agentId: params.agentIdForAccountSettings,
         settings: snapshot.settings,
       });
+      applyAccountSettingsToProcessEnv({ settings: snapshot.settings });
       applyProviderSpawnExtrasToProcessEnv({
         agentId: params.agentIdForAccountSettings,
         settings: snapshot.settings,

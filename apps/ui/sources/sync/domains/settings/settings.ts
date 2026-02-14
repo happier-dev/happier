@@ -293,6 +293,7 @@ const SettingsSchemaBase = z.object({
     scmDefaultDiffModeByBackend: z.record(z.string(), z.enum(SCM_DIFF_MODE_OPTIONS)).default({}).describe('Preferred default diff mode by backend id'),
     scmReviewMaxFiles: z.number().describe('Maximum file count for unified SCM diff review mode before falling back to single-file review'),
     scmReviewMaxChangedLines: z.number().describe('Maximum total changed lines for unified SCM diff review mode before falling back to single-file review'),
+    scmIncludeCoAuthoredBy: z.boolean().describe('Whether to include Co-Authored-By credits in generated commit messages'),
 
     // Files/diff rendering options (flat; used by CodeLines surfaces).
     filesDiffSyntaxHighlightingMode: z.enum(['off', 'simple', 'advanced']).describe('Diff/file syntax highlighting mode'),
@@ -466,6 +467,7 @@ export const settingsDefaults: Settings = {
     scmDefaultDiffModeByBackend: {},
     scmReviewMaxFiles: 25,
     scmReviewMaxChangedLines: 2000,
+    scmIncludeCoAuthoredBy: false,
 
     filesDiffSyntaxHighlightingMode: 'simple',
     filesChangedFilesRowDensity: 'comfortable',

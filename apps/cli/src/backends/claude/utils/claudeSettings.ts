@@ -57,13 +57,15 @@ export function readClaudeSettings(): ClaudeSettings | null {
  * @returns true if Co-Authored-By should be included, false otherwise
  */
 export function shouldIncludeCoAuthoredBy(): boolean {
+  const envRaw = typeof process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY === 'string'
+    ? process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY.trim()
+    : '';
+  if (envRaw === '1') return true;
+  if (envRaw === '0') return false;
+
   const settings = readClaudeSettings();
-  
-  // If no settings file or includeCoAuthoredBy is not explicitly set,
-  // default to true to maintain backward compatibility
-  if (!settings || settings.includeCoAuthoredBy === undefined) {
-    return true;
-  }
-  
-  return settings.includeCoAuthoredBy;
+
+  // Opt-in: only enable attribution when explicitly configured.
+  if (!settings) return false;
+  return settings.includeCoAuthoredBy === true;
 }

@@ -11,6 +11,7 @@ import { logger } from '@/ui/logger';
 import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { fetchAccountSettingsSnapshot } from '@/settings/accountSettingsClient';
 import { assertBackendEnabledByAccountSettings } from '@/settings/backendEnabled';
+import { applyAccountSettingsToProcessEnv } from '@/settings/applyAccountSettingsToProcessEnv';
 import { resolveProviderOutgoingMessageMetaExtras } from '@/settings/providerSettings';
 import packageJson from '../../../../package.json';
 
@@ -223,7 +224,13 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
 
   if (showVersion) {
     console.log(`happier version: ${packageJson.version}`);
-    // Don't exit - continue to pass --version to Claude Code
+    const versionOnlyInvocation =
+      strippedArgs.length > 0 &&
+      strippedArgs.every((arg) => arg === '-v' || arg === '--version');
+    if (versionOnlyInvocation) {
+      return;
+    }
+    // For mixed invocations, continue and pass --version through to Claude Code.
   }
 
   const { credentials } = await authAndSetupMachineIfNeeded();
@@ -231,6 +238,7 @@ ${chalk.bold.cyan('Claude Code Options (from `claude --help`):')}
   try {
     const snapshot = await fetchAccountSettingsSnapshot({ credentials });
     assertBackendEnabledByAccountSettings({ agentId: 'claude', settings: snapshot.settings });
+    applyAccountSettingsToProcessEnv({ settings: snapshot.settings });
     options.claudeRemoteMetaDefaults = resolveProviderOutgoingMessageMetaExtras({
       agentId: 'claude',
       settings: snapshot.settings,

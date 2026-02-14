@@ -13,6 +13,7 @@ import { readClaudeSettings, shouldIncludeCoAuthoredBy } from './claudeSettings'
 describe('Claude Settings', () => {
   let testClaudeDir: string;
   let originalClaudeConfigDir: string | undefined;
+  let originalIncludeCoauthoredByEnv: string | undefined;
 
   beforeEach(() => {
     // Create a temporary directory for testing
@@ -22,6 +23,8 @@ describe('Claude Settings', () => {
     // Set environment variable to point to test directory
     originalClaudeConfigDir = process.env.CLAUDE_CONFIG_DIR;
     process.env.CLAUDE_CONFIG_DIR = testClaudeDir;
+    originalIncludeCoauthoredByEnv = process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
+    delete process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
   });
 
   afterEach(() => {
@@ -30,6 +33,11 @@ describe('Claude Settings', () => {
       process.env.CLAUDE_CONFIG_DIR = originalClaudeConfigDir;
     } else {
       delete process.env.CLAUDE_CONFIG_DIR;
+    }
+    if (originalIncludeCoauthoredByEnv !== undefined) {
+      process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = originalIncludeCoauthoredByEnv;
+    } else {
+      delete process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY;
     }
     
     // Clean up test directory
@@ -63,17 +71,17 @@ describe('Claude Settings', () => {
   });
 
   describe('shouldIncludeCoAuthoredBy', () => {
-    it('returns true when no settings file exists (default behavior)', () => {
+    it('returns false when no settings file exists (opt-in default)', () => {
       const result = shouldIncludeCoAuthoredBy();
-      expect(result).toBe(true);
+      expect(result).toBe(false);
     });
 
-    it('returns true when includeCoAuthoredBy is not set (default behavior)', () => {
+    it('returns false when includeCoAuthoredBy is not set (opt-in default)', () => {
       const settingsPath = join(testClaudeDir, 'settings.json');
       writeFileSync(settingsPath, JSON.stringify({ otherSetting: 'value' }));
 
       const result = shouldIncludeCoAuthoredBy();
-      expect(result).toBe(true);
+      expect(result).toBe(false);
     });
 
     it('returns false when includeCoAuthoredBy is explicitly set to false', () => {
@@ -90,6 +98,22 @@ describe('Claude Settings', () => {
 
       const result = shouldIncludeCoAuthoredBy();
       expect(result).toBe(true);
+    });
+
+    it('honors HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY=1 even when file says false', () => {
+      const settingsPath = join(testClaudeDir, 'settings.json');
+      writeFileSync(settingsPath, JSON.stringify({ includeCoAuthoredBy: false }));
+      process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = '1';
+
+      expect(shouldIncludeCoAuthoredBy()).toBe(true);
+    });
+
+    it('honors HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY=0 even when file says true', () => {
+      const settingsPath = join(testClaudeDir, 'settings.json');
+      writeFileSync(settingsPath, JSON.stringify({ includeCoAuthoredBy: true }));
+      process.env.HAPPIER_SCM_INCLUDE_CO_AUTHORED_BY = '0';
+
+      expect(shouldIncludeCoAuthoredBy()).toBe(false);
     });
   });
 });
