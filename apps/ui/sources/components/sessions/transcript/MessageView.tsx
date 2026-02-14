@@ -93,7 +93,8 @@ function UserTextBlock(props: {
   sessionId: string;
   canSendMessages: boolean;
 }) {
-  const [isHovered, setIsHovered] = React.useState(false);
+  const [isMessageHovered, setIsMessageHovered] = React.useState(false);
+  const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
   const isDiscarded = isCommittedMessageDiscarded(props.metadata, props.message.localId);
@@ -111,14 +112,14 @@ function UserTextBlock(props: {
     })();
   }, [props.canSendMessages, props.sessionId]);
 
-  const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isHovered });
+  const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
 
   return (
     <View style={styles.userMessageContainer}>
       <Pressable
         style={styles.userMessageWrapper}
-        onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
-        onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
+        onHoverIn={isWeb ? () => setIsMessageHovered(true) : undefined}
+        onHoverOut={isWeb ? () => setIsMessageHovered(false) : undefined}
       >
         <View style={[styles.userMessageBubble, isDiscarded && styles.userMessageBubbleDiscarded]}>
           <StructuredMessageBlock
@@ -150,7 +151,11 @@ function UserTextBlock(props: {
             !showCopyButton && styles.messageActionContainerHidden,
           ]}
         >
-          <CopyMessageButton markdown={props.message.displayText || props.message.text} />
+          <CopyMessageButton
+            markdown={props.message.displayText || props.message.text}
+            onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
+            onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+          />
         </View>
       </Pressable>
     </View>
@@ -162,7 +167,8 @@ function AgentTextBlock(props: {
   sessionId: string;
   canSendMessages: boolean;
 }) {
-  const [isHovered, setIsHovered] = React.useState(false);
+  const [isMessageHovered, setIsMessageHovered] = React.useState(false);
+  const [isCopyButtonHovered, setIsCopyButtonHovered] = React.useState(false);
   const isWeb = Platform.OS === 'web';
   const router = useRouter();
   const showThinkingMessages = useFeatureEnabled('messages.thinkingVisibility');
@@ -185,13 +191,13 @@ function AgentTextBlock(props: {
     return null;
   }
 
-  const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isHovered });
+  const showCopyButton = shouldShowMessageCopyButton({ platformOS: Platform.OS, isMessageHovered, isCopyButtonHovered });
 
   return (
     <Pressable
       style={styles.agentMessageContainer}
-      onHoverIn={isWeb ? () => setIsHovered(true) : undefined}
-      onHoverOut={isWeb ? () => setIsHovered(false) : undefined}
+      onHoverIn={isWeb ? () => setIsMessageHovered(true) : undefined}
+      onHoverOut={isWeb ? () => setIsMessageHovered(false) : undefined}
     >
       <StructuredMessageBlock
         message={props.message as any}
@@ -215,13 +221,17 @@ function AgentTextBlock(props: {
           !showCopyButton && styles.messageActionContainerHidden,
         ]}
       >
-        <CopyMessageButton markdown={props.message.text} />
+        <CopyMessageButton
+          markdown={props.message.text}
+          onHoverIn={isWeb ? () => setIsCopyButtonHovered(true) : undefined}
+          onHoverOut={isWeb ? () => setIsCopyButtonHovered(false) : undefined}
+        />
       </View>
     </Pressable>
   );
 }
 
-function CopyMessageButton(props: { markdown: string }) {
+function CopyMessageButton(props: { markdown: string; onHoverIn?: () => void; onHoverOut?: () => void }) {
   const { theme } = useUnistyles();
   const [copied, setCopied] = React.useState(false);
   const resetTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -263,6 +273,8 @@ function CopyMessageButton(props: { markdown: string }) {
   return (
     <Pressable
       onPress={handlePress}
+      onHoverIn={props.onHoverIn}
+      onHoverOut={props.onHoverOut}
       hitSlop={8}
       accessibilityRole="button"
       accessibilityLabel={t('common.copy')}
