@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { View, Text, ViewStyle } from 'react-native';
-import { calculateUnifiedDiff, DiffToken } from '@/components/diff/calculateDiff';
+import { calculateUnifiedDiff, DiffToken } from '@/components/ui/code/model/diff/calculateDiff';
 import { Typography } from '@/constants/Typography';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -239,4 +239,3 @@ export const DiffView: React.FC<DiffViewProps> = ({
     //     </View>
     // );
 };
-
