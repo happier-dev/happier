@@ -1,9 +1,11 @@
 import * as React from 'react';
-import { View, Platform, Text } from 'react-native';
+import { View, Platform, Text, Pressable } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import * as Clipboard from 'expo-clipboard';
+import { Modal } from '@/modal';
 import { sanitizeRenderedMermaidSvg } from './mermaidSanitize';
 
 // Style for Web platform
@@ -23,6 +25,15 @@ export const MermaidRenderer = React.memo((props: {
     const { theme } = useUnistyles();
     const [dimensions, setDimensions] = React.useState({ width: 0, height: 200 });
     const [svgContent, setSvgContent] = React.useState<string | null>(null);
+
+    const copyMermaid = React.useCallback(async () => {
+        try {
+            await Clipboard.setStringAsync(props.content);
+            Modal.alert(t('common.success'), t('markdown.codeCopied'), [{ text: t('common.ok'), style: 'cancel' }]);
+        } catch (error) {
+            Modal.alert(t('common.error'), t('markdown.copyFailed'), [{ text: t('common.ok'), style: 'cancel' }]);
+        }
+    }, [props.content]);
 
     const onLayout = React.useCallback((event: any) => {
         const { width } = event.nativeEvent.layout;
@@ -96,10 +107,17 @@ export const MermaidRenderer = React.memo((props: {
 
         return (
             <View style={style.container}>
-                <WebDiv
-                    style={webStyle}
-                    dangerouslySetInnerHTML={{ __html: svgContent }}
-                />
+                <View style={style.diagramWrapper}>
+                    <View style={style.copyButtonWrapper}>
+                        <Pressable testID="mermaid-copy-button" style={style.copyButton} onPress={copyMermaid}>
+                            <Text style={style.copyButtonText}>{t('common.copy')}</Text>
+                        </Pressable>
+                    </View>
+                    <WebDiv
+                        style={webStyle}
+                        dangerouslySetInnerHTML={{ __html: svgContent }}
+                    />
+                </View>
             </View>
         );
     }
@@ -151,6 +169,11 @@ export const MermaidRenderer = React.memo((props: {
     return (
         <View style={style.container} onLayout={onLayout}>
             <View style={[style.innerContainer, { height: dimensions.height }]}>
+                <View style={style.copyButtonWrapper}>
+                    <Pressable testID="mermaid-copy-button" style={style.copyButton} onPress={copyMermaid}>
+                        <Text style={style.copyButtonText}>{t('common.copy')}</Text>
+                    </Pressable>
+                </View>
                 <WebView
                     source={{ html }}
                     style={{ flex: 1 }}
@@ -175,10 +198,32 @@ const style = StyleSheet.create((theme) => ({
         marginVertical: 8,
         width: '100%',
     },
+    diagramWrapper: {
+        position: 'relative',
+        width: '100%',
+    },
     innerContainer: {
         width: '100%',
         backgroundColor: theme.colors.surfaceHighest,
         borderRadius: 8,
+    },
+    copyButtonWrapper: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        zIndex: 10,
+        opacity: 0.9,
+    },
+    copyButton: {
+        backgroundColor: theme.colors.surfaceHigh,
+        borderRadius: 6,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+    },
+    copyButtonText: {
+        ...Typography.default('semiBold'),
+        color: theme.colors.text,
+        fontSize: 12,
     },
     loadingContainer: {
         justifyContent: 'center',
