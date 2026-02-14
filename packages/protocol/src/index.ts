@@ -309,6 +309,19 @@ export {
 } from './executionRuns.js';
 
 export {
+  DaemonExecutionRunMarkerSchema,
+  DaemonExecutionRunProcessInfoSchema,
+  DaemonExecutionRunEntrySchema,
+  DaemonExecutionRunListRequestSchema,
+  DaemonExecutionRunListResponseSchema,
+  type DaemonExecutionRunMarker,
+  type DaemonExecutionRunProcessInfo,
+  type DaemonExecutionRunEntry,
+  type DaemonExecutionRunListRequest,
+  type DaemonExecutionRunListResponse,
+} from './daemonExecutionRuns.js';
+
+export {
   EphemeralTaskKindSchema,
   EphemeralTaskPermissionModeSchema,
   EphemeralTaskRunRequestSchema,

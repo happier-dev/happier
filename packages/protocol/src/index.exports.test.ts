@@ -25,10 +25,18 @@ describe('protocol package root exports', () => {
         expect(parsed.t).toBe('automation-upsert');
     });
 
-    it('exports voice mediator streaming schemas', () => {
-        expect(typeof protocol.VoiceMediatorTurnStreamStartRequestSchema).toBe('object');
-        expect(typeof protocol.VoiceMediatorTurnStreamReadResponseSchema).toBe('object');
-        expect(typeof protocol.VoiceMediatorTurnStreamCancelRequestSchema).toBe('object');
+    it('exports voice agent streaming schemas', () => {
+        expect(typeof protocol.VoiceAgentTurnStreamStartRequestSchema).toBe('object');
+        expect(typeof protocol.VoiceAgentTurnStreamReadResponseSchema).toBe('object');
+        expect(typeof protocol.VoiceAgentTurnStreamCancelRequestSchema).toBe('object');
+    });
+
+    it('exports review triage overlay schemas for execution-run consumers', () => {
+        expect(typeof (protocol as any).ReviewTriageOverlaySchema?.safeParse).toBe('function');
+        const parsed = (protocol as any).ReviewTriageOverlaySchema.safeParse({
+            findings: [{ id: 'f1', status: 'accept' }],
+        });
+        expect(parsed.success).toBe(true);
     });
 
     it('exports bug report routing defaults', () => {
@@ -47,5 +55,10 @@ describe('protocol package root exports', () => {
             repo: '',
         });
         expect(url).toContain('https://github.com/happier-dev/happier/issues/new?');
+    });
+
+    it('exports daemon execution run schemas for machine-wide run listing', () => {
+        expect(typeof (protocol as any).DaemonExecutionRunMarkerSchema?.safeParse).toBe('function');
+        expect(typeof (protocol as any).DaemonExecutionRunListResponseSchema?.safeParse).toBe('function');
     });
 });
