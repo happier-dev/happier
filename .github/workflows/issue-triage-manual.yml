@@ -16,6 +16,7 @@ on:
 jobs:
   triage-manual:
     runs-on: ubuntu-latest
+    environment: issue-triage
     permissions:
       contents: read
       issues: write
@@ -39,7 +40,8 @@ jobs:
         id: maintainer_tools_token
         uses: actions/create-github-app-token@v1
         with:
-          app-id: ${{ vars.MAINTAINER_TOOLS_APP_ID }}
+          # Prefer a repo variable, but allow a repo secret as a fallback.
+          app-id: ${{ vars.MAINTAINER_TOOLS_APP_ID || secrets.MAINTAINER_TOOLS_APP_ID }}
           private-key: ${{ secrets.MAINTAINER_TOOLS_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: |
