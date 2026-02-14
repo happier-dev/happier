@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { createRpcCallError } from '../runtime/rpcErrors';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
-const sessionRPCSpy = vi.fn(async () => ({ success: true, hash: 'h1' }));
+type SessionWriteFileRpcResponse = Readonly<{ success: boolean; hash: string }> | null;
+const sessionRPCSpy = vi.fn(
+    async (_sessionId: string, _method: string, _payload: unknown): Promise<SessionWriteFileRpcResponse> => ({
+        success: true,
+        hash: 'h1',
+    }),
+);
 
 vi.mock('../api/session/apiSocket', () => ({
     apiSocket: {

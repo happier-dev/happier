@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const sessionRPCSpy = vi.fn(async () => ({ success: true, content: 'aGVsbG8=' }));
+type SessionReadFileRpcResponse = Readonly<{ success: boolean; content: string }> | null;
+const sessionRPCSpy = vi.fn(
+    async (_sessionId: string, _method: string, _payload: unknown): Promise<SessionReadFileRpcResponse> => ({
+        success: true,
+        content: 'aGVsbG8=',
+    }),
+);
 
 vi.mock('../api/session/apiSocket', () => ({
     apiSocket: {
@@ -19,4 +25,3 @@ describe('sessionReadFile', () => {
         expect(typeof res.error).toBe('string');
     });
 });
-

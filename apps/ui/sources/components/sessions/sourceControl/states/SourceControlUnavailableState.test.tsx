@@ -44,14 +44,12 @@ describe('SourceControlUnavailableState', () => {
   it('hides method-unavailable details (non-actionable)', async () => {
     const { SourceControlUnavailableState } = await import('./SourceControlUnavailableState');
 
-    let tree: renderer.ReactTestRenderer | null = null;
+    let tree: ReturnType<typeof renderer.create> | undefined;
     await act(async () => {
       tree = renderer.create(
         <SourceControlUnavailableState details={RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE} />
       );
     });
-
-    expect(tree).not.toBeNull();
     const textNodes = tree!.root.findAllByType('Text');
     expect(textNodes.some((node) => node.props.children === RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE)).toBe(false);
   });
@@ -59,14 +57,12 @@ describe('SourceControlUnavailableState', () => {
   it('hides method-not-found details (non-actionable)', async () => {
     const { SourceControlUnavailableState } = await import('./SourceControlUnavailableState');
 
-    let tree: renderer.ReactTestRenderer | null = null;
+    let tree: ReturnType<typeof renderer.create> | undefined;
     await act(async () => {
       tree = renderer.create(
         <SourceControlUnavailableState details={RPC_ERROR_MESSAGES.METHOD_NOT_FOUND} />
       );
     });
-
-    expect(tree).not.toBeNull();
     const textNodes = tree!.root.findAllByType('Text');
     expect(textNodes.some((node) => node.props.children === RPC_ERROR_MESSAGES.METHOD_NOT_FOUND)).toBe(false);
   });
