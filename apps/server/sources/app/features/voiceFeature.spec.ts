@@ -6,8 +6,8 @@ describe('features/voiceFeature', () => {
   it('treats ELEVENLABS_AGENT_ID as configured in non-production', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'development',
-      VOICE_ENABLED: 'true',
-      VOICE_REQUIRE_SUBSCRIPTION: 'false',
+      HAPPIER_FEATURE_VOICE__ENABLED: 'true',
+      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
       ELEVENLABS_API_KEY: 'k',
       ELEVENLABS_AGENT_ID: 'agent_dev',
     } as any);
@@ -20,8 +20,8 @@ describe('features/voiceFeature', () => {
   it('allows using ELEVENLABS_AGENT_ID_PROD as a fallback in non-production', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'development',
-      VOICE_ENABLED: 'true',
-      VOICE_REQUIRE_SUBSCRIPTION: 'false',
+      HAPPIER_FEATURE_VOICE__ENABLED: 'true',
+      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
       ELEVENLABS_API_KEY: 'k',
       ELEVENLABS_AGENT_ID_PROD: 'agent_prod',
     } as any);
@@ -33,8 +33,8 @@ describe('features/voiceFeature', () => {
   it('prefers ELEVENLABS_AGENT_ID_PROD in production when set', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'production',
-      VOICE_ENABLED: 'true',
-      VOICE_REQUIRE_SUBSCRIPTION: 'false',
+      HAPPIER_FEATURE_VOICE__ENABLED: 'true',
+      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
       ELEVENLABS_API_KEY: 'k',
       ELEVENLABS_AGENT_ID: 'agent_dev',
       ELEVENLABS_AGENT_ID_PROD: 'agent_prod',
@@ -47,8 +47,8 @@ describe('features/voiceFeature', () => {
   it('falls back to ELEVENLABS_AGENT_ID in production when prod override is missing', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'production',
-      VOICE_ENABLED: 'true',
-      VOICE_REQUIRE_SUBSCRIPTION: 'false',
+      HAPPIER_FEATURE_VOICE__ENABLED: 'true',
+      HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: 'false',
       ELEVENLABS_API_KEY: 'k',
       ELEVENLABS_AGENT_ID: 'agent_dev',
     } as any);
@@ -57,4 +57,3 @@ describe('features/voiceFeature', () => {
     expect(res.voice.enabled).toBe(true);
   });
 });
-

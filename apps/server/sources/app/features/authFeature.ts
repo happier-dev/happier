@@ -1,7 +1,7 @@
 import type { FeaturesResponse } from "./types";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
 import { resolveAuthProviderRegistryResult } from "@/app/auth/providers/registry";
-import { parseBooleanEnv } from "@/config/env";
+import { readAuthFeatureEnv } from "./catalog/readFeatureEnv";
 
 function uniqueStrings(values: readonly string[]): string[] {
     const seen = new Set<string>();
@@ -17,6 +17,7 @@ function uniqueStrings(values: readonly string[]): string[] {
 }
 
 export function resolveAuthFeature(env: NodeJS.ProcessEnv): Pick<FeaturesResponse["features"], "auth"> {
+    const featureEnv = readAuthFeatureEnv(env);
     const policy = resolveAuthPolicyFromEnv(env);
     const authProviderRegistryResult = resolveAuthProviderRegistryResult(env);
     const authProviderRegistry = authProviderRegistryResult.providers;
@@ -65,15 +66,15 @@ export function resolveAuthFeature(env: NodeJS.ProcessEnv): Pick<FeaturesRespons
         providers[provider.id] = provider.resolveFeatures({ env, policy });
     }
 
-    const autoRedirectEnabled = parseBooleanEnv(env.AUTH_UI_AUTO_REDIRECT, false);
-    const recoveryKeyReminderEnabled = parseBooleanEnv(env.AUTH_UI_RECOVERY_KEY_REMINDER_ENABLED, true);
-    const explicitAutoRedirectProviderId = (env.AUTH_UI_AUTO_REDIRECT_PROVIDER_ID ?? "").trim().toLowerCase();
+    const autoRedirectEnabled = featureEnv.uiAutoRedirectEnabled;
+    const recoveryKeyReminderEnabled = featureEnv.uiRecoveryKeyReminderEnabled;
+    const explicitAutoRedirectProviderId = featureEnv.uiAutoRedirectProviderId;
     const enabledExternalSignupProviders = signupMethods
         .filter((m) => m.enabled && m.id !== "anonymous")
         .map((m) => String(m.id).trim().toLowerCase())
         .filter(Boolean);
 
-    const providerResetFlag = parseBooleanEnv(env.AUTH_RECOVERY_PROVIDER_RESET_ENABLED, true);
+    const providerResetFlag = featureEnv.recoveryProviderResetEnabled;
     const providerResetProviders = providerResetFlag
         ? enabledExternalSignupProviders.filter((id) => {
               const resolver = authProviderRegistry.find((p) => p.id === id);
