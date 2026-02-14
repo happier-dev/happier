@@ -198,3 +198,18 @@ export function tokenizeSimpleSyntaxLine(params: {
     return out;
 }
 
+export function tokenizeSimpleSyntaxText(params: {
+    text: string;
+    language: string | null;
+}): SimpleSyntaxToken[] {
+    const raw = params.text ?? '';
+    if (raw.length === 0) return [{ text: '', type: 'default' }];
+
+    const lines = raw.replace(/\r\n/g, '\n').split('\n');
+    const out: SimpleSyntaxToken[] = [];
+    for (let i = 0; i < lines.length; i++) {
+        if (i > 0) out.push({ text: '\n', type: 'default' });
+        out.push(...tokenizeSimpleSyntaxLine({ line: lines[i] ?? '', language: params.language }));
+    }
+    return out;
+}
