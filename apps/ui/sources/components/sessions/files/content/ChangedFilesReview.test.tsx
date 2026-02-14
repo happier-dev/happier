@@ -47,8 +47,18 @@ vi.mock('@/sync/ops', () => ({
     sessionScmDiffFile: (sessionId: string, req: any) => sessionScmDiffFileSpy(sessionId, req),
 }));
 
-vi.mock('@/components/sessions/files/file/ScmDiffDisplay', () => ({
-    ScmDiffDisplay: (props: any) => React.createElement('ScmDiffDisplay', props),
+vi.mock('@/components/ui/code/view/CodeLinesView', () => ({
+    CodeLinesView: (props: any) => React.createElement('CodeLinesView', props),
+}));
+
+vi.mock('@/components/ui/code/highlighting/useCodeLinesSyntaxHighlighting', () => ({
+    useCodeLinesSyntaxHighlighting: () => ({
+        mode: 'off',
+        language: null,
+        maxBytes: 1_000_000,
+        maxLines: 10_000,
+        maxLineLength: 10_000,
+    }),
 }));
 
 describe('ChangedFilesReview', () => {
@@ -130,6 +140,53 @@ describe('ChangedFilesReview', () => {
         expect(sessionScmDiffFileSpy.mock.calls.length).toBe(2);
         const calledPaths = sessionScmDiffFileSpy.mock.calls.map((call: any) => call[1]?.path);
         expect(calledPaths).toEqual(['src/a.ts', 'src/b.ts']);
+    });
+
+    it('disables virtualization for diff blocks when review comments are enabled', async () => {
+        sessionScmDiffFileSpy.mockClear();
+        sessionScmDiffFileSpy.mockImplementation(async (_sessionId: string, req: any) => ({
+            success: true,
+            diff: `diff:${req.path}:${req.area}`,
+            error: null,
+        }));
+
+        const { ChangedFilesReview } = await import('./ChangedFilesReview');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        await act(async () => {
+            tree = renderer.create(
+                <ChangedFilesReview
+                    theme={theme}
+                    sessionId="session-1"
+                    snapshot={snapshot}
+                    changedFilesViewMode="repository"
+                    attributionReliability="high"
+                    allRepositoryChangedFiles={[fileA]}
+                    sessionAttributedFiles={[]}
+                    repositoryOnlyFiles={[]}
+                    suppressedInferredCount={0}
+                    maxFiles={25}
+                    maxChangedLines={2000}
+                    onFilePress={vi.fn()}
+                    reviewCommentsEnabled
+                    reviewCommentDrafts={[]}
+                />
+            );
+        });
+
+        for (let i = 0; i < 20; i++) {
+            await act(async () => {
+                await Promise.resolve();
+            });
+            const views = tree!.root.findAllByType('CodeLinesView' as any);
+            if (views.length > 0) break;
+        }
+
+        const views = tree!.root.findAllByType('CodeLinesView' as any);
+        expect(views.length).toBeGreaterThan(0);
+        for (const view of views) {
+            expect(view.props.virtualized).toBe(false);
+        }
     });
 
     it('falls back to single-file loading when thresholds are exceeded', async () => {
@@ -296,7 +353,7 @@ describe('ChangedFilesReview', () => {
             await act(async () => {
                 await Promise.resolve();
             });
-            const diffs = tree!.root.findAllByType('ScmDiffDisplay' as any);
+            const diffs = tree!.root.findAllByType('CodeLinesView' as any);
             if (diffs.length >= 1) break;
         }
 
@@ -308,13 +365,13 @@ describe('ChangedFilesReview', () => {
         await act(async () => {
             items[1]!.props.onPress();
         });
-        expect(tree!.root.findAllByType('ScmDiffDisplay' as any)).toHaveLength(0);
+        expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(0);
 
         const outline = tree!.root.findByType(ChangedFilesReviewOutline as any);
         await act(async () => {
             outline.props.onSelectFile(fileB);
         });
-        expect(tree!.root.findAllByType('ScmDiffDisplay' as any)).toHaveLength(1);
+        expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(1);
     });
 
     it('toggles diff visibility when pressing a file row in stacked review mode', async () => {
@@ -352,11 +409,11 @@ describe('ChangedFilesReview', () => {
             await act(async () => {
                 await Promise.resolve();
             });
-            const diffs = tree!.root.findAllByType('ScmDiffDisplay' as any);
+            const diffs = tree!.root.findAllByType('CodeLinesView' as any);
             if (diffs.length >= 2) break;
         }
 
-        expect(tree!.root.findAllByType('ScmDiffDisplay' as any)).toHaveLength(2);
+        expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);
 
         const items = tree!.root.findAllByType('Item' as any);
         expect(items.length).toBe(2);
@@ -364,12 +421,12 @@ describe('ChangedFilesReview', () => {
         await act(async () => {
             items[0]!.props.onPress();
         });
-        expect(tree!.root.findAllByType('ScmDiffDisplay' as any)).toHaveLength(1);
+        expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(1);
 
         await act(async () => {
             items[0]!.props.onPress();
         });
-        expect(tree!.root.findAllByType('ScmDiffDisplay' as any)).toHaveLength(2);
+        expect(tree!.root.findAllByType('CodeLinesView' as any)).toHaveLength(2);
     });
 
     it('uses a localized fallback when diff loading fails without an error string', async () => {
