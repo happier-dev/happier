@@ -1,3 +1,4 @@
+import * as React from 'react';
 import { ActivityIndicator, Pressable, View } from 'react-native';
 
 import { Text } from '@/components/ui/text/StyledText';
@@ -16,6 +17,26 @@ type SourceControlOperationsHistorySectionProps = Readonly<{
 
 export function SourceControlOperationsHistorySection(props: SourceControlOperationsHistorySectionProps) {
     const { theme, historyLoading, historyEntries, historyHasMore, onLoadMoreHistory, onOpenCommit } = props;
+    const DEFAULT_VISIBLE_COUNT = 5;
+    const LOAD_MORE_STEP = 20;
+    const [visibleCount, setVisibleCount] = React.useState(DEFAULT_VISIBLE_COUNT);
+
+    const firstSha = historyEntries.at(0)?.sha ?? null;
+    const lastFirstShaRef = React.useRef<string | null>(firstSha);
+    React.useEffect(() => {
+        // Reset when the list is replaced (e.g., refresh/reset pagination).
+        if (lastFirstShaRef.current !== firstSha) {
+            lastFirstShaRef.current = firstSha;
+            setVisibleCount(DEFAULT_VISIBLE_COUNT);
+        }
+    }, [firstSha]);
+
+    React.useEffect(() => {
+        // Never hide commits when there is no pagination.
+        if (!historyHasMore && historyEntries.length > visibleCount) {
+            setVisibleCount(historyEntries.length);
+        }
+    }, [historyEntries.length, historyHasMore, visibleCount]);
 
     if (historyLoading && historyEntries.length === 0) {
         return <ActivityIndicator size="small" color={theme.colors.textSecondary} />;
@@ -41,9 +62,10 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
             >
                 Recent commits
             </Text>
-            {historyEntries.slice(0, 5).map((entry) => (
+            {historyEntries.slice(0, Math.min(historyEntries.length, visibleCount)).map((entry) => (
                 <Pressable
                     key={entry.sha}
+                    testID={`scm-commit-entry-${entry.sha}`}
                     onPress={() => onOpenCommit(entry.sha)}
                     style={(p) => ({
                         paddingVertical: 10,
@@ -84,10 +106,14 @@ export function SourceControlOperationsHistorySection(props: SourceControlOperat
                     </View>
                 </Pressable>
             ))}
-            {historyHasMore && (
+            {(historyHasMore || visibleCount < historyEntries.length) && (
                 <Pressable
                     disabled={historyLoading}
-                    onPress={onLoadMoreHistory}
+                    testID="scm-commit-load-more"
+                    onPress={() => {
+                        setVisibleCount((prev) => prev + LOAD_MORE_STEP);
+                        onLoadMoreHistory();
+                    }}
                     style={(p) => ({
                         marginTop: 4,
                         paddingVertical: 10,
