@@ -82,7 +82,7 @@ case "${asset}" in
     ;;
 esac
 
-bin_path="$(find "${extract_dir}" -type f \\( -name minisign -o -name minisign.exe \\) 2>/dev/null | head -n 1 || true)"
+bin_path="$(find "${extract_dir}" -type f \( -name minisign -o -name minisign.exe \) 2>/dev/null | head -n 1 || true)"
 if [[ -z "${bin_path}" ]]; then
   echo "Failed to locate minisign binary in bootstrap archive." >&2
   exit 1
@@ -97,4 +97,3 @@ if [[ -n "${GITHUB_PATH:-}" ]]; then
 else
   echo "${bin_dir}"
 fi
-
