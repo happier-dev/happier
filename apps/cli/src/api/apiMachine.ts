@@ -16,6 +16,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { fetchChanges } from './changes';
 import { readLastChangesCursor, writeLastChangesCursor } from '@/persistence';
 import { resolveLoopbackHttpUrl } from './client/loopbackUrl';
+import { getSocketIoProxyOptions } from '@/utils/proxy/socketIoProxy';
 
 import type { DaemonToServerEvents, ServerToDaemonEvents } from './machine/socketTypes';
 import { registerMachineRpcHandlers, type MachineRpcHandlers } from './machine/rpcHandlers';
@@ -143,6 +144,7 @@ export class ApiMachineClient {
             reconnectionDelayMax: 5000,
             withCredentials: true,
             autoConnect: false,
+            ...getSocketIoProxyOptions({ targetUrl: serverUrl, env: process.env }),
         });
 
         this.socket.on('connect', () => {

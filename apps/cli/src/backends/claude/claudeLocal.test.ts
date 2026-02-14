@@ -272,4 +272,35 @@ describe('claudeLocal --continue handling', () => {
         expect(spawnArgs).toContain('123e4567-e89b-12d3-a456-426614174999');
         expect(onSessionFound).not.toHaveBeenCalled();
     });
+
+    it('treats exit code 143 as expected termination when abort is requested', async () => {
+        const controller = new AbortController();
+        controller.abort();
+
+        mockSpawn.mockReturnValueOnce({
+            stdio: [null, null, null, null],
+            on: vi.fn((event, callback) => {
+                if (event === 'exit') {
+                    process.nextTick(() => callback(143, null));
+                }
+            }),
+            addListener: vi.fn(),
+            removeListener: vi.fn(),
+            kill: vi.fn(),
+            stdout: { on: vi.fn() },
+            stderr: { on: vi.fn() },
+            stdin: {
+                on: vi.fn(),
+                end: vi.fn()
+            }
+        });
+
+        await expect(claudeLocal({
+            abort: controller.signal,
+            sessionId: null,
+            path: '/tmp',
+            onSessionFound,
+            claudeArgs: [],
+        })).resolves.toBeTruthy();
+    });
 });
