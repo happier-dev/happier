@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { View, Text, ScrollView } from 'react-native';
+import { View, Text } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { ToolViewProps } from '../core/_registry';
-import { DiffView } from '@/components/diff/DiffView';
+import { ToolDiffView } from '@/components/tools/shell/presentation/ToolDiffView';
 import { knownTools } from '../../catalog';
 import { trimIdent } from '@/utils/strings/trimIdent';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -11,7 +11,6 @@ import { t } from '@/text';
 
 export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) => {
     const showLineNumbersInToolViews = useSetting('showLineNumbersInToolViews');
-    const wrapLinesInDiffs = useSetting('wrapLinesInDiffs');
     
     let edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> = [];
     
@@ -47,62 +46,39 @@ export const MultiEditView = React.memo<ToolViewProps>(({ tool, detailLevel }) =
     const remaining = edits.length - visibleEdits.length;
     const showLineNumbers = isFull ? true : !!showLineNumbersInToolViews;
 
-    const content = (
-        <View style={{ flex: 1 }}>
-            {visibleEdits.map((edit, index) => {
-                const oldString = trimIdent(edit.old_string || '');
-                const newString = trimIdent(edit.new_string || '');
-                
-                return (
-                    <View key={index}>
-                        {isFull ? (
-                            <View style={styles.editHeader}>
-                                <Text style={styles.editNumber}>
-                                    {t('tools.multiEdit.editNumber', { index: index + 1, total: edits.length })}
-                                </Text>
-                                {edit.replace_all ? (
-                                    <View style={styles.replaceAllBadge}>
-                                        <Text style={styles.replaceAllText}>{t('tools.multiEdit.replaceAll')}</Text>
-                                    </View>
-                                ) : null}
-                            </View>
-                        ) : null}
-                        <DiffView 
-                            oldText={oldString} 
-                            newText={newString} 
-                            wrapLines={wrapLinesInDiffs}
-                            showLineNumbers={showLineNumbers}
-                            showPlusMinusSymbols={showLineNumbers}
-                        />
-                        {isFull && index < visibleEdits.length - 1 ? <View style={styles.separator} /> : null}
-                    </View>
-                );
-            })}
-            {!isFull && remaining > 0 ? <Text style={styles.more}>{`+${remaining} more`}</Text> : null}
-        </View>
-    );
-
-    if (wrapLinesInDiffs) {
-        // When wrapping lines, no horizontal scroll needed
-        return (
-            <ToolSectionView fullWidth>
-                {content}
-            </ToolSectionView>
-        );
-    }
-
-    // When not wrapping, use horizontal scroll
     return (
         <ToolSectionView fullWidth>
-            <ScrollView 
-                horizontal 
-                showsHorizontalScrollIndicator={true}
-                showsVerticalScrollIndicator={true}
-                nestedScrollEnabled={true}
-                contentContainerStyle={{ flexGrow: 1 }}
-            >
-                {content}
-            </ScrollView>
+            <View style={{ flex: 1 }}>
+                {visibleEdits.map((edit, index) => {
+                    const oldString = trimIdent(edit.old_string || '');
+                    const newString = trimIdent(edit.new_string || '');
+                    
+                    return (
+                        <View key={index}>
+                            {isFull ? (
+                                <View style={styles.editHeader}>
+                                    <Text style={styles.editNumber}>
+                                        {t('tools.multiEdit.editNumber', { index: index + 1, total: edits.length })}
+                                    </Text>
+                                    {edit.replace_all ? (
+                                        <View style={styles.replaceAllBadge}>
+                                            <Text style={styles.replaceAllText}>{t('tools.multiEdit.replaceAll')}</Text>
+                                        </View>
+                                    ) : null}
+                                </View>
+                            ) : null}
+                            <ToolDiffView
+                                oldText={oldString}
+                                newText={newString}
+                                showLineNumbers={showLineNumbers}
+                                showPlusMinusSymbols={showLineNumbers}
+                            />
+                            {isFull && index < visibleEdits.length - 1 ? <View style={styles.separator} /> : null}
+                        </View>
+                    );
+                })}
+                {!isFull && remaining > 0 ? <Text style={styles.more}>{`+${remaining} more`}</Text> : null}
+            </View>
         </ToolSectionView>
     );
 });

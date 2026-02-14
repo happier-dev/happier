@@ -9,7 +9,6 @@ import { collectHostText, makeToolCall, makeToolViewProps } from '../../shell/vi
 vi.mock('react-native', () => ({
     View: 'View',
     Text: 'Text',
-    ScrollView: 'ScrollView',
 }));
 
 vi.mock('react-native-unistyles', () => ({
@@ -21,10 +20,10 @@ vi.mock('../../shell/presentation/ToolSectionView', () => ({
 }));
 
 const diffSpy = vi.fn();
-vi.mock('@/components/diff/DiffView', () => ({
-    DiffView: (props: any) => {
+vi.mock('@/components/tools/shell/presentation/ToolDiffView', () => ({
+    ToolDiffView: (props: any) => {
         diffSpy(props);
-        return React.createElement('DiffView', props);
+        return React.createElement('ToolDiffView', props);
     },
 }));
 
@@ -39,7 +38,6 @@ vi.mock('@/text', () => ({
 vi.mock('@/sync/domains/state/storage', () => ({
     useSetting: (key: string) => {
         if (key === 'showLineNumbersInToolViews') return false;
-        if (key === 'wrapLinesInDiffs') return true;
         return undefined;
     },
 }));
@@ -84,7 +82,7 @@ describe('MultiEditView', () => {
             oldText: 'a',
             newText: 'b',
             showLineNumbers: false,
-            wrapLines: true,
+            showPlusMinusSymbols: false,
         });
         const renderedText = collectHostText(tree).join('\n').replace(/\s+/g, ' ');
         expect(renderedText).toContain('+2 more');
@@ -100,7 +98,7 @@ describe('MultiEditView', () => {
             oldText: 'a',
             newText: 'b',
             showLineNumbers: true,
-            wrapLines: true,
+            showPlusMinusSymbols: true,
         });
         const renderedText = collectHostText(tree).join('\n').replace(/\s+/g, ' ');
         expect(renderedText).toContain('Edit 1/3');
