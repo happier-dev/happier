@@ -193,4 +193,31 @@ describe('CodeLineRow', () => {
         expect(onPressAddComment).toHaveBeenCalledTimes(1);
         expect(onPressAddComment).toHaveBeenCalledWith(line);
     });
+
+    it('sets nativeID to enable deep-link line scrolling on web', async () => {
+        const { CodeLineRow } = await import('./CodeLineRow');
+
+        let tree: renderer.ReactTestRenderer | null = null;
+        act(() => {
+            tree = renderer.create(
+                <CodeLineRow
+                    line={{
+                        id: 'f:120',
+                        sourceIndex: 0,
+                        kind: 'context',
+                        oldLine: 120,
+                        newLine: 120,
+                        renderPrefixText: '',
+                        renderCodeText: 'const x = 1;',
+                        renderIsHeaderLine: false,
+                        selectable: false,
+                    }}
+                    selected={false}
+                />,
+            );
+        });
+
+        const rootView = tree!.root.findAllByType('View' as any)[0]!;
+        expect(rootView.props.nativeID).toBe('f:120');
+    });
 });

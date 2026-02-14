@@ -79,11 +79,14 @@ export function CodeLineRow(props: {
     }, [theme.colors, textColor]);
 
     return (
-        <View style={[
+        <View
+            nativeID={line.id}
+            style={[
             styles(theme).row,
             highlighted ? styles(theme).rowHighlighted : null,
             { backgroundColor },
-        ]}>
+            ]}
+        >
             <Pressable
                 style={styles(theme).rowPressable}
                 onPress={onPress}

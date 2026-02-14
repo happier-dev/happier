@@ -171,4 +171,170 @@ describe('CodeLinesView', () => {
         expect(rows).toHaveLength(1);
         expect(rows[0]!.props.syntaxHighlighting.mode).toBe('advanced');
     });
+
+    it('sets initialScrollIndex when scrollToLineId is provided', async () => {
+        const { CodeLinesView } = await import('./CodeLinesView');
+
+        let tree!: renderer.ReactTestRenderer;
+        renderer.act(() => {
+            tree = renderer.create(
+                <CodeLinesView
+                    scrollToLineId="b"
+                    lines={[
+                        {
+                            id: 'a',
+                            sourceIndex: 0,
+                            kind: 'context',
+                            oldLine: 1,
+                            newLine: 1,
+                            renderPrefixText: '',
+                            renderCodeText: 'a',
+                            renderIsHeaderLine: false,
+                            selectable: false,
+                        },
+                        {
+                            id: 'b',
+                            sourceIndex: 1,
+                            kind: 'context',
+                            oldLine: 2,
+                            newLine: 2,
+                            renderPrefixText: '',
+                            renderCodeText: 'b',
+                            renderIsHeaderLine: false,
+                            selectable: false,
+                        },
+                    ]}
+                />,
+            );
+        });
+
+        const list = (tree as renderer.ReactTestRenderer).root.findByType('FlatList' as any);
+        expect(list.props.initialScrollIndex).toBe(1);
+    });
+
+    it('attempts a DOM scrollIntoView fallback when scrollToLineId is provided', async () => {
+        vi.useFakeTimers();
+        const getElementById = vi.fn();
+        const scrollIntoView = vi.fn();
+        getElementById.mockReturnValue({ scrollIntoView });
+        const previousDocument = (globalThis as any).document;
+        (globalThis as any).document = { getElementById };
+
+        try {
+            const { CodeLinesView } = await import('./CodeLinesView');
+
+            renderer.act(() => {
+                renderer.create(
+                    <CodeLinesView
+                        scrollToLineId="b"
+                        lines={[
+                            {
+                                id: 'a',
+                                sourceIndex: 0,
+                                kind: 'context',
+                                oldLine: 1,
+                                newLine: 1,
+                                renderPrefixText: '',
+                                renderCodeText: 'a',
+                                renderIsHeaderLine: false,
+                                selectable: false,
+                            },
+                            {
+                                id: 'b',
+                                sourceIndex: 1,
+                                kind: 'context',
+                                oldLine: 2,
+                                newLine: 2,
+                                renderPrefixText: '',
+                                renderCodeText: 'b',
+                                renderIsHeaderLine: false,
+                                selectable: false,
+                            },
+                        ]}
+                    />,
+                );
+            });
+
+            // Effect uses a 0ms timeout.
+            vi.runAllTimers();
+
+            expect(getElementById).toHaveBeenCalledWith('b');
+            expect(scrollIntoView).toHaveBeenCalled();
+        } finally {
+            (globalThis as any).document = previousDocument;
+            vi.useRealTimers();
+        }
+    });
+
+    it('falls back to setting scrollTop on the nearest scroll container when the target element is not mounted', async () => {
+        vi.useFakeTimers();
+
+        const scrollContainer: any = {
+            scrollTop: 0,
+            clientHeight: 100,
+            scrollHeight: 1000,
+            parentElement: null,
+            scrollTo: vi.fn(function ({ top }: { top: number }) {
+                this.scrollTop = top;
+            }),
+        };
+
+        const anchorElement: any = {
+            id: 'a',
+            parentElement: scrollContainer,
+        };
+
+        const getElementById = vi.fn((id: string) => {
+            if (id === 'b') return null; // target line not mounted yet
+            if (id === 'a') return anchorElement; // first rendered row
+            return null;
+        });
+
+        const previousDocument = (globalThis as any).document;
+        (globalThis as any).document = { getElementById };
+
+        try {
+            const { CodeLinesView } = await import('./CodeLinesView');
+
+            renderer.act(() => {
+                renderer.create(
+                    <CodeLinesView
+                        scrollToLineId="b"
+                        lines={[
+                            {
+                                id: 'a',
+                                sourceIndex: 0,
+                                kind: 'context',
+                                oldLine: 1,
+                                newLine: 1,
+                                renderPrefixText: '',
+                                renderCodeText: 'a',
+                                renderIsHeaderLine: false,
+                                selectable: false,
+                            },
+                            {
+                                id: 'b',
+                                sourceIndex: 1,
+                                kind: 'context',
+                                oldLine: 2,
+                                newLine: 2,
+                                renderPrefixText: '',
+                                renderCodeText: 'b',
+                                renderIsHeaderLine: false,
+                                selectable: false,
+                            },
+                        ]}
+                    />,
+                );
+            });
+
+            vi.runAllTimers();
+
+            // Estimated row height is 22px; index 1 should land at ~22px.
+            expect(scrollContainer.scrollTop).toBe(22);
+        } finally {
+            (globalThis as any).document = previousDocument;
+            vi.useRealTimers();
+        }
+    });
 });
